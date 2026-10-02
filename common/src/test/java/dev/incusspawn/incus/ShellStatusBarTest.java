@@ -48,6 +48,9 @@ class ShellStatusBarTest {
             @Override public Optional<String> type() { return Optional.of("url"); }
             @Override public Optional<String> shortcut() { return Optional.of(shortcut); }
             @Override public ActionResult execute(ActionContext context) {
+                throw new AssertionError("the menu must not run an action that may prompt");
+            }
+            @Override public ActionResult executeWithoutPrompting(ActionContext context) {
                 try {
                     release.await();
                 } catch (InterruptedException e) {
@@ -166,5 +169,126 @@ class ShellStatusBarTest {
         assertEquals("\033]0;my", drained());
         bar.writeOutput(title, 6, title.length - 6);
         assertTrue(drained().startsWith(" title\007$ \0337"));
+    }
+
+    // --- After the session: nothing may bring the bar back ---
+
+    private static void write(ShellStatusBar bar, String s) throws Exception {
+        var bytes = s.getBytes(StandardCharsets.UTF_8);
+        bar.writeOutput(bytes, 0, bytes.length);
+    }
+
+    @Test
+    void aFrameAfterCleanupGetsNoScrollRegionOrBar() throws Exception {
+        // SIGTERM while the shell prints (tail -f): the hook's cleanup races the output loop.
+        bar.setup(80, 24);
+        bar.cleanup();
+        drained();
+        write(bar, "late output");
+        assertEquals("late output", drained());
+    }
+
+    @Test
+    void nothingRepaintsAfterCleanup() {
+        bar.setMenuActions(List.of(urlAction("v", ActionResult.ok("ok"), new AtomicInteger())), context());
+        bar.setup(80, 24);
+        bar.cleanup();
+        drained();
+        bar.showMenu();
+        bar.handleMenuKey((byte) 'x');
+        bar.hideMenu();
+        bar.resize(100, 30);
+        bar.cleanup();
+        assertEquals("", drained());
+    }
+
+    @Test
+    void anActionThatFinishesAfterTheSessionDrawsNothing() throws Exception {
+        // In the TUI path the JVM outlives the session, and the TUI owns the screen by then.
+        var release = new CountDownLatch(1);
+        var runs = new AtomicInteger();
+        bar.setMenuActions(List.of(urlAction("v", ActionResult.ok("ok"), runs, release)), context());
+        bar.setup(80, 24);
+        var running = bar.runAction(bar.menuActions().get(0));
+        bar.cleanup();
+        drained();
+        release.countDown();
+        running.join(5000);
+        assertEquals(1, runs.get());
+        assertEquals("", drained());
+    }
+
+    @Test
+    void aReconnectDrawsAgain() throws Exception {
+        bar.setup(80, 24);
+        bar.cleanup();
+        bar.setup(80, 24);
+        drained();
+        write(bar, "x");
+        assertTrue(drained().contains("\033[1;22r"));
+    }
+
+    @Test
+    void cleanupFirstCancelsASequenceTheChildLeftOpen() throws Exception {
+        bar.setup(80, 24);
+        write(bar, "\033]0;a title the child never ended");
+        drained();
+        bar.cleanup();
+        assertEquals("\030\0337\033[23;1H\033[J\033[r\0338", drained());
+    }
+
+    // --- Repaints that do not follow a frame wait for a boundary too ---
+
+    @Test
+    void theMenuWaitsForTheChildsSequenceToEnd() throws Exception {
+        bar.setMenuActions(List.of(urlAction("v", ActionResult.ok("ok"), new AtomicInteger())), context());
+        bar.setup(80, 24);
+        write(bar, "\033[3");
+        drained();
+        bar.showMenu();
+        assertEquals("", drained(), "F12 mid-sequence must not cut it");
+        write(bar, "1m");
+        var out = drained();
+        assertTrue(out.startsWith("1m\0337") && out.contains("[Esc] Close"), out);
+    }
+
+    @Test
+    void aResizeMidSequenceRedrawsAtTheNextBoundary() throws Exception {
+        bar.setup(80, 24);
+        write(bar, "\033[3");
+        drained();
+        bar.resize(100, 30);
+        assertEquals("", drained());
+        write(bar, "1m");
+        var out = drained();
+        assertTrue(out.startsWith("1m\033[1;28r\033[2J"), out);
+    }
+
+    // --- What the bottom row shows ---
+
+    @Test
+    void aMultiLineErrorFlashesItsFirstLineOnly() throws Exception {
+        var error = ActionResult.error("VS Code does not appear to be installed.\nInstall it from: https://x");
+        bar.setMenuActions(List.of(urlAction("v", error, new AtomicInteger())), context());
+        bar.setup(80, 24);
+        drained();
+        bar.runAction(bar.menuActions().get(0)).join(5000);
+        var out = drained();
+        assertTrue(out.contains("✗ VS Code does not appear to be installed."), out);
+        assertFalse(out.contains("Install it from"), out);
+        assertFalse(out.contains("\n"), out);
+    }
+
+    @Test
+    void theBarIsCutByCodePointsAndShowsNoControlCharacters() {
+        // 19 columns of text, then an emoji (a surrogate pair) at the 20th.
+        var bar = new ShellStatusBar("abcdefghijklmn\uD83D\uDE00xyz\u0007", terminal);
+        bar.setup(20, 10);
+        var out = drained();
+        assertTrue(out.contains(" isx abcdefghijklmn\uD83D\uDE00"), out);
+        assertFalse(out.contains("xyz"), out);
+        var wide = new ShellStatusBar("bell\u0007", terminal);
+        wide.setup(40, 10);
+        assertFalse(drained().contains("\u0007"));
     }
 }

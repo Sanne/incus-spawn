@@ -221,9 +221,9 @@ class YamlToolActionTest {
 
     @Test
     void testCheckUrlPrerequisitesSkipsUnknownSchemes() {
-        assertNull(YamlToolAction.checkUrlPrerequisites("http://example.com"));
-        assertNull(YamlToolAction.checkUrlPrerequisites("https://example.com"));
-        assertNull(YamlToolAction.checkUrlPrerequisites("custom://something"));
+        assertNull(YamlToolAction.checkUrlPrerequisites("http://example.com", false));
+        assertNull(YamlToolAction.checkUrlPrerequisites("https://example.com", false));
+        assertNull(YamlToolAction.checkUrlPrerequisites("custom://something", false));
     }
 
     // --- vscode-remote folder URI conversion ---
@@ -341,5 +341,45 @@ class YamlToolActionTest {
         entry.setType("shell");
         var action = new YamlToolAction("test", entry);
         assertTrue(action.id().isEmpty());
+    }
+
+    @Test
+    void withoutPromptingAMissingRemoteSshExtensionIsAnErrorNotAQuestion() {
+        // The shell status bar runs this while the session holds the terminal in raw mode: a
+        // prompt would be drawn over the session and its Enter would go to the shell.
+        var probe = new YamlToolAction.VscodeProbe() {
+            @Override public String cli() { return "code"; }
+            @Override public boolean installed() { return true; }
+            @Override public boolean hasExtension(String cli, String id) { return false; }
+        };
+        var originalIn = System.in;
+        var originalOut = System.out;
+        var printed = new java.io.ByteArrayOutputStream();
+        try {
+            System.setIn(new java.io.InputStream() {
+                @Override public int read() { throw new AssertionError("read the terminal"); }
+            });
+            System.setOut(new java.io.PrintStream(printed));
+            var result = YamlToolAction.checkVscodePrerequisites(
+                    "vscode://vscode-remote/ssh-remote+dev-1/home/agentuser/p", false, probe);
+            assertFalse(result.success());
+            assertTrue(result.message().contains("Remote - SSH"), result.message());
+            assertFalse(result.message().contains("\n"));
+        } finally {
+            System.setIn(originalIn);
+            System.setOut(originalOut);
+        }
+        assertEquals("", printed.toString());
+    }
+
+    @Test
+    void withoutPromptingACommandActionDoesNotTakeTheTerminal() {
+        var entry = new ActionEntry();
+        entry.setLabel("Run script");
+        entry.setType("command");
+        entry.setCommand("touch /tmp/isx-must-not-exist-" + System.nanoTime());
+        var result = new YamlToolAction("t", entry).executeWithoutPrompting(
+                new ActionContext("dev-1", MachineType.CONTAINER));
+        assertFalse(result.success());
     }
 }

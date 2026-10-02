@@ -23,14 +23,22 @@ public class ShellStatusBar {
     private static final String STYLE_REVERSE_VIDEO = "\033[0;7m";
     private static final String STYLE_DIM = "\033[0;2m";
     private static final String ERASE_LINE_RIGHT = "\033[K";
+    /** CAN: aborts whatever escape sequence the terminal is in the middle of. */
+    private static final String CANCEL_SEQUENCE = "\030";
     private static final byte ESC = 0x1B;
 
     private final String instanceName;
     private String templateName;
     private final OutputStream out;
     private final Object lock = new Object();
-    private final OutputBoundary childOutput = new OutputBoundary();
 
+    // Guarded by lock. The bar draws only between setup() and cleanup(): after cleanup nothing
+    // may bring the scroll region or the bar back (a late frame, a flash timer, an action that
+    // finishes after the session), and the TUI path keeps the JVM alive to see it.
+    private boolean open;
+    private OutputBoundary childOutput = new OutputBoundary();
+    /** A resize arrived while the child's output stood inside a sequence: clear at the next boundary. */
+    private boolean clearPending;
     private int width;
     private int height;
 
@@ -38,6 +46,7 @@ public class ShellStatusBar {
     private ActionContext actionContext;
     private volatile boolean menuActive = false;
     private volatile String flashMessage;
+    private volatile String menuHint;
     private volatile Thread flashThread;
 
     public ShellStatusBar(String instanceName, OutputStream out) {
@@ -66,37 +75,63 @@ public class ShellStatusBar {
         return menuActive;
     }
 
+    /** Start drawing, for a session (or a reconnect) whose output starts fresh. */
     public void setup(int width, int height) {
-        resize(width, height);
+        synchronized (lock) {
+            open = true;
+            childOutput = new OutputBoundary();
+            this.width = width;
+            this.height = height;
+            paintUnsync(true);
+        }
     }
 
     public void resize(int newWidth, int newHeight) {
-        this.width = newWidth;
-        this.height = newHeight;
         synchronized (lock) {
-            emit(setScrollRegion(1, newHeight - BAR_LINES));
-            emit(CLEAR_SCREEN);
-            emit(CURSOR_HOME);
-            emit(SAVE_CURSOR);
-            renderBarUnsync();
-            emit(RESTORE_CURSOR);
-            flush();
+            this.width = newWidth;
+            this.height = newHeight;
+            paintUnsync(true);
         }
     }
 
     public void writeOutput(byte[] data, int off, int len) throws IOException {
         synchronized (lock) {
             out.write(data, off, len);
-            // A frame can end inside an escape sequence or a UTF-8 character; anything written
-            // there would cut it short, so the fixup waits for a frame that ends between them.
-            if (childOutput.atBoundaryAfter(data, off, len)) {
-                emit(SAVE_CURSOR);
-                emit(setScrollRegion(1, height - BAR_LINES));
-                renderBarUnsync();
-                emit(RESTORE_CURSOR);
-            }
+            childOutput.scan(data, off, len);
+            // Every frame re-asserts the scroll region and the bar, which the child may have
+            // reset or scrolled over.
+            paintUnsync(clearPending);
             flush();
         }
+    }
+
+    /**
+     * Draw the scroll region and the bar, leaving the cursor where the shell has it -- or, with
+     * {@code clear}, clear the screen first (after a resize, the old bar rows may be anywhere).
+     * Nothing once closed. A frame can end inside an escape sequence or a UTF-8 character, and
+     * anything written there would cut it short, so while the child's output stands inside one
+     * the paint waits for the next frame that ends between them.
+     */
+    private void paintUnsync(boolean clear) {
+        if (!open) return;
+        if (!childOutput.atBoundary()) {
+            // writeOutput paints again after every frame, so this one is only deferred.
+            clearPending |= clear;
+            return;
+        }
+        clearPending = false;
+        if (clear) {
+            emit(setScrollRegion(1, height - BAR_LINES));
+            emit(CLEAR_SCREEN);
+            emit(CURSOR_HOME);
+            emit(SAVE_CURSOR);
+        } else {
+            emit(SAVE_CURSOR);
+            emit(setScrollRegion(1, height - BAR_LINES));
+        }
+        renderBarUnsync();
+        emit(RESTORE_CURSOR);
+        flush();
     }
 
     /**
@@ -110,7 +145,11 @@ public class ShellStatusBar {
         private State state = State.GROUND;
         private int continuationBytes;
 
-        boolean atBoundaryAfter(byte[] data, int off, int len) {
+        boolean atBoundary() {
+            return state == State.GROUND && continuationBytes == 0;
+        }
+
+        void scan(byte[] data, int off, int len) {
             for (int i = off; i < off + len; i++) {
                 int b = data[i] & 0xFF;
                 switch (state) {
@@ -139,22 +178,27 @@ public class ShellStatusBar {
                     case STRING_ESC -> state = b == '\\' ? State.GROUND : State.STRING;
                 }
             }
-            return state == State.GROUND && continuationBytes == 0;
         }
     }
 
-    /** Repaint the bar, leaving the cursor where the shell has it. */
     private void repaint() {
         synchronized (lock) {
-            emit(SAVE_CURSOR);
-            renderBarUnsync();
-            emit(RESTORE_CURSOR);
-            flush();
+            paintUnsync(false);
         }
     }
 
+    /**
+     * Stop drawing, for good until the next {@link #setup}: erase the bar and give back the full
+     * screen. Idempotent, since the shutdown hook and the session's end can both get here.
+     */
     public void cleanup() {
         synchronized (lock) {
+            if (!open) return;
+            open = false;
+            clearFlash();
+            menuHint = null;
+            // A child killed mid-sequence would swallow what follows into it.
+            if (!childOutput.atBoundary()) emit(CANCEL_SEQUENCE);
             // Erase both bar rows, and give back the full screen with the cursor where the
             // shell left it: resetting the scroll region homes the cursor, hence the save.
             emit(SAVE_CURSOR);
@@ -201,35 +245,34 @@ public class ShellStatusBar {
             }
         }
         sb.append(" or Esc");
-        synchronized (lock) {
-            renderMenuFlashUnsync(sb.toString());
-        }
-    }
-
-    private void renderMenuFlashUnsync(String hint) {
-        int bottomRow = height;
-        emit(SAVE_CURSOR);
-        emitLine(bottomRow, " " + hint, true);
-        emit(RESTORE_CURSOR);
-        flush();
+        menuHint = sb.toString();
+        repaint();
         var prev = flashThread;
         if (prev != null) prev.interrupt();
         flashThread = Thread.ofVirtual().start(() -> {
             try {
                 Thread.sleep(1500);
+                menuHint = null;
                 if (menuActive) repaint();
             } catch (InterruptedException ignored) {}
         });
     }
 
+    /**
+     * Run a menu action off the stdin thread -- opening a URL can wait seconds on a launcher, and
+     * the shell must keep getting keystrokes meanwhile -- and without prompting: the session owns
+     * the terminal, so an action that read from it would fight the shell for keystrokes.
+     */
+    Thread runAction(ToolAction action) {
+        return Thread.ofVirtual().start(() -> flashResult(action));
+    }
+
     private void executeAction(ToolAction action) {
-        // Off the stdin thread: opening a URL can wait seconds on a launcher, and the shell
-        // must keep getting keystrokes meanwhile.
-        Thread.ofVirtual().start(() -> flashResult(action));
+        runAction(action);
     }
 
     private void flashResult(ToolAction action) {
-        var result = action.execute(actionContext);
+        var result = action.executeWithoutPrompting(actionContext);
         if (result.success()) {
             showFlash("✓ " + action.label(), false);
         } else {
@@ -238,8 +281,13 @@ public class ShellStatusBar {
     }
 
     private void showFlash(String message, boolean isError) {
-        this.flashMessage = message;
-        repaint();
+        synchronized (lock) {
+            if (!open) return;
+            // One row, so the first line only: an action's error can span several, and a bare
+            // LF in raw mode would step out of the bar.
+            this.flashMessage = message.lines().findFirst().orElse("");
+            paintUnsync(false);
+        }
         var prev = flashThread;
         if (prev != null) prev.interrupt();
         if (!isError) {
@@ -316,7 +364,12 @@ public class ShellStatusBar {
         // Top line: instance name
         emitLine(topRow, padLine(header(), "[Esc] Close "), true);
 
-        // Bottom line: action shortcuts
+        // Bottom line: action shortcuts, or which keys work after a wrong one
+        var hint = menuHint;
+        if (hint != null) {
+            emitLine(bottomRow, " " + hint, true);
+            return;
+        }
         var sb = new StringBuilder(" ");
         if (menuActions.isEmpty()) {
             sb.append("No actions available");
@@ -344,11 +397,14 @@ public class ShellStatusBar {
     }
 
     private void emitLine(int row, String content, boolean highlight) {
-        var line = content;
-        if (line.length() > width) {
-            line = line.substring(0, width);
-        }
-        int pad = width - line.length();
+        // Cut by code points, never inside a surrogate pair; control characters would move the
+        // cursor out of the row, so they show as spaces.
+        int[] codePoints = content.codePoints()
+                .map(c -> Character.isISOControl(c) ? ' ' : c)
+                .limit(Math.max(width, 0))
+                .toArray();
+        var line = new String(codePoints, 0, codePoints.length);
+        int pad = width - codePoints.length;
         if (pad > 0) {
             line = line + " ".repeat(pad);
         }
