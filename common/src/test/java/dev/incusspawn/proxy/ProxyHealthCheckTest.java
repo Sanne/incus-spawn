@@ -89,6 +89,22 @@ class ProxyHealthCheckTest {
         assertEquals(ProxyHealthCheck.ProxyStatus.STALE_DNS, checkWithHealthListenerOn("127.0.0.1"));
     }
 
+    @Test
+    void aStaleForegroundProxyIsNotJoinedByTheService() {
+        // The service would start beside it on the new gateway, and the stale proxy would write
+        // its old address back into the bridge DNS on its next reload.
+        var stale = ProxyHealthCheck.ProxyStatus.STALE_GATEWAY;
+        assertFalse(ProxyHealthCheck.serviceRestartCanHelp(stale, true, () -> false));
+        assertTrue(ProxyHealthCheck.serviceRestartCanHelp(stale, true, () -> true));
+        assertFalse(ProxyHealthCheck.serviceRestartCanHelp(stale, false, () -> true));
+        // A proxy that is down is started whether or not the service was active, without asking.
+        for (var down : java.util.List.of(ProxyHealthCheck.ProxyStatus.NOT_RUNNING, ProxyHealthCheck.ProxyStatus.STALE_DNS)) {
+            assertTrue(ProxyHealthCheck.serviceRestartCanHelp(down, true,
+                    () -> fail("a stopped proxy must not cost an is-active query")));
+            assertFalse(ProxyHealthCheck.serviceRestartCanHelp(down, false, () -> true));
+        }
+    }
+
     /** The status with the bridge at 10.0.0.1, its overrides at {@code ip}, and a socket on that health port. */
     private static ProxyHealthCheck.ProxyStatus checkWithHealthListenerOn(String ip) throws Exception {
         assumeTrue(Files.isReadable(Path.of("/proc/net/tcp")), "needs Linux /proc");

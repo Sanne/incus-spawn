@@ -398,7 +398,7 @@ public final class ProxyHealthCheck {
             System.err.println(formatError(ProxyStatus.WAITING_FOR_DNS));
             System.exit(1);
         }
-        if (tryAutoRestart(incus)) {
+        if (serviceRestartCanHelp(status) && tryAutoRestart(incus)) {
             if (waitForDns(incus)) { warnIfDrifted(incus); return; }
         }
         System.err.println(formatError(check(incus)));
@@ -416,11 +416,26 @@ public final class ProxyHealthCheck {
             System.err.println(formatError(ProxyStatus.WAITING_FOR_DNS));
             return false;
         }
-        if (tryAutoRestart(incus)) {
+        if (serviceRestartCanHelp(status) && tryAutoRestart(incus)) {
             if (waitForDns(incus)) { warnIfDrifted(incus); return true; }
         }
         System.err.println(formatError(check(incus)));
         return false;
+    }
+
+    /**
+     * Whether restarting the proxy service can clear {@code status}. A proxy on an old bridge
+     * address that the service does not run is a foreground one: starting the service would put
+     * a second proxy beside it, and the stale one would write its old address back into the
+     * bridge DNS on its next reload.
+     */
+    public static boolean serviceRestartCanHelp(ProxyStatus status) {
+        return serviceRestartCanHelp(status, ProxyService.isInstalled(), ProxyService::isActive);
+    }
+
+    static boolean serviceRestartCanHelp(ProxyStatus status, boolean installed,
+                                         java.util.function.BooleanSupplier active) {
+        return installed && (status != ProxyStatus.STALE_GATEWAY || active.getAsBoolean());
     }
 
     public static boolean tryAutoRestart(IncusClient incus) {

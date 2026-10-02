@@ -27,7 +27,6 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyLog;
-import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.lifecycle.ZmxSocketForward;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionContext;
@@ -5405,7 +5404,7 @@ public class ListCommand extends BaseCommand {
             setStatusMessage("Proxy restarting...");
             return true;
         }
-        if (ProxyService.isInstalled()) {
+        if (ProxyHealthCheck.serviceRestartCanHelp(proxyStatus)) {
             proxyRestartInProgress = true;
             setStatusMessage(proxyStatus == ProxyHealthCheck.ProxyStatus.STALE_GATEWAY
                     ? "Proxy on an old bridge address, restarting service..."
