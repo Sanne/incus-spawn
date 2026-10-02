@@ -2872,10 +2872,12 @@ public class BuildCommand extends BaseCommand {
      * made the directory as root. {@code useradd} then succeeds but skips {@code /etc/skel}, and a
      * {@code chown -R} would fail on the read-only mount. So copy skel without clobbering, chown
      * everything except mount points, which belong to the host, and give the home the 0700 that
-     * {@code useradd -m} would have (a pre-created one is 0755).
+     * {@code useradd -m} would have (a pre-created one is 0755). The copy's status is ignored:
+     * GNU coreutils 9.2 to 9.4 exit 1 whenever {@code -n} leaves a file alone, which after a normal
+     * {@code useradd -m} is every file (#981). The ownership and mode steps still fail the build.
      */
     static final String AGENT_HOME_OWNERSHIP =
-            "cp -an /etc/skel/. /home/agentuser/ && chown agentuser:agentuser /home/agentuser && "
+            "cp -an /etc/skel/. /home/agentuser/; chown agentuser:agentuser /home/agentuser && "
             + "chmod 700 /home/agentuser && "
             + "find /home/agentuser -mindepth 1 -exec mountpoint -q {} \\; -prune "
             + "-o -exec chown -h agentuser:agentuser {} +";

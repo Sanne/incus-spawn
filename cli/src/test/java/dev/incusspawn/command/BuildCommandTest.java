@@ -2759,6 +2759,9 @@ class BuildCommandTest {
         var chownLog = tempDir.resolve("chown.log");
         writeStub(bin.resolve("mountpoint"), "[ \"$2\" = \"" + mount + "\" ]");
         writeStub(bin.resolve("chown"), "shift; [ \"$1\" = agentuser:agentuser ] && shift; echo \"$@\" >> " + chownLog);
+        // GNU coreutils 9.2 to 9.4 and BSD cp exit 1 when -n leaves a file alone, as it does
+        // .bashrc here (#981): stub that, so the result does not depend on the host's cp.
+        writeStub(bin.resolve("cp"), "PATH=${PATH#*:} cp \"$@\" || exit; exit 1");
 
         var script = BuildCommand.AGENT_HOME_OWNERSHIP
                 .replace("/etc/skel", skel.toString())
