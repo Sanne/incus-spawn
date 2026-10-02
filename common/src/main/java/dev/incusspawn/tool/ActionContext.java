@@ -31,9 +31,5 @@ public record ActionContext(
 
     public record InstanceState(String ipv4, String status, String parent, String networkMode) {}
 
-    public record RepoInfo(String name, String path, String url, String hostPath) {
-        public RepoInfo(String name, String path, String url) {
-            this(name, path, url, null);
-        }
-    }
+    public record RepoInfo(String name, String path, String url) {}
 }

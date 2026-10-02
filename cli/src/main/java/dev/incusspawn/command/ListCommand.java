@@ -4523,7 +4523,6 @@ public class ListCommand extends BaseCommand {
         var repos = new ArrayList<ActionContext.RepoInfo>();
         var templateName = resolveTemplateName(instance);
         if (templateName == null) return repos;
-        var config = dev.incusspawn.config.SpawnConfig.load();
         var chain = getInheritanceChain(templateName);
         for (var def : chain) {
             for (var repo : def.getRepos()) {
@@ -4532,12 +4531,7 @@ public class ListCommand extends BaseCommand {
                 var repoPath = path.startsWith("~/")
                         ? "/home/agentuser" + path.substring(1) : path;
                 var name = repoPath.substring(repoPath.lastIndexOf('/') + 1);
-                String hostPath = null;
-                try {
-                    var hp = dev.incusspawn.git.GitRemoteUtils.resolveHostRepoPath(name, config);
-                    if (hp != null) hostPath = hp.toString();
-                } catch (Exception ignored) {}
-                repos.add(new ActionContext.RepoInfo(name, repoPath, repo.getUrl(), hostPath));
+                repos.add(new ActionContext.RepoInfo(name, repoPath, repo.getUrl()));
             }
         }
         return repos;

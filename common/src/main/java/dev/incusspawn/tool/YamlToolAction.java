@@ -225,9 +225,6 @@ public class YamlToolAction implements ToolAction {
             result = result.replace("${repo_name}", repo.name());
             result = result.replace("${repo_path}", repo.path());
             result = result.replace("${repo_url}", repo.url());
-            if (repo.hostPath() != null) {
-                result = result.replace("${host_repo_path}", repo.hostPath());
-            }
         }
 
         // Instance variables (available when executing, not when generating label)
