@@ -253,6 +253,22 @@ class ImageDefTest {
         assertEquals("myorg/catalog", agent.getSkills().getList().get(1));
     }
 
+    /** An empty {@code list:} must not swallow the keys that follow the skills block. */
+    @Test
+    void emptySkillsListKeepsTheRestOfTheDefinition() throws Exception {
+        var def = ImageDef.parseYaml("""
+                name: tpl-agent
+                skills:
+                  repo: myorg/claude-skills
+                  list:
+                packages: [git]
+                """);
+
+        assertEquals("myorg/claude-skills", def.getSkills().getRepo());
+        assertEquals(List.of(), def.getSkills().getList());
+        assertEquals(List.of("git"), def.getPackages());
+    }
+
     @Test
     void parseImageWithHostResources(@TempDir Path tempDir) throws Exception {
         var imagesDir = tempDir.resolve("images");

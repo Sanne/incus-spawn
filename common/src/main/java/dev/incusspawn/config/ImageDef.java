@@ -271,8 +271,15 @@ public class ImageDef {
                     var field = p.currentName();
                     p.nextToken();
                     switch (field) {
-                        case "repo" -> repo = p.getText();
+                        // getText() reads a JSON null as "null", which a build-source snapshot writes
+                        case "repo" -> repo = p.currentToken() == JsonToken.VALUE_NULL ? null : p.getText();
                         case "list" -> {
+                            // An empty "list:" is a null: reading on to an END_ARRAY would take
+                            // the rest of the definition as skills
+                            if (p.currentToken() != JsonToken.START_ARRAY) {
+                                p.skipChildren();
+                                continue;
+                            }
                             var items = new ArrayList<String>();
                             while (p.nextToken() != JsonToken.END_ARRAY) {
                                 items.add(p.getText());

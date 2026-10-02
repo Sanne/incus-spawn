@@ -11,6 +11,25 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class BuildSourceTest {
 
+    /**
+     * A snapshot must describe the definition it was taken from: a JSON null skills repo used to
+     * come back as the catalog "null", so a restored definition never matched its own fingerprint.
+     */
+    @Test
+    void roundTripKeepsTheFingerprint() throws Exception {
+        var imageDef = ImageDef.parseYaml("name: tpl-test\npackages: [git]\n");
+        var toolDef = ToolDef.loadFromStream(new java.io.ByteArrayInputStream(
+                "name: maven-3\npackages: [maven]\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+        var restored = BuildSource.fromJson(new BuildSource(Map.of("tpl-test", imageDef),
+                Map.of("maven-3", toolDef), null, null).toJson());
+
+        var restoredDef = restored.getDefinitions().get("tpl-test");
+        assertNull(restoredDef.getSkills().getRepo());
+        assertEquals(imageDef.contentFingerprint(Map.of()), restoredDef.contentFingerprint(Map.of()));
+        assertEquals(toolDef.contentFingerprint(), restored.getTools().get("maven-3").contentFingerprint());
+    }
+
     @Test
     void roundTripSerialization() {
         var imageDef = new ImageDef();
