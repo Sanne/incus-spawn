@@ -127,9 +127,13 @@ public class ShellStatusBar {
 
     public void cleanup() {
         synchronized (lock) {
-            emit(RESET_SCROLL_REGION);
-            emit("\033[" + height + ";1H");
+            // Erase both bar rows, and give back the full screen with the cursor where the
+            // shell left it: resetting the scroll region homes the cursor, hence the save.
+            emit(SAVE_CURSOR);
+            emit("\033[" + (height - BAR_LINES + 1) + ";1H");
             emit(ERASE_BELOW);
+            emit(RESET_SCROLL_REGION);
+            emit(RESTORE_CURSOR);
             flush();
         }
     }
@@ -375,7 +379,7 @@ public class ShellStatusBar {
 
     private void emit(String seq) {
         try {
-            out.write(seq.getBytes(StandardCharsets.US_ASCII));
+            out.write(seq.getBytes(StandardCharsets.UTF_8));
         } catch (IOException ignored) {}
     }
 
