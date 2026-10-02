@@ -103,7 +103,7 @@ public final class FakeIncusDaemon implements IncusTransport {
         node.putArray("profiles").add("default");
         node.putObject("devices");
         instances.put(name, node);
-        if (status.equals("Running")) pids.put(name, nextPid++);
+        if (holdsLiveState(status)) pids.put(name, nextPid++);
         expand(name);
         return this;
     }
@@ -368,7 +368,7 @@ public final class FakeIncusDaemon implements IncusTransport {
             state.put("pid", pids.getOrDefault(name, 0L));
             // A running guest holds what DHCP gave it: its reservation, unless told otherwise
             var held = dhcpAnswers.getOrDefault(name, bridgeNicAddress(instance));
-            if (instance.path("status").asText().equals("Running")) {
+            if (holdsLiveState(instance.path("status").asText())) {
                 var network = state.putObject("network");
                 if (guestInterfaces.containsKey(name)) addInet(network, "docker0", guestInterfaces.get(name));
                 if (!held.isEmpty()) addInet(network, "eth0", held);
@@ -426,6 +426,11 @@ public final class FakeIncusDaemon implements IncusTransport {
         // Each device in a PATCH replaces the instance's device of that name whole
         var devices = (ObjectNode) instance.get("devices");
         patch.path("devices").properties().forEach(e -> devices.set(e.getKey(), e.getValue()));
+    }
+
+    /** A frozen guest is paused, not stopped: it keeps its process and its addresses. */
+    private static boolean holdsLiveState(String status) {
+        return status.equals("Running") || status.equals("Frozen");
     }
 
     private static void addInet(ObjectNode network, String iface, String address) {

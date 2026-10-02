@@ -14,7 +14,7 @@ import java.util.Comparator;
  * host-wide static IP lock under the home directory: against the real one, a test would wait
  * on (and delay) whatever isx is branching on the developer's machine.
  */
-final class TempHome implements BeforeEachCallback, AfterEachCallback {
+public final class TempHome implements BeforeEachCallback, AfterEachCallback {
 
     private static final ExtensionContext.Namespace NS = ExtensionContext.Namespace.create(TempHome.class);
 

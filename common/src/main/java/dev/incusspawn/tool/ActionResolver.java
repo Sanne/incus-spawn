@@ -1,8 +1,10 @@
 package dev.incusspawn.tool;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 
 import java.util.ArrayList;
@@ -118,9 +120,13 @@ public class ActionResolver {
      * Falls back to the YAML chain for templates or when BUILD_SOURCE is unavailable.
      */
     public Set<String> collectInstalledTools(String instanceName, String parentTemplate) {
-        var buildSourceJson = incus.configGet(instanceName, Metadata.BUILD_SOURCE);
-        if (buildSourceJson != null && !buildSourceJson.isBlank()) {
-            var type = Metadata.getType(incus, instanceName);
+        return collectInstalledTools(readInstance(instanceName).path("config"), parentTemplate);
+    }
+
+    private Set<String> collectInstalledTools(JsonNode config, String parentTemplate) {
+        var buildSourceJson = config.path(Metadata.BUILD_SOURCE).asText("");
+        if (!buildSourceJson.isBlank()) {
+            var type = config.path(Metadata.TYPE).asText("");
             if (!Metadata.TYPE_BASE.equals(type)) {
                 var bs = dev.incusspawn.config.BuildSource.fromJson(buildSourceJson);
                 if (bs != null) {
@@ -217,25 +223,29 @@ public class ActionResolver {
      * Build an ActionContext for executing an action on an instance.
      */
     public ActionContext buildActionContext(String instanceName, String parentTemplate) {
-        var status = incus.getInstanceStatus(instanceName);
+        // One instance read for status, type and every config key (configGet is a full instance
+        // GET per key), plus /state only where a guest can hold an address (#979).
+        var instance = readInstance(instanceName);
+        var config = instance.path("config");
+        var status = instance.path("status").asText("");
         var ipv4 = "";
-        if (incus.configGet(instanceName, "volatile.eth0.hwaddr") != null) {
+        // A frozen guest is paused, not stopped, and still holds its address.
+        if ("Running".equalsIgnoreCase(status) || "Frozen".equalsIgnoreCase(status)) {
             var extracted = incus.getContainerIpv4(instanceName);
             if (extracted != null) {
                 ipv4 = extracted;
             }
         }
         if (ipv4.isEmpty()) {
-            ipv4 = incus.configGet(instanceName, Metadata.STATIC_IP);
-            if (ipv4 == null) ipv4 = "";
+            ipv4 = config.path(Metadata.STATIC_IP).asText("");
         }
-        var networkMode = incus.configGet(instanceName, Metadata.NETWORK_MODE);
-        var installedTools = collectInstalledTools(instanceName, parentTemplate);
+        var networkMode = config.path(Metadata.NETWORK_MODE).asText("");
+        var installedTools = collectInstalledTools(config, parentTemplate);
         var repos = collectRepos(parentTemplate);
 
         return new ActionContext(
                 instanceName,
-                incus.machineType(instanceName),
+                IncusClient.machineType(instance),
                 installedTools,
                 repos,
                 new ActionContext.InstanceState(ipv4, status, parentTemplate, networkMode)
@@ -243,6 +253,15 @@ public class ActionResolver {
     }
 
     // --- Private helpers ---
+
+    /** The instance as one GET returns it, failing like {@code configGet} when Incus refuses it. */
+    private JsonNode readInstance(String instanceName) {
+        var instance = incus.instanceMetadata(instanceName);
+        if (instance.isMissingNode() || instance.isNull()) {
+            throw new IncusException("Failed to read instance " + instanceName);
+        }
+        return instance;
+    }
 
     private String resolveDefaultActionRef(String instanceName, String parentTemplate) {
         // Walk the template YAML chain (child wins over parent).
