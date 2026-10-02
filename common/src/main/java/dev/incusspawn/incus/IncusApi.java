@@ -773,7 +773,7 @@ class IncusApi {
                                 int off = 0;
                                 while (off < data.length) {
                                     var result = f12Parser.feed(data, off, data.length - off);
-                                    off = data.length;
+                                    off += result.consumed();
                                     if (result.f12Detected()) {
                                         if (statusBar.isMenuActive()) {
                                             statusBar.hideMenu();

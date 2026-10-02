@@ -13,22 +13,26 @@ package dev.incusspawn.incus;
  */
 public class EscapeSequenceParser {
 
-    public record Result(byte[] toForward, boolean f12Detected, byte menuKey) {
-        static final Result EMPTY = new Result(new byte[0], false, (byte) 0);
+    /**
+     * One parse event. {@code consumed} is how many of the fed bytes it accounts for: after an
+     * F12 or a menu key the rest of the read is left unparsed, and the caller feeds it again.
+     */
+    public record Result(byte[] toForward, boolean f12Detected, byte menuKey, int consumed) {
 
-        static Result forward(byte[] data, int off, int len) {
-            if (len == 0) return EMPTY;
+        static Result forward(byte[] data, int len, int consumed) {
             var copy = new byte[len];
-            System.arraycopy(data, off, copy, 0, len);
-            return new Result(copy, false, (byte) 0);
+            System.arraycopy(data, 0, copy, 0, len);
+            return new Result(copy, false, (byte) 0, consumed);
         }
 
-        static Result f12() {
-            return new Result(new byte[0], true, (byte) 0);
+        static Result f12(byte[] before, int len, int consumed) {
+            var copy = new byte[len];
+            System.arraycopy(before, 0, copy, 0, len);
+            return new Result(copy, true, (byte) 0, consumed);
         }
 
-        static Result menu(byte key) {
-            return new Result(new byte[0], false, key);
+        static Result menu(byte key, int consumed) {
+            return new Result(new byte[0], false, key, consumed);
         }
     }
 
@@ -53,15 +57,18 @@ public class EscapeSequenceParser {
 
     /**
      * Feed raw input bytes and return the parse result. May be called with
-     * partial reads — the parser buffers across calls.
+     * partial reads — the parser buffers a split CSI sequence across calls.
      *
-     * <p>Returns exactly one result per call. When F12 is detected mid-buffer,
-     * the bytes before it are returned in {@code toForward} and the caller
-     * should call {@code feed} again with the remaining bytes (this simplifies
-     * the contract: one event per call).
+     * <p>Returns exactly one event per call. When F12 or a menu key is found
+     * mid-buffer, the bytes before it are returned in {@code toForward} and
+     * {@link Result#consumed()} stops after it: the caller feeds the rest again.
+     *
+     * <p>A read that ends in a bare ESC is the Escape key, not the start of a
+     * sequence: terminals write a whole key sequence at once, and holding the
+     * ESC back would delay it until the next keystroke.
      */
     public Result feed(byte[] data, int off, int len) {
-        if (len == 0) return Result.EMPTY;
+        if (len == 0) return Result.forward(new byte[0], 0, 0);
 
         if (menuMode) {
             return feedMenuMode(data, off, len);
@@ -79,7 +86,7 @@ public class EscapeSequenceParser {
                         pendingLen = 0;
                         pending[pendingLen++] = data[i];
                     } else if (b >= 0x20 && b <= 0x7E) {
-                        return Result.menu(data[i]);
+                        return Result.menu(data[i], i + 1 - off);
                     }
                     break;
                 case ESC:
@@ -89,10 +96,7 @@ public class EscapeSequenceParser {
                     } else {
                         state = State.NORMAL;
                         pendingLen = 0;
-                        if (b == 0x1B) {
-                            return Result.menu((byte) 0x1B);
-                        }
-                        return Result.menu((byte) 0x1B);
+                        return Result.menu((byte) 0x1B, i + 1 - off);
                     }
                     break;
                 case CSI:
@@ -105,7 +109,7 @@ public class EscapeSequenceParser {
                         if (isF12Sequence(data[i])) {
                             state = State.NORMAL;
                             pendingLen = 0;
-                            return Result.f12();
+                            return Result.f12(pending, 0, i + 1 - off);
                         }
                         state = State.NORMAL;
                         pendingLen = 0;
@@ -119,9 +123,9 @@ public class EscapeSequenceParser {
         if (state == State.ESC) {
             state = State.NORMAL;
             pendingLen = 0;
-            return Result.menu((byte) 0x1B);
+            return Result.menu((byte) 0x1B, len);
         }
-        return Result.EMPTY;
+        return Result.forward(pending, 0, len);
     }
 
     private Result feedNormalMode(byte[] data, int off, int len) {
@@ -155,31 +159,22 @@ public class EscapeSequenceParser {
                     break;
                 case CSI:
                 case CSI_PARAM:
-                    if (b >= 0x30 && b <= 0x3F) {
+                    if (b >= 0x30 && b <= 0x3F && pendingLen == pending.length) {
+                        // Too long to be F12 (e.g. a mouse report): pass it through as it comes.
+                        System.arraycopy(pending, 0, out, outLen, pendingLen);
+                        outLen += pendingLen;
+                        out[outLen++] = data[i];
+                        state = State.NORMAL;
+                        pendingLen = 0;
+                    } else if (b >= 0x30 && b <= 0x3F) {
                         state = State.CSI_PARAM;
-                        if (pendingLen < pending.length) pending[pendingLen++] = data[i];
+                        pending[pendingLen++] = data[i];
                     } else if (b >= 0x40 && b <= 0x7E) {
                         // Final byte — check if this is F12
                         if (isF12Sequence(data[i])) {
                             state = State.NORMAL;
                             pendingLen = 0;
-                            if (outLen > 0) {
-                                // Return accumulated output; caller will see F12 on next feed
-                                // Actually, signal F12 now — the bytes before it are separate
-                                var forwarded = new byte[outLen];
-                                System.arraycopy(out, 0, forwarded, 0, outLen);
-                                // We need to handle remaining bytes too
-                                int remaining = (off + len) - (i + 1);
-                                if (remaining > 0) {
-                                    var combined = new byte[outLen];
-                                    System.arraycopy(out, 0, combined, 0, outLen);
-                                    // Return what we have so far + F12 signal
-                                    // The caller needs to know about both
-                                    return new Result(combined, true, (byte) 0);
-                                }
-                                return new Result(forwarded, true, (byte) 0);
-                            }
-                            return Result.f12();
+                            return Result.f12(out, outLen, i + 1 - off);
                         }
                         // Not F12 — flush the whole CSI sequence
                         System.arraycopy(pending, 0, out, outLen, pendingLen);
@@ -199,12 +194,14 @@ public class EscapeSequenceParser {
             }
         }
 
-        if (outLen == 0 && pendingLen == 0) return Result.EMPTY;
-        if (outLen == 0) return Result.EMPTY; // still buffering a partial sequence
-
-        var result = new byte[outLen];
-        System.arraycopy(out, 0, result, 0, outLen);
-        return Result.forward(result, 0, outLen);
+        if (state == State.ESC) {
+            // A bare Escape key (see feed): forward it now.
+            System.arraycopy(pending, 0, out, outLen, pendingLen);
+            outLen += pendingLen;
+            state = State.NORMAL;
+            pendingLen = 0;
+        }
+        return Result.forward(out, outLen, len);
     }
 
     private boolean isF12Sequence(byte finalByte) {
