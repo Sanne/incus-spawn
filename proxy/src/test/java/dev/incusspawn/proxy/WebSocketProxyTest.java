@@ -24,12 +24,26 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import javax.net.ssl.SNIHostName;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.ServerSocket;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -57,7 +71,8 @@ class WebSocketProxyTest {
     static HttpServer mockUpstream;
 
     static final ConcurrentLinkedQueue<String> capturedAuthHeaders = new ConcurrentLinkedQueue<>();
-    static final AtomicInteger upstreamCloseCount = new AtomicInteger();
+    // Per path: a test that leaves its socket to close late must not satisfy another's wait
+    static final Map<String, AtomicInteger> upstreamCloses = new ConcurrentHashMap<>();
 
     @BeforeAll
     static void startProxy() throws Exception {
@@ -92,6 +107,11 @@ class WebSocketProxyTest {
         mockUpstream.webSocketHandler(ws -> {
             var auth = ws.headers().get("Authorization");
             if (auth != null) capturedAuthHeaders.add(auth);
+            if (ws.path().startsWith("/v1/greet")) {
+                // Speaks first, in the handshake's own event-loop turn: the proxy must
+                // not lose a frame that reaches it before it has wired the relay
+                ws.writeTextMessage("greeting");
+            }
             ws.textMessageHandler(msg -> {
                 if ("close-with-4008".equals(msg)) {
                     ws.close((short) 4008, "quota_exceeded");
@@ -101,7 +121,8 @@ class WebSocketProxyTest {
             });
             ws.binaryMessageHandler(buf ->
                     ws.writeBinaryMessage(Buffer.buffer("echo:").appendBuffer(buf)));
-            ws.closeHandler(v -> upstreamCloseCount.incrementAndGet());
+            var path = ws.path();
+            ws.closeHandler(v -> upstreamCloses.computeIfAbsent(path, p -> new AtomicInteger()).incrementAndGet());
         });
         int mockPort = await(mockUpstream.listen(0, "127.0.0.1"), 5).actualPort();
 
@@ -252,11 +273,13 @@ class WebSocketProxyTest {
 
     @Test
     void clientClosePropagatesUpstream() throws Exception {
-        var countBefore = upstreamCloseCount.get();
+        var path = "/v1/close-test";
+        var closes = upstreamCloses.computeIfAbsent(path, p -> new AtomicInteger());
+        var countBefore = closes.get();
         var client = createClient();
 
         var echo = new CompletableFuture<String>();
-        var ws = connect(client, connectOptions("/v1/close-test"), socket -> {
+        var ws = connect(client, connectOptions(path), socket -> {
             socket.textMessageHandler(echo::complete);
             socket.writeTextMessage("hi");
         });
@@ -264,10 +287,10 @@ class WebSocketProxyTest {
 
         await(onClient(ws::close), 2);
 
-        for (int i = 0; i < 50 && upstreamCloseCount.get() <= countBefore; i++) {
+        for (int i = 0; i < 50 && closes.get() <= countBefore; i++) {
             Thread.sleep(100);
         }
-        assertTrue(upstreamCloseCount.get() > countBefore,
+        assertTrue(closes.get() > countBefore,
                 "Upstream WebSocket should close when client disconnects");
         close(client);
     }
@@ -334,6 +357,155 @@ class WebSocketProxyTest {
         pingReceived.get(35, TimeUnit.SECONDS);
         await(onClient(ws::close), 2);
         close(client);
+    }
+
+    /**
+     * Frames a client sends the moment its handshake completes must reach upstream. The
+     * proxy only wires the relay once its own upstream WebSocket is open, so until then
+     * the client's socket is paused and its frames buffered; a frame delivered to an
+     * unwired socket would be dropped. Many sockets at once, each writing in the turn
+     * its handshake completed, to give that window a chance.
+     * <p>
+     * On Vert.x 4 the existing relay tests already fail when that window is mishandled;
+     * this one and {@link #upstreamFrameSentRightAfterTheHandshakeIsNotLost} are canaries
+     * for Vert.x 5, which hands over the accepted socket later and already flowing.
+     */
+    @Test
+    void framesSentRightAfterTheHandshakeAreNotLost() throws Exception {
+        var client = createClient();
+        try {
+            int sockets = 40;
+            var echoes = new ConcurrentLinkedQueue<String>();
+            var allEchoed = new CountDownLatch(sockets);
+            var opened = new ArrayList<Future<WebSocket>>();
+            var expected = new ArrayList<String>();
+            for (int i = 0; i < sockets; i++) {
+                var message = "burst-" + i;
+                expected.add(message + " <- echo:" + message);
+                opened.add(onClient(() -> client.webSocket(connectOptions("/v1/burst")).map(ws -> {
+                    ws.textMessageHandler(msg -> {
+                        echoes.add(message + " <- " + msg);
+                        allEchoed.countDown();
+                    });
+                    ws.writeTextMessage(message);
+                    return ws;
+                })));
+            }
+            for (var f : opened) await(f, 10);
+            assertTrue(allEchoed.await(10, TimeUnit.SECONDS),
+                    "Every frame sent right after the handshake should be relayed, got " + echoes);
+            // Each socket got its own echo: nothing cross-routed or dropped
+            assertEquals(expected.stream().sorted().toList(), echoes.stream().sorted().toList());
+        } finally {
+            // 40 open relays would otherwise run on into the following tests
+            close(client);
+        }
+    }
+
+    /**
+     * Upstream speaking first, in the same turn its handshake completes, must reach the client.
+     * A Vert.x 5 canary, like {@link #framesSentRightAfterTheHandshakeAreNotLost}.
+     */
+    @Test
+    void upstreamFrameSentRightAfterTheHandshakeIsNotLost() throws Exception {
+        var client = createClient();
+        var greeting = new CompletableFuture<String>();
+
+        connect(client, connectOptions("/v1/greet"), ws -> ws.textMessageHandler(greeting::complete));
+
+        assertEquals("greeting", greeting.get(5, TimeUnit.SECONDS));
+        close(client);
+    }
+
+    /** An upgrade request without {@code Sec-WebSocket-Key} is refused with a 400, not left hanging. */
+    @Test
+    void malformedUpgradeIsAnswered400() throws Exception {
+        try (var socket = openTls()) {
+            var out = socket.getOutputStream();
+            out.write(("GET /v1/no-key HTTP/1.1\r\n"
+                    + "Host: api.openai.com\r\n"
+                    + "Upgrade: websocket\r\n"
+                    + "Connection: Upgrade\r\n"
+                    + "Sec-WebSocket-Version: 13\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            var head = readHead(socket.getInputStream());
+            assertTrue(head.startsWith("HTTP/1.1 400"), "Expected a 400, got: " + head);
+        }
+    }
+
+    /**
+     * A frame pipelined in the same write as the upgrade request is relayed. RFC 6455
+     * 4.1 says a client waits for the 101 first, so this is not a requirement -- but the
+     * proxy relays it today: the frame is buffered while the client socket is paused
+     * and upstream connects, like any other early frame.
+     */
+    @Test
+    void framePipelinedWithTheUpgradeRequestIsRelayed() throws Exception {
+        try (var socket = openTls()) {
+            // RFC 6455's sample nonce, encoded here so a secret scanner does not mistake it for a key
+            var key = Base64.getEncoder().encodeToString("the sample nonce".getBytes(StandardCharsets.US_ASCII));
+            var request = ("GET /v1/pipelined HTTP/1.1\r\n"
+                    + "Host: api.openai.com\r\n"
+                    + "Upgrade: websocket\r\n"
+                    + "Connection: Upgrade\r\n"
+                    + "Sec-WebSocket-Key: " + key + "\r\n"
+                    + "Sec-WebSocket-Version: 13\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII);
+            // One masked text frame, as a client must send it
+            var payload = "pipelined".getBytes(StandardCharsets.UTF_8);
+            var all = new ByteArrayOutputStream();
+            all.write(request);
+            all.write(0x81);
+            all.write(0x80 | payload.length);
+            byte[] mask = {1, 2, 3, 4};
+            all.write(mask);
+            for (int i = 0; i < payload.length; i++) all.write(payload[i] ^ mask[i % 4]);
+            var out = socket.getOutputStream();
+            out.write(all.toByteArray());
+            out.flush();
+
+            var in = socket.getInputStream();
+            var head = readHead(in);
+            assertTrue(head.startsWith("HTTP/1.1 101"), "Expected a 101, got: " + head);
+            int b0 = in.read();
+            assertEquals(0x81, b0, "Expected one unfragmented text frame (-1: the connection closed)");
+            int len = in.read();
+            assertTrue(len >= 0 && len < 126, "Expected a short unmasked frame, length byte " + len);
+            var body = in.readNBytes(len);
+            assertEquals("echo:pipelined", new String(body, StandardCharsets.UTF_8));
+        }
+    }
+
+    /** A raw TLS connection to the proxy as {@code api.openai.com}, for requests no WebSocket client would send. */
+    private SSLSocket openTls() throws Exception {
+        var trustAll = new X509TrustManager() {
+            public void checkClientTrusted(X509Certificate[] c, String a) {}
+            public void checkServerTrusted(X509Certificate[] c, String a) {}
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        };
+        var ssl = SSLContext.getInstance("TLS");
+        ssl.init(null, new TrustManager[]{trustAll}, null);
+        var socket = (SSLSocket) ssl.getSocketFactory().createSocket("127.0.0.1", mitmPort);
+        var params = socket.getSSLParameters();
+        params.setServerNames(List.of(new SNIHostName("api.openai.com")));
+        socket.setSSLParameters(params);
+        socket.setSoTimeout(5_000);
+        socket.startHandshake();
+        return socket;
+    }
+
+    /** Reads an HTTP response head up to and including the blank line, byte by byte. */
+    private static String readHead(InputStream in) throws IOException {
+        var head = new StringBuilder();
+        while (!head.toString().endsWith("\r\n\r\n")) {
+            int b = in.read();
+            if (b < 0) break;
+            head.append((char) b);
+        }
+        return head.toString();
     }
 
     static int findFreePort() throws Exception {
