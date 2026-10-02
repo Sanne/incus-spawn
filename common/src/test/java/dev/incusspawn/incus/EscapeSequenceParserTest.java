@@ -218,4 +218,17 @@ class EscapeSequenceParserTest {
         var input = "\033[<0;123;45M".getBytes();
         assertArrayEquals(input, parser.feed(input, 0, input.length).toForward());
     }
+
+    @Test
+    void anApplicationCursorKeyInTheMenuIsSwallowedWhole() {
+        // Up arrow with application cursor keys on (vim, less): ESC O A. Neither closes the
+        // menu nor leaves an "A" for the shell.
+        var parser = new EscapeSequenceParser();
+        parser.setMenuMode(true);
+        var input = new byte[]{0x1B, 0x4F, 0x41};
+        var result = parser.feed(input, 0, input.length);
+        assertEquals(0, result.menuKey());
+        assertEquals(3, result.consumed());
+        assertEquals(0, result.toForward().length);
+    }
 }

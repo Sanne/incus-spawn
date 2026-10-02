@@ -36,7 +36,7 @@ public class EscapeSequenceParser {
         }
     }
 
-    private enum State { NORMAL, ESC, CSI, CSI_PARAM }
+    private enum State { NORMAL, ESC, CSI, CSI_PARAM, SS3 }
 
     private State state = State.NORMAL;
     private final byte[] pending = new byte[8];
@@ -93,11 +93,18 @@ public class EscapeSequenceParser {
                     if (b == 0x5B) {
                         state = State.CSI;
                         pending[pendingLen++] = data[i];
+                    } else if (b == 0x4F) {
+                        // SS3: ESC O <key>, e.g. arrows with application cursor keys on.
+                        state = State.SS3;
                     } else {
                         state = State.NORMAL;
                         pendingLen = 0;
                         return Result.menu((byte) 0x1B, i + 1 - off);
                     }
+                    break;
+                case SS3:
+                    state = State.NORMAL;
+                    pendingLen = 0;
                     break;
                 case CSI:
                 case CSI_PARAM:

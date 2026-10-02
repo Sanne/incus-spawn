@@ -23,22 +23,27 @@ public record ShellMenu(List<ToolAction> actions, ActionContext context) {
     }
 
     /**
-     * The menu-eligible actions among {@code actions}: those with {@code shell_menu: true} that
-     * run on the host ({@code url} and {@code command}). An {@code expand: repos} action is offered
-     * once, for the repo the session starts in ({@code workdir}, or the home directory), falling
-     * back to its first repo.
+     * The menu-eligible actions among {@code actions}: {@code url} actions with
+     * {@code shell_menu: true}. Only those, since the menu runs them while the shell owns the
+     * terminal, and a {@code command} action's process would share the raw tty with the session.
+     * An {@code expand: repos} action is offered once, for the repo the session starts in
+     * ({@code workdir}, or the home directory), falling back to its first repo.
      */
     public static ShellMenu of(List<ToolAction> actions, String workdir, ActionContext context) {
         var effectiveWorkdir = workdir == null || workdir.isBlank() ? DEFAULT_WORKDIR : workdir;
-        var chosen = new LinkedHashMap<String, ToolAction>();
+        var chosen = new LinkedHashMap<Object, ToolAction>();
         for (var action : actions) {
-            var type = action.type().orElse("");
-            if (!action.isShellMenu()
-                    || !(YamlToolAction.TYPE_URL.equals(type) || YamlToolAction.TYPE_COMMAND.equals(type))) {
+            if (!action.isShellMenu() || !action.type().map(YamlToolAction.TYPE_URL::equals).orElse(false)) {
                 continue;
             }
+            if (action.repoPath().isEmpty()) {
+                chosen.put(action, action);
+                continue;
+            }
+            // One entry per expanded action, whichever of its repos the session starts in.
             var key = action.toolName() + ":" + action.baseId().orElse("");
-            var inWorkdir = action.repoPath().map(effectiveWorkdir::equals).orElse(false);
+            var repo = action.repoPath().get();
+            var inWorkdir = effectiveWorkdir.equals(repo) || effectiveWorkdir.startsWith(repo + "/");
             if (!chosen.containsKey(key) || inWorkdir) {
                 chosen.put(key, action);
             }
