@@ -54,6 +54,32 @@ if [ ${#missing[@]} -gt 0 ]; then
     fi
 fi
 
+# virtiofsd: without it Incus shares every VM disk device over 9p, which cannot be hot-plugged, so
+# VM builds with host resources or the DNF cache fail (#853). Fedora's incus does not pull it in.
+# Debian and Ubuntu releases that predate the standalone package ship it in qemu-system-common.
+virtiofsd=
+if command -v dnf >/dev/null; then
+    rpm -q virtiofsd >/dev/null 2>&1 || virtiofsd=virtiofsd
+elif ! dpkg -s virtiofsd >/dev/null 2>&1; then
+    # Ask apt only after an update: on a fresh host its package lists are empty.
+    sudo apt-get update -qq
+    if apt-cache show virtiofsd >/dev/null 2>&1; then
+        virtiofsd=virtiofsd
+    else
+        dpkg -s qemu-system-common >/dev/null 2>&1 || virtiofsd=qemu-system-common
+    fi
+fi
+if [ -n "$virtiofsd" ]; then
+    step "Installing $virtiofsd"
+    if command -v dnf >/dev/null; then
+        sudo dnf install -y -q "$virtiofsd"
+    else
+        sudo apt-get install -y -qq "$virtiofsd"
+    fi
+    # Incus looks for virtiofsd only when it starts: a daemon already running would keep using 9p.
+    sudo systemctl try-restart incus.service
+fi
+
 getent group incus-admin | grep -qw "$USER" || sudo usermod -aG incus-admin "$USER"
 sudo systemctl enable --now incus.socket >/dev/null
 
