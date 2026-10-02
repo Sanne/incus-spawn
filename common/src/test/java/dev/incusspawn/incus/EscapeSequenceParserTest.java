@@ -159,4 +159,63 @@ class EscapeSequenceParserTest {
         // Should forward the entire input (CSI + text)
         assertArrayEquals(input, result.toForward());
     }
+
+    private static final byte[] F12 = {0x1B, 0x5B, 0x32, 0x34, 0x7E};
+
+    @Test
+    void aBareEscapeIsForwardedAtOnce() {
+        // vim leaves insert mode on Esc: holding it until the next key delays that by a keystroke.
+        var parser = new EscapeSequenceParser();
+        var result = parser.feed(new byte[]{0x1B}, 0, 1);
+        assertArrayEquals(new byte[]{0x1B}, result.toForward());
+
+        result = parser.feed(new byte[]{0x61}, 0, 1);
+        assertArrayEquals(new byte[]{0x61}, result.toForward());
+    }
+
+    @Test
+    void bytesAfterF12InTheSameReadAreLeftForTheNextFeed() {
+        // F12 then a shortcut typed fast enough to arrive in one read.
+        var parser = new EscapeSequenceParser();
+        var input = new byte[]{0x61, 0x1B, 0x5B, 0x32, 0x34, 0x7E, 0x76}; // a F12 v
+        var result = parser.feed(input, 0, input.length);
+        assertTrue(result.f12Detected());
+        assertArrayEquals(new byte[]{0x61}, result.toForward());
+        assertEquals(6, result.consumed());
+
+        parser.setMenuMode(true);
+        result = parser.feed(input, 6, 1);
+        assertEquals((byte) 0x76, result.menuKey());
+        assertEquals(1, result.consumed());
+    }
+
+    @Test
+    void menuKeysAfterTheFirstInOneReadAreLeftForTheNextFeed() {
+        var parser = new EscapeSequenceParser();
+        parser.setMenuMode(true);
+        var input = new byte[]{0x78, 0x1B, 0x5B, 0x32, 0x34, 0x7E}; // x F12
+        var result = parser.feed(input, 0, input.length);
+        assertEquals((byte) 0x78, result.menuKey());
+        assertEquals(1, result.consumed());
+
+        result = parser.feed(input, 1, input.length - 1);
+        assertTrue(result.f12Detected());
+        assertEquals(5, result.consumed());
+    }
+
+    @Test
+    void aReadWithoutAnEventIsConsumedWhole() {
+        var parser = new EscapeSequenceParser();
+        var input = "ls -l\r".getBytes();
+        assertEquals(input.length, parser.feed(input, 0, input.length).consumed());
+        assertEquals(F12.length, parser.feed(F12, 0, F12.length).consumed());
+    }
+
+    @Test
+    void aLongCsiSequencePassesThroughIntact() {
+        // An SGR mouse report, longer than the bytes the parser keeps to recognise F12.
+        var parser = new EscapeSequenceParser();
+        var input = "\033[<0;123;45M".getBytes();
+        assertArrayEquals(input, parser.feed(input, 0, input.length).toForward());
+    }
 }
