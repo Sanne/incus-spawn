@@ -64,6 +64,56 @@ jobs:
           path: proxy/target/quarkus-app/
           retention-days: 1
 
+  # Unit tests on a macOS host, arm64 only (#970, #974; see .claude/rules/ci.md). macos-15 is a
+  # standard label, free on a public repository; -xlarge is billed and would only buy speed. Not in
+  # cancel-on-unit-failure's needs: a Mac-only failure leaves the Linux jobs worth finishing, and it
+  # starts alongside unit-tests rather than after it, so a Linux failure still cancels it early.
+  unit-tests-macos:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Oracle GraalVM 25.4
+        uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.4'
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          # Not maven-<os>-: the Linux jobs' restore-keys prefix `maven-` would match it.
+          key: macos-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: macos-maven-
+
+      # A test failure in common must not stop cli and proxy from running (-fae would still skip
+      # them, as modules depending on a failed one), so failures are counted from the reports after.
+      - name: Test
+        run: mvn -B -ntp -Dmaven.test.failure.ignore=true test
+
+      - name: Fail on test failures
+        run: |
+          failed=$(find . -path '*/target/surefire-reports/TEST-*.xml' \
+            -exec grep -lE '<testsuite [^>]*(failures|errors)="[1-9]' {} + || true)
+          if [ -n "$failed" ]; then
+            echo "::error::macOS test failures in:"
+            echo "$failed"
+            exit 1
+          fi
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: surefire-reports-macos
+          overwrite: true  # a re-run of the failed job must not lose its reports to a name clash
+          path: '**/target/surefire-reports/'
+          retention-days: 7
+
   # The uber-jars are what JBang users run, and nothing else in CI executes them. Without this the
   # JVM channel can only be found broken by a user: the CLI losing its ability to serve the proxy
   # in-process went unnoticed for six weeks because the released jar was built but never run.
