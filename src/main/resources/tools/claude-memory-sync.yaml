@@ -1,0 +1,249 @@
+name: claude-memory-sync
+description: Sync Claude Code project memory between host and container at session boundaries
+
+parameters:
+  pathmap:
+    type: string
+    description: >
+      Comma-separated host_rel:container_rel path pairs relative to home.
+      Example: "claude/casehub:casehub,.hortora:.hortora"
+
+run_as_user:
+  - |
+    mkdir -p ~/.claude/bin
+    cat > ~/.claude/bin/memory-sync.sh << 'SYNCEOF'
+    #!/bin/bash
+    set -euo pipefail
+    export PATHMAP="%%PATHMAP%%"
+    export SYNC_REPO="$HOME/.claude-sync"
+
+    [ -d "$SYNC_REPO/.git" ] || exit 0
+
+    python3 - "$@" << 'PYEOF'
+    import json, os, shutil, socket, subprocess, sys
+
+    sync_repo = os.environ["SYNC_REPO"]
+    claude_dir = os.path.expanduser("~/.claude")
+    home = os.path.expanduser("~")
+    map_path = os.path.join(claude_dir, "memory-map.json")
+    pathmap_raw = os.environ.get("PATHMAP", "")
+    verbose = "--verbose" in sys.argv or "--dry-run" in sys.argv
+    dry_run = "--dry-run" in sys.argv
+    push_mode = "--push" in sys.argv
+    checkpoint_mode = "--checkpoint" in sys.argv
+
+    def log(msg):
+        if verbose: print(f"  {msg}", file=sys.stderr)
+
+    def warn(msg):
+        print(f"  [memory-sync] WARNING: {msg}", file=sys.stderr)
+
+    def encode_path(p):
+        return p.replace("/", "-").replace(".", "-")
+
+    def discover_host_home():
+        d = os.path.join(sync_repo, "projects")
+        if not os.path.isdir(d):
+            return None
+        dirs = [e for e in os.listdir(d) if os.path.isdir(os.path.join(d, e))]
+        return "/" + min(dirs, key=len).lstrip("-").replace("-", "/") if dirs else None
+
+    def find_repos(base):
+        if not os.path.isdir(base):
+            return []
+        return [os.path.join(base, e) for e in os.listdir(base)
+                if os.path.isdir(os.path.join(base, e, ".git"))]
+
+    def build_mappings():
+        host_home = discover_host_home()
+        if not host_home:
+            return []
+        mappings = [{
+            "host_dir": encode_path(host_home),
+            "container_dir": encode_path(home),
+            "label": "~ (home/global)",
+            "match_type": "home"
+        }]
+        if not pathmap_raw.strip():
+            return mappings
+        for pair in pathmap_raw.split(","):
+            pair = pair.strip()
+            if ":" not in pair:
+                continue
+            host_rel, container_rel = pair.split(":", 1)
+            host_base = os.path.join(host_home, host_rel)
+            container_base = os.path.join(home, container_rel)
+            for repo in find_repos(container_base):
+                name = os.path.basename(repo)
+                h_enc = encode_path(os.path.join(host_base, name))
+                c_enc = encode_path(repo)
+                if os.path.isdir(os.path.join(sync_repo, "projects", h_enc, "memory")):
+                    mappings.append({
+                        "host_dir": h_enc, "container_dir": c_enc,
+                        "label": os.path.relpath(repo, home), "match_type": "pathmap"
+                    })
+        return mappings
+
+    def ensure_mapping():
+        need_regen = True
+        if os.path.isfile(map_path):
+            with open(map_path) as f:
+                existing = json.load(f)
+            if any(m.get("match_type") == "pathmap" for m in existing.get("mappings", [])):
+                need_regen = False
+        if need_regen:
+            mappings = build_mappings()
+            os.makedirs(claude_dir, exist_ok=True)
+            with open(map_path, "w") as f:
+                json.dump({"mappings": mappings}, f, indent=2)
+            log(f"Regenerated mapping: {len(mappings)} entries")
+            for m in mappings:
+                log(f"  {m['label']}: {m['host_dir']} -> {m['container_dir']}")
+
+    def sync_files(src_base, dst_base, mappings, src_key, dst_key):
+        synced = 0
+        for m in mappings:
+            src = os.path.join(src_base, "projects", m[src_key], "memory")
+            dst = os.path.join(dst_base, "projects", m[dst_key], "memory")
+            label = m.get("label", "")
+            if not os.path.isdir(src):
+                continue
+            md_files = [f for f in os.listdir(src) if f.endswith(".md")]
+            if not md_files:
+                continue
+            if dry_run:
+                log(f"DRY-RUN: {label}: {len(md_files)} file(s)")
+                continue
+            os.makedirs(dst, exist_ok=True)
+            copied = 0
+            for fname in md_files:
+                s, d = os.path.join(src, fname), os.path.join(dst, fname)
+                if not os.path.exists(d) or os.path.getmtime(s) > os.path.getmtime(d):
+                    shutil.copy2(s, d)
+                    copied += 1
+            if copied:
+                log(f"{label}: synced {copied}/{len(md_files)} file(s)")
+            synced += copied
+        return synced
+
+    def sync_global_files():
+        for f in os.listdir(sync_repo):
+            if f.endswith(".md") and os.path.isfile(os.path.join(sync_repo, f)):
+                src = os.path.join(sync_repo, f)
+                dst = os.path.join(claude_dir, f)
+                if not os.path.exists(dst) or os.path.getmtime(src) > os.path.getmtime(dst):
+                    shutil.copy2(src, dst)
+
+    def ensure_git_user():
+        r = subprocess.run(["git", "-C", sync_repo, "config", "user.name"], capture_output=True)
+        if r.returncode != 0:
+            subprocess.run(["git", "-C", sync_repo, "config", "user.name", "isx-memory-sync"],
+                           capture_output=True)
+            subprocess.run(["git", "-C", sync_repo, "config", "user.email", "memory-sync@incus-spawn"],
+                           capture_output=True)
+
+    def git_commit_and_push():
+        ensure_git_user()
+        subprocess.run(["git", "-C", sync_repo, "add", "--all"], capture_output=True)
+        r = subprocess.run(["git", "-C", sync_repo, "diff", "--cached", "--quiet"],
+                           capture_output=True)
+        if r.returncode == 0:
+            return False
+        subprocess.run(["git", "-C", sync_repo, "commit", "-m",
+                       f"memory sync from {socket.gethostname()}"], capture_output=True)
+        r = subprocess.run(["git", "-C", sync_repo, "push"],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            log("Pushed to remote.")
+        elif "No configured push destination" in r.stderr or "does not appear to be a git" in r.stderr:
+            log("Committed locally (host can fetch via isx gateway).")
+        else:
+            warn(f"Push failed: {r.stderr.strip()}")
+        return True
+
+    def git_pull():
+        r = subprocess.run(["git", "-C", sync_repo, "pull", "--rebase", "--quiet"],
+                           capture_output=True, text=True)
+        if r.returncode != 0 and r.stderr.strip():
+            if "CONFLICT" in r.stderr:
+                warn(f"Merge conflict during pull — manual resolution needed in {sync_repo}")
+                subprocess.run(["git", "-C", sync_repo, "rebase", "--abort"], capture_output=True)
+            elif "Could not resolve host" not in r.stderr:
+                warn(f"Pull failed: {r.stderr.strip()}")
+
+    ensure_mapping()
+    if not os.path.isfile(map_path):
+        sys.exit(0)
+    with open(map_path) as f:
+        mappings = json.load(f).get("mappings", [])
+
+    if push_mode or checkpoint_mode:
+        if not checkpoint_mode:
+            git_pull()
+        synced = sync_files(claude_dir, sync_repo, mappings, "container_dir", "host_dir")
+        if synced > 0 and not dry_run:
+            committed = git_commit_and_push()
+            if committed:
+                log(f"Committed {synced} file(s).")
+        elif synced == 0:
+            log("No changes to write back.")
+    else:
+        git_pull()
+        synced = sync_files(sync_repo, claude_dir, mappings, "host_dir", "container_dir")
+        if not dry_run:
+            sync_global_files()
+        log(f"Sync complete: {synced} memory file(s) pulled from host.")
+    PYEOF
+    SYNCEOF
+    sed -i "s|%%PATHMAP%%|${param_pathmap}|g" ~/.claude/bin/memory-sync.sh
+    chmod +x ~/.claude/bin/memory-sync.sh
+  - |
+    python3 << 'PYEOF'
+    import json, os
+
+    settings_path = os.path.expanduser("~/.claude/settings.json")
+    settings = {}
+    if os.path.isfile(settings_path):
+        with open(settings_path) as f:
+            settings = json.load(f)
+
+    if "hooks" not in settings:
+        settings["hooks"] = {}
+
+    hook_entries = {
+        "SessionStart": "~/.claude/bin/memory-sync.sh",
+        "SessionEnd": "~/.claude/bin/memory-sync.sh --push",
+        "Stop": "~/.claude/bin/memory-sync.sh --checkpoint"
+    }
+    for event, command in hook_entries.items():
+        if event not in settings["hooks"]:
+            settings["hooks"][event] = []
+        already = any(
+            hook.get("command", "") == command
+            for group in settings["hooks"][event]
+            for hook in group.get("hooks", [])
+        )
+        if not already:
+            settings["hooks"][event].append({
+                "hooks": [{"type": "command", "command": command}]
+            })
+
+    with open(settings_path, "w") as f:
+        json.dump(settings, f, indent=2)
+
+    print("  SessionStart + SessionEnd + Stop hooks registered")
+    PYEOF
+  - |
+    if [ -d ~/.claude-sync/.git ]; then
+      git -C ~/.claude-sync config user.name "isx-memory-sync"
+      git -C ~/.claude-sync config user.email "memory-sync@incus-spawn"
+    fi
+  - |
+    if [ -d ~/.claude-sync ]; then
+      for f in ~/.claude-sync/*.md; do
+        [ -f "$f" ] && cp "$f" ~/.claude/
+      done
+    fi
+  - PATHMAP="${param_pathmap}" ~/.claude/bin/memory-sync.sh --verbose || true
+
+verify: test -x /home/agentuser/.claude/bin/memory-sync.sh
