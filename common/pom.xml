@@ -26,6 +26,23 @@
                     </execution>
                 </executions>
             </plugin>
+            <plugin>
+                <!-- FakeIncusDaemon and the other test doubles, for the cli's tests. Built even
+                     under -Dmaven.test.skip=true, or the cli could not resolve it: then it holds
+                     whatever target/test-classes has, nothing on a clean build. -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                        <configuration>
+                            <skip>false</skip>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 

@@ -26,6 +26,12 @@
             <artifactId>incus-spawn-common</artifactId>
         </dependency>
         <dependency>
+            <groupId>dev.incusspawn</groupId>
+            <artifactId>incus-spawn-common</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-arc</artifactId>
         </dependency>
