@@ -2622,20 +2622,20 @@ public class BuildCommand extends BaseCommand {
      * Start the stopped build container, first making it known to the proxy as its template
      * when that template pins any account (#903): see {@link BuildAccounts#start}.
      */
-    private BuildAccounts.Started startBuild(String buildName, ImageDef imageDef, Map<String, ImageDef> defs) {
+    BuildAccounts.Started startBuild(String buildName, ImageDef imageDef, Map<String, ImageDef> defs) {
         return BuildAccounts.start(incus, buildName, ImageDef.resolveAccounts(imageDef, defs),
                 imageDef.getName(), ProxyService::signalAccountRefresh);
     }
 
     /** Fail the build if its guest did not take the address {@link #startBuild} gave it. */
-    private void requireBuildAddress(String buildName, BuildAccounts.Started started) {
+    void requireBuildAddress(String buildName, BuildAccounts.Started started) {
         if (started.address() != null) {
             InstanceLifecycle.requireBuildAddress(incus, buildName, started.address());
         }
     }
 
     /** Stop the finished template and give back the address {@link #startBuild} gave it. */
-    private void stopBuild(String buildName, BuildAccounts.Started started) {
+    void stopBuild(String buildName, BuildAccounts.Started started) {
         BuildOutput.stepStart("Stopping image...");
         incus.stop(buildName);
         BuildOutput.stepDone();
