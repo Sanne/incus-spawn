@@ -101,6 +101,28 @@ worked when `launchctl` returned 0 and the job is running. Sleeping between `boo
 `bootstrap` was rejected as timing-dependent and still blind to a failed `bootstrap`; retrying
 `bootstrap` on error 5 was rejected because 5 is also what a rejected plist returns.
 
+Two gaps surfaced once `kickstart -k` restarted a loaded job in place rather than always reloading
+it. First, comparing the plist on disk to what this build would generate (`needsMacOsPlistUpdate`)
+cannot see every reason to reload: a drift restart assessed from a health signal (a stale cert, a
+wrong bridge address) has nothing to do with the plist file, so `reinstallIfChanged` and
+`upgradeIfNeeded` now force a reload explicitly instead of asking that comparison, which would
+otherwise answer "nothing changed" and leave `kickstart -k` running the old job in place. Second,
+several `isx` commands can find the proxy unhealthy within the same window — two terminals running
+`isx branch` at once is the common case — and each one restarting in turn would `kickstart -k` a
+proxy the first one had just brought up, cutting every instance's connection a second time for no
+reason; `ProxyHealthCheck.tryAutoRestart` now re-checks `/health` under `proxy.lock`
+(`ProxyService.restartIfUnhealthy`) immediately before restarting, the same recheck
+`reinstallIfChanged` already did for drift, so the second command finds the proxy healthy and
+does nothing.
+
+`installMacOs`'s failure message depends on *why* the reinstall's restart failed, which `isActive()`
+alone cannot say: a job still being unloaded when the install's own teardown timed out, and a job
+that loaded fine but is failing to come up (bad config, VM unreachable), both leave the job loaded.
+`LaunchdJob.start`/`restart` therefore return a three-value `Outcome`
+(`RUNNING`/`STILL_UNLOADING`/`FAILED`) instead of a boolean, so `installMacOs` can report "the
+previous job had not finished unloading" only for the first case and fall through to the ordinary
+"not responding" message, which points at logs, for the second.
+
 In the foreground, `isx proxy start` runs `isx-proxy` as a child sharing the terminal, and a
 shutdown hook stops that child when the CLI is terminated: SIGTERM, then SIGKILL after 15 seconds,
 longer than the proxy's own 10-second forced exit. Ctrl+C reaches both through the process group,

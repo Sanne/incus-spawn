@@ -28,6 +28,21 @@ final class LaunchdJob {
     }
 
     /**
+     * What {@link #start} or {@link #restart} left behind, named so a caller that needs the
+     * reason — {@code installMacOs}, to pick between "the previous job had not finished
+     * unloading" and the generic "not responding" — does not have to infer it from {@code
+     * isActive()} after the fact. {@code isActive()} alone cannot tell the two apart: both leave
+     * the job loaded, one because launchd is still tearing the old one down, the other because
+     * {@code kickstart}/{@code bootstrap} succeeded and KeepAlive already relaunched a process
+     * that is failing to come up (review on #916).
+     */
+    enum Outcome {
+        RUNNING, STILL_UNLOADING, FAILED;
+
+        boolean up() { return this == RUNNING; }
+    }
+
+    /**
      * How long an unloading job is given to be gone. launchd gives a process about five seconds
      * to exit before killing it, so the wait has to outlast that.
      */
@@ -75,23 +90,23 @@ final class LaunchdJob {
      * means loaded, including a job that is being unloaded — is already true, and the "loaded but
      * not responding" case goes through {@link #restart} instead (review on #916).
      */
-    boolean start(Consumer<String> log) {
+    Outcome start(Consumer<String> log) {
         return load(log);
     }
 
     /**
-     * Restart the job so that it runs what the plist now says, and return whether it stays up.
+     * Restart the job so that it runs what the plist now says.
      *
      * @param plistChanged the plist on disk is not the one the job was loaded from, so launchd
      *                     has to read it again, which only unloading and loading does
      */
-    boolean restart(boolean plistChanged, Consumer<String> log) {
+    Outcome restart(boolean plistChanged, Consumer<String> log) {
         if (!isLoaded()) return load(log);
         if (!plistChanged) return kick(log, "kickstart", "-k", target);
 
         // The result of bootout says nothing useful: it is 0 as soon as the job was told to go.
         launchctl.run("bootout", target);
-        return awaitUnloaded(log) && load(log);
+        return awaitUnloaded(log) ? load(log) : Outcome.STILL_UNLOADING;
     }
 
     /**
@@ -99,19 +114,20 @@ final class LaunchdJob {
      * unloading, as after {@code isx proxy stop} on a proxy that will not exit; that one is
      * waited out and loaded afresh. Any other refusal leaves the job as it is.
      */
-    private boolean kick(Consumer<String> log, String... kickstart) {
+    private Outcome kick(Consumer<String> log, String... kickstart) {
         var kicked = launchctl.run(kickstart);
-        if (kicked.ok()) return awaitUp();
+        if (kicked.ok()) return awaitUp() ? Outcome.RUNNING : Outcome.FAILED;
         if (kicked.exitCode() != BEING_UNLOADED) {
             report(log, kickstart[0], kicked);
-            return false;
+            return Outcome.FAILED;
         }
-        return awaitUnloaded(log) && load(log);
+        return awaitUnloaded(log) ? load(log) : Outcome.STILL_UNLOADING;
     }
 
     /** Loads a job launchd does not have, and starts it. */
-    private boolean load(Consumer<String> log) {
-        return step(log, "bootstrap", domain, plist.toString()) && step(log, "kickstart", target) && awaitUp();
+    private Outcome load(Consumer<String> log) {
+        var up = step(log, "bootstrap", domain, plist.toString()) && step(log, "kickstart", target) && awaitUp();
+        return up ? Outcome.RUNNING : Outcome.FAILED;
     }
 
     private boolean awaitUnloaded(Consumer<String> log) {

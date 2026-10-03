@@ -126,7 +126,7 @@ class LaunchdJobTest {
     void restartReloadsAJobWhoseBootoutIsStillInProgress() {
         aRunningJob();
 
-        assertTrue(job.restart(true, log::add), log.toString());
+        assertEquals(LaunchdJob.Outcome.RUNNING, job.restart(true, log::add), log.toString());
 
         assertTrue(launchd.loaded && launchd.running, "the job must end up loaded and running");
         assertEquals(1, launchd.count("bootstrap"), "bootstrap is tried once, after the teardown: " + launchd.calls);
@@ -138,7 +138,7 @@ class LaunchdJobTest {
         aRunningJob();
         launchd.plistRejected = true;
 
-        assertFalse(job.restart(true, log::add));
+        assertEquals(LaunchdJob.Outcome.FAILED, job.restart(true, log::add));
 
         assertFalse(launchd.loaded);
         assertEquals(List.of("launchctl bootstrap failed (exit 5): Bootstrap failed: 5: Input/output error"), log);
@@ -146,7 +146,7 @@ class LaunchdJobTest {
 
     @Test
     void restartingAJobThatIsNotLoadedLoadsAndStartsIt() {
-        assertTrue(job.restart(false, log::add), log.toString());
+        assertEquals(LaunchdJob.Outcome.RUNNING, job.restart(false, log::add), log.toString());
 
         assertTrue(launchd.loaded && launchd.running);
         assertEquals(0, launchd.count("bootout"));
@@ -159,7 +159,7 @@ class LaunchdJobTest {
     void aLoadedJobWithAnUnchangedPlistIsRestartedInPlace() {
         aRunningJob();
 
-        assertTrue(job.restart(false, log::add), log.toString());
+        assertEquals(LaunchdJob.Outcome.RUNNING, job.restart(false, log::add), log.toString());
 
         assertEquals(List.of("kickstart -k " + TARGET),
                 launchd.calls.stream().filter(c -> !c.startsWith("print ")).toList());
@@ -171,7 +171,7 @@ class LaunchdJobTest {
         aRunningJob();
         launchd.run("bootout", TARGET);
 
-        assertTrue(job.restart(false, log::add), log.toString());
+        assertEquals(LaunchdJob.Outcome.RUNNING, job.restart(false, log::add), log.toString());
 
         assertTrue(launchd.loaded && launchd.running);
         assertEquals(1, launchd.count("bootout"), "it is going already: no second bootout");
@@ -184,19 +184,20 @@ class LaunchdJobTest {
         aRunningJob();
         launchd.kickstartExit = 1;
 
-        assertFalse(job.restart(false, log::add));
+        assertEquals(LaunchdJob.Outcome.FAILED, job.restart(false, log::add));
 
         assertTrue(launchd.loaded, "the job was loaded and still is");
         assertEquals(0, launchd.count("bootout"));
         assertEquals(List.of("launchctl kickstart failed (exit 1)."), log);
     }
 
+    /** Pinned separately from FAILED (review on #916): installMacOs reports this one differently. */
     @Test
     void restartGivesUpOnAJobThatNeverFinishesUnloading() {
         aRunningJob();
         launchd.printsUntilUnloaded = -1;
 
-        assertFalse(job.restart(true, log::add));
+        assertEquals(LaunchdJob.Outcome.STILL_UNLOADING, job.restart(true, log::add));
 
         assertEquals(0, launchd.count("bootstrap"), "loading it again could only fail");
         assertEquals(LaunchdJob.UNLOAD_POLLS, pauses);
@@ -212,14 +213,14 @@ class LaunchdJobTest {
         aRunningJob();
         launchd.exitsAtOnce = true;
 
-        assertFalse(job.restart(false, log::add));
+        assertEquals(LaunchdJob.Outcome.FAILED, job.restart(false, log::add));
         assertTrue(job.isLoaded(), "it is loaded all the same, so launchd will try again");
     }
 
     /** start() only ever reaches a job that is not loaded (review on #916: see LaunchdJob#start). */
     @Test
     void startLoadsAJobThatIsNotLoaded() {
-        assertTrue(job.start(log::add), log.toString());
+        assertEquals(LaunchdJob.Outcome.RUNNING, job.start(log::add), log.toString());
 
         assertEquals(1, launchd.count("bootstrap"));
         assertTrue(launchd.loaded && launchd.running);

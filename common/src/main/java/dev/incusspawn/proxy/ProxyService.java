@@ -276,9 +276,20 @@ public final class ProxyService {
 
     /** {@link #restartIfUnhealthy(String, java.util.function.Consumer)} against a given port, for tests. */
     static boolean restartIfUnhealthy(String healthAddr, int healthPort, java.util.function.Consumer<String> log) {
+        return restartIfUnhealthy(healthAddr, healthPort, log, () -> restartLocked(log));
+    }
+
+    /**
+     * As above, with the restart itself replaceable. A test proving the health recheck skips a
+     * restart it never reaches only needs a stub here, not the real {@code launchctl}/{@code
+     * systemctl} — which a regression in that recheck would otherwise run against whatever
+     * service is actually installed on the machine running the test (review on #916).
+     */
+    static boolean restartIfUnhealthy(String healthAddr, int healthPort, java.util.function.Consumer<String> log,
+                                       java.util.function.BooleanSupplier restart) {
         try (var ignored = acquireProxyLock()) {
             if (ProxyHealthCheck.isHealthy(healthAddr, healthPort)) return true;
-            return restartLocked(log);
+            return restart.getAsBoolean();
         }
     }
 
@@ -313,11 +324,14 @@ public final class ProxyService {
             // whatever loads the job next runs isx-proxy directly. That is not this process:
             // unloading its own job ends it before it can load the job again, so the loop stops
             // and the proxy stays down until the next isx command or login starts it.
-            // forceReload callers already asked needsMacOsPlistUpdate() themselves to decide
-            // whether to restart at all; writing directly here, instead of asking it again
-            // through refreshStaleMacOsPlist, is what removes that second call.
+            // forceReload callers have already decided to restart for their own reason — a
+            // stale plist (upgradeIfNeeded), or health-assessed drift needsMacOsPlistUpdate()
+            // itself said nothing about (reinstallIfChanged, review on #916). Writing directly
+            // here, instead of asking refreshStaleMacOsPlist's own comparison again, means a
+            // restart they already committed to is never second-guessed by a check that would
+            // say "nothing to do" in the second case.
             var rewrote = forceReload ? writeMacOsPlist() : refreshStaleMacOsPlist();
-            restarted = proxyJob().restart(forceReload || rewrote, log);
+            restarted = proxyJob().restart(forceReload || rewrote, log).up();
         } else {
             // A unit halted by RestartPreventExitStatus sits in 'failed' state, and repeated
             // restart attempts can trip systemd's start rate limit — reset makes recovery
@@ -343,7 +357,7 @@ public final class ProxyService {
         if (isActive()) return true;
         try (var ignored = acquireProxyLock()) {
             if (isActive()) return true;
-            if (Platform.isMacOS()) return proxyJob().start(System.err::println);
+            if (Platform.isMacOS()) return proxyJob().start(System.err::println).up();
             runQuiet("systemctl", "--user", "reset-failed", SERVICE_NAME);
             runQuiet("systemctl", "--user", "start", SERVICE_NAME);
             return isActive();
@@ -1007,8 +1021,10 @@ public final class ProxyService {
      * Rewrites the plist when it is not what this build would write, and reports whether the
      * job now needs to reload it. False on a write failure too — a caller that read true back
      * as "reload" would have launchd re-read a plist that, in fact, did not change (review on
-     * #916: the write is the only caller {@link #writeMacOsPlist} has left, on purpose, so
-     * nothing can rewrite the plist without this answering whether it actually changed).
+     * #916). The one caller that writes the plist without asking this is {@link #restartLocked}'s
+     * {@code forceReload} branch, which already knows to reload for a reason this comparison
+     * cannot see (health-assessed drift, in {@link #reinstallIfChanged}) and would otherwise be
+     * told "nothing changed" by it.
      */
     private static boolean refreshStaleMacOsPlist() {
         return needsMacOsPlistUpdate() && writeMacOsPlist();
@@ -1112,14 +1128,13 @@ public final class ProxyService {
         }
         // A reinstall over a loaded job is a restart with a new plist, with the same teardown
         // to wait for (see LaunchdJob).
-        var started = proxyJob().restart(true, message -> System.err.println("  " + message));
+        var outcome = proxyJob().restart(true, message -> System.err.println("  " + message));
 
-        if (!started && isActive()) {
-            // restart gave up — most likely LaunchdJob timed out waiting for the previous job's
-            // teardown — while launchd still reports the (dying) old job as loaded: isActive()
-            // alone would read this as healthy-ish and say "not responding", when what is
-            // actually true is that nothing may be loaded at all moments from now (#916's
-            // outcome, on this install path).
+        if (outcome == LaunchdJob.Outcome.STILL_UNLOADING) {
+            // Named by LaunchdJob itself, not guessed from isActive(): that alone cannot tell
+            // this apart from a restart that loaded fine and is merely unhealthy, which isActive()
+            // would read the same way and report as generic "not responding" below (review on
+            // #916) — wrong, since nothing here was actually loaded when the install started.
             ProxyLog.info("Service installed, restart did not complete");
             System.err.println("  Services installed, but the previous job had not finished unloading.");
             System.err.println("  It may not come back on its own; check: isx proxy status");
