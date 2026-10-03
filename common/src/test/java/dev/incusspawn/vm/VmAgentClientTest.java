@@ -132,9 +132,51 @@ class VmAgentClientTest {
         assertTrue(VmAgentClient.btrfsOrphanDelete("cow", "containers", "../etc").isEmpty());
     }
 
+    /**
+     * ".." alone is a valid A-Za-z0-9._- string, so the charset check the other rejection tests
+     * exercise does not catch it; realpath'd against the pool root (itself a btrfs subvolume) it
+     * would have deleted every instance, image and snapshot on the pool (review on #874).
+     */
+    @Test
+    void btrfsOrphanDeleteRejectsDotDot() {
+        assertTrue(VmAgentClient.btrfsOrphanDelete("cow", "containers", "..").isEmpty());
+    }
+
+    @Test
+    void btrfsOrphanDeleteRejectsASingleDot() {
+        assertTrue(VmAgentClient.btrfsOrphanDelete("cow", "containers", ".").isEmpty());
+    }
+
+    @Test
+    void btrfsOrphanDeleteRejectsALeadingDash() {
+        assertTrue(VmAgentClient.btrfsOrphanDelete("cow", "containers", "-rf").isEmpty());
+    }
+
     @Test
     void btrfsOrphanDeleteRejectsABadPoolName() {
         assertTrue(VmAgentClient.btrfsOrphanDelete("../x", "containers", "orphan-1").isEmpty());
+    }
+
+    // ---- supportsOrphanDelete's probe-reply decision (#874) ----
+
+    @Test
+    void isOrphanDeleteSupportedIsTrueForTheProbesExpectedReply() {
+        assertTrue(VmAgentClient.isOrphanDeleteSupported(java.util.Optional.of("error: not a subvolume")));
+    }
+
+    @Test
+    void isOrphanDeleteSupportedIsFalseForAnUnknownVerb() {
+        assertFalse(VmAgentClient.isOrphanDeleteSupported(java.util.Optional.of("error: unknown verb")));
+    }
+
+    @Test
+    void isOrphanDeleteSupportedIsFalseWhenTheAgentDidNotAnswer() {
+        assertFalse(VmAgentClient.isOrphanDeleteSupported(java.util.Optional.empty()));
+    }
+
+    @Test
+    void supportsOrphanDeleteRejectsABadPoolNameWithoutAskingTheAgent() {
+        assertFalse(VmAgentClient.supportsOrphanDelete("../x"));
     }
 
     @Test

@@ -881,8 +881,16 @@ unprivileged host): refusing every delete there would be worse than the rare orp
   dangling record's path whenever it rewrites that record, and that directory is not the orphan's data.
   `subvolumeFindings` stays pure (no agent call) so it is unit-testable without a VM; `DoctorCommand.checkSubvolumes`
   is where the live action is wired in, replacing the finding's description and remediation only on macOS and only
-  when there are orphans. An appliance built before the verb existed answers `error: unknown verb`, same as the
-  other `btrfs-*` verbs, and the remediation falls back to pointing at `isx vm reset`.
+  when there are orphans and `VmAgentClient.supportsOrphanDelete` confirms the appliance has the verb. That probe
+  sends a name no real subvolume has, so a supported appliance answers `error: not a subvolume` — never reaching the
+  Incus re-check or a delete — while one built before the verb existed answers `error: unknown verb`; either way
+  nothing is touched. Probing before offering, rather than discovering it after the user confirms, is what lets the
+  remediation keep pointing at `isx vm reset` on an older appliance instead of a destructive action reporting, too
+  late, that it cannot do what it just offered. `DoctorCommand.deleteOrphans` draws the same distinction on the
+  delete calls themselves: a timeout (`VmAgentClient.send`'s own 5s watchdog, same as an unreachable agent) answers
+  `Optional.empty()`, which is not the literal `error: unknown verb` string — the only reply that actually means
+  "unsupported" — so a slow-but-working verb on a later orphan is not told its appliance is too old while its
+  delete finishes inside the VM regardless.
 
 `isx vm reset` (`VmManager.resetDataDisk`) is the macOS last resort for a pool with nothing worth keeping. It lists
 what will be lost, booting a stopped VM to ask Incus, because the host keeps per-instance state (SSH config, git

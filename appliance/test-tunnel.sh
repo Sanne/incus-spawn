@@ -125,6 +125,15 @@ expect '[ "$(agent "btrfs-orphan-delete cow containers ../etc")" = "error: bad n
     "btrfs-orphan-delete rejects a path-like name"
 expect '[ "$(agent "btrfs-orphan-delete cow containers nested/path")" = "error: bad name" ]' \
     "btrfs-orphan-delete rejects a name that hides a nested path"
+# ".." alone is a valid A-Za-z0-9._- string, so the charset check above does not catch it on its
+# own; resolved against the pool root (itself a btrfs subvolume) it would delete every instance,
+# image and snapshot on the pool (review on #874).
+expect '[ "$(agent "btrfs-orphan-delete cow containers ..")" = "error: bad name" ]' \
+    "btrfs-orphan-delete rejects .. on its own"
+expect '[ "$(agent "btrfs-orphan-delete cow containers .")" = "error: bad name" ]' \
+    "btrfs-orphan-delete rejects a bare dot"
+expect '[ "$(agent "btrfs-orphan-delete cow containers -rf")" = "error: bad name" ]' \
+    "btrfs-orphan-delete rejects a name that could be read as an option"
 # A validated name this fresh appliance never built is not a subvolume at all: the Incus
 # re-check (any project, instances and volumes) and the delete must not be reached for it.
 # Refusing a name Incus *does* still hold needs a real instance or volume, which a bare-tunnel

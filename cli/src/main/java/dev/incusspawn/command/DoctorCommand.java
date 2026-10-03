@@ -540,13 +540,16 @@ public class DoctorCommand extends BaseCommand {
         var loaded = loadImageDefs().loaded();
         Set<String> templates = loaded == null ? Set.of() : loaded.defs().keySet();
         var findings = subvolumeFindings(scan, templates, sizes, Platform.isMacOS());
-        if (Platform.isMacOS() && !scan.orphans().isEmpty()) {
+        // Probed before offering the live remediation, not discovered after the user confirms
+        // it (review on #874): an appliance too old for the verb keeps today's "wipe the pool
+        // with isx vm reset" text instead of a destructive action that only then reports it
+        // cannot do what it just offered.
+        if (Platform.isMacOS() && !scan.orphans().isEmpty() && VmAgentClient.supportsOrphanDelete(pool)) {
             // subvolumeFindings always adds the orphan finding first when there are any (see its
             // own source, right below): replace its "wipe the whole pool" suggestion with a live
             // per-subvolume delete through the VM agent (#874). subvolumeFindings itself stays
             // pure — no VmAgentClient call — so it is testable without a VM; this impure wrapper
-            // is where the action actually gets wired in, and where an appliance too old for the
-            // verb is told apart from one that is not (deleteOrphans, below).
+            // is where the action actually gets wired in.
             var orphan = findings.get(0);
             findings = new ArrayList<>(findings);
             findings.set(0, new Finding(orphan.status(), orphan.label(), orphan.detail(),
@@ -562,6 +565,8 @@ public class DoctorCommand extends BaseCommand {
      * anything — a separate trust boundary from this scan, which can be stale by the time the
      * user confirms. Stops at the first {@code error: unknown verb}: an appliance too old for
      * one of these orphans is too old for all of them, and {@code isx vm reset} is still there.
+     * {@code checkSubvolumes} probes for that case before ever offering this remediation, so
+     * reaching it here would mean the verb regressed between the probe and the confirm.
      */
     private static void deleteOrphans(InstanceSubvolumes.Scan scan) throws IOException {
         deleteOrphans(scan, ref -> VmAgentClient.btrfsOrphanDelete(scan.pool(), ref.kind().dir, ref.name()));
@@ -573,10 +578,20 @@ public class DoctorCommand extends BaseCommand {
             throws IOException {
         var failures = new ArrayList<String>();
         for (var ref : scan.orphans()) {
-            var reply = agent.apply(ref).orElse("");
+            var replyOpt = agent.apply(ref);
+            // Empty means no answer at all — VmAgentClient.send's own 5s timeout, same as an
+            // unreachable agent — which is not the same claim as the literal "error: unknown
+            // verb" an old appliance's agent actually makes (review on #874): a slow-but-working
+            // verb reaching this on a later orphan would otherwise be told it is unsupported
+            // while its delete finishes anyway inside the VM.
+            if (replyOpt.isEmpty()) {
+                throw new IOException(ref.path() + ": the VM agent did not answer in time;"
+                        + " re-run 'isx doctor' to see whether the delete went through anyway");
+            }
+            var reply = replyOpt.get();
             if ("deleted".equals(reply)) {
                 System.out.println("     deleted " + ref.path());
-            } else if (reply.isEmpty() || "error: unknown verb".equals(reply)) {
+            } else if ("error: unknown verb".equals(reply)) {
                 throw new IOException("this appliance does not support removing a single subvolume yet;"
                         + " wipe the pool instead with 'isx vm reset', or update the appliance");
             } else {

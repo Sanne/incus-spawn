@@ -166,7 +166,32 @@ public final class VmAgentClient {
     public static Optional<String> btrfsOrphanDelete(String poolName, String kindDir, String name) {
         if (!dev.incusspawn.incus.BtrfsUsage.isSafePoolName(poolName)) return Optional.empty();
         if (!isSafeSubvolumeKind(kindDir)) return Optional.empty();
-        if (name == null || !name.matches("[A-Za-z0-9._-]+")) return Optional.empty();
+        // A leading '.' or '-' is rejected outright: '.' and '..' are themselves valid
+        // A-Za-z0-9._- strings, and the agent's own mirrored check closes the same gap on its
+        // side, but this one must agree or a client-side-only name could still reach it some
+        // other way in the future (review on #874).
+        if (name == null || name.startsWith(".") || name.startsWith("-")
+                || !name.matches("[A-Za-z0-9._-]+")) return Optional.empty();
         return send("btrfs-orphan-delete " + poolName + " " + kindDir + " " + name);
+    }
+
+    /**
+     * Whether this appliance's agent recognizes {@code btrfs-orphan-delete} at all, so a caller
+     * can offer that remediation only where it can work and keep {@code isx vm reset} as the
+     * only option on an older appliance (review on #874). Probes with a name no real subvolume
+     * has: on a supported appliance that reaches {@code btrfs subvolume show}, which fails and
+     * replies {@code error: not a subvolume}, never the delete itself. {@code false} on any
+     * reply this probe did not expect, including a timeout, so a flaky agent does not get offered
+     * the destructive remediation either.
+     */
+    public static boolean supportsOrphanDelete(String poolName) {
+        if (!dev.incusspawn.incus.BtrfsUsage.isSafePoolName(poolName)) return false;
+        return isOrphanDeleteSupported(
+                send("btrfs-orphan-delete " + poolName + " containers isx-orphan-delete-probe"));
+    }
+
+    /** The decision {@link #supportsOrphanDelete} makes from a probe reply; package-private for tests. */
+    static boolean isOrphanDeleteSupported(Optional<String> reply) {
+        return reply.isPresent() && !"error: unknown verb".equals(reply.get());
     }
 }
