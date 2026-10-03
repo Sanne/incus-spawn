@@ -845,8 +845,14 @@ public final class VmManager {
         pb.environment().remove("PERL5LIB");
         pb.redirectErrorStream(true);
         // perl's own stderr (a broken POSIX module, a missing target) would otherwise vanish and
-        // leave only "vfkit could not be started"; vm.log is where the VM's console already goes.
-        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(Environment.vmLogFile().toFile()));
+        // leave only "vfkit could not be started". Kept in vfkitLogFile(), never vmLogFile(): vfkit
+        // opens that one itself, non-append, for the VM's own virtio-serial console, and a second,
+        // append-mode writer on the same file corrupts both (#971 review) — vfkit's own periodic
+        // lines ("machine awake" on host wake, timesync setup) land at EOF over console bytes
+        // `isx vm console` has already read past, and the console's next write lands over those.
+        // A separate file also keeps `vm.log` absent, and the first-launch TCC note it gates on,
+        // through a perl failure: vfkit's own output never touches it.
+        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(Environment.vfkitLogFile().toFile()));
         var process = pb.start();
         long pid = process.pid();
         try {
@@ -856,7 +862,7 @@ public final class VmManager {
         } catch (IOException e) {
             // Nothing was recorded, so nothing else will ever find this process to stop it.
             process.destroyForcibly();
-            throw e;
+            throw new IOException(e.getMessage() + " (see " + Environment.vfkitLogFile() + ")", e);
         }
         BuildOutput.stepDone("pid=" + pid + ", rest=localhost:" + restPort
                 + (launch == cmd ? "; no " + PERL + ", so it stops when the command that started it exits" : ""));

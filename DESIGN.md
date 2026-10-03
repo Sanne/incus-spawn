@@ -1293,6 +1293,16 @@ three cases; `AbandonProcessGroup` in the agent's plist covers another one only.
 app bundle through LaunchServices (`open`) would detach it too, but returns no pid. If perl is
 ever gone from macOS the command is run as before, and this has to be solved again.
 
+vfkit's own stdout/stderr (perl's diagnostics if the exec above fails; otherwise whatever vfkit
+itself prints) go to `Environment.vfkitLogFile()`, never to `vm.log`: vfkit opens `vm.log` itself,
+non-append, for the VM's virtio-serial console, and a second writer appending to the same file
+corrupts both — vfkit's own periodic lines ("machine awake" on host wake, timesync setup) land at
+EOF over console bytes `isx vm console` has already read past, and the console's next write lands
+over those in turn. A separate file also keeps `vm.log`'s absence a reliable signal of a first
+launch, which gates the one-time TCC permissions note: before the split, a perl failure still
+created `vm.log` (the append-mode redirect creates the file as soon as the process starts), so a
+retry after a perl failure saw `vm.log` already there and silently dropped the note.
+
 ### Lifecycle locking
 
 Multiple `isx` processes can modify VM or proxy state concurrently (e.g. `isx vm restart` in one terminal while `ensureRunning()` auto-starts in another). `VmManager`, `ProxyService` and static IP allocation all guard their critical sections with one `HostLock`: an `fcntl` advisory file lock (`FileChannel.tryLock()`), auto-released on process death, behind a per-path in-process `ReentrantLock`. The in-process half is what makes it safe for a multi-threaded TUI: a second `tryLock` from the same JVM throws instead of waiting, and closing any channel on the file drops every lock the process holds on it. Each lock used to be open-coded, and only the newest had that half. `HostLock` is `AutoCloseable` and not reentrant, so public methods (`start`, `stop`, `restart`, `ensureRunning`, `install`, etc.) acquire it then delegate to private `*Locked()` variants, and a method that calls another mutating method (e.g. `restart` → `stopLocked` + `startLocked`) uses the locked variant. Lock files live at `~/.local/state/incus-spawn/vm.lock` (VM), `~/.config/incus-spawn/proxy.lock` (proxy) and `~/.cache/incus-spawn/locks/.static-ip.lock`. A waiter prints one wait message and polls with backoff from 10 ms to 50 ms, and times out after 30 seconds. The cap is low for fairness, not only speed: `fcntl` keeps no queue, so whoever polls first after a release wins, and a waiter backed off to half a second kept losing to newcomers polling every 10 ms until it timed out while the lock changed hands all along. The in-process lock is keyed by the lock file's real path, since `fcntl` locks a file rather than a path spelling.
