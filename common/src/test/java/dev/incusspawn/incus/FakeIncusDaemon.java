@@ -41,7 +41,8 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final List<String> requests = new ArrayList<>();
     private final List<String> refusedWrites = new ArrayList<>();
     private final List<String> apiExtensions = new ArrayList<>();
-    private final Map<String, String> pushedModes = new LinkedHashMap<>();
+    private record Pushed(String mode, String content) {}
+    private final Map<String, Pushed> pushed = new LinkedHashMap<>();
     private final Map<String, String> consoleLogs = new LinkedHashMap<>();
     /** The {@code processes} each state read reports, consumed in order; the last one sticks. */
     private final Map<String, ArrayDeque<Integer>> agentProcesses = new LinkedHashMap<>();
@@ -245,7 +246,14 @@ public final class FakeIncusDaemon implements IncusTransport {
 
     /** The mode a file was last pushed into an instance with, or null if it never was. */
     public String pushedMode(String instanceName, String path) {
-        return pushedModes.get(instanceName + path);
+        var p = pushed.get(instanceName + path);
+        return p == null ? null : p.mode();
+    }
+
+    /** What a file was last pushed into an instance with, or null if it never was. */
+    public String pushedContent(String instanceName, String path) {
+        var p = pushed.get(instanceName + path);
+        return p == null ? null : p.content();
     }
 
     /** Every request so far, as {@code "METHOD path"}, in order. */
@@ -272,7 +280,12 @@ public final class FakeIncusDaemon implements IncusTransport {
         if (name == null || !instances.containsKey(name) || !path.contains("/files?")) return notFound();
         var file = java.net.URLDecoder.decode(path.substring(path.indexOf("path=") + 5),
                 java.nio.charset.StandardCharsets.UTF_8);
-        pushedModes.put(name + file, extraHeaders.getOrDefault("X-Incus-mode", ""));
+        try {
+            pushed.put(name + file, new Pushed(extraHeaders.getOrDefault("X-Incus-mode", ""),
+                    java.nio.file.Files.readString(bodyFile)));
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
         return sync(JSON.createObjectNode());
     }
 

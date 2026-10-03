@@ -240,7 +240,6 @@ public class ListCommand extends BaseCommand {
     private SelectState newTemplateLocationSelect;
     private int newTemplateFieldIndex;
     private String statusMessage;
-    private boolean ipFixApplied;
     private String progressMessage;
     // Search/filter state
     private boolean searchActive = false;
@@ -5482,7 +5481,6 @@ public class ListCommand extends BaseCommand {
     }
 
     private void fixStaticIpIfNeeded(String name, MachineType machineType) {
-        ipFixApplied = false;
         if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
         // Runs on the TUI's own screen: printing would draw over it. A warning (spoofing
         // protection refused, an unusable allocation lock) goes to the warning log; progress
@@ -5490,7 +5488,6 @@ public class ListCommand extends BaseCommand {
         var output = new StaticIpAllocator.Output(msg -> {}, warningLog::add);
         try {
             if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name, output, machineType)) {
-                ipFixApplied = true;
                 statusMessage = "Static IP reassigned to current bridge subnet";
             }
         } catch (Exception ignored) {
@@ -5526,7 +5523,9 @@ public class ListCommand extends BaseCommand {
     private void shellInto(ActionContext target, String commandOverride) {
         var name = target.name();
         var machineType = target.machineType();
-        var status = incus.getInstanceStatus(name);
+        // Read after fixStaticIpIfNeeded, so a VM it just reassigned is seen to owe its file
+        var instance = incus.instanceMetadata(name);
+        var status = instance.path("status").asText("");
         // An empty status means any failed lookup, not just a missing instance, so confirm before
         // giving up: a daemon hiccup must not cancel a shell on an instance that's still there.
         if (status.isEmpty() && !incus.exists(name)) {
@@ -5536,8 +5535,7 @@ public class ListCommand extends BaseCommand {
             return;
         }
         // Runs after the TUI has released the terminal, so plain stdout is safe here.
-        InstanceLifecycle.ensureReady(incus, name, status, ipFixApplied && machineType == MachineType.VM,
-                machineType, System.out::println);
+        InstanceLifecycle.ensureReady(incus, name, instance, machineType, System.out::println);
         ZmxSocketForward.ensureSymlink(name);
         checkGuiHealth(name);
         System.out.println("Connecting to " + name + "...\n");

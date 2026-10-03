@@ -53,7 +53,7 @@ class VmAgentRecoveryTest {
         // probe throws rather than failing, and must still count as "not responding".
         daemon.instance("vm1", "virtual-machine", "Running", Map.of());
 
-        assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(client(), "vm1", "Running", false, MachineType.VM, said::add));
+        assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(client(), "vm1", daemon.instance("vm1"), MachineType.VM, said::add));
         assertEquals(List.of("vm1 stop", "vm1 start"), daemon.stateActions());
         assertEquals(List.of("VM agent not responding, restarting vm1..."), said);
     }

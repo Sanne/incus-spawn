@@ -88,6 +88,9 @@ class InstanceLifecycleNetworkFixTest {
         assertTrue(InstanceLifecycle.fixStaticIpIfNeeded(incus, "test"));
 
         verify(incus, never()).filePush(any(), eq("test"), any());
+        // ...so the file is pushed once the VM runs (#997)
+        verify(incus).configSetAll(eq("test"), argThat(map ->
+                "true".equals(map.get(Metadata.NETWORK_PUSH_PENDING))));
     }
 
     @Test

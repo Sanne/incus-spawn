@@ -1,12 +1,15 @@
 package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.config.NetworkMode;
+import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -26,7 +29,7 @@ class SetupScriptTest {
             \tuse=$HOME,""";
 
     private static InstanceLifecycle.RuntimeConfig prefetched(String terminfo) {
-        return new InstanceLifecycle.RuntimeConfig(null, true, null, null, null, terminfo, "");
+        return new InstanceLifecycle.RuntimeConfig(null, true, null, null, null, terminfo, "10.0.0.2");
     }
 
     private static int syntaxCheck(String script) throws Exception {
@@ -82,6 +85,42 @@ class SetupScriptTest {
         assertEquals(1, run(script, stubs), script);
     }
 
+    /**
+     * A VM guest keeps its kernel's predictable NIC name, so there is no {@code eth0} to wait on
+     * (#997): the wait must find the instance's address wherever it is, or every VM branch
+     * spends both setup runs (~35 s) on it and then warns that setup may not be complete.
+     */
+    @Test
+    void findsTheAddressOnAVmNicThatIsNotEth0(@TempDir Path stubs) throws Exception {
+        var daemon = new FakeIncusDaemon().instance("vm", "virtual-machine", "Stopped",
+                Map.of(Metadata.STATIC_IP, "10.166.11.7"));
+        var prefetched = InstanceLifecycle.prefetchRuntimeConfig(daemon.client(), "vm");
+        var script = InstanceLifecycle.buildSetupScript(prefetched, null, NetworkMode.FULL, List.of());
+        stub(stubs, "chown", "exit 0");
+        stub(stubs, "systemctl", "exit 0");
+        stub(stubs, "seq", "echo 1");
+        stub(stubs, "sleep", "exit 0");
+        stub(stubs, "ip", """
+                case "$*" in *eth0*) echo 'Device "eth0" does not exist.' >&2; exit 1;; esac
+                echo '1: lo    inet 127.0.0.1/8 scope host lo'
+                echo '2: enp5s0    inet 10.166.11.7/24 brd 10.166.11.255 scope global dynamic enp5s0'""");
+        assertEquals(0, run(script, stubs), script);
+
+        // Another interface's address is not the instance's: a docker0 up first is no answer.
+        stub(stubs, "ip", "echo '3: docker0    inet 172.17.0.1/16 scope global docker0'");
+        assertEquals(1, run(script, stubs), script);
+    }
+
+    @Test
+    void onlyAnAddressReachesTheShell() {
+        assertEquals("ip -4 -o addr show | grep -qF ' inet 10.166.11.7/'",
+                InstanceLifecycle.addressUpCheck("10.166.11.7"));
+        var fallback = "ip -4 route show default | grep -q .";
+        assertEquals(fallback, InstanceLifecycle.addressUpCheck(""));
+        assertEquals(fallback, InstanceLifecycle.addressUpCheck(null));
+        assertEquals(fallback, InstanceLifecycle.addressUpCheck("10.0.0.2'; reboot; '"));
+    }
+
     private static void stub(Path dir, String command, String body) throws Exception {
         var file = dir.resolve(command);
         Files.writeString(file, "#!/bin/sh\n" + body + "\n");
@@ -99,6 +138,6 @@ class SetupScriptTest {
     @Test
     void airgapSkipsTheNetworkWait() {
         var script = InstanceLifecycle.buildSetupScript(prefetched(null), null, NetworkMode.AIRGAP, List.of());
-        assertFalse(script.contains("eth0"));
+        assertFalse(script.contains("ip -4"), script);
     }
 }

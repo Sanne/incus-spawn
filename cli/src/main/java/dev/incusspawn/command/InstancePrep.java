@@ -50,18 +50,18 @@ public class InstancePrep {
 
         var networkMode = incus.configGet(name, Metadata.NETWORK_MODE);
         var machineType = incus.machineType(name);
-        boolean ipFixed = false;
         if (!NetworkMode.AIRGAP.name().equals(networkMode)) {
             if (!ProxyHealthCheck.checkOrWarn(incus)) return null;
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();
-            ipFixed = fixStaticIpMismatch(incus, name, machineType);
+            fixStaticIpMismatch(incus, name, machineType);
             fixCaMismatch(incus, name, machineType);
             fixResolvConfMismatch(incus, name);
         }
 
-        InstanceLifecycle.ensureReady(incus, name, incus.getInstanceStatus(name),
-                ipFixed && machineType == MachineType.VM, machineType, System.out::println);
+        // Read after the repair above, so a VM it just reassigned is seen to owe its file
+        InstanceLifecycle.ensureReady(incus, name, incus.instanceMetadata(name), machineType,
+                System.out::println);
 
         GuiPassthrough.checkGuiHealth(incus, name);
         InstanceLifecycle.reconcileAccountIdentities(incus, name);
@@ -69,19 +69,17 @@ public class InstancePrep {
         return templateName;
     }
 
-    private static boolean fixStaticIpMismatch(IncusClient incus, String name, MachineType machineType) {
-        if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return false;
+    private static void fixStaticIpMismatch(IncusClient incus, String name, MachineType machineType) {
+        if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
         try {
             if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name, StaticIpAllocator.Output.TERMINAL, machineType)) {
                 BuildOutput.warnBanner("Static IP mismatch",
                         "Reassigned to current bridge subnet.");
-                return true;
             }
         } catch (Exception e) {
             System.err.println("Warning: could not repair static IP for " + name
                     + ": " + e.getMessage());
         }
-        return false;
     }
 
     private static void fixResolvConfMismatch(IncusClient incus, String name) {

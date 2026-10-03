@@ -31,10 +31,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 /**
  * Shared helpers for instance/template creation lifecycle.
@@ -574,17 +576,21 @@ public final class InstanceLifecycle {
     }
 
     /**
-     * Make {@code name}, currently in {@code status}, answer exec before a shell or command runs
-     * in it: start it if stopped, or recover a VM whose agent does not answer
-     * ({@link VmAgentRecovery}). With {@code pushNetworkConfig}, then push the VM's deferred
-     * {@code .network} file, which could not be written while it was stopped.
+     * Make {@code name} answer exec before a shell or command runs in it: start it if stopped,
+     * or recover a VM whose agent does not answer ({@link VmAgentRecovery}). Then push a VM's
+     * deferred {@code .network} file if it still owes one ({@link Metadata#NETWORK_PUSH_PENDING}),
+     * whatever the status it was in: a VM repaired while stopped and then started outside isx
+     * (plain {@code incus start}, autostart after a host reboot) boots its old file, and only this
+     * push brings it back onto the network.
      *
      * <p>Progress and warnings go to {@code say}, never straight to stdout or stderr, so a caller
      * that owns the terminal (the TUI) can route them.
+     *
+     * @param instance the instance as read, for its status and the pending mark
      */
-    public static void ensureReady(IncusClient incus, String name, String status, boolean pushNetworkConfig,
+    public static void ensureReady(IncusClient incus, String name, JsonNode instance,
                                    MachineType machineType, Consumer<String> say) {
-        if ("Stopped".equalsIgnoreCase(status)) {
+        if ("Stopped".equalsIgnoreCase(instance.path("status").asText(""))) {
             say.accept("Starting " + name + "...");
             prepareHostDevicesForStart(incus, name, say);
             startInstance(incus, name, say);
@@ -592,13 +598,22 @@ public final class InstanceLifecycle {
         } else if (machineType == MachineType.VM && !agentAnswers(incus, name)) {
             VmAgentRecovery.restartForAgent(incus, name, say);
         }
-        if (pushNetworkConfig) pushDeferredNetworkConfig(incus, name);
+        // Only a VM is ever marked
+        if (instance.path("config").has(Metadata.NETWORK_PUSH_PENDING)) {
+            pushDeferredNetworkConfig(incus, name, instance, bridgePrefixLen(incus),
+                    msg -> say.accept(BuildOutput.STEP_INDENT + "Warning: " + msg));
+        }
     }
 
-    /** Whether a running VM's agent answers exec; Incus refuses the exec outright when it is down. */
+    /** Whether a running VM's agent answers exec. */
     private static boolean agentAnswers(IncusClient incus, String name) {
+        return execSucceeds(incus, name, "echo", "ready");
+    }
+
+    /** Whether a command runs and succeeds in a running instance; Incus refuses exec when its agent is down. */
+    private static boolean execSucceeds(IncusClient incus, String name, String... command) {
         try {
-            return incus.shellExec(name, "echo", "ready").success();
+            return incus.shellExec(name, command).success();
         } catch (RuntimeException agentDown) {
             return false;
         }
@@ -679,8 +694,15 @@ public final class InstanceLifecycle {
 
     static void pushStaticNetworkConfig(IncusClient incus, String name,
                                         String ip, String gateway, int prefixLen) {
-        pushStaticNetworkConfig(incus, name, ip, gateway, prefixLen, STDERR_WARN);
+        pushStaticNetworkConfig(incus, name, CONTAINER_NIC_MATCH, ip, gateway, prefixLen, STDERR_WARN);
     }
+
+    static final String NETWORK_FILE = "/etc/systemd/network/10-eth0.network";
+
+    /** Incus names a container's NIC after the device's {@code name}, which isx sets to eth0. */
+    private static final String CONTAINER_NIC_MATCH = "Name=eth0";
+
+    private static final Pattern MAC = Pattern.compile("[0-9a-f]{2}(:[0-9a-f]{2}){5}");
 
     /**
      * Push a systemd-networkd static config into the container, overwriting the
@@ -691,10 +713,14 @@ public final class InstanceLifecycle {
      * {@code systemd-networkd}, running as {@code systemd-network}, cannot read. A template's
      * own {@code 10-eth0.network} hid this, since overwriting keeps a file's mode; a template
      * without one got a branch with no network.
+     *
+     * @param match the {@code [Match]} line naming the NIC: {@link #CONTAINER_NIC_MATCH} for a
+     *              container, the MAC address for a VM (see {@link #pushVmNetworkConfig})
+     * @return whether the file was pushed
      */
-    static void pushStaticNetworkConfig(IncusClient incus, String name, String ip,
+    static boolean pushStaticNetworkConfig(IncusClient incus, String name, String match, String ip,
                                         String gateway, int prefixLen, Consumer<String> warn) {
-        var content = "[Match]\nName=eth0\n\n[Network]\n"
+        var content = "[Match]\n" + match + "\n\n[Network]\n"
                 + "Address=" + ip + "/" + prefixLen + "\n"
                 + "Gateway=" + gateway + "\n"
                 + "DNS=" + gateway + "\n";
@@ -702,13 +728,14 @@ public final class InstanceLifecycle {
             var tmp = Files.createTempFile("isx-network-", ".network");
             try {
                 Files.writeString(tmp, content);
-                incus.filePush(tmp.toString(), name, "/etc/systemd/network/10-eth0.network",
-                        "0", "0", "0644");
+                incus.filePush(tmp.toString(), name, NETWORK_FILE, "0", "0", "0644");
             } finally {
                 Files.deleteIfExists(tmp);
             }
+            return true;
         } catch (IOException | RuntimeException e) {
             warn.accept("failed to push static network config: " + e.getMessage());
+            return false;
         }
     }
 
@@ -719,13 +746,45 @@ public final class InstanceLifecycle {
      */
     public static void pushDeferredVmFiles(IncusClient incus, String name, NetworkMode networkMode) {
         if (networkMode != NetworkMode.AIRGAP) {
-            var ip = incus.configGet(name, Metadata.STATIC_IP);
-            var gateway = incus.configGet(name, Metadata.STATIC_GATEWAY);
-            if (!ip.isEmpty() && !gateway.isEmpty()) {
-                pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
-            }
+            pushVmNetworkConfig(incus, name, incus.instanceMetadata(name), bridgePrefixLen(incus),
+                    STDERR_WARN);
         }
     }
+
+    /**
+     * Push a running VM's static {@code .network} file, from one read of the instance.
+     *
+     * <p>A VM guest keeps its kernel's predictable name for the NIC ({@code enp5s0} on Incus's
+     * PCIe layout) whatever the device's {@code name} says, so the file matches the NIC by the
+     * MAC address Incus gives the device rather than by any name (#997). The permanent one, so
+     * a VLAN or bridge a user builds on the NIC, which takes over its MAC, does not match too.
+     * Until the file applies, at the next boot or {@code networkctl reload}, the VM has the same
+     * address from DHCP: Incus's DHCP server hands out the NIC's {@code ipv4.address}.
+     *
+     * @param instance the instance as read; none of what is used here changes across a start
+     */
+    private static VmPush pushVmNetworkConfig(IncusClient incus, String name, JsonNode instance,
+                                              int prefixLen, Consumer<String> warn) {
+        var config = instance.path("config");
+        var ip = config.path(Metadata.STATIC_IP).asText("");
+        var gateway = config.path(Metadata.STATIC_GATEWAY).asText("");
+        if (ip.isEmpty() || gateway.isEmpty()) return VmPush.NOTHING_TO_PUSH;
+        var nic = IncusClient.nic(instance, BridgeAddress.BRIDGE);
+        // A MAC set on the device wins; Incus records the one it generates in volatile config
+        var mac = nic == null ? "" : nic.config().getOrDefault("hwaddr",
+                config.path("volatile." + nic.name() + ".hwaddr").asText("")).toLowerCase(Locale.ROOT);
+        if (!MAC.matcher(mac).matches()) {
+            // A file matching no link is inert, and one matching every link would put the
+            // address on a nested bridge too: leave the VM on DHCP, which gives it the same one.
+            warn.accept("could not find the MAC address of " + name
+                    + "'s NIC; it keeps the address DHCP gives it");
+            return VmPush.NOTHING_TO_PUSH;
+        }
+        return pushStaticNetworkConfig(incus, name, "PermanentMACAddress=" + mac, ip, gateway,
+                prefixLen, warn) ? VmPush.PUSHED : VmPush.FAILED;
+    }
+
+    private enum VmPush { PUSHED, NOTHING_TO_PUSH, FAILED }
 
     /**
      * Detect and fix stale static IP configuration caused by a bridge subnet
@@ -735,8 +794,8 @@ public final class InstanceLifecycle {
      * the in-guest {@code .network} file.
      *
      * <p>For VMs the {@code .network} file cannot be pushed while stopped
-     * (requires the incus-agent). The caller must arrange a deferred push
-     * via {@link #pushDeferredNetworkConfig} after start.
+     * (requires the incus-agent): the VM is marked {@link Metadata#NETWORK_PUSH_PENDING}
+     * instead, and {@link #ensureReady} pushes it once the VM runs.
      *
      * @return true if a fix was applied
      */
@@ -780,12 +839,14 @@ public final class InstanceLifecycle {
         if (!proxyGw.isEmpty()) {
             updates.put(Metadata.PROXY_GATEWAY, newGateway);
         }
+        var resolvedType = machineType != null ? machineType : incus.machineType(name);
+        // The VM's file still holds the old address and is only pushed while it runs
+        if (resolvedType == MachineType.VM) updates.put(Metadata.NETWORK_PUSH_PENDING, "true");
         incus.configSetAll(name, updates);
 
-        var resolvedType = machineType != null ? machineType : incus.machineType(name);
         if (resolvedType == MachineType.CONTAINER) {
-            pushStaticNetworkConfig(incus, name, newIp, newGateway, bridge.prefixLen(),
-                    output.warn());
+            pushStaticNetworkConfig(incus, name, CONTAINER_NIC_MATCH, newIp, newGateway,
+                    bridge.prefixLen(), output.warn());
         }
         return true;
     }
@@ -805,9 +866,20 @@ public final class InstanceLifecycle {
             if (bridge.isEmpty()) return 0;
             for (var stale : staleStaticIps(incus, bridge.get()).entrySet()) {
                 try {
-                    if (fixStaticIp(incus, stale.getKey(), stale.getValue(), bridge.get(),
-                            StaticIpAllocator.Output.TERMINAL, incus.machineType(stale.getKey()))) {
+                    var name = stale.getKey();
+                    var listed = stale.getValue();
+                    var type = MachineType.fromIncus(listed);
+                    var storedIp = listed.path("config").path(Metadata.STATIC_IP).asText("");
+                    if (fixStaticIp(incus, name, storedIp, bridge.get(),
+                            StaticIpAllocator.Output.TERMINAL, type)) {
                         fixed++;
+                        // A running VM can take its file now; a stopped one gets it at its next
+                        // start. Read again after the fix, which wrote the address the file needs.
+                        if (type == MachineType.VM
+                                && "Running".equalsIgnoreCase(listed.path("status").asText(""))) {
+                            pushDeferredNetworkConfig(incus, name, incus.instanceMetadata(name),
+                                    bridge.get().prefixLen(), STDERR_WARN);
+                        }
                     }
                 } catch (Exception e) {
                     System.err.println("  Warning: failed to migrate " + stale.getKey()
@@ -822,21 +894,33 @@ public final class InstanceLifecycle {
     }
 
     /**
-     * Push the static {@code .network} file into a running VM using its stored
-     * metadata. Call after {@code incus.start()} + {@code waitForReady()} for
-     * VMs whose static IP was fixed while stopped.
+     * Deliver the {@code .network} file a running VM owes ({@link Metadata#NETWORK_PUSH_PENDING}):
+     * push it, apply it with {@code networkctl reload}, and clear the mark once settled. A failure
+     * leaves the mark, so the next shell tries again.
+     *
+     * @param instance the instance as read after its address was reassigned
      */
-    public static void pushDeferredNetworkConfig(IncusClient incus, String name) {
-        var ip = incus.configGet(name, Metadata.STATIC_IP);
-        var gateway = incus.configGet(name, Metadata.STATIC_GATEWAY);
-        if (!ip.isEmpty() && !gateway.isEmpty()) {
-            pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
-            // The VM already booted with the old .network file; tell networkd
-            // to re-read and apply the new config without a full reboot.
-            try {
-                incus.shellExec(name, "networkctl", "reconfigure", "eth0");
-            } catch (Exception ignored) {
+    static void pushDeferredNetworkConfig(IncusClient incus, String name, JsonNode instance,
+                                          int prefixLen, Consumer<String> warn) {
+        var settled = switch (pushVmNetworkConfig(incus, name, instance, prefixLen, warn)) {
+            case FAILED -> false;
+            // Nothing to push leaves the VM on DHCP, which gives it its address: done too
+            case NOTHING_TO_PUSH -> true;
+            // The VM already booted with the old .network file. reload re-reads the files
+            // and reconfigures every link whose file changed, so it needs no interface
+            // name; reconfigure alone would re-apply the config networkd already had.
+            case PUSHED -> {
+                if (execSucceeds(incus, name, "networkctl", "reload")) yield true;
+                // Still pending: its old address is dropped until a reboot applies the file
+                warn.accept("could not apply the new network config in " + name
+                        + "; restart it, or the next shell tries again");
+                yield false;
             }
+        };
+        if (!settled) return;
+        try {
+            incus.configUnset(name, Metadata.NETWORK_PUSH_PENDING);
+        } catch (Exception ignored) {
         }
     }
 
@@ -850,8 +934,8 @@ public final class InstanceLifecycle {
                 : List.copyOf(staleStaticIps(incus, bridge.get()).keySet());
     }
 
-    /** Each instance whose static IP is off the bridge's subnet, with that IP. */
-    private static Map<String, String> staleStaticIps(IncusClient incus, BridgeAddress bridge) {
+    /** The listed instances whose static IP is off the bridge's subnet, by name. */
+    private static Map<String, JsonNode> staleStaticIps(IncusClient incus, BridgeAddress bridge) {
         // The listing already carries each instance's config: one request, not one per instance.
         JsonNode instances;
         try {
@@ -859,14 +943,14 @@ public final class InstanceLifecycle {
         } catch (IOException e) {
             throw new IncusException("Failed to parse instance list: " + e.getMessage());
         }
-        var stale = new LinkedHashMap<String, String>();
+        var stale = new LinkedHashMap<String, JsonNode>();
         for (var instance : instances) {
             var name = instance.path("name").asText("");
             if (name.isEmpty()) continue;
             var storedIp = instance.path("config").path(Metadata.STATIC_IP).asText("");
             if (storedIp.isEmpty()) continue;
             if (!CidrUtils.isInSubnet(storedIp, bridge.subnet())) {
-                stale.put(name, storedIp);
+                stale.put(name, instance);
             }
         }
         return stale;
@@ -1201,9 +1285,10 @@ public final class InstanceLifecycle {
         // and a coarser interval is paid in full by every branch. Airgap branches have no
         // NIC, so the wait would always time out — skip it.
         if (networkMode != NetworkMode.AIRGAP) {
+            var addressUp = addressUpCheck(prefetched != null ? prefetched.staticIp() : null);
             sb.append("\n{ systemctl start systemd-networkd 2>/dev/null; ")
-              .append("for i in $(seq 1 300); do ip -4 -o addr show eth0 | grep -q 'inet ' && break; sleep 0.05; done; ")
-              .append("ip -4 -o addr show eth0 | grep -q 'inet '; }");
+              .append("for i in $(seq 1 300); do ").append(addressUp).append(" && break; sleep 0.05; done; ")
+              .append(addressUp).append("; }");
         }
         var buildSource = BuildSource.fromJson(buildSourceJson);
         if (buildSource != null) {
@@ -1214,6 +1299,23 @@ public final class InstanceLifecycle {
             }
         }
         return sb.toString();
+    }
+
+    /**
+     * The setup script's test for the instance's network being up. It looks for the address,
+     * not at an interface: a VM's NIC keeps its kernel's predictable name rather than eth0
+     * (#997), and the assigned address is the one the proxy identifies the instance by, where
+     * any address would also take a nested docker0's.
+     */
+    static String addressUpCheck(String staticIp) {
+        try {
+            // Normalized, so only digits and dots reach the shell
+            var ip = CidrUtils.longToIp(CidrUtils.ipToLong(staticIp));
+            return "ip -4 -o addr show | grep -qF ' inet " + ip + "/'";
+        } catch (RuntimeException noAddress) {
+            // Nothing to look for: a default route, which a nested docker0 does not add
+            return "ip -4 route show default | grep -q .";
+        }
     }
 
     /**

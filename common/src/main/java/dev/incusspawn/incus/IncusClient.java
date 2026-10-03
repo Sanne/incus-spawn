@@ -1640,6 +1640,8 @@ public class IncusClient {
         var config = new LinkedHashMap<String, String>();
         config.put(Metadata.STATIC_IP, "");
         config.put(Metadata.STATIC_GATEWAY, "");
+        // Owed to the source's guest; the copy gets its own file when it is branched
+        config.put(Metadata.NETWORK_PUSH_PENDING, "");
         config.putAll(configOverrides);
         body.put("config", config);
         var resp = http.requestAndWait("POST", "/1.0/instances", body);
