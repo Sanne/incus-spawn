@@ -1277,6 +1277,32 @@ The vfkit vsock tunnel (`AF_VSOCK` across `host unix socket → vfkit → in-VM 
 
 - **Diagnosis and layer-aware recovery.** The tunnel has two independent failure points: the host-side vfkit forwarding (link 2) and the guest-side socat forwarder (link 3). `isx doctor` and the automatic recovery in `VmManager.ensureRunning()` both compare the host-side fd count (`lsof`) against the in-VM socat child count (agent `socat-count` verb) to localize the wedge via `leakLayer()`: if the guest count is low while the host count is high, vfkit is not reaping (VFKIT); if both are high, the forwarder is lingering children (FORWARDER); if the guest count is zero, the forwarder is not running (always FORWARDER — restarting it is the correct fix regardless of host count). The recovery decision tree in `recoverReachability()`: 10s grace probe → `detectLeakLayer()` → for a VFKIT wedge, fail fast with "run `isx vm restart`" (a forwarder restart cannot fix a host-side problem); for FORWARDER or unknown layer, restart the forwarder via the agent → 15s post-restart probe → 30s backstop. `probeTunnelHealth()` provides the same detection as a public API for proactive TUI/build-time checks, returning `HEALTHY`/`VFKIT_WEDGED`/`FORWARDER_ISSUE`/`UNKNOWN`. Recovery is provided by a small **allowlisted in-VM control agent** (`isx-agent`) on its own vsock port — verbs `ping`, `version`, `socat-count`, `sshd-status`, `forwarder-restart`, `btrfs-usage`, `btrfs-status`, `btrfs-rescan`, no arbitrary exec — reached over an independent channel so it works even when the Incus tunnel is wedged. `forwarder-restart` drops and relaunches the forwarder **without rebooting the VM or stopping containers**, and now verifies the new process started (polls `pgrep` 4×0.5s) before confirming; stderr goes to `/dev/console` (the virtio-serial feeding `vm.log`) so startup errors are visible. See appliance/DESIGN.md for the in-VM side.
 
+### The macOS VM outlives whatever started it
+
+vfkit is started as the leader of a new session, not as a plain child of `isx`. A plain child
+stays in the starting command's process group and on its terminal, and both take it down. Closing
+the terminal hangs up every process on it. Ctrl+C reaches the whole foreground group, so
+interrupting the command that happened to start the VM stopped the VM. And launchd kills whatever
+is left in a job's process group once the job exits, so the login agent, whose `isx vm start`
+exits as soon as the VM is up, killed its own VM a few seconds later (#971).
+
+Java has no `setsid`, and macOS ships no `setsid` command, so the VM is started through
+`/usr/bin/perl -MPOSIX=setsid -e 'setsid(); exec …'`: perl replaces itself with vfkit, so the pid
+`isx` records is the VM's. Ignoring SIGHUP (`nohup`) was rejected because it covers one of the
+three cases; `AbandonProcessGroup` in the agent's plist covers another one only. Launching the
+app bundle through LaunchServices (`open`) would detach it too, but returns no pid. If perl is
+ever gone from macOS the command is run as before, and this has to be solved again.
+
+vfkit's own stdout/stderr (perl's diagnostics if the exec above fails; otherwise whatever vfkit
+itself prints) go to `Environment.vfkitLogFile()`, never to `vm.log`: vfkit opens `vm.log` itself,
+non-append, for the VM's virtio-serial console, and a second writer appending to the same file
+corrupts both — vfkit's own periodic lines ("machine awake" on host wake, timesync setup) land at
+EOF over console bytes `isx vm console` has already read past, and the console's next write lands
+over those in turn. A separate file also keeps `vm.log`'s absence a reliable signal of a first
+launch, which gates the one-time TCC permissions note: before the split, a perl failure still
+created `vm.log` (the append-mode redirect creates the file as soon as the process starts), so a
+retry after a perl failure saw `vm.log` already there and silently dropped the note.
+
 ### Lifecycle locking
 
 Multiple `isx` processes can modify VM or proxy state concurrently (e.g. `isx vm restart` in one terminal while `ensureRunning()` auto-starts in another). `VmManager`, `ProxyService` and static IP allocation all guard their critical sections with one `HostLock`: an `fcntl` advisory file lock (`FileChannel.tryLock()`), auto-released on process death, behind a per-path in-process `ReentrantLock`. The in-process half is what makes it safe for a multi-threaded TUI: a second `tryLock` from the same JVM throws instead of waiting, and closing any channel on the file drops every lock the process holds on it. Each lock used to be open-coded, and only the newest had that half. `HostLock` is `AutoCloseable` and not reentrant, so public methods (`start`, `stop`, `restart`, `ensureRunning`, `install`, etc.) acquire it then delegate to private `*Locked()` variants, and a method that calls another mutating method (e.g. `restart` → `stopLocked` + `startLocked`) uses the locked variant. Lock files live at `~/.local/state/incus-spawn/vm.lock` (VM), `~/.config/incus-spawn/proxy.lock` (proxy) and `~/.cache/incus-spawn/locks/.static-ip.lock`. A waiter prints one wait message and polls with backoff from 10 ms to 50 ms, and times out after 30 seconds. The cap is low for fairness, not only speed: `fcntl` keeps no queue, so whoever polls first after a release wins, and a waiter backed off to half a second kept losing to newcomers polling every 10 ms until it timed out while the lock changed hands all along. The in-process lock is keyed by the lock file's real path, since `fcntl` locks a file rather than a path spelling.

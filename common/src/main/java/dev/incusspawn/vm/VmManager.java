@@ -838,15 +838,88 @@ public final class VmManager {
                 "--restful-uri", "tcp://localhost:" + restPort
         ));
 
-        var pb = new ProcessBuilder(cmd);
+        var launch = inOwnSession(cmd);
+        var pb = new ProcessBuilder(launch);
+        // The user's perl settings are for their scripts, and can stop the one-liner from loading.
+        pb.environment().remove("PERL5OPT");
+        pb.environment().remove("PERL5LIB");
         pb.redirectErrorStream(true);
-        pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+        // perl's own stderr (a broken POSIX module, a missing target) would otherwise vanish and
+        // leave only "vfkit could not be started". Kept in vfkitLogFile(), never vmLogFile(): vfkit
+        // opens that one itself, non-append, for the VM's own virtio-serial console, and a second,
+        // append-mode writer on the same file corrupts both (#971 review) — vfkit's own periodic
+        // lines ("machine awake" on host wake, timesync setup) land at EOF over console bytes
+        // `isx vm console` has already read past, and the console's next write lands over those.
+        // A separate file also keeps `vm.log` absent, and the first-launch TCC note it gates on,
+        // through a perl failure: vfkit's own output never touches it.
+        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(Environment.vfkitLogFile().toFile()));
         var process = pb.start();
         long pid = process.pid();
+        try {
+            awaitExec(process, "vfkit");
+            Files.writeString(Environment.vmPidFile(), String.valueOf(pid));
+            Files.writeString(Environment.vmRestUriFile(), "http://localhost:" + restPort);
+        } catch (IOException e) {
+            // Nothing was recorded, so nothing else will ever find this process to stop it.
+            process.destroyForcibly();
+            throw new IOException(e.getMessage() + " (see " + Environment.vfkitLogFile() + ")", e);
+        }
+        BuildOutput.stepDone("pid=" + pid + ", rest=localhost:" + restPort
+                + (launch == cmd ? "; no " + PERL + ", so it stops when the command that started it exits" : ""));
+    }
 
-        Files.writeString(Environment.vmPidFile(), String.valueOf(pid));
-        Files.writeString(Environment.vmRestUriFile(), "http://localhost:" + restPort);
-        BuildOutput.stepDone("pid=" + pid + ", rest=localhost:" + restPort);
+    private static final Path PERL = Path.of("/usr/bin/perl");
+
+    /**
+     * The command that runs {@code cmd} as the leader of a new session, under the same pid.
+     * <p>
+     * The VM has to outlive the command that starts it. Started as a plain child it stays in
+     * that command's process group and on its terminal, and both take it down: closing the
+     * terminal hangs up every process on it, Ctrl+C reaches the whole foreground group, and
+     * launchd kills whatever is left in a job's process group once the job exits, which is what
+     * the launch agent's {@code isx vm start} does as soon as the VM is up (#971). A session of
+     * its own has no terminal and a process group nobody else is in.
+     * <p>
+     * Java cannot call {@code setsid}, and macOS ships no {@code setsid} command, so perl does it
+     * and then execs the VM in its place: the pid the caller gets is the VM's. Without perl the
+     * command is returned as it is, and the VM starts the way it used to.
+     */
+    static List<String> inOwnSession(List<String> cmd) {
+        if (!Files.isExecutable(PERL)) return cmd;
+        var wrapped = new ArrayList<>(List.of(PERL.toString(), "-MPOSIX=setsid", "-e",
+                "setsid(); exec { $ARGV[0] } @ARGV or die qq(exec $ARGV[0]: $!\\n)", "--"));
+        wrapped.addAll(cmd);
+        return wrapped;
+    }
+
+    /**
+     * Waits until a process started through {@link #inOwnSession} has become {@code program}.
+     * <p>
+     * For its first moments the pid is still perl. {@link #isRunning()} takes a recorded pid
+     * whose command is not the VM's for a stale one and removes the VM's files, so the pid must
+     * not be recorded before the exec; and an exec that fails, which {@code ProcessBuilder}
+     * used to report itself, now shows only as perl exiting.
+     */
+    static void awaitExec(Process process, String program) throws IOException {
+        Optional<String> last = Optional.empty();
+        for (int i = 0; i < 100; i++) {
+            if (!process.isAlive()) {
+                throw new IOException(program + " could not be started (exit " + process.exitValue() + ")");
+            }
+            last = process.info().command();
+            if (last.map(c -> c.contains(program)).orElse(false)) return;
+            try {
+                Thread.sleep(20);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("interrupted while starting " + program);
+            }
+        }
+        if (last.isPresent()) {
+            // Still perl two seconds in: something is wrong with the exec, not with reading it.
+            throw new IOException(program + " did not exec within 2s (still " + last.get() + ")");
+        }
+        // The command could not be read at all; a live process is the best answer there is.
     }
 
     // --- Internal: QEMU ---

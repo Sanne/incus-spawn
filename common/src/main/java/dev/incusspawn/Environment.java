@@ -204,6 +204,16 @@ public final class Environment {
         return vmStateDir().resolve("vm.log");
     }
 
+    /**
+     * vfkit's own stdout/stderr (perl's diagnostics if the exec into it fails, and whatever vfkit
+     * itself prints — "machine awake" on host wake, timesync setup). Separate from {@link
+     * #vmLogFile()} because vfkit opens that file itself, non-append, for the VM's virtio-serial
+     * console: sharing one append-mode fd with that non-append writer corrupts both (#971 review).
+     */
+    public static Path vfkitLogFile() {
+        return vmStateDir().resolve("vfkit.log");
+    }
+
     public static Path vmRestUriFile() {
         return vmStateDir().resolve("vm.rest-uri");
     }
