@@ -1048,13 +1048,20 @@ public final class ProxyService {
     }
 
     /**
-     * Rewrite a stale legacy plist in place when this process is itself {@code
-     * isSupervisedInvocation()} — the one case {@link #restartLocked} can never reach, because
-     * bootout/bootstrap there would end the very job running this process (#977). No bootout or
-     * bootstrap here either, for the same reason: launchd only re-reads the file on its next load,
-     * so this only takes effect at the next login or explicit restart, not this one. Called from
-     * {@code ProxyStartCommand} on the branch that runs the proxy in the foreground instead of
-     * through the service manager.
+     * Rewrite a stale legacy plist in place. Named for its one caller, {@code ProxyStartCommand},
+     * which calls it only on the branch that runs the proxy in the foreground because this process
+     * is itself {@code isSupervisedInvocation()} — the one case {@link #restartLocked} can never
+     * reach, because bootout/bootstrap there would end the very job running this process (#977);
+     * this method itself does not check that. No bootout or bootstrap here either, for the same
+     * reason: launchd only re-reads the file on its next load, so this only takes effect at the
+     * next login or explicit restart, not this one.
+     * <p>
+     * The write also closes {@link #needsMacOsPlistUpdate}'s only window onto this plist: once it
+     * matches what this build generates, {@link #upgradeIfNeeded} and {@link #reinstallIfChanged}
+     * see nothing stale and never reload the job from outside either. The legacy parent process
+     * (a resident JVM on JVM installs, running `isx proxy start` under the old plist) therefore
+     * stays up — this invocation runs the proxy in its own foreground meanwhile — until the next
+     * login, or a drift/health check restarts the service for an unrelated reason.
      */
     public static void migrateMacOsPlistIfSupervised() {
         if (!Platform.isMacOS()) return;
