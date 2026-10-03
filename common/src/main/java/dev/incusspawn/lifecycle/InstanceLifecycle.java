@@ -31,10 +31,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 /**
  * Shared helpers for instance/template creation lifecycle.
@@ -586,7 +588,10 @@ public final class InstanceLifecycle {
         } else if (machineType == MachineType.VM && !agentAnswers(incus, name)) {
             VmAgentRecovery.restartForAgent(incus, name, say);
         }
-        if (pushNetworkConfig) pushDeferredNetworkConfig(incus, name);
+        if (pushNetworkConfig) {
+            pushDeferredNetworkConfig(incus, name,
+                    msg -> say.accept(BuildOutput.STEP_INDENT + "Warning: " + msg));
+        }
     }
 
     /** Whether a running VM's agent answers exec; Incus refuses the exec outright when it is down. */
@@ -673,8 +678,15 @@ public final class InstanceLifecycle {
 
     static void pushStaticNetworkConfig(IncusClient incus, String name,
                                         String ip, String gateway, int prefixLen) {
-        pushStaticNetworkConfig(incus, name, ip, gateway, prefixLen, STDERR_WARN);
+        pushStaticNetworkConfig(incus, name, CONTAINER_NIC_MATCH, ip, gateway, prefixLen, STDERR_WARN);
     }
+
+    static final String NETWORK_FILE = "/etc/systemd/network/10-eth0.network";
+
+    /** Incus names a container's NIC after the device's {@code name}, which isx sets to eth0. */
+    private static final String CONTAINER_NIC_MATCH = "Name=eth0";
+
+    private static final Pattern MAC = Pattern.compile("[0-9a-f]{2}(:[0-9a-f]{2}){5}");
 
     /**
      * Push a systemd-networkd static config into the container, overwriting the
@@ -685,10 +697,14 @@ public final class InstanceLifecycle {
      * {@code systemd-networkd}, running as {@code systemd-network}, cannot read. A template's
      * own {@code 10-eth0.network} hid this, since overwriting keeps a file's mode; a template
      * without one got a branch with no network.
+     *
+     * @param match the {@code [Match]} line naming the NIC: {@link #CONTAINER_NIC_MATCH} for a
+     *              container, the MAC address for a VM (see {@link #pushVmNetworkConfig})
+     * @return whether the file was pushed
      */
-    static void pushStaticNetworkConfig(IncusClient incus, String name, String ip,
+    static boolean pushStaticNetworkConfig(IncusClient incus, String name, String match, String ip,
                                         String gateway, int prefixLen, Consumer<String> warn) {
-        var content = "[Match]\nName=eth0\n\n[Network]\n"
+        var content = "[Match]\n" + match + "\n\n[Network]\n"
                 + "Address=" + ip + "/" + prefixLen + "\n"
                 + "Gateway=" + gateway + "\n"
                 + "DNS=" + gateway + "\n";
@@ -696,13 +712,14 @@ public final class InstanceLifecycle {
             var tmp = Files.createTempFile("isx-network-", ".network");
             try {
                 Files.writeString(tmp, content);
-                incus.filePush(tmp.toString(), name, "/etc/systemd/network/10-eth0.network",
-                        "0", "0", "0644");
+                incus.filePush(tmp.toString(), name, NETWORK_FILE, "0", "0", "0644");
             } finally {
                 Files.deleteIfExists(tmp);
             }
+            return true;
         } catch (IOException | RuntimeException e) {
             warn.accept("failed to push static network config: " + e.getMessage());
+            return false;
         }
     }
 
@@ -712,13 +729,41 @@ public final class InstanceLifecycle {
      * SSH keys and terminfo are not among them: {@link #setupRuntime} writes those.
      */
     public static void pushDeferredVmFiles(IncusClient incus, String name, NetworkMode networkMode) {
-        if (networkMode != NetworkMode.AIRGAP) {
-            var ip = incus.configGet(name, Metadata.STATIC_IP);
-            var gateway = incus.configGet(name, Metadata.STATIC_GATEWAY);
-            if (!ip.isEmpty() && !gateway.isEmpty()) {
-                pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
-            }
+        if (networkMode != NetworkMode.AIRGAP) pushVmNetworkConfig(incus, name, STDERR_WARN);
+    }
+
+    /**
+     * Push a running VM's static {@code .network} file, from one read of the instance.
+     *
+     * <p>A VM guest keeps its kernel's predictable name for the NIC ({@code enp5s0} on Incus's
+     * PCIe layout) whatever the device's {@code name} says, so the file matches the NIC by the
+     * MAC address Incus gives the device rather than by any name (#997). The permanent one, so
+     * a VLAN or bridge a user builds on the NIC, which takes over its MAC, does not match too.
+     * Until the file
+     * applies, at the next boot or {@code networkctl reload}, the VM has the same address from
+     * DHCP: Incus's DHCP server hands out the NIC's {@code ipv4.address}.
+     *
+     * @return whether a file was pushed
+     */
+    private static boolean pushVmNetworkConfig(IncusClient incus, String name, Consumer<String> warn) {
+        var instance = incus.instanceMetadata(name);
+        var config = instance.path("config");
+        var ip = config.path(Metadata.STATIC_IP).asText("");
+        var gateway = config.path(Metadata.STATIC_GATEWAY).asText("");
+        if (ip.isEmpty() || gateway.isEmpty()) return false;
+        var device = IncusClient.nicDeviceName(instance, BridgeAddress.BRIDGE);
+        // A MAC set on the device wins; Incus records the one it generates in volatile config
+        var mac = device == null ? "" : instance.path("expanded_devices").path(device).path("hwaddr")
+                .asText(config.path("volatile." + device + ".hwaddr").asText("")).toLowerCase(Locale.ROOT);
+        if (!MAC.matcher(mac).matches()) {
+            // A file matching no link is inert, and one matching every link would put the
+            // address on a nested bridge too: leave the VM on DHCP, which gives it the same one.
+            warn.accept("could not find the MAC address of " + name
+                    + "'s NIC; it keeps the address DHCP gives it");
+            return false;
         }
+        return pushStaticNetworkConfig(incus, name, "PermanentMACAddress=" + mac, ip, gateway,
+                bridgePrefixLen(incus), warn);
     }
 
     /**
@@ -747,10 +792,15 @@ public final class InstanceLifecycle {
     public static boolean fixStaticIpIfNeeded(IncusClient incus, String name,
                                               StaticIpAllocator.Output output,
                                               MachineType machineType) {
-        var storedIp = incus.configGet(name, Metadata.STATIC_IP);
+        // One read for both keys: configGet is a full instance GET per key
+        var config = incus.configByPrefix(name, "");
+        var storedIp = config.getOrDefault(Metadata.STATIC_IP, "");
         if (storedIp.isEmpty()) return false;
         var bridge = BridgeAddress.read(incus);
-        return bridge.isPresent() && fixStaticIp(incus, name, storedIp, bridge.get(), output, machineType);
+        var fixed = bridge.isPresent() && fixStaticIp(incus, name, storedIp, bridge.get(), output, machineType);
+        // A repair made while the VM could not take its file (isx init, isx doctor) still has
+        // to reach the guest: the caller pushes it once the VM runs
+        return fixed || config.containsKey(Metadata.NETWORK_PUSH_PENDING);
     }
 
     private static boolean fixStaticIp(IncusClient incus, String name, String storedIp,
@@ -774,12 +824,14 @@ public final class InstanceLifecycle {
         if (!proxyGw.isEmpty()) {
             updates.put(Metadata.PROXY_GATEWAY, newGateway);
         }
+        var resolvedType = machineType != null ? machineType : incus.machineType(name);
+        // The VM's file still holds the old address and is only pushed while it runs
+        if (resolvedType == MachineType.VM) updates.put(Metadata.NETWORK_PUSH_PENDING, "true");
         incus.configSetAll(name, updates);
 
-        var resolvedType = machineType != null ? machineType : incus.machineType(name);
         if (resolvedType == MachineType.CONTAINER) {
-            pushStaticNetworkConfig(incus, name, newIp, newGateway, bridge.prefixLen(),
-                    output.warn());
+            pushStaticNetworkConfig(incus, name, CONTAINER_NIC_MATCH, newIp, newGateway,
+                    bridge.prefixLen(), output.warn());
         }
         return true;
     }
@@ -799,9 +851,15 @@ public final class InstanceLifecycle {
             if (bridge.isEmpty()) return 0;
             for (var stale : staleStaticIps(incus, bridge.get()).entrySet()) {
                 try {
-                    if (fixStaticIp(incus, stale.getKey(), stale.getValue(), bridge.get(),
-                            StaticIpAllocator.Output.TERMINAL, incus.machineType(stale.getKey()))) {
+                    var name = stale.getKey();
+                    var type = incus.machineType(name);
+                    if (fixStaticIp(incus, name, stale.getValue(), bridge.get(),
+                            StaticIpAllocator.Output.TERMINAL, type)) {
                         fixed++;
+                        // A running VM can take its file now; a stopped one gets it at its next start
+                        if (type == MachineType.VM && "Running".equalsIgnoreCase(incus.getInstanceStatus(name))) {
+                            pushDeferredNetworkConfig(incus, name, STDERR_WARN);
+                        }
                     }
                 } catch (Exception e) {
                     System.err.println("  Warning: failed to migrate " + stale.getKey()
@@ -820,15 +878,18 @@ public final class InstanceLifecycle {
      * metadata. Call after {@code incus.start()} + {@code waitForReady()} for
      * VMs whose static IP was fixed while stopped.
      */
-    public static void pushDeferredNetworkConfig(IncusClient incus, String name) {
-        var ip = incus.configGet(name, Metadata.STATIC_IP);
-        var gateway = incus.configGet(name, Metadata.STATIC_GATEWAY);
-        if (!ip.isEmpty() && !gateway.isEmpty()) {
-            pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
-            // The VM already booted with the old .network file; tell networkd
-            // to re-read and apply the new config without a full reboot.
+    public static void pushDeferredNetworkConfig(IncusClient incus, String name, Consumer<String> warn) {
+        if (pushVmNetworkConfig(incus, name, warn)) {
+            // The VM already booted with the old .network file. reload re-reads the files and
+            // reconfigures every link whose file changed, so it needs no interface name;
+            // reconfigure alone would re-apply the config networkd already had.
             try {
-                incus.shellExec(name, "networkctl", "reconfigure", "eth0");
+                incus.shellExec(name, "networkctl", "reload");
+            } catch (Exception ignored) {
+            }
+            // Pushed is enough: a reload that failed is made up for by the next boot
+            try {
+                incus.configUnset(name, Metadata.NETWORK_PUSH_PENDING);
             } catch (Exception ignored) {
             }
         }
@@ -1011,10 +1072,11 @@ public final class InstanceLifecycle {
                 || hasSshdTool(buildSourceJson);
         var workdir = config.getOrDefault(Metadata.WORKDIR, "");
         var shellCommand = config.getOrDefault(Metadata.SHELL_COMMAND, "");
+        var staticIp = config.getOrDefault(Metadata.STATIC_IP, "");
         var subnetDiag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
         var terminfo = captureHostTerminfo();
         return new RuntimeConfig(buildSourceJson, hasSshKeys, workdir, shellCommand,
-                subnetDiag, terminfo);
+                subnetDiag, terminfo, staticIp);
     }
 
     private static String captureHostTerminfo() {
@@ -1031,9 +1093,10 @@ public final class InstanceLifecycle {
         }
     }
 
+    /** @param staticIp the address the instance was assigned; empty if none */
     public record RuntimeConfig(String buildSourceJson, boolean hasSshKeys,
                                 String workdir, String shellCommand,
-                                String subnetDiagnostic, String terminfo) {
+                                String subnetDiagnostic, String terminfo, String staticIp) {
 
         public IncusClient.ShellPrep toShellPrep() {
             return IncusClient.ShellPrep.fromPrefetched(
@@ -1194,9 +1257,10 @@ public final class InstanceLifecycle {
         // and a coarser interval is paid in full by every branch. Airgap branches have no
         // NIC, so the wait would always time out — skip it.
         if (networkMode != NetworkMode.AIRGAP) {
+            var addressUp = addressUpCheck(prefetched != null ? prefetched.staticIp() : null);
             sb.append("\n{ systemctl start systemd-networkd 2>/dev/null; ")
-              .append("for i in $(seq 1 300); do ip -4 -o addr show eth0 | grep -q 'inet ' && break; sleep 0.05; done; ")
-              .append("ip -4 -o addr show eth0 | grep -q 'inet '; }");
+              .append("for i in $(seq 1 300); do ").append(addressUp).append(" && break; sleep 0.05; done; ")
+              .append(addressUp).append("; }");
         }
         var buildSource = BuildSource.fromJson(buildSourceJson);
         if (buildSource != null) {
@@ -1207,6 +1271,23 @@ public final class InstanceLifecycle {
             }
         }
         return sb.toString();
+    }
+
+    /**
+     * The setup script's test for the instance's network being up. It looks for the address,
+     * not at an interface: a VM's NIC keeps its kernel's predictable name rather than eth0
+     * (#997), and the assigned address is the one the proxy identifies the instance by, where
+     * any address would also take a nested docker0's.
+     */
+    static String addressUpCheck(String staticIp) {
+        try {
+            // Normalized, so only digits and dots reach the shell
+            var ip = CidrUtils.longToIp(CidrUtils.ipToLong(staticIp));
+            return "ip -4 -o addr show | grep -qF ' inet " + ip + "/'";
+        } catch (RuntimeException noAddress) {
+            // Nothing to look for: a default route, which a nested docker0 does not add
+            return "ip -4 route show default | grep -q .";
+        }
     }
 
     /**

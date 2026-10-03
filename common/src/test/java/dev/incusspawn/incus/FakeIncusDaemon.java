@@ -41,6 +41,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final List<String> refusedWrites = new ArrayList<>();
     private final List<String> apiExtensions = new ArrayList<>();
     private final Map<String, String> pushedModes = new LinkedHashMap<>();
+    private final Map<String, String> pushedContents = new LinkedHashMap<>();
     private final Map<String, String> consoleLogs = new LinkedHashMap<>();
     /** Running instances' init pids; every start gets a fresh one, as a new QEMU process would. */
     private final Map<String, Long> pids = new LinkedHashMap<>();
@@ -225,6 +226,11 @@ public final class FakeIncusDaemon implements IncusTransport {
         return pushedModes.get(instanceName + path);
     }
 
+    /** What a file was last pushed into an instance with, or null if it never was. */
+    public String pushedContent(String instanceName, String path) {
+        return pushedContents.get(instanceName + path);
+    }
+
     /** Every request so far, as {@code "METHOD path"}, in order. */
     public List<String> requests() {
         return List.copyOf(requests);
@@ -250,6 +256,11 @@ public final class FakeIncusDaemon implements IncusTransport {
         var file = java.net.URLDecoder.decode(path.substring(path.indexOf("path=") + 5),
                 java.nio.charset.StandardCharsets.UTF_8);
         pushedModes.put(name + file, extraHeaders.getOrDefault("X-Incus-mode", ""));
+        try {
+            pushedContents.put(name + file, java.nio.file.Files.readString(bodyFile));
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
         return sync(JSON.createObjectNode());
     }
 
