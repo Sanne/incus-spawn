@@ -178,6 +178,68 @@ repo-paths:
 
 With this configuration, `isx branch` adds a git remote named after the instance in each matching host repo (protocol-lenient — SSH and HTTPS URLs for the same repo are treated as equal), and `isx destroy` removes it.
 
+## Delegating from an agent on your host (MCP)
+
+An agent running on your machine -- Claude Code, say -- can use isx itself: create disposable instances from templates you approved, run builds and tests in them, and hand whole tasks to the Claude Code inside an instance. `isx mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) over stdio:
+
+`isx init` offers to set this up (it is experimental, so off by default): it registers `isx mcp` with Claude Code for all projects and asks, for each template that installs Claude Code, whether agents may use it. To do the same by hand:
+
+```shell
+claude mcp add --scope user isx -- ~/.local/bin/isx mcp
+```
+
+Nothing is available until you approve templates in `~/.config/incus-spawn/config.yaml`. Agents never can -- `isx mcp` reads this section on every call and has no way to write it:
+
+```yaml
+mcp:
+  templates: [tpl-java, tpl-dev]   # the only templates an agent may branch from
+  max-instances: 3                 # per host user, across sessions (default 3)
+  max-concurrent-tasks: 2          # background commands and delegated agents, per session (default 2)
+  delegate-max-turns: 200          # optional cap for delegated agents
+  delegate-permission-mode: bypassPermissions   # the delegates' --permission-mode (default shown)
+  delegate-permission-modes:       # per-template overrides, e.g. a reviewer that only plans
+    tpl-review: plan
+  orphan-grace-hours: 24           # how long an instance outlives its session (default 24)
+  summary-model: haiku             # answers the tools' `ask` inside the instance (default haiku)
+```
+
+| Tool | What it does |
+|------|--------------|
+| `list_templates` | The approved templates, whether they are built, which can take a delegated task, and in which permission mode |
+| `create_instance` | A fresh CoW branch of an approved template, as `isx branch` would make it, with an optional `purpose` |
+| `list_instances` / `adopt_instance` | Your instances and their tasks, including those an ended session left behind; take one back |
+| `exec` | Run a command as `agentuser`; no time limit unless the agent sets one, or `background: true` for a task |
+| `delegate` | Give an instruction, or a skill name and arguments, to the Claude Code inside an instance (or a fresh one from a template) |
+| `task_status` / `wait_any` / `task_result` | Follow a task (optionally waiting), wait for whichever of several finishes first, read its outcome or the agent's report |
+| `send_message` | Continue a delegated agent's conversation (e.g. "push and open a PR") |
+| `get_diff` | What a delegated task changed, committed or not: a patch, or with `stat` just the files and line counts |
+| `cancel_task` / `destroy_instance` | Stop a task, or throw an instance away |
+| `keep_instance` | Hand an instance over to you for good |
+
+`exec`, `task_result` and `get_diff` take an optional `ask`: instead of the text, a one-shot Claude Code on `summary-model` reads it *inside the instance* and answers the question ("which tests fail?"), so a long log or patch never fills the host agent's context. The answer is a model's reading -- untrusted and lossy -- so anything that gates a merge stays deterministic: `get_diff(stat)`, CI, a reviewer.
+
+What an agent gets is deliberately narrow:
+
+- **Only approved templates.** Never a project-local (`.incus-spawn/`) definition or an image built from one, and never an unbuilt one -- it is told to ask you to run `isx build`.
+- **Template defaults, no choices.** Network mode, credential accounts, resources: exactly what `isx branch --from <template>` gives. Credentials stay in the host proxy as always; which GitHub account a delegate can push with is the one you pinned on the template.
+- **Your instances, one session at a time.** Every instance is stamped with your host user, an optional purpose (`#870 implement`), and the session holding it; every tool checks that stamp. Instances outlive their session, because a coordinating agent restarts while its workers wait: when a session ends (or dies), its instances become orphans that any later session of yours can take back with `adopt_instance`, tasks included. An orphan nobody adopts is destroyed by the next `isx mcp` to start once `orphan-grace-hours` have passed -- never while someone is in it with `isx shell` or an agent it delegated to is still working, and never one handed to you with `keep_instance`. Instances are named `mcp-<template>-<hint>-<suffix>`; don't give your own instances `mcp-*` names.
+- **Taking over is safe.** You can join a delegate's conversation yourself: `isx shell` into the instance, then `claude --resume <session>`. While you are in it, `task_status` says `attached` and `send_message` is refused, so the host agent never races you on one conversation.
+- **No host access.** Nothing runs on the host and no host files are read or written: results come back as text, and `get_diff` returns a patch rather than touching your checkout.
+- **An audit trail.** Every call is logged, with credentials scrubbed, to `~/.local/state/incus-spawn/mcp.log`.
+
+`isx mcp` runs as you, so these limits hold for the MCP tools, not for an agent that can also run `isx` through its shell. Allow the MCP tools and deny the rest in Claude Code's settings:
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__isx__*"],
+    "deny": ["Bash(isx:*)", "Edit(~/.config/incus-spawn/**)", "Write(~/.config/incus-spawn/**)"]
+  }
+}
+```
+
+Delegated agents spend the Claude account of the template they run in. Text coming back from an instance -- command output, a delegate's report, a diff -- is data produced inside the sandbox, and the tool descriptions tell the host agent to treat it that way.
+
 ## Why full system containers?
 
 **Docker and Podman are built for shipping applications** — minimal filesystems, single-process isolation, fast startup. isx solves a different problem: full **system containers** powered by [Incus](https://linuxcontainers.org/incus/) that behave like real machines. Each environment runs its own init system, has real networking (`ping`, `strace`, nested Podman/Docker), and supports GUI and audio passthrough (Linux only). Templates pre-install your baseline tools and repos, but the environment is a real Linux system — agents and users can freely `dnf install`, `pip install`, build from source, or run Docker Compose just like on a workstation.
@@ -982,7 +1044,7 @@ Both are needed, and `jbang` must stay on your PATH. To update, re-run both comm
 
 ## Configuration
 
-- `~/.config/incus-spawn/config.yaml` -- auth credentials and global settings
+- `~/.config/incus-spawn/config.yaml` -- auth credentials and global settings (including the `mcp:` section, see [Delegating from an agent](#delegating-from-an-agent-on-your-host-mcp))
 - `~/.config/incus-spawn/ssh/` -- managed SSH key pair, per-instance config, and known_hosts
 - `~/.config/incus-spawn/images/*.yaml` -- user-level template definitions
 - `~/.config/incus-spawn/tools/*.yaml` -- user-level tool definitions
@@ -1142,6 +1204,7 @@ Beyond security, a shared project directory is also **misleading**. The agent's 
 | [`isx reset`](#isx-reset) | Reset to a clean slate |
 | [`isx vm`](#isx-vm) | Manage the VM appliance (macOS only) |
 | [`isx ask`](#isx-ask) | AI-powered help |
+| [`isx mcp`](#isx-mcp) | Serve isx to a local agent over MCP |
 | [`isx completion`](#isx-completion) | Print shell completion script |
 
 Use `isx <command> --help` for detailed options on any command.
@@ -1497,6 +1560,14 @@ AI-powered help. Ask any question about incus-spawn (uses AI tokens).
 | Option | Description |
 |--------|-------------|
 | `--with-templates` | Include template and tool definitions in the AI context |
+
+### `isx mcp`
+
+Serve isx to an agent on this machine over the Model Context Protocol (stdio). Started by the agent, not by hand:
+
+    claude mcp add isx -- isx mcp
+
+See [Delegating from an agent on your host](#delegating-from-an-agent-on-your-host-mcp) for what it offers and how to approve templates.
 
 ### `isx completion`
 

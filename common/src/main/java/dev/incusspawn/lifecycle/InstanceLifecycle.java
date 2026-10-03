@@ -136,6 +136,12 @@ public final class InstanceLifecycle {
                     AccountSelection.fromConfig(instance.path("config"))));
         }
         if (!settings.kvm()) KvmPassthrough.removeKvm(instance, update);
+        // A copy carries its source's MCP ownership stamps. A branch of an agent's instance
+        // (say, one it handed over with keep_instance) belongs to whoever made the branch, and
+        // must not be mistaken for the dead session's orphan and reaped.
+        instance.path("config").fieldNames().forEachRemaining(key -> {
+            if (Metadata.isMcpKey(key) && !settings.extraConfig().containsKey(key)) update.unset(key);
+        });
         update.config(settings.extraConfig());
         // Templates built before free page reporting existed don't carry it to their copies
         if (IncusClient.machineType(instance) == MachineType.VM
@@ -1014,7 +1020,7 @@ public final class InstanceLifecycle {
         var subnetDiag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
         var terminfo = captureHostTerminfo();
         return new RuntimeConfig(buildSourceJson, hasSshKeys, workdir, shellCommand,
-                subnetDiag, terminfo);
+                subnetDiag, terminfo, config.getOrDefault(Metadata.STATIC_IP, ""));
     }
 
     private static String captureHostTerminfo() {
@@ -1031,9 +1037,10 @@ public final class InstanceLifecycle {
         }
     }
 
+    /** @param staticIp the address {@code configureBranch} assigned, or "" for none */
     public record RuntimeConfig(String buildSourceJson, boolean hasSshKeys,
                                 String workdir, String shellCommand,
-                                String subnetDiagnostic, String terminfo) {
+                                String subnetDiagnostic, String terminfo, String staticIp) {
 
         public IncusClient.ShellPrep toShellPrep() {
             return IncusClient.ShellPrep.fromPrefetched(

@@ -660,7 +660,8 @@ public final class ProxyService {
         }
     }
 
-    static String resolveIsxPath() {
+    /** The installed {@code isx} to point services and clients at, or null if none is found. */
+    public static String resolveIsxPath() {
         try {
             var pb = new ProcessBuilder("which", "isx");
             pb.redirectErrorStream(true);

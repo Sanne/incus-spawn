@@ -31,6 +31,11 @@ public final class Metadata {
     public static final String SHELL_COMMAND = PREFIX + "shell-command";
     public static final String DEFAULT_ACTION = PREFIX + "default-action";
     public static final String PENDING_OP = PREFIX + "pending-op";
+
+    /** The operation another isx process has under way on an instance, from its config; "" for none. */
+    public static String pendingOp(java.util.Map<String, String> config) {
+        return config.getOrDefault(PENDING_OP, "");
+    }
     public static final String STATIC_IP = PREFIX + "static-ip";
     public static final String STATIC_GATEWAY = PREFIX + "static-gateway";
     /**
@@ -51,6 +56,30 @@ public final class Metadata {
     // of contentFingerprint(), so stamping it never triggers a rebuild.
     public static final String DISK_REFERENCED = PREFIX + "disk-referenced";
 
+    /**
+     * MCP ownership (see {@code isx mcp}). An instance belongs to the host user in
+     * {@link #MCP_OWNER}, and is held by one session at a time: {@link #MCP_SESSION} is
+     * {@code <pid>-<processStartMillis>} of the {@code isx mcp} process holding it, which tells
+     * whether the holder is still alive. Any session of the same user may adopt it once its
+     * holder is gone. The rest are for display.
+     */
+    public static final String MCP_PREFIX = PREFIX + "mcp-";
+    public static final String MCP_SESSION = MCP_PREFIX + "session";
+    public static final String MCP_OWNER = MCP_PREFIX + "owner";
+    /** Free text the agent gave at creation, e.g. {@code #870 implement}. */
+    public static final String MCP_PURPOSE = MCP_PREFIX + "purpose";
+    /**
+     * When the instance lost its session (an ISO-8601 instant): stamped when the session ends,
+     * or by the first later session to notice it died. Orphans are destroyed only once
+     * {@code mcp.orphan-grace-hours} have passed since; adoption clears it.
+     */
+    public static final String MCP_ORPHANED = MCP_PREFIX + "orphaned";
+    public static final String MCP_CLIENT = MCP_PREFIX + "client";
+    public static final String MCP_CLIENT_PID = MCP_PREFIX + "client-pid";
+    public static final String MCP_CWD = MCP_PREFIX + "cwd";
+    /** Set by {@code keep_instance}: the instance now belongs to the user and outlives the session. */
+    public static final String MCP_KEPT = MCP_PREFIX + "kept";
+
     public static final String TYPE_BASE = "base";
     public static final String TYPE_PROJECT = "project";
     public static final String TYPE_CLONE = "clone";
@@ -61,6 +90,10 @@ public final class Metadata {
     public static final String OP_DELETING = "deleting";
 
     private Metadata() {}
+
+    public static boolean isMcpKey(String key) {
+        return key.startsWith(MCP_PREFIX);
+    }
 
     /**
      * Key holding which named credential account this instance uses for a config

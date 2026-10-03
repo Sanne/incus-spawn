@@ -222,6 +222,20 @@ public class IncusClient {
     }
 
     /**
+     * Run {@code script} as {@code user} in a login shell ({@code su -}), streaming its output
+     * and forwarding {@code stdin} (null for none). Returns the exit code. Unlike
+     * {@link #execInContainer} the output is never buffered whole, so the caller bounds it.
+     */
+    public int execScriptAsUser(String container, String user, String script,
+                                InputStream stdin, OutputStream stdout, OutputStream stderr) {
+        var command = List.of("su", "-", user, "-c", LOGIN_PATH_PREFIX + script);
+        return stdin == null
+                ? http().execStream(container, command, 0, 0, null, Map.of(), stdout, stderr)
+                : http().execBidirectional(container, command, 0, 0, null, Map.of(),
+                        stdin, stdout, stderr);
+    }
+
+    /**
      * Execute a bidirectional command inside a container, forwarding stdin from the host.
      * Used for binary protocols like the git pack protocol.
      */
@@ -1897,6 +1911,20 @@ public class IncusClient {
      */
     public JsonNode instanceMetadata(String name) {
         return http().get("/1.0/instances/" + name).body().path("metadata");
+    }
+
+    /**
+     * Like {@link #instanceMetadata}, but only Incus answering that the instance does not exist
+     * yields null; any other failure (403, 500, a daemon that cannot answer) throws. For
+     * decisions that must not mistake "cannot ask" for "gone".
+     */
+    public JsonNode instanceMetadataOrThrow(String name) {
+        var resp = http().get("/1.0/instances/" + name);
+        if (resp.statusCode() == 404) return null;
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to read instance '" + name + "' (HTTP " + resp.statusCode() + ")");
+        }
+        return resp.body().path("metadata");
     }
 
     /**

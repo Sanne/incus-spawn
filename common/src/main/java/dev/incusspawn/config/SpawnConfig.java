@@ -75,6 +75,11 @@ public class SpawnConfig {
     @JsonProperty("ready-timeouts")
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private Object readyTimeouts;
+    // What `isx mcp` lets a local agent do. Null (absent) means nothing is approved, and is
+    // never written back.
+    @JsonProperty("mcp")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private McpConfig mcp;
     private Map<String, Object> extras = new java.util.LinkedHashMap<>();
 
     /** How a Claude account authenticates. Named for what the credential is, not what isx uses it for. */
@@ -626,6 +631,10 @@ public class SpawnConfig {
     public ArtifactCacheConfig artifactCache() { return ArtifactCacheConfig.of(artifactCache); }
     /** The {@code ready-timeouts:} section, or null when there is none. */
     public ReadyTimeoutsConfig readyTimeouts() { return ReadyTimeoutsConfig.of(readyTimeouts); }
+
+    /** The {@code mcp:} section, or its defaults (no templates approved) when absent. */
+    public McpConfig mcp() { return mcp != null ? mcp : new McpConfig(); }
+    public void setMcp(McpConfig mcp) { this.mcp = mcp; }
     public void setAutoCloneRepos(String autoCloneRepos) { this.autoCloneRepos = autoCloneRepos == null ? "" : autoCloneRepos; }
     @JsonAnySetter
     public void setExtra(String key, Object value) { extras.put(key, value); }
@@ -716,6 +725,7 @@ public class SpawnConfig {
         this.tuiLiveRefresh = other.tuiLiveRefresh;
         this.artifactCache = other.artifactCache;
         this.readyTimeouts = other.readyTimeouts;
+        this.mcp = other.mcp;
         this.extras = other.extras;
     }
 

@@ -70,11 +70,14 @@ class InstanceLifecycleRequestBudgetTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(
                 Metadata.WORKDIR, "/home/agentuser/project",
                 Metadata.SHELL_COMMAND, "zsh",
-                "user.incus-spawn.ssh-setup", "done"));
+                "user.incus-spawn.ssh-setup", "done",
+                Metadata.STATIC_IP, "10.166.11.20"));
         var config = InstanceLifecycle.prefetchRuntimeConfig(daemon.client(), NAME);
         assertBudget(2, daemon, "prefetchRuntimeConfig");
 
         assertEquals("/home/agentuser/project", config.workdir());
+        // isx mcp answers create_instance from this, rather than reading the instance again.
+        assertEquals("10.166.11.20", config.staticIp());
         assertEquals("zsh", config.shellCommand());
         assertEquals("", config.buildSourceJson());
         assertTrue(config.hasSshKeys());
@@ -249,6 +252,21 @@ class InstanceLifecycleRequestBudgetTest {
         var config = daemon.instance(NAME).path("config");
         assertEquals("someone", config.path(OWNER).asText());
         assertEquals("x", config.path(Metadata.PREFIX + "note").asText());
+    }
+
+    @Test
+    void aBranchOfAnAgentsInstanceIsNotTheAgents() {
+        // A kept instance still carries the session that created it. A user's branch of it must
+        // not inherit that, or the orphan reaper would take it for the dead session's.
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.MCP_SESSION, "4242-1700000000000", Metadata.MCP_OWNER, "alice",
+                Metadata.MCP_KEPT, "2026-09-27"));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
+        var config = daemon.instance(NAME).path("config");
+        assertFalse(config.has(Metadata.MCP_SESSION));
+        assertFalse(config.has(Metadata.MCP_OWNER));
+        assertFalse(config.has(Metadata.MCP_KEPT));
     }
 
     @Test

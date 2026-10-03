@@ -1,0 +1,160 @@
+package dev.incusspawn.mcp;
+
+import dev.incusspawn.incus.Metadata;
+
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+/** An in-memory {@link InstanceBackend}: instances are just config maps. */
+class FakeBackend implements InstanceBackend {
+
+    final Map<String, Map<String, String>> instances = new ConcurrentHashMap<>();
+    final List<TemplateInfo> templates = new ArrayList<>();
+    final List<String> destroyed = new CopyOnWriteArrayList<>();
+    final List<String> scripts = new CopyOnWriteArrayList<>();
+    /** What each exec in {@link #scripts} got on stdin ("" for none), in the same order. */
+    final List<String> stdins = new CopyOnWriteArrayList<>();
+    volatile String execStdout = "";
+    volatile int execExit = 0;
+    volatile RuntimeException createFailure;
+    /** Run while an instance is being created: what happens concurrently with a slow copy. */
+    volatile Runnable onCreate;
+    /** When set, answers each exec script with its stdout (exit 0), instead of execStdout/execExit. */
+    volatile java.util.function.Function<String, String> responder;
+
+    FakeBackend template(String name, boolean built, String... tools) {
+        templates.add(new TemplateInfo(name, name + " template", built, false, List.of(tools), false, Map.of()));
+        if (built) instances.put(name, new ConcurrentHashMap<>(Map.of(Metadata.TYPE, Metadata.TYPE_BASE)));
+        return this;
+    }
+
+    FakeBackend projectLocalTemplate(String name) {
+        templates.add(new TemplateInfo(name, "", true, false, List.of(), true, Map.of()));
+        return this;
+    }
+
+    FakeBackend instance(String name, Map<String, String> config) {
+        instances.put(name, new ConcurrentHashMap<>(config));
+        return this;
+    }
+
+    @Override
+    public List<TemplateInfo> templates() {
+        return List.copyOf(templates);
+    }
+
+    @Override
+    public CreatedInstance create(TemplateInfo info, String name, Map<String, String> stamps) {
+        var template = info.name();
+        if (createFailure != null) throw createFailure;
+        if (onCreate != null) onCreate.run();
+        var config = new ConcurrentHashMap<String, String>(stamps);
+        config.put(Metadata.TYPE, Metadata.TYPE_CLONE);
+        config.put(Metadata.PARENT, template);
+        instances.put(name, config);
+        return new CreatedInstance(name, "10.0.0.2", "/home/agentuser");
+    }
+
+    @Override
+    public java.util.Optional<TemplateInfo> template(String name) {
+        return templates.stream().filter(t -> t.name().equals(name)).findFirst();
+    }
+
+    @Override
+    public void destroy(String name) {
+        instances.remove(name);
+        destroyed.add(name);
+    }
+
+    /** Run between {@link #destroyIfHeldBy}'s mark and its re-read: what another session does meanwhile. */
+    volatile Runnable onMarked;
+    /** Run before each {@link #stamp} is applied: what another session did just before it. */
+    volatile Runnable onStamp;
+
+    @Override
+    public boolean destroyIfHeldBy(String name, String session) {
+        var instance = instances.get(name);
+        if (instance == null) return false;
+        instance.put(Metadata.PENDING_OP, Metadata.OP_DELETING);
+        if (onMarked != null) onMarked.run();
+        if (!session.equals(instance.get(Metadata.MCP_SESSION))) {
+            instance.remove(Metadata.PENDING_OP);
+            return false;
+        }
+        destroy(name);
+        return true;
+    }
+
+    volatile int proxyRefreshes;
+
+    @Override
+    public void refreshProxy() {
+        proxyRefreshes++;
+    }
+
+    /** When set, every metadata read throws it, as a backend whose daemon cannot answer does. */
+    volatile RuntimeException metadataFailure;
+
+    /** Run before each {@link #metadata} read: what happened meanwhile. */
+    volatile Runnable onRead;
+
+    /** Every {@link #metadata} call, as a real backend's instance GETs. */
+    final java.util.concurrent.atomic.AtomicInteger metadataReads = new java.util.concurrent.atomic.AtomicInteger();
+
+    @Override
+    public Map<String, String> metadata(String name) {
+        metadataReads.incrementAndGet();
+        if (onRead != null) onRead.run();
+        if (metadataFailure != null) throw metadataFailure;
+        var config = instances.get(name);
+        return config == null ? null : new LinkedHashMap<>(config);
+    }
+
+    @Override
+    public void stamp(String name, Map<String, String> config) {
+        if (onStamp != null) onStamp.run();
+        var instance = instances.get(name);
+        config.forEach((k, v) -> {
+            if (v == null) instance.remove(k);
+            else instance.put(k, v);
+        });
+    }
+
+    void stamp(String name, String key, String value) {
+        stamp(name, java.util.Collections.singletonMap(key, value));
+    }
+
+    @Override
+    public Map<String, Map<String, String>> mcpInstances() {
+        var result = new LinkedHashMap<String, Map<String, String>>();
+        instances.forEach((name, config) -> {
+            if (config.containsKey(Metadata.MCP_SESSION)) result.put(name, Map.copyOf(config));
+        });
+        return result;
+    }
+
+    @Override
+    public int exec(String name, String script, InputStream stdin, OutputStream stdout, OutputStream stderr) {
+        if (!instances.containsKey(name)) throw new IllegalStateException("Instance not found: " + name);
+        scripts.add(script);
+        try {
+            stdins.add(stdin == null ? "" : new String(stdin.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+        var answer = responder != null ? responder.apply(script) : execStdout;
+        try {
+            if (stdout != null) stdout.write(answer.getBytes(StandardCharsets.UTF_8));
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+        return responder != null ? 0 : execExit;
+    }
+}

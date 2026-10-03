@@ -52,6 +52,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final Map<String, String> dhcpAnswers = new LinkedHashMap<>();
     private final Map<String, String> guestInterfaces = new LinkedHashMap<>();
     private boolean refuseNextWrite;
+    private int failReadsWith;
     private int nextOperation = 1;
     private long nextPid = 1000;
 
@@ -179,6 +180,12 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
+    /** Answer every instance GET with this error status (0: answer normally), as a failing daemon would. */
+    public FakeIncusDaemon failInstanceReads(int status) {
+        failReadsWith = status;
+        return this;
+    }
+
     /** What the instance's console log holds, as {@code incus console --show-log} would print it. */
     public FakeIncusDaemon consoleLog(String instanceName, String log) {
         consoleLogs.put(instanceName, log);
@@ -267,6 +274,13 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     private RawResponse handle(String method, String path, byte[] body) throws IOException {
+        if (failReadsWith != 0 && method.equals("GET") && path.startsWith("/1.0/instances/")) {
+            var error = JSON.createObjectNode();
+            error.put("type", "error");
+            error.put("error", "refused by FakeIncusDaemon");
+            error.put("error_code", failReadsWith);
+            return new RawResponse(failReadsWith, bytes(error));
+        }
         if (path.equals("/1.0") && method.equals("GET")) {
             var server = JSON.createObjectNode();
             server.set("api_extensions", JSON.valueToTree(apiExtensions));

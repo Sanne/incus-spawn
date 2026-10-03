@@ -1,0 +1,60 @@
+package dev.incusspawn.mcp;
+
+import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.tui.InstanceLockManager;
+import org.junit.jupiter.api.Test;
+
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+class IncusInstanceBackendTest {
+
+    private final IncusClient incus = mock(IncusClient.class);
+    private final IncusInstanceBackend backend = new IncusInstanceBackend(incus, mock(InstanceLockManager.class));
+
+    @Test
+    void onlyAnInstanceIncusSaysIsMissingReadsAsGone() {
+        when(incus.instanceMetadataOrThrow("gone")).thenReturn(null);
+        assertNull(backend.metadata("gone"));
+    }
+
+    @Test
+    void aFailedReadIsNotMistakenForAGoneInstance() {
+        // A 403 or 500 said nothing about the instance: reading it as gone abandoned live ones (#858).
+        when(incus.instanceMetadataOrThrow("dev")).thenThrow(new IncusException("Failed to read instance 'dev' (HTTP 500)"));
+        assertThrows(ToolError.class, () -> backend.metadata("dev"));
+    }
+
+    @Test
+    void theSweepMarksBeforeItReadsTheHolderAndBacksOffWhenAdopted() {
+        var locks = mock(InstanceLockManager.class);
+        when(locks.tryAcquire("orphan", Metadata.OP_DELETING)).thenReturn(Optional.of(() -> { }));
+        var sweeper = new IncusInstanceBackend(incus, locks);
+        var adopted = JsonRpc.JSON.createObjectNode();
+        adopted.put("name", "orphan");
+        adopted.putObject("config").put(Metadata.MCP_SESSION, "3-300");
+        when(incus.instanceMetadataOrThrow("orphan")).thenReturn(adopted);
+
+        assertFalse(sweeper.destroyIfHeldBy("orphan", "2-200"));
+
+        // The mark first, then the read: an adoption stamping in between is seen here, and one
+        // stamping after sees the mark (McpSession.adopt).
+        var order = inOrder(incus);
+        order.verify(incus).configSet("orphan", Metadata.PENDING_OP, Metadata.OP_DELETING); // strictly, not setPendingOperation
+        order.verify(incus).instanceMetadataOrThrow("orphan");
+        order.verify(incus).configUnset("orphan", Metadata.PENDING_OP); // strictly: a mark left behind would never go
+        verify(incus, never()).delete(anyString(), anyBoolean());
+    }
+}

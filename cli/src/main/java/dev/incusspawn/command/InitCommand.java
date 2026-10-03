@@ -14,6 +14,7 @@ import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.FirewallDetector.DetectionResult;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -246,7 +247,7 @@ public class InitCommand extends BaseCommand {
         if (!requireLinux()) {
             return CommandResult.valueOf(1);
         }
-        totalSteps = 13;
+        totalSteps = 14;
         currentStep = 0;
         printBanner("incus-spawn — First-Time Setup",
                 "Configuring your isolated development environment",
@@ -272,7 +273,7 @@ public class InitCommand extends BaseCommand {
         var loader = new ToolDefLoader();
         var allTools = loader.allToolSetups();
         var credentials = selectCredentials(allTools);
-        totalSteps = 10 + credentials.size();
+        totalSteps = 11 + credentials.size();
         for (var toolName : credentials) {
             switch (toolName) {
                 case "claude" -> setupClaudeAuth();
@@ -283,6 +284,7 @@ public class InitCommand extends BaseCommand {
         closeHttpClient();
         setupSearchPaths();
         setupHostPaths();
+        setupMcp();
 
         installGitRemoteShim();
 
@@ -312,7 +314,7 @@ public class InitCommand extends BaseCommand {
     }
 
     private CommandResult doMacOsInit() throws Exception {
-        totalSteps = 10;
+        totalSteps = 11;
         currentStep = 0;
         printBanner("incus-spawn — First-Time Setup (macOS)",
                 "Configuring your isolated development environment",
@@ -338,7 +340,7 @@ public class InitCommand extends BaseCommand {
         var macLoader = new ToolDefLoader();
         var macTools = macLoader.allToolSetups();
         var macCredentials = selectCredentials(macTools);
-        totalSteps = 7 + macCredentials.size();
+        totalSteps = 8 + macCredentials.size();
         for (var toolName : macCredentials) {
             switch (toolName) {
                 case "claude" -> setupClaudeAuth();
@@ -349,6 +351,7 @@ public class InitCommand extends BaseCommand {
         closeHttpClient();
         setupSearchPaths();
         setupHostPaths();
+        setupMcp();
 
         installGitRemoteShim();
 
@@ -3218,6 +3221,136 @@ public class InitCommand extends BaseCommand {
             System.out.println(skipMessage);
         } else {
             System.out.println("  Paths unchanged.");
+        }
+    }
+
+    static final String MCP_SERVER_NAME = "isx";
+
+    private void setupMcp() {
+        startStep("Agent Access over MCP (experimental)",
+                "Lets Claude Code on this machine use isx itself: create",
+                "instances from templates you approve here, run commands",
+                "in them, and hand tasks to the Claude Code inside them.",
+                "Agents can never approve templates themselves.");
+        var prompts = Prompts.console();
+        if (prompts == null) {
+            System.out.println("  Skipped: no console. Re-run 'isx init' interactively to set this up.");
+            return;
+        }
+        setupMcp(SpawnConfig.load(), prompts, ImageDef.loadTrusted());
+    }
+
+    /**
+     * Offer to register {@code isx mcp} with Claude Code, then ask about each template that
+     * installs Claude Code (the only ones a task can be delegated to) whether agents may use it.
+     * Templates already approved by hand that do not install Claude Code are left as they are.
+     */
+    void setupMcp(SpawnConfig config, Prompts prompts, java.util.Map<String, ImageDef> defs) {
+        if (!hostHasCommand("claude")) {
+            System.out.println("  Claude Code is not installed on this host; skipping.");
+            System.out.println("  Install it and re-run 'isx init' to enable this.");
+            return;
+        }
+        var registered = claudeMcpRegistered();
+        var approved = config.mcp().templates();
+        var enabled = registered || !approved.isEmpty();
+        if (enabled) {
+            System.out.println("  Currently " + (registered ? "registered with Claude Code" : "not registered")
+                    + "; approved templates: " + (approved.isEmpty() ? "none" : String.join(", ", approved)) + ".");
+        }
+        if (!askConfirmation(prompts, "  Enable the experimental isx MCP server?", enabled)) {
+            if (registered) {
+                System.out.println("  Left as it is. To remove it: claude mcp remove --scope user " + MCP_SERVER_NAME);
+            }
+            return;
+        }
+
+        if (!registered) {
+            var isx = isxPath();
+            if (isx == null) {
+                System.out.println("  Could not find the installed isx binary; register it yourself:");
+                System.out.println("    claude mcp add --scope user " + MCP_SERVER_NAME + " -- <path to isx> mcp");
+            } else if (registerClaudeMcp(isx)) {
+                System.out.println("  " + GREEN_BOLD + "✓" + RESET + " Registered with Claude Code as '"
+                        + MCP_SERVER_NAME + "' (all projects).");
+            } else {
+                System.out.println("  Registering failed; register it yourself:");
+                System.out.println("    claude mcp add --scope user " + MCP_SERVER_NAME + " -- " + isx + " mcp");
+            }
+        }
+
+        var candidates = defs.values().stream()
+                .filter(def -> ImageDef.chain(def, defs).stream()
+                        .anyMatch(d -> d.getTools().stream().anyMatch(t -> "claude".equals(t.getName()))))
+                .map(ImageDef::getName)
+                .sorted()
+                .toList();
+        if (candidates.isEmpty()) {
+            System.out.println("  No template installs Claude Code yet (the 'claude' tool), so there is");
+            System.out.println("  none to approve. Add one, then re-run 'isx init' or edit the mcp:");
+            System.out.println("  section of " + Environment.configDir().resolve("config.yaml") + ".");
+            return;
+        }
+        System.out.println("  Approve the templates agents may create instances from:");
+        var chosen = new java.util.ArrayList<String>();
+        for (var name : candidates) {
+            var note = templateBuilt(name) ? "" : DIM + " (not built yet: isx build " + name + ")" + RESET;
+            if (askConfirmation(prompts, "    " + name + note + "?", approved.contains(name))) chosen.add(name);
+        }
+        // Keep hand-approved templates this step does not ask about, in their order.
+        var updated = new java.util.ArrayList<String>();
+        approved.stream().filter(n -> !candidates.contains(n) || chosen.contains(n)).forEach(updated::add);
+        chosen.stream().filter(n -> !updated.contains(n)).forEach(updated::add);
+        if (updated.equals(approved)) {
+            System.out.println("  Approved templates unchanged.");
+        } else {
+            var mcp = config.mcp();
+            mcp.setTemplates(updated);
+            config.setMcp(mcp);
+            config.save();
+            System.out.println("  Approved templates saved: " + (updated.isEmpty() ? "none" : String.join(", ", updated)) + ".");
+        }
+        System.out.println("  " + DIM + "Keep agents to the MCP tools with Claude Code permissions: see the" + RESET);
+        System.out.println("  " + DIM + "README section 'Delegating from an agent on your host (MCP)'." + RESET);
+    }
+
+    /** The installed isx, for Claude Code to start; null if none is found. */
+    String isxPath() {
+        return ProxyService.resolveIsxPath();
+    }
+
+    /** Whether Claude Code already knows an MCP server by this name. */
+    boolean claudeMcpRegistered() {
+        return runSilently("claude", "mcp", "get", MCP_SERVER_NAME) == 0;
+    }
+
+    /** Register {@code isx mcp} with Claude Code for every project; true on success. */
+    boolean registerClaudeMcp(String isxPath) {
+        return runSilently("claude", "mcp", "add", "--scope", "user", MCP_SERVER_NAME, "--", isxPath, "mcp") == 0;
+    }
+
+    /** Run a host command for its exit code alone, showing nothing and reading no input. */
+    private static int runSilently(String... command) {
+        try {
+            return new ProcessBuilder(command)
+                    .redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")))
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start().waitFor();
+        } catch (IOException e) {
+            return -1;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -1;
+        }
+    }
+
+    /** Whether a template has been built (exists in Incus as a base image). */
+    boolean templateBuilt(String name) {
+        try {
+            return incus != null && Metadata.TYPE_BASE.equals(Metadata.getType(incus, name));
+        } catch (RuntimeException e) {
+            return false;
         }
     }
 

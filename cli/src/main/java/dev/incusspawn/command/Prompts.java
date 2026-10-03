@@ -1,5 +1,7 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.Headless;
+
 import java.io.Console;
 
 /**
@@ -42,6 +44,8 @@ public interface Prompts {
 
     /** The process's terminal, or {@code null} when there is none (piped or detached). */
     static Prompts console() {
+        // Headless (isx mcp): stdin is the protocol stream, and a prompt would eat it.
+        if (Headless.active()) return null;
         var console = System.console();
         return console == null ? null : of(console);
     }
