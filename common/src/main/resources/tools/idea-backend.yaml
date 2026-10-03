@@ -60,3 +60,5 @@ actions:
     type: url
     expand: repos
     url: "jetbrains-gateway://connect#idePath=%2Fopt%2Fidea&host=${name}&port=22&user=agentuser&type=ssh&deploy=false&projectPath=${repo_path}"
+    shell_menu: true
+    shortcut: g

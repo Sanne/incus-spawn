@@ -9,8 +9,8 @@ import java.io.IOException;
  */
 public class YamlToolAction implements ToolAction {
 
-    private static final String TYPE_URL = "url";
-    private static final String TYPE_COMMAND = "command";
+    public static final String TYPE_URL = "url";
+    public static final String TYPE_COMMAND = "command";
     private static final String TYPE_SHELL = "shell";
     private static final String TYPE_COPY_TO_CLIPBOARD = "copy-to-clipboard";
     public static final String EXPAND_REPOS = "repos";
@@ -52,6 +52,33 @@ public class YamlToolAction implements ToolAction {
         return entry.isRequiresRunning();
     }
 
+    @Override
+    public boolean isShellMenu() {
+        return entry.isShellMenu();
+    }
+
+    @Override
+    public java.util.Optional<String> shortcut() {
+        var s = entry.getShortcut();
+        return s == null || s.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(s);
+    }
+
+    @Override
+    public java.util.Optional<String> type() {
+        var t = entry.getType();
+        return t == null || t.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(t);
+    }
+
+    @Override
+    public Object expandedFrom() {
+        return entry;
+    }
+
+    @Override
+    public java.util.Optional<String> repoPath() {
+        return repo != null ? java.util.Optional.of(repo.path()) : java.util.Optional.empty();
+    }
+
     public boolean isUrl() {
         return TYPE_URL.equals(entry.getType());
     }
@@ -78,13 +105,26 @@ public class YamlToolAction implements ToolAction {
 
     @Override
     public ActionResult execute(ActionContext context) {
+        return run(context, true);
+    }
+
+    @Override
+    public ActionResult executeWithoutPrompting(ActionContext context) {
+        // These take the terminal over; nothing that does not own it may run them.
+        if (TYPE_COMMAND.equals(entry.getType()) || TYPE_SHELL.equals(entry.getType())) {
+            return ActionResult.error("'" + entry.getLabel() + "' runs in the terminal; use isx run or the TUI");
+        }
+        return run(context, false);
+    }
+
+    private ActionResult run(ActionContext context, boolean mayPrompt) {
         var type = entry.getType();
         if (type == null || type.isBlank()) {
             return ActionResult.error("Missing action type for tool: " + toolName);
         }
 
         return switch (type) {
-            case TYPE_URL -> executeUrl(context);
+            case TYPE_URL -> executeUrl(context, mayPrompt);
             case TYPE_COMMAND -> executeCommand(context);
             case TYPE_SHELL -> ActionResult.error("Missing command for shell action: " + entry.getLabel());
             case TYPE_COPY_TO_CLIPBOARD -> executeCopyToClipboard(context);
@@ -92,13 +132,13 @@ public class YamlToolAction implements ToolAction {
         };
     }
 
-    private ActionResult executeUrl(ActionContext context) {
+    private ActionResult executeUrl(ActionContext context, boolean mayPrompt) {
         var url = interpolate(entry.getUrl(), context);
         if (url == null || url.isBlank()) {
             return ActionResult.error("Missing URL for action: " + entry.getLabel());
         }
 
-        var prereq = checkUrlPrerequisites(url);
+        var prereq = checkUrlPrerequisites(url, mayPrompt);
         if (prereq != null) {
             return prereq;
         }
@@ -234,12 +274,12 @@ public class YamlToolAction implements ToolAction {
 
     // --- URL scheme prerequisite checks ---
 
-    static ActionResult checkUrlPrerequisites(String url) {
+    static ActionResult checkUrlPrerequisites(String url, boolean mayPrompt) {
         var scheme = extractScheme(url);
         if (scheme == null) return null;
 
         return switch (scheme) {
-            case "vscode" -> checkVscodePrerequisites(url);
+            case "vscode" -> checkVscodePrerequisites(url, mayPrompt, VscodeProbe.HOST);
             case "jetbrains-gateway" -> checkGatewayPrerequisites();
             default -> null;
         };
@@ -250,16 +290,35 @@ public class YamlToolAction implements ToolAction {
         return idx > 0 ? url.substring(0, idx).toLowerCase(java.util.Locale.ROOT) : null;
     }
 
-    private static ActionResult checkVscodePrerequisites(String url) {
-        var codePath = findVscodeCli();
-        if (codePath == null && !isVscodeInstalled()) {
+    /** What the VS Code checks ask the host, so a test can answer instead. */
+    interface VscodeProbe {
+        String cli();
+        boolean installed();
+        boolean hasExtension(String cli, String extensionId);
+
+        VscodeProbe HOST = new VscodeProbe() {
+            @Override public String cli() { return findVscodeCli(); }
+            @Override public boolean installed() { return isVscodeInstalled(); }
+            @Override public boolean hasExtension(String cli, String extensionId) {
+                return isVscodeExtensionInstalled(cli, extensionId);
+            }
+        };
+    }
+
+    static ActionResult checkVscodePrerequisites(String url, boolean mayPrompt, VscodeProbe probe) {
+        var codePath = probe.cli();
+        if (codePath == null && !probe.installed()) {
             return ActionResult.error(
                     "VS Code does not appear to be installed.\n" +
                     "Install it from: https://code.visualstudio.com/");
         }
 
         if (codePath != null && url.contains("vscode-remote/ssh-remote")) {
-            if (!isVscodeExtensionInstalled(codePath, "ms-vscode-remote.remote-ssh")) {
+            if (!probe.hasExtension(codePath, "ms-vscode-remote.remote-ssh")) {
+                if (!mayPrompt) {
+                    return ActionResult.error("VS Code's 'Remote - SSH' extension is not installed: "
+                            + "install ms-vscode-remote.remote-ssh, then retry");
+                }
                 System.out.println(
                         "The VS Code 'Remote - SSH' extension is required for this action but is not installed.\n" +
                         "\nPress Enter to open VS Code and install it...");

@@ -110,7 +110,10 @@ public class BranchCommand extends BaseCommand {
                 shellPrep = shellPrep.withActionCommand(defaultCmd);
             }
         }
-        incus.interactiveShell(name, "agentuser", shellPrep);
+        var menu = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
+                RuntimeServices.toolSetups(), preflight.defs())
+                .shellMenu(name, prefetched.templateName(), prefetched.workdir());
+        incus.interactiveShell(name, "agentuser", shellPrep, menu);
         return CommandResult.SUCCESS;
     }
 

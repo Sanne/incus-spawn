@@ -252,6 +252,21 @@ public class ActionResolver {
         );
     }
 
+    /**
+     * The shell status bar's F12 menu for an instance, or {@link ShellMenu#NONE} without a single
+     * Incus request when the feature is off or the instance has no template. The menu's actions
+     * come from the context it builds, so tools and repos are collected once.
+     */
+    public ShellMenu shellMenu(String instanceName, String templateName, String workdir) {
+        if (templateName == null || templateName.isBlank() || !ShellMenu.enabled()) {
+            return ShellMenu.NONE;
+        }
+        var context = buildActionContext(instanceName, templateName);
+        var actions = resolveActionsForInstance(instanceName, templateName,
+                context.installedTools(), context.repos());
+        return ShellMenu.of(actions, workdir, context);
+    }
+
     // --- Private helpers ---
 
     /** The instance as one GET returns it, failing like {@code configGet} when Incus refuses it. */

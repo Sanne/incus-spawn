@@ -1,6 +1,10 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.tool.ActionResolver;
+import dev.incusspawn.tool.ShellMenu;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -25,7 +29,14 @@ public class ShellCommand extends BaseCommand {
         }
 
         System.out.println("Connecting to " + name + "...\n");
-        incus.interactiveShell(name, "agentuser");
+        var prep = IncusClient.ShellPrep.from(incus, name);
+        var menu = ShellMenu.NONE;
+        if (ShellMenu.enabled()) {
+            menu = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
+                    RuntimeServices.toolSetups(), ImageDef.loadAll(w -> {}))
+                    .shellMenu(name, prep.templateName(), prep.workdir());
+        }
+        incus.interactiveShell(name, "agentuser", prep, menu);
         return CommandResult.SUCCESS;
     }
 

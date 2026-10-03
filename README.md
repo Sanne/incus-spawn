@@ -883,6 +883,11 @@ Type-specific fields:
 - **`shell`**: `command` -- command to run inside the container as an interactive terminal session
 - **`copy-to-clipboard`**: `text` -- text to copy to the host clipboard
 
+Action visibility fields:
+
+- `shell_menu` -- when `true`, the action also appears in the **F12 shell status bar menu** during `isx shell` sessions (only `url` actions, which open on the host without taking over the terminal)
+- `shortcut` -- the single key that runs the action from that menu
+
 Template variables available in `label`, `url`, `command`, and `text`: `${ip}`, `${name}`, `${parent}`. When `expand: repos` is set, repo-specific variables are also available: `${repo_name}`, `${repo_path}`, `${repo_url}`.
 
 ```yaml
@@ -1204,6 +1209,14 @@ Create a new instance as a copy-on-write clone from a template or existing insta
 Open a shell in an existing instance.
 
     isx shell <instance>
+
+When the `shell-status-bar` feature is enabled, a two-line status bar is pinned at the bottom of the terminal showing the instance name, template, IP address, and network mode. Press **F12** to open a quick-action menu with shortcuts from tool actions that set `shell_menu: true`. Enable with:
+
+```yaml
+# ~/.config/incus-spawn/config.yaml
+features:
+  - shell-status-bar
+```
 
 ### `isx run`
 

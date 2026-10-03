@@ -7,6 +7,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ReadyTimeoutsConfig;
+import dev.incusspawn.tool.ShellMenu;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -418,35 +419,32 @@ public class IncusClient {
      */
     public record ShellPrep(String workdir, String shellCommand,
                             boolean autoAttachTmux, boolean autoAttachZmx,
-                            String subnetDiagnostic, boolean terminfoHandled) {
+                            String subnetDiagnostic, boolean terminfoHandled,
+                            String templateName) {
 
         public ShellPrep withActionCommand(String command) {
             return new ShellPrep(workdir, command, false, autoAttachZmx,
-                    subnetDiagnostic, terminfoHandled);
+                    subnetDiagnostic, terminfoHandled, templateName);
         }
 
         public static ShellPrep from(IncusClient incus, String container) {
-            var workdir = incus.configGet(container, Metadata.WORKDIR);
-            var shellCmd = incus.configGet(container, Metadata.SHELL_COMMAND);
-            var buildSource = incus.configGet(container, Metadata.BUILD_SOURCE);
-            var diag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
-            return new ShellPrep(
-                    workdir.isBlank() ? null : workdir,
-                    shellCmd.isBlank() ? null : shellCmd,
-                    shouldAutoAttach(buildSource, "tmux"),
-                    shouldAutoAttach(buildSource, "zmx"),
-                    diag, false);
+            // One instance read for every key: configGet costs a round trip per key.
+            var config = incus.configByPrefix(container, "");
+            return fromPrefetched(config.get(Metadata.WORKDIR), config.get(Metadata.SHELL_COMMAND),
+                    config.get(Metadata.BUILD_SOURCE),
+                    BridgeSubnetCheck.detectConflictDiagnostic(incus), false,
+                    Metadata.templateOf(config));
         }
 
         public static ShellPrep fromPrefetched(String workdir, String shellCommand,
                                                String buildSourceJson, String subnetDiagnostic,
-                                               boolean terminfoHandled) {
+                                               boolean terminfoHandled, String templateName) {
             return new ShellPrep(
                     workdir != null && !workdir.isBlank() ? workdir : null,
                     shellCommand != null && !shellCommand.isBlank() ? shellCommand : null,
                     shouldAutoAttach(buildSourceJson, "tmux"),
                     shouldAutoAttach(buildSourceJson, "zmx"),
-                    subnetDiagnostic, terminfoHandled);
+                    subnetDiagnostic, terminfoHandled, templateName);
         }
 
         private static boolean shouldAutoAttach(String buildSourceJson, String toolName) {
@@ -473,6 +471,10 @@ public class IncusClient {
     }
 
     public void interactiveShell(String container, String user, ShellPrep prep) {
+        interactiveShell(container, user, prep, ShellMenu.NONE);
+    }
+
+    public void interactiveShell(String container, String user, ShellPrep prep, ShellMenu menu) {
         System.out.print("\033]0;isx:" + container + "\007");
         System.out.flush();
 
@@ -534,11 +536,17 @@ public class IncusClient {
 
             var env = Map.of("HOME", homeDir);
 
+            ShellStatusBar statusBar = null;
+            if (ShellMenu.enabled()) {
+                statusBar = new ShellStatusBar(container, System.out);
+                statusBar.setMenuActions(menu.actions(), menu.context());
+            }
+
             for (int reconnectAttempt = 0; ; reconnectAttempt++) {
                 try {
                     var size = IncusApi.terminalSize();
                     boolean connectionLost = http().execPty(container, shellArgs, 0, 0,
-                            null, env, size[0], size[1]);
+                            null, env, size[0], size[1], statusBar);
                     if (!connectionLost) return;
                 } catch (IncusException e) {
                     if (!hasIOExceptionCause(e) || reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) throw e;

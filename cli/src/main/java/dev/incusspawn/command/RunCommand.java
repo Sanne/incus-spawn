@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.tool.ActionResolver;
+import dev.incusspawn.tool.ShellMenu;
 import dev.incusspawn.tool.ToolAction;
 import dev.incusspawn.tool.YamlToolAction;
 import org.aesh.command.CommandDefinition;
@@ -51,7 +52,9 @@ public class RunCommand extends BaseCommand {
             if (defaultAction.isEmpty()) {
                 // No default action configured, fall back to shell
                 System.out.println("No default action configured for " + name + ", opening shell...\n");
-                incus.interactiveShell(name, "agentuser");
+                var prep = dev.incusspawn.incus.IncusClient.ShellPrep.from(incus, name);
+                incus.interactiveShell(name, "agentuser", prep,
+                        resolver.shellMenu(name, parent, prep.workdir()));
                 return CommandResult.SUCCESS;
             }
             toolAction = defaultAction.get();
@@ -100,8 +103,12 @@ public class RunCommand extends BaseCommand {
             var shellCmd = cmd.get();
             var updatedPrep = new dev.incusspawn.incus.IncusClient.ShellPrep(
                     prep.workdir(), shellCmd, prep.autoAttachTmux(), prep.autoAttachZmx(),
-                    prep.subnetDiagnostic(), prep.terminfoHandled());
-            incus.interactiveShell(name, "agentuser", updatedPrep);
+                    prep.subnetDiagnostic(), prep.terminfoHandled(), prep.templateName());
+            var menu = ShellMenu.enabled()
+                    ? ShellMenu.of(resolver.resolveActionsForInstance(name, parent, installedTools, repos),
+                            prep.workdir(), context)
+                    : ShellMenu.NONE;
+            incus.interactiveShell(name, "agentuser", updatedPrep, menu);
             return CommandResult.SUCCESS;
         }
 

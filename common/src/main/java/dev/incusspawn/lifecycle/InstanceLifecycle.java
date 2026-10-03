@@ -1014,7 +1014,7 @@ public final class InstanceLifecycle {
         var subnetDiag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
         var terminfo = captureHostTerminfo();
         return new RuntimeConfig(buildSourceJson, hasSshKeys, workdir, shellCommand,
-                subnetDiag, terminfo);
+                subnetDiag, terminfo, Metadata.templateOf(config));
     }
 
     private static String captureHostTerminfo() {
@@ -1033,12 +1033,13 @@ public final class InstanceLifecycle {
 
     public record RuntimeConfig(String buildSourceJson, boolean hasSshKeys,
                                 String workdir, String shellCommand,
-                                String subnetDiagnostic, String terminfo) {
+                                String subnetDiagnostic, String terminfo,
+                                String templateName) {
 
         public IncusClient.ShellPrep toShellPrep() {
             return IncusClient.ShellPrep.fromPrefetched(
                     workdir, shellCommand, buildSourceJson, subnetDiagnostic,
-                    terminfo != null);
+                    terminfo != null, templateName);
         }
     }
 
