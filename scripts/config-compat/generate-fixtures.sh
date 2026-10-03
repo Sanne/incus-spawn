@@ -24,7 +24,7 @@ git -C "$REPO" worktree add --detach "$WORK/src" "$TAG" >/dev/null
 (cd "$WORK/src" && mvn -q -pl common -am package -DskipTests \
     && mvn -q -pl common dependency:build-classpath -Dmdep.outputFile="$WORK/cp.txt")
 
-CP="$(ls "$WORK"/src/common/target/incus-spawn-common-*.jar | grep -v sources | head -1):$(cat "$WORK/cp.txt")"
+CP="$(ls "$WORK"/src/common/target/incus-spawn-common-*.jar | grep -Ev -- "-(sources|tests)\.jar$" | head -1):$(cat "$WORK/cp.txt")"
 mkdir -p "$WORK/classes" "$OUT"
 javac -d "$WORK/classes" -cp "$CP" "$REPO/scripts/config-compat/GenerateConfigFixtures.java"
 java -cp "$WORK/classes:$CP" GenerateConfigFixtures "$OUT" "$TAG"
