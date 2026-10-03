@@ -98,7 +98,7 @@ class ArtifactCacheProxyTest {
     /** The protocols and connections HEADs arrived on. */
     static final Set<HttpVersion> headVersions = ConcurrentHashMap.newKeySet();
     static final Set<HttpConnection> headConnections = ConcurrentHashMap.newKeySet();
-    /** The connection the last HEAD arrived on, and the one a stalled HEAD was left waiting on. */
+    /** The connection the last HEAD arrived on, and the one the first stalled HEAD was left waiting on. */
     static volatile HttpConnection lastHeadConnection;
     static volatile HttpConnection stalledConnection;
     /** HEADs left to receive but never answer, like a connection that died silently. */
@@ -189,7 +189,7 @@ class ArtifactCacheProxyTest {
             headConnections.add(req.connection());
             lastHeadConnection = req.connection();
             if (headsToStall.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
-                stalledConnection = req.connection();
+                if (stalledConnection == null) stalledConnection = req.connection();
                 return;
             }
             if (headDelayMs > 0) {
@@ -795,14 +795,21 @@ class ArtifactCacheProxyTest {
         assertEquals(MitmProxy.SidecarAnswer.UNREACHABLE, confirm());
         assertTrue(proxy.inBackoff(CENTRAL), "a refused connect starts the backoff");
 
-        // Back to the address the pooled connection was made to: acquiring it needs no network I/O
+        // Back to the address the pooled connection was made to: acquiring it needs no network I/O.
+        // The read-idle timeout closes the stalled connection and the HEAD is retried on a new one,
+        // possibly at once: the idle check ticks from the last read, not from the HEAD. So the
+        // retry stalls too, or its answer would end the backoff before it is checked (#1005).
         online(CENTRAL);
-        headsToStall.set(1);
+        headsToStall.set(2);
         var stalled = confirmAsync();
         await("the HEAD to arrive", () -> stalledConnection != null);
         assertSame(pooled, stalledConnection, "the HEAD went out on the pooled connection");
         assertTrue(proxy.inBackoff(CENTRAL), "a pooled connection proves nothing until it answers");
-        stalled.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+        assertEquals(MitmProxy.SidecarAnswer.UNREACHABLE,
+                stalled.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS));
+        assertEquals(0, headsToStall.get(), "the HEAD was retried");
+        assertNotSame(pooled, lastHeadConnection, "on another connection");
+        assertTrue(proxy.inBackoff(CENTRAL), "nor does the retry's connection, until it answers");
 
         assertNotEquals(MitmProxy.SidecarAnswer.UNREACHABLE, confirm());
         assertFalse(proxy.inBackoff(CENTRAL), "an answer ends the backoff");
