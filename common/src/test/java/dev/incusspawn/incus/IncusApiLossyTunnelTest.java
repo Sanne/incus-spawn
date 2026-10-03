@@ -12,6 +12,9 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -92,6 +95,31 @@ class IncusApiLossyTunnelTest {
         server.trailingGapMillis = 60;
         assertEquals("abcdef", exec(api()).stdout(),
                 "output still in flight when /wait returns must not be truncated");
+    }
+
+    // Regression for #987: the fake decided "every fd is connected" per fd thread, so when all
+    // four registered before any of them checked, each started the command and every byte was
+    // sent four times. Real Incus starts the command once; so must the fake.
+    @Test
+    @Timeout(10)
+    void commandStartsOnceWhenEveryFdRegistersBeforeAnyChecks() {
+        server.sendCloseFrames = false;
+        server.stdout = "a";
+        server.stderr = "e";
+        server.trailingStdout = List.of("b");
+        var allRegistered = new CountDownLatch(4);
+        var raceForced = new AtomicBoolean(true);
+        server.afterFdRegistered = () -> {
+            allRegistered.countDown();
+            try {
+                if (!allRegistered.await(5, TimeUnit.SECONDS)) raceForced.set(false);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        var result = exec(api());
+        assertTrue(raceForced.get(), "every fd must have registered before any of them checked");
+        assertEquals(new IncusClient.ExecResult(0, "ab", "e"), result);
     }
 
     @Test

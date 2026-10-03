@@ -18,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -85,6 +86,11 @@ final class LossyIncusServer implements AutoCloseable {
     volatile long trailingGapMillis = 0;
     /** Keep writing stdout after completion until the client hangs up (never idle). */
     volatile boolean trickleForever = false;
+    /**
+     * Runs on each fd's server thread after it registers, before deciding whether to start the
+     * command. That fd's client frames (and PINGs) go unread while it blocks.
+     */
+    volatile Runnable afterFdRegistered = () -> { };
 
     final AtomicInteger connectionsAccepted = new AtomicInteger();
     /** "METHOD path" of every plain request that reached the server, in arrival order. */
@@ -96,6 +102,8 @@ final class LossyIncusServer implements AutoCloseable {
 
     private final Map<String, WsPeer> execFds = new ConcurrentHashMap<>();
     private volatile CountDownLatch operationDone = new CountDownLatch(1);
+    /** Claimed by whichever fd thread first sees every fd connected, so the command runs once. */
+    private final AtomicBoolean commandStarted = new AtomicBoolean();
 
     LossyIncusServer() throws IOException {
         dir = Files.createTempDirectory("lossy");
@@ -257,6 +265,7 @@ final class LossyIncusServer implements AutoCloseable {
 
     private void startOperation() {
         execFds.clear();
+        commandStarted.set(false);
         operationDone = new CountDownLatch(1);
     }
 
@@ -308,7 +317,10 @@ final class LossyIncusServer implements AutoCloseable {
             default -> "unknown";
         };
         var peer = new WsPeer(conn, out);
-        if (execFds.put(fd, peer) == null && execFds.keySet().containsAll(List.of("0", "1", "2", "control"))) {
+        execFds.put(fd, peer);
+        afterFdRegistered.run();
+        if (execFds.keySet().containsAll(List.of("0", "1", "2", "control"))
+                && commandStarted.compareAndSet(false, true)) {
             // wait-for-websocket: Incus starts the command once every fd is connected.
             Thread.ofVirtual().start(this::runCommand);
         }
