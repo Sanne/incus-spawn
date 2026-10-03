@@ -268,12 +268,13 @@ public final class ProxyService {
         ProxyLog.info("Service restarting");
         log.accept("Restarting proxy service...");
         if (Platform.isMacOS()) {
-            // Refresh a stale plist before bootstrapping it. launchd has no per-exit-code restart
-            // policy and no INVOCATION_ID, so a plist from an older build — one whose
-            // ProgramArguments are `isx proxy start` — reaches this method from inside the job it
-            // is about to bootout, and KeepAlive starts the cycle again. Rewriting first means the
-            // relaunch runs isx-proxy directly, so the loop ends after a single pass instead of
-            // needing a separate CLI invocation to break it.
+            // Refresh a stale plist before bootstrapping it: a plist from an older build — one
+            // whose ProgramArguments are `isx proxy start` rather than isx-proxy directly — would
+            // otherwise relaunch into the same binary this restart is meant to replace. This
+            // method is never reached from inside the job it would bootout: that case is
+            // isSupervisedInvocation(), which ProxyStartCommand routes to the foreground instead
+            // of here (#977) — see migrateMacOsPlistIfSupervised() for how that case still gets
+            // its plist rewritten.
             if (needsMacOsPlistUpdate()) updateMacOsProxyPlist();
             var uid = getUid();
             runQuiet("launchctl", "bootout", "gui/" + uid + "/" + PROXY_LABEL);
@@ -500,11 +501,12 @@ public final class ProxyService {
      * Waits for launchd to finish removing a job after {@code bootout} (#977). Unlike {@link
      * #waitForProxyExit}, which polls the proxy's own {@code /health}, this works for any job —
      * the VM login agent included, which answers nothing to poll — by asking {@code launchctl
-     * print} whether the target is still known at all. Up to 10s: launchd gives a process about
-     * five seconds to exit before killing it, the same bound {@code waitForProxyExit} assumes.
+     * print} whether the target is still known at all. Up to 20s: {@code launchd.plist(5)}
+     * documents 20 seconds as {@code ExitTimeOut}'s default, the longest launchd gives a job to
+     * exit on its own before killing it.
      */
     private static void waitForJobUnloaded(String target) {
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 200; i++) {
             if (!runQuiet("launchctl", "print", target)) return;
             try { Thread.sleep(100); } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -834,8 +836,8 @@ public final class ProxyService {
      */
     public static boolean isSupervisedInvocation() {
         if (Platform.isMacOS()) {
-            var pid = proxyJobPid();
-            return pid != null && pid.equals(String.valueOf(ProcessHandle.current().pid()));
+            var output = proxyJobPrintOutput();
+            return output != null && isOwnJob(output, ProcessHandle.current().pid());
         }
         var invocationId = System.getenv("INVOCATION_ID");
         if (invocationId == null || invocationId.isBlank()) return false;
@@ -843,20 +845,31 @@ public final class ProxyService {
         return shown != null && shown.contains("InvocationID=" + invocationId);
     }
 
-    /** The pid {@code launchctl print} reports for the proxy job, or null if not running or not found. */
-    private static String proxyJobPid() {
+    /** Raw {@code launchctl print} output for the proxy job, or null if not running or not found. */
+    private static String proxyJobPrintOutput() {
         try {
             var pb = new ProcessBuilder("launchctl", "print", "gui/" + getUid() + "/" + PROXY_LABEL);
             pb.redirectErrorStream(true);
             var process = pb.start();
             var output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            return process.waitFor() == 0 ? parseLaunchctlPrintPid(output) : null;
+            return process.waitFor() == 0 ? output : null;
         } catch (Exception e) {
             return null;
         }
     }
 
-    /** {@code launchctl print}'s {@code pid = N} line, for {@link #proxyJobPid()}; package-private for tests. */
+    /**
+     * Whether {@code launchctlPrintOutput}'s {@code pid = N} line names {@code ownPid} — the
+     * decision {@link #isSupervisedInvocation()} pins on macOS, separated from the process launch
+     * above so the three cases (own pid, another pid, job not running) are testable without
+     * shelling out. Package-private for tests.
+     */
+    static boolean isOwnJob(String launchctlPrintOutput, long ownPid) {
+        var pid = parseLaunchctlPrintPid(launchctlPrintOutput);
+        return pid != null && pid.equals(String.valueOf(ownPid));
+    }
+
+    /** {@code launchctl print}'s {@code pid = N} line, for {@link #isOwnJob}; package-private for tests. */
     static String parseLaunchctlPrintPid(String launchctlPrintOutput) {
         return launchctlPrintOutput.lines().map(String::strip)
                 .filter(l -> l.startsWith("pid = "))
@@ -1034,6 +1047,22 @@ public final class ProxyService {
         }
     }
 
+    /**
+     * Rewrite a stale legacy plist in place when this process is itself {@code
+     * isSupervisedInvocation()} — the one case {@link #restartLocked} can never reach, because
+     * bootout/bootstrap there would end the very job running this process (#977). No bootout or
+     * bootstrap here either, for the same reason: launchd only re-reads the file on its next load,
+     * so this only takes effect at the next login or explicit restart, not this one. Called from
+     * {@code ProxyStartCommand} on the branch that runs the proxy in the foreground instead of
+     * through the service manager.
+     */
+    public static void migrateMacOsPlistIfSupervised() {
+        if (!Platform.isMacOS()) return;
+        try (var ignored = acquireProxyLock()) {
+            if (needsMacOsPlistUpdate()) updateMacOsProxyPlist();
+        }
+    }
+
     public static boolean installMacOs() {
         var isxPath = resolveIsxPath();
         if (isxPath == null) {
@@ -1090,7 +1119,13 @@ public final class ProxyService {
         // install, or just logged in) when a reinstall reaches it; a finished one-shot job is
         // already gone by the time bootout is asked to remove it, so this returns at once then.
         waitForJobUnloaded("gui/" + uid + "/" + VM_LABEL);
-        runQuiet("launchctl", "bootstrap", "gui/" + uid, vmPlistFile().toString());
+        if (!runQuiet("launchctl", "bootstrap", "gui/" + uid, vmPlistFile().toString())) {
+            // waitForJobUnloaded gave up before launchd finished removing the old job: bootstrap
+            // fails the same "Input/output error" this all exists to avoid. Warn rather than fail
+            // outright — the proxy agent below is unaffected and still worth installing — but say
+            // so, since nothing else here would otherwise reveal that no VM login agent is loaded.
+            System.err.println("  Warning: VM service did not reinstall cleanly. Run 'isx doctor' or retry 'isx init'.");
+        }
 
         // Only the proxy agent needs the separate binary — the VM agent runs `isx vm start`, so it
         // is installed above regardless. Bailing before this point would leave a user with no

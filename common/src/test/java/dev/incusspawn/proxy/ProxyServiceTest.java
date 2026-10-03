@@ -243,6 +243,28 @@ class ProxyServiceTest {
                 """));
     }
 
+    @Test
+    void isOwnJobIsTrueWhenThePidMatches() {
+        assertTrue(ProxyService.isOwnJob(REAL_LAUNCHCTL_PRINT, 729));
+    }
+
+    @Test
+    void isOwnJobIsFalseWhenAnotherProcessHoldsTheJob() {
+        assertFalse(ProxyService.isOwnJob(REAL_LAUNCHCTL_PRINT, 730));
+    }
+
+    @Test
+    void isOwnJobIsFalseWhenTheJobIsNotRunning() {
+        assertFalse(ProxyService.isOwnJob("""
+                gui/502/dev.incusspawn.proxy = {
+                \tactive count = 1
+                \tpath = /Users/someone/Library/LaunchAgents/dev.incusspawn.proxy.plist
+                \ttype = LaunchAgent
+                \tstate = not running
+                }
+                """, 729));
+    }
+
     // --- JBang launcher scripts ---------------------------------------------------
 
     @Test
