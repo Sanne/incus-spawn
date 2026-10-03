@@ -444,9 +444,9 @@ public final class ProxyHealthCheck {
 
     public static boolean tryAutoRestart(IncusClient incus, java.util.function.Consumer<String> log) {
         if (!ProxyService.isInstalled()) return false;
-        log.accept("Proxy is not reachable, restarting service...");
-        ProxyService.restart(log);
         var addr = healthAddress(incus);
+        log.accept("Proxy is not reachable, restarting service...");
+        ProxyService.restartIfUnhealthy(addr, log);
         for (int i = 0; i < 30; i++) {
             try { Thread.sleep(500); } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

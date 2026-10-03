@@ -260,33 +260,87 @@ public final class ProxyService {
         }
     }
 
+    /**
+     * Restarts the proxy unless it is already healthy by the time the lock is held. Several
+     * {@code isx} commands finding the proxy down at once (parallel {@code isx branch}, the
+     * usual agent pattern) all reach this; without the recheck, the second one through the lock
+     * would {@code kickstart -k} a proxy the first one just brought up — on macOS blocking for
+     * the rest of {@code ThrottleInterval} and then cutting every connection of a proxy that was
+     * fine (review on #916). Re-checks under the lock, the way {@link #reinstallIfChanged}
+     * re-checks drift, rather than before it: another process could otherwise finish its own
+     * restart in the gap between this check and acquiring the lock.
+     */
+    public static boolean restartIfUnhealthy(String healthAddr, java.util.function.Consumer<String> log) {
+        return restartIfUnhealthy(healthAddr, ProxyConfig.DEFAULT_HEALTH_PORT, log);
+    }
+
+    /** {@link #restartIfUnhealthy(String, java.util.function.Consumer)} against a given port, for tests. */
+    static boolean restartIfUnhealthy(String healthAddr, int healthPort, java.util.function.Consumer<String> log) {
+        return restartIfUnhealthy(healthAddr, healthPort, log, () -> restartLocked(log));
+    }
+
+    /**
+     * As above, with the restart itself replaceable. A test proving the health recheck skips a
+     * restart it never reaches only needs a stub here, not the real {@code launchctl}/{@code
+     * systemctl} — which a regression in that recheck would otherwise run against whatever
+     * service is actually installed on the machine running the test (review on #916).
+     */
+    static boolean restartIfUnhealthy(String healthAddr, int healthPort, java.util.function.Consumer<String> log,
+                                       java.util.function.BooleanSupplier restart) {
+        try (var ignored = acquireProxyLock()) {
+            if (ProxyHealthCheck.isHealthy(healthAddr, healthPort)) return true;
+            return restart.getAsBoolean();
+        }
+    }
+
     private static boolean restartLocked() {
-        return restartLocked(System.err::println);
+        return restartLocked(System.err::println, false);
     }
 
     private static boolean restartLocked(java.util.function.Consumer<String> log) {
+        return restartLocked(log, false);
+    }
+
+    /**
+     * @param forceReload the caller already knows the loaded job may not match disk — a drift
+     *                     repair ({@link #reinstallIfChanged}) or an upgrade ({@link
+     *                     #upgradeIfNeeded}) — so launchd must always re-read the plist. Left
+     *                     false, only a plist this restart itself finds stale forces that: {@code
+     *                     kickstart -k} never re-reads the plist, so any other cause of a
+     *                     loaded/disk mismatch (a Ctrl-C between a write and the {@code bootout}
+     *                     below, a failed {@code bootout}, an install interrupted after writing
+     *                     the plist but before this restart) would otherwise last until the next
+     *                     login (review on #916).
+     */
+    private static boolean restartLocked(java.util.function.Consumer<String> log, boolean forceReload) {
         ProxyLog.info("Service restarting");
         log.accept("Restarting proxy service...");
+        boolean restarted;
         if (Platform.isMacOS()) {
-            // Refresh a stale plist before bootstrapping it. launchd has no per-exit-code restart
+            // Refresh a stale plist before loading it. launchd has no per-exit-code restart
             // policy and no INVOCATION_ID, so a plist from an older build — one whose
             // ProgramArguments are `isx proxy start` — reaches this method from inside the job it
-            // is about to bootout, and KeepAlive starts the cycle again. Rewriting first means the
-            // relaunch runs isx-proxy directly, so the loop ends after a single pass instead of
-            // needing a separate CLI invocation to break it.
-            if (needsMacOsPlistUpdate()) updateMacOsProxyPlist();
-            var uid = getUid();
-            runQuiet("launchctl", "bootout", "gui/" + uid + "/" + PROXY_LABEL);
-            waitForProxyExit();
-            runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
+            // is about to unload, and KeepAlive starts the cycle again. Rewriting first means
+            // whatever loads the job next runs isx-proxy directly. That is not this process:
+            // unloading its own job ends it before it can load the job again, so the loop stops
+            // and the proxy stays down until the next isx command or login starts it.
+            // forceReload callers have already decided to restart for their own reason — a
+            // stale plist (upgradeIfNeeded), or health-assessed drift needsMacOsPlistUpdate()
+            // itself said nothing about (reinstallIfChanged, review on #916). Writing directly
+            // here, instead of asking refreshStaleMacOsPlist's own comparison again, means a
+            // restart they already committed to is never second-guessed by a check that would
+            // say "nothing to do" in the second case.
+            var rewrote = forceReload ? writeMacOsPlist() : refreshStaleMacOsPlist();
+            restarted = proxyJob().restart(forceReload || rewrote, log).up();
         } else {
             // A unit halted by RestartPreventExitStatus sits in 'failed' state, and repeated
             // restart attempts can trip systemd's start rate limit — reset makes recovery
             // unconditional once the user has fixed the config. No-op when the unit is healthy.
             runQuiet("systemctl", "--user", "reset-failed", SERVICE_NAME);
             runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
+            restarted = isActive();
         }
-        if (isActive()) {
+        if (restarted) {
             log.accept("Proxy service restarted.");
             return true;
         }
@@ -303,14 +357,9 @@ public final class ProxyService {
         if (isActive()) return true;
         try (var ignored = acquireProxyLock()) {
             if (isActive()) return true;
-            if (Platform.isMacOS()) {
-                var uid = getUid();
-                runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
-                runQuiet("launchctl", "kickstart", "gui/" + uid + "/" + PROXY_LABEL);
-            } else {
-                runQuiet("systemctl", "--user", "reset-failed", SERVICE_NAME);
-                runQuiet("systemctl", "--user", "start", SERVICE_NAME);
-            }
+            if (Platform.isMacOS()) return proxyJob().start(System.err::println).up();
+            runQuiet("systemctl", "--user", "reset-failed", SERVICE_NAME);
+            runQuiet("systemctl", "--user", "start", SERVICE_NAME);
             return isActive();
         }
     }
@@ -374,10 +423,12 @@ public final class ProxyService {
             if (!needsReinstall) needsReinstall = ProxyHealthCheck.assessDrift(info).restartHelps();
 
             if (needsReinstall) {
-                if (Platform.isMacOS()) {
-                    updateMacOsProxyPlist();
-                }
-                var restarted = restartLocked();
+                // Always reload on macOS: the plist on disk may already match what this build
+                // would write even though the loaded job does not (review on #916) — e.g. drift
+                // was assessed from a health signal, not from needsMacOsPlistUpdate() above, so
+                // there is nothing here to tell restartLocked the loaded job is stale except
+                // saying so directly.
+                var restarted = restartLocked(System.err::println, true);
                 // The service files now exec proxyBin, so this records the binary the service
                 // really restarted onto. A bare restart() may still exec a binary from a previous
                 // installation, which says nothing about this one, so it records nothing.
@@ -471,9 +522,12 @@ public final class ProxyService {
                 if (resolveProxyBinaryPath() == null && haltUnusableMacOsServiceLocked()) {
                     return;
                 }
+                // Forcing the reload here is also what lets restartLocked skip asking
+                // needsMacOsPlistUpdate() a second time: it already answered yes, right above.
                 if (needsMacOsPlistUpdate()) {
-                    updateMacOsProxyPlist();
-                    if (restartLocked()) DriftRestartRecord.write(resolveProxyBinaryPath());
+                    if (restartLocked(System.err::println, true)) {
+                        DriftRestartRecord.write(resolveProxyBinaryPath());
+                    }
                 }
                 return;
             }
@@ -482,16 +536,6 @@ public final class ProxyService {
                 System.out.println("Updated proxy service configuration.");
                 runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
                 if (isActive()) DriftRestartRecord.write(proxyBin);
-            }
-        }
-    }
-
-    private static void waitForProxyExit() {
-        for (int i = 0; i < 30; i++) {
-            if (!ProxyHealthCheck.isHealthy("127.0.0.1")) return;
-            try { Thread.sleep(200); } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
             }
         }
     }
@@ -922,12 +966,8 @@ public final class ProxyService {
 
     public static boolean isMacOsServiceActive() {
         try {
-            var pb = new ProcessBuilder("launchctl", "print", "gui/" + getUid() + "/" + PROXY_LABEL);
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            process.getInputStream().readAllBytes();
-            return process.waitFor() == 0;
-        } catch (Exception e) {
+            return proxyJob().isLoaded();
+        } catch (RuntimeException e) {
             return false;
         }
     }
@@ -977,14 +1017,30 @@ public final class ProxyService {
         }
     }
 
-    private static void updateMacOsProxyPlist() {
+    /**
+     * Rewrites the plist when it is not what this build would write, and reports whether the
+     * job now needs to reload it. False on a write failure too — a caller that read true back
+     * as "reload" would have launchd re-read a plist that, in fact, did not change (review on
+     * #916). The one caller that writes the plist without asking this is {@link #restartLocked}'s
+     * {@code forceReload} branch, which already knows to reload for a reason this comparison
+     * cannot see (health-assessed drift, in {@link #reinstallIfChanged}) and would otherwise be
+     * told "nothing changed" by it.
+     */
+    private static boolean refreshStaleMacOsPlist() {
+        return needsMacOsPlistUpdate() && writeMacOsPlist();
+    }
+
+    /** Writes the plist this build would generate. Returns whether the write succeeded. */
+    private static boolean writeMacOsPlist() {
         var proxyBin = resolveProxyBinaryPath();
-        if (proxyBin == null) return;
+        if (proxyBin == null) return false;
         try {
             Files.createDirectories(proxyPlistFile().getParent());
             Files.writeString(proxyPlistFile(), generateProxyPlist(proxyBin));
+            return true;
         } catch (IOException e) {
             System.err.println("Warning: could not update proxy plist: " + e.getMessage());
+            return false;
         }
     }
 
@@ -1049,13 +1105,6 @@ public final class ProxyService {
             haltUnusableMacOsServiceLocked();
             return false;
         }
-        try {
-            Files.writeString(proxyPlistFile(), generateProxyPlist(proxyBin));
-        } catch (IOException e) {
-            System.err.println("Failed to write proxy plist: " + e.getMessage());
-            return false;
-        }
-
         // Configure bridge DNS now (from Terminal) so the launchd proxy service
         // doesn't need to reach the Incus VM API at startup — macOS Sequoia blocks
         // local network access from ad-hoc-signed binaries under launchd.
@@ -1068,10 +1117,29 @@ public final class ProxyService {
         }
 
         System.out.println("  Installing proxy service...");
-        runQuiet("launchctl", "bootout", "gui/" + uid, proxyPlistFile().toString());
-        waitForProxyExit();
-        runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
+        // Written only now, right before it is loaded: restartLocked takes a plist that is
+        // current on disk for the one the job runs, so the two must not be left apart by an
+        // install that stops in between.
+        try {
+            Files.writeString(proxyPlistFile(), generateProxyPlist(proxyBin));
+        } catch (IOException e) {
+            System.err.println("Failed to write proxy plist: " + e.getMessage());
+            return false;
+        }
+        // A reinstall over a loaded job is a restart with a new plist, with the same teardown
+        // to wait for (see LaunchdJob).
+        var outcome = proxyJob().restart(true, message -> System.err.println("  " + message));
 
+        if (outcome == LaunchdJob.Outcome.STILL_UNLOADING) {
+            // Named by LaunchdJob itself, not guessed from isActive(): that alone cannot tell
+            // this apart from a restart that loaded fine and is merely unhealthy, which isActive()
+            // would read the same way and report as generic "not responding" below (review on
+            // #916) — wrong, since nothing here was actually loaded when the install started.
+            ProxyLog.info("Service installed, restart did not complete");
+            System.err.println("  Services installed, but the previous job had not finished unloading.");
+            System.err.println("  It may not come back on its own; check: isx proxy status");
+            return false;
+        }
         if (isActive()) {
             if (ProxyHealthCheck.awaitHealthy(5)) {
                 ProxyLog.info("Service installed and running");
@@ -1096,6 +1164,37 @@ public final class ProxyService {
         try { Files.deleteIfExists(proxyPlistFile()); } catch (IOException ignored) {}
         try { Files.deleteIfExists(vmPlistFile()); } catch (IOException ignored) {}
         System.out.println("  macOS services uninstalled.");
+    }
+
+    private static LaunchdJob proxyJob() {
+        return new LaunchdJob(ProxyService::launchctl, ProxyService::pauseBetweenPolls,
+                "gui/" + getUid(), PROXY_LABEL, proxyPlistFile());
+    }
+
+    private static LaunchdJob.Result launchctl(String... args) {
+        var command = new ArrayList<String>();
+        command.add("launchctl");
+        command.addAll(List.of(args));
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes());
+            return new LaunchdJob.Result(process.waitFor(), output);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new LaunchdJob.Result(-1, "interrupted");
+        } catch (IOException e) {
+            return new LaunchdJob.Result(-1, e.getMessage());
+        }
+    }
+
+    private static void pauseBetweenPolls() {
+        try {
+            Thread.sleep(LaunchdJob.POLL_MILLIS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static String getUid() {

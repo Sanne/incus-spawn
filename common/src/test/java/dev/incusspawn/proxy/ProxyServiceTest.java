@@ -200,6 +200,42 @@ class ProxyServiceTest {
                 "launchd KeepAlive plus `isx proxy start` is the same self-restart loop");
     }
 
+    /**
+     * Review on #916: several `isx` commands finding the proxy down at once must not each
+     * restart it — the second one through the lock would {@code kickstart -k} (or, on macOS,
+     * bootout+bootstrap) a proxy the first one just brought up.
+     */
+    @Test
+    void restartIfUnhealthyDoesNotRestartAnAlreadyHealthyProxy() throws Exception {
+        var server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/health", exchange -> {
+            var body = "{\"status\":\"ok\"}".getBytes();
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        // acquireProxyLock() reads user.home itself; isolated here, as DriftRestartRecordTest
+        // does, so this never waits on or corrupts a real ~/.config/incus-spawn/proxy.lock.
+        var originalHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            var log = new java.util.ArrayList<String>();
+            // The restart action itself is a stub that fails the test if ever reached, rather
+            // than the real launchctl/systemctl restartLocked() would call: were the recheck
+            // this test pins to regress, a bare restartIfUnhealthy(...) call would restart
+            // whatever service is actually installed on the machine running the test (review
+            // on #916 — hit on the Mac runner while verifying this very test by reverting the fix).
+            assertTrue(ProxyService.restartIfUnhealthy("127.0.0.1", server.getAddress().getPort(), log::add,
+                    () -> fail("already healthy: must not have restarted")));
+            assertEquals(java.util.List.of(), log, "already healthy: nothing should have been restarted");
+        } finally {
+            System.setProperty("user.home", originalHome);
+            server.stop(0);
+        }
+    }
+
     // --- JBang launcher scripts ---------------------------------------------------
 
     @Test
