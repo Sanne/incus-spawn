@@ -45,9 +45,10 @@ valid_pool() {
     return 0
 }
 
-# One line per connection: "<verb> [arg] [opt]". arg and opt are optional and only consumed by
-# verbs that declare them (the btrfs-* verbs); both are always validated before use.
-read -r verb arg opt || exit 0
+# One line per connection: "<verb> [arg] [opt] [extra]". arg, opt and extra are optional and only
+# consumed by verbs that declare them (the btrfs-* verbs); all three are always validated before
+# use. For the btrfs-* verbs, arg is always the pool name.
+read -r verb arg opt extra || exit 0
 
 case "$verb" in
     ping)
@@ -147,6 +148,71 @@ case "$verb" in
             echo running
         else
             echo "error: $out"
+        fi
+        ;;
+    btrfs-orphan-delete)
+        # Removes one orphaned subvolume so the rest of the pool is untouched (#874) — isx
+        # doctor's only destructive-but-targeted alternative to wiping the whole pool with
+        # 'isx vm reset'.
+        valid_pool "$arg" || exit 0
+        case "$opt" in
+            containers) itype=container ;;
+            virtual-machines) itype=virtual-machine ;;
+            *) echo "error: bad kind"; exit 0 ;;
+        esac
+        # A leading '.' or '-' is rejected outright, not just filtered by charset: '.' and '..'
+        # are themselves valid A-Za-z0-9._- strings, and '..' resolved by 'btrfs subvolume
+        # delete -R' against the pool root deletes every instance, image and snapshot on it
+        # (review on #874 -- the pool root is itself a btrfs subvolume, so 'subvolume show'
+        # accepts it, and nothing is ever named '..' so the Incus re-check below passes too).
+        case "$extra" in
+            ''|.*|-*|*[!A-Za-z0-9._-]*) echo "error: bad name"; exit 0 ;;
+        esac
+        name="$extra"
+        path="$POOL_MOUNT_PREFIX/$arg/$opt/$name"
+        # Not "path exists": Incus 6.23 recreates a plain directory (with backup.yaml) at a
+        # dangling record's path whenever it rewrites that record, and that is not this
+        # orphan's data.
+        btrfs subvolume show "$path" >/dev/null 2>&1 || { echo "error: not a subvolume"; exit 0; }
+        # Re-check here, inside the VM, that nothing in Incus -- any project -- still
+        # references this name: a separate trust boundary from whatever the host's own scan
+        # claims. On disk, a non-default project's subvolume is "<project>_<name>", so each
+        # project's bare names are joined back onto its prefix before comparing against $name.
+        # 'incus project list' marks the active project "<name> (current)", even with -f csv;
+        # stripped here, or the unquoted word-split loop below also iterates "(current)" as a
+        # project of its own and every 'incus' call against it fails (review on #874).
+        projects=$(incus project list -f csv -c n 2>/dev/null | sed 's/ (current)$//')
+        if [ $? -ne 0 ] || [ -z "$projects" ]; then
+            echo "error: could not list projects"
+            exit 0
+        fi
+        found=
+        for proj in $projects; do
+            prefix=
+            [ "$proj" = default ] || prefix="${proj}_"
+            insts=$(incus list --project "$proj" -f csv -c n 2>/dev/null)
+            [ $? -eq 0 ] || { echo "error: could not list instances"; exit 0; }
+            for inst in $insts; do
+                [ "$prefix$inst" = "$name" ] && { found=1; break; }
+            done
+            [ -n "$found" ] && break
+            # 'storage volume list' has no --type flag (review on #874, confirmed against Incus
+            # 6.23): the type is a positional filter, before --project.
+            vols=$(incus storage volume list "$arg" "type=$itype" --project "$proj" -f csv -c n 2>/dev/null)
+            [ $? -eq 0 ] || { echo "error: could not list volumes"; exit 0; }
+            for vol in $vols; do
+                [ "$prefix$vol" = "$name" ] && { found=1; break; }
+            done
+            [ -n "$found" ] && break
+        done
+        if [ -n "$found" ]; then
+            echo "error: still referenced by Incus"
+            exit 0
+        fi
+        if btrfs subvolume delete -R "$path" >/dev/null 2>&1; then
+            echo deleted
+        else
+            echo "error: delete failed"
         fi
         ;;
     *)
