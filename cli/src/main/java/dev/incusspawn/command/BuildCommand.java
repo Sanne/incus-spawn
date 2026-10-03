@@ -1775,7 +1775,8 @@ public class BuildCommand extends BaseCommand {
                 "done; " +
                 "mkdir -p /usr/share/man/man{1,2,3,4,5,6,7,8,9}; " +
                 // Write a temporary DHCP network config for systemd-networkd to use during the build.
-                // Branches replace this with a static config at creation time.
+                // Branches replace this with a static config at creation time. Containers only:
+                // Incus names a container's NIC eth0, a VM's keeps its own name (#997).
                 "mkdir -p /etc/systemd/network; " +
                 "printf '[Match]\\nName=eth0\\n\\n[Network]\\nDHCP=ipv4\\n\\n[DHCPv4]\\nUseDNS=no\\n' " +
                 "> /etc/systemd/network/10-eth0.network; " +
@@ -2520,6 +2521,7 @@ public class BuildCommand extends BaseCommand {
         BuildOutput.stepDone();
     }
 
+    /** Containers only: their NIC is eth0, a VM's is not (see InstanceLifecycle.addressUpCheck). */
     private void waitForIpv4(Container container) {
         BuildOutput.stepStart("Waiting for network...");
         var result = container.sh(

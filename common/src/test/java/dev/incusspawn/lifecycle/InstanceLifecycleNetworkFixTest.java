@@ -19,7 +19,7 @@ class InstanceLifecycleNetworkFixTest {
     @Test
     void fixStaticIpIfNeeded_noStaticIp_returnsFalse() {
         var incus = mock(IncusClient.class);
-        when(incus.configGet("test", Metadata.STATIC_IP)).thenReturn("");
+        when(incus.configByPrefix("test", "")).thenReturn(Map.of(Metadata.STATIC_IP, ""));
 
         assertFalse(InstanceLifecycle.fixStaticIpIfNeeded(incus, "test"));
         verify(incus, never()).deviceConfigSet(any(), any(), any(), any());
@@ -28,7 +28,7 @@ class InstanceLifecycleNetworkFixTest {
     @Test
     void fixStaticIpIfNeeded_ipOnCurrentSubnet_returnsFalse() {
         var incus = mock(IncusClient.class);
-        when(incus.configGet("test", Metadata.STATIC_IP)).thenReturn("172.20.0.5");
+        when(incus.configByPrefix("test", "")).thenReturn(Map.of(Metadata.STATIC_IP, "172.20.0.5"));
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.20.0.1/24");
 
         assertFalse(InstanceLifecycle.fixStaticIpIfNeeded(incus, "test"));
@@ -38,7 +38,7 @@ class InstanceLifecycleNetworkFixTest {
     @Test
     void fixStaticIpIfNeeded_ipOnStaleSubnet_reallocates() {
         var incus = mock(IncusClient.class);
-        when(incus.configGet("test", Metadata.STATIC_IP)).thenReturn("172.20.0.5");
+        when(incus.configByPrefix("test", "")).thenReturn(Map.of(Metadata.STATIC_IP, "172.20.0.5"));
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.21.0.1/24");
 
         // StaticIpAllocator.claim needs these
@@ -61,7 +61,7 @@ class InstanceLifecycleNetworkFixTest {
     @Test
     void fixStaticIpIfNeeded_proxyOnly_updatesProxyGateway() {
         var incus = mock(IncusClient.class);
-        when(incus.configGet("test", Metadata.STATIC_IP)).thenReturn("172.20.0.5");
+        when(incus.configByPrefix("test", "")).thenReturn(Map.of(Metadata.STATIC_IP, "172.20.0.5"));
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.21.0.1/24");
         when(incus.listJsonConfig()).thenReturn("[]");
         when(incus.findNicDeviceName("test", "incusbr0")).thenReturn("eth0");
@@ -78,7 +78,7 @@ class InstanceLifecycleNetworkFixTest {
     @Test
     void fixStaticIpIfNeeded_vm_skipsFilePush() {
         var incus = mock(IncusClient.class);
-        when(incus.configGet("test", Metadata.STATIC_IP)).thenReturn("172.20.0.5");
+        when(incus.configByPrefix("test", "")).thenReturn(Map.of(Metadata.STATIC_IP, "172.20.0.5"));
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.21.0.1/24");
         when(incus.listJsonConfig()).thenReturn("[]");
         when(incus.findNicDeviceName("test", "incusbr0")).thenReturn("eth0");
@@ -88,6 +88,9 @@ class InstanceLifecycleNetworkFixTest {
         assertTrue(InstanceLifecycle.fixStaticIpIfNeeded(incus, "test"));
 
         verify(incus, never()).filePush(any(), eq("test"), any());
+        // ...so the file is pushed once the VM runs (#997)
+        verify(incus).configSetAll(eq("test"), argThat(map ->
+                "true".equals(map.get(Metadata.NETWORK_PUSH_PENDING))));
     }
 
     @Test

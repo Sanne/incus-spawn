@@ -34,6 +34,12 @@ public final class Metadata {
     public static final String STATIC_IP = PREFIX + "static-ip";
     public static final String STATIC_GATEWAY = PREFIX + "static-gateway";
     /**
+     * Set on a VM whose address was reassigned while its {@code .network} file could not be
+     * pushed (that needs the running agent); cleared once it is. Until then the guest would come
+     * up on the old address, which the NIC's IP filtering drops.
+     */
+    public static final String NETWORK_PUSH_PENDING = PREFIX + "network-push-pending";
+    /**
      * The {@link IncusClient#pid} of the boot isx last restarted a VM into because its agent did
      * not answer. Unresponsive again on that same boot, the VM is reported rather than restarted
      * a second time (#843).
