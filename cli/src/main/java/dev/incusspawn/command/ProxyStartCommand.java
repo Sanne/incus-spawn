@@ -48,8 +48,8 @@ public class ProxyStartCommand extends BaseCommand {
         // execs `isx proxy start` directly, so this guard is what stops that on an installation
         // that predates it pointing straight at isx-proxy. It is checked last because it can fork
         // `systemctl`/`launchctl`, which the two cheap predicates often make unnecessary.
-        var serviceManaged = ProxyService.isInstalled() && !hasNonDefaultOptions()
-                && !ProxyService.isSupervisedInvocation();
+        var supervised = ProxyService.isSupervisedInvocation();
+        var serviceManaged = ProxyService.isInstalled() && !hasNonDefaultOptions() && !supervised;
 
         // Answering "it is already running" needs no binary — keep that answer available to the
         // scripts that call this command idempotently, even where isx-proxy cannot be located
@@ -101,6 +101,11 @@ public class ProxyStartCommand extends BaseCommand {
             System.err.println("Proxy service failed to start. Check logs with: isx proxy logs");
             return CommandResult.FAILURE;
         }
+
+        // A legacy plist is never rewritten by restartLocked when this process runs supervised —
+        // that would bootout the very job running it (#977) — so this is the only chance to fix it
+        // before the next login finds it stale again.
+        if (supervised) ProxyService.migrateMacOsPlistIfSupervised();
 
         var cmd = new ArrayList<String>();
         cmd.add(proxyBin);
