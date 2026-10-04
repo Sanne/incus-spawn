@@ -194,6 +194,52 @@ class DelegationToolsTest {
         assertTrue(backend.scripts.stream().anyMatch(s -> s.contains("--unit=isx-task-" + task + "-2")));
     }
 
+    private String agentInstance() {
+        return backend.instances.keySet().stream().filter(n -> n.startsWith("mcp-")).findFirst().orElseThrow();
+    }
+
+    @Test
+    void aRunningTaskBlocksAStopUnlessForcedWhichCancelsItFirst() throws Exception {
+        var task = delegateFresh();
+        var instance = agentInstance();
+        var refused = call("stop_instance", "{\"instance\":\"" + instance + "\"}");
+        assertTrue(refused.path("isError").asBoolean());
+        assertTrue(text(refused).contains(task), text(refused));
+        assertFalse(backend.stopped.contains(instance));
+
+        var forced = call("stop_instance", "{\"instance\":\"" + instance + "\",\"force\":true}");
+        assertFalse(forced.path("isError").asBoolean(), text(forced));
+        assertTrue(backend.stopped.contains(instance));
+        assertTrue(backend.scripts.stream().anyMatch(sc -> sc.contains("systemctl stop isx-task-" + task)),
+                "the task was cancelled before the stop");
+        assertTrue(tasks.all().stream().noneMatch(Tasks.Task::busy), "no task is left recorded as running");
+    }
+
+    @Test
+    void aFinishedTaskDoesNotBlockAStop() throws Exception {
+        delegateFresh();
+        taskState = "finished";
+        var r = call("stop_instance", "{\"instance\":\"" + agentInstance() + "\"}");
+        assertFalse(r.path("isError").asBoolean(), text(r));
+    }
+
+    @Test
+    void aStoppedInstanceIsReachedOnlyAfterStartInstance() throws Exception {
+        var task = delegateFresh();
+        taskState = "finished";
+        var instance = agentInstance();
+        call("stop_instance", "{\"instance\":\"" + instance + "\"}");
+        for (var r : List.of(call("exec", "{\"instance\":\"" + instance + "\",\"command\":\"ls\"}"),
+                call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance + "\"}"),
+                call("task_result", "{\"task_id\":\"" + task + "\"}"))) {
+            assertTrue(r.path("isError").asBoolean());
+            assertTrue(text(r).contains("start_instance"), text(r));
+        }
+        assertFalse(call("start_instance", "{\"instance\":\"" + instance + "\"}").path("isError").asBoolean());
+        assertFalse(backend.stopped.contains(instance));
+        assertFalse(call("task_result", "{\"task_id\":\"" + task + "\"}").path("isError").asBoolean());
+    }
+
     /** The run script inside a launch, which travels base64-encoded. */
     private String runScript(int run) {
         var launch = backend.scripts.stream().filter(sc -> sc.contains("isx-task-") && sc.contains("-" + run + " --"))

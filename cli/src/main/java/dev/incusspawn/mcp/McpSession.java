@@ -225,6 +225,18 @@ final class McpSession {
     }
 
     /**
+     * {@link #requireOwned}, for a tool that runs something in the instance: refused, saying how
+     * to start it, while it is stopped.
+     */
+    Map<String, String> requireRunning(String name) {
+        var metadata = requireOwned(name);
+        if (InstanceBackend.stopped(metadata)) {
+            throw new ToolError("'" + name + "' is stopped. Start it with start_instance first.");
+        }
+        return metadata;
+    }
+
+    /**
      * Take over one of this host user's instances from the session that held it. Refused for an
      * instance kept for the user, for one another user's session made, and -- unless
      * {@code force} -- for one whose session is still running, which would lose it mid-work.

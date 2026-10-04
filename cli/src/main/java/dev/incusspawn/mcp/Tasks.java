@@ -88,7 +88,7 @@ final class Tasks {
         tasks.values().removeIf(t -> !session.holds(t.instance()));
     }
 
-    /** This session's task, after checking the session still owns its instance. */
+    /** This session's task, after checking the session still owns its instance and it is running. */
     Owned require(String id) {
         Task task;
         synchronized (this) {
@@ -98,7 +98,7 @@ final class Tasks {
             throw new ToolError("no task '" + id + "' in this session. Tasks are listed by list_instances; "
                     + "a task of an instance another session held becomes yours with adopt_instance.");
         }
-        return new Owned(task, session.requireOwned(task.instance()));
+        return new Owned(task, session.requireRunning(task.instance()));
     }
 
     /** Start a background command in {@code instance}, which the caller checked is owned. */
@@ -230,6 +230,14 @@ final class Tasks {
             if (ordered.containsValue("done") || System.nanoTime() >= deadline || ctx.cancelled()) return ordered;
             ctx.progress(watched.size() + " task(s) still running");
             Thread.sleep(2000);
+        }
+    }
+
+    /** The tasks of {@code instance} still running, after asking the instance which have finished. */
+    List<Task> busyIn(String instance) {
+        refreshStates();
+        synchronized (this) {
+            return tasks.values().stream().filter(t -> t.busy() && t.instance().equals(instance)).toList();
         }
     }
 

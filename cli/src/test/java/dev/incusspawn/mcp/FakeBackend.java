@@ -96,6 +96,16 @@ class FakeBackend implements InstanceBackend {
         return true;
     }
 
+    @Override
+    public void stop(String name) {
+        stopped.add(name);
+    }
+
+    @Override
+    public void start(String name) {
+        stopped.remove(name);
+    }
+
     volatile int proxyRefreshes;
 
     @Override

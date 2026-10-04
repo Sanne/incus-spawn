@@ -71,6 +71,18 @@ interface InstanceBackend {
      */
     boolean destroyIfHeldBy(String name, String session);
 
+    /**
+     * Stop a running instance, as the TUI does, under its {@link dev.incusspawn.incus.Metadata#OP_STOPPING}
+     * lock. Throws {@link ToolError} when another isx process holds the lock or the stop fails.
+     */
+    void stop(String name);
+
+    /**
+     * Start a stopped instance as {@code isx shell} would before opening a shell: proxy check,
+     * static IP and CA repair, then the start. Throws {@link ToolError} on refusal.
+     */
+    void start(String name);
+
     /** Tell the proxy instances went away, so a reused address never maps to one of them. */
     void refreshProxy();
 

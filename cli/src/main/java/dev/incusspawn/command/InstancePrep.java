@@ -29,18 +29,49 @@ public class InstancePrep {
      * @return the parent template name, or null if validation fails
      */
     public static String prepareInstance(IncusClient incus, String name) {
-        if (!incus.exists(name)) {
-            System.err.println("Error: no instance named '" + name + "' found.");
-            System.err.println("Run 'isx list' to see available instances.");
+        String templateName;
+        try {
+            templateName = prepare(incus, name, System.out::println);
+        } catch (Refused e) {
+            if (!e.reported()) e.getMessage().lines().forEach(l -> System.err.println(l));
             return null;
+        }
+        GuiPassthrough.checkGuiHealth(incus, name);
+        return templateName;
+    }
+
+    /** Why {@link #prepare} refused, as lines for the user; {@code reported} when already printed. */
+    public static final class Refused extends RuntimeException {
+        private final boolean reported;
+
+        Refused(String message, boolean reported) {
+            super(message);
+            this.reported = reported;
+        }
+
+        public boolean reported() {
+            return reported;
+        }
+    }
+
+    /**
+     * {@link #prepareInstance} without the GUI check, for a caller with no terminal ({@code isx
+     * mcp}'s {@code start_instance}): refuses by throwing {@link Refused} rather than printing and
+     * returning null. Progress from the start goes to {@code say}.
+     *
+     * @return the leaf template the instance descends from
+     */
+    public static String prepare(IncusClient incus, String name, java.util.function.Consumer<String> say) {
+        if (!incus.exists(name)) {
+            throw new Refused("Error: no instance named '" + name + "' found.\n"
+                    + "Run 'isx list' to see available instances.", false);
         }
 
         // Validate parent template before any side effects
         var parent = incus.configGet(name, Metadata.PARENT);
         if (parent == null || parent.isEmpty()) {
-            System.err.println("Error: instance '" + name + "' has no parent template.");
-            System.err.println("This does not appear to be an incus-spawn managed instance.");
-            return null;
+            throw new Refused("Error: instance '" + name + "' has no parent template.\n"
+                    + "This does not appear to be an incus-spawn managed instance.", false);
         }
 
         // Prefer PROFILE (always the leaf template name) for chain resolution;
@@ -51,7 +82,9 @@ public class InstancePrep {
         var networkMode = incus.configGet(name, Metadata.NETWORK_MODE);
         var machineType = incus.machineType(name);
         if (!NetworkMode.AIRGAP.name().equals(networkMode)) {
-            if (!ProxyHealthCheck.checkOrWarn(incus)) return null;
+            if (!ProxyHealthCheck.checkOrWarn(incus)) {
+                throw new Refused("the isx proxy is not running; run 'isx doctor' to diagnose.", true);
+            }
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();
             fixStaticIpMismatch(incus, name, machineType);
@@ -60,10 +93,8 @@ public class InstancePrep {
         }
 
         // Read after the repair above, so a VM it just reassigned is seen to owe its file
-        InstanceLifecycle.ensureReady(incus, name, incus.instanceMetadata(name), machineType,
-                System.out::println);
+        InstanceLifecycle.ensureReady(incus, name, incus.instanceMetadata(name), machineType, say);
 
-        GuiPassthrough.checkGuiHealth(incus, name);
         InstanceLifecycle.reconcileAccountIdentities(incus, name);
 
         return templateName;

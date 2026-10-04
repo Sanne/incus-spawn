@@ -216,6 +216,24 @@ final class McpTools {
                 Schema.object().string("instance", "Instance name", true).build(),
                 McpTool.annotations(false, true, true),
                 (args, ctx) -> destroyInstance(args)));
+        tools.add(new McpTool("stop_instance",
+                "Stop one of your instances, e.g. to fork it with create_instance from_instance: a "
+                        + "stopped instance is copied exactly as it is on disk. Its files stay; running "
+                        + "processes end. Refused while one of its tasks runs, unless force, which "
+                        + "cancels them first. Start it again with start_instance.",
+                Schema.object()
+                        .string("instance", "Instance name, from create_instance", true)
+                        .bool("force", "Cancel its running tasks and stop it anyway")
+                        .build(),
+                McpTool.annotations(false, false, true),
+                (args, ctx) -> stopInstance(args, ctx)));
+        tools.add(new McpTool("start_instance",
+                "Start one of your instances that was stopped with stop_instance.",
+                Schema.object()
+                        .string("instance", "Instance name, from create_instance", true)
+                        .build(),
+                McpTool.annotations(false, false, true),
+                (args, ctx) -> startInstance(args, ctx)));
         tools.add(new McpTool("keep_instance",
                 "Hand one of your instances over to the user for good (e.g. to let them inspect a "
                         + "result): it is never destroyed as an orphan, and no later session can adopt "
@@ -360,7 +378,7 @@ final class McpTools {
 
     private ToolResult exec(McpTool.Args args, ToolContext ctx) throws InterruptedException {
         var name = args.requireString("instance");
-        var metadata = session.requireOwned(name);
+        var metadata = session.requireRunning(name);
         var command = args.requireString("command");
         var cwd = args.string("cwd");
         if (cwd == null || cwd.isBlank()) cwd = IncusInstanceBackend.workdir(metadata);
@@ -500,7 +518,7 @@ final class McpTools {
             var created = newInstance(info, "task", args.string("purpose"), ctx);
             return startDelegate(created.name(), args.string("cwd"), created.workdir(), prompt, mode, true);
         }
-        var metadata = session.requireOwned(instance);
+        var metadata = session.requireRunning(instance);
         var name = instance;
         var entry = session.instances().stream().filter(o -> o.name().equals(name)).findFirst();
         if (entry.isEmpty() || !entry.get().supportsDelegate()) {
@@ -763,6 +781,40 @@ final class McpTools {
         McpAuditLog.record(session.id, "destroy_instance", name, null, millisSince(start),
                 destroyed ? "destroyed" : "already-gone");
         return ToolResult.text(destroyed ? "Destroyed " + name + "." : name + " was already gone.");
+    }
+
+    private ToolResult stopInstance(McpTool.Args args, ToolContext ctx) {
+        var name = args.requireString("instance");
+        if (InstanceBackend.stopped(session.requireOwned(name))) return ToolResult.text(name + " is already stopped.");
+        var busy = tasks.busyIn(name);
+        if (!busy.isEmpty() && !args.bool("force")) {
+            throw new ToolError(name + " has running tasks (" + String.join(", ", busy.stream().map(Tasks.Task::id).toList())
+                    + "). Wait for them, cancel_task them, or set force to cancel them and stop.");
+        }
+        var start = System.nanoTime();
+        // Cancelled first, so none is left recorded as running in an instance nobody can ask.
+        for (var task : busy) tasks.cancel(task);
+        ctx.progress("Stopping " + name);
+        backend.stop(name);
+        McpAuditLog.record(session.id, "stop_instance", name, null, millisSince(start),
+                busy.isEmpty() ? "stopped" : "stopped, cancelled " + busy.size() + " task(s)");
+        return ToolResult.text("Stopped " + name + (busy.isEmpty() ? "" : ", after cancelling "
+                + String.join(", ", busy.stream().map(Tasks.Task::id).toList())) + ".");
+    }
+
+    private ToolResult startInstance(McpTool.Args args, ToolContext ctx) {
+        var name = args.requireString("instance");
+        if (!InstanceBackend.stopped(session.requireOwned(name))) return ToolResult.text(name + " is already running.");
+        var start = System.nanoTime();
+        ctx.progress("Starting " + name);
+        try {
+            backend.start(name);
+        } catch (RuntimeException e) {
+            McpAuditLog.record(session.id, "start_instance", name, null, millisSince(start), "failed: " + e.getMessage());
+            throw e;
+        }
+        McpAuditLog.record(session.id, "start_instance", name, null, millisSince(start), "started");
+        return ToolResult.text("Started " + name + ".");
     }
 
     private ToolResult keepInstance(McpTool.Args args) {

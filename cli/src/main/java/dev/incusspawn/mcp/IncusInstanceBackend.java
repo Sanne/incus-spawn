@@ -2,6 +2,7 @@ package dev.incusspawn.mcp;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.BuildInfo;
+import dev.incusspawn.command.InstancePrep;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
@@ -124,6 +125,29 @@ final class IncusInstanceBackend implements InstanceBackend {
                     config -> session.equals(config.path(Metadata.MCP_SESSION).asText(null)));
         } catch (IncusException e) {
             throw new ToolError("cannot remove '" + name + "': " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void stop(String name) {
+        var lock = locks.tryAcquire(name, Metadata.OP_STOPPING);
+        if (lock.isEmpty()) throw new ToolError("'" + name + "' is locked by another isx process; try again.");
+        try (var held = lock.get()) {
+            incus.stop(name);
+        } catch (IncusException e) {
+            throw new ToolError("could not stop '" + name + "': " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void start(String name) {
+        try {
+            // Stdout is the protocol channel, but StdioGuard has sent System.out to stderr.
+            InstancePrep.prepare(incus, name, System.err::println);
+        } catch (InstancePrep.Refused e) {
+            throw new ToolError("could not start '" + name + "': " + e.getMessage());
+        } catch (IncusException e) {
+            throw new ToolError("could not start '" + name + "': " + e.getMessage());
         }
     }
 
