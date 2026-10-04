@@ -230,8 +230,9 @@ final class McpSession {
      */
     Map<String, String> requireRunning(String name) {
         var metadata = requireOwned(name);
-        if (InstanceBackend.stopped(metadata)) {
-            throw new ToolError("'" + name + "' is stopped. Start it with start_instance first.");
+        if (!InstanceBackend.running(metadata)) {
+            throw new ToolError("'" + name + "' is " + metadata.get(InstanceBackend.STATUS).toLowerCase(java.util.Locale.ROOT)
+                    + ". Start it with start_instance first.");
         }
         return metadata;
     }

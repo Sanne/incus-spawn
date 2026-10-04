@@ -24,6 +24,11 @@ interface InstanceBackend {
         return "Stopped".equals(metadata.get(STATUS));
     }
 
+    /** Whether Incus says it runs; true when the read carried no status, so nothing is refused on a guess. */
+    static boolean running(Map<String, String> metadata) {
+        return metadata.getOrDefault(STATUS, "Running").equals("Running");
+    }
+
     /**
      * What {@code list_templates} shows about one template. {@code projectLocal} when the
      * image was built from a repository's {@code .incus-spawn/} definitions. {@code definitions}
@@ -70,18 +75,18 @@ interface InstanceBackend {
     void destroy(String name);
 
     /**
-     * Destroy an instance only if {@code session} still holds it, for a caller that does not:
-     * the orphan sweep. Marks it {@link dev.incusspawn.incus.Metadata#OP_DELETING} first and
+     * Destroy an instance only if {@code session} still holds it -- and, with {@code onlyIfStopped},
+     * only if it is still stopped -- for a caller that does not: the orphan sweep. Marks it {@link dev.incusspawn.incus.Metadata#OP_DELETING} first and
      * re-reads the holder under that mark; an adoption stamps first and reads the mark after
      * ({@link McpSession#adopt}), so of the two, one always sees the other. Returns whether it
      * was destroyed, and throws {@link ToolError} when another isx process holds its lock; like
      * {@link #destroy}, does not tell the proxy.
      */
-    boolean destroyIfHeldBy(String name, String session);
+    boolean destroyIfHeldBy(String name, String session, boolean onlyIfStopped);
 
     /**
-     * Stop a running instance, as the TUI does, under its {@link dev.incusspawn.incus.Metadata#OP_STOPPING}
-     * lock. Throws {@link ToolError} when another isx process holds the lock or the stop fails.
+     * Stop a running instance, as the TUI does: under its lock, marked
+     * {@link dev.incusspawn.incus.Metadata#OP_STOPPING} meanwhile. Throws {@link ToolError} when another isx process holds the lock or the stop fails.
      */
     void stop(String name);
 

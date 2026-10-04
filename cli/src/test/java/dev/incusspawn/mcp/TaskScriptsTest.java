@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Runs the task scripts in a real local bash, with stand-ins for what the instance provides:
@@ -445,6 +446,23 @@ class TaskScriptsTest {
         assertEquals("", sh(TaskScripts.list(), ""), "a fork finds no task to adopt");
         assertTrue(Files.isDirectory(odd) && Files.exists(notes), "only task ids are removed");
         sh("HOME=" + home.resolve("empty") + "; " + TaskScripts.clear(), ""); // no tasks dir at all
+    }
+
+    @Test
+    void clearingFailsWhenATaskCannotBeRemoved() throws Exception {
+        assumeTrue(!"root".equals(System.getProperty("user.name")), "root removes anything");
+        recordedTask("t15-abc", Tasks.AGENT, false);
+        var tasks = home.resolve(".isx-mcp/tasks/t15-abc");
+        tasks.toFile().setWritable(false); // a directory whose entries cannot be removed
+        try {
+            var p = new ProcessBuilder("bash", "-c", TaskScripts.clear()).directory(home.toFile());
+            p.environment().put("HOME", home.toString());
+            var proc = p.start();
+            assertTrue(proc.waitFor(10, TimeUnit.SECONDS));
+            assertEquals(1, proc.exitValue(), "a fork that keeps its source's task must not pass as cleared");
+        } finally {
+            tasks.toFile().setWritable(true);
+        }
     }
 
     @Test

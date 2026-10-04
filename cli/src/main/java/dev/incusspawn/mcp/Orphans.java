@@ -97,13 +97,14 @@ final class Orphans {
                 }
                 if (now.isBefore(since.plus(grace))) return;
                 // Stopped, nobody can be in it, and inUse could not look inside to tell.
-                if (!InstanceBackend.stopped(other.config()) && inUse.test(name)) {
+                var stopped = InstanceBackend.stopped(other.config());
+                if (!stopped && inUse.test(name)) {
                     System.err.println("isx mcp: keeping orphaned instance " + name
                             + ": someone, or a task it was given, is still working in it");
                     return;
                 }
                 // Not if it was adopted while we looked, or is being adopted now.
-                if (backend.destroyIfHeldBy(name, other.config().get(Metadata.MCP_SESSION))) destroyed.add(name);
+                if (backend.destroyIfHeldBy(name, other.config().get(Metadata.MCP_SESSION), stopped)) destroyed.add(name);
             } catch (RuntimeException e) {
                 System.err.println("isx mcp: could not handle orphaned instance " + name + ": " + e.getMessage());
             }

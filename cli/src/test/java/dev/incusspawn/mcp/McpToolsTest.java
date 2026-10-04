@@ -279,4 +279,23 @@ class McpToolsTest {
         assertEquals(List.of(name), backend.destroyed);
         assertEquals(1, session.instances().size(), "only the source is held");
     }
+
+    @Test
+    void aBlankTemplateBesideFromInstanceIsNoTemplate() throws Exception {
+        var source = createJava();
+        call("stop_instance", "{\"instance\":\"" + source + "\"}");
+        var r = fork(source, ",\"template\":\"\"");
+        assertFalse(r.path("isError").asBoolean(), text(r));
+    }
+
+    @Test
+    void anInstanceInErrorIsNeitherRunningNorStopped() throws Exception {
+        var name = createJava();
+        backend.statuses.put(name, "Error");
+        var exec = call("exec", "{\"instance\":\"" + name + "\",\"command\":\"ls\"}");
+        assertTrue(text(exec).contains("is error. Start it with start_instance"), text(exec));
+        assertTrue(text(fork(name, "")).contains("is error, not stopped"));
+        assertEquals("Started " + name + ".", text(call("start_instance", "{\"instance\":\"" + name + "\"}")));
+        assertFalse(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"ls\"}").path("isError").asBoolean());
+    }
 }

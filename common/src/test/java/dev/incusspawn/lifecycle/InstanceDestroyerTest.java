@@ -21,7 +21,7 @@ class InstanceDestroyerTest {
         daemon.clearRequests();
 
         assertFalse(InstanceDestroyer.deleteHeldIf(daemon.client(), "orphan",
-                config -> "2-200".equals(config.path(Metadata.MCP_SESSION).asText())));
+                instance -> "2-200".equals(instance.path("config").path(Metadata.MCP_SESSION).asText())));
 
         var requests = daemon.requests().stream().filter(r -> !r.startsWith("GET /1.0/operations/")).toList();
         assertEquals(List.of("PATCH /1.0/instances/orphan", "GET /1.0/instances/orphan", "PATCH /1.0/instances/orphan"),

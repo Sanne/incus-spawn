@@ -30,7 +30,7 @@ public final class InstanceDestroyer {
     }
 
     /**
-     * {@link #deleteHeld}, but only if {@code stillWanted} holds for the instance's config as
+     * {@link #deleteHeld}, but only if {@code stillWanted} holds for the instance (its config, status) as
      * read <em>after</em> the {@link Metadata#OP_DELETING} mark is written: a writer that
      * changes the instance before the mark is seen here, and one that reads the mark after
      * writing sees it. Otherwise the mark is taken back and nothing is deleted. The mark is
@@ -45,7 +45,7 @@ public final class InstanceDestroyer {
         try {
             var instance = incus.instanceMetadataOrThrow(name);
             if (instance == null) return false;
-            wanted = stillWanted.test(instance.path("config"));
+            wanted = stillWanted.test(instance);
         } catch (RuntimeException e) {
             incus.clearPendingOperation(name);
             throw e;

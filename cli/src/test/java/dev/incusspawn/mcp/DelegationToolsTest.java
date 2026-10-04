@@ -528,6 +528,23 @@ class DelegationToolsTest {
     }
 
     @Test
+    void anInstanceAdoptedWhileStoppedGetsItsTasksBackWhenStarted() throws Exception {
+        // Its coordinator stopped it to fork it, then ended; its tasks cannot be read until it runs.
+        backend.instance("mcp-agent-src-abcde", Map.of(
+                dev.incusspawn.incus.Metadata.PROFILE, "tpl-agent",
+                dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
+                dev.incusspawn.incus.Metadata.MCP_OWNER, "alice"));
+        backend.stopped.add("mcp-agent-src-abcde");
+        taskListing = "t3-old agent 1 done /home/agentuser\n";
+        var adopted = text(call("adopt_instance", "{\"instance\":\"mcp-agent-src-abcde\"}"));
+        assertTrue(adopted.contains("warning"), adopted);
+        var started = text(call("start_instance", "{\"instance\":\"mcp-agent-src-abcde\"}"));
+        assertTrue(started.contains("t3-old"), started);
+        taskState = "finished";
+        assertTrue(text(call("task_result", "{\"task_id\":\"t3-old\"}")).contains("Fixed the race"));
+    }
+
+    @Test
     void aRefusedEnvironmentNameGivesItsTaskSlotBack() throws Exception {
         config.setMaxConcurrentTasks(1);
         var instance = JsonRpc.JSON.readTree(text(call("create_instance", "{\"template\":\"tpl-plain\"}")))

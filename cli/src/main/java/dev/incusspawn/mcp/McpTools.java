@@ -282,8 +282,8 @@ final class McpTools {
     }
 
     private ToolResult createInstance(McpTool.Args args, ToolContext ctx) {
-        var template = args.string("template");
-        var source = args.string("from_instance");
+        var template = blankToNull(args.string("template"));
+        var source = blankToNull(args.string("from_instance"));
         if ((template == null) == (source == null)) throw new ToolError("give exactly one of template or from_instance");
         InstanceBackend.TemplateInfo info;
         InstanceBackend.CreatedInstance created;
@@ -293,8 +293,9 @@ final class McpTools {
         } else {
             var metadata = session.requireOwned(source);
             if (!InstanceBackend.stopped(metadata)) {
-                throw new ToolError("'" + source + "' is running. Stop it with stop_instance first: a fork "
-                        + "copies its files as they are, and a running instance's are still changing.");
+                throw new ToolError("'" + source + "' is " + metadata.getOrDefault(InstanceBackend.STATUS, "running")
+                        .toLowerCase(java.util.Locale.ROOT) + ", not stopped. Stop it with stop_instance first: a "
+                        + "fork copies its files as they are, and a running instance's are still changing.");
             }
             info = policy.requireLineage(McpSession.templateOf(metadata));
             created = fork(info, source, args.string("name_hint"), args.string("purpose"), ctx);
@@ -315,14 +316,14 @@ final class McpTools {
 
     private InstanceBackend.CreatedInstance newInstance(InstanceBackend.TemplateInfo template, String hint,
                                                         String purpose, ToolContext ctx) {
-        return provision(template, hint, purpose, ctx, "Creating %s from " + template.name(), template.name(),
-                "created", (name, stamps) -> backend.create(template, name, stamps));
+        return provision(template, hint, purpose, ctx, name -> "Creating " + name + " from " + template.name(),
+                template.name(), "created", (name, stamps) -> backend.create(template, name, stamps));
     }
 
     /** A fork of {@code source}, which descends from {@code lineage}: as {@link #newInstance}, without the source's tasks. */
     private InstanceBackend.CreatedInstance fork(InstanceBackend.TemplateInfo lineage, String source, String hint,
                                                  String purpose, ToolContext ctx) {
-        return provision(lineage, hint, purpose, ctx, "Forking " + source + " into %s", source, "forked",
+        return provision(lineage, hint, purpose, ctx, name -> "Forking " + source + " into " + name, source, "forked",
                 (name, stamps) -> {
                     var created = backend.fork(lineage, source, name, stamps);
                     try {
@@ -330,10 +331,16 @@ final class McpTools {
                         // fork would claim the source's tasks.
                         tasks.run(name, TaskScripts.clear(), null);
                     } catch (RuntimeException e) {
-                        backend.destroy(name);
-                        backend.refreshProxy();
+                        var removed = "the fork was removed";
+                        try {
+                            backend.destroy(name);
+                            backend.refreshProxy();
+                        } catch (RuntimeException cleanup) {
+                            removed = "removing the fork failed too (" + cleanup.getMessage()
+                                    + "); ask the user to run: isx destroy " + name;
+                        }
                         throw new ToolError("forking " + source + " failed: could not clear its tasks in " + name
-                                + " (" + e.getMessage() + "); the fork was removed.");
+                                + " (" + e.getMessage() + "); " + removed + ".");
                     }
                     return created;
                 });
@@ -341,14 +348,15 @@ final class McpTools {
 
     /**
      * Reserve a name under {@code lineage}, make the instance with {@code make}, and register it,
-     * or give the reservation back if making it failed. {@code progress} has a {@code %s} for the name.
+     * or give the reservation back if making it failed.
      */
     private InstanceBackend.CreatedInstance provision(
-            InstanceBackend.TemplateInfo lineage, String hint, String purpose, ToolContext ctx, String progress,
+            InstanceBackend.TemplateInfo lineage, String hint, String purpose, ToolContext ctx,
+            java.util.function.Function<String, String> progress,
             String from, String outcome,
             java.util.function.BiFunction<String, java.util.Map<String, String>, InstanceBackend.CreatedInstance> make) {
         var name = session.reserve(lineage, hint, purpose);
-        ctx.progress(progress.formatted(name));
+        ctx.progress(progress.apply(name));
         var start = System.nanoTime();
         InstanceBackend.CreatedInstance created;
         try {
@@ -855,7 +863,7 @@ final class McpTools {
 
     private ToolResult startInstance(McpTool.Args args, ToolContext ctx) {
         var name = args.requireString("instance");
-        if (!InstanceBackend.stopped(session.requireOwned(name))) return ToolResult.text(name + " is already running.");
+        if (InstanceBackend.running(session.requireOwned(name))) return ToolResult.text(name + " is already running.");
         var start = System.nanoTime();
         ctx.progress("Starting " + name);
         try {
@@ -865,7 +873,15 @@ final class McpTools {
             throw e;
         }
         McpAuditLog.record(session.id, "start_instance", name, null, millisSince(start), "started");
-        return ToolResult.text("Started " + name + ".");
+        // Adopted while stopped, its tasks could not be read then; known ones are kept as they are.
+        var note = "";
+        try {
+            var ids = tasks.adopt(name);
+            if (!ids.isEmpty()) note = " Its tasks: " + String.join(", ", ids) + ".";
+        } catch (RuntimeException e) {
+            note = " Its tasks could not be read, so their ids may not work here: " + e.getMessage();
+        }
+        return ToolResult.text("Started " + name + "." + note);
     }
 
     private ToolResult keepInstance(McpTool.Args args) {
@@ -874,6 +890,10 @@ final class McpTools {
         McpAuditLog.record(session.id, "keep_instance", name, null, 0, "kept");
         return ToolResult.text(name + " now belongs to the user: it is never destroyed as an orphan, and "
                 + "they can open it with: isx shell " + name);
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     private static long millisSince(long startNanos) {

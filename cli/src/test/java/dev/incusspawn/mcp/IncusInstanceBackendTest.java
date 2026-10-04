@@ -60,7 +60,7 @@ class IncusInstanceBackendTest {
         adopted.putObject("config").put(Metadata.MCP_SESSION, "3-300");
         when(incus.instanceMetadataOrThrow("orphan")).thenReturn(adopted);
 
-        assertFalse(sweeper.destroyIfHeldBy("orphan", "2-200"));
+        assertFalse(sweeper.destroyIfHeldBy("orphan", "2-200", false));
 
         // The mark first, then the read: an adoption stamping in between is seen here, and one
         // stamping after sees the mark (McpSession.adopt).

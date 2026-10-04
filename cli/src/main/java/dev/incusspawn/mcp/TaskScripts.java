@@ -227,10 +227,11 @@ final class TaskScripts {
     /**
      * Remove every task's records: what a fork must do, since the copy brought its source's
      * along, ids included. Only directories named like a task id, as {@link #unfinished} reads.
+     * Fails if one could not be removed (a file a delegate wrote as root, say).
      */
     static String clear() {
         return "for d in " + TASKS_DIR + "/*/; do D=${d%/}; id=${D##*/}; "
-                + "case $id in ''|*[!a-z0-9-]*) continue;; esac; rm -rf -- \"$D\"; done; exit 0";
+                + "case $id in ''|*[!a-z0-9-]*) continue;; esac; rm -rf -- \"$D\" || r=1; done; exit ${r:-0}";
     }
 
     /** All of a command task's output, stdout then stderr, each under a heading. */

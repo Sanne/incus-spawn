@@ -127,12 +127,14 @@ final class IncusInstanceBackend implements InstanceBackend {
     }
 
     @Override
-    public boolean destroyIfHeldBy(String name, String session) {
+    public boolean destroyIfHeldBy(String name, String session, boolean onlyIfStopped) {
         var lock = locks.tryAcquire(name, Metadata.OP_DELETING);
         if (lock.isEmpty()) throw new ToolError("'" + name + "' is locked by another isx process.");
         try (var held = lock.get()) {
             return InstanceDestroyer.deleteHeldIf(incus, name,
-                    config -> session.equals(config.path(Metadata.MCP_SESSION).asText(null)));
+                    instance -> session.equals(instance.path("config").path(Metadata.MCP_SESSION).asText(null))
+                            // Started since the caller saw it stopped: someone may be in it now.
+                            && (!onlyIfStopped || "Stopped".equals(instance.path("status").asText())));
         } catch (IncusException e) {
             throw new ToolError("cannot remove '" + name + "': " + e.getMessage());
         }
@@ -143,7 +145,12 @@ final class IncusInstanceBackend implements InstanceBackend {
         var lock = locks.tryAcquire(name, Metadata.OP_STOPPING);
         if (lock.isEmpty()) throw new ToolError("'" + name + "' is locked by another isx process; try again.");
         try (var held = lock.get()) {
-            incus.stop(name);
+            incus.setPendingOperation(name, Metadata.OP_STOPPING);
+            try {
+                incus.stop(name);
+            } finally {
+                incus.clearPendingOperation(name);
+            }
         } catch (IncusException e) {
             throw new ToolError("could not stop '" + name + "': " + e.getMessage());
         }

@@ -21,8 +21,10 @@ class FakeBackend implements InstanceBackend {
     final List<String> scripts = new CopyOnWriteArrayList<>();
     /** What each exec in {@link #scripts} got on stdin ("" for none), in the same order. */
     final List<String> stdins = new CopyOnWriteArrayList<>();
-    /** Instances whose status is Stopped; every other instance is Running. */
+    /** Instances whose status is Stopped; every other instance is Running, unless {@link #statuses} says. */
     final java.util.Set<String> stopped = ConcurrentHashMap.newKeySet();
+    /** Statuses other than Running and Stopped (Error, Frozen), by instance. */
+    final Map<String, String> statuses = new ConcurrentHashMap<>();
     /** When set, every exec throws it, as Incus does for an instance it cannot run a command in. */
     volatile RuntimeException execFailure;
     volatile String execStdout = "";
@@ -101,12 +103,12 @@ class FakeBackend implements InstanceBackend {
     volatile Runnable onStamp;
 
     @Override
-    public boolean destroyIfHeldBy(String name, String session) {
+    public boolean destroyIfHeldBy(String name, String session, boolean onlyIfStopped) {
         var instance = instances.get(name);
         if (instance == null) return false;
         instance.put(Metadata.PENDING_OP, Metadata.OP_DELETING);
         if (onMarked != null) onMarked.run();
-        if (!session.equals(instance.get(Metadata.MCP_SESSION))) {
+        if (!session.equals(instance.get(Metadata.MCP_SESSION)) || onlyIfStopped && !stopped.contains(name)) {
             instance.remove(Metadata.PENDING_OP);
             return false;
         }
@@ -122,6 +124,7 @@ class FakeBackend implements InstanceBackend {
     @Override
     public void start(String name) {
         stopped.remove(name);
+        statuses.remove(name);
     }
 
     volatile int proxyRefreshes;
@@ -151,7 +154,7 @@ class FakeBackend implements InstanceBackend {
 
     private Map<String, String> withStatus(String name, Map<String, String> config) {
         var result = new LinkedHashMap<>(config);
-        result.put(STATUS, stopped.contains(name) ? "Stopped" : "Running");
+        result.put(STATUS, stopped.contains(name) ? "Stopped" : statuses.getOrDefault(name, "Running"));
         return result;
     }
 
@@ -182,6 +185,7 @@ class FakeBackend implements InstanceBackend {
     public int exec(String name, String script, InputStream stdin, OutputStream stdout, OutputStream stderr) {
         if (!instances.containsKey(name)) throw new IllegalStateException("Instance not found: " + name);
         if (execFailure != null) throw execFailure;
+        if (stopped.contains(name)) throw new IllegalStateException("Instance is not running");
         scripts.add(script);
         try {
             stdins.add(stdin == null ? "" : new String(stdin.readAllBytes(), StandardCharsets.UTF_8));

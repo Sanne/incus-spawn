@@ -111,6 +111,16 @@ class OrphansTest {
     }
 
     @Test
+    void aStoppedOrphanStartedSinceTheListingIsSpared() {
+        // Someone ran isx shell on it after the sweep listed it stopped: it was not looked into.
+        var backend = new FakeBackend().instance("stopped", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
+        backend.stopped.add("stopped");
+        backend.onMarked = () -> backend.stopped.remove("stopped");
+        assertEquals(List.of(), Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW, name -> false));
+        assertFalse(backend.instances.get("stopped").containsKey(Metadata.PENDING_OP), "the mark is taken back");
+    }
+
+    @Test
     void anOrphanAdoptedDuringTheSweepIsSpared() {
         var backend = new FakeBackend().instance("expired", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
         var destroyed = Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW, name -> {
