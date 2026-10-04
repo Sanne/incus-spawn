@@ -164,15 +164,13 @@ final class TaskScripts {
     /**
      * Report a task's state as {@code key=value} lines, then {@code ---} and the tail of its
      * output: the events of the current run for an agent, stdout then stderr for a command.
+     * The state is {@link #RUN_STATE}'s, so every reader decides it by the same rules.
      */
     static String status(String taskId, int tailBytes) {
         var d = dir(taskId);
-        return "D=" + d + "; [ -d \"$D\" ] || { echo state=missing; exit 0; }; "
-                + "n=$(cat \"$D/current\"); k=$(cat \"$D/kind\"); echo run=$n; echo kind=$k; "
-                // Through sudo: an unprivileged login session in a container may not reach
-                // systemd's system bus, and would report every running task as gone.
-                + "echo unit=$(sudo -n systemctl is-active " + unit(taskId, "$n") + " 2>/dev/null); "
-                + "[ -f \"$D/exit-$n\" ] && echo exit=$(cat \"$D/exit-$n\"); "
+        return "D=" + d + "; [ -d \"$D\" ] || { echo state=missing; exit 0; }; id=" + taskId + "; " + RUN_STATE
+                + "k=$([ -f \"$D/kind\" ] && cat \"$D/kind\"); echo run=$n; echo kind=$k; echo state=$s; "
+                + "[ $s = finished ] && echo exit=$(cat \"$D/exit-$n\"); "
                 + "if [ \"$k\" = agent ]; then "
                 + "echo cwd=$(cat \"$D/cwd\" 2>/dev/null); echo session_id=$(cat \"$D/session_id\" 2>/dev/null); "
                 + Presence.script("presence=") + "; "
@@ -201,17 +199,71 @@ final class TaskScripts {
         return sb.append("exit 0").toString();
     }
 
+    /** Where {@link #cancel} stamps the time it started cancelling run {@code $n} in {@code $D}. */
+    private static final String CANCEL_STAMP = "\"$D/cancelling-$n\"";
+
     /**
-     * Sets {@code s} to {@code running}, {@code done} or {@code unknown} for task {@code $id}
-     * in {@code $D}: done once its current run recorded an exit, otherwise as systemd sees its
-     * unit. Through sudo, like {@link #status}.
+     * True while run {@code $n} in {@code $D} is being cancelled: {@link #cancel} stamps the time
+     * before stopping its unit and records the exit only after its kill sweep, so meanwhile the
+     * unit is inactive with no exit file, which would read as lost. Five minutes outlasts the
+     * stop itself (systemd waits up to 90 s by default) and the sweep; an older stamp, or one from
+     * the future, is a cancel that died midway and no longer counts. The stamp is read as data:
+     * anything but digits never reaches the arithmetic, where bash would evaluate it. No fork
+     * unless a stamp exists, since this runs on every poll of a running task.
+     */
+    private static final String CANCELLING = "{ [ -f " + CANCEL_STAMP + " ] && read -r c 2>/dev/null < " + CANCEL_STAMP
+            + " && case $c in ''|*[!0-9]*) false;; esac && t=$(date +%s) "
+            + "&& [ $(( t - c )) -ge 0 ] && [ $(( t - c )) -lt 300 ]; }";
+
+    /**
+     * Sets {@code n} to task {@code $id}'s current run in {@code $D} and {@code s} to
+     * {@code finished} once that run recorded an exit, else as systemd sees its unit:
+     * {@code running}, {@code lost} (ended without an exit, or no run at all) or {@code unknown}
+     * (systemd could not be asked). Through sudo, like {@link #status}. The exit file is looked
+     * at again after asking systemd, since a run writes it before its unit ends, and once more
+     * after the {@link #CANCELLING} check, since a cancel records it before removing its stamp:
+     * only a unit seen inactive with no exit file after both, and no fresh stamp, died without one.
      */
     // Only regular files are read: a FIFO in their place (anyone in the instance can make one)
     // would hold the read until something writes to it.
-    private static final String STATE = "n=$([ -f \"$D/current\" ] && cat \"$D/current\" 2>/dev/null); "
-            + "if [ -z \"$n\" ] || [ -f \"$D/exit-$n\" ]; then s=done; else "
-            + "s=$(sudo -n systemctl is-active \"" + UNIT_PREFIX + "$id-$n\" 2>/dev/null); "
-            + "case \"$s\" in active|activating) s=running;; '') s=unknown;; *) s=done;; esac; fi; ";
+    private static final String RUN_STATE = "n=$([ -f \"$D/current\" ] && cat \"$D/current\" 2>/dev/null); s=lost; "
+            + "if [ -n \"$n\" ]; then "
+            + "[ -f \"$D/exit-$n\" ] || s=$(sudo -n systemctl is-active \"" + UNIT_PREFIX + "$id-$n\" 2>/dev/null); "
+            + "if [ -f \"$D/exit-$n\" ]; then s=finished; else "
+            + "case \"$s\" in active|activating) s=running;; '') s=unknown;; "
+            // A cancel records its exit before it removes its stamp: looked at once more, a cancel
+            // that finished between the two checks reads finished, never lost.
+            + "*) if " + CANCELLING + "; then s=running; elif [ -f \"$D/exit-$n\" ]; then s=finished; "
+            + "else s=lost; fi;; esac; fi; fi; ";
+
+    /** {@link #RUN_STATE}, with {@code finished} and {@code lost} both {@code done}. */
+    private static final String STATE = RUN_STATE + "case $s in finished|lost) s=done;; esac; ";
+
+    /**
+     * What a client watching for task changes is told ({@link TaskWatcher}): {@code task <id>
+     * <run> running|finished <exit>|lost|unknown} per task ({@link #RUN_STATE}), then for each
+     * finished agent its {@code sid <id> <session>} and {@code cwd <id> <path>}, and if there was
+     * one, the {@link Presence} probe once, each line prefixed {@code presence }. One exec per
+     * instance, one {@code /proc} scan at most.
+     */
+    static String watch(Collection<String> taskIds) {
+        return watchBody(taskIds) + "; exit 0";
+    }
+
+    /** {@link #watch} without its {@code exit}, to follow another script in the same exec. */
+    static String watchBody(Collection<String> taskIds) {
+        var sb = new StringBuilder("p=; ");
+        for (var id : taskIds) {
+            sb.append("D=").append(dir(id)).append("; id=").append(id).append("; ").append(RUN_STATE)
+                    .append("if [ $s = finished ]; then echo \"task $id $n finished $(cat \"$D/exit-$n\")\"; ")
+                    // Regular files only, as in RUN_STATE: a FIFO would hold the poller for good.
+                    .append("k=; [ -f \"$D/kind\" ] && read -r k < \"$D/kind\"; if [ \"$k\" = ").append(Tasks.AGENT).append(" ]; then ")
+                    .append("p=1; echo \"sid $id $([ -f \"$D/session_id\" ] && cat \"$D/session_id\")\"; ")
+                    .append("echo \"cwd $id $([ -f \"$D/cwd\" ] && cat \"$D/cwd\")\"; fi; ")
+                    .append("else echo \"task $id ${n:-0} $s\"; fi; ");
+        }
+        return sb.append("[ -n \"$p\" ] && ").append(Presence.script("presence ")).toString();
+    }
 
     /**
      * Every task recorded in the instance, one per line: {@code <id> <kind> <run> <running|done>
@@ -289,8 +341,14 @@ final class TaskScripts {
      * Fails if any of them did, as {@link #cancel} alone would.
      */
     static String cancelAll(List<String> taskIds) {
+        return cancelAll(taskIds, "");
+    }
+
+    /** {@link #cancelAll}, then {@code then} (a script with no {@code exit}) once all are cancelled. */
+    static String cancelAll(List<String> taskIds, String then) {
         return taskIds.stream().map(id -> "( " + cancel(id) + " ) & p=\"$p $!\"; ")
-                .collect(Collectors.joining("", "p=; ", "r=0; for c in $p; do wait $c || r=1; done; exit $r"));
+                .collect(Collectors.joining("", "p=; ", "r=0; for c in $p; do wait $c || r=1; done; "
+                        + (then.isEmpty() ? "" : then + "; ") + "exit $r"));
     }
 
     /**
@@ -306,9 +364,12 @@ final class TaskScripts {
                 + "done; [ $s = TERM ] && sleep 2; done; exit 0";
         var quoted = ExecScript.quote(kill);
         return "D=" + d + "; n=$(cat \"$D/current\" 2>/dev/null) || exit 0; "
+                // Before the stop: until the exit is recorded below, a state read says running.
+                + "[ -f \"$D/exit-$n\" ] || date +%s > " + CANCEL_STAMP + "; "
                 + "sudo -n systemctl stop " + unit(taskId, "$n") + " 2>/dev/null; "
                 + "{ sudo -n bash -c " + quoted + " 2>/dev/null || bash -c " + quoted + "; }; "
-                + "[ -f \"$D/exit-$n\" ] || { " + recordExit("$n", "143") + "; }";
+                // The sweep is over either way: the stamp goes, and the cancel keeps its own status.
+                + "[ -f \"$D/exit-$n\" ] || { " + recordExit("$n", "143") + "; }; r=$?; rm -f " + CANCEL_STAMP + "; exit $r";
     }
 
     /**

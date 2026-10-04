@@ -223,6 +223,8 @@ mcp:
 
 A delegated task can run under its own profile: `model` (a Claude Code model id or alias, e.g. `haiku` for a rebase, the template's own for a design) and `max_turns`, which later `send_message` turns keep unless they choose again. A model is checked against the template's credential account first, with one tiny request inside the instance that is remembered for the session, so a model the account cannot use fails the call rather than the task. `max_turns` can only narrow your `delegate-max-turns`. The permission mode is never the agent's to choose.
 
+A client that drives `isx mcp` from code rather than from a model can ask to be told instead of waiting: list `isx/task_changed` under `capabilities.experimental` in `initialize`, and every change of a task's state arrives as a `notifications/isx/task_changed` (`task_id`, `instance`, `run`, `state`: `running`, `finished`, `lost`, `attached` or `released`, and `exit_code` once finished). Clients that do not ask are not polled for it.
+
 `exec`, `task_result` and `get_diff` take an optional `ask`: instead of the text, a one-shot Claude Code on `summary-model` reads it *inside the instance* and answers the question ("which tests fail?"), so a long log or patch never fills the host agent's context. The answer is a model's reading -- untrusted and lossy -- so anything that gates a merge stays deterministic: `get_diff(stat)`, CI, a reviewer.
 
 What an agent gets is deliberately narrow:

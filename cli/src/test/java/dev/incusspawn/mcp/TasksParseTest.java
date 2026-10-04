@@ -12,7 +12,7 @@ class TasksParseTest {
 
     @Test
     void aUnitStateNobodyCouldReadIsUnknownNotLost() {
-        assertEquals("unknown", Tasks.parse("run=1\nkind=command\nunit=\n---\n\n---stderr\n").state());
-        assertEquals("lost", Tasks.parse("run=1\nkind=command\nunit=inactive\n---\n\n---stderr\n").state());
+        assertEquals("unknown", Tasks.parse("run=1\nkind=command\nstate=unknown\n---\n\n---stderr\n").state());
+        assertEquals("lost", Tasks.parse("run=1\nkind=command\nstate=lost\n---\n\n---stderr\n").state());
     }
 }

@@ -380,7 +380,7 @@ final class McpTools {
         try {
             created = make.apply(name, session.stamps(purpose));
         } catch (RuntimeException e) {
-            session.abandon(name);
+            session.abandon(name, McpSession.Hold.GONE);
             McpAuditLog.record(session.id, "create_instance", name, from, millisSince(start),
                     "failed: " + e.getMessage());
             throw e;

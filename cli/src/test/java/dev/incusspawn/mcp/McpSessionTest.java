@@ -52,11 +52,32 @@ class McpSessionTest {
     }
 
     @Test
+    void anInstanceLetGoOfIsHeldNoMoreForTheReasonItWasLetGo() {
+        var s = session(3);
+        var destroyed = create(s, backend);
+        var deleted = create(s, backend);
+        var taken = create(s, backend);
+        s.destroy(destroyed);
+        backend.instances.remove(deleted); // deleted behind the session's back
+        assertThrows(ToolError.class, () -> s.requireOwned(deleted));
+        backend.stamp(taken, Metadata.MCP_SESSION, "42-1"); // another session adopted it
+        assertThrows(ToolError.class, () -> s.requireOwned(taken));
+
+        var reads = backend.metadataReads.get();
+        assertEquals(McpSession.Hold.GONE, s.hold(destroyed), "a destroy is not an adoption");
+        assertEquals(McpSession.Hold.GONE, s.hold(deleted));
+        assertEquals(McpSession.Hold.RELEASED, s.hold(taken));
+        assertEquals(McpSession.Hold.GONE, s.whyNotHeld(destroyed));
+        assertEquals(McpSession.Hold.RELEASED, s.whyNotHeld("mcp-never-held"));
+        assertEquals(reads, backend.metadataReads.get(), "known when let go of: no request");
+    }
+
+    @Test
     void anInstanceIncusCannotAnswerForIsStillHeld() {
         var s = session(3);
         var name = create(s, backend);
         backend.metadataFailure = new ToolError("cannot read it from Incus right now");
-        assertTrue(s.stillHolds(name));
+        assertEquals(McpSession.Hold.HELD, s.hold(name));
         assertThrows(RuntimeException.class, () -> s.requireOwned(name));
         backend.metadataFailure = null;
         s.requireOwned(name); // still held once Incus answers again
@@ -164,7 +185,7 @@ class McpSessionTest {
     @Test
     void anAbandonedCreateFreesItsSlot() {
         var s = session(1);
-        s.abandon(s.reserve(TEMPLATE, null, null));
+        s.abandon(s.reserve(TEMPLATE, null, null), McpSession.Hold.GONE);
         s.reserve(TEMPLATE, null, null);
     }
 

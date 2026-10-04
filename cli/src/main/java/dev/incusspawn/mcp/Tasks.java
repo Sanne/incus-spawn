@@ -103,6 +103,9 @@ final class Tasks {
     /** Instances that did not answer in time, with when ({@link System#nanoTime}) to ask again. */
     private final Map<String, Long> quietUntil = new ConcurrentHashMap<>();
 
+    private final TaskWatcher watcher = new TaskWatcher(this::watchRound);
+    /** Instances whose last watch exec failed: polled again only by the next slow round. */
+    private final java.util.Set<String> unanswered = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     Tasks(McpSession session, InstanceBackend backend, Supplier<McpConfig> config) {
         this.session = session;
@@ -110,17 +113,29 @@ final class Tasks {
         this.config = config;
     }
 
-    synchronized List<Task> all() {
+    /** What tells a client that opted in when a task changes state. */
+    TaskWatcher watcher() {
+        return watcher;
+    }
+
+    List<Task> all() {
+        // Outside the lock: forgetting may ask Incus why, and tell a watching client.
         forgetUnheld();
-        return List.copyOf(tasks.values());
+        synchronized (this) {
+            return List.copyOf(tasks.values());
+        }
     }
 
     /**
      * Forget the tasks of instances this session no longer holds -- another session adopted
      * them, or they are gone -- so they neither count against the limit nor get watched.
      */
-    private synchronized void forgetUnheld() {
-        tasks.values().removeIf(t -> !session.holds(t.instance()));
+    private void forgetUnheld() {
+        java.util.Set<String> instances;
+        synchronized (this) {
+            instances = tasks.values().stream().map(Task::instance).collect(Collectors.toSet());
+        }
+        instances.forEach(this::forgetIfUnheld);
     }
 
     /** This session's task, after checking the session still owns its instance and it is running. */
@@ -217,7 +232,8 @@ final class Tasks {
             var profile = parts.length > 5 ? recordedProfile(parts[4], parts[5]) : Profile.NONE;
             var task = new Task(parts[0], instance, kind, cwd, profile, runs, "running".equals(parts[3]), false);
             synchronized (this) {
-                tasks.putIfAbsent(task.id(), task);
+                // Once reported released, a task this session takes back is reported again.
+                if (tasks.putIfAbsent(task.id(), task) == null) watcher.revive(task.id());
             }
             adopted.add(task.id());
         }
@@ -262,6 +278,9 @@ final class Tasks {
         var status = parse(run(task.instance(), TaskScripts.status(task.id(), tailBytes), null));
         // "unknown" says nothing about the task: keep what we last knew rather than free its slot.
         if (!"unknown".equals(status.state())) markRunning(Map.of(task.id(), status.running()));
+        // A task whose directory is gone reads as run 0.
+        watcher.observe(task.id(), task.instance(), status.run() > 0 ? status.run() : task.runs(),
+                status.state(), status.exit());
         return status;
     }
 
@@ -321,11 +340,18 @@ final class Tasks {
         cancel(task.instance(), List.of(task));
     }
 
-    /** Cancel several tasks of one instance in one exec. */
+    /**
+     * Cancel several tasks of one instance in one exec. For a watching client the same exec then
+     * says how they ended: {@code stop_instance} stops the instance right after, and a stopped
+     * instance cannot be asked.
+     */
     void cancel(String instance, List<Task> list) {
         if (list.isEmpty()) return;
-        run(instance, TaskScripts.cancelAll(list.stream().map(Task::id).toList()), null);
+        var ids = list.stream().map(Task::id).toList();
+        var watching = watcher.enabled();
+        var out = run(instance, TaskScripts.cancelAll(ids, watching ? TaskScripts.watchBody(ids) : ""), null);
         markRunning(list.stream().collect(Collectors.toMap(Task::id, t -> false)));
+        if (watching) observeWatch(instance, ids, out);
     }
 
     String diff(Task task, String path, int maxBytes, boolean statOnly) {
@@ -509,8 +535,8 @@ final class Tasks {
         }
         believedRunning.stream().collect(Collectors.groupingBy(Task::instance)).forEach((instance, list) -> {
             // Adopted by another session (or gone): its tasks are no longer this session's.
-            if (!session.stillHolds(instance)) {
-                forgetInstance(instance);
+            if (session.hold(instance) != McpSession.Hold.HELD) {
+                forgetIfUnheld(instance);
                 return;
             }
             try {
@@ -534,7 +560,127 @@ final class Tasks {
 
     /** Forget the tasks of an instance that no longer exists. */
     synchronized void forgetInstance(String instance) {
-        tasks.values().removeIf(t -> t.instance().equals(instance));
+        forgetLocked(instance, TaskWatcher.LOST);
+    }
+
+    /**
+     * Forget the tasks of an instance the session has let go of, for the reason it recorded
+     * then. Decided under the lock {@link #adopt} takes, so an adoption completing meanwhile
+     * keeps its tasks rather than having them forgotten and tombstoned behind it.
+     */
+    private synchronized void forgetIfUnheld(String instance) {
+        var why = session.whyNotHeld(instance);
+        if (why == McpSession.Hold.HELD) return;
+        forgetLocked(instance, why == McpSession.Hold.GONE ? TaskWatcher.LOST : TaskWatcher.RELEASED);
+    }
+
+    /** Holds the lock: the watcher hears of it before an adoption can bring the tasks back. */
+    private void forgetLocked(String instance, String reason) {
+        tasks.values().removeIf(t -> {
+            if (!t.instance().equals(instance)) return false;
+            watcher.forget(t.id(), instance, reason);
+            return true;
+        });
+    }
+
+    /**
+     * One round of the watcher's polling: every task it last reported running, or never
+     * reported (adopted, or cancelled since), one exec per instance. A slow round also looks at
+     * finished agents, whose conversation a person may have joined or left, and first asks
+     * whether the session still holds each instance with tasks: another session may have adopted it.
+     * An instance that could not be asked (stopped, say) is left alone until the next slow round,
+     * rather than costing a failed exec every two seconds.
+     */
+    void watchRound(boolean slow) {
+        if (slow) unanswered.clear();
+        forgetUnheld();
+        List<Task> current;
+        synchronized (this) {
+            current = List.copyOf(tasks.values());
+        }
+        if (slow) {
+            current.stream().map(Task::instance).distinct().forEach(instance -> {
+                if (session.hold(instance) != McpSession.Hold.HELD) forgetIfUnheld(instance);
+            });
+        }
+        current.stream()
+                .filter(t -> !t.launching() && session.holds(t.instance()) && !unanswered.contains(t.instance()))
+                .filter(t -> {
+                    var state = watcher.lastState(t.id());
+                    return state == null || state.equals(TaskWatcher.RUNNING)
+                            || (slow && AGENT.equals(t.kind()) && TaskWatcher.ATTACHABLE.contains(state));
+                })
+                .collect(Collectors.groupingBy(Task::instance, LinkedHashMap::new, Collectors.toList()))
+                .forEach((instance, watched) -> {
+                    try {
+                        watch(instance, watched);
+                    } catch (RuntimeException e) {
+                        // As for any probe: gone takes its tasks with it, unreachable changes nothing.
+                        if (isGone(instance)) forgetInstance(instance);
+                        else unanswered.add(instance);
+                    }
+                });
+    }
+
+    /** One task as {@link TaskScripts#watch} saw it; {@code session} and {@code cwd} for a finished agent. */
+    private static final class Seen {
+        int run;
+        String state;
+        Integer exit;
+        String session;
+        String cwd;
+    }
+
+    /**
+     * Ask one instance how these tasks are, and report what changed. A reading of an earlier run
+     * than the session now knows of (a run launched while the exec was out) is stale, and dropped.
+     */
+    private void watch(String instance, List<Task> watched) {
+        var ids = watched.stream().map(Task::id).toList();
+        observeWatch(instance, ids, run(instance, TaskScripts.watch(ids), null));
+    }
+
+    /** Report what {@link TaskScripts#watch} said about these tasks. */
+    private void observeWatch(String instance, List<String> ids, String output) {
+        var seen = new LinkedHashMap<String, Seen>();
+        var presence = new java.util.ArrayList<String>();
+        for (var line : output.split("\n")) {
+            if (line.startsWith("presence ")) {
+                presence.add(line.substring("presence ".length()));
+                continue;
+            }
+            var parts = line.split(" ", 3);
+            if (parts.length < 3 || !ids.contains(parts[1])) continue;
+            var task = seen.computeIfAbsent(parts[1], k -> new Seen());
+            switch (parts[0]) {
+                case "task" -> {
+                    var f = parts[2].split(" ");
+                    task.run = (int) parseLong(f[0]);
+                    task.state = f.length > 1 ? f[1] : "unknown";
+                    if (f.length > 2) task.exit = (int) parseLong(f[2]);
+                }
+                case "sid" -> task.session = parts[2].strip();
+                case "cwd" -> task.cwd = parts[2].strip();
+                default -> { }
+            }
+        }
+        var who = Presence.parse(presence);
+        var known = new HashMap<String, Boolean>();
+        seen.forEach((id, task) -> {
+            int runs;
+            synchronized (this) {
+                var now = tasks.get(id);
+                if (task.state == null || now == null || task.run > 0 && task.run < now.runs()) return;
+                runs = now.runs();
+            }
+            // No run at all (its directory is gone): reported under the run the session knows.
+            if (task.run == 0) task.run = runs;
+            var state = task.state.equals("finished") && task.session != null
+                    && who.holderOf(task.session, task.cwd) != null ? "attached" : task.state;
+            if (!state.equals("unknown")) known.put(id, state.equals(TaskWatcher.RUNNING));
+            watcher.observe(id, instance, task.run, state, task.exit);
+        });
+        markRunning(known);
     }
 
     /**
@@ -557,11 +703,13 @@ final class Tasks {
             }
             throw e;
         }
+        Task launched;
         synchronized (this) {
-            var launched = reserved.launched();
+            launched = reserved.launched();
             tasks.put(launched.id(), launched);
-            return launched;
         }
+        watcher.observe(launched.id(), launched.instance(), launched.runs(), TaskWatcher.RUNNING, null);
+        return launched;
     }
 
     /**
@@ -622,13 +770,9 @@ final class Tasks {
         var output = split >= 0 ? rest.substring(0, split) : rest;
         var stderr = split >= 0 ? rest.substring(split + "\n---stderr\n".length()) : "";
         Integer exit = header.containsKey("exit") ? Integer.valueOf(header.get("exit").strip()) : null;
-        var unit = header.getOrDefault("unit", "");
-        String state;
-        if (exit != null) state = "finished";
-        else if (unit.equals("active") || unit.equals("activating")) state = "running";
-        // No answer at all is not evidence the task died: say so rather than call it lost.
-        else if (unit.isBlank()) state = "unknown";
-        else state = "lost";
+        // Decided in the guest (TaskScripts.RUN_STATE); anything else says nothing about the task.
+        var state = header.getOrDefault("state", "unknown");
+        if (!List.of("running", "finished", "lost").contains(state)) state = "unknown";
         var agent = AGENT.equals(header.get("kind"));
         var attached = agent ? Presence.parse(presence).holderOf(header.get("session_id"), header.get("cwd")) : null;
         if (attached != null && state.equals("finished")) state = "attached";

@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
@@ -63,6 +64,7 @@ public final class McpMain {
         // when it can deliver SIGTERM; after a SIGKILL, the next session notices the orphans.
         Runtime.getRuntime().addShutdownHook(new Thread(release, "isx-mcp-release"));
 
+        var watcher = tasks.watcher();
         var server = new McpServer(new StdioTransport(guard.protocolIn, guard.protocolOut),
                 requireInit(tools.all(), initialized), BuildInfo.instance().version(), INSTRUCTIONS,
                 clientInfo -> {
@@ -70,8 +72,10 @@ public final class McpMain {
                     if (initialized.getAsBoolean()) {
                         Thread.startVirtualThread(() -> sweepOrphans(backend, self, owner, config));
                     }
-                });
+                }, Map.of(TaskWatcher.CAPABILITY, watcher::start));
+        watcher.sendTo(server::notify);
         server.run();
+        watcher.stop();
         release.run();
         return 0;
     }

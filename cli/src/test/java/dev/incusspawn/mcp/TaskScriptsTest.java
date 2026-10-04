@@ -321,8 +321,134 @@ class TaskScriptsTest {
         // As in a container where the session cannot reach systemd: no answer at all.
         stub("systemctl", "exit 1");
         assertEquals("t10-abc unknown\n", sh(TaskScripts.states(java.util.List.of("t10-abc")), ""));
+        assertEquals("unknown", Tasks.parse(sh(TaskScripts.status("t10-abc", 0), "")).state(), "not lost");
         var pid = Files.readString(home.resolve("units/isx-task-t10-abc-1")).strip();
         sh("kill -TERM -- -" + pid, "");
+    }
+
+    @Test
+    void theWatchProbeTellsEachStateAndWhoIsInAFinishedConversation() throws Exception {
+        sh(TaskScripts.launch("t20-abc", 1, Tasks.COMMAND,
+                TaskScripts.commandRun("t20-abc", work.toString(), Map.of(), "sleep 300")), "");
+        sh(TaskScripts.launch("t21-abc", 1, Tasks.COMMAND,
+                TaskScripts.commandRun("t21-abc", work.toString(), Map.of(), "exit 5")), "");
+        awaitFinished("t21-abc");
+        // Its unit ended without recording an exit: killed, or the instance restarted.
+        var dead = Files.createDirectories(home.resolve(".isx-mcp/tasks/t22-abc"));
+        Files.writeString(dead.resolve("kind"), "command\n");
+        Files.writeString(dead.resolve("current"), "1\n");
+        var ids = java.util.List.of("t20-abc", "t21-abc", "t22-abc", "t23-abc");
+        assertEquals("task t20-abc 1 running\ntask t21-abc 1 finished 5\ntask t22-abc 1 lost\ntask t23-abc 0 lost\n",
+                sh(TaskScripts.watch(ids), ""), "no finished agent: no presence probe");
+
+        sh(TaskScripts.launch("t24-abc", 1, Tasks.AGENT,
+                TaskScripts.agentRun("t24-abc", 1, work.toString(), Tasks.Profile.NONE, null, "plan")), "go");
+        awaitFinished("t24-abc");
+        var resumed = new ProcessBuilder("bash", "-c", "exec -a claude bash -c 'sleep 30; :' --resume " + sessionId())
+                .directory(home.toFile()).start();
+        try {
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            String watched;
+            do {
+                watched = sh(TaskScripts.watch(java.util.List.of("t24-abc")), "");
+            } while (!watched.contains("presence resume " + resumed.pid() + " ") && System.nanoTime() < deadline);
+            assertTrue(watched.startsWith("task t24-abc 1 finished 0\nsid t24-abc " + sessionId()
+                    + "\ncwd t24-abc " + work.toRealPath() + "\n"), watched);
+            assertTrue(watched.contains("presence resume " + resumed.pid() + " " + sessionId() + "\n"), watched);
+        } finally {
+            resumed.destroy();
+            resumed.waitFor(5, TimeUnit.SECONDS);
+        }
+
+        // A task whose kind cannot be read after an agent is not taken for one.
+        var kindless = Files.createDirectories(home.resolve(".isx-mcp/tasks/t25-abc"));
+        Files.writeString(kindless.resolve("current"), "1\n");
+        Files.writeString(kindless.resolve("exit-1"), "0\n");
+        var both = sh(TaskScripts.watch(java.util.List.of("t24-abc", "t25-abc")), "");
+        assertTrue(both.contains("task t25-abc 1 finished 0\n"), both);
+        assertFalse(both.contains("sid t25-abc"), both);
+
+        // Cancelling and then watching, in one exec: the cancel's own exit code is kept.
+        sh(TaskScripts.launch("t26-abc", 1, Tasks.COMMAND,
+                TaskScripts.commandRun("t26-abc", work.toString(), Map.of(), "sleep 300")), "");
+        var ids26 = java.util.List.of("t26-abc");
+        assertEquals("task t26-abc 1 finished 143\n", sh(TaskScripts.cancelAll(ids26, TaskScripts.watchBody(ids26)), ""));
+
+        stub("systemctl", "exit 1"); // systemd cannot be asked: not lost, unknown
+        assertEquals("task t20-abc 1 unknown\n", sh(TaskScripts.watch(java.util.List.of("t20-abc")), ""));
+        var pid = Files.readString(home.resolve("units/isx-task-t20-abc-1")).strip();
+        sh("kill -TERM -- -" + pid, "");
+    }
+
+    @Test
+    void aTaskBeingCancelledReadsRunningUntilItsExitIsRecorded() throws Exception {
+        var sleep = new ProcessBuilder("bash", "-c", "command -v sleep").start();
+        var realSleep = new String(sleep.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
+        // The kill sweep's pause between TERM and KILL holds until the test releases it: the
+        // window in which the unit is stopped and the exit is not recorded yet.
+        stub("sleep", "if [ \"$1\" = 2 ]; then while [ ! -f \"$HOME/release\" ]; do " + realSleep
+                + " 0.05; done; else exec " + realSleep + " \"$@\"; fi");
+        var id = "t27-abc";
+        var ids = java.util.List.of(id);
+        sh(TaskScripts.launch(id, 1, Tasks.COMMAND, TaskScripts.commandRun(id, work.toString(), Map.of(), "sleep 300")), "");
+        var pb = new ProcessBuilder("bash", "-c", TaskScripts.cancel(id)).directory(home.toFile());
+        pb.environment().put("HOME", home.toString());
+        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        var cancel = pb.start();
+        try {
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (!sh("systemctl is-active isx-task-" + id + "-1 || true", "").contains("inactive")) {
+                assertTrue(System.nanoTime() < deadline, "the cancel never stopped the unit");
+                Thread.sleep(50);
+            }
+            assertFalse(Files.exists(home.resolve(".isx-mcp/tasks/" + id + "/exit-1")), "still in the window");
+            assertEquals("task " + id + " 1 running\n", sh(TaskScripts.watch(ids), ""), "not lost: being cancelled");
+            assertEquals("running", Tasks.parse(sh(TaskScripts.status(id, 0), "")).state());
+            assertEquals(id + " running\n", sh(TaskScripts.states(ids), ""));
+        } finally {
+            Files.writeString(home.resolve("release"), "");
+            assertTrue(cancel.waitFor(20, TimeUnit.SECONDS));
+        }
+        assertEquals("task " + id + " 1 finished 143\n", sh(TaskScripts.watch(ids), ""));
+
+        assertFalse(Files.exists(home.resolve(".isx-mcp/tasks/" + id + "/cancelling-1")), "the stamp is gone");
+
+        // A stamp a cancel that died midway left long ago, or one from the future, counts for
+        // nothing: the run is lost after all. Nor is a stamp that is not a number evaluated.
+        var d = Files.createDirectories(home.resolve(".isx-mcp/tasks/t28-abc"));
+        Files.writeString(d.resolve("kind"), "command\n");
+        Files.writeString(d.resolve("current"), "1\n");
+        var now = System.currentTimeMillis() / 1000;
+        var watch28 = TaskScripts.watch(java.util.List.of("t28-abc"));
+        for (var stamp : java.util.List.of(String.valueOf(now - 600), String.valueOf(now + 600), "x[$(touch " + home + "/pwned)]")) {
+            Files.writeString(d.resolve("cancelling-1"), stamp + "\n");
+            assertEquals("task t28-abc 1 lost\n", sh(watch28, ""), stamp);
+        }
+        assertFalse(Files.exists(home.resolve("pwned")), "a stamp is data, never evaluated");
+        Files.writeString(d.resolve("cancelling-1"), now + "\n");
+        assertEquals("task t28-abc 1 running\n", sh(watch28, ""), "a fresh one counts");
+    }
+
+    @Test
+    void aCancelThatFinishesBetweenTheChecksReadsFinishedNotLost() throws Exception {
+        var d = Files.createDirectories(home.resolve(".isx-mcp/tasks/t29-abc"));
+        Files.writeString(d.resolve("kind"), "command\n");
+        Files.writeString(d.resolve("current"), "1\n"); // no unit: systemd says inactive
+        Files.writeString(d.resolve("cancelling-1"), System.currentTimeMillis() / 1000 + "\n");
+        // Pins the exit file being looked at once more when the stamp check fails. In the real
+        // race the cancel records its exit and removes its stamp before the check's [ -f ], with
+        // no command in between to hook; here the hook is date, the check's only command: it
+        // records the exit and removes the stamp, and answers a time that makes the stamp it
+        // already read stale, so the check fails as it would on a stamp already gone.
+        stub("date", "D=$HOME/.isx-mcp/tasks/t29-abc; echo 143 > \"$D/exit-1\"; rm -f \"$D/cancelling-1\"; "
+                + "echo " + (System.currentTimeMillis() / 1000 + 3600));
+        assertEquals("task t29-abc 1 finished 143\n", sh(TaskScripts.watch(java.util.List.of("t29-abc")), ""));
+
+        Files.delete(d.resolve("exit-1"));
+        Files.writeString(d.resolve("cancelling-1"), System.currentTimeMillis() / 1000 + "\n");
+        var status = Tasks.parse(sh(TaskScripts.status("t29-abc", 0), ""));
+        assertEquals("finished", status.state(), "status() reads it the same way");
+        assertEquals(143, status.exit());
     }
 
     @Test
@@ -524,7 +650,20 @@ class TaskScriptsTest {
         long start = System.nanoTime();
         assertEquals("task t11-abc running\n", sh(TaskScripts.busy(), ""));
         assertEquals("task t11-abc running\n", sh(TaskScripts.unfinished(), ""));
-        assertTrue(System.nanoTime() - start < 10_000_000_000L, "neither probe waited on a FIFO");
+        // The watch poller reads more of a finished task: its kind, and an agent's session and cwd.
+        var finishedKind = Files.createDirectories(home.resolve(".isx-mcp/tasks/t21-abc"));
+        Files.writeString(finishedKind.resolve("current"), "1\n");
+        Files.writeString(finishedKind.resolve("exit-1"), "0\n");
+        sh("mkfifo " + finishedKind.resolve("kind"), "");
+        var agent = Files.createDirectories(home.resolve(".isx-mcp/tasks/t22-abc"));
+        Files.writeString(agent.resolve("current"), "1\n");
+        Files.writeString(agent.resolve("exit-1"), "0\n");
+        Files.writeString(agent.resolve("kind"), "agent\n");
+        sh("mkfifo " + agent.resolve("session_id") + " " + agent.resolve("cwd"), "");
+        var watched = sh(TaskScripts.watch(java.util.List.of("t18-abc", "t19-abc", "t21-abc", "t22-abc")), "");
+        assertTrue(watched.startsWith("task t18-abc 0 lost\ntask t19-abc 1 lost\ntask t21-abc 1 finished 0\n"
+                + "task t22-abc 1 finished 0\nsid t22-abc \ncwd t22-abc \n"), watched);
+        assertTrue(System.nanoTime() - start < 10_000_000_000L, "no probe waited on a FIFO");
         var pid = Files.readString(home.resolve("units/isx-task-t11-abc-2")).strip();
         sh("kill -TERM -- -" + pid, "");
     }

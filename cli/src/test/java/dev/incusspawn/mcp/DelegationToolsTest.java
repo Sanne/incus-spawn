@@ -100,13 +100,13 @@ class DelegationToolsTest {
             if (script.startsWith("f=$(mktemp)")) return "exit=0\nsummarised=12 lines, 345 bytes\n---\nIt touches A.java only.\n";
             if (script.contains("--numstat")) return "## /home/agentuser\n3\t1\tsrc/A.java\n 1 file changed\n---\n";
             if (!script.startsWith("D=") || !script.contains("echo run=")) return ""; // cancel
-            if (taskState.equals("unknown")) return "run=1\nkind=agent\nunit=\n---\n\n---stderr\n";
+            if (taskState.equals("unknown")) return "run=1\nkind=agent\nstate=unknown\n---\n\n---stderr\n";
             var who = attached ? "cwd=/home/agentuser\nsession_id=s1\npresence=claude 77 /elsewhere\n"
                     + "presence=resume 77 s1\n" : "";
             return taskState.equals("running")
-                    ? "run=1\nkind=agent\nunit=active\n" + who + "events_bytes=10\n---\n" + EVENTS.lines().limit(2)
+                    ? "run=1\nkind=agent\nstate=running\n" + who + "events_bytes=10\n---\n" + EVENTS.lines().limit(2)
                             .reduce("", (a, b) -> a + b + "\n") + "\n---stderr\n"
-                    : "run=1\nkind=agent\nunit=inactive\nexit=0\n" + who + "events_bytes=400\n---\n"
+                    : "run=1\nkind=agent\nstate=finished\nexit=0\n" + who + "events_bytes=400\n---\n"
                             + (finishedEvents != null ? finishedEvents : EVENTS) + "\n---stderr\n";
         };
     }

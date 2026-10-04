@@ -215,7 +215,7 @@ final class McpServer {
                 params.set("progressToken", token);
                 params.put("progress", state.count);
                 params.put("message", message);
-                send(JsonRpc.notification("notifications/progress", params));
+                notify("notifications/progress", params);
             }
         };
     }

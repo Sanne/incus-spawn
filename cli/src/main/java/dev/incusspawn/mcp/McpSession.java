@@ -57,6 +57,8 @@ final class McpSession {
     private final Supplier<McpConfig> config;
     private final Predicate<SessionId> alive;
     private final Map<String, Owned> owned = new LinkedHashMap<>();
+    /** Why each instance this session held was let go of: what {@link #hold} says once it is. */
+    private final Map<String, Hold> letGo = new java.util.HashMap<>();
 
     McpSession(SessionId id, String owner, long clientPid, String cwd,
                InstanceBackend backend, Supplier<McpConfig> config, Predicate<SessionId> alive) {
@@ -165,7 +167,8 @@ final class McpSession {
         synchronized (this) {
             var max = config.get().maxInstances();
             // A held instance deleted behind the session's back (from the TUI, say) is let go.
-            owned.keySet().removeIf(n -> readyBefore.contains(n) && !listing.containsKey(n));
+            readyBefore.stream().filter(n -> owned.containsKey(n) && !listing.containsKey(n))
+                    .forEach(n -> abandon(n, Hold.GONE));
             var mine = owned.values().stream().filter(o -> !o.kept()).count();
             var others = elsewhere.stream().filter(n -> !owned.containsKey(n)).count();
             if (mine + others >= max) {
@@ -184,6 +187,7 @@ final class McpSession {
             }
             owned.put(name, new Owned(name, template.name(), template.supportsDelegate(), purpose,
                     Instant.now(), false, false));
+            letGo.remove(name);
             return name;
         }
     }
@@ -192,9 +196,22 @@ final class McpSession {
         owned.computeIfPresent(name, (k, o) -> o.asReady());
     }
 
-    /** Forget a reservation whose create failed and was cleaned up. */
-    synchronized void abandon(String name) {
+    /**
+     * Let go of {@code name}, remembering why: what {@link #hold} answers for it from then on.
+     * Every way out of the registry comes through here, so the reason is never a guess.
+     */
+    synchronized void abandon(String name, Hold why) {
         owned.remove(name);
+        letGo.put(name, why);
+    }
+
+    /**
+     * Why this session no longer holds {@code name}, as it learned when it let go -- no request:
+     * {@code GONE} (destroyed, or Incus said so) or {@code RELEASED} (another session's stamp,
+     * or never held). {@code HELD} while it does.
+     */
+    synchronized Hold whyNotHeld(String name) {
+        return owned.containsKey(name) ? Hold.HELD : letGo.getOrDefault(name, Hold.RELEASED);
     }
 
     synchronized List<Owned> instances() {
@@ -233,11 +250,11 @@ final class McpSession {
         if (!lookup(name).ready()) throw new ToolError("'" + name + "' is still being created.");
         var metadata = backend.metadata(name);
         if (metadata == null) {
-            abandon(name);
+            abandon(name, Hold.GONE);
             throw new ToolError("'" + name + "' no longer exists.");
         }
         if (!ours(metadata)) {
-            abandon(name);
+            abandon(name, Hold.RELEASED);
             throw new ToolError("'" + name + "' is no longer held by this session: another session adopted it.");
         }
         var busy = Metadata.pendingOp(metadata);
@@ -312,6 +329,7 @@ final class McpSession {
                 createdOf(after), true, false);
         synchronized (this) {
             owned.put(name, adopted);
+            letGo.remove(name);
         }
         return adopted;
     }
@@ -373,26 +391,33 @@ final class McpSession {
         }
     }
 
+    /** Whether this session holds an instance, and if not, whether the instance is gone. */
+    enum Hold { HELD, GONE, RELEASED }
+
     /**
-     * Whether this session still holds {@code name}, by its stamp in Incus; forgets it if not.
-     * An instance still being created counts as held. When Incus cannot be asked, it stays held:
+     * Whether this session still holds {@code name}, by its stamp in Incus; forgets it if not,
+     * saying why from the same read: {@code GONE} when Incus has no such instance,
+     * {@code RELEASED} when another session's stamp is on it or this one never held it. An
+     * instance still being created counts as held, and so does one Incus cannot be asked about:
      * this is for letting go of what is certainly gone, never for guessing.
      */
-    boolean stillHolds(String name) {
+    Hold hold(String name) {
         synchronized (this) {
             var entry = owned.get(name);
-            if (entry == null) return false;
-            if (!entry.ready()) return true;
+            // Let go of already, by a tool call that knew why (a destroy is not an adoption).
+            if (entry == null) return whyNotHeld(name);
+            if (!entry.ready()) return Hold.HELD;
         }
         Map<String, String> metadata;
         try {
             metadata = backend.metadata(name);
         } catch (RuntimeException e) {
-            return true;
+            return Hold.HELD;
         }
-        if (metadata != null && ours(metadata)) return true;
-        abandon(name);
-        return false;
+        if (metadata != null && ours(metadata)) return Hold.HELD;
+        var why = metadata == null ? Hold.GONE : Hold.RELEASED;
+        abandon(name, why);
+        return why;
     }
 
     /** Hand an instance to the user: never adopted, counted or reaped again. */
@@ -410,14 +435,14 @@ final class McpSession {
         if (!lookup(name).ready()) throw new ToolError("'" + name + "' is still being created; destroy it once it is.");
         var metadata = backend.metadata(name);
         if (metadata != null && !ours(metadata)) {
-            abandon(name);
+            abandon(name, Hold.RELEASED);
             throw new ToolError("'" + name + "' is no longer held by this session: another session adopted it.");
         }
         if (metadata != null) {
             backend.destroy(name);
             backend.refreshProxy();
         }
-        abandon(name);
+        abandon(name, Hold.GONE);
         return metadata != null;
     }
 
@@ -457,9 +482,7 @@ final class McpSession {
                 }
             }
         }
-        synchronized (this) {
-            released.forEach(owned::remove);
-        }
+        released.forEach(name -> abandon(name, Hold.RELEASED));
         return released;
     }
 
