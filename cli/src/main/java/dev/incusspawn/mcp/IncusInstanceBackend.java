@@ -158,7 +158,9 @@ final class IncusInstanceBackend implements InstanceBackend {
 
     @Override
     public void start(String name) {
-        try {
+        var lock = locks.tryAcquire(name, "starting");
+        if (lock.isEmpty()) throw new ToolError("'" + name + "' is locked by another isx process; try again.");
+        try (var held = lock.get()) {
             // Stdout is the protocol channel, but StdioGuard has sent System.out to stderr.
             InstancePrep.prepare(incus, name, System.err::println);
         } catch (InstancePrep.Refused | IncusException e) {

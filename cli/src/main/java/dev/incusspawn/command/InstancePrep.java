@@ -57,7 +57,8 @@ public class InstancePrep {
     /**
      * {@link #prepareInstance} without the GUI check, for a caller with no terminal ({@code isx
      * mcp}'s {@code start_instance}): refuses by throwing {@link Refused} rather than printing and
-     * returning null. Progress from the start goes to {@code say}.
+     * returning null. {@code say} gets {@link InstanceLifecycle#ensureReady}'s progress; the repairs
+     * before it (which may start the instance to fix its CA) print as {@code isx shell} does.
      *
      * @return the leaf template the instance descends from
      */
@@ -83,7 +84,8 @@ public class InstancePrep {
         var machineType = incus.machineType(name);
         if (!NetworkMode.AIRGAP.name().equals(networkMode)) {
             if (!ProxyHealthCheck.checkOrWarn(incus)) {
-                throw new Refused("the isx proxy is not running; run 'isx doctor' to diagnose.", true);
+                // checkOrWarn printed why; the reason may be DNS or a stale gateway as well as a stop.
+                throw new Refused("the isx proxy is not ready to serve this instance; 'isx doctor' says why.", true);
             }
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();

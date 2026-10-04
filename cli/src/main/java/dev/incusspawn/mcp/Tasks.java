@@ -90,6 +90,18 @@ final class Tasks {
 
     /** This session's task, after checking the session still owns its instance and it is running. */
     Owned require(String id) {
+        var task = lookup(id);
+        return new Owned(task, session.requireRunning(task.instance()));
+    }
+
+    /** {@link #require}, for a caller that copes with a stopped instance itself (waiting reads it as unknown). */
+    Task requireHeld(String id) {
+        var task = lookup(id);
+        session.requireOwned(task.instance());
+        return task;
+    }
+
+    private Task lookup(String id) {
         Task task;
         synchronized (this) {
             task = tasks.get(id);
@@ -98,7 +110,7 @@ final class Tasks {
             throw new ToolError("no task '" + id + "' in this session. Tasks are listed by list_instances; "
                     + "a task of an instance another session held becomes yours with adopt_instance.");
         }
-        return new Owned(task, session.requireRunning(task.instance()));
+        return task;
     }
 
     /** Start a background command in {@code instance}, which the caller checked is owned. */
@@ -162,7 +174,7 @@ final class Tasks {
             adopted.add(task.id());
         }
         // A run recorded as unfinished may have died with a restart: ask systemd.
-        refreshStates();
+        refreshStates(instance::equals);
         return adopted;
     }
 

@@ -60,8 +60,9 @@ interface InstanceBackend {
 
     /**
      * Branch the instance {@code source}, which descends from {@code lineage}, into {@code name}
-     * exactly as {@code isx branch <name> --from <source>} would: the source's account pins,
-     * network mode and files, with {@code stamps} written by the copy itself. Throws
+     * exactly as {@code isx branch <name> --from <source>} would: the source's account pins and
+     * files, every other setting at its default (full network, as every agent's instance has),
+     * with {@code stamps} written by the copy itself. Throws
      * {@link ToolError} on refusal.
      */
     CreatedInstance fork(TemplateInfo lineage, String source, String name, Map<String, String> stamps);
@@ -92,7 +93,8 @@ interface InstanceBackend {
 
     /**
      * Start a stopped instance as {@code isx shell} would before opening a shell: proxy check,
-     * static IP and CA repair, then the start. Throws {@link ToolError} on refusal.
+     * static IP and CA repair, then the start, under the instance's lock. Throws
+     * {@link ToolError} on refusal.
      */
     void start(String name);
 

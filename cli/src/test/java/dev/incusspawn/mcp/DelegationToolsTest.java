@@ -235,6 +235,8 @@ class DelegationToolsTest {
             assertTrue(r.path("isError").asBoolean());
             assertTrue(text(r).contains("start_instance"), text(r));
         }
+        var waited = call("wait_any", "{\"task_ids\":[\"" + task + "\"],\"timeout_seconds\":1}");
+        assertFalse(waited.path("isError").asBoolean(), "waiting copes with a stopped instance: " + text(waited));
         assertFalse(call("start_instance", "{\"instance\":\"" + instance + "\"}").path("isError").asBoolean());
         assertFalse(backend.stopped.contains(instance));
         assertFalse(call("task_result", "{\"task_id\":\"" + task + "\"}").path("isError").asBoolean());

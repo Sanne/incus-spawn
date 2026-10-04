@@ -221,6 +221,24 @@ class TaskScriptsTest {
     }
 
     @Test
+    void aCancelThatFailsFailsTheBatch() throws Exception {
+        recordedTask("t9-abc", Tasks.COMMAND, false);
+        Files.writeString(home.resolve(".isx-mcp/tasks/t9-abc/current"), "2\n"); // run 2 never recorded an exit
+        home.resolve(".isx-mcp/tasks/t9-abc").toFile().setWritable(false); // and none can be written now
+        assumeTrue(!"root".equals(System.getProperty("user.name")), "root writes anywhere");
+        try {
+            var p = new ProcessBuilder("bash", "-c", TaskScripts.cancelAll(java.util.List.of("t9-abc", "t10-abc")));
+            p.environment().put("HOME", home.toString());
+            p.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+            var proc = p.directory(home.toFile()).start();
+            assertTrue(proc.waitFor(20, TimeUnit.SECONDS));
+            assertEquals(1, proc.exitValue(), "cancel_task must not report a cancel whose exit was not recorded");
+        } finally {
+            home.resolve(".isx-mcp/tasks/t9-abc").toFile().setWritable(true);
+        }
+    }
+
+    @Test
     void aTaskThatHasWrittenNothingYetStillHasAStatus() throws Exception {
         var d = Files.createDirectories(home.resolve(".isx-mcp/tasks/t5-abc"));
         Files.writeString(d.resolve("current"), "1\n");

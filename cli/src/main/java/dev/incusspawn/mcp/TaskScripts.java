@@ -241,9 +241,13 @@ final class TaskScripts {
                 + "echo; echo '--- stderr'; cat \"$D/stderr\" 2>/dev/null; exit 0";
     }
 
-    /** {@link #cancel} for several tasks at once, side by side: each waits between TERM and KILL. */
+    /**
+     * {@link #cancel} for several tasks at once, side by side: each waits between TERM and KILL.
+     * Fails if any of them did, as {@link #cancel} alone would.
+     */
     static String cancelAll(List<String> taskIds) {
-        return taskIds.stream().map(id -> "( " + cancel(id) + " ) & ").collect(Collectors.joining("", "", "wait; exit 0"));
+        return taskIds.stream().map(id -> "( " + cancel(id) + " ) & p=\"$p $!\"; ")
+                .collect(Collectors.joining("", "p=; ", "r=0; for c in $p; do wait $c || r=1; done; exit $r"));
     }
 
     /**

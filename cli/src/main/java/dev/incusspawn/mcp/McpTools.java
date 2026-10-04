@@ -695,7 +695,7 @@ final class McpTools {
             tasks.all().stream().filter(t -> t.running() && !t.launching()).forEach(watched::add);
             if (watched.isEmpty()) return ToolResult.text("No task of this session is running.");
         } else {
-            for (var id : ids) watched.add(tasks.require(id).task());
+            for (var id : ids) watched.add(tasks.requireHeld(id));
         }
         var timeout = args.integer("timeout_seconds");
         var seconds = timeout == null ? MAX_WAIT_SECONDS : Math.clamp(timeout, 0, MAX_WAIT_SECONDS);
@@ -863,7 +863,13 @@ final class McpTools {
 
     private ToolResult startInstance(McpTool.Args args, ToolContext ctx) {
         var name = args.requireString("instance");
-        if (InstanceBackend.running(session.requireOwned(name))) return ToolResult.text(name + " is already running.");
+        var metadata = session.requireOwned(name);
+        if (InstanceBackend.running(metadata)) return ToolResult.text(name + " is already running.");
+        if (!InstanceBackend.stopped(metadata)) {
+            throw new ToolError("'" + name + "' is " + metadata.get(InstanceBackend.STATUS).toLowerCase(java.util.Locale.ROOT)
+                    + ", not stopped, and only a stopped instance can be started. Ask the user to look at it: "
+                    + "isx shell " + name);
+        }
         var start = System.nanoTime();
         ctx.progress("Starting " + name);
         try {

@@ -293,9 +293,12 @@ class McpToolsTest {
         var name = createJava();
         backend.statuses.put(name, "Error");
         var exec = call("exec", "{\"instance\":\"" + name + "\",\"command\":\"ls\"}");
-        assertTrue(text(exec).contains("is error. Start it with start_instance"), text(exec));
+        assertTrue(text(exec).contains("is error, which isx mcp cannot change. Ask the user"), text(exec));
         assertTrue(text(fork(name, "")).contains("is error, not stopped"));
-        assertEquals("Started " + name + ".", text(call("start_instance", "{\"instance\":\"" + name + "\"}")));
-        assertFalse(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"ls\"}").path("isError").asBoolean());
+        var start = call("start_instance", "{\"instance\":\"" + name + "\"}");
+        assertTrue(start.path("isError").asBoolean(), "never reported started when nothing could start it");
+        assertTrue(text(start).contains("only a stopped instance can be started"), text(start));
+        backend.statuses.put(name, "Frozen");
+        assertTrue(text(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"ls\"}")).contains("is frozen"));
     }
 }
