@@ -3,7 +3,9 @@ package dev.incusspawn.mcp;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * The shell scripts behind background tasks: {@code exec(background)} and {@code delegate}.
@@ -236,6 +238,11 @@ final class TaskScripts {
         var d = dir(taskId);
         return "D=" + d + "; echo '--- stdout'; cat \"$D/stdout\" 2>/dev/null; "
                 + "echo; echo '--- stderr'; cat \"$D/stderr\" 2>/dev/null; exit 0";
+    }
+
+    /** {@link #cancel} for several tasks at once, side by side: each waits between TERM and KILL. */
+    static String cancelAll(List<String> taskIds) {
+        return taskIds.stream().map(id -> "( " + cancel(id) + " ) & ").collect(Collectors.joining("", "", "wait; exit 0"));
     }
 
     /**

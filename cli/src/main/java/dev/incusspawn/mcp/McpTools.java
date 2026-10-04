@@ -315,50 +315,52 @@ final class McpTools {
 
     private InstanceBackend.CreatedInstance newInstance(InstanceBackend.TemplateInfo template, String hint,
                                                         String purpose, ToolContext ctx) {
-        var name = session.reserve(template, hint, purpose);
-        ctx.progress("Creating " + name + " from " + template.name());
-        var start = System.nanoTime();
-        InstanceBackend.CreatedInstance created;
-        try {
-            created = backend.create(template, name, session.stamps(purpose));
-        } catch (RuntimeException e) {
-            session.abandon(name);
-            McpAuditLog.record(session.id, "create_instance", name, template.name(), millisSince(start),
-                    "failed: " + e.getMessage());
-            throw e;
-        }
-        session.created(name);
-        McpAuditLog.record(session.id, "create_instance", name, template.name(), millisSince(start), "created");
-        return created;
+        return provision(template, hint, purpose, ctx, "Creating %s from " + template.name(), template.name(),
+                "created", (name, stamps) -> backend.create(template, name, stamps));
     }
 
     /** A fork of {@code source}, which descends from {@code lineage}: as {@link #newInstance}, without the source's tasks. */
     private InstanceBackend.CreatedInstance fork(InstanceBackend.TemplateInfo lineage, String source, String hint,
                                                  String purpose, ToolContext ctx) {
+        return provision(lineage, hint, purpose, ctx, "Forking " + source + " into %s", source, "forked",
+                (name, stamps) -> {
+                    var created = backend.fork(lineage, source, name, stamps);
+                    try {
+                        // The copy brought the source's task records, ids included: adopting the
+                        // fork would claim the source's tasks.
+                        tasks.run(name, TaskScripts.clear(), null);
+                    } catch (RuntimeException e) {
+                        backend.destroy(name);
+                        backend.refreshProxy();
+                        throw new ToolError("forking " + source + " failed: could not clear its tasks in " + name
+                                + " (" + e.getMessage() + "); the fork was removed.");
+                    }
+                    return created;
+                });
+    }
+
+    /**
+     * Reserve a name under {@code lineage}, make the instance with {@code make}, and register it,
+     * or give the reservation back if making it failed. {@code progress} has a {@code %s} for the name.
+     */
+    private InstanceBackend.CreatedInstance provision(
+            InstanceBackend.TemplateInfo lineage, String hint, String purpose, ToolContext ctx, String progress,
+            String from, String outcome,
+            java.util.function.BiFunction<String, java.util.Map<String, String>, InstanceBackend.CreatedInstance> make) {
         var name = session.reserve(lineage, hint, purpose);
-        ctx.progress("Forking " + source + " into " + name);
+        ctx.progress(progress.formatted(name));
         var start = System.nanoTime();
         InstanceBackend.CreatedInstance created;
         try {
-            created = backend.fork(lineage, source, name, session.stamps(purpose));
-            try {
-                // The copy brought the source's task records, ids included: adopting the fork
-                // would claim the source's tasks.
-                tasks.run(name, TaskScripts.clear(), null);
-            } catch (RuntimeException e) {
-                backend.destroy(name);
-                backend.refreshProxy();
-                throw new ToolError("forking " + source + " failed: could not clear its tasks in " + name
-                        + " (" + e.getMessage() + "); the fork was removed.");
-            }
+            created = make.apply(name, session.stamps(purpose));
         } catch (RuntimeException e) {
             session.abandon(name);
-            McpAuditLog.record(session.id, "create_instance", name, source, millisSince(start),
-                    "fork failed: " + e.getMessage());
+            McpAuditLog.record(session.id, "create_instance", name, from, millisSince(start),
+                    "failed: " + e.getMessage());
             throw e;
         }
         session.created(name);
-        McpAuditLog.record(session.id, "create_instance", name, source, millisSince(start), "forked");
+        McpAuditLog.record(session.id, "create_instance", name, from, millisSince(start), outcome);
         return created;
     }
 
@@ -836,19 +838,19 @@ final class McpTools {
         var name = args.requireString("instance");
         if (InstanceBackend.stopped(session.requireOwned(name))) return ToolResult.text(name + " is already stopped.");
         var busy = tasks.busyIn(name);
+        var ids = String.join(", ", busy.stream().map(Tasks.Task::id).toList());
         if (!busy.isEmpty() && !args.bool("force")) {
-            throw new ToolError(name + " has running tasks (" + String.join(", ", busy.stream().map(Tasks.Task::id).toList())
+            throw new ToolError(name + " has running tasks (" + ids
                     + "). Wait for them, cancel_task them, or set force to cancel them and stop.");
         }
         var start = System.nanoTime();
         // Cancelled first, so none is left recorded as running in an instance nobody can ask.
-        for (var task : busy) tasks.cancel(task);
+        tasks.cancel(name, busy);
         ctx.progress("Stopping " + name);
         backend.stop(name);
         McpAuditLog.record(session.id, "stop_instance", name, null, millisSince(start),
                 busy.isEmpty() ? "stopped" : "stopped, cancelled " + busy.size() + " task(s)");
-        return ToolResult.text("Stopped " + name + (busy.isEmpty() ? "" : ", after cancelling "
-                + String.join(", ", busy.stream().map(Tasks.Task::id).toList())) + ".");
+        return ToolResult.text("Stopped " + name + (busy.isEmpty() ? "" : ", after cancelling " + ids) + ".");
     }
 
     private ToolResult startInstance(McpTool.Args args, ToolContext ctx) {

@@ -208,6 +208,18 @@ class TaskScriptsTest {
     }
 
     @Test
+    void cancellingSeveralTasksAtOnceStopsEachInOneWait() throws Exception {
+        var ids = java.util.List.of("t6-abc", "t7-abc", "t8-abc");
+        for (var id : ids) {
+            sh(TaskScripts.launch(id, 1, Tasks.COMMAND, TaskScripts.commandRun(id, work.toString(), Map.of(), "sleep 300")), "");
+        }
+        var start = System.nanoTime();
+        sh(TaskScripts.cancelAll(ids), "");
+        assertTrue(System.nanoTime() - start < TimeUnit.SECONDS.toNanos(5), "side by side, not one after another");
+        for (var id : ids) assertEquals(143, Tasks.parse(sh(TaskScripts.status(id, 1000), "")).exit(), id);
+    }
+
+    @Test
     void aTaskThatHasWrittenNothingYetStillHasAStatus() throws Exception {
         var d = Files.createDirectories(home.resolve(".isx-mcp/tasks/t5-abc"));
         Files.writeString(d.resolve("current"), "1\n");

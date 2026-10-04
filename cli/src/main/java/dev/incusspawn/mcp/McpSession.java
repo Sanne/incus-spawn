@@ -330,8 +330,7 @@ final class McpSession {
      * names the instance it was copied from, which for a fork is another instance.
      */
     static String templateOf(Map<String, String> metadata) {
-        var profile = metadata.getOrDefault(Metadata.PROFILE, "");
-        return profile.isEmpty() ? metadata.getOrDefault(Metadata.PARENT, "") : profile;
+        return java.util.Objects.requireNonNullElse(Metadata.templateOf(metadata), "");
     }
 
     private static String describeClient(Map<String, String> metadata) {

@@ -235,15 +235,21 @@ final class Tasks {
 
     /** The tasks of {@code instance} still running, after asking the instance which have finished. */
     List<Task> busyIn(String instance) {
-        refreshStates();
+        refreshStates(instance::equals);
         synchronized (this) {
             return tasks.values().stream().filter(t -> t.busy() && t.instance().equals(instance)).toList();
         }
     }
 
     void cancel(Task task) {
-        run(task.instance(), TaskScripts.cancel(task.id()), null);
-        markRunning(Map.of(task.id(), false));
+        cancel(task.instance(), List.of(task));
+    }
+
+    /** Cancel several tasks of one instance in one exec. */
+    void cancel(String instance, List<Task> list) {
+        if (list.isEmpty()) return;
+        run(instance, TaskScripts.cancelAll(list.stream().map(Task::id).toList()), null);
+        markRunning(list.stream().collect(Collectors.toMap(Task::id, t -> false)));
     }
 
     String diff(Task task, String path, int maxBytes, boolean statOnly) {
@@ -315,10 +321,16 @@ final class Tasks {
 
     /** Ask each instance, once, which of the tasks believed running still are. */
     private void refreshStates() {
+        refreshStates(instance -> true);
+    }
+
+    /** {@link #refreshStates()}, asking only the instances {@code which} accepts. */
+    private void refreshStates(java.util.function.Predicate<String> which) {
         forgetUnheld();
         List<Task> believedRunning;
         synchronized (this) {
-            believedRunning = tasks.values().stream().filter(t -> t.running() && !t.launching()).toList();
+            believedRunning = tasks.values().stream()
+                    .filter(t -> t.running() && !t.launching() && which.test(t.instance())).toList();
         }
         believedRunning.stream().collect(Collectors.groupingBy(Task::instance)).forEach((instance, list) -> {
             // Adopted by another session (or gone): its tasks are no longer this session's.

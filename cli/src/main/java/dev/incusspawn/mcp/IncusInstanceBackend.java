@@ -154,9 +154,7 @@ final class IncusInstanceBackend implements InstanceBackend {
         try {
             // Stdout is the protocol channel, but StdioGuard has sent System.out to stderr.
             InstancePrep.prepare(incus, name, System.err::println);
-        } catch (InstancePrep.Refused e) {
-            throw new ToolError("could not start '" + name + "': " + e.getMessage());
-        } catch (IncusException e) {
+        } catch (InstancePrep.Refused | IncusException e) {
             throw new ToolError("could not start '" + name + "': " + e.getMessage());
         }
     }
