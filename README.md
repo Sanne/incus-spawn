@@ -1463,7 +1463,7 @@ Manage the MITM authentication proxy.
 |--------|-------------|
 | `--port <port>` | MITM TLS proxy port (default: `18443`) |
 | `--health-port <port>` | Health check HTTP port (default: `18080`) |
-| `--gateway-ip <ip>` | Incus bridge gateway IP (skips auto-detection on Linux; on macOS it must be the host's VM-facing bridge address) |
+| `--gateway-ip <ip>` | Incus bridge gateway IP (skips auto-detection; on Linux it must be a private (RFC 1918) or loopback address or the bridge's own, on macOS the host's VM-facing bridge address) |
 | `--debug` | Log full request/response details |
 
 #### `isx proxy dump`

@@ -1,6 +1,7 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.Platform;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import org.junit.jupiter.api.AfterEach;
@@ -104,11 +105,36 @@ class GatewayOverrideTest {
         // Each would be written verbatim into every address=/<domain>/ line: not IPv4, not
         // this host's bridge, or not the canonical form dnsmasq and Vert.x would both read the
         // same way. ::ffff:10.99.0.1 parses as IPv4 but dnsmasq would serve it as AAAA.
-        for (var bad : List.of("0.0.0.0", "::", "127.0.0.1", "169.254.1.1", "fd42::1",
+        for (var bad : List.of("0.0.0.0", "::", "169.254.1.1", "fd42::1",
                 "::ffff:10.99.0.1", "10.1", "010.099.000.001", "224.0.0.1", "255.255.255.255",
                 "10.99.0.1/24", " 10.99.0.1", "gw.local")) {
             assertEquals(ProxyService.EXIT_CONFIG, checkOnLinux(bad), bad);
         }
+    }
+
+    /**
+     * On Linux the override is also the credential listener's bind address, so it may only be
+     * somewhere other hosts cannot route to: a private range, loopback, or the bridge's own
+     * address (#1022). A private override needs no bridge read, so it still works around a
+     * bridge with no address to read (#892).
+     */
+    @Test
+    void onLinuxAcceptsPrivateLoopbackOrTheBridgeAddress() {
+        var bridge = "100.64.10.1";
+        for (var bad : List.of("8.8.8.8", "100.64.10.2", "172.32.0.1", "192.169.1.1", "11.0.0.1")) {
+            assertEquals(ProxyService.EXIT_CONFIG, checkOnLinux(bad, bridge), bad);
+        }
+        for (var local : List.of("10.99.0.1", "172.16.0.5", "172.31.255.254", "192.168.1.20", "127.0.0.1")) {
+            assertEquals(0, checkOnLinux(local), local);
+        }
+        assertEquals(0, checkOnLinux(bridge, bridge), "a bridge outside the private ranges is still the bridge");
+    }
+
+    @Test
+    void onLinuxANonPrivateOverrideThatCannotBeCheckedIsRefused() {
+        // Exit 1, as without an override: Incus not up yet is transient, not a config error.
+        assertEquals(1, checkOnLinux("100.64.10.1", null),
+                "with no bridge address to compare against, nothing is known safe");
     }
 
     /** On macOS the override is the credential listener's bind address (#937). */
@@ -133,8 +159,33 @@ class GatewayOverrideTest {
                 "with no VM bridge to compare against, nothing is known safe");
     }
 
+    /** A check that must not need the bridge address: a private override is enough on its own. */
+    /** What the proxy compares a non-private override with: the bridge as Incus reports it now. */
+    @Test
+    void onLinuxTheBridgeIsReadFromIncusWithoutTheCachedGateway() {
+        if (Platform.isMacOS()) return;
+        var reads = new AtomicInteger();
+        assertEquals(0, ProxyMain.checkGatewayOverride("100.64.10.1", bridgeAt("100.64.10.1/24", reads)));
+        assertEquals(ProxyService.EXIT_CONFIG,
+                ProxyMain.checkGatewayOverride("100.64.10.2", bridgeAt("100.64.10.1/24", reads)));
+        assertEquals(0, ProxyMain.checkGatewayOverride("192.168.1.20", bridgeAt("100.64.10.1/24", reads)));
+        assertEquals(2, reads.get(), "a private override reads nothing");
+
+        // A cached gateway must not stand in for a bridge that cannot be read.
+        var config = SpawnConfig.load();
+        config.setIncusBridgeGateway("100.64.10.1");
+        config.save();
+        assertEquals("100.64.10.1", ProxyConfig.resolveGatewayIp(bridgeWithNoAddress(new ArrayList<>())),
+                "the cache is in place");
+        assertEquals(1, ProxyMain.checkGatewayOverride("100.64.10.1", bridgeWithNoAddress(new ArrayList<>())));
+    }
+
     private static int checkOnLinux(String option) {
-        return ProxyMain.checkGatewayOverride(option, false, () -> fail("Linux has no VM bridge"));
+        return ProxyMain.checkGatewayOverride(option, false, () -> fail("no bridge read needed for " + option));
+    }
+
+    private static int checkOnLinux(String option, String bridge) {
+        return ProxyMain.checkGatewayOverride(option, false, () -> bridge);
     }
 
     private static int checkOnMacOs(String option, String bridge) {
