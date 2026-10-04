@@ -135,7 +135,8 @@ class WaitForReadyTest {
     @Test
     void vmWhoseStateDoesNotReportProcessesIsProbedWithExec() {
         daemon.instance("vm1", "virtual-machine", "Running", Map.of());
-        assertThrows(IncusException.class, () -> client(50, 300, 100).waitForReady("vm1", MachineType.VM));
+        // Several 250 ms polls: with one, a slow first round trip leaves no time for a second (#1016)
+        assertThrows(IncusException.class, () -> client(50, 1_000, 100).waitForReady("vm1", MachineType.VM));
 
         assertEquals(1, requestsEndingWith("/state").size(), daemon.requests().toString());
         assertTrue(requestsEndingWith("/exec").size() > 1, "falls back to probing exec: " + daemon.requests());
