@@ -41,7 +41,7 @@ public class ProxyMain implements QuarkusApplication {
                     System.out.println("Options:");
                     System.out.println("  --port <port>         MITM listen port (default: " + ProxyConfig.DEFAULT_MITM_PORT + ")");
                     System.out.println("  --health-port <port>  Health check port (default: " + ProxyConfig.DEFAULT_HEALTH_PORT + ")");
-                    System.out.println("  --gateway-ip <ip>     Override gateway IP detection");
+                    System.out.println("  --gateway-ip <ip>     Gateway IP to listen on (skips detection on Linux, must be the VM bridge on macOS)");
                     System.out.println("  --debug               Enable API traffic debug logging");
                     System.out.println("  --version, -V         Display version info");
                     System.out.println("  --help, -h            Show this help");
@@ -62,14 +62,14 @@ public class ProxyMain implements QuarkusApplication {
 
         installLogTee();
 
-        var badOverride = checkGatewayOverride(gatewayIpOption);
-        if (badOverride != 0) return badOverride;
-
         var incus = new IncusClient();
         if (!Environment.hasBeenInitialized()) {
             System.err.println("Error: incus-spawn has not been initialized. Run 'isx init' first.");
             return ProxyService.EXIT_CONFIG;
         }
+
+        var badOverride = checkGatewayOverride(gatewayIpOption);
+        if (badOverride != 0) return badOverride;
 
         var loaded = ConfigFingerprint.load();
         var config = loaded.config();
@@ -245,8 +245,7 @@ public class ProxyMain implements QuarkusApplication {
         } else if (Platform.isMacOS()) {
             gatewayIp = VmNetwork.discoverHostBridgeIp();
             if (gatewayIp == null) {
-                System.err.println("Error: could not discover VM-facing bridge interface.");
-                System.err.println(ProxyConfig.gatewayUnavailableHint(true));
+                reportNoVmBridge();
                 return null;
             }
         } else {
@@ -268,16 +267,44 @@ public class ProxyMain implements QuarkusApplication {
      * and the unauthenticated health endpoint binds to it, so it must be a unicast IPv4 address
      * in the canonical form: {@code 10.1} or {@code ::ffff:10.99.0.1} parse as the same address
      * but are not what dnsmasq would read, and a wildcard would expose /health everywhere.
+     * <p>
+     * On macOS the override is the bind address of the credential-injecting listener, and a
+     * caller the proxy cannot place is served the default accounts, so anywhere but the host's
+     * end of the VM link would serve them to other hosts (#937). It must be exactly the address
+     * {@link VmNetwork#discoverHostBridgeIp()} finds; when that finds nothing, the override
+     * cannot be checked and the proxy stops as it would without one.
      */
     static int checkGatewayOverride(String gatewayIpOption) {
-        if (gatewayIpOption == null || gatewayIpOption.isBlank() || Platform.isMacOS()
-                || isBridgeGatewayLiteral(gatewayIpOption)) {
-            return 0;
-        }
+        return checkGatewayOverride(gatewayIpOption, Platform.isMacOS(), VmNetwork::discoverHostBridgeIp);
+    }
+
+    static int checkGatewayOverride(String gatewayIpOption, boolean macOS,
+            java.util.function.Supplier<String> hostBridgeIp) {
+        if (gatewayIpOption == null || gatewayIpOption.isBlank()) return 0;
+        if (macOS) return checkMacOsGatewayOverride(gatewayIpOption, hostBridgeIp.get());
+        if (isBridgeGatewayLiteral(gatewayIpOption)) return 0;
         System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not a bridge gateway address.");
         System.err.println("Pass the Incus bridge's own IPv4 address, without the prefix length that");
         System.err.println("'incus network get incusbr0 ipv4.address' shows (10.166.11.1, not 10.166.11.1/24).");
         return ProxyService.EXIT_CONFIG;
+    }
+
+    private static int checkMacOsGatewayOverride(String gatewayIpOption, String bridgeIp) {
+        if (bridgeIp == null) {
+            reportNoVmBridge();
+            return 1;
+        }
+        if (bridgeIp.equals(gatewayIpOption)) return 0;
+        System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not the VM-facing bridge address ("
+                + bridgeIp + ").");
+        System.err.println("The proxy injects credentials, so on macOS it listens only where the VM reaches it.");
+        System.err.println("Omit --gateway-ip to use " + bridgeIp + ".");
+        return ProxyService.EXIT_CONFIG;
+    }
+
+    private static void reportNoVmBridge() {
+        System.err.println("Error: could not discover VM-facing bridge interface.");
+        System.err.println(ProxyConfig.gatewayUnavailableHint(true));
     }
 
     private static boolean isBridgeGatewayLiteral(String address) {

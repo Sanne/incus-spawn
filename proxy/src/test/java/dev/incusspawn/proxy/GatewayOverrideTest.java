@@ -12,16 +12,19 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * {@code --gateway-ip} decides where the health endpoint listens and where bridge DNS points,
  * without a second bridge lookup that would ignore the override or fail when the bridge has no
  * address to read (#892). On macOS neither follows the gateway (health is on localhost, DNS
- * inside the VM points at the VM's own bridge), so these cases guard the Linux behaviour.
+ * inside the VM points at the VM's own bridge), so those cases guard the Linux behaviour; what
+ * the override may be is checked for both platforms on every platform.
  */
 class GatewayOverrideTest {
 
@@ -95,18 +98,47 @@ class GatewayOverrideTest {
 
     @Test
     void refusesAnOverrideThatCannotBeTheBridgeGatewayAsAConfigError() {
-        assertEquals(0, ProxyMain.checkGatewayOverride(null));
-        assertEquals(0, ProxyMain.checkGatewayOverride(OVERRIDE));
-        assertEquals(0, ProxyMain.checkGatewayOverride(" "), "blank means no override, as before");
-        if (Platform.isMacOS()) return;
+        assertEquals(0, checkOnLinux(null));
+        assertEquals(0, checkOnLinux(OVERRIDE));
+        assertEquals(0, checkOnLinux(" "), "blank means no override, as before");
         // Each would be written verbatim into every address=/<domain>/ line: not IPv4, not
         // this host's bridge, or not the canonical form dnsmasq and Vert.x would both read the
         // same way. ::ffff:10.99.0.1 parses as IPv4 but dnsmasq would serve it as AAAA.
         for (var bad : List.of("0.0.0.0", "::", "127.0.0.1", "169.254.1.1", "fd42::1",
                 "::ffff:10.99.0.1", "10.1", "010.099.000.001", "224.0.0.1", "255.255.255.255",
                 "10.99.0.1/24", " 10.99.0.1", "gw.local")) {
-            assertEquals(ProxyService.EXIT_CONFIG, ProxyMain.checkGatewayOverride(bad), bad);
+            assertEquals(ProxyService.EXIT_CONFIG, checkOnLinux(bad), bad);
         }
+    }
+
+    /** On macOS the override is the credential listener's bind address (#937). */
+    @Test
+    void onMacOsAcceptsOnlyTheVmBridgeAddress() {
+        var bridge = "192.168.64.1";
+        Supplier<String> noLookup = () -> fail("no override, nothing to check");
+        assertEquals(0, ProxyMain.checkGatewayOverride(null, true, noLookup));
+        assertEquals(0, ProxyMain.checkGatewayOverride(" ", true, noLookup), "blank means no override, as before");
+        assertEquals(0, checkOnMacOs(bridge, bridge));
+        for (var bad : List.of("0.0.0.0", "::", "192.168.1.20", "10.99.0.1", "8.8.8.8",
+                "127.0.0.1", "192.168.064.001", "::ffff:192.168.64.1", "192.168.64.1/24",
+                " 192.168.64.1", "gw.local")) {
+            assertEquals(ProxyService.EXIT_CONFIG, checkOnMacOs(bad, bridge), bad);
+        }
+    }
+
+    @Test
+    void onMacOsAnOverrideThatCannotBeCheckedIsRefused() {
+        // Exit 1, as without an override: a VM not up yet is transient, not a config error.
+        assertEquals(1, checkOnMacOs("192.168.64.1", null),
+                "with no VM bridge to compare against, nothing is known safe");
+    }
+
+    private static int checkOnLinux(String option) {
+        return ProxyMain.checkGatewayOverride(option, false, () -> fail("Linux has no VM bridge"));
+    }
+
+    private static int checkOnMacOs(String option, String bridge) {
+        return ProxyMain.checkGatewayOverride(option, true, () -> bridge);
     }
 
     @Test
