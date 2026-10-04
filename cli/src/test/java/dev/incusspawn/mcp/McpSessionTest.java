@@ -283,6 +283,16 @@ class McpSessionTest {
     }
 
     @Test
+    void aForkIsAdoptedByTheTemplateItDescendsFrom() {
+        // A fork's PARENT is the instance it was branched from; its lineage is PROFILE (#1013).
+        other("mcp-dev-fork-abcde", DEAD, "alice", Metadata.PARENT, "mcp-dev-src-fghij",
+                Metadata.PROFILE, "tpl-dev", Metadata.MCP_ORPHANED, "2026-09-28T10:00:00Z");
+        var adopted = session(3).adopt("mcp-dev-fork-abcde", false);
+        assertEquals("tpl-dev", adopted.template());
+        assertTrue(adopted.supportsDelegate());
+    }
+
+    @Test
     void aLiveSessionsInstanceIsAdoptedOnlyByForce() {
         other("held", ALIVE, "alice");
         var s = session(3);

@@ -260,7 +260,7 @@ final class McpSession {
                     + holder.get().pid() + describeClient(metadata) + "). Adopting it would take it away "
                     + "mid-work; set force: true only if that session is stuck.");
         }
-        var template = metadata.getOrDefault(Metadata.PARENT, "");
+        var template = templateOf(metadata);
         if (!config.get().templates().contains(template)) {
             throw new ToolError("'" + name + "' comes from template '" + template + "', which is no longer "
                     + "approved for agents. " + TemplatePolicy.HOW_TO_APPROVE);
@@ -310,6 +310,16 @@ final class McpSession {
         }
         // Still marked after the wait: it is ours by its stamp, so held like any busy instance.
         return after;
+    }
+
+    /**
+     * The template an instance descends from: {@link Metadata#PROFILE}, the leaf template every
+     * copy carries, as {@code InstancePrep} and {@code BranchFlow} read it. {@link Metadata#PARENT}
+     * names the instance it was copied from, which for a fork is another instance.
+     */
+    static String templateOf(Map<String, String> metadata) {
+        var profile = metadata.getOrDefault(Metadata.PROFILE, "");
+        return profile.isEmpty() ? metadata.getOrDefault(Metadata.PARENT, "") : profile;
     }
 
     private static String describeClient(Map<String, String> metadata) {

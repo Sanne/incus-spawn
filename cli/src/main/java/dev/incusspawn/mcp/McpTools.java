@@ -318,7 +318,7 @@ final class McpTools {
             var config = other.config();
             var node = list.addObject();
             node.put("instance", other.name());
-            node.put("template", config.getOrDefault(Metadata.PARENT, ""));
+            node.put("template", McpSession.templateOf(config));
             var purpose = config.get(Metadata.MCP_PURPOSE);
             if (purpose != null) node.put("purpose", purpose);
             if (other.orphaned()) {
@@ -716,7 +716,7 @@ final class McpTools {
         var message = args.requireString("message");
         var template = session.instances().stream().filter(o -> o.name().equals(task.instance()))
                 .map(McpSession.Owned::template).findFirst()
-                .orElse(owned.metadata().getOrDefault(Metadata.PARENT, ""));
+                .orElse(McpSession.templateOf(owned.metadata()));
         var updated = tasks.sendMessage(task, message, permissionMode(template));
         McpAuditLog.record(session.id, "send_message", task.instance(), message, 0,
                 "task=" + task.id() + " turn=" + updated.runs());
