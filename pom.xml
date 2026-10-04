@@ -50,8 +50,9 @@
         <!--
           Keeps AESCrypt.makeSessionKey out of the test JVM's JIT: GraalVM 25's JIT sometimes
           gets an AES-256 key schedule wrong, and TLS tests fail with bad_record_mac (#940,
-          DESIGN.md "Testing"). A property rather than surefire configuration, so the Quarkus
-          plugin can still add its own test JVM arguments. JitWorkaroundTest pins it.
+          upstream: oracle/graal#14599, DESIGN.md "Testing"). A property rather than surefire
+          configuration, so the Quarkus plugin can still add its own test JVM arguments.
+          JitWorkaroundTest pins it.
         -->
         <argLine>-XX:CompileCommand=quiet -XX:CompileCommand=exclude,com.sun.crypto.provider.AESCrypt::makeSessionKey</argLine>
     </properties>

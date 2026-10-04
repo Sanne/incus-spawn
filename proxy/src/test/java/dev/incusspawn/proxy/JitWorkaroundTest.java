@@ -10,9 +10,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The tests here run real TLS on every hop (client, MITM server, upstream client, mock
  * upstream), all in one JVM. On GraalVM 25's JIT, AESCrypt.makeSessionKey sometimes gives
  * one cipher a wrong AES-256 key schedule while warming up, and that connection fails with
- * bad_record_mac (#940). The root pom's {@code argLine} property keeps the method
- * interpreted; if that is lost (a module setting surefire's own {@code <argLine>}, say), these
- * tests go back to failing once in a while, on whatever test was running, and nothing points here.
+ * bad_record_mac (#940, upstream:
+ * <a href="https://github.com/oracle/graal/issues/14599">oracle/graal#14599</a>). The root
+ * pom's {@code argLine} property keeps the method interpreted; if that is lost (a module
+ * setting surefire's own {@code <argLine>}, say), these tests go back to failing once in a
+ * while, on whatever test was running, and nothing points here.
  */
 class JitWorkaroundTest {
 
