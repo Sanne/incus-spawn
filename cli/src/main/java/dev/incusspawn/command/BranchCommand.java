@@ -33,8 +33,12 @@ public class BranchCommand extends BaseCommand {
     @Option(name = "from", description = "Source instance to branch from (auto-detected from cwd if omitted)")
     String source;
 
-    @Option(name = "gui", description = "Enable GUI passthrough (Wayland + GPU + audio)", hasValue = false)
+    @Option(name = "gui", description = "Enable GUI passthrough (Wayland + GPU + audio); "
+            + "the default when the template has gui: true", hasValue = false)
     boolean gui;
+
+    @Option(name = "no-gui", description = "Disable GUI passthrough even if the template has gui: true", hasValue = false)
+    boolean noGui;
 
     @Option(name = "kvm", description = "Expose /dev/kvm for nested virtualization", hasValue = false)
     boolean kvm;
@@ -86,8 +90,13 @@ public class BranchCommand extends BaseCommand {
         }
         var networkMode = airgap ? NetworkMode.AIRGAP
                 : proxyOnly ? NetworkMode.PROXY_ONLY : NetworkMode.FULL;
+        if (gui && noGui) {
+            System.err.println("Error: --gui and --no-gui are mutually exclusive.");
+            return CommandResult.valueOf(1);
+        }
+        Boolean guiChoice = gui ? Boolean.TRUE : noGui ? Boolean.FALSE : null;
         Boolean kvmChoice = kvm ? Boolean.TRUE : noKvm ? Boolean.FALSE : null;
-        var request = new BranchFlow.Request(resolvedSource, name, gui, kvmChoice, networkMode,
+        var request = new BranchFlow.Request(resolvedSource, name, guiChoice, kvmChoice, networkMode,
                 inbox, cpuLimit, memoryLimit, diskLimit, accounts, !noStart, Map.of());
 
         BranchFlow.Preflight preflight;

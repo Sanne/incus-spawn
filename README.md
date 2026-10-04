@@ -319,7 +319,7 @@ Image schema fields (all optional except `name`):
 - `host-resources` -- host files/directories to share with containers (see below)
 - `mask_services` -- systemd units to mask in the image
 - `env` -- environment variables written to `/etc/profile.d/isx-env.sh` (see [Environment Variables](#environment-variables))
-- `gui` -- enable GUI support
+- `gui` -- enable GUI support: container branches get GUI passthrough by default when isx runs in a Wayland session (`isx branch --no-gui` and the TUI dialog opt out)
 - `pinned` -- pin the base image to `image_tag` instead of tracking the newest release
 - `workdir` -- default working directory when shelling into a container (see below)
 - `shell-command` -- command to run instead of the login shell (see below)
@@ -1257,7 +1257,8 @@ Create a new instance as a copy-on-write clone from a template or existing insta
 | Option | Description |
 |--------|-------------|
 | `--from <source>` | Source instance to branch from (auto-detected from cwd if omitted) |
-| `--gui` | Enable GUI passthrough (Wayland + GPU + audio) |
+| `--gui` | Enable GUI passthrough (Wayland + GPU + audio); the default when the template has `gui: true` |
+| `--no-gui` | Disable GUI passthrough even if the template has `gui: true` |
 | `--kvm` | Expose /dev/kvm for nested virtualization |
 | `--no-kvm` | Disable KVM even if the template was built with `type: kvm` |
 | `--airgap` | Disable all network access |

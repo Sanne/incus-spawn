@@ -913,7 +913,11 @@ public class IncusClient {
     }
 
     public CopyPlan planCopy(String source) {
-        var sourceInstance = instanceMetadata(source);
+        return planCopy(instanceMetadata(source));
+    }
+
+    /** {@link #planCopy(String)} from a source already read with {@link #instanceMetadata}. */
+    public CopyPlan planCopy(JsonNode sourceInstance) {
         var sourcePool = rootDiskPoolFromDevices(sourceInstance.path("expanded_devices"));
         var addressedNics = withoutStaticAddress(sourceInstance.path("devices"));
         var pools = listPools();
@@ -2158,8 +2162,13 @@ public class IncusClient {
         if (!resp.isSuccess()) {
             throw new IncusException("Failed to read config from " + name);
         }
+        return configByPrefix(resp.body().path("metadata"), prefix);
+    }
+
+    /** {@link #configByPrefix(String, String)} from an instance already read with {@link #instanceMetadata}. */
+    public static Map<String, String> configByPrefix(JsonNode instanceMetadata, String prefix) {
         var result = new java.util.LinkedHashMap<String, String>();
-        resp.body().path("metadata").path("config").properties().forEach(entry -> {
+        instanceMetadata.path("config").properties().forEach(entry -> {
             if (!entry.getKey().startsWith(prefix)) return;
             var value = entry.getValue();
             if (value == null || value.isNull()) return;

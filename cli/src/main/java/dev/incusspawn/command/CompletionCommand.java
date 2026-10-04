@@ -156,6 +156,7 @@ public class CompletionCommand extends BaseCommand {
                 '--from=[Source instance to branch from]:instance:_isx_instances' \\
                 '--gui[Enable GUI passthrough (Wayland + GPU + audio)]' \\
                 '--kvm[Expose /dev/kvm for nested virtualization]' \\
+                '--no-gui[Disable GUI passthrough even if the template has gui: true]' \\
                 '--no-kvm[Disable KVM even if the template was built with type: kvm]' \\
                 '--airgap[Disable network access (complete isolation)]' \\
                 '--proxy-only[Restrict network to host proxy only]' \\
@@ -513,7 +514,7 @@ public class CompletionCommand extends BaseCommand {
                       return ;;
                     --cpu|--memory|--disk) return ;;
                   esac
-                  COMPREPLY=( $(compgen -W "--help --from --gui --kvm --no-kvm --airgap --proxy-only --inbox --cpu --memory --disk --no-start --account" -- "$cur") )
+                  COMPREPLY=( $(compgen -W "--help --from --gui --no-gui --kvm --no-kvm --airgap --proxy-only --inbox --cpu --memory --disk --no-start --account" -- "$cur") )
                   ;;
                 build)
                   case "$prev" in
@@ -780,6 +781,7 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand branch' -l from        -d 'Source instance to branch from' -a '(__isx_instances)'
             complete -c isx -f -n '__isx_using_subcommand branch' -l gui         -d 'Enable GUI passthrough (Wayland + GPU + audio)'
             complete -c isx -f -n '__isx_using_subcommand branch' -l kvm         -d 'Expose /dev/kvm for nested virtualization'
+            complete -c isx -f -n '__isx_using_subcommand branch' -l no-gui      -d 'Disable GUI passthrough even if the template has gui: true'
             complete -c isx -f -n '__isx_using_subcommand branch' -l no-kvm      -d 'Disable KVM even if the template was built with type: kvm'
             complete -c isx -f -n '__isx_using_subcommand branch' -l airgap      -d 'Disable network access (complete isolation)'
             complete -c isx -f -n '__isx_using_subcommand branch' -l proxy-only  -d 'Restrict network to host proxy only'

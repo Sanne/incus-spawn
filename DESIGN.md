@@ -106,7 +106,7 @@ with install instructions.
 
 - **System containers** by default (lightweight, full init system), with `--vm` flag for KVM VMs (stronger isolation, separate kernel)
 - Containers don't drop capabilities (`lxc.cap.drop =`) and the host kernel relaxes `perf_event_paranoid` to `-1` so profilers work without restrictions; `ptrace_scope` is unrestricted (Yama is not compiled in) and `ping_group_range` is wide by default
-- No GUI by default; Wayland + GPU passthrough available at branch time
+- No GUI unless the template asks for it (`gui: true`); Wayland + GPU passthrough available at branch time
 - Three network modes at branch time: full internet (default), proxy-only, or airgapped
 - Container user: `agentuser` (UID 1000, passwordless sudo)
 
@@ -306,7 +306,7 @@ The TUI branch modal supports:
 - Inbox mount (read-only host directory for sharing files into the container)
 - VM resource limits (CPU, memory, disk)
 
-The modal only collects inputs: the branch itself is made by `BranchFlow`, the same `preflight()`/`create()` as `isx branch`, so a TUI branch gets the template's and source's account selection, the proxy refresh before start, and the CA, `resolv.conf` and identity repairs after it. It used to be a hand-kept copy of the flow that skipped all of those, so a branch reusing a destroyed instance's static IP could be served that instance's credential account (#800).
+The modal only collects inputs: the branch itself is made by `BranchFlow`, the same `preflight()`/`create()` as `isx branch`, so a TUI branch gets the template's and source's account selection, the proxy refresh before start, and the CA, `resolv.conf` and identity repairs after it. It used to be a hand-kept copy of the flow that skipped all of those, so a branch reusing a destroyed instance's static IP could be served that instance's credential account (#800). Its initial values come from `BranchFlow.defaultsFor()` too -- the one rule `create()` applies to whatever a request leaves null: GUI and KVM on when the source's definition sets `gui: true` / `type: kvm` or the source itself has GUI or `instance-mode: kvm` (GUI only for a container, since passthrough's GPU device would keep a VM from starting; a default GUI outside a Wayland session is skipped with a note rather than failed with errors), and the adaptive CPU, memory and disk limits for its machine type. The dialog used to compute its own, and its KVM rule already differed from the CLI's, which ignored the definition (#869). `create()` takes those defaults, its machine type and the copy plan from the source read `preflight()` already made (`Preflight.sourceInstance`), and the dialog reads the source once for its defaults and account rows.
 
 ### Terminal Output Visual Language
 
@@ -467,7 +467,7 @@ The built-in `idea-backend` tool installs the JetBrains IntelliJ IDEA remote dev
 
 ### GUI and Audio Passthrough
 
-Enables GUI applications and audio inside containers:
+Enables GUI applications and audio inside containers. A branch gets it with `--gui`, or by default when its template sets `gui: true` (or its source has it) and it is a container branched from a Wayland session; `--no-gui` opts out. `isx mcp`'s branches never get it.
 - GPU device passed through for hardware-accelerated rendering
 - Host `XDG_RUNTIME_DIR` bind-mounted, exposing the Wayland socket and PipeWire/PulseAudio socket
 - Environment variables written to `/etc/profile.d/wayland.sh` (`WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, toolkit backends)

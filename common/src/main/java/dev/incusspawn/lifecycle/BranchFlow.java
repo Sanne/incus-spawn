@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.config.AccountOrigin;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.AccountResolver;
@@ -52,12 +53,12 @@ public final class BranchFlow {
     static java.util.function.Predicate<IncusClient> proxyHealthCheck = ProxyHealthCheck::checkOrWarn;
 
     /**
-     * What to branch. {@code kvm} null means "whatever the source template was built with";
-     * null {@code cpu}/{@code memory}/{@code disk} mean the adaptive defaults.
+     * What to branch. A null {@code gui}, {@code kvm}, {@code cpu}, {@code memory} or
+     * {@code disk} means the {@linkplain #defaultsFor default} for the source.
      * {@code extraConfig} is stamped in the same writes as the branch's own metadata: on the copy
      * request itself and again in {@link InstanceLifecycle#configureBranch}.
      */
-    public record Request(String source, String name, boolean gui, Boolean kvm,
+    public record Request(String source, String name, Boolean gui, Boolean kvm,
                           NetworkMode networkMode, Path inbox, Integer cpu, String memory,
                           String disk, List<String> accountOverrides, boolean start,
                           Map<String, String> extraConfig) {
@@ -66,7 +67,11 @@ public final class BranchFlow {
             extraConfig = extraConfig == null ? Map.of() : Map.copyOf(extraConfig);
         }
 
-        /** A branch with every setting at the template's default, as {@code isx branch <name> --from <source>}. */
+        /**
+         * A branch with every setting at the template's default, as {@code isx branch <name> --from <source>},
+         * except GUI passthrough, which is always off: this is the agent's branch ({@code isx mcp}),
+         * and nobody watches its display.
+         */
         public static Request defaults(String source, String name) {
             return new Request(source, name, false, null, NetworkMode.FULL, null, null, null,
                     null, List.of(), true, Map.of());
@@ -78,9 +83,45 @@ public final class BranchFlow {
         }
     }
 
-    /** A request that passed {@link #preflight}: nothing has been created yet. */
+    /**
+     * What a branch of a source gets for each setting its {@link Request} leaves open. One rule
+     * for {@code isx branch} and the TUI's branch dialog, which shows these as its initial values.
+     *
+     * @param cpu null for a container, which gets no CPU limit
+     */
+    public record Defaults(MachineType machineType, boolean gui, boolean kvm, Integer cpu,
+                           String memory, String disk) {}
+
+    /**
+     * The {@link Defaults} for a branch of {@code source}, given that instance as
+     * {@link IncusClient#instanceMetadata} reads it. GUI and KVM follow the source's definition
+     * when it is a template, and what the source was built or branched with either way. GUI only
+     * for a container: passthrough hands over a GPU device, which a VM cannot start with.
+     */
+    public static Defaults defaultsFor(String source, JsonNode instance, Map<String, ImageDef> defs) {
+        var def = defs.get(source);
+        var config = instance.path("config");
+        var machineType = IncusClient.machineType(instance);
+        var gui = machineType == MachineType.CONTAINER && ((def != null && def.isGui())
+                || "true".equals(config.path(Metadata.GUI_ENABLED).asText("")));
+        var kvm = (def != null && def.isKvm())
+                || "kvm".equals(config.path(Metadata.INSTANCE_MODE).asText(""));
+        if (machineType == MachineType.VM) {
+            return new Defaults(machineType, gui, kvm, Math.max(1, ResourceLimits.hostProcessorCount() - 2),
+                    ResourceLimits.defaultVmMemoryLimit(), ResourceLimits.defaultDiskLimit());
+        }
+        return new Defaults(machineType, gui, kvm, null, ResourceLimits.adaptiveMemoryLimit(),
+                ResourceLimits.defaultDiskLimit());
+    }
+
+    /**
+     * A request that passed {@link #preflight}: nothing has been created yet.
+     *
+     * @param sourceInstance the source as preflight read it, so {@link #create} need not read it again
+     */
     public record Preflight(Request request, Map<String, ImageDef> defs,
-                            Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins) {}
+                            Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins,
+                            JsonNode sourceInstance) {}
 
     /** An account selection and who chose each pin in it. */
     /** @param template the leaf template the source was built from ({@link Inherited#template}) */
@@ -132,9 +173,10 @@ public final class BranchFlow {
         var config = SpawnConfig.load();
         var loader = new ToolDefLoader();
         var served = ToolProxyResolver.proxyToolSetups(config, loader);
+        var sourceInstance = incus.instanceMetadata(req.source());
         ResolvedAccounts accounts;
         try {
-            accounts = resolveAccountSelection(incus, req.source(), req.accountOverrides(), defs, config,
+            accounts = resolveAccountSelection(incus, req.source(), sourceInstance, req.accountOverrides(), defs, config,
                     AccountSelection.byNamespace(served));
         } catch (AccountSelection.InvalidSelectionException
                  | AccountResolver.UnknownAccountException e) {
@@ -159,7 +201,7 @@ public final class BranchFlow {
         } catch (HostResourceSetup.ForbiddenMountTargetException e) {
             throw new BranchException(e.getMessage());
         }
-        return new Preflight(req, defs, accounts.accounts(), accounts.origins());
+        return new Preflight(req, defs, accounts.accounts(), accounts.origins(), sourceInstance);
     }
 
     /**
@@ -175,7 +217,11 @@ public final class BranchFlow {
 
         BuildOutput.branchHeader(name, source);
 
-        var copyPlan = incus.planCopy(source);
+        // The source as preflight read it: the copy plan, its machine type and every default the request leaves open
+        var sourceInstance = preflight.sourceInstance();
+        var defaults = defaultsFor(source, sourceInstance, defs);
+
+        var copyPlan = incus.planCopy(sourceInstance);
         if (!copyPlan.cow()) {
             BuildOutput.warn("This branch will be a full copy, not a CoW clone: "
                     + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
@@ -190,7 +236,14 @@ public final class BranchFlow {
 
         // Configure GUI before start so environment.* keys are visible to init. First, because
         // it may push files: any push lands well before the start (see prefetchAndStart).
-        if (req.gui()) {
+        var gui = req.gui() != null ? req.gui() : defaults.gui();
+        if (gui && req.gui() == null && !GuiPassthrough.inWaylandSession()) {
+            // Only the template's default: outside a Wayland session (SSH, a headless host) that is a note, not an error
+            System.err.println("Note: '" + source + "' has GUI passthrough, but isx is not running in a "
+                    + "Wayland session; branching without it.");
+            gui = false;
+        }
+        if (gui) {
             if (GuiPassthrough.configureGui(incus, name)) {
                 incus.configSet(name, Metadata.GUI_ENABLED, "true");
             } else {
@@ -200,27 +253,17 @@ public final class BranchFlow {
         } else {
             // Clean up inherited GUI devices/env from incus copy
             GuiPassthrough.removeGui(incus, name);
-            warnIfTemplateWantsGui(incus, source, defs);
         }
 
-        var sourceMachineType = incus.machineType(source);
-        String cpu;
-        if (req.cpu() != null) {
-            cpu = String.valueOf(req.cpu());
-        } else if (sourceMachineType == MachineType.VM) {
-            cpu = String.valueOf(Math.max(1, ResourceLimits.hostProcessorCount() - 2));
-        } else {
-            cpu = null;
-        }
-        var memory = req.memory() != null ? req.memory()
-                : sourceMachineType == MachineType.VM ? ResourceLimits.defaultVmMemoryLimit() : ResourceLimits.adaptiveMemoryLimit();
-        var disk = req.disk() != null ? req.disk() : ResourceLimits.defaultDiskLimit();
+        var cpuLimit = req.cpu() != null ? req.cpu() : defaults.cpu();
+        var cpu = cpuLimit == null ? null : String.valueOf(cpuLimit);
+        var memory = req.memory() != null ? req.memory() : defaults.memory();
+        var disk = req.disk() != null ? req.disk() : defaults.disk();
 
         BuildOutput.step("Resource limits: " +
                 (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk.");
-        var enableKvm = req.kvm() != null ? req.kvm()
-                : "kvm".equals(incus.configGet(source, Metadata.INSTANCE_MODE));
-        var machineType = sourceMachineType;
+        var enableKvm = req.kvm() != null ? req.kvm() : defaults.kvm();
+        var machineType = defaults.machineType();
         InstanceLifecycle.configureBranch(incus, name, new InstanceLifecycle.BranchSettings(
                 cpu, memory, disk, networkMode, source, preflight.accounts(),
                 preflight.accountOrigins(), enableKvm, req.extraConfig()));
@@ -315,10 +358,11 @@ public final class BranchFlow {
      * was built for.
      */
     private static ResolvedAccounts resolveAccountSelection(IncusClient incus, String source,
+                                                            JsonNode sourceInstance,
                                                             List<String> accountOverrides,
                                                             Map<String, ImageDef> defs, SpawnConfig config,
                                                             Map<String, ToolSetup> setups) {
-        var inherited = inheritedAccounts(incus, source, defs);
+        var inherited = inheritedAccounts(sourceInstance, source, defs);
         var overrides = AccountSelection.parse(accountOverrides);
         var selection = selection(inherited, overrides);
         var origins = new java.util.LinkedHashMap<>(inherited.origins());
@@ -366,7 +410,11 @@ public final class BranchFlow {
      */
     public static Inherited inheritedAccounts(IncusClient incus, String source, Map<String, ImageDef> defs) {
         // One read for the profile, the pins, their origins and the build record.
-        var instance = incus.instanceMetadata(source);
+        return inheritedAccounts(incus.instanceMetadata(source), source, defs);
+    }
+
+    /** {@link #inheritedAccounts(IncusClient, String, Map)} from a source already read with {@link IncusClient#instanceMetadata}. */
+    public static Inherited inheritedAccounts(JsonNode instance, String source, Map<String, ImageDef> defs) {
         if (!instance.isObject()) { // Incus answers a missing instance with "metadata": null
             throw new IncusException("Failed to read instance " + source);
         }
@@ -406,18 +454,6 @@ public final class BranchFlow {
         // Cheap (SIGUSR1 re-reads the instance list only) and happens before the guest boots,
         // so the first request from inside already sees the right answer.
         ProxyService.signalAccountRefresh();
-    }
-
-    private static void warnIfTemplateWantsGui(IncusClient incus, String source,
-                                               Map<String, ImageDef> defs) {
-        if ("true".equals(incus.configGet(source, Metadata.GUI_ENABLED))) {
-            System.err.println("Note: '" + source + "' has GUI passthrough — consider using --gui.");
-            return;
-        }
-        var def = defs.get(source);
-        if (def != null && def.isGui()) {
-            System.err.println("Note: '" + source + "' has GUI passthrough — consider using --gui.");
-        }
     }
 
     private static void checkCaMismatch(IncusClient incus, String source) {

@@ -16,7 +16,6 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.GuiPassthrough;
@@ -494,7 +493,7 @@ public class ListCommand extends BaseCommand {
                         .filter(t -> t.name.equals(branchSourceName))
                         .findFirst().orElse(null);
                 if (tpl != null && !"not built".equals(tpl.buildStatus)) {
-                    openBranchModal(tpl.name, tpl.runtime);
+                    openBranchModal(tpl.name);
                 }
             }
 
@@ -1414,7 +1413,7 @@ public class ListCommand extends BaseCommand {
                 return true;
             }
             if (vanished(template.name)) return true;
-            openBranchModal(template.name, template.runtime);
+            openBranchModal(template.name);
             return true;
         }
 
@@ -1510,7 +1509,7 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         if (key.isKey(KeyCode.F4)) {
-            openBranchModal(selected.name, selected.runtime);
+            openBranchModal(selected.name);
             return true;
         }
         if (key.isKey(KeyCode.F7) && !key.hasShift() && isRunning(selected)) {
@@ -1668,26 +1667,30 @@ public class ListCommand extends BaseCommand {
         mode = Mode.NEW_TEMPLATE;
     }
 
-    private void openBranchModal(String sourceName, String runtime) {
+    private void openBranchModal(String sourceName) {
         branchSourceName = sourceName;
         branchNameInput = new TextInputState(suggestBranchName(sourceName));
-        var def = imageDefs.get(sourceName);
-        branchGuiCheck = new CheckboxState((def != null && def.isGui())
-                || "true".equals(incus.configGet(sourceName, Metadata.GUI_ENABLED)));
-        branchKvmCheck = new CheckboxState((def != null && def.isKvm())
-                || "kvm".equals(incus.configGet(sourceName, Metadata.INSTANCE_MODE)));
+        // BranchFlow's own defaults, so the dialog offers what 'isx branch' would do (#869)
+        // One read of the source serves the defaults and the account rows
+        var source = incus.instanceMetadataOrThrow(sourceName);
+        if (source == null) {
+            mode = Mode.BROWSE;
+            statusMessage = sourceName + " no longer exists";
+            return;
+        }
+        var defaults = BranchFlow.defaultsFor(sourceName, source, imageDefs);
+        branchGuiCheck = new CheckboxState(defaults.gui());
+        branchKvmCheck = new CheckboxState(defaults.kvm());
         branchNetworkModes = NetworkMode.values();
         branchNetworkSelect = new SelectState(java.util.Arrays.stream(branchNetworkModes)
                 .map(NetworkMode::label).toArray(String[]::new));
         branchInboxCheck = new CheckboxState(false);
         branchInboxInput = new TextInputState("");
-        branchSourceIsVm = runtime.toUpperCase().contains("VIRTUAL");
-        var adaptiveMemory = ResourceLimits.defaultVmMemoryLimit();
-        var adaptiveDisk = ResourceLimits.defaultDiskLimit();
-        vmCpuInput = new TextInputState(String.valueOf(Math.max(1, ResourceLimits.hostProcessorCount() - 2)));
-        vmMemoryInput = new TextInputState(adaptiveMemory);
-        vmDiskInput = new TextInputState(adaptiveDisk);
-        branchAccounts = branchAccountChoicesFor(sourceName);
+        branchSourceIsVm = defaults.machineType() == MachineType.VM;
+        vmCpuInput = new TextInputState(defaults.cpu() == null ? "" : String.valueOf(defaults.cpu()));
+        vmMemoryInput = new TextInputState(defaults.memory());
+        vmDiskInput = new TextInputState(defaults.disk());
+        branchAccounts = branchAccountChoicesFor(sourceName, source);
         branchFieldIndex = 0;
         mode = Mode.BRANCH;
     }
@@ -1700,20 +1703,20 @@ public class ListCommand extends BaseCommand {
     /** What the open branch dialog's source inherits, or null when it could not be read. */
     private BranchFlow.Inherited branchInherited;
 
-    private BranchAccountChoices branchAccountChoicesFor(String source) {
+    private BranchAccountChoices branchAccountChoicesFor(String source, JsonNode sourceInstance) {
         List<BranchAccountChoices.Row> rows;
         branchInherited = null;
         try {
             var config = SpawnConfig.load();
             // The TUI's own loader: a fresh one would re-read the tool definitions from disk.
             var setups = dev.incusspawn.config.AccountSelection.namespaceSetups(config, toolDefLoader);
-            var inherited = BranchFlow.inheritedAccounts(incus, source, imageDefs);
+            var inherited = BranchFlow.inheritedAccounts(sourceInstance, source, imageDefs);
             branchInherited = inherited;
             // allToolSetups, not find(): find() knows only YAML tools, and claude and gh are Java.
             var namespaces = dev.incusspawn.config.AccountSelection.templateNamespaces(
                     imageDefs.get(inherited.template()), imageDefs, toolDefLoader.allToolSetups()::get);
             rows = BranchAccountChoices.rowsFor(config, setups, namespaces, inherited,
-                    incus.configByPrefix(source, Metadata.ACCOUNT_IDENTITY_PREFIX));
+                    IncusClient.configByPrefix(sourceInstance, Metadata.ACCOUNT_IDENTITY_PREFIX));
         } catch (RuntimeException e) {
             rows = List.of();
         }
