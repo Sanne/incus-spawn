@@ -1,8 +1,10 @@
 package dev.incusspawn.incus;
 
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.TempHome;
 import dev.incusspawn.lifecycle.VmAgentRecovery;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.time.Duration;
 import java.util.List;
@@ -17,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <p>In this package rather than {@code lifecycle} so it can shorten {@code waitForReady}.
  */
+@ExtendWith(TempHome.class)
 class VmAgentRecoveryTest {
 
     private static final String FAILED = "[FAILED] Failed to start incus-agent.service - Incus - agent.";

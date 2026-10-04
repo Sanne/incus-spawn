@@ -4,6 +4,7 @@ import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * shell, and VM agent recovery. The TUI used to start with a bare {@code incus.start}, so only the
  * CLI re-armed. <b>Whatever those paths are merged into must still call it.</b>
  */
+@ExtendWith(TempHome.class)
 class IpFilteringRearmTest {
 
     private static final String NAME = "box";

@@ -5,7 +5,9 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.VmAgentFailure;
+import dev.incusspawn.proxy.InstanceSecret;
 
+import java.util.HashMap;
 import java.util.function.Consumer;
 
 /**
@@ -69,10 +71,14 @@ public final class VmAgentRecovery {
         InstanceLifecycle.prepareHostDevicesForStart(incus, name, instance, say);
         InstanceLifecycle.startInstance(incus, name, say);
         // Stamped before the wait, so a boot whose agent never comes up is still recorded
-        // however the wait ends.
+        // however the wait ends. The boot's new secret (#934) in the same write: nothing in the
+        // guest has it before the probe below puts it there.
+        var stamps = new HashMap<String, String>();
+        var secret = InstanceSecret.stampInto(stamps);
         long restarted = incus.pid(name);
-        if (restarted > 0) incus.configSet(name, Metadata.AGENT_RESTART_BOOT, Long.toString(restarted));
-        incus.waitForReady(name, MachineType.VM);
+        if (restarted > 0) stamps.put(Metadata.AGENT_RESTART_BOOT, Long.toString(restarted));
+        incus.configSetAll(name, stamps);
+        incus.waitForReady(name, MachineType.VM, InstanceSecret.GUEST_SCRIPT, InstanceSecret.guestEnv(secret));
     }
 
     private static IncusException refusal(String name, String why) {

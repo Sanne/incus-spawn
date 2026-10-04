@@ -96,9 +96,7 @@ public class InstancePrep {
     private static void fixCaMismatch(IncusClient incus, String container, MachineType machineType) {
         // Ensure the container is running so we can push the cert
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(container))) {
-            InstanceLifecycle.prepareHostDevicesForStart(incus, container);
-            InstanceLifecycle.startInstance(incus, container);
-            incus.waitForReady(container, machineType);
+            InstanceLifecycle.startForUse(incus, container, machineType, System.err::println);
         }
 
         if (CertificateAuthority.fixContainerCaIfNeeded(incus, container)) {

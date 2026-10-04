@@ -22,7 +22,7 @@ class InstanceRegistryTest {
                      "user.incus-spawn.static-ip":"10.0.0.6",
                      "user.incus-spawn.account.claude":"personal"}}
                 ]
-                """);
+                """).byAddress();
         assertEquals(2, parsed.size());
 
         var work = parsed.get("10.0.0.5");
@@ -39,7 +39,7 @@ class InstanceRegistryTest {
     void instanceWithNoPinningUsesDefaults() {
         var parsed = InstanceRegistry.parse("""
                 [{"name":"plain","config":{"user.incus-spawn.static-ip":"10.0.0.7"}}]
-                """);
+                """).byAddress();
         var entry = parsed.get("10.0.0.7");
         assertNotNull(entry);
         assertTrue(entry.usesDefaults());
@@ -56,7 +56,7 @@ class InstanceRegistryTest {
                   {"name":"airgap","config":{"user.incus-spawn.network-mode":"AIRGAP"}},
                   {"name":"blank","config":{"user.incus-spawn.static-ip":"  "}}
                 ]
-                """);
+                """).byAddress();
         assertTrue(parsed.isEmpty());
     }
 
@@ -66,15 +66,15 @@ class InstanceRegistryTest {
                 [{"name":"b","config":{
                     "user.incus-spawn.static-ip":"10.0.0.8",
                     "user.incus-spawn.account.claude":""}}]
-                """);
+                """).byAddress();
         assertTrue(parsed.get("10.0.0.8").usesDefaults());
     }
 
     @Test
     void malformedJsonYieldsAnEmptyMapRatherThanThrowing() {
-        assertTrue(InstanceRegistry.parse("not json").isEmpty());
-        assertTrue(InstanceRegistry.parse("{}").isEmpty());
-        assertTrue(InstanceRegistry.parse("").isEmpty());
+        assertTrue(InstanceRegistry.parse("not json").byAddress().isEmpty());
+        assertTrue(InstanceRegistry.parse("{}").byAddress().isEmpty());
+        assertTrue(InstanceRegistry.parse("").byAddress().isEmpty());
     }
 
     /**
@@ -96,7 +96,7 @@ class InstanceRegistryTest {
                 [{"name":"work","config":{
                     "user.incus-spawn.static-ip":"10.0.0.5",
                     "user.incus-spawn.account.claude":"work"}}]
-                """);
+                """).byAddress();
         assertNotNull(parsed.get(InstanceRegistry.normalize("::ffff:10.0.0.5")));
     }
 
@@ -116,7 +116,7 @@ class InstanceRegistryTest {
                      "user.incus-spawn.static-ip":"10.0.0.5",
                      "user.incus-spawn.account.claude":"personal"}}
                 ]
-                """);
+                """).byAddress();
         assertEquals("dev-1", parsed.get("10.0.0.5").instanceName());
         assertEquals("work", parsed.get("10.0.0.5").accountsByNamespace().get("claude"));
     }
@@ -130,7 +130,7 @@ class InstanceRegistryTest {
                       {"name":"dev-2","status":"%s","config":{"user.incus-spawn.static-ip":"10.0.0.5"}},
                       {"name":"dev-3","status":"Running","config":{"user.incus-spawn.static-ip":"10.0.0.6"}}
                     ]
-                    """.formatted(statuses[0], statuses[1]));
+                    """.formatted(statuses[0], statuses[1])).byAddress();
             assertNull(parsed.get("10.0.0.5"), String.join("/", statuses));
             assertEquals("dev-3", parsed.get("10.0.0.6").instanceName(), "others are unaffected");
         }
@@ -143,7 +143,7 @@ class InstanceRegistryTest {
                 [{"name":"box","config":{"user.incus-spawn.static-ip":"10.0.0.8",
                    "user.incus-spawn.account-identity.claude":"oauth",
                    "user.incus-spawn.account-identity.github":"me"}}]
-                """);
+                """).byAddress();
         var box = parsed.get("10.0.0.8");
         assertEquals(java.util.Map.of("claude", "oauth", "github", "me"), box.bakedIdentities());
         assertTrue(box.usesDefaults(), "build stamps are not pins");
@@ -167,5 +167,82 @@ class InstanceRegistryTest {
         assertTrue(states.get("pinned").followsDefault("claude"));
         assertTrue(states.get("follower").followsDefault("github"));
         assertEquals("oauth", states.get("follower").bakedIdentities().get("claude"));
+    }
+
+    private static final String SECRET_KEY = dev.incusspawn.incus.Metadata.INSTANCE_SECRET_SHA256;
+    private static final String ADDRESS_KEY = dev.incusspawn.incus.Metadata.STATIC_IP;
+
+    /** A registry over two running boxes, each started with its own secret. */
+    private static InstanceRegistry twoBoxes(dev.incusspawn.incus.FakeIncusDaemon daemon,
+                                             String secretA, String secretB) {
+        daemon.instance("box-a", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.5",
+                        SECRET_KEY, InstanceSecret.sha256(secretA)))
+                .instance("box-b", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.6",
+                        SECRET_KEY, InstanceSecret.sha256(secretB)));
+        var registry = new InstanceRegistry(daemon.client());
+        assertTrue(registry.refresh());
+        return registry;
+    }
+
+    /** #934: a caller is an instance only when its address and its secret both say so. */
+    @Test
+    void identifiesACallerByAddressAndSecretTogether() {
+        var a = InstanceSecret.generate();
+        var b = InstanceSecret.generate();
+        var registry = twoBoxes(new dev.incusspawn.incus.FakeIncusDaemon(), a, b);
+
+        assertEquals("box-a", registry.identify("10.0.0.5", a).instanceName());
+        assertEquals("box-a", registry.identify("::ffff:10.0.0.5", a).instanceName(),
+                "a dual-stack listener's mapped address is the same caller");
+        assertEquals("box-b", registry.identify("10.0.0.6", b).instanceName());
+
+        assertNull(registry.identify("10.0.0.6", a), "another instance's secret");
+        assertNull(registry.identify("10.0.0.9", a), "the right secret from an unknown address");
+        assertNull(registry.identify("10.0.0.5", null), "the address alone");
+        assertNull(registry.identify("10.0.0.5", ""));
+        assertNull(registry.identify("10.0.0.5", InstanceSecret.sha256(a)), "the recorded hash");
+        assertNull(registry.identify(null, a));
+    }
+
+    @Test
+    void aRestartRetiresTheSecretOfThePreviousStart() {
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon();
+        var before = InstanceSecret.generate();
+        var registry = twoBoxes(daemon, before, InstanceSecret.generate());
+        var after = InstanceSecret.generate();
+        daemon.client().configSet("box-a", SECRET_KEY, InstanceSecret.sha256(after));
+        assertTrue(registry.refresh());
+
+        assertNull(registry.identify("10.0.0.5", before));
+        assertEquals("box-a", registry.identify("10.0.0.5", after).instanceName());
+    }
+
+    @Test
+    void anInstanceWithoutASecretIsNeverIdentified() {
+        // Started before #934, or only ever by incus itself: still served its accounts by
+        // address, but nothing it presents identifies it
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("old", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.7"));
+        var registry = new InstanceRegistry(daemon.client());
+        registry.refresh();
+        assertEquals("old", registry.lookup("10.0.0.7").instanceName());
+        assertNull(registry.identify("10.0.0.7", InstanceSecret.generate()));
+        assertNull(registry.identify("10.0.0.7", ""));
+    }
+
+    @Test
+    void aSharedAddressIsTheRunningClaimantsWithItsOwnSecret() {
+        // A copy made before #815 carries its source's address; only the running one can call
+        var running = InstanceSecret.generate();
+        var stopped = InstanceSecret.generate();
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("stopped", "container", "Stopped", java.util.Map.of(ADDRESS_KEY, "10.0.0.5",
+                        SECRET_KEY, InstanceSecret.sha256(stopped)))
+                .instance("running", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.5",
+                        SECRET_KEY, InstanceSecret.sha256(running)));
+        var registry = new InstanceRegistry(daemon.client());
+        registry.refresh();
+        assertEquals("running", registry.identify("10.0.0.5", running).instanceName());
+        assertNull(registry.identify("10.0.0.5", stopped));
     }
 }

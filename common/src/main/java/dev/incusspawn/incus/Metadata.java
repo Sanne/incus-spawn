@@ -45,6 +45,12 @@ public final class Metadata {
      */
     public static final String NETWORK_PUSH_PENDING = PREFIX + "network-push-pending";
     /**
+     * SHA-256 of the secret the instance was given at its last start by isx; see
+     * {@code InstanceSecret}. Never the secret itself: the guest can read its own {@code user.*}
+     * keys through {@code /dev/incus}.
+     */
+    public static final String INSTANCE_SECRET_SHA256 = PREFIX + "instance-secret-sha256";
+    /**
      * The {@link IncusClient#pid} of the boot isx last restarted a VM into because its agent did
      * not answer. Unresponsive again on that same boot, the VM is reported rather than restarted
      * a second time (#843).

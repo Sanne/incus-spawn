@@ -19,6 +19,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.InstanceUpdate;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.StaticIpAllocator;
+import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.util.BuildOutput;
@@ -592,9 +593,7 @@ public final class InstanceLifecycle {
                                    MachineType machineType, Consumer<String> say) {
         if ("Stopped".equalsIgnoreCase(instance.path("status").asText(""))) {
             say.accept("Starting " + name + "...");
-            prepareHostDevicesForStart(incus, name, say);
-            startInstance(incus, name, say);
-            incus.waitForReady(name, machineType);
+            startForUse(incus, name, machineType, say);
         } else if (machineType == MachineType.VM && !agentAnswers(incus, name)) {
             VmAgentRecovery.restartForAgent(incus, name, say);
         }
@@ -603,6 +602,52 @@ public final class InstanceLifecycle {
             pushDeferredNetworkConfig(incus, name, instance, bridgePrefixLen(incus),
                     msg -> say.accept(BuildOutput.STEP_INDENT + "Warning: " + msg));
         }
+    }
+
+    /**
+     * Start a stopped instance for use and wait until it answers exec: the start every path
+     * that brings an existing instance up goes through -- {@code isx shell} and {@code isx run},
+     * the TUI's shell, and their CA repairs. Prepares its host devices
+     * ({@link #prepareHostDevicesForStart}), and gives it a new secret ({@link
+     * #rotateInstanceSecret}), which the readiness probe itself puts in place: it costs no
+     * request of its own.
+     */
+    public static void startForUse(IncusClient incus, String name, MachineType machineType,
+                                   Consumer<String> warn) {
+        prepareHostDevicesForStart(incus, name, warn);
+        var secret = rotateInstanceSecret(incus, name);
+        startInstance(incus, name, warn);
+        incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT, InstanceSecret.guestEnv(secret));
+    }
+
+    /**
+     * Restart a running instance and wait until it answers, with a new secret (#934): the
+     * reboot empties the guest's {@code /run}, so without one the box would be left with none.
+     */
+    public static void restartForUse(IncusClient incus, String name, MachineType machineType) {
+        // Before, not after: once the restart returns the guest is booting, when Incus API calls
+        // contend with it. A restart that then fails leaves a guest whose secret no longer
+        // matches, which is refused -- the safe way for it to go wrong.
+        var secret = rotateInstanceSecret(incus, name);
+        incus.restart(name);
+        incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT, InstanceSecret.guestEnv(secret));
+    }
+
+    /**
+     * Give an instance a new secret for the start about to happen, and return it for the
+     * caller to put in place once the guest answers (#934). Recording its hash is one write.
+     *
+     * <p>The proxy is not signalled: on Linux that costs a bridge read, a health call and a fork
+     * on every start, and makes the proxy list every instance while this one boots. Nothing
+     * needs it sooner -- the previous start's secret went with the guest's {@code /run}, and a
+     * caller refused on a snapshot taken before the start refreshes and asks again
+     * ({@link dev.incusspawn.proxy.InstanceRegistry#identify}).
+     */
+    static String rotateInstanceSecret(IncusClient incus, String name) {
+        var stamp = new HashMap<String, String>();
+        var secret = InstanceSecret.stampInto(stamp);
+        incus.configSetAll(name, stamp);
+        return secret;
     }
 
     /** Whether a running VM's agent answers exec. */
@@ -1076,7 +1121,8 @@ public final class InstanceLifecycle {
      *
      * <p>Nothing is pushed into the instance between the two: Incus stops its forkfile file
      * server on start, and one still finishing a push makes the start wait a full second.
-     * Anything the instance needs goes into the post-start setup script instead.
+     * Anything the instance needs goes into the post-start setup script instead -- its secret
+     * included.
      */
     public static RuntimeConfig prefetchAndStart(IncusClient incus, String name, MachineType machineType) {
         var prefetched = prefetchRuntimeConfig(incus, name);
@@ -1160,9 +1206,10 @@ public final class InstanceLifecycle {
      *
      * @param prefetched config read before start to avoid seccomp lock contention;
      *                   if null, config is read live (slower on macOS)
+     * @param secret     the instance secret to put in place (#934), or null for none
      */
     public static void setupRuntime(IncusClient incus, String name,
-                                   NetworkMode networkMode, RuntimeConfig prefetched) {
+                                   NetworkMode networkMode, RuntimeConfig prefetched, String secret) {
         if (networkMode == NetworkMode.PROXY_ONLY) {
             applyProxyOnlyFirewall(incus, name);
         }
@@ -1174,9 +1221,10 @@ public final class InstanceLifecycle {
         var buildSourceJson = prefetched != null ? prefetched.buildSourceJson()
                 : incus.configGet(name, Metadata.BUILD_SOURCE);
         var sshKeys = prefetched != null && prefetched.hasSshKeys() ? sshKeysToInject() : List.<String>of();
-        var setupScript = buildSetupScript(prefetched, buildSourceJson, networkMode, sshKeys);
+        var setupScript = buildSetupScript(prefetched, buildSourceJson, networkMode, sshKeys, secret != null);
         BuildOutput.stepStart("Waiting for container...");
-        if (!incus.pollUntilReady(name, 30, "sh", "-c", setupScript)) {
+        var env = secret != null ? InstanceSecret.guestEnv(secret) : Map.<String, String>of();
+        if (!incus.pollUntilReady(name, 30, env, "sh", "-c", setupScript)) {
             BuildOutput.stepBreak();
             System.err.println(BuildOutput.STEP_INDENT + "Warning: container setup may not be complete.");
         } else {
@@ -1197,7 +1245,7 @@ public final class InstanceLifecycle {
     }
 
     public static void setupRuntime(IncusClient incus, String name, NetworkMode networkMode) {
-        setupRuntime(incus, name, networkMode, null);
+        setupRuntime(incus, name, networkMode, null, null);
     }
 
     /**
@@ -1250,7 +1298,7 @@ public final class InstanceLifecycle {
 
     /**
      * Build a shell script that performs all post-start setup in one exec: SSH keys, terminfo,
-     * home ownership, network readiness and tool readiness. Batching avoids multiple exec round
+     * the instance secret, home ownership, network readiness and tool readiness. Batching avoids multiple exec round
      * trips that each block due to seccomp_notify lock contention during container startup.
      *
      * <p>SSH keys and terminfo travel inside the script rather than being pushed into the
@@ -1263,6 +1311,12 @@ public final class InstanceLifecycle {
      */
     static String buildSetupScript(RuntimeConfig prefetched, String buildSourceJson,
                                    NetworkMode networkMode, List<String> sshKeys) {
+        return buildSetupScript(prefetched, buildSourceJson, networkMode, sshKeys, false);
+    }
+
+    /** @param deliverSecret whether the script puts in place the secret its exec environment carries */
+    static String buildSetupScript(RuntimeConfig prefetched, String buildSourceJson,
+                                   NetworkMode networkMode, List<String> sshKeys, boolean deliverSecret) {
         var sb = new StringBuilder();
         if (!sshKeys.isEmpty()) {
             // Same result as the file push this replaces: agentuser (uid 1000) owns it, 0600.
@@ -1275,6 +1329,7 @@ public final class InstanceLifecycle {
         if (prefetched != null && prefetched.terminfo() != null) {
             sb.append(Container.heredoc("tic -x - 2>/dev/null", prefetched.terminfo())).append('\n');
         }
+        if (deliverSecret) sb.append(InstanceSecret.GUEST_SCRIPT).append('\n');
         // Best-effort like the steps above: only the readiness checks below decide whether
         // the script succeeded, which is what pollUntilReady retries on.
         sb.append("chown agentuser:agentuser /home/agentuser || true");

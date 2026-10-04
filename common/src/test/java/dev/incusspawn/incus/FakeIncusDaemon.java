@@ -39,6 +39,9 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final Map<String, ObjectNode> networks = new LinkedHashMap<>();
     private final List<ObjectNode> extraVolumes = new ArrayList<>();
     private final List<String> requests = new ArrayList<>();
+    private final List<Exec> execs = new ArrayList<>();
+    /** An exec asked for: its command, and the environment it asked for on top of the defaults. */
+    public record Exec(List<String> command, Map<String, String> environment) {}
     private final List<String> refusedWrites = new ArrayList<>();
     private final List<String> apiExtensions = new ArrayList<>();
     private record Pushed(String mode, String content) {}
@@ -261,6 +264,11 @@ public final class FakeIncusDaemon implements IncusTransport {
         return List.copyOf(requests);
     }
 
+    /** Every exec asked for, in order, whether or not it was served (none is). */
+    public List<Exec> execs() {
+        return List.copyOf(execs);
+    }
+
     public void clearRequests() {
         requests.clear();
     }
@@ -269,6 +277,14 @@ public final class FakeIncusDaemon implements IncusTransport {
     public RawResponse request(String method, String path, String contentType,
                                Map<String, String> extraHeaders, byte[] body) throws IOException {
         requests.add(method + " " + path);
+        if (method.equals("POST") && path.endsWith("/exec") && body != null) {
+            var exec = JSON.readTree(body);
+            var command = new ArrayList<String>();
+            exec.path("command").forEach(arg -> command.add(arg.asText()));
+            var environment = new LinkedHashMap<String, String>();
+            exec.path("environment").properties().forEach(e -> environment.put(e.getKey(), e.getValue().asText()));
+            execs.add(new Exec(command, environment));
+        }
         return handle(method, path, body);
     }
 

@@ -167,7 +167,12 @@ public class IncusClient {
      * Execute a command inside a container as root.
      */
     public ExecResult shellExec(String container, String... command) {
-        return http().execCapture(container, List.of(command), 0, 0, null, Map.of());
+        return shellExec(container, Map.of(), command);
+    }
+
+    /** {@link #shellExec(String, String...)} with {@code env} added to the command's environment. */
+    public ExecResult shellExec(String container, Map<String, String> env, String... command) {
+        return http().execCapture(container, List.of(command), 0, 0, null, env);
     }
 
     /**
@@ -260,10 +265,15 @@ public class IncusClient {
     private static final long POLL_INTERVAL_MS = 50;
 
     public boolean pollUntilReady(String name, int timeoutSeconds, String... command) {
+        return pollUntilReady(name, timeoutSeconds, Map.of(), command);
+    }
+
+    /** {@link #pollUntilReady(String, int, String...)} with {@code env} added to the command's environment. */
+    public boolean pollUntilReady(String name, int timeoutSeconds, Map<String, String> env, String... command) {
         long deadline = System.nanoTime() + timeoutSeconds * 1_000_000_000L;
         while (System.nanoTime() < deadline) {
             try {
-                if (shellExec(name, command).success()) return true;
+                if (shellExec(name, env, command).success()) return true;
             } catch (Exception ignored) {
                 failIfDied(name, startupState(name));
             }
@@ -320,6 +330,17 @@ public class IncusClient {
 
     /** See {@link #waitForReady(String)}. */
     public void waitForReady(String name, MachineType type) {
+        waitForReady(name, type, null, Map.of());
+    }
+
+    /**
+     * {@link #waitForReady(String, MachineType)}, with {@code guestScript} run by the readiness
+     * probe itself, so that a step which can only happen once the guest answers costs no request
+     * of its own. It runs as root on every probe until one answers, so it must be idempotent, and
+     * it must not fail: the probe answers only when the script lets it reach its end. {@code env}
+     * is added to its environment.
+     */
+    public void waitForReady(String name, MachineType type, String guestScript, Map<String, String> env) {
         var t = readyTimeouts;
         long start = System.nanoTime();
         long deadline = start + (type == MachineType.VM ? t.vm() : t.container()).toNanos();
@@ -349,7 +370,8 @@ public class IncusClient {
             if (probe) {
                 ExecResult result = null;
                 try {
-                    result = shellExec(name, "echo", "ready");
+                    result = guestScript == null ? shellExec(name, "echo", "ready")
+                            : shellExec(name, env, "sh", "-c", guestScript + "\necho ready");
                 } catch (Exception ignored) {
                 }
                 if (result != null && answeredReady(result)) return;
@@ -1635,13 +1657,15 @@ public class IncusClient {
         body.put("source", Map.of("type", "copy", "source", source));
         body.put("storage", plan.targetPool());
         // A device in the request replaces the source's whole; an empty config value unsets.
-        // The copy keeps no address, on its NIC or in the metadata the proxy identifies it by.
+        // The copy keeps no address, on its NIC or in the metadata the proxy identifies it by,
+        // and not its source's instance secret either (#934).
         if (!plan.addressedNics().isEmpty()) body.put("devices", plan.addressedNics());
         var config = new LinkedHashMap<String, String>();
         config.put(Metadata.STATIC_IP, "");
         config.put(Metadata.STATIC_GATEWAY, "");
         // Owed to the source's guest; the copy gets its own file when it is branched
         config.put(Metadata.NETWORK_PUSH_PENDING, "");
+        config.put(Metadata.INSTANCE_SECRET_SHA256, "");
         config.putAll(configOverrides);
         body.put("config", config);
         var resp = http.requestAndWait("POST", "/1.0/instances", body);

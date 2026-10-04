@@ -21,12 +21,14 @@ import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.proxy.CertificateAuthority.CaStatus;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.util.BuildOutput;
 
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -178,8 +180,12 @@ public final class BranchFlow {
             BuildOutput.warn("This branch will be a full copy, not a CoW clone: "
                     + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
         }
+        // The branch's own secret, its hash stamped by the copy request: no extra write, and no
+        // moment in which the new instance carries the hash of its source's
+        var copyConfig = new LinkedHashMap<>(req.extraConfig());
+        var secret = InstanceSecret.stampInto(copyConfig);
         BuildOutput.stepStart("Copying from template...");
-        incus.copy(source, name, copyPlan, req.extraConfig());
+        incus.copy(source, name, copyPlan, copyConfig);
         BuildOutput.stepDone();
 
         // Configure GUI before start so environment.* keys are visible to init. First, because
@@ -243,7 +249,7 @@ public final class BranchFlow {
             InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode);
         }
 
-        InstanceLifecycle.setupRuntime(incus, name, networkMode, prefetched);
+        InstanceLifecycle.setupRuntime(incus, name, networkMode, prefetched, secret);
 
         if (networkMode != NetworkMode.AIRGAP) {
             CertificateAuthority.fixContainerCaIfNeeded(incus, name);

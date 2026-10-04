@@ -1526,7 +1526,7 @@ public class ListCommand extends BaseCommand {
                     selected.name,
                     "Restarted " + selected.name,
                     Metadata.OP_RESTARTING,
-                    () -> incus.restart(selected.name));
+                    () -> InstanceLifecycle.restartForUse(incus, selected.name, selected.machineType()));
             return true;
         }
         if (key.isKey(KeyCode.F6)) {
@@ -5507,11 +5507,10 @@ public class ListCommand extends BaseCommand {
             // Runs on the TUI's own screen, where stderr would be drawn over: a mount dropped
             // because its host directory is gone must not go unannounced (#852), so it goes to
             // the warning log, which the status line announces when the shell returns to the TUI.
-            // Both go through InstanceLifecycle, as isx shell's do: the prep re-arms IP spoofing
-            // protection (#905) and startInstance falls back where the host cannot enforce it.
-            InstanceLifecycle.prepareHostDevicesForStart(incus, containerName, warningLog::add);
-            InstanceLifecycle.startInstance(incus, containerName, warningLog::add);
-            incus.waitForReady(containerName, machineType);
+            // Through InstanceLifecycle, as isx shell's start is: the prep re-arms IP spoofing
+            // protection (#905), the start falls back where the host cannot enforce it, and the
+            // instance gets its new secret (#934).
+            InstanceLifecycle.startForUse(incus, containerName, machineType, warningLog::add);
         }
         CertificateAuthority.fixContainerCaIfNeeded(incus, containerName);
     }

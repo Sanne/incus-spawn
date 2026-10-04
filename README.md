@@ -89,6 +89,8 @@ See [Installation](#installation) for all options and update instructions. Shell
 
 There is no API, endpoint, environment variable, or file that code inside the container can access to obtain real credentials — the injection happens entirely outside the trust boundary.
 
+Each instance also gets a random **instance secret** every time isx starts it, at the path in `$ISX_INSTANCE_SECRET_FILE` (`/run/isx/instance-secret`, readable by the instance user). It is not a credential for anything upstream: it lets a service on the host tell instances apart by source address *and* secret together, so it is useless from any other instance. A restart replaces it; a reboot isx did not perform leaves the instance without one until isx next starts it.
+
 The proxy must be running for non-airgapped containers. `isx init` can install it as a systemd user service, or run `isx proxy` in a separate terminal. The CLI verifies proxy reachability and version compatibility before builds, branches, and shell access.
 
 The proxy also caches container image layers and build artifacts on the host — the same dependency is never downloaded twice (see [Caching](#caching)).

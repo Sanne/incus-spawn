@@ -49,6 +49,21 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void aStartForUseAddsOneWriteForItsSecret() {
+        // The prep's read, the secret's hash (#934), the start and its wait; the secret itself
+        // rides in the readiness probe, which costs nothing it did not cost before.
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
+        assertThrows(IncusException.class, () -> InstanceLifecycle.startForUse(
+                daemon.clientWithShortReadyWait(), NAME, dev.incusspawn.incus.MachineType.CONTAINER, msg -> {}));
+        var requests = daemon.requests();
+        var beforeProbe = requests.subList(0, requests.indexOf("POST /1.0/instances/" + NAME + "/exec"));
+        assertEquals(List.of("GET /1.0/instances/" + NAME, "PATCH /1.0/instances/" + NAME,
+                "PUT /1.0/instances/" + NAME + "/state"), beforeProbe.subList(0, 3), String.join("\n", requests));
+        assertEquals(4, beforeProbe.size(), () -> "startForUse before its first probe:\n" + String.join("\n", requests)
+                + "\nMore is a latency regression; fewer is an improvement -- lower the budget.");
+    }
+
+    @Test
     void preparingHostDevicesReadsTheInstanceOnce() {
         // Filtering already on, as on every instance branched since #905's check: re-arming it
         // must cost nothing then.

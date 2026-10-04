@@ -98,12 +98,22 @@ public final class InstanceRegistry {
 
     /** Every instance in the registry's current snapshot, as the proxy would serve it. */
     public java.util.Collection<InstanceAccounts> instances() {
-        return snapshot.byAddress().values();
+        return snapshot.parsed().byAddress().values();
     }
 
-    private record Snapshot(Map<String, InstanceAccounts> byAddress, long takenAt) {}
+    /**
+     * What one listing says.
+     *
+     * @param secretByAddress the hash of the secret each address's instance was given at its
+     *                        last start ({@link InstanceSecret}). Kept beside the accounts rather
+     *                        than in {@link InstanceAccounts}, which the proxy caches by value:
+     *                        a key that changed on every restart would grow those caches.
+     */
+    record Parsed(Map<String, InstanceAccounts> byAddress, Map<String, String> secretByAddress) {}
 
-    private static final Snapshot EMPTY = new Snapshot(Map.of(), 0L);
+    private record Snapshot(Parsed parsed, long takenAt) {}
+
+    private static final Snapshot EMPTY = new Snapshot(new Parsed(Map.of(), Map.of()), 0L);
 
     private final IncusClient incus;
     private final AtomicBoolean refreshing = new AtomicBoolean();
@@ -119,7 +129,30 @@ public final class InstanceRegistry {
      */
     public InstanceAccounts lookup(String sourceAddress) {
         if (sourceAddress == null || sourceAddress.isBlank()) return null;
-        return snapshot.byAddress().get(normalize(sourceAddress));
+        return snapshot.parsed().byAddress().get(normalize(sourceAddress));
+    }
+
+    /**
+     * The instance a caller is, judged by its source address <em>and</em> the secret it
+     * presents ({@link InstanceSecret#HEADER}); null unless both belong to the same instance.
+     * Neither alone passes: a secret from any other address, one from before the instance's
+     * last start, or the right address with no secret are all refused. Non-blocking, like
+     * {@link #lookup}.
+     *
+     * <p>A refusal right after a start may come from a snapshot that predates it: a start does
+     * not signal the proxy, which costs every start more than this costs its first caller. A
+     * refused caller may {@link #refresh} and ask again before treating the secret as wrong --
+     * but only when {@link #wantsMissRefresh} allows, as for a lookup miss: refusals are what a
+     * guest presenting a wrong secret can make at will, and each refresh lists every instance.
+     */
+    public InstanceAccounts identify(String sourceAddress, String presentedSecret) {
+        if (sourceAddress == null || sourceAddress.isBlank()) return null;
+        var current = snapshot.parsed();
+        var address = normalize(sourceAddress);
+        var instance = current.byAddress().get(address);
+        if (instance == null
+                || !InstanceSecret.matches(presentedSecret, current.secretByAddress().get(address))) return null;
+        return instance;
     }
 
     /** Whether the snapshot is old enough that a refresh is worth doing. */
@@ -146,14 +179,13 @@ public final class InstanceRegistry {
     public boolean refresh() {
         if (!refreshing.compareAndSet(false, true)) return false;
         try {
-            var parsed = parse(incus.listJsonConfig());
-            snapshot = new Snapshot(parsed, System.currentTimeMillis());
+            snapshot = new Snapshot(parse(incus.listJsonConfig()), System.currentTimeMillis());
             return true;
         } catch (RuntimeException e) {
             // Keep serving the previous snapshot: a transient Incus hiccup should not
             // strip every instance of its pinned account and silently fall back to
             // defaults. Bump the timestamp so a broken socket is not retried per request.
-            snapshot = new Snapshot(snapshot.byAddress(), System.currentTimeMillis());
+            snapshot = new Snapshot(snapshot.parsed(), System.currentTimeMillis());
             ProxyLog.warn("Instance registry refresh failed: " + e.getMessage());
             return false;
         } finally {
@@ -215,11 +247,11 @@ public final class InstanceRegistry {
      * Build the address map from the JSON of {@code /1.0/instances?recursion=1}.
      * Package-private and static so it can be tested without a running Incus.
      */
-    static Map<String, InstanceAccounts> parse(String instancesJson) {
+    static Parsed parse(String instancesJson) {
         var claimants = new LinkedHashMap<String, List<Claimant>>();
         try {
             var root = JSON.readTree(instancesJson);
-            if (!root.isArray()) return Map.of();
+            if (!root.isArray()) return new Parsed(Map.of(), Map.of());
             for (var instance : root) {
                 var name = instance.path("name").asText("");
                 var config = instance.path("config");
@@ -230,20 +262,24 @@ public final class InstanceRegistry {
 
                 claimants.computeIfAbsent(normalize(address), a -> new ArrayList<>()).add(new Claimant(
                         new InstanceAccounts(name, accountsOf(config), identitiesOf(config)),
-                        "Running".equalsIgnoreCase(instance.path("status").asText(""))));
+                        "Running".equalsIgnoreCase(instance.path("status").asText("")),
+                        config.path(Metadata.INSTANCE_SECRET_SHA256).asText("").strip()));
             }
         } catch (Exception e) {
             ProxyLog.warn("Could not parse instance list for the account registry: " + e.getMessage());
         }
         var byAddress = new LinkedHashMap<String, InstanceAccounts>();
+        var secretByAddress = new LinkedHashMap<String, String>();
         claimants.forEach((address, all) -> {
             var owner = owner(address, all);
-            if (owner != null) byAddress.put(address, owner);
+            if (owner == null) return;
+            byAddress.put(address, owner.accounts());
+            if (!owner.secretSha256().isEmpty()) secretByAddress.put(address, owner.secretSha256());
         });
-        return byAddress;
+        return new Parsed(byAddress, secretByAddress);
     }
 
-    private record Claimant(InstanceAccounts accounts, boolean running) {}
+    private record Claimant(InstanceAccounts accounts, boolean running, String secretSha256) {}
 
     /**
      * Who an address belongs to. isx gives each address to one instance, but a copy made by an
@@ -251,14 +287,14 @@ public final class InstanceRegistry {
      * an instance whose NIC address another NIC holds, so of several claimants only a running
      * one can be sending traffic from it; never whichever the listing happens to put last.
      */
-    private static InstanceAccounts owner(String address, List<Claimant> claimants) {
-        if (claimants.size() == 1) return claimants.getFirst().accounts();
+    private static Claimant owner(String address, List<Claimant> claimants) {
+        if (claimants.size() == 1) return claimants.getFirst();
         var running = claimants.stream().filter(Claimant::running).toList();
         var names = claimants.stream().map(c -> c.accounts().instanceName()).toList();
         if (running.size() == 1) {
             ProxyLog.warn("Address " + address + " is claimed by " + names + "; serving "
                     + running.getFirst().accounts().instanceName() + ", the one running");
-            return running.getFirst().accounts();
+            return running.getFirst();
         }
         // Stopped claimants send nothing. Several running is not something isx creates: map
         // the address to none of them rather than guess, and say so
