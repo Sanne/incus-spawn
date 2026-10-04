@@ -72,6 +72,23 @@ class McpServerProtocolTest {
     }
 
     @Test
+    void anExperimentalCapabilityStartsOnlyWhenAskedForAndAfterTheResponse() {
+        var sentBeforeStart = new ArrayList<Integer>();
+        var server = new McpServer(out, tools, "1", null, null,
+                java.util.Map.of("isx/x", () -> sentBeforeStart.add(out.sent.size())));
+        server.handle("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"capabilities\":{}}}");
+        assertTrue(out.byId(1).path("result").path("capabilities").path("experimental").has("isx/x"));
+        assertEquals(List.of(), sentBeforeStart, "not asked for");
+        server.handle("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"initialize\",\"params\":{"
+                + "\"capabilities\":{\"experimental\":{\"isx/x\":{}}}}}");
+        assertEquals(List.of(2), sentBeforeStart, "started once both responses were out");
+        server.notify("notifications/isx/x", JsonRpc.JSON.createObjectNode().put("a", 1));
+        var note = out.sent.getLast();
+        assertFalse(note.has("id"), "a notification");
+        assertEquals("notifications/isx/x", note.path("method").asText());
+    }
+
+    @Test
     void anUnknownVersionIsAnsweredWithTheNewest() {
         server().handle("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{"
                 + "\"protocolVersion\":\"1999-01-01\"}}");

@@ -21,7 +21,7 @@ import java.util.function.Consumer;
  * demand, that extension (and the Vert.x it needs) added ~1.7 ms to the startup of every isx
  * command, including ones that never serve MCP. What isx needs of the protocol is small --
  * {@code initialize}, {@code ping}, {@code tools/list}, {@code tools/call}, cancellation and
- * progress.
+ * progress, plus isx's own notifications a client asks for under {@code capabilities.experimental}.
  *
  * <p>The reader thread never runs a tool: each {@code tools/call} runs on its own virtual thread,
  * so {@code ping} and {@code notifications/cancelled} are answered while a long exec is running.
@@ -39,12 +39,24 @@ final class McpServer {
     private final String version;
     private final String instructions;
     private final Consumer<JsonNode> onInitialize;
+    private final Map<String, Runnable> experimental;
     private final Map<JsonNode, ToolContext> inFlight = new ConcurrentHashMap<>();
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
 
     McpServer(McpTransport transport, List<McpTool> tools, String version, String instructions,
               Consumer<JsonNode> onInitialize) {
+        this(transport, tools, version, instructions, onInitialize, Map.of());
+    }
+
+    /**
+     * {@code experimental}: capabilities the server offers under {@code capabilities.experimental},
+     * each with what to start when the client's {@code initialize} lists it too. Started only once
+     * the {@code initialize} response is out, so nothing they send can precede it.
+     */
+    McpServer(McpTransport transport, List<McpTool> tools, String version, String instructions,
+              Consumer<JsonNode> onInitialize, Map<String, Runnable> experimental) {
         this.transport = transport;
+        this.experimental = experimental;
         tools.forEach(t -> this.tools.put(t.name(), t));
         this.version = version;
         this.instructions = instructions;
@@ -96,7 +108,13 @@ final class McpServer {
             return;
         }
         switch (method) {
-            case "initialize" -> send(JsonRpc.response(id, initialize(params)));
+            case "initialize" -> {
+                send(JsonRpc.response(id, initialize(params)));
+                var wanted = params.path("capabilities").path("experimental");
+                experimental.forEach((name, start) -> {
+                    if (wanted.has(name)) start.run();
+                });
+            }
             case "ping" -> send(JsonRpc.response(id, JsonRpc.JSON.createObjectNode()));
             case "tools/list" -> send(JsonRpc.response(id, listTools()));
             case "tools/call" -> callTool(id, params);
@@ -122,7 +140,12 @@ final class McpServer {
         var result = JsonRpc.JSON.createObjectNode();
         result.put("protocolVersion",
                 PROTOCOL_VERSIONS.contains(requested) ? requested : PROTOCOL_VERSIONS.getFirst());
-        result.putObject("capabilities").putObject("tools").put("listChanged", false);
+        var capabilities = result.putObject("capabilities");
+        capabilities.putObject("tools").put("listChanged", false);
+        if (!experimental.isEmpty()) {
+            var offered = capabilities.putObject("experimental");
+            experimental.keySet().forEach(offered::putObject);
+        }
         var info = result.putObject("serverInfo");
         info.put("name", "isx");
         info.put("version", version);
@@ -195,6 +218,11 @@ final class McpServer {
                 send(JsonRpc.notification("notifications/progress", params));
             }
         };
+    }
+
+    /** Send a notification the client did not ask for by request: one it opted into. */
+    void notify(String method, JsonNode params) {
+        send(JsonRpc.notification(method, params));
     }
 
     private void send(ObjectNode message) {
