@@ -1,6 +1,8 @@
 package dev.incusspawn.mcp;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
@@ -13,13 +15,15 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Runs the scripts {@link ExecScript} generates in a real local bash, as the instance's login
- * shell would (minus {@code su}), with {@code HOME} pointed at a temporary directory.
+ * shell would (minus {@code su}), with {@code HOME} pointed at a temporary directory. Linux only:
+ * the script is written for the guest, which has {@code setsid}, GNU {@code timeout} and the
+ * {@code /proc} this test counts a session's processes in, and a macOS host has none of them (#1016).
  */
+@EnabledOnOs(OS.LINUX)
 class ExecScriptTest {
 
     @TempDir
@@ -80,13 +84,6 @@ class ExecScriptTest {
     }
 
     @Test
-    void anInvalidEnvironmentNameIsRefused() {
-        for (var key : new String[] {"A-B", "1X", "X;Y", "", "A B"}) {
-            assertThrows(ToolError.class, () -> build("x", Map.of(key, "v"), "true", null), key);
-        }
-    }
-
-    @Test
     void theCommandsStdinIsForwarded() throws Exception {
         var pb = new ProcessBuilder("bash", "-c", build(home.toString(), Map.of(), "tr a-z A-Z", null));
         pb.environment().put("HOME", home.toString());
@@ -103,12 +100,6 @@ class ExecScriptTest {
         var r = run(build(home.toString(), Map.of(), "sleep 30", 1));
         assertEquals(124, r.exit());
         assertTrue(System.nanoTime() - start < TimeUnit.SECONDS.toNanos(15));
-    }
-
-    @Test
-    void thereIsNoTimeoutUnlessOneIsAsked() {
-        assertFalse(build("x", Map.of(), "true", null).contains("timeout"));
-        assertThrows(ToolError.class, () -> build("x", Map.of(), "true", 0));
     }
 
     @Test

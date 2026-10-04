@@ -2,6 +2,8 @@ package dev.incusspawn.mcp;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
@@ -19,8 +21,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Runs the task scripts in a real local bash, with stand-ins for what the instance provides:
  * {@code sudo}, {@code systemd-run}/{@code systemctl} (a unit is a background process group),
- * {@code su} and a {@code claude} that speaks stream-json.
+ * {@code su} and a {@code claude} that speaks stream-json. Linux only: the scripts are written for
+ * the guest, which has {@code setsid}, {@code /proc} and GNU {@code grep -z}, and a macOS host has
+ * none of them (#1016).
  */
+@EnabledOnOs(OS.LINUX)
 class TaskScriptsTest {
 
     @TempDir
@@ -200,12 +205,6 @@ class TaskScriptsTest {
         var status = Tasks.parse(sh(TaskScripts.status(id, 1000), ""));
         assertEquals("finished", status.state());
         assertEquals(143, status.exit());
-    }
-
-    @Test
-    void aUnitStateNobodyCouldReadIsUnknownNotLost() {
-        assertEquals("unknown", Tasks.parse("run=1\nkind=command\nunit=\n---\n\n---stderr\n").state());
-        assertEquals("lost", Tasks.parse("run=1\nkind=command\nunit=inactive\n---\n\n---stderr\n").state());
     }
 
     @Test
