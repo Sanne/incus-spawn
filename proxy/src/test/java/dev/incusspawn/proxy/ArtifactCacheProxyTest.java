@@ -75,9 +75,9 @@ class ArtifactCacheProxyTest {
     static HttpClient client;
     // Every request of the test client goes out from this one context. Issued from the
     // test thread instead, each got a context of its own, and under load responses lost
-    // their bodies and the client's TLS stream was corrupted (bad_record_mac, records of
-    // zeros): seen in CI, and reproduced by running this class repeatedly in one JVM on
-    // two CPUs, where it no longer happens this way.
+    // their bodies: reproduced by running this class repeatedly in one JVM on two CPUs.
+    // The bad_record_mac failures seen alongside, on every TLS hop here, were the JIT
+    // (#940): see the argLine in the root pom.
     static io.vertx.core.Context clientContext;
     static int mitmPort;
     static int upstreamPort;
