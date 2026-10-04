@@ -98,6 +98,19 @@ class OrphansTest {
     }
 
     @Test
+    void aStoppedOrphanHasNobodyInItAndIsDestroyedAfterItsGracePeriod() {
+        // A session that stopped the instance it forks from, then died, must not leak it (#1013).
+        var backend = new FakeBackend()
+                .instance("stopped", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO))
+                .instance("unreachable", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
+        backend.stopped.add("stopped");
+        backend.execFailure = new IllegalStateException("Instance is not running");
+        var destroyed = Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW,
+                name -> Orphans.inUse(backend, name));
+        assertEquals(List.of("stopped"), destroyed, "a running instance that cannot be looked into is spared");
+    }
+
+    @Test
     void anOrphanAdoptedDuringTheSweepIsSpared() {
         var backend = new FakeBackend().instance("expired", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
         var destroyed = Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW, name -> {

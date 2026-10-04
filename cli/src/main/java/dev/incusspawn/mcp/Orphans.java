@@ -79,7 +79,7 @@ final class Orphans {
      *
      * @param inUse whether a person or a task is working in the instance ({@link #inUse}); it
      *              must answer true when it cannot tell, so what cannot be inspected is left for
-     *              the user
+     *              the user. Not asked about a stopped instance.
      */
     static List<String> sweep(InstanceBackend backend, SessionId self, String owner, Predicate<SessionId> alive,
                               Duration grace, Instant now, Predicate<String> inUse) {
@@ -96,7 +96,8 @@ final class Orphans {
                     return;
                 }
                 if (now.isBefore(since.plus(grace))) return;
-                if (inUse.test(name)) {
+                // Stopped, nobody can be in it, and inUse could not look inside to tell.
+                if (!InstanceBackend.stopped(other.config()) && inUse.test(name)) {
                     System.err.println("isx mcp: keeping orphaned instance " + name
                             + ": someone, or a task it was given, is still working in it");
                     return;
@@ -114,7 +115,8 @@ final class Orphans {
     /**
      * Whether a person works in the instance ({@link Presence}) or one of its tasks has not
      * finished: a delegate outliving its coordinator by the grace period still has unpushed
-     * work. True when the instance cannot be looked into (e.g. stopped) or systemd cannot say.
+     * work. True when the instance cannot be looked into or systemd cannot say; the sweep does
+     * not ask about a stopped instance, which has nobody in it.
      */
     static boolean inUse(InstanceBackend backend, String name) {
         try {

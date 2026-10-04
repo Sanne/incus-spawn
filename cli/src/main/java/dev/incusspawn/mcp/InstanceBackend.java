@@ -14,6 +14,17 @@ import java.util.Map;
 interface InstanceBackend {
 
     /**
+     * Not a config key: the instance's Incus status ({@code Running}, {@code Stopped}, ...), which
+     * {@link #metadata} and {@link #mcpInstances} add from the same read, so knowing it costs no
+     * request. No {@code user.incus-spawn.*} key can collide with it.
+     */
+    String STATUS = "status";
+
+    static boolean stopped(Map<String, String> metadata) {
+        return "Stopped".equals(metadata.get(STATUS));
+    }
+
+    /**
      * What {@code list_templates} shows about one template. {@code projectLocal} when the
      * image was built from a repository's {@code .incus-spawn/} definitions. {@code definitions}
      * are the ones it was described from, which {@link #create} branches with rather than
@@ -64,7 +75,7 @@ interface InstanceBackend {
     void refreshProxy();
 
     /**
-     * The instance's {@code user.incus-spawn.*} config, or null if Incus says it does not exist.
+     * The instance's {@code user.incus-spawn.*} config and its {@link #STATUS}, or null if Incus says it does not exist.
      * Throws when Incus cannot be asked, so that is never mistaken for the instance being gone.
      */
     Map<String, String> metadata(String name);
@@ -72,7 +83,7 @@ interface InstanceBackend {
     /** Set config keys in one write; a null value removes the key. */
     void stamp(String name, Map<String, String> config);
 
-    /** Instances whose config carries an MCP session, with their config. */
+    /** Instances whose config carries an MCP session, with their config and {@link #STATUS}. */
     Map<String, Map<String, String>> mcpInstances();
 
     /** Run a script as agentuser in a login shell. */

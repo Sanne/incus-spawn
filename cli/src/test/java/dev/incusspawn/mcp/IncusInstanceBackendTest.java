@@ -8,9 +8,11 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.inOrder;
@@ -28,6 +30,17 @@ class IncusInstanceBackendTest {
     void onlyAnInstanceIncusSaysIsMissingReadsAsGone() {
         when(incus.instanceMetadataOrThrow("gone")).thenReturn(null);
         assertNull(backend.metadata("gone"));
+    }
+
+    @Test
+    void theStatusComesFromTheSameReadAsTheConfig() {
+        var instance = JsonRpc.JSON.createObjectNode();
+        instance.put("status", "Stopped");
+        instance.putObject("config").put(Metadata.MCP_SESSION, "2-200").put("volatile.uuid", "x");
+        when(incus.instanceMetadataOrThrow("dev")).thenReturn(instance);
+        var metadata = backend.metadata("dev");
+        assertTrue(InstanceBackend.stopped(metadata));
+        assertEquals(java.util.Set.of(Metadata.MCP_SESSION, InstanceBackend.STATUS), metadata.keySet());
     }
 
     @Test

@@ -184,6 +184,8 @@ final class IncusInstanceBackend implements InstanceBackend {
         instance.path("config").properties().forEach(e -> {
             if (e.getKey().startsWith(Metadata.PREFIX)) config.put(e.getKey(), e.getValue().asText());
         });
+        var status = instance.path("status").asText("");
+        if (!status.isEmpty()) config.put(STATUS, status);
         return config;
     }
 }

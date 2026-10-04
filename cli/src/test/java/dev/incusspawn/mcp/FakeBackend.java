@@ -21,6 +21,10 @@ class FakeBackend implements InstanceBackend {
     final List<String> scripts = new CopyOnWriteArrayList<>();
     /** What each exec in {@link #scripts} got on stdin ("" for none), in the same order. */
     final List<String> stdins = new CopyOnWriteArrayList<>();
+    /** Instances whose status is Stopped; every other instance is Running. */
+    final java.util.Set<String> stopped = ConcurrentHashMap.newKeySet();
+    /** When set, every exec throws it, as Incus does for an instance it cannot run a command in. */
+    volatile RuntimeException execFailure;
     volatile String execStdout = "";
     volatile int execExit = 0;
     volatile RuntimeException createFailure;
@@ -114,7 +118,13 @@ class FakeBackend implements InstanceBackend {
         if (onRead != null) onRead.run();
         if (metadataFailure != null) throw metadataFailure;
         var config = instances.get(name);
-        return config == null ? null : new LinkedHashMap<>(config);
+        return config == null ? null : withStatus(name, config);
+    }
+
+    private Map<String, String> withStatus(String name, Map<String, String> config) {
+        var result = new LinkedHashMap<>(config);
+        result.put(STATUS, stopped.contains(name) ? "Stopped" : "Running");
+        return result;
     }
 
     @Override
@@ -135,7 +145,7 @@ class FakeBackend implements InstanceBackend {
     public Map<String, Map<String, String>> mcpInstances() {
         var result = new LinkedHashMap<String, Map<String, String>>();
         instances.forEach((name, config) -> {
-            if (config.containsKey(Metadata.MCP_SESSION)) result.put(name, Map.copyOf(config));
+            if (config.containsKey(Metadata.MCP_SESSION)) result.put(name, withStatus(name, config));
         });
         return result;
     }
@@ -143,6 +153,7 @@ class FakeBackend implements InstanceBackend {
     @Override
     public int exec(String name, String script, InputStream stdin, OutputStream stdout, OutputStream stderr) {
         if (!instances.containsKey(name)) throw new IllegalStateException("Instance not found: " + name);
+        if (execFailure != null) throw execFailure;
         scripts.add(script);
         try {
             stdins.add(stdin == null ? "" : new String(stdin.readAllBytes(), StandardCharsets.UTF_8));
