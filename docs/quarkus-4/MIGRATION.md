@@ -52,7 +52,7 @@ These parts need no Quarkus 4, so they go to `main` as separate PRs, which keeps
 - #962: `MitmTlsTest` (pins V-T1 and the reload behaviour; fails on the Vert.x 5 port without change 4).
 - #963: WebSocket early-frame tests (the pipelined-frame test passes on 4.5 and fails on 5.1.8, see V-W1).
 
-Still to split out: dropping `quarkus-jackson` (change 2), and the `PoolOptions` and `WebSocketClient` parts of change 1, which both exist in Vert.x 4.5.
+Being split out: dropping `quarkus-jackson` (change 2). Still to split out: the `PoolOptions` and `WebSocketClient` parts of change 1, which both exist in Vert.x 4.5.
 
 ## Open decisions for us
 
@@ -91,6 +91,7 @@ Each item has the evidence to act on it. Severity is our judgement.
   - Nothing says that Jackson 2 is still BOM-managed and transitional, or that `quarkus-jackson` is now Jackson 3.
   - The Jackson defaults table omits `SORT_PROPERTIES_ALPHABETICALLY`, which silently changes serialized output. The table also describes only the Quarkus-managed mapper, not mappers that applications construct themselves.
   - The CDI API group change (`jakarta.enterprise` to `jakarta.cdi`) and the `smallrye-common-vertx-context` to `smallrye-common-vertx5-context` rename are missing; both matter to anyone with explicit exclusions or enforcer rules.
+- **Q-11 (suggestion): reflection-free Jackson outside REST.** The build-time generated (de)serializers (`JacksonSerializerFactory`/`JacksonDeserializerFactory`) exist only in `quarkus-rest-jackson`, opt-in, and only for REST endpoint types. An application that maps its own model, such as a CLI reading YAML config into `@RegisterForReflection` classes with mappers it builds itself, has no way to use them, so it stays on reflection in native. A `quarkus-jackson` option covering the managed mapper outside REST, or explicitly listed model classes, would make the optimisation available to non-REST apps. `quarkus-jackson` itself only registers classes for reflection.
 - **Q-10 (minor):**
   - The native build still passes the deprecated `--enable-url-protocols`.
   - The `NativeConfig` javadoc still names `jdk-21` builder images.
