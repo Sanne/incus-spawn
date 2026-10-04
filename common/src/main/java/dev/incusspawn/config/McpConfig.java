@@ -18,7 +18,8 @@ import java.util.regex.Pattern;
  *   templates: [tpl-java, tpl-dev]   # the only templates an agent may branch from
  *   max-instances: 3                 # per host user, across sessions, counting creates in flight
  *   max-concurrent-tasks: 2          # background commands and delegated agents, per session
- *   delegate-max-turns: 200          # passed to the inner agent as --max-turns
+ *   delegate-max-turns: 200          # passed to the inner agent as --max-turns; a delegate's
+ *                                    # max_turns may narrow it, never exceed it
  *   delegate-permission-mode: bypassPermissions   # passed to every delegate as --permission-mode
  *   delegate-permission-modes:       # per-template overrides of it
  *     tpl-review: plan
@@ -43,9 +44,12 @@ public class McpConfig {
      * through {@code ANTHROPIC_DEFAULT_HAIKU_MODEL} is followed.
      */
     public static final String DEFAULT_SUMMARY_MODEL = "haiku";
-    /** Permission modes and model names are passed to {@code claude}; nothing else is allowed. */
+    /**
+     * Permission modes and model names are passed to {@code claude}; nothing else is allowed.
+     * A model starts with a letter or digit, so it cannot be read as an option.
+     */
     private static final Pattern MODE = Pattern.compile("[A-Za-z]{1,40}");
-    private static final Pattern MODEL = Pattern.compile("[A-Za-z0-9._:@/\\[\\]-]{1,120}");
+    private static final Pattern MODEL = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:@/\\[\\]-]{0,119}");
 
     @JsonProperty("templates")
     private List<String> templates;
@@ -76,9 +80,18 @@ public class McpConfig {
         return maxConcurrentTasks == null ? DEFAULT_MAX_CONCURRENT_TASKS : Math.max(0, maxConcurrentTasks);
     }
 
-    /** Null when unset: the inner agent's own default applies. */
+    /**
+     * Null when unset: the inner agent's own default applies. Also the ceiling of a delegate's
+     * own {@code max_turns}: an agent may spend less of the user's budget, never more.
+     */
     public Integer delegateMaxTurns() {
         return delegateMaxTurns;
+    }
+
+    /** The turn budget of a delegate that chose {@code chosen} (null for none): within the ceiling. */
+    public Integer delegateMaxTurns(Integer chosen) {
+        if (chosen == null) return delegateMaxTurns;
+        return delegateMaxTurns == null ? chosen : Integer.valueOf(Math.min(chosen, delegateMaxTurns));
     }
 
     /**
@@ -103,10 +116,18 @@ public class McpConfig {
 
     public String summaryModel() {
         if (summaryModel == null) return DEFAULT_SUMMARY_MODEL;
-        if (!MODEL.matcher(summaryModel).matches()) {
+        if (!isModelName(summaryModel)) {
             throw new IllegalArgumentException("mcp.summary-model '" + summaryModel + "' is not a model name");
         }
         return summaryModel;
+    }
+
+    /**
+     * Whether {@code model} can be passed to {@code claude --model}: a model id or alias, never
+     * anything a shell or an option parser would read as more.
+     */
+    public static boolean isModelName(String model) {
+        return model != null && MODEL.matcher(model).matches();
     }
 
     public void setTemplates(List<String> templates) { this.templates = templates; }

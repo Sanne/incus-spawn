@@ -23,7 +23,7 @@ class McpSessionTest {
 
     private final FakeBackend backend = new FakeBackend().template("tpl-dev", true, "claude");
     private static final InstanceBackend.TemplateInfo TEMPLATE =
-            new InstanceBackend.TemplateInfo("tpl-dev", "", true, false, List.of(), false, Map.of());
+            new InstanceBackend.TemplateInfo("tpl-dev", "", true, false, List.of(), null, false, Map.of());
     private final McpConfig config = new McpConfig();
     private final Set<SessionId> alive = new HashSet<>(Set.of(SELF, SessionId.parse(ALIVE).orElseThrow()));
 

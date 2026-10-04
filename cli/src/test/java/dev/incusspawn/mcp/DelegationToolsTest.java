@@ -43,6 +43,8 @@ class DelegationToolsTest {
     private volatile String finishedEvents;
     /** What the tasks listing of an adopted instance answers. */
     private volatile String taskListing = "";
+    /** What the model check answers; null for a model the account can use. */
+    private volatile String modelRefusal;
 
     private static final String EVENTS = """
             {"type":"system","subtype":"init","session_id":"s1"}
@@ -83,6 +85,10 @@ class DelegationToolsTest {
                 }
                 if (failLaunch) throw new ToolError("launch failed");
                 return "";
+            }
+            if (script.contains(ModelCheck.MARKER)) {
+                return "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":" + (modelRefusal != null) + ",\"result\":\""
+                        + (modelRefusal == null ? "OK" : modelRefusal) + "\"}\n";
             }
             if (script.startsWith("for d in")) return taskListing;
             if (script.startsWith("f=$(mktemp)")) return "exit=0\nsummarised=12 lines, 345 bytes\n---\nIt touches A.java only.\n";
@@ -518,7 +524,7 @@ class DelegationToolsTest {
         assertTrue(call("exec", "{\"instance\":\"mcp-agent-870-impl-abcde\",\"command\":\"ls\"}").path("isError").asBoolean(),
                 "not held until adopted");
 
-        taskListing = "t3-old agent 2 done /home/agentuser/repo dir\nnot a task line\n";
+        taskListing = "t3-old agent 2 done claude-haiku-4-5 9 /home/agentuser/repo dir\nnot a task line\n";
         var adopted = text(call("adopt_instance", "{\"instance\":\"mcp-agent-870-impl-abcde\"}"));
         assertTrue(adopted.contains("\"t3-old\""), adopted);
         taskState = "finished";
@@ -527,6 +533,12 @@ class DelegationToolsTest {
         var run = runScript(3);
         assertTrue(run.contains("cd -- '/home/agentuser/repo dir'"), "resumed where it worked: " + run);
         assertTrue(run.contains("--resume"), run);
+        assertTrue(run.contains("--model 'claude-haiku-4-5'") && run.contains("--max-turns 9 "),
+                "an adopted task keeps its profile: " + run);
+        assertEquals(0, modelChecks(), "a turn naming no model runs on the recorded one");
+        assertFalse(call("send_message", "{\"task_id\":\"t3-old\",\"message\":\"m\",\"model\":\"claude-haiku-4-5\"}")
+                .path("isError").asBoolean());
+        assertEquals(1, modelChecks(), "naming the recorded model checks it: the instance wrote that record");
     }
 
     @Test
@@ -575,7 +587,7 @@ class DelegationToolsTest {
         var task = tasks.require(id).task();
         // A concurrent destroy_instance forgets the task between send_message's check and its reservation.
         tasks.forgetInstance(task.instance());
-        var e = assertThrows(ToolError.class, () -> tasks.sendMessage(task, "push it", "bypassPermissions"));
+        var e = assertThrows(ToolError.class, () -> tasks.sendMessage(task, "push it", Tasks.Profile.NONE, "bypassPermissions", null));
         assertTrue(e.getMessage().contains("no longer this session's"), e.getMessage());
     }
 
@@ -604,5 +616,177 @@ class DelegationToolsTest {
         };
         var r = call("delegate", "{\"instruction\":\"next\",\"template\":\"tpl-agent\"}");
         assertFalse(r.path("isError").asBoolean(), text(r));
+    }
+
+    private long modelChecks() {
+        return backend.scripts.stream().filter(s -> s.contains(ModelCheck.MARKER)).count();
+    }
+
+    private long instancesMade() {
+        return backend.instances.keySet().stream().filter(n -> n.startsWith("mcp-")).count();
+    }
+
+    @Test
+    void aTaskRunsUnderItsOwnModelAndBudgetAndLaterTurnsKeepThem() throws Exception {
+        config.setDelegateMaxTurns(200);
+        var r = call("delegate", "{\"instruction\":\"rebase\",\"template\":\"tpl-agent\","
+                + "\"model\":\"claude-haiku-4-5\",\"max_turns\":7}");
+        assertFalse(r.path("isError").asBoolean(), text(r));
+        var task = JsonRpc.JSON.readTree(text(r)).path("task_id").asText();
+        assertTrue(runScript(1).contains(" --model 'claude-haiku-4-5'"), runScript(1));
+        assertTrue(runScript(1).contains(" --max-turns 7 "), runScript(1));
+        assertTrue(text(call("task_status", "{\"task_id\":\"" + task + "\"}")).contains("model: claude-haiku-4-5"));
+
+        taskState = "finished";
+        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"again\"}").path("isError").asBoolean());
+        assertTrue(runScript(2).contains(" --model 'claude-haiku-4-5'") && runScript(2).contains(" --max-turns 7 "),
+                "a later turn keeps the task's profile: " + runScript(2));
+        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"think\",\"max_turns\":3}")
+                .path("isError").asBoolean());
+        assertTrue(runScript(3).contains(" --model 'claude-haiku-4-5'") && runScript(3).contains(" --max-turns 3 "),
+                runScript(3));
+        assertEquals(1, modelChecks(), "a model checked once is not checked again");
+    }
+
+    @Test
+    void withoutAProfileTheTemplatesModelAndTheConfiguredBudgetApply() throws Exception {
+        config.setDelegateMaxTurns(200);
+        delegateFresh();
+        assertFalse(runScript(1).contains("--model"), runScript(1));
+        assertTrue(runScript(1).contains(" --max-turns 200 "), runScript(1));
+        assertEquals(0, modelChecks(), "nothing to check");
+    }
+
+    @Test
+    void theTurnBudgetCanNarrowTheUsersCeilingButNeverWidenIt() throws Exception {
+        config.setDelegateMaxTurns(50);
+        var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":51}");
+        assertTrue(r.path("isError").asBoolean());
+        assertTrue(text(r).contains("mcp.delegate-max-turns"), text(r));
+        assertTrue(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":0}")
+                .path("isError").asBoolean());
+        assertEquals(0, instancesMade(), "refused before an instance was made");
+        assertFalse(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":50}")
+                .path("isError").asBoolean());
+
+        // A budget recorded under a higher ceiling is held to the one the user set since.
+        var task = tasks.all().get(0).id();
+        taskState = "finished";
+        config.setDelegateMaxTurns(20);
+        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"m\"}").path("isError").asBoolean());
+        assertTrue(runScript(2).contains(" --max-turns 20 "), runScript(2));
+    }
+
+    @Test
+    void aModelTheAccountCannotUseFailsTheCallAndLeavesNothingBehind() throws Exception {
+        modelRefusal = "API Error: 404 model: claude-opus-9 not found";
+        var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"claude-opus-9\"}");
+        assertTrue(r.path("isError").asBoolean());
+        assertTrue(text(r).contains("claude-opus-9 not found"), text(r));
+        assertTrue(backend.scripts.stream().noneMatch(s -> s.contains("systemd-run")), "no task started");
+        assertEquals(0, instancesMade(), "the instance made for it is gone");
+        assertTrue(tasks.all().isEmpty());
+
+        // A failure is not remembered: the account may be fixed meanwhile.
+        modelRefusal = null;
+        assertFalse(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"claude-opus-9\"}")
+                .path("isError").asBoolean());
+        assertEquals(2, modelChecks());
+    }
+
+    @Test
+    void aModelIsCheckedPerTemplateAccountAndModel() throws Exception {
+        config.setMaxConcurrentTasks(10);
+        config.setMaxInstances(10);
+        var instance = JsonRpc.JSON.readTree(text(call("create_instance", "{\"template\":\"tpl-agent\"}")))
+                .path("instance").asText();
+        call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"haiku\"}");
+        call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"haiku\"}");
+        assertEquals(1, modelChecks());
+        call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"opus\"}");
+        assertEquals(2, modelChecks());
+        // Another account can reach other models.
+        backend.stamp(instance, dev.incusspawn.incus.Metadata.accountKey("claude"), "work");
+        var r = call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance + "\",\"model\":\"haiku\"}");
+        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertEquals(3, modelChecks());
+    }
+
+    @Test
+    void aModelThatIsNotAModelNameIsRefusedUnrun() throws Exception {
+        var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"haiku --dangerously-skip-permissions\"}");
+        assertTrue(r.path("isError").asBoolean());
+        assertTrue(text(r).contains("model"), text(r));
+        assertTrue(backend.scripts.isEmpty(), "nothing ran");
+        assertEquals(0, instancesMade());
+    }
+
+    @Test
+    void listTemplatesSaysWhatAProfileOverrides() throws Exception {
+        config.setDelegateMaxTurns(200);
+        backend.delegateModel("tpl-agent", "claude-opus-5-5");
+        var listed = JsonRpc.JSON.readTree(text(call("list_templates", "{}")));
+        var agent = listed.path("templates").get(0);
+        assertEquals("tpl-agent", agent.path("name").asText());
+        assertEquals("claude-opus-5-5", agent.path("delegate_model").asText());
+        assertEquals(200, listed.path("delegate_max_turns").asInt());
+        assertTrue(listed.path("templates").get(1).path("delegate_model").isMissingNode(), listed.toString());
+    }
+
+    @Test
+    void aCallRefusedAnywaySpendsNoModelCheck() throws Exception {
+        var task = delegateFresh();
+        var r = call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"m\",\"model\":\"opus\"}");
+        assertTrue(text(r).contains("still running"), text(r));
+        var instance = tasks.all().get(0).instance();
+        r = call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance + "\",\"model\":\"opus\"}");
+        assertTrue(text(r).contains("already an agent"), text(r));
+        assertEquals(0, modelChecks());
+
+        // A run refused by its check gives its slot back, and the task keeps its profile.
+        taskState = "finished";
+        modelRefusal = "API Error: 403";
+        assertTrue(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"m\",\"model\":\"opus\"}")
+                .path("isError").asBoolean());
+        assertEquals(1, tasks.all().get(0).runs());
+        assertEquals(null, tasks.all().get(0).profile().model());
+        modelRefusal = null;
+        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"m\"}").path("isError").asBoolean());
+        assertTrue(runScript(2).contains("--resume") && !runScript(2).contains("--model"), runScript(2));
+    }
+
+    @Test
+    void aCheckedModelIsCheckedAgainWhenTheAccountItResolvesToChanges() throws Exception {
+        config.setMaxConcurrentTasks(10);
+        call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"haiku\"}");
+        call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"haiku\"}");
+        assertEquals(1, modelChecks());
+        backend.defaultAccount = "vertex"; // the user changed claude.default meanwhile
+        call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"haiku\"}");
+        assertEquals(2, modelChecks());
+    }
+
+    @Test
+    void aFreshInstancesAccountIsTheOneItsBranchPinnedWithoutReadingItBack() throws Exception {
+        config.setMaxConcurrentTasks(10);
+        backend.createdAccounts.put("claude", "work");
+        var reads = backend.metadataReads.get();
+        call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"haiku\"}");
+        assertEquals(reads, backend.metadataReads.get(), "no Incus read to learn what the branch wrote");
+        // An instance pinned to the same account shares the check.
+        var instance = JsonRpc.JSON.readTree(text(call("create_instance", "{\"template\":\"tpl-agent\"}")))
+                .path("instance").asText();
+        assertFalse(call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance + "\",\"model\":\"haiku\"}")
+                .path("isError").asBoolean());
+        assertEquals(1, modelChecks());
+    }
+
+    @Test
+    void taskStatusShowsTheBudgetTheRunGets() throws Exception {
+        config.setDelegateMaxTurns(200);
+        var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":150}");
+        var task = JsonRpc.JSON.readTree(text(r)).path("task_id").asText();
+        config.setDelegateMaxTurns(50);
+        assertTrue(text(call("task_status", "{\"task_id\":\"" + task + "\"}")).contains("max_turns: 50"));
     }
 }

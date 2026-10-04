@@ -111,4 +111,27 @@ class McpConfigTest {
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> mcp.delegatePermissionMode("t"));
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, mcp::summaryModel);
     }
+
+    @Test
+    void aDelegatesOwnBudgetStaysWithinTheCeiling() throws Exception {
+        var unset = parse("mcp:\n  templates: [t]\n").mcp();
+        assertNull(unset.delegateMaxTurns(null));
+        assertEquals(500, unset.delegateMaxTurns(500), "no ceiling: the task's own");
+        var capped = parse("mcp:\n  delegate-max-turns: 50\n").mcp();
+        assertEquals(50, capped.delegateMaxTurns(null));
+        assertEquals(7, capped.delegateMaxTurns(7));
+        assertEquals(50, capped.delegateMaxTurns(80), "never above the user's");
+    }
+
+    @Test
+    void aModelNameIsCheckedTheSameWayWhereverItComesFrom() {
+        assertTrue(McpConfig.isModelName("claude-haiku-4-5"));
+        assertTrue(McpConfig.isModelName("opus[1m]"));
+        assertTrue(McpConfig.isModelName("claude-opus-4-6@20250101"));
+        assertFalse(McpConfig.isModelName("haiku; rm -rf ~"));
+        assertFalse(McpConfig.isModelName("haiku --dangerously-skip-permissions"));
+        assertFalse(McpConfig.isModelName("--dangerously-skip-permissions"), "never read as an option");
+        assertFalse(McpConfig.isModelName(""));
+        assertFalse(McpConfig.isModelName(null));
+    }
 }

@@ -57,10 +57,19 @@ final class AskScript {
                 + "[ \"$b\" -gt 0 ] || { echo '(there was nothing to summarise)'; exit 0; }; "
                 + "command -v claude >/dev/null || { echo '(no Claude Code in this instance to answer: ask needs a template with supports_delegate)'; exit 0; }; "
                 + "cd \"$w\" && { echo " + TaskScripts.b64(prompt) + " | base64 -d; head -c " + INPUT_LIMIT + " \"$f\"; "
-                + "printf '\\n</data>\\n'; } | claude -p --model " + ExecScript.quote(model)
-                + " --tools '' --no-session-persistence --output-format text > \"$w/answer\" 2> \"$w/err\"; "
+                + "printf '\\n</data>\\n'; } | " + oneShot(model)
+                + " --output-format text > \"$w/answer\" 2> \"$w/err\"; "
                 + "rc=$?; head -c " + ANSWER_LIMIT + " \"$w/answer\"; "
                 + "[ \"$rc\" = 0 ] || echo \"(the summary failed, exit $rc: $(tail -c 500 \"$w/err\"))\"; exit 0";
+    }
+
+    /**
+     * A Claude Code that answers once and does nothing else: no tools, so text it reads cannot
+     * make it act, and no session saved. Run it in an empty directory, so no project
+     * instructions reach it. Also how {@link ModelCheck} asks whether a model answers.
+     */
+    static String oneShot(String model) {
+        return "claude -p --model " + ExecScript.quote(model) + " --tools '' --no-session-persistence";
     }
 
     /** What {@link #build} printed. {@code exit} is null when the script did not get that far. */

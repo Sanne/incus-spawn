@@ -70,4 +70,22 @@ class IncusInstanceBackendTest {
         order.verify(incus).configUnset("orphan", Metadata.PENDING_OP); // strictly: a mark left behind would never go
         verify(incus, never()).delete(anyString(), anyBoolean());
     }
+
+    @Test
+    void aTemplatesDelegateModelIsTheNearestOneItsChainSets() throws Exception {
+        var base = dev.incusspawn.config.ImageDef.parseYaml("name: tpl-base\ntools:\n  - claude: {model: claude-sonnet-5-5}\n");
+        var child = dev.incusspawn.config.ImageDef.parseYaml("name: tpl-child\nparent: tpl-base\ntools:\n  - claude: {model: claude-opus-5-5}\n");
+        var plain = dev.incusspawn.config.ImageDef.parseYaml("name: tpl-plain\ntools:\n  - claude\n");
+        // A child re-listing the tool reconfigures it with its own parameters only.
+        var relisted = dev.incusspawn.config.ImageDef.parseYaml(
+                "name: tpl-relisted\nparent: tpl-base\ntools:\n  - claude: {attribution-commit: x}\n");
+        var unlisted = dev.incusspawn.config.ImageDef.parseYaml("name: tpl-unlisted\nparent: tpl-base\n");
+        var defs = java.util.Map.of("tpl-base", base, "tpl-child", child, "tpl-plain", plain,
+                "tpl-relisted", relisted, "tpl-unlisted", unlisted);
+        assertNull(IncusInstanceBackend.delegateModel(relisted, defs), "the build drops the parent's model");
+        org.junit.jupiter.api.Assertions.assertEquals("claude-sonnet-5-5", IncusInstanceBackend.delegateModel(unlisted, defs));
+        org.junit.jupiter.api.Assertions.assertEquals("claude-opus-5-5", IncusInstanceBackend.delegateModel(child, defs));
+        org.junit.jupiter.api.Assertions.assertEquals("claude-sonnet-5-5", IncusInstanceBackend.delegateModel(base, defs));
+        assertNull(IncusInstanceBackend.delegateModel(plain, defs), "unset: Claude Code's own default");
+    }
 }

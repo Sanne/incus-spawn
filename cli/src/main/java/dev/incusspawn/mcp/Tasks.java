@@ -30,16 +30,32 @@ final class Tasks {
     static final int RESULT_TAIL = 256 * 1024;
 
     /**
+     * What a delegated agent runs under, as the coordinator chose it: a {@code --model} and a
+     * {@code --max-turns}, each null when not chosen (the template's model, the configured
+     * budget). Later runs keep it, each value until one replaces it.
+     */
+    record Profile(String model, Integer maxTurns) {
+        static final Profile NONE = new Profile(null, null);
+
+        Profile with(Profile override) {
+            if (override == null) return this;
+            return new Profile(override.model != null ? override.model : model,
+                    override.maxTurns != null ? override.maxTurns : maxTurns);
+        }
+    }
+
+    /**
      * A task. {@code cwd} is where every run of it works: Claude Code keeps its sessions per
      * directory, so a resumed agent must start where the first run did. {@code launching} marks
      * a run whose slot is reserved but whose launch has not returned: it counts as running, and
      * the state probe (which cannot see it yet) must not say otherwise.
      */
-    record Task(String id, String instance, String kind, String cwd, int runs, boolean running,
+    record Task(String id, String instance, String kind, String cwd, Profile profile, int runs, boolean running,
                 boolean launching) {
-        Task launchingRun(int n) { return new Task(id, instance, kind, cwd, n, true, true); }
-        Task launched() { return new Task(id, instance, kind, cwd, runs, true, false); }
-        Task withRunning(boolean r) { return launching ? this : new Task(id, instance, kind, cwd, runs, r, false); }
+        Task launchingRun(int n) { return new Task(id, instance, kind, cwd, profile, n, true, true); }
+        Task launched() { return new Task(id, instance, kind, cwd, profile, runs, true, false); }
+        Task withRunning(boolean r) { return launching ? this : new Task(id, instance, kind, cwd, profile, runs, r, false); }
+        Task withProfile(Profile p) { return new Task(id, instance, kind, cwd, p, runs, running, launching); }
         boolean busy() { return running || launching; }
     }
 
@@ -115,28 +131,30 @@ final class Tasks {
 
     /** Start a background command in {@code instance}, which the caller checked is owned. */
     Task startCommand(String instance, String cwd, Map<String, String> env, String command) {
-        var task = reserve(null, new Task(nextId(), instance, COMMAND, cwd, 1, true, true), true);
-        return launch(task, null, t -> TaskScripts.commandRun(t.id(), cwd, env, command), "");
+        var task = reserve(null, null, new Task(nextId(), instance, COMMAND, cwd, Profile.NONE, 1, true, true), true);
+        return launch(task, null, null, t -> TaskScripts.commandRun(t.id(), cwd, env, command), "");
     }
 
     /**
-     * Start a delegated agent in {@code instance}, which the caller checked is owned. Without
-     * {@code refresh}, the caller has just asked the instances ({@link #checkCapacityForNewAgent}),
-     * so they are asked again only if the states as last known would refuse: a refresh only
-     * ever frees slots.
+     * Start a delegated agent in {@code instance}, which the caller checked is owned, under
+     * {@code profile}. Without {@code refresh}, the caller has just asked the instances
+     * ({@link #checkCapacityForNewAgent}), so they are asked again only if the states as last
+     * known would refuse: a refresh only ever frees slots.
      */
-    Task delegate(String instance, String cwd, String instruction, String permissionMode, boolean refresh) {
-        var task = reserve(null, new Task(nextId(), instance, AGENT, cwd, 1, true, true), refresh);
-        return launch(task, null,
-                t -> TaskScripts.agentRun(t.id(), 1, cwd, config.get().delegateMaxTurns(), permissionMode), instruction);
+    Task delegate(String instance, String cwd, String instruction, Profile profile, String permissionMode,
+                  boolean refresh, Runnable check) {
+        var task = reserve(null, null, new Task(nextId(), instance, AGENT, cwd, profile, 1, true, true), refresh);
+        return launch(task, null, check, t -> agentRun(t, permissionMode), instruction);
     }
 
     /**
-     * Continue a finished agent task's conversation with a new message, where it started.
+     * Continue a finished agent task's conversation with a new message, where it started, under
+     * its profile with {@code override} applied. {@code check} runs once the run's slot is
+     * reserved, and refuses it by throwing.
      * Refused while a person is in that conversation: two writers would race on one session.
      * Checked when sent, so a person joining in the seconds after is not seen.
      */
-    Task sendMessage(Task task, String message, String permissionMode) {
+    Task sendMessage(Task task, String message, Profile override, String permissionMode, Runnable check) {
         if (!AGENT.equals(task.kind())) throw new ToolError("task " + task.id() + " is a command, not a delegated agent.");
         var attached = status(task, 0).attachedPid();
         if (attached != null) {
@@ -144,9 +162,18 @@ final class Tasks {
                     + ", in " + task.instance() + "). Messages would race with theirs: wait until task_status "
                     + "no longer says attached, or ask the user.");
         }
-        var reserved = reserve(task.id(), null, true);
-        return launch(reserved, task, t -> TaskScripts.agentRun(t.id(), t.runs(), t.cwd(),
-                config.get().delegateMaxTurns(), permissionMode), message);
+        var reserved = reserve(task.id(), override, null, true);
+        return launch(reserved, task, check, t -> agentRun(t, permissionMode), message);
+    }
+
+    /**
+     * The run script of the task's current run. Its turn budget is the task's own, else the
+     * configured one -- and never more than the configured one: a budget chosen under a higher
+     * ceiling is held to the one the user set since.
+     */
+    private String agentRun(Task t, String permissionMode) {
+        return TaskScripts.agentRun(t.id(), t.runs(), t.cwd(), t.profile(),
+                config.get().delegateMaxTurns(t.profile().maxTurns()), permissionMode);
     }
 
     /**
@@ -156,7 +183,7 @@ final class Tasks {
     List<String> adopt(String instance) {
         var adopted = new java.util.ArrayList<String>();
         for (var line : run(instance, TaskScripts.list(), null).split("\n")) {
-            var parts = line.strip().split(" ", 5);
+            var parts = line.strip().split(" ", 7);
             if (parts.length < 4 || !parts[0].matches("[a-z0-9-]+")) continue;
             var kind = parts[1];
             if (!AGENT.equals(kind) && !COMMAND.equals(kind)) continue;
@@ -166,8 +193,9 @@ final class Tasks {
             } catch (NumberFormatException e) {
                 continue;
             }
-            var cwd = parts.length > 4 && !parts[4].isBlank() ? parts[4] : IncusInstanceBackend.AGENT_HOME;
-            var task = new Task(parts[0], instance, kind, cwd, runs, "running".equals(parts[3]), false);
+            var cwd = parts.length > 6 && !parts[6].isBlank() ? parts[6] : IncusInstanceBackend.AGENT_HOME;
+            var profile = parts.length > 5 ? recordedProfile(parts[4], parts[5]) : Profile.NONE;
+            var task = new Task(parts[0], instance, kind, cwd, profile, runs, "running".equals(parts[3]), false);
             synchronized (this) {
                 tasks.putIfAbsent(task.id(), task);
             }
@@ -176,6 +204,21 @@ final class Tasks {
         // A run recorded as unfinished may have died with a restart: ask systemd.
         refreshStates(instance::equals);
         return adopted;
+    }
+
+    /**
+     * The profile an instance recorded for a task ({@code -} for a value never chosen). Read
+     * from inside the instance, so only what a coordinator could have chosen is taken: anything
+     * else is dropped, never passed to the next run.
+     */
+    static Profile recordedProfile(String model, String maxTurns) {
+        Integer turns = null;
+        try {
+            if (!maxTurns.equals("-")) turns = Integer.parseInt(maxTurns);
+        } catch (NumberFormatException e) {
+            // left unset
+        }
+        return new Profile(McpConfig.isModelName(model) ? model : null, turns != null && turns > 0 ? turns : null);
     }
 
     /**
@@ -275,20 +318,23 @@ final class Tasks {
      * one lock, so concurrent calls see each other's reservations; asking the instances which
      * tasks have finished happens before it, outside the lock.
      */
-    private Task reserve(String continuing, Task fresh, boolean refresh) {
+    private Task reserve(String continuing, Profile override, Task fresh, boolean refresh) {
         if (!refresh) {
             try {
-                return reserveNow(continuing, fresh);
+                return reserveNow(continuing, override, fresh);
             } catch (ToolError refused) {
                 // Tasks may have finished since the caller asked: ask again before refusing.
             }
         }
         refreshStates();
-        return reserveNow(continuing, fresh);
+        return reserveNow(continuing, override, fresh);
     }
 
-    /** {@link #reserve} against the states as last known. */
-    private Task reserveNow(String continuing, Task fresh) {
+    /**
+     * {@link #reserve} against the states as last known. A continued task's next run takes on
+     * {@code override}, so whoever reads the task meanwhile sees the profile it starts with.
+     */
+    private Task reserveNow(String continuing, Profile override, Task fresh) {
         synchronized (this) {
             if (continuing != null) {
                 var task = tasks.get(continuing);
@@ -302,7 +348,7 @@ final class Tasks {
                             + "with wait_seconds) or cancel_task it first.");
                 }
                 checkLimit();
-                var next = task.launchingRun(task.runs() + 1);
+                var next = task.launchingRun(task.runs() + 1).withProfile(task.profile().with(override));
                 tasks.put(continuing, next);
                 return next;
             }
@@ -375,14 +421,16 @@ final class Tasks {
     }
 
     /**
-     * Launch a reserved run. On any failure -- building its run script included, which refuses
-     * what an agent sent (a bad environment name) -- the reservation is undone: a fresh task is
+     * Launch a reserved run, once {@code check} (if any) passed. On any failure -- the check's
+     * and building its run script included, which refuses what an agent sent (a bad
+     * environment name) -- the reservation is undone: a fresh task is
      * forgotten, a continued one goes back to how it was. Otherwise the slot would stay counted
      * for good, as nothing ever re-probes a launching task.
      */
-    private Task launch(Task reserved, Task previous, java.util.function.Function<Task, String> runScript,
-                        String stdin) {
+    private Task launch(Task reserved, Task previous, Runnable check,
+                        java.util.function.Function<Task, String> runScript, String stdin) {
         try {
+            if (check != null) check.run();
             run(reserved.instance(), TaskScripts.launch(reserved.id(), reserved.runs(), reserved.kind(),
                     runScript.apply(reserved)), stdin);
         } catch (RuntimeException e) {

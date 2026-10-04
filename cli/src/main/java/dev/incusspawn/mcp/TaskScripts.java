@@ -82,8 +82,12 @@ final class TaskScripts {
     /**
      * The run script of one turn of a delegated agent. Run 1 records, for every git repository
      * at or under {@code cwd}, the commit it started from, which {@link #diff} compares against.
+     * Every run records the profile the task {@code chosen}, which an adopting session reads
+     * back with {@link #list}, and runs on its model with {@code maxTurns}, the budget the
+     * session gives it, as its turn budget.
      */
-    static String agentRun(String taskId, int run, String cwd, Integer maxTurns, String permissionMode) {
+    static String agentRun(String taskId, int run, String cwd, Tasks.Profile chosen, Integer maxTurns,
+                           String permissionMode) {
         var d = dir(taskId);
         var sb = new StringBuilder();
         sb.append("D=").append(d).append('\n');
@@ -99,9 +103,16 @@ final class TaskScripts {
                     && echo "$h $(pwd -P)"); done | sort -u -k2 > "$D/base.txt"
                     """);
         }
+        if (chosen.model() != null) {
+            sb.append("printf '%s' ").append(ExecScript.quote(chosen.model())).append(" > \"$D/model\"\n");
+        }
+        if (chosen.maxTurns() != null) {
+            sb.append("echo ").append(chosen.maxTurns().intValue()).append(" > \"$D/max-turns\"\n");
+        }
         sb.append("claude -p --output-format stream-json --verbose")
                 .append(" --append-system-prompt \"$(cat \"$D/brief.md\")\"");
-        if (maxTurns != null) sb.append(" --max-turns ").append(maxTurns);
+        if (chosen.model() != null) sb.append(" --model ").append(ExecScript.quote(chosen.model()));
+        if (maxTurns != null) sb.append(" --max-turns ").append(maxTurns.intValue());
         // Always explicit: a headless agent that meets a permission prompt has nobody to answer it.
         sb.append(" --permission-mode ").append(ExecScript.quote(permissionMode));
         if (run > 1) sb.append(" --resume \"$(cat \"$D/session_id\")\"");
@@ -199,15 +210,17 @@ final class TaskScripts {
 
     /**
      * Every task recorded in the instance, one per line: {@code <id> <kind> <run> <running|done>
-     * <cwd>}. How an adopting session learns the tasks the previous one started; whether a
-     * {@code running} one really is, it then asks systemd with {@link #states}.
+     * <model> <max-turns> <cwd>}, with {@code -} for a profile value never chosen. How an
+     * adopting session learns the tasks the previous one started; whether a {@code running} one
+     * really is, it then asks systemd with {@link #states}.
      */
     static String list() {
         return "for d in " + TASKS_DIR + "/*/; do [ -f \"$d/kind\" ] || continue; "
                 + "n=$(cat \"$d/current\" 2>/dev/null); [ -n \"$n\" ] || continue; "
                 + "if [ -f \"$d/exit-$n\" ]; then r=done; else r=running; fi; "
-                + "printf '%s %s %s %s %s\\n' \"$(basename \"$d\")\" \"$(cat \"$d/kind\")\" \"$n\" \"$r\" "
-                + "\"$(cat \"$d/cwd\" 2>/dev/null)\"; done; exit 0";
+                + "m=$(head -c 200 \"$d/model\" 2>/dev/null | tr -d ' \\n'); t=$(head -c 20 \"$d/max-turns\" 2>/dev/null | tr -d ' \\n'); "
+                + "printf '%s %s %s %s %s %s %s\\n' \"$(basename \"$d\")\" \"$(cat \"$d/kind\")\" \"$n\" \"$r\" "
+                + "\"${m:--}\" \"${t:--}\" \"$(cat \"$d/cwd\" 2>/dev/null)\"; done; exit 0";
     }
 
     /**

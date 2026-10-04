@@ -197,7 +197,7 @@ mcp:
   templates: [tpl-java, tpl-dev]   # the only templates an agent may branch from
   max-instances: 3                 # per host user, across sessions (default 3)
   max-concurrent-tasks: 2          # background commands and delegated agents, per session (default 2)
-  delegate-max-turns: 200          # optional cap for delegated agents
+  delegate-max-turns: 200          # optional turn budget for delegated agents; a task may ask for less, never more
   delegate-permission-mode: bypassPermissions   # the delegates' --permission-mode (default shown)
   delegate-permission-modes:       # per-template overrides, e.g. a reviewer that only plans
     tpl-review: plan
@@ -207,17 +207,19 @@ mcp:
 
 | Tool | What it does |
 |------|--------------|
-| `list_templates` | The approved templates, whether they are built, which can take a delegated task, and in which permission mode |
+| `list_templates` | The approved templates, whether they are built, which can take a delegated task, in which permission mode and on which model |
 | `create_instance` | A fresh CoW branch of an approved template, as `isx branch` would make it, with an optional `purpose`; or, with `from_instance`, a fork of one of your stopped instances -- prepare once, fork N times |
 | `stop_instance` / `start_instance` | Stop an instance (to fork it; refused while a task runs, unless `force`), and start it again |
 | `list_instances` / `adopt_instance` | Your instances and their tasks, including those an ended session left behind; take one back |
 | `exec` | Run a command as `agentuser`; no time limit unless the agent sets one, or `background: true` for a task |
-| `delegate` | Give an instruction, or a skill name and arguments, to the Claude Code inside an instance (or a fresh one from a template) |
+| `delegate` | Give an instruction, or a skill name and arguments, to the Claude Code inside an instance (or a fresh one from a template), optionally on its own `model` and `max_turns` |
 | `task_status` / `wait_any` / `task_result` | Follow a task (optionally waiting), wait for whichever of several finishes first, read its outcome or the agent's report |
 | `send_message` | Continue a delegated agent's conversation (e.g. "push and open a PR") |
 | `get_diff` | What a delegated task changed, committed or not: a patch, or with `stat` just the files and line counts |
 | `cancel_task` / `destroy_instance` | Stop a task, or throw an instance away |
 | `keep_instance` | Hand an instance over to you for good |
+
+A delegated task can run under its own profile: `model` (a Claude Code model id or alias, e.g. `haiku` for a rebase, the template's own for a design) and `max_turns`, which later `send_message` turns keep unless they choose again. A model is checked against the template's credential account first, with one tiny request inside the instance that is remembered for the session, so a model the account cannot use fails the call rather than the task. `max_turns` can only narrow your `delegate-max-turns`. The permission mode is never the agent's to choose.
 
 `exec`, `task_result` and `get_diff` take an optional `ask`: instead of the text, a one-shot Claude Code on `summary-model` reads it *inside the instance* and answers the question ("which tests fail?"), so a long log or patch never fills the host agent's context. The answer is a model's reading -- untrusted and lossy -- so anything that gates a merge stays deterministic: `get_diff(stat)`, CI, a reviewer.
 

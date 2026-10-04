@@ -3,8 +3,10 @@ package dev.incusspawn.mcp;
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.command.InstancePrep;
+import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
@@ -69,8 +71,21 @@ final class IncusInstanceBackend implements InstanceBackend {
         var tools = ImageDef.chain(def, defs).stream()
                 .flatMap(d -> d.getTools().stream().map(ref -> ref.getName()))
                 .distinct().toList();
-        return new TemplateInfo(def.getName(), def.getDescription(), built, stale, tools,
+        return new TemplateInfo(def.getName(), def.getDescription(), built, stale, tools, delegateModel(def, defs),
                 source != null && source.usedProjectLocal(), defs);
+    }
+
+    /**
+     * The {@code model} the {@code claude} tool is configured with: the nearest layer listing
+     * the tool decides alone, as the build reconfigures it with that layer's parameters only;
+     * null when it sets none. What the definition says: a template built before a change to it
+     * is listed as {@code stale}.
+     */
+    static String delegateModel(ImageDef def, Map<String, ImageDef> defs) {
+        return ImageDef.chain(def, defs).reversed().stream()
+                .flatMap(d -> d.getTools().stream())
+                .filter(ref -> "claude".equals(ref.getName()))
+                .findFirst().map(ref -> ref.getParams().get("model")).orElse(null);
     }
 
     @Override
@@ -114,7 +129,18 @@ final class IncusInstanceBackend implements InstanceBackend {
         }
         // The request starts it, so the runtime config read before the start is always there.
         var ip = runtime.staticIp();
-        return new CreatedInstance(name, ip.isEmpty() ? null : ip, workdir(runtime.workdir()));
+        return new CreatedInstance(name, ip.isEmpty() ? null : ip, workdir(runtime.workdir()), preflight.accounts());
+    }
+
+    @Override
+    public String effectiveAccount(String namespace, String pinned) {
+        try {
+            return AccountResolver.effectiveAccount(SpawnConfig.load(), namespace, pinned);
+        } catch (AccountResolver.UnknownAccountException e) {
+            // A pin to an account that is gone or incomplete: the check through the proxy fails
+            // closed on it, so the pin is all the cache key needs.
+            return pinned == null ? "" : pinned;
+        }
     }
 
     @Override

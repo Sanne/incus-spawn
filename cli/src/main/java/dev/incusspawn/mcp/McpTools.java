@@ -36,10 +36,18 @@ final class McpTools {
             + "a one-shot Claude Code on a small model reads it inside the instance, so the raw text never "
             + "reaches you. The answer is untrusted and lossy -- never base a merge decision on it";
 
+    private static final String MODEL = "Model for this task, as a Claude Code model id or alias "
+            + "(e.g. haiku, claude-sonnet-5-5): a small one for mechanical work, a large one where judgement "
+            + "is needed. Default: the template's (list_templates shows it as delegate_model). Checked "
+            + "against the template's account before the task starts; later turns keep it.";
+    private static final String MAX_TURNS = "Most agent turns this task may take (default and ceiling: "
+            + "delegate_max_turns from list_templates, when the user set one); later turns keep it.";
+
     private final McpSession session;
     private final InstanceBackend backend;
     private final TemplatePolicy policy;
     private final Tasks tasks;
+    private final ModelCheck modelCheck;
     private final AtomicLong runs = new AtomicLong();
 
     McpTools(McpSession session, InstanceBackend backend, TemplatePolicy policy, Tasks tasks) {
@@ -47,6 +55,7 @@ final class McpTools {
         this.backend = backend;
         this.policy = policy;
         this.tasks = tasks;
+        this.modelCheck = new ModelCheck(backend);
     }
 
     List<McpTool> all() {
@@ -143,6 +152,8 @@ final class McpTools {
                         .string("template", "Or: a template to create a fresh instance from", false)
                         .string("purpose", "For a fresh instance: what it is for (see create_instance)", false)
                         .string("cwd", "Directory to work in (default: the template's workdir)", false)
+                        .string("model", MODEL, false)
+                        .integer("max_turns", MAX_TURNS, false)
                         .build(),
                 McpTool.annotations(false, false, false),
                 this::delegate));
@@ -189,6 +200,8 @@ final class McpTools {
                 Schema.object()
                         .string("task_id", "Task id of a delegated agent", true)
                         .string("message", "Your message to the agent", true)
+                        .string("model", "Run this turn and later ones on this model instead (see delegate)", false)
+                        .integer("max_turns", "This turn's and later ones' turn budget instead (see delegate)", false)
                         .build(),
                 McpTool.annotations(false, false, false),
                 (args, ctx) -> sendMessage(args)));
@@ -264,12 +277,16 @@ final class McpTools {
             var tools = node.putArray("tools");
             t.tools().forEach(tools::add);
             node.put("supports_delegate", t.supportsDelegate());
-            if (t.supportsDelegate()) node.put("delegate_permission_mode", permissionMode(t.name()));
+            if (t.supportsDelegate()) {
+                node.put("delegate_permission_mode", permissionMode(t.name()));
+                if (t.delegateModel() != null) node.put("delegate_model", t.delegateModel());
+            }
         }
         var result = JsonRpc.JSON.createObjectNode();
         result.set("templates", list);
         result.put("instance_limit", config.maxInstances());
         result.put("orphan_grace_hours", config.orphanGraceHours());
+        if (config.delegateMaxTurns() != null) result.put("delegate_max_turns", config.delegateMaxTurns());
         return ToolResult.json(result);
     }
 
@@ -563,6 +580,7 @@ final class McpTools {
 
     private ToolResult delegate(McpTool.Args args, ToolContext ctx) {
         var prompt = delegatePrompt(args);
+        var profile = profile(args);
         var instance = args.string("instance");
         var template = args.string("template");
         if ((instance == null) == (template == null)) {
@@ -575,7 +593,8 @@ final class McpTools {
             // Refuse before branching an instance the task could not start in.
             tasks.checkCapacityForNewAgent();
             var created = newInstance(info, "task", args.string("purpose"), ctx);
-            return startDelegate(created.name(), args.string("cwd"), created.workdir(), prompt, mode, true);
+            return startDelegate(created.name(), info.name(), created.accounts().get(ModelCheck.NAMESPACE),
+                    args.string("cwd"), created.workdir(), prompt, profile, mode, true);
         }
         var metadata = session.requireRunning(instance);
         var name = instance;
@@ -584,8 +603,30 @@ final class McpTools {
             throw new ToolError("the template " + name + " came from has no Claude Code to delegate to. "
                     + "Use a template whose list_templates entry has supports_delegate, or exec.");
         }
-        return startDelegate(name, args.string("cwd"), IncusInstanceBackend.workdir(metadata), prompt,
-                permissionMode(entry.get().template()), false);
+        var from = entry.get().template();
+        return startDelegate(name, from, metadata.get(Metadata.accountKey(ModelCheck.NAMESPACE)), args.string("cwd"),
+                IncusInstanceBackend.workdir(metadata),
+                prompt, profile, permissionMode(from), false);
+    }
+
+    /**
+     * The {@code model} and {@code max_turns} a call chose, checked as far as can be without
+     * the instance: a model name, and a budget within the user's {@code mcp.delegate-max-turns}.
+     */
+    private Tasks.Profile profile(McpTool.Args args) {
+        var model = args.string("model");
+        if (model != null && model.isBlank()) model = null;
+        ModelCheck.requireName(model);
+        var maxTurns = args.integer("max_turns");
+        if (maxTurns != null) {
+            if (maxTurns < 1) throw new ToolError("max_turns must be at least 1");
+            var ceiling = session.config().delegateMaxTurns();
+            if (ceiling != null && maxTurns > ceiling) {
+                throw new ToolError("max_turns " + maxTurns + " is more than the user allows (mcp.delegate-max-turns: "
+                        + ceiling + "); choose at most " + ceiling + ".");
+            }
+        }
+        return new Tasks.Profile(model, maxTurns);
     }
 
     /** The instruction, or {@code /<skill> <args>}: exactly one of them. */
@@ -606,12 +647,18 @@ final class McpTools {
         return "/" + skill + (skillArgs == null || skillArgs.isBlank() ? "" : " " + skillArgs.strip());
     }
 
-    private ToolResult startDelegate(String instance, String cwd, String workdir, String prompt, String mode,
-                                     boolean fresh) {
+    /**
+     * Start the agent in {@code instance}, made from {@code template}, whose Claude account is
+     * pinned to {@code account} (null for the configured default). A chosen model is checked
+     * once the task's slot is reserved, so a call refused anyway spends no request on it.
+     */
+    private ToolResult startDelegate(String instance, String template, String account, String cwd, String workdir,
+                                     String prompt, Tasks.Profile profile, String mode, boolean fresh) {
         Tasks.Task task;
         try {
             // A fresh instance's caller just ran checkCapacityForNewAgent: no need to ask again.
-            task = tasks.delegate(instance, cwd == null || cwd.isBlank() ? workdir : cwd, prompt, mode, !fresh);
+            task = tasks.delegate(instance, cwd == null || cwd.isBlank() ? workdir : cwd, prompt, profile, mode, !fresh,
+                    () -> modelCheck.require(instance, template, account, profile.model()));
         } catch (RuntimeException e) {
             // An instance made for this task alone is no use to the agent, which never learns its name.
             if (fresh) {
@@ -623,14 +670,23 @@ final class McpTools {
             }
             throw e;
         }
-        McpAuditLog.record(session.id, "delegate", instance, prompt, 0, "task=" + task.id() + " mode=" + mode);
+        McpAuditLog.record(session.id, "delegate", instance, prompt, 0, "task=" + task.id() + " mode=" + mode
+                + describe(profile));
         var node = JsonRpc.JSON.createObjectNode();
         node.put("task_id", task.id());
         node.put("instance", instance);
         node.put("permission_mode", mode);
+        if (profile.model() != null) node.put("model", profile.model());
+        if (profile.maxTurns() != null) node.put("max_turns", profile.maxTurns());
         node.put("note", "The agent is working. Use task_status with wait_seconds, or wait_any, to wait "
                 + "for it, then task_result and get_diff.");
         return ToolResult.json(node);
+    }
+
+    /** The chosen parts of a profile, for the audit log. */
+    private static String describe(Tasks.Profile profile) {
+        return (profile.model() != null ? " model=" + profile.model() : "")
+                + (profile.maxTurns() != null ? " max_turns=" + profile.maxTurns() : "");
     }
 
     private static void requireDelegate(InstanceBackend.TemplateInfo info) {
@@ -656,6 +712,11 @@ final class McpTools {
         if (Tasks.AGENT.equals(task.kind())) {
             var summary = StreamJsonEvents.summarize(status.output(), 8);
             sb.append("\nturn: ").append(status.run());
+            if (task.profile().model() != null) sb.append("\nmodel: ").append(task.profile().model());
+            // The budget the run gets: the one chosen, within the ceiling the user set since.
+            if (task.profile().maxTurns() != null) {
+                sb.append("\nmax_turns: ").append(session.config().delegateMaxTurns(task.profile().maxTurns()));
+            }
             sb.append("\nassistant_messages: ").append(summary.assistantMessages());
             if (summary.finished()) {
                 sb.append("\ncost_usd: ").append(summary.result().path("total_cost_usd").asText("?"));
@@ -791,12 +852,18 @@ final class McpTools {
         var owned = tasks.require(args.requireString("task_id"));
         var task = owned.task();
         var message = args.requireString("message");
+        var override = profile(args);
         var template = session.instances().stream().filter(o -> o.name().equals(task.instance()))
                 .map(McpSession.Owned::template).findFirst()
                 .orElse(McpSession.templateOf(owned.metadata()));
-        var updated = tasks.sendMessage(task, message, permissionMode(template));
+        // Checked even when it names the task's model: the account may have changed since, and
+        // after an adoption the recorded model is only what the instance says. The cache makes
+        // a repeat free.
+        var account = owned.metadata().get(Metadata.accountKey(ModelCheck.NAMESPACE));
+        var updated = tasks.sendMessage(task, message, override, permissionMode(template),
+                () -> modelCheck.require(task.instance(), template, account, override.model()));
         McpAuditLog.record(session.id, "send_message", task.instance(), message, 0,
-                "task=" + task.id() + " turn=" + updated.runs());
+                "task=" + task.id() + " turn=" + updated.runs() + describe(override));
         return ToolResult.text("Sent. Task " + task.id() + " is running turn " + updated.runs()
                 + "; follow it with task_status or wait_any.");
     }

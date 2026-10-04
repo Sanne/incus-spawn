@@ -36,14 +36,30 @@ class FakeBackend implements InstanceBackend {
     volatile java.util.function.Function<String, String> responder;
 
     FakeBackend template(String name, boolean built, String... tools) {
-        templates.add(new TemplateInfo(name, name + " template", built, false, List.of(tools), false, Map.of()));
+        templates.add(new TemplateInfo(name, name + " template", built, false, List.of(tools), null, false, Map.of()));
         if (built) instances.put(name, new ConcurrentHashMap<>(Map.of(Metadata.TYPE, Metadata.TYPE_BASE)));
         return this;
     }
 
     FakeBackend projectLocalTemplate(String name) {
-        templates.add(new TemplateInfo(name, "", true, false, List.of(), true, Map.of()));
+        templates.add(new TemplateInfo(name, "", true, false, List.of(), null, true, Map.of()));
         return this;
+    }
+
+    FakeBackend delegateModel(String template, String model) {
+        templates.replaceAll(t -> t.name().equals(template) ? new TemplateInfo(t.name(), t.description(), t.built(),
+                t.stale(), t.tools(), model, t.projectLocal(), t.definitions()) : t);
+        return this;
+    }
+
+    /** The account pins a created instance gets, as its template's accounts would give. */
+    final Map<String, String> createdAccounts = new ConcurrentHashMap<>();
+    /** The configured default account of every namespace, which an unpinned instance uses. */
+    volatile String defaultAccount = "personal";
+
+    @Override
+    public String effectiveAccount(String namespace, String pinned) {
+        return pinned != null ? pinned : defaultAccount;
     }
 
     FakeBackend instance(String name, Map<String, String> config) {
@@ -65,8 +81,9 @@ class FakeBackend implements InstanceBackend {
         config.put(Metadata.TYPE, Metadata.TYPE_CLONE);
         config.put(Metadata.PARENT, template);
         config.put(Metadata.PROFILE, template); // every copy of a template carries it
+        createdAccounts.forEach((ns, account) -> config.put(Metadata.accountKey(ns), account));
         instances.put(name, config);
-        return new CreatedInstance(name, "10.0.0.2", "/home/agentuser");
+        return new CreatedInstance(name, "10.0.0.2", "/home/agentuser", Map.copyOf(createdAccounts));
     }
 
     /** Every fork, as {@code source -> name}. */
@@ -83,7 +100,11 @@ class FakeBackend implements InstanceBackend {
         config.put(Metadata.PARENT, source);
         instances.put(name, config);
         forks.add(source + " -> " + name);
-        return new CreatedInstance(name, "10.0.0.3", "/home/agentuser");
+        var accounts = new LinkedHashMap<String, String>();
+        config.forEach((k, v) -> {
+            if (k.startsWith(Metadata.ACCOUNT_PREFIX)) accounts.put(k.substring(Metadata.ACCOUNT_PREFIX.length()), v);
+        });
+        return new CreatedInstance(name, "10.0.0.3", "/home/agentuser", accounts);
     }
 
     @Override

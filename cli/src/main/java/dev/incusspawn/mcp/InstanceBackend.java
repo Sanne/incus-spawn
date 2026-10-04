@@ -30,13 +30,15 @@ interface InstanceBackend {
     }
 
     /**
-     * What {@code list_templates} shows about one template. {@code projectLocal} when the
+     * What {@code list_templates} shows about one template. {@code delegateModel} is the model
+     * its Claude Code is configured with, null for Claude Code's own default. {@code projectLocal} when the
      * image was built from a repository's {@code .incus-spawn/} definitions. {@code definitions}
      * are the ones it was described from, which {@link #create} branches with rather than
      * loading them again; never shown to the agent.
      */
     record TemplateInfo(String name, String description, boolean built, boolean stale,
-                        List<String> tools, boolean projectLocal, Map<String, ImageDef> definitions) {
+                        List<String> tools, String delegateModel, boolean projectLocal,
+                        Map<String, ImageDef> definitions) {
         boolean supportsDelegate() {
             return tools.contains("claude");
         }
@@ -67,7 +69,8 @@ interface InstanceBackend {
      */
     CreatedInstance fork(TemplateInfo lineage, String source, String name, Map<String, String> stamps);
 
-    record CreatedInstance(String name, String ip, String workdir) {}
+    /** {@code accounts} are the credential account pins the branch stamped, by namespace. */
+    record CreatedInstance(String name, String ip, String workdir, Map<String, String> accounts) {}
 
     /**
      * Delete an instance known to exist, as {@code isx destroy} does. Does not tell the proxy:
@@ -106,6 +109,13 @@ interface InstanceBackend {
      * Throws when Incus cannot be asked, so that is never mistaken for the instance being gone.
      */
     Map<String, String> metadata(String name);
+
+    /**
+     * The account an instance pinned to {@code pinned} (null for none) uses in
+     * {@code namespace} now: the pin, or the configured default, which the user may change at
+     * any time. A pin that does not resolve to a usable account is returned as it was pinned.
+     */
+    String effectiveAccount(String namespace, String pinned);
 
     /** Set config keys in one write; a null value removes the key. */
     void stamp(String name, Map<String, String> config);
