@@ -75,9 +75,19 @@ final class IncusInstanceBackend implements InstanceBackend {
 
     @Override
     public CreatedInstance create(TemplateInfo info, String name, Map<String, String> stamps) {
+        return branch(info, info.name(), name, stamps);
+    }
+
+    @Override
+    public CreatedInstance fork(TemplateInfo lineage, String source, String name, Map<String, String> stamps) {
+        // BranchFlow resolves a branch of a branch already: the leaf template from PROFILE, the
+        // source's own pins on top of the template's.
+        return branch(lineage, source, name, stamps);
+    }
+
+    private CreatedInstance branch(TemplateInfo info, String template, String name, Map<String, String> stamps) {
         // Exactly `isx branch <name> --from <template>`: the template's network mode, accounts,
         // KVM and resource defaults; no GUI, no inbox. The agent chooses none of it.
-        var template = info.name();
         var request = BranchFlow.Request.defaults(template, name).withExtraConfig(stamps);
         BranchFlow.Preflight preflight;
         try {

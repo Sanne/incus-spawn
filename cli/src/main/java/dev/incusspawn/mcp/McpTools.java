@@ -64,9 +64,13 @@ final class McpTools {
                         + "ready in seconds. Returns its name, which the other tools take. It outlives "
                         + "this session: when the session ends it is orphaned, and a later session of "
                         + "yours can take it back with adopt_instance until mcp.orphan-grace-hours pass. "
-                        + "Destroy it with destroy_instance when you are done with it.",
+                        + "Destroy it with destroy_instance when you are done with it. Or fork one of "
+                        + "your instances with from_instance: prepare it once (build, prime caches), "
+                        + "stop it with stop_instance, then fork it as many times as you need -- each "
+                        + "fork starts with an identical copy of its files and no tasks.",
                 Schema.object()
-                        .string("template", "Template name, from list_templates", true)
+                        .string("template", "Template name, from list_templates", false)
+                        .string("from_instance", "Or: one of your instances, stopped, to fork", false)
                         .string("name_hint", "Optional word to include in the generated name "
                                 + "(1-16 chars of a-z, 0-9, '-'), e.g. '870-impl'", false)
                         .string("purpose", "What the instance is for, shown by list_instances to you and to "
@@ -278,12 +282,27 @@ final class McpTools {
     }
 
     private ToolResult createInstance(McpTool.Args args, ToolContext ctx) {
-        var template = args.requireString("template");
-        var info = policy.require(template);
-        var created = newInstance(info, args.string("name_hint"), args.string("purpose"), ctx);
+        var template = args.string("template");
+        var source = args.string("from_instance");
+        if ((template == null) == (source == null)) throw new ToolError("give exactly one of template or from_instance");
+        InstanceBackend.TemplateInfo info;
+        InstanceBackend.CreatedInstance created;
+        if (template != null) {
+            info = policy.require(template);
+            created = newInstance(info, args.string("name_hint"), args.string("purpose"), ctx);
+        } else {
+            var metadata = session.requireOwned(source);
+            if (!InstanceBackend.stopped(metadata)) {
+                throw new ToolError("'" + source + "' is running. Stop it with stop_instance first: a fork "
+                        + "copies its files as they are, and a running instance's are still changing.");
+            }
+            info = policy.requireLineage(McpSession.templateOf(metadata));
+            created = fork(info, source, args.string("name_hint"), args.string("purpose"), ctx);
+        }
         var node = JsonRpc.JSON.createObjectNode();
         node.put("instance", created.name());
-        node.put("template", template);
+        node.put("template", info.name());
+        if (source != null) node.put("forked_from", source);
         if (created.ip() != null) node.put("ip", created.ip());
         node.put("workdir", created.workdir());
         var tools = node.putArray("tools");
@@ -310,6 +329,36 @@ final class McpTools {
         }
         session.created(name);
         McpAuditLog.record(session.id, "create_instance", name, template.name(), millisSince(start), "created");
+        return created;
+    }
+
+    /** A fork of {@code source}, which descends from {@code lineage}: as {@link #newInstance}, without the source's tasks. */
+    private InstanceBackend.CreatedInstance fork(InstanceBackend.TemplateInfo lineage, String source, String hint,
+                                                 String purpose, ToolContext ctx) {
+        var name = session.reserve(lineage, hint, purpose);
+        ctx.progress("Forking " + source + " into " + name);
+        var start = System.nanoTime();
+        InstanceBackend.CreatedInstance created;
+        try {
+            created = backend.fork(lineage, source, name, session.stamps(purpose));
+            try {
+                // The copy brought the source's task records, ids included: adopting the fork
+                // would claim the source's tasks.
+                tasks.run(name, TaskScripts.clear(), null);
+            } catch (RuntimeException e) {
+                backend.destroy(name);
+                backend.refreshProxy();
+                throw new ToolError("forking " + source + " failed: could not clear its tasks in " + name
+                        + " (" + e.getMessage() + "); the fork was removed.");
+            }
+        } catch (RuntimeException e) {
+            session.abandon(name);
+            McpAuditLog.record(session.id, "create_instance", name, source, millisSince(start),
+                    "fork failed: " + e.getMessage());
+            throw e;
+        }
+        session.created(name);
+        McpAuditLog.record(session.id, "create_instance", name, source, millisSince(start), "forked");
         return created;
     }
 

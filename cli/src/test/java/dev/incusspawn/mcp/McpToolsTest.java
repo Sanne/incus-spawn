@@ -188,4 +188,95 @@ class McpToolsTest {
         assertTrue(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"x\",\"ask\":\"q\",\"background\":true}")
                 .path("isError").asBoolean());
     }
+
+    private JsonNode fork(String source, String extra) throws Exception {
+        return call("create_instance", "{\"from_instance\":\"" + source + "\"" + extra + "}");
+    }
+
+    @Test
+    void aForkIsABranchOfAStoppedInstanceThisSessionHolds() throws Exception {
+        var source = createJava();
+        call("keep_instance", "{\"instance\":\"" + source + "\"}");
+        backend.stamp(source, Metadata.MCP_PURPOSE, "prepared");
+        backend.stamp(source, Metadata.ACCOUNT_PREFIX + "claude", "work");
+        call("stop_instance", "{\"instance\":\"" + source + "\"}");
+
+        backend.metadataReads.set(0);
+        var result = fork(source, ",\"name_hint\":\"review\",\"purpose\":\"correctness review\"");
+        assertFalse(result.path("isError").asBoolean(), text(result));
+        assertEquals(1, backend.metadataReads.get(), "ownership, status and lineage come from one read");
+        var node = JsonRpc.JSON.readTree(text(result));
+        var name = node.path("instance").asText();
+        assertTrue(name.startsWith("mcp-java-review-"), name);
+        assertEquals("tpl-java", node.path("template").asText());
+        assertEquals(source, node.path("forked_from").asText());
+        assertEquals(List.of(source + " -> " + name), backend.forks);
+
+        var config = backend.instances.get(name);
+        assertEquals("4242-1", config.get(Metadata.MCP_SESSION));
+        assertEquals("alice", config.get(Metadata.MCP_OWNER));
+        assertEquals("correctness review", config.get(Metadata.MCP_PURPOSE));
+        assertEquals("work", config.get(Metadata.ACCOUNT_PREFIX + "claude"), "the source's pins come along");
+        assertFalse(config.containsKey(Metadata.MCP_KEPT), "a fork of a kept instance is not kept");
+        assertTrue(backend.scripts.stream().anyMatch(sc -> sc.equals(TaskScripts.clear())),
+                "the fork starts without the source's tasks");
+
+        // A fork is an instance like any other: it can be used, stopped and forked again.
+        assertFalse(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"true\"}").path("isError").asBoolean());
+        call("stop_instance", "{\"instance\":\"" + name + "\"}");
+        var again = fork(name, "");
+        assertFalse(again.path("isError").asBoolean(), text(again));
+        assertEquals("tpl-java", JsonRpc.JSON.readTree(text(again)).path("template").asText());
+    }
+
+    @Test
+    void onlyAStoppedInstanceThisSessionHoldsCanBeForked() throws Exception {
+        var running = createJava();
+        var r = fork(running, "");
+        assertTrue(r.path("isError").asBoolean());
+        assertTrue(text(r).contains("stop_instance"), text(r));
+
+        backend.instance("users-box", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PROFILE, "tpl-java"));
+        backend.stopped.add("users-box");
+        assertTrue(fork("users-box", "").path("isError").asBoolean());
+
+        assertTrue(call("create_instance", "{}").path("isError").asBoolean(), "neither");
+        assertTrue(call("create_instance", "{\"template\":\"tpl-java\",\"from_instance\":\"" + running + "\"}")
+                .path("isError").asBoolean(), "both");
+        assertEquals(List.of(), backend.forks);
+    }
+
+    @Test
+    void aForkIsRefusedOnceItsTemplateIsNoLongerApproved() throws Exception {
+        var source = createJava();
+        call("stop_instance", "{\"instance\":\"" + source + "\"}");
+        config.setTemplates(List.of("tpl-secret"));
+        var r = fork(source, "");
+        assertTrue(r.path("isError").asBoolean());
+        assertTrue(text(r).contains("not approved"), text(r));
+        assertEquals(List.of(), backend.forks);
+    }
+
+    @Test
+    void aForkCountsAgainstTheInstanceLimit() throws Exception {
+        config.setMaxInstances(2);
+        var source = createJava();
+        call("stop_instance", "{\"instance\":\"" + source + "\"}");
+        assertFalse(fork(source, "").path("isError").asBoolean());
+        var r = fork(source, "");
+        assertTrue(r.path("isError").asBoolean());
+        assertTrue(text(r).contains("mcp.max-instances"), text(r));
+    }
+
+    @Test
+    void aForkWhoseTasksCannotBeClearedIsRemoved() throws Exception {
+        var source = createJava();
+        call("stop_instance", "{\"instance\":\"" + source + "\"}");
+        backend.execExit = 1;
+        var r = fork(source, "");
+        assertTrue(r.path("isError").asBoolean());
+        var name = backend.forks.getFirst().split(" -> ")[1];
+        assertEquals(List.of(name), backend.destroyed);
+        assertEquals(1, session.instances().size(), "only the source is held");
+    }
 }

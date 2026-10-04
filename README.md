@@ -206,7 +206,8 @@ mcp:
 | Tool | What it does |
 |------|--------------|
 | `list_templates` | The approved templates, whether they are built, which can take a delegated task, and in which permission mode |
-| `create_instance` | A fresh CoW branch of an approved template, as `isx branch` would make it, with an optional `purpose` |
+| `create_instance` | A fresh CoW branch of an approved template, as `isx branch` would make it, with an optional `purpose`; or, with `from_instance`, a fork of one of your stopped instances -- prepare once, fork N times |
+| `stop_instance` / `start_instance` | Stop an instance (to fork it; refused while a task runs, unless `force`), and start it again |
 | `list_instances` / `adopt_instance` | Your instances and their tasks, including those an ended session left behind; take one back |
 | `exec` | Run a command as `agentuser`; no time limit unless the agent sets one, or `background: true` for a task |
 | `delegate` | Give an instruction, or a skill name and arguments, to the Claude Code inside an instance (or a fresh one from a template) |

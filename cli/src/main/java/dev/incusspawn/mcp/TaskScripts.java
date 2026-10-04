@@ -222,6 +222,15 @@ final class TaskScripts {
                 + STATE + "[ $s = done ] || echo \"task $id $s\"; done; exit 0";
     }
 
+    /**
+     * Remove every task's records: what a fork must do, since the copy brought its source's
+     * along, ids included. Only directories named like a task id, as {@link #unfinished} reads.
+     */
+    static String clear() {
+        return "for d in " + TASKS_DIR + "/*/; do D=${d%/}; id=${D##*/}; "
+                + "case $id in ''|*[!a-z0-9-]*) continue;; esac; rm -rf -- \"$D\"; done; exit 0";
+    }
+
     /** All of a command task's output, stdout then stderr, each under a heading. */
     static String output(String taskId) {
         var d = dir(taskId);

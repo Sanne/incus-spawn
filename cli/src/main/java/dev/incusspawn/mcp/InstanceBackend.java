@@ -53,6 +53,14 @@ interface InstanceBackend {
      */
     CreatedInstance create(TemplateInfo template, String name, Map<String, String> stamps);
 
+    /**
+     * Branch the instance {@code source}, which descends from {@code lineage}, into {@code name}
+     * exactly as {@code isx branch <name> --from <source>} would: the source's account pins,
+     * network mode and files, with {@code stamps} written by the copy itself. Throws
+     * {@link ToolError} on refusal.
+     */
+    CreatedInstance fork(TemplateInfo lineage, String source, String name, Map<String, String> stamps);
+
     record CreatedInstance(String name, String ip, String workdir) {}
 
     /**

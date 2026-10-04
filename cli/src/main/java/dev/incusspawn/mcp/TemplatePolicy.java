@@ -40,6 +40,20 @@ final class TemplatePolicy {
 
     /** The template, if an agent may branch from it now; otherwise a {@link ToolError} saying why. */
     InstanceBackend.TemplateInfo require(String name) {
+        var info = requireLineage(name);
+        if (!info.built()) {
+            throw new ToolError("template '" + name + "' is approved but not built. "
+                    + "Ask the user to run: isx build " + name);
+        }
+        return info;
+    }
+
+    /**
+     * The template an instance descends from, if an agent may still fork that instance: as
+     * {@link #require}, except that the template need not be built -- a fork copies the
+     * instance, not the template's image -- the same rule adoption applies.
+     */
+    InstanceBackend.TemplateInfo requireLineage(String name) {
         var listed = config.get().templates();
         if (!listed.contains(name)) {
             throw new ToolError("template '" + name + "' is not approved for agents"
@@ -52,10 +66,6 @@ final class TemplatePolicy {
         if (info.projectLocal()) {
             throw new ToolError("template '" + name + "' was built from a project-local definition "
                     + "(.incus-spawn/ in a repository), which agents may never use.");
-        }
-        if (!info.built()) {
-            throw new ToolError("template '" + name + "' is approved but not built. "
-                    + "Ask the user to run: isx build " + name);
         }
         return info;
     }

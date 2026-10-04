@@ -62,8 +62,26 @@ class FakeBackend implements InstanceBackend {
         var config = new ConcurrentHashMap<String, String>(stamps);
         config.put(Metadata.TYPE, Metadata.TYPE_CLONE);
         config.put(Metadata.PARENT, template);
+        config.put(Metadata.PROFILE, template); // every copy of a template carries it
         instances.put(name, config);
         return new CreatedInstance(name, "10.0.0.2", "/home/agentuser");
+    }
+
+    /** Every fork, as {@code source -> name}. */
+    final List<String> forks = new CopyOnWriteArrayList<>();
+
+    /** As Incus's copy and configureBranch: the source's config, its mcp-* keys replaced by the stamps. */
+    @Override
+    public CreatedInstance fork(TemplateInfo lineage, String source, String name, Map<String, String> stamps) {
+        if (createFailure != null) throw createFailure;
+        var config = new ConcurrentHashMap<String, String>(instances.get(source));
+        config.keySet().removeIf(Metadata::isMcpKey);
+        config.putAll(stamps);
+        config.put(Metadata.TYPE, Metadata.TYPE_CLONE);
+        config.put(Metadata.PARENT, source);
+        instances.put(name, config);
+        forks.add(source + " -> " + name);
+        return new CreatedInstance(name, "10.0.0.3", "/home/agentuser");
     }
 
     @Override

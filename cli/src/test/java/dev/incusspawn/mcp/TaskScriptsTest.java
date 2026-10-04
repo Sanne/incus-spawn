@@ -424,6 +424,18 @@ class TaskScriptsTest {
     }
 
     @Test
+    void clearingRemovesEveryTaskAndNothingElse() throws Exception {
+        recordedTask("t11-abc", Tasks.AGENT, false);
+        recordedTask("t12-abc", Tasks.COMMAND, false);
+        var odd = Files.createDirectories(home.resolve(".isx-mcp/tasks/a b*"));
+        var notes = Files.writeString(home.resolve(".isx-mcp/tasks/notes"), "kept\n");
+        sh(TaskScripts.clear(), "");
+        assertEquals("", sh(TaskScripts.list(), ""), "a fork finds no task to adopt");
+        assertTrue(Files.isDirectory(odd) && Files.exists(notes), "only task ids are removed");
+        sh("HOME=" + home.resolve("empty") + "; " + TaskScripts.clear(), ""); // no tasks dir at all
+    }
+
+    @Test
     void anExitCodeIsNeverSeenHalfWritten() throws Exception {
         // Whether a run finished is whether its exit file exists: each is written aside, then renamed.
         var scripts = java.util.List.of(

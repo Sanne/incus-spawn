@@ -68,4 +68,13 @@ class TemplatePolicyTest {
         assertTrue(policy.require("tpl-java").supportsDelegate());
         assertEquals(false, policy.require("tpl-dev").supportsDelegate());
     }
+
+    @Test
+    void aForksLineageNeedNotBeBuiltButMustStillBeApprovedAndTrusted() {
+        config.setTemplates(List.of("tpl-unbuilt", "tpl-repo"));
+        assertEquals("tpl-unbuilt", policy.requireLineage("tpl-unbuilt").name());
+        assertThrows(ToolError.class, () -> policy.require("tpl-unbuilt"));
+        assertThrows(ToolError.class, () -> policy.requireLineage("tpl-repo"));
+        assertThrows(ToolError.class, () -> policy.requireLineage("tpl-java"));
+    }
 }
