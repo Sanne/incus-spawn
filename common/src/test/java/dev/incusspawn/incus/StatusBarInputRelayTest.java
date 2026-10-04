@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -80,5 +81,19 @@ class StatusBarInputRelayTest {
         IncusApi.relayInput(keys, keys.length, parser, bar, shell);
         assertArrayEquals(new byte[0], shell.received.toByteArray());
         assertTrue(bar.isMenuActive());
+    }
+
+    @Test
+    void aKeyTypedRightAfterEscReachesTheShell() throws Exception {
+        // Esc and the next key in one read (fast typing, or Alt+key): Esc closes the menu, and
+        // the key is the shell's, not swallowed with it.
+        var bar = bar(List.of(action()));
+        var parser = IncusApi.inputParserFor(bar);
+        var shell = new Shell();
+        IncusApi.relayInput(F12, F12.length, parser, bar, shell);
+        var keys = new byte[]{0x1B, 'l', 's'};
+        IncusApi.relayInput(keys, keys.length, parser, bar, shell);
+        assertFalse(bar.isMenuActive());
+        assertArrayEquals(new byte[]{'l', 's'}, shell.received.toByteArray());
     }
 }

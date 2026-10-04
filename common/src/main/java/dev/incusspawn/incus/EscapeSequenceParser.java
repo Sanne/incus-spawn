@@ -97,9 +97,11 @@ public class EscapeSequenceParser {
                         // SS3: ESC O <key>, e.g. arrows with application cursor keys on.
                         state = State.SS3;
                     } else {
+                        // A bare Escape followed by a key typed fast (or Alt+key): the key is
+                        // not part of it, so it is left for after the menu closes.
                         state = State.NORMAL;
                         pendingLen = 0;
-                        return Result.menu((byte) 0x1B, i + 1 - off);
+                        return Result.menu((byte) 0x1B, i - off);
                     }
                     break;
                 case SS3:

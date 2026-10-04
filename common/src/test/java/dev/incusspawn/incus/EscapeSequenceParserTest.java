@@ -96,6 +96,16 @@ class EscapeSequenceParserTest {
     }
 
     @Test
+    void menuModeEscapeLeavesTheNextKeyUnconsumed() {
+        var parser = new EscapeSequenceParser();
+        parser.setMenuMode(true);
+
+        var result = parser.feed(new byte[]{0x1B, 'l'}, 0, 2);
+        assertEquals((byte) 0x1B, result.menuKey());
+        assertEquals(1, result.consumed());
+    }
+
+    @Test
     void menuModeShortcutReturned() {
         var parser = new EscapeSequenceParser();
         parser.setMenuMode(true);

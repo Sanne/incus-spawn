@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.Warnings;
 import dev.incusspawn.config.SpawnConfig;
 
 import java.util.ArrayList;
@@ -27,7 +28,9 @@ public record ShellMenu(List<ToolAction> actions, ActionContext context) {
      * {@code shell_menu: true}. Only those, since the menu runs them while the shell owns the
      * terminal, and a {@code command} action's process would share the raw tty with the session.
      * An {@code expand: repos} action is offered once, for the repo the session starts in
-     * ({@code workdir}, or the home directory), falling back to its first repo.
+     * ({@code workdir}, or the home directory), falling back to its first repo. Each entry needs a
+     * key of its own: one without a single printable ASCII shortcut could not be run, and of two
+     * with the same key (in either case) only the first ever would, so those are left out.
      */
     public static ShellMenu of(List<ToolAction> actions, String workdir, ActionContext context) {
         var effectiveWorkdir = workdir == null || workdir.isBlank() ? DEFAULT_WORKDIR : workdir;
@@ -48,6 +51,21 @@ public record ShellMenu(List<ToolAction> actions, ActionContext context) {
                 chosen.put(key, action);
             }
         }
-        return new ShellMenu(new ArrayList<>(chosen.values()), context);
+        var byKey = new LinkedHashMap<Character, ToolAction>();
+        for (var action : chosen.values()) {
+            var key = action.shortcut().filter(s -> s.length() == 1 && s.charAt(0) > ' ' && s.charAt(0) < 0x7F);
+            if (key.isEmpty()) {
+                Warnings.warn("Action '" + action.label() + "' of " + action.toolName()
+                        + " is left out of the shell menu: its shortcut must be one printable ASCII key");
+                continue;
+            }
+            var previous = byKey.putIfAbsent(Character.toLowerCase(key.get().charAt(0)), action);
+            if (previous != null) {
+                Warnings.warn("Action '" + action.label() + "' of " + action.toolName()
+                        + " is left out of the shell menu: '" + previous.label() + "' already uses the key "
+                        + key.get());
+            }
+        }
+        return new ShellMenu(new ArrayList<>(byKey.values()), context);
     }
 }

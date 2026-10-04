@@ -200,11 +200,11 @@ public class ShellStatusBar {
 
     /**
      * Just enough of a terminal's parser to tell whether the child's output stream stands between
-     * escape sequences and characters, across frames: ESC, CSI, string sequences (OSC, DCS, APC,
-     * PM, SOS, ended by BEL or ST) and UTF-8 continuation bytes.
+     * escape sequences and characters, across frames: ESC, CSI, string sequences (OSC, ended by
+     * BEL or ST; DCS, APC, PM and SOS, ended by ST alone) and UTF-8 continuation bytes.
      */
     static final class OutputBoundary {
-        private enum State { GROUND, ESC, CSI, STRING, STRING_ESC }
+        private enum State { GROUND, ESC, CSI, OSC, STRING, STRING_ESC }
 
         private State state = State.GROUND;
         private int continuationBytes;
@@ -236,9 +236,12 @@ public class ShellStatusBar {
                         if (b == 0x1B) state = State.ESC; // starts a new sequence
                         else if (b >= 0x40 && b <= 0x7E) state = State.GROUND;
                     }
-                    case STRING -> {
+                    case OSC -> {
                         if (b == 0x07) state = State.GROUND;
                         else if (b == 0x1B) state = State.STRING_ESC;
+                    }
+                    case STRING -> {
+                        if (b == 0x1B) state = State.STRING_ESC;
                     }
                     // ST ends the string; ESC and anything else aborts it and starts a sequence.
                     case STRING_ESC -> state = b == '\\' ? State.GROUND : afterEscape(b);
@@ -249,7 +252,8 @@ public class ShellStatusBar {
         private static State afterEscape(int b) {
             return switch (b) {
                 case '[' -> State.CSI;
-                case ']', 'P', '_', '^', 'X' -> State.STRING;
+                case ']' -> State.OSC;
+                case 'P', '_', '^', 'X' -> State.STRING;
                 case 0x1B -> State.ESC;
                 default -> b >= 0x20 && b <= 0x2F ? State.ESC : State.GROUND;
             };
@@ -446,15 +450,31 @@ public class ShellStatusBar {
         emitLine(bottomRow, sb.toString(), true);
     }
 
-    /** Terminal columns a code point takes: two for East Asian wide characters and emoji. */
+    /**
+     * Terminal columns a code point takes: two for East Asian wide characters and emoji. Where
+     * terminals disagree it errs wide, since a row counted too wide only ends early, while one
+     * counted too narrow wraps and scrolls the screen.
+     */
     static int columns(int codePoint) {
         int c = codePoint;
         boolean wide = (c >= 0x1100 && c <= 0x115F) || (c >= 0x2E80 && c <= 0xA4CF && c != 0x303F)
                 || (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF)
                 || (c >= 0xFE30 && c <= 0xFE4F) || (c >= 0xFF00 && c <= 0xFF60)
-                || (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x1F300 && c <= 0x1F64F)
-                || (c >= 0x1F900 && c <= 0x1F9FF) || (c >= 0x20000 && c <= 0x3FFFD);
+                || (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x1F000 && c <= 0x1FAFF)
+                || (c >= 0x20000 && c <= 0x3FFFD) || isWideBmpEmoji(c);
         return wide ? 2 : 1;
+    }
+
+    /** The emoji below U+1F000 that terminals draw two columns wide (Emoji_Presentation). */
+    private static boolean isWideBmpEmoji(int c) {
+        return switch (c) {
+            case 0x231A, 0x231B, 0x23E9, 0x23EA, 0x23EB, 0x23EC, 0x23F0, 0x23F3, 0x25FD, 0x25FE,
+                 0x2614, 0x2615, 0x267F, 0x2693, 0x26A1, 0x26AA, 0x26AB, 0x26BD, 0x26BE, 0x26C4,
+                 0x26C5, 0x26CE, 0x26D4, 0x26EA, 0x26F2, 0x26F3, 0x26F5, 0x26FA, 0x26FD, 0x2705,
+                 0x270A, 0x270B, 0x2728, 0x274C, 0x274E, 0x2753, 0x2754, 0x2755, 0x2757, 0x2795,
+                 0x2796, 0x2797, 0x27B0, 0x27BF, 0x2B1B, 0x2B1C, 0x2B50, 0x2B55 -> true;
+            default -> c >= 0x2648 && c <= 0x2653;
+        };
     }
 
     static int columns(String s) {

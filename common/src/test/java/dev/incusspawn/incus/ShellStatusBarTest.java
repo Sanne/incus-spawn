@@ -330,6 +330,18 @@ class ShellStatusBarTest {
         assertTrue(drained().startsWith("m\0337"));
     }
 
+    @Test
+    void belEndsAnOscButNotADcs() throws Exception {
+        bar.setup(80, 24);
+        drained();
+        write(bar, "\033]0;title\007");
+        assertTrue(drained().startsWith("\033]0;title\007\0337"), "BEL ends an OSC");
+        write(bar, "\033Pq a\007"); // a DCS frame ending in BEL: the terminal is still in the DCS
+        assertEquals("\033Pq a\007", drained());
+        write(bar, "\033\\");
+        assertTrue(drained().startsWith("\033\\\0337"), "ST ends it");
+    }
+
     // --- What the bottom row shows ---
 
     @Test
@@ -354,6 +366,12 @@ class ShellStatusBarTest {
         assertTrue(out.contains(" isx abcdefghijklmn \033[0m"), out);
         assertFalse(out.contains("\uD83D"), out);
         assertEquals(2, ShellStatusBar.columns("界"));
+        assertEquals(2, ShellStatusBar.columns("\uD83D\uDE80")); // 🚀, outside the faces block
+        assertEquals(2, ShellStatusBar.columns("\u26A1"));
+        assertEquals(1, ShellStatusBar.columns("✓"));
+        var rocket = new ShellStatusBar("abcdefghijklmn\uD83D\uDE80xyz", terminal);
+        rocket.setup(20, 10);
+        assertFalse(drained().contains("\uD83D\uDE80"), "a row never takes more columns than it has");
         var wide = new ShellStatusBar("bell\u0007", terminal);
         wide.setup(40, 10);
         assertFalse(drained().contains("\u0007"));
