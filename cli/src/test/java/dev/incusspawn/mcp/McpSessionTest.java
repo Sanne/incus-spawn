@@ -346,4 +346,99 @@ class McpSessionTest {
         assertTrue(s.holds(name), "the reservation survives");
         assertTrue(backend.instances.containsKey(name));
     }
+    /** An instance's tasks as the per-user task probe would find them: busy ones, by instance. */
+    private final Map<String, Integer> busyIn = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** A second, live session of the same user, with its own tasks. */
+    private Tasks tasksOf(McpSession session) {
+        backend.instanceResponder = (instance, script) -> {
+            if (script.equals(TaskScripts.busy())) {
+                return "task t1-x running\n".repeat(busyIn.getOrDefault(instance, 0));
+            }
+            return ""; // a launch, or a state probe of nothing believed running
+        };
+        return new Tasks(session, backend, () -> config);
+    }
+
+    @Test
+    void twoSessionsOfOneUserShareOneTaskBudget() {
+        var a = session(8);
+        config.setMaxConcurrentTasks(3);
+        var bId = SessionId.parse(ALIVE).orElseThrow();
+        var b = new McpSession(bId, "alice", 98, "/home/alice/other", backend, () -> config, alive::contains);
+        var aTasks = tasksOf(a);
+        var bTasks = tasksOf(b);
+        var aInstance = create(a, backend);
+        var bInstance = create(b, backend);
+        other("mcp-orphan", DEAD, "alice");
+        other("mcp-bobs", DEAD, "bob");
+        other("mcp-kept", DEAD, "alice", Metadata.MCP_KEPT, "true");
+        // Kept by a session that still runs: it can go on starting tasks there.
+        alive.add(SessionId.parse("5-500").orElseThrow());
+        other("mcp-kept-live", "5-500", "alice", Metadata.MCP_KEPT, "true");
+        other("mcp-stopped", DEAD, "alice");
+        backend.stopped.add("mcp-stopped");
+
+        aTasks.startCommand(aInstance, "/", Map.of(), "make serve");
+        busyIn.put(aInstance, 1);
+        busyIn.put("mcp-orphan", 1);
+        busyIn.put("mcp-bobs", 5);
+        busyIn.put("mcp-kept", 5);
+        busyIn.put("mcp-kept-live", 1);
+        busyIn.put("mcp-stopped", 5);
+
+        var e = assertThrows(ToolError.class, () -> bTasks.startCommand(bInstance, "/", Map.of(), "make test"));
+        assertTrue(e.getMessage().contains("mcp.max-concurrent-tasks") && e.getMessage().contains("(3)"),
+                e.getMessage());
+        assertTrue(e.getMessage().contains("0 in this session, 3 in other sessions or orphaned"), e.getMessage());
+
+        busyIn.put("mcp-orphan", 0);
+        backend.scripts.clear();
+        bTasks.startCommand(bInstance, "/", Map.of(), "make test");
+        var probed = backend.scripts.stream().filter(sc -> sc.equals(TaskScripts.busy())).count();
+        assertEquals(3, probed, "only alice's running instances held elsewhere are asked: " + backend.scripts);
+    }
+
+    @Test
+    void anInstanceThatNeverAnswersCountsNothingAndBlocksNothing() throws Exception {
+        var a = session(8);
+        config.setMaxConcurrentTasks(1);
+        var tasks = tasksOf(a);
+        tasks.elsewhereTimeout = java.time.Duration.ofMillis(200);
+        var instance = create(a, backend);
+        other("mcp-hung", DEAD, "alice");
+        var release = new java.util.concurrent.CountDownLatch(1);
+        backend.instanceResponder = (name, script) -> {
+            if (name.equals("mcp-hung")) {
+                try {
+                    release.await(); // a su - that never returns
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return "task t1-x running\n";
+            }
+            return "";
+        };
+        try {
+            var started = System.nanoTime();
+            tasks.startCommand(instance, "/", Map.of(), "make serve");
+            assertTrue(System.nanoTime() - started < 5_000_000_000L, "waited for the hung instance");
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
+    void aSessionAloneAsksNoOtherInstance() {
+        var a = session(8);
+        config.setMaxConcurrentTasks(2);
+        var tasks = tasksOf(a);
+        var instance = create(a, backend);
+        tasks.startCommand(instance, "/", Map.of(), "make serve");
+        tasks.startCommand(instance, "/", Map.of(), "make test");
+        assertFalse(backend.scripts.stream().anyMatch(sc -> sc.equals(TaskScripts.busy())), backend.scripts.toString());
+        var e = assertThrows(ToolError.class, () -> tasks.startCommand(instance, "/", Map.of(), "make more"));
+        assertTrue(e.getMessage().contains("2 in this session, 0 in other sessions"), e.getMessage());
+        assertFalse(e.getMessage().contains("adopt_instance"), "nothing elsewhere to point at: " + e.getMessage());
+    }
 }

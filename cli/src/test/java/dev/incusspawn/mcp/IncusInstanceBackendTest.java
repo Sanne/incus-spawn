@@ -88,4 +88,26 @@ class IncusInstanceBackendTest {
         org.junit.jupiter.api.Assertions.assertEquals("claude-sonnet-5-5", IncusInstanceBackend.delegateModel(base, defs));
         assertNull(IncusInstanceBackend.delegateModel(plain, defs), "unset: Claude Code's own default");
     }
+
+    @Test
+    void theMcpListingCarriesEachInstancesStatus() {
+        // The per-user task count asks only running instances, from this same listing.
+        when(incus.listJsonConfig()).thenReturn("""
+                [{"name":"mcp-a","status":"Stopped","config":{"%s":"2-200","volatile.x":"y"}},
+                 {"name":"plain","status":"Running","config":{}}]""".formatted(Metadata.MCP_SESSION));
+        var listing = backend.mcpInstances();
+        assertEquals(java.util.Set.of("mcp-a"), listing.keySet());
+        assertEquals("Stopped", listing.get("mcp-a").get(InstanceBackend.STATUS));
+        assertEquals("2-200", listing.get("mcp-a").get(Metadata.MCP_SESSION));
+        assertEquals(2, listing.get("mcp-a").size(), "only isx's config, and the status");
+    }
+
+    @Test
+    void aListingThatDoesNotSayReadsAsRunning() {
+        when(incus.listJsonConfig()).thenReturn("""
+                [{"name":"mcp-a","config":{"%s":"2-200"}}]""".formatted(Metadata.MCP_SESSION));
+        var listed = backend.mcpInstances().get("mcp-a");
+        assertFalse(listed.containsKey(InstanceBackend.STATUS));
+        assertTrue(InstanceBackend.running(listed), "asked, as the fake backend's instances are");
+    }
 }

@@ -285,6 +285,7 @@ final class McpTools {
         var result = JsonRpc.JSON.createObjectNode();
         result.set("templates", list);
         result.put("instance_limit", config.maxInstances());
+        result.put("task_limit", config.maxConcurrentTasks());
         result.put("orphan_grace_hours", config.orphanGraceHours());
         if (config.delegateMaxTurns() != null) result.put("delegate_max_turns", config.delegateMaxTurns());
         return ToolResult.json(result);
@@ -656,7 +657,8 @@ final class McpTools {
                                      String prompt, Tasks.Profile profile, String mode, boolean fresh) {
         Tasks.Task task;
         try {
-            // A fresh instance's caller just ran checkCapacityForNewAgent: no need to ask again.
+            // A fresh instance's caller just ran checkCapacityForNewAgent: its own tasks need not
+            // be asked again. Other sessions' are: they may have started some while it branched.
             task = tasks.delegate(instance, cwd == null || cwd.isBlank() ? workdir : cwd, prompt, profile, mode, !fresh,
                     () -> modelCheck.require(instance, template, account, profile.model()));
         } catch (RuntimeException e) {

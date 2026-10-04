@@ -77,6 +77,15 @@ class McpToolsTest {
     }
 
     @Test
+    void theCeilingsAreListedWithTheTemplates() throws Exception {
+        config.setMaxInstances(12);
+        config.setMaxConcurrentTasks(10);
+        var listed = JsonRpc.JSON.readTree(text(call("list_templates", "{}")));
+        assertEquals(12, listed.path("instance_limit").asInt());
+        assertEquals(10, listed.path("task_limit").asInt());
+    }
+
+    @Test
     void withNothingApprovedTheAgentIsToldWhoCanApprove() throws Exception {
         config.setTemplates(List.of());
         assertTrue(text(call("list_templates", "{}")).contains("mcp.templates"));

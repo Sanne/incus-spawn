@@ -16,8 +16,8 @@ import java.util.regex.Pattern;
  * <pre>
  * mcp:
  *   templates: [tpl-java, tpl-dev]   # the only templates an agent may branch from
- *   max-instances: 3                 # per host user, across sessions, counting creates in flight
- *   max-concurrent-tasks: 2          # background commands and delegated agents, per session
+ *   max-instances: 8                 # per host user, across sessions, counting creates in flight
+ *   max-concurrent-tasks: 8          # background commands and delegated agents, per host user, across sessions
  *   delegate-max-turns: 200          # passed to the inner agent as --max-turns; a delegate's
  *                                    # max_turns may narrow it, never exceed it
  *   delegate-permission-mode: bypassPermissions   # passed to every delegate as --permission-mode
@@ -34,8 +34,8 @@ import java.util.regex.Pattern;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class McpConfig {
 
-    public static final int DEFAULT_MAX_INSTANCES = 3;
-    public static final int DEFAULT_MAX_CONCURRENT_TASKS = 2;
+    public static final int DEFAULT_MAX_INSTANCES = 8;
+    public static final int DEFAULT_MAX_CONCURRENT_TASKS = 8;
     /** What every isx template's managed settings already default to; passed explicitly. */
     public static final String DEFAULT_PERMISSION_MODE = "bypassPermissions";
     public static final int DEFAULT_ORPHAN_GRACE_HOURS = 24;

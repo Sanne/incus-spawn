@@ -230,11 +230,22 @@ final class TaskScripts {
      * background commands: a dev server never finishes, and would keep its orphan forever.
      */
     static String unfinished() {
+        return unfinished("read -r k < \"$D/kind\" 2>/dev/null && [ \"$k\" = " + Tasks.AGENT + " ] || continue; ");
+    }
+
+    /**
+     * {@link #unfinished}, for every task, background commands included: how another session of
+     * the same host user counts this instance's tasks against {@code mcp.max-concurrent-tasks}.
+     */
+    static String busy() {
+        return unfinished("[ -f \"$D/kind\" ] || continue; ");
+    }
+
+    private static String unfinished(String filter) {
         return "for d in " + TASKS_DIR + "/*/; do D=${d%/}; id=${D##*/}; "
                 // Any directory there could be made by anyone in the instance: only a task id.
                 + "case $id in ''|*[!a-z0-9-]*) continue;; esac; "
-                + "read -r k < \"$D/kind\" 2>/dev/null && [ \"$k\" = " + Tasks.AGENT + " ] || continue; "
-                + STATE + "[ $s = done ] || echo \"task $id $s\"; done; exit 0";
+                + filter + STATE + "[ $s = done ] || echo \"task $id $s\"; done; exit 0";
     }
 
     /**

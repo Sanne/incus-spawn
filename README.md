@@ -195,8 +195,8 @@ Nothing is available until you approve templates in `~/.config/incus-spawn/confi
 ```yaml
 mcp:
   templates: [tpl-java, tpl-dev]   # the only templates an agent may branch from
-  max-instances: 3                 # per host user, across sessions (default 3)
-  max-concurrent-tasks: 2          # background commands and delegated agents, per session (default 2)
+  max-instances: 8                 # per host user, across sessions (default 8)
+  max-concurrent-tasks: 8          # background commands and delegated agents, per host user, across sessions (default 8)
   delegate-max-turns: 200          # optional turn budget for delegated agents; a task may ask for less, never more
   delegate-permission-mode: bypassPermissions   # the delegates' --permission-mode (default shown)
   delegate-permission-modes:       # per-template overrides, e.g. a reviewer that only plans
@@ -204,6 +204,8 @@ mcp:
   orphan-grace-hours: 24           # how long an instance outlives its session (default 24)
   summary-model: haiku             # answers the tools' `ask` inside the instance (default haiku)
 ```
+
+`max-instances` and `max-concurrent-tasks` are the two knobs to raise for a controller, one session running many tasks at once. They are a safety net against runaway creation, not a budget: the only cost of a high number is host memory. `list_templates` reports both, as `instance_limit` and `task_limit`.
 
 | Tool | What it does |
 |------|--------------|

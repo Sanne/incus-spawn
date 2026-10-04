@@ -87,6 +87,27 @@ final class McpSession {
         return others;
     }
 
+    /**
+     * This user's running instances whose tasks this session does not count as its own: those
+     * other sessions hold, and the orphans, from one listing. A kept instance counts while a live
+     * session still holds it, which can go on running tasks there; once that session ends it is
+     * the user's, as for {@code mcp.max-instances}.
+     */
+    List<String> taskInstancesElsewhere() {
+        var result = new ArrayList<String>();
+        backend.mcpInstances().forEach((name, config) -> {
+            if (!owner.equals(config.get(Metadata.MCP_OWNER)) || !InstanceBackend.running(config)) return;
+            var holder = SessionId.parse(config.get(Metadata.MCP_SESSION));
+            if (holder.isPresent() && holder.get().equals(id)) return;
+            if (config.containsKey(Metadata.MCP_KEPT) && (holder.isEmpty() || !alive.test(holder.get()))) return;
+            result.add(name);
+        });
+        synchronized (this) {
+            result.removeIf(owned::containsKey);
+        }
+        return result;
+    }
+
     void clientName(String name) {
         client = name == null ? "" : name;
     }

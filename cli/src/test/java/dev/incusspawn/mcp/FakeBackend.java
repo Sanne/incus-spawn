@@ -34,6 +34,8 @@ class FakeBackend implements InstanceBackend {
     volatile Runnable onCreate;
     /** When set, answers each exec script with its stdout (exit 0), instead of execStdout/execExit. */
     volatile java.util.function.Function<String, String> responder;
+    /** Like {@link #responder}, given the instance too: (instance, script) to stdout. Checked first. */
+    volatile java.util.function.BiFunction<String, String, String> instanceResponder;
 
     FakeBackend template(String name, boolean built, String... tools) {
         templates.add(new TemplateInfo(name, name + " template", built, false, List.of(tools), null, false, Map.of()));
@@ -213,12 +215,13 @@ class FakeBackend implements InstanceBackend {
         } catch (java.io.IOException e) {
             throw new IllegalStateException(e);
         }
-        var answer = responder != null ? responder.apply(script) : execStdout;
+        var answer = instanceResponder != null ? instanceResponder.apply(name, script)
+                : responder != null ? responder.apply(script) : execStdout;
         try {
             if (stdout != null) stdout.write(answer.getBytes(StandardCharsets.UTF_8));
         } catch (java.io.IOException e) {
             throw new IllegalStateException(e);
         }
-        return responder != null ? 0 : execExit;
+        return instanceResponder != null || responder != null ? 0 : execExit;
     }
 }

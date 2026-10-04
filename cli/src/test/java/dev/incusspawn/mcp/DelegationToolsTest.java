@@ -45,6 +45,8 @@ class DelegationToolsTest {
     private volatile String taskListing = "";
     /** What the model check answers; null for a model the account can use. */
     private volatile String modelRefusal;
+    /** How many busy tasks the per-user count finds in each instance another session holds. */
+    private volatile int busyElsewhere;
 
     private static final String EVENTS = """
             {"type":"system","subtype":"init","session_id":"s1"}
@@ -65,6 +67,7 @@ class DelegationToolsTest {
         server = new McpServer(out, new McpTools(session, backend, new TemplatePolicy(backend, () -> config),
                 tasks).all(), "1", null, null);
         backend.responder = script -> {
+            if (script.equals(TaskScripts.busy())) return "task tx-other running\n".repeat(busyElsewhere);
             if (isStateProbe(script)) { // one line per task asked about
                 var ids = java.util.regex.Pattern.compile("; id=(t[0-9a-z-]+); ").matcher(script).results()
                         .map(m -> m.group(1) + switch (taskState) {
@@ -187,6 +190,21 @@ class DelegationToolsTest {
         var r = call("delegate", "{\"instruction\":\"another\",\"template\":\"tpl-agent\"}");
         assertTrue(r.path("isError").asBoolean());
         assertTrue(text(r).contains("mcp.max-concurrent-tasks"), text(r));
+    }
+
+    @Test
+    void tasksOtherSessionsStartWhileTheInstanceIsMadeStillCount() throws Exception {
+        config.setMaxConcurrentTasks(2);
+        // An orphan of alice's, from a session that ended: its tasks count against her cap.
+        backend.instance("mcp-agent-orphan-aaaaa", Map.of(
+                dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
+                dev.incusspawn.incus.Metadata.MCP_OWNER, "alice"));
+        backend.onCreate = () -> busyElsewhere = 2; // started while the branch was being made
+        var before = backend.instances.size();
+        var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\"}");
+        assertTrue(r.path("isError").asBoolean(), text(r));
+        assertTrue(text(r).contains("2 in other sessions"), text(r));
+        assertEquals(before, backend.instances.size(), "the instance made for it is removed");
     }
 
     @Test

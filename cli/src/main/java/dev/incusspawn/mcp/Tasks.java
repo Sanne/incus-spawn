@@ -10,6 +10,11 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.time.Duration;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -84,6 +89,8 @@ final class Tasks {
     // Task ids outlive the session that made them (an adopting session takes the tasks over),
     // so they must not collide with a later session's: a counter alone, or a pid, would.
     private final String tag = McpSession.randomSuffix(4);
+    /** How long counting other sessions' tasks waits for an instance before counting it as none. */
+    Duration elsewhereTimeout = Duration.ofSeconds(10);
 
     Tasks(McpSession session, InstanceBackend backend, Supplier<McpConfig> config) {
         this.session = session;
@@ -138,8 +145,9 @@ final class Tasks {
     /**
      * Start a delegated agent in {@code instance}, which the caller checked is owned, under
      * {@code profile}. Without {@code refresh}, the caller has just asked the instances
-     * ({@link #checkCapacityForNewAgent}), so they are asked again only if the states as last
-     * known would refuse: a refresh only ever frees slots.
+     * ({@link #checkCapacityForNewAgent}), so this session's are asked again only if the states as
+     * last known would refuse: a refresh only ever frees slots. Other sessions' tasks are always
+     * counted anew: they may have started more while the caller branched an instance.
      */
     Task delegate(String instance, String cwd, String instruction, Profile profile, String permissionMode,
                   boolean refresh, Runnable check) {
@@ -226,9 +234,10 @@ final class Tasks {
      * create an instance for a new agent task, which should not be made only to be turned away.
      */
     void checkCapacityForNewAgent() {
+        var elsewhere = busyElsewhere();
         refreshStates();
         synchronized (this) {
-            checkLimit();
+            checkLimit(elsewhere);
         }
     }
 
@@ -316,25 +325,29 @@ final class Tasks {
      * {@code continuing}. Refuses beyond {@code mcp.max-concurrent-tasks}, a second agent in one
      * working tree, or a run of a task still running. The check and the reservation happen under
      * one lock, so concurrent calls see each other's reservations; asking the instances which
-     * tasks have finished happens before it, outside the lock.
+     * tasks have finished happens before it, outside the lock. Another session's reservation is
+     * not seen until it launched: two sessions may both take the last slot, as two may both take
+     * the last instance. The cap is a net against runaway creation, not a budget.
      */
     private Task reserve(String continuing, Profile override, Task fresh, boolean refresh) {
+        var elsewhere = busyElsewhere();
         if (!refresh) {
             try {
-                return reserveNow(continuing, override, fresh);
+                return reserveNow(continuing, override, fresh, elsewhere);
             } catch (ToolError refused) {
                 // Tasks may have finished since the caller asked: ask again before refusing.
             }
         }
         refreshStates();
-        return reserveNow(continuing, override, fresh);
+        return reserveNow(continuing, override, fresh, elsewhere);
     }
 
     /**
-     * {@link #reserve} against the states as last known. A continued task's next run takes on
-     * {@code override}, so whoever reads the task meanwhile sees the profile it starts with.
+     * {@link #reserve} against the states as last known, with {@code elsewhere} busy in other
+     * sessions. A continued task's next run takes on {@code override}, so whoever reads the task
+     * meanwhile sees the profile it starts with.
      */
-    private Task reserveNow(String continuing, Profile override, Task fresh) {
+    private Task reserveNow(String continuing, Profile override, Task fresh, long elsewhere) {
         synchronized (this) {
             if (continuing != null) {
                 var task = tasks.get(continuing);
@@ -347,7 +360,7 @@ final class Tasks {
                     throw new ToolError("task " + continuing + " is still running; wait for it (task_status "
                             + "with wait_seconds) or cancel_task it first.");
                 }
-                checkLimit();
+                checkLimit(elsewhere);
                 var next = task.launchingRun(task.runs() + 1).withProfile(task.profile().with(override));
                 tasks.put(continuing, next);
                 return next;
@@ -361,20 +374,66 @@ final class Tasks {
                     }
                 }
             }
-            checkLimit();
+            checkLimit(elsewhere);
             tasks.put(fresh.id(), fresh);
             return fresh;
         }
     }
 
-    /** Refuse a new run when as many as {@code mcp.max-concurrent-tasks} are busy. Holds the lock. */
-    private void checkLimit() {
-        var busy = tasks.values().stream().filter(Task::busy).count();
+    /**
+     * Refuse a new run when as many as {@code mcp.max-concurrent-tasks} are busy, counting the
+     * {@code elsewhere} busy in this user's other sessions and orphans. Holds the lock.
+     */
+    private void checkLimit(long elsewhere) {
+        var mine = tasks.values().stream().filter(Task::busy).count();
+        var busy = mine + elsewhere;
         var max = config.get().maxConcurrentTasks();
         if (busy >= max) {
-            throw new ToolError(busy + " task(s) are running, the most mcp.max-concurrent-tasks "
-                    + "allows (" + max + "). Wait for one to finish or cancel_task it.");
+            throw new ToolError(busy + " task(s) are running (" + mine + " in this session, "
+                    + elsewhere + " in other sessions or orphaned instances), the most "
+                    + "mcp.max-concurrent-tasks allows (" + max + "). Wait for one to finish, or cancel_task "
+                    + "one of this session's" + (elsewhere > 0 ? "; list_instances shows the other sessions' "
+                    + "instances and the orphans, which adopt_instance takes over" : "") + ".");
         }
+    }
+
+    /**
+     * The tasks still running in this host user's instances that another session holds or that
+     * are orphaned ({@link McpSession#taskInstancesElsewhere}): the cap is per user, like
+     * {@code mcp.max-instances}, since the machine runs them all whichever process holds them.
+     * One listing, then one exec per such instance, in parallel; none when there are none.
+     * {@code unknown} counts as running, as this session keeps an unknown task's slot. An
+     * instance that cannot be asked, or does not answer within {@link #elsewhereTimeout}, counts
+     * nothing, so one broken instance cannot block every later task: {@code mcp.max-instances}
+     * still bounds it.
+     */
+    private long busyElsewhere() {
+        var asked = session.taskInstancesElsewhere();
+        if (asked.isEmpty()) return 0;
+        var pool = Executors.newVirtualThreadPerTaskExecutor();
+        var counts = asked.stream().map(name -> pool.submit(() -> {
+            try {
+                return run(name, TaskScripts.busy(), null).lines().filter(l -> l.startsWith("task ")).count();
+            } catch (RuntimeException e) {
+                return 0L;
+            }
+        })).toList();
+        // Not closed with try: that would wait for a guest that never answers.
+        pool.shutdown();
+        var deadline = System.nanoTime() + elsewhereTimeout.toNanos();
+        long total = 0;
+        for (var count : counts) {
+            try {
+                total += count.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            } catch (TimeoutException | ExecutionException e) {
+                count.cancel(true);
+            } catch (InterruptedException e) {
+                pool.shutdownNow();
+                Thread.currentThread().interrupt();
+                throw new ToolError("interrupted while counting this user's running tasks");
+            }
+        }
+        return total;
     }
 
     /** Ask each instance, once, which of the tasks believed running still are. */
