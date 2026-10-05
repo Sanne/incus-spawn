@@ -36,11 +36,15 @@ public final class GuiPassthrough {
             Pattern.compile("[A-Za-z0-9._-]+");
 
     /**
-     * Whether isx runs in a Wayland session it could pass through. Only a cheap look at the
-     * environment: {@link #configureGui} still checks the socket and says what is wrong.
+     * Whether isx runs in a Wayland session it could pass through: the checks
+     * {@link #configureGui} makes before touching the instance, without saying what is wrong.
      */
     public static boolean inWaylandSession() {
-        return System.getenv("XDG_RUNTIME_DIR") != null && System.getenv("WAYLAND_DISPLAY") != null;
+        var xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
+        var waylandDisplay = System.getenv("WAYLAND_DISPLAY");
+        return xdgRuntimeDir != null && waylandDisplay != null
+                && WAYLAND_DISPLAY_PATTERN.matcher(waylandDisplay).matches()
+                && java.nio.file.Files.exists(java.nio.file.Path.of(xdgRuntimeDir, waylandDisplay));
     }
 
     /**

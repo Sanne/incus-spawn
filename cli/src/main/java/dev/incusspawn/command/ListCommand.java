@@ -220,6 +220,8 @@ public class ListCommand extends BaseCommand {
     /** The branch dialog's credential account rows; empty when there is nothing to choose. */
     private BranchAccountChoices branchAccounts;
     private CheckboxState branchGuiCheck;
+    /** Why the dialog's GUI box started unticked although the source asks for GUI, or null. */
+    private String branchGuiNote;
     private CheckboxState branchKvmCheck;
     private NetworkMode[] branchNetworkModes;
     private SelectState branchNetworkSelect;
@@ -1680,7 +1682,7 @@ public class ListCommand extends BaseCommand {
         }
         var defaults = BranchFlow.defaultsFor(sourceName, source, imageDefs);
         branchGuiCheck = new CheckboxState(defaults.gui());
-        if (defaults.guiNote() != null) warningLog.add(defaults.guiNote());
+        branchGuiNote = defaults.guiNote();
         branchKvmCheck = new CheckboxState(defaults.kvm());
         branchNetworkModes = NetworkMode.values();
         branchNetworkSelect = new SelectState(java.util.Arrays.stream(branchNetworkModes)
@@ -5353,6 +5355,8 @@ public class ListCommand extends BaseCommand {
             memory = blankToNull(vmMemoryInput.text());
             disk = blankToNull(vmDiskInput.text());
         }
+        // Printed with the branch's own progress, once the runner has released the terminal
+        if (!branchGuiCheck.isChecked() && branchGuiNote != null) BuildOutput.warn(branchGuiNote);
         var request = new BranchFlow.Request(source, name, branchGuiCheck.isChecked(),
                 branchKvmCheck.isChecked(), branchNetworkMode(),
                 inboxText == null ? null : java.nio.file.Path.of(inboxText),

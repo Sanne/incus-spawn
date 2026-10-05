@@ -110,6 +110,18 @@ class BranchDefaultsTest {
     }
 
     @Test
+    void aProjectLocalDefinitionDoesNotTurnGuiOn() {
+        // GUI hands over the host's GPU and XDG_RUNTIME_DIR: a cloned repository's gui: true
+        // still needs --gui
+        var daemon = new FakeIncusDaemon().container("tpl-dev", Map.of());
+        var defs = template("container", true);
+        defs.get("tpl-dev").setProjectRoot(java.nio.file.Path.of("/home/user/cloned"));
+        var defaults = BranchFlow.defaultsFor("tpl-dev", daemon.client().instanceMetadata("tpl-dev"), defs);
+        assertFalse(defaults.gui());
+        assertNotNull(defaults.guiNote());
+    }
+
+    @Test
     void anAgentsBranchNeverGetsGui() {
         // isx mcp's request: GPU and the host's Wayland socket are never an agent's by default,
         // even from a gui: true template in a Wayland session

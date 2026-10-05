@@ -89,20 +89,39 @@ public final class BranchFlow {
     /**
      * What a branch of a source gets for each setting its {@link Request} leaves open. One rule
      * for {@code isx branch} and the TUI's branch dialog, which shows these as its initial values.
+     * The resource limits are worked out when asked for: on macOS each memory default forks
+     * {@code sysctl}, which a request that sets its own limits should not pay.
      *
-     * @param cpu     null for a container, which gets no CPU limit
      * @param guiNote why {@code gui} is off although the source asks for GUI, or null
      */
-    public record Defaults(MachineType machineType, boolean gui, boolean kvm, Integer cpu,
-                           String memory, String disk, String guiNote) {}
+    public record Defaults(MachineType machineType, boolean gui, boolean kvm, String guiNote) {
+        /** The CPU limit, or null for a container, which gets none. */
+        public Integer cpu() {
+            return machineType == MachineType.VM ? Math.max(1, ResourceLimits.hostProcessorCount() - 2) : null;
+        }
+
+        public String memory() {
+            return machineType == MachineType.VM ? ResourceLimits.defaultVmMemoryLimit()
+                    : ResourceLimits.adaptiveMemoryLimit();
+        }
+
+        public String disk() {
+            return ResourceLimits.defaultDiskLimit();
+        }
+    }
 
     /**
      * The {@link Defaults} for a branch of {@code source}, given that instance as
      * {@link IncusClient#instanceMetadata} reads it. GUI and KVM follow the source's definition
-     * when it is a template, and what the source was built or branched with either way. GUI only
-     * for a container: passthrough hands over a GPU device, which a VM cannot start with. And
-     * only from a Wayland session: outside one (SSH, a headless host) it cannot work, and a
-     * default should not fail with errors where it was never asked for.
+     * when it is a template, and what the source was built or branched with either way.
+     *
+     * <p>GUI is narrower, since it hands the branch the host's GPU and its whole
+     * {@code XDG_RUNTIME_DIR}. Only for a container, which is all passthrough can start with;
+     * only from a Wayland session, as outside one (SSH, a headless host) it cannot work and a
+     * default should not fail with errors where nobody asked for it; and never from a
+     * project-local definition, or a source built with one: a cloned repository's
+     * {@code .incus-spawn/} gets only what stays inside its project, so its {@code gui: true}
+     * still needs {@code --gui}.
      */
     public static Defaults defaultsFor(String source, JsonNode instance, Map<String, ImageDef> defs) {
         var def = defs.get(source);
@@ -110,17 +129,25 @@ public final class BranchFlow {
         var machineType = IncusClient.machineType(instance);
         var wantsGui = machineType == MachineType.CONTAINER && ((def != null && def.isGui())
                 || "true".equals(config.path(Metadata.GUI_ENABLED).asText("")));
-        var gui = wantsGui && waylandSession.getAsBoolean();
-        var guiNote = wantsGui && !gui ? "'" + source + "' has GUI passthrough, but isx is not "
-                + "running in a Wayland session; branching without it." : null;
+        String guiNote = null;
+        if (wantsGui && projectLocal(def, config)) {
+            guiNote = "'" + source + "' asks for GUI passthrough from a project-local definition, "
+                    + "so it is off unless chosen (isx branch --gui).";
+        } else if (wantsGui && !waylandSession.getAsBoolean()) {
+            guiNote = "'" + source + "' asks for GUI passthrough, but isx is not running in a "
+                    + "Wayland session, so it is off.";
+        }
+        var gui = wantsGui && guiNote == null;
         var kvm = (def != null && def.isKvm())
                 || "kvm".equals(config.path(Metadata.INSTANCE_MODE).asText(""));
-        if (machineType == MachineType.VM) {
-            return new Defaults(machineType, gui, kvm, Math.max(1, ResourceLimits.hostProcessorCount() - 2),
-                    ResourceLimits.defaultVmMemoryLimit(), ResourceLimits.defaultDiskLimit(), guiNote);
-        }
-        return new Defaults(machineType, gui, kvm, null, ResourceLimits.adaptiveMemoryLimit(),
-                ResourceLimits.defaultDiskLimit(), guiNote);
+        return new Defaults(machineType, gui, kvm, guiNote);
+    }
+
+    /** Whether {@code def}, or any definition the source was built from, is project-local. */
+    private static boolean projectLocal(ImageDef def, JsonNode config) {
+        if (def != null && def.getProjectRoot() != null) return true;
+        var built = BuildSource.fromJson(config.path(Metadata.BUILD_SOURCE).asText(""));
+        return built != null && built.usedProjectLocal();
     }
 
     /** Whether a branch made from {@code req} gets GUI passthrough: the request's choice, else the default. */
