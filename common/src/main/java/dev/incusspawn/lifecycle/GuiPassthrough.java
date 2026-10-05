@@ -35,16 +35,28 @@ public final class GuiPassthrough {
     private static final Pattern WAYLAND_DISPLAY_PATTERN =
             Pattern.compile("[A-Za-z0-9._-]+");
 
-    /**
-     * Whether isx runs in a Wayland session it could pass through: the checks
-     * {@link #configureGui} makes before touching the instance, without saying what is wrong.
-     */
+    /** Whether isx runs in a Wayland session it could pass through. */
     public static boolean inWaylandSession() {
+        return waylandProblem() == null;
+    }
+
+    /** Why GUI passthrough cannot work from this session, one line per element, or null when it can. */
+    private static String waylandProblem() {
         var xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
         var waylandDisplay = System.getenv("WAYLAND_DISPLAY");
-        return xdgRuntimeDir != null && waylandDisplay != null
-                && WAYLAND_DISPLAY_PATTERN.matcher(waylandDisplay).matches()
-                && java.nio.file.Files.exists(java.nio.file.Path.of(xdgRuntimeDir, waylandDisplay));
+        if (xdgRuntimeDir == null || waylandDisplay == null) {
+            return "Error: GUI passthrough requires WAYLAND_DISPLAY and XDG_RUNTIME_DIR.\n"
+                    + "Make sure you are running isx from a Wayland graphical session.";
+        }
+        if (!WAYLAND_DISPLAY_PATTERN.matcher(waylandDisplay).matches()) {
+            return "Error: WAYLAND_DISPLAY contains invalid characters: " + waylandDisplay;
+        }
+        var hostSocket = xdgRuntimeDir + "/" + waylandDisplay;
+        if (!java.nio.file.Files.exists(java.nio.file.Path.of(hostSocket))) {
+            return "Error: Wayland socket not found at " + hostSocket + "\n"
+                    + "Make sure you are running isx from a Wayland graphical session.";
+        }
+        return null;
     }
 
     /**
@@ -52,23 +64,13 @@ public final class GuiPassthrough {
      * socket mount, environment variables, and tmpfiles.d for XDG_RUNTIME_DIR.
      */
     public static boolean configureGui(IncusClient incus, String name) {
+        var problem = waylandProblem();
+        if (problem != null) {
+            System.err.println(problem);
+            return false;
+        }
         var xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
         var waylandDisplay = System.getenv("WAYLAND_DISPLAY");
-        if (xdgRuntimeDir == null || waylandDisplay == null) {
-            System.err.println("Error: GUI passthrough requires WAYLAND_DISPLAY and XDG_RUNTIME_DIR.");
-            System.err.println("Make sure you are running isx from a Wayland graphical session.");
-            return false;
-        }
-        if (!WAYLAND_DISPLAY_PATTERN.matcher(waylandDisplay).matches()) {
-            System.err.println("Error: WAYLAND_DISPLAY contains invalid characters: " + waylandDisplay);
-            return false;
-        }
-        var hostSocket = xdgRuntimeDir + "/" + waylandDisplay;
-        if (!java.nio.file.Files.exists(java.nio.file.Path.of(hostSocket))) {
-            System.err.println("Error: Wayland socket not found at " + hostSocket);
-            System.err.println("Make sure you are running isx from a Wayland graphical session.");
-            return false;
-        }
 
         BuildOutput.step("Enabling GUI passthrough.");
         // Remove first in case the source already had these devices (incus copy carries them over).
