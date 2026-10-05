@@ -419,7 +419,7 @@ jobs:
         if: matrix.full
         run: |
           install -m 755 native-cli/incus-spawn-*-runner isx
-          ./isx instances
+          ./isx list -q
           # doctor flags this runner's missing config, CA and proxy, which are irrelevant here,
           # so assert only on what it learned through the tunnel.
           ./isx doctor > doctor.out 2>&1 || true

@@ -71,7 +71,7 @@ esac
 INSTANCE="isx-trace-$$"
 cleanup() {
     # shellcheck disable=SC2086  # $ISX is "java -jar <path>" for the JVM
-    if $ISX instances 2>/dev/null | grep -qx "$INSTANCE"; then
+    if $ISX list -q 2>/dev/null | grep -qx "$INSTANCE"; then
         echo "Destroying $INSTANCE..."
         # shellcheck disable=SC2086
         $ISX destroy "$INSTANCE" --skip-confirmation >/dev/null 2>&1 || \

@@ -160,14 +160,14 @@ echo ""
 
 # $ISX is deliberately unquoted below: for the JVM it is "java -jar <path>".
 # shellcheck disable=SC2086
-$ISX instances >/dev/null 2>&1 || die "isx cannot reach Incus ('isx instances' failed). Is the daemon running?"
+$ISX list -q >/dev/null 2>&1 || die "isx cannot reach Incus ('isx list -q' failed). Is the daemon running?"
 INSTANCE="isx-bench-$$"
 # Destroy whatever throwaway instances a failure left behind: $INSTANCE and the per-sample
 # $INSTANCE-<runtime>-<n> branches. A completed run destroys its own, so by then none are left.
 cleanup() {
     local leftover
     # shellcheck disable=SC2086
-    for leftover in $($ISX instances 2>/dev/null | grep -E "^$INSTANCE(-|\$)"); do
+    for leftover in $($ISX list -q 2>/dev/null | grep -E "^$INSTANCE(-|\$)"); do
         echo ""
         echo "Destroying $leftover..."
         # shellcheck disable=SC2086
@@ -223,7 +223,7 @@ def run_to_prompt(cmd, timeout_s):
 # (name, args, expected exit, output marker)
 OPERATIONS = [
     ("startup", ["--help"], 0, None),
-    ("instances", ["instances"], 0, None),
+    ("instances", ["list", "-q"], 0, None),  # the name listing; named for isx instances, which it replaced
     ("accountShow", ["account", "show", instance], 0, None),
     ("prepareRunning", ["run", instance, "--action", PREPARE_ACTION], 1, PREPARE_MARKER),
 ]
