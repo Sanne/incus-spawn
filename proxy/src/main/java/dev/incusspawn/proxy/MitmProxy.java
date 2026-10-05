@@ -295,6 +295,10 @@ public class MitmProxy {
         upstreamOverrides.put(host, SocketAddress.inetSocketAddress(port, ip));
     }
 
+    SocketAddress upstreamOverride(String host) {
+        return upstreamOverrides.get(host);
+    }
+
     /** Trust a stub's certificate for upstream connections, alongside the system CAs. Set before start(). */
     void trustUpstreamCertificate(String pemPath) {
         extraUpstreamTrustPem = pemPath;

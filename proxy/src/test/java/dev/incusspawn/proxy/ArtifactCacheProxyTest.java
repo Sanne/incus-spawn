@@ -29,6 +29,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.ConnectException;
+import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -59,6 +63,7 @@ class ArtifactCacheProxyTest {
     static final String PORTAL = "plugins.gradle.org";
     static final String GRADLE = "services.gradle.org";
     static final String GRADLE_DOWNLOADS = "downloads.gradle.org";
+    static final List<String> REPOSITORY_HOSTS = List.of(CENTRAL, PORTAL, GRADLE, GRADLE_DOWNLOADS);
     static final String JAR = "/maven2/org/example/lib/1.0/lib-1.0.jar";
     static final String PLUGIN_JAR = "/m2/org/example/plugin/1.0/plugin-1.0.jar";
     static final String DIST = "/distributions/gradle-9.0-bin.zip";
@@ -82,6 +87,13 @@ class ArtifactCacheProxyTest {
     static int mitmPort;
     static int upstreamPort;
     static int h1UpstreamPort;
+    /**
+     * A loopback port nothing holds: taken from the kernel and closed again at once, so a connect
+     * to it is refused on every platform (#1008). Not 127.0.0.2, which only Linux refuses (macOS
+     * does not answer it), and not a socket held bound but never listening: macOS drops a SYN to
+     * that one too. Either way each connect waited out the 10 s connect timeout there.
+     */
+    static InetSocketAddress refused;
 
     /** A reply status that closes the connection instead of answering. */
     static final int DROP = -2;
@@ -157,7 +169,8 @@ class ArtifactCacheProxyTest {
                 .get(5, TimeUnit.SECONDS).actualPort();
 
         mitmPort = WebSocketProxyTest.findFreePort();
-        proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, WebSocketProxyTest.findFreePort(), "127.0.0.1",
+        var healthPort = WebSocketProxyTest.findFreePort();
+        proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, healthPort, "127.0.0.1",
                 new ProxyCredentials("", "", false, "", "", java.util.List.of()));
         proxy.upstreamTrustAll = true;
         proxy.probeReadIdleSeconds = 1;
@@ -174,6 +187,14 @@ class ArtifactCacheProxyTest {
         thread.setDaemon(true);
         thread.start();
         assertTrue(ready.await(15, TimeUnit.SECONDS), "Proxy did not start in time");
+        // Only once every listener of the class is up, and never one of their ports: a listener
+        // that took it after the pick would answer the offline tests instead of refusing them.
+        do {
+            try (var closed = new Socket()) {
+                closed.bind(new InetSocketAddress("127.0.0.1", 0));
+                refused = (InetSocketAddress) closed.getLocalSocketAddress();
+            }
+        } while (Set.of(upstreamPort, h1UpstreamPort, mitmPort, healthPort).contains(refused.getPort()));
 
         clientContext = vertx.getOrCreateContext();
         client = vertx.createHttpClient(new HttpClientOptions()
@@ -351,7 +372,7 @@ class ArtifactCacheProxyTest {
     /** Every repository host goes to the mock, through the same hook the benchmark uses. */
     static void online() {
         proxy.clearUnreachable();
-        for (var host : new String[] {CENTRAL, PORTAL, GRADLE, GRADLE_DOWNLOADS}) {
+        for (var host : REPOSITORY_HOSTS) {
             online(host);
         }
     }
@@ -360,10 +381,10 @@ class ArtifactCacheProxyTest {
         assertTrue(ProxyMain.applyBenchUpstream(proxy, host + "=127.0.0.1:" + upstreamPort, ""));
     }
 
-    /** Nothing listens on 127.0.0.2's port, so every connection is refused. */
+    /** Every repository host goes to {@link #refused}, so every connection is refused. */
     static void offline() {
-        for (var host : new String[] {CENTRAL, PORTAL, GRADLE, GRADLE_DOWNLOADS}) {
-            proxy.overrideUpstream(host, "127.0.0.2", upstreamPort);
+        for (var host : REPOSITORY_HOSTS) {
+            proxy.overrideUpstream(host, refused.getHostString(), refused.getPort());
         }
     }
 
@@ -771,6 +792,21 @@ class ArtifactCacheProxyTest {
 
         assertEquals(200, get(CENTRAL, JAR + ".sha1").status());
         assertEquals(before, Files.getLastModifiedTime(stored));
+    }
+
+    @Test
+    void offlineIsRefusedOnEveryPlatform() throws Exception {
+        offline();
+        for (var host : REPOSITORY_HOSTS) {
+            var target = proxy.upstreamOverride(host);
+            var address = new InetSocketAddress(target.host(), target.port());
+            assertNotNull(NetworkInterface.getByInetAddress(address.getAddress()), host
+                    + ": an address no interface holds is refused on Linux but hangs until the timeout on macOS");
+            try (var socket = new Socket()) {
+                // Far below the proxy's 10 s connect timeout: refused, not waited out
+                assertThrows(ConnectException.class, () -> socket.connect(address, 2000), host);
+            }
+        }
     }
 
     @Test
