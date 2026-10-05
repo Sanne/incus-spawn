@@ -83,6 +83,7 @@ import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -5643,10 +5644,16 @@ public class ListCommand extends BaseCommand {
         return collectEntries(incus.listJson());
     }
 
-    /** The isx-managed instances in an instance listing, templates included. */
-    private static List<InstanceInfo> collectEntries(String listingJson) {
+    /**
+     * The isx-managed instances in an instance listing, templates included. A listing that cannot
+     * be read is an error, never an empty list: a script would take that for "no instances".
+     */
+    static List<InstanceInfo> collectEntries(String listingJson) {
         try {
             var nodes = JSON.readTree(listingJson);
+            if (!nodes.isArray()) {
+                throw new IncusException("Cannot read the instance listing from Incus: expected a JSON array");
+            }
             var entryList = new ArrayList<InstanceInfo>();
             for (var node : nodes) {
                 var config = node.path("config");
@@ -5698,10 +5705,8 @@ public class ListCommand extends BaseCommand {
                         config.has(Metadata.KVM_ENABLED)));
             }
             return entryList;
-        } catch (IncusException e) {
-            throw e;
-        } catch (Exception e) {
-            return List.of();
+        } catch (JsonProcessingException e) {
+            throw new IncusException("Cannot read the instance listing from Incus: " + e.getOriginalMessage(), e);
         }
     }
 

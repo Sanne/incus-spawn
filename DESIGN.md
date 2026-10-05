@@ -415,7 +415,9 @@ is empty. So query commands take `--format` (#1036), through one shared helper,
 - **`plain`** is one record per line, tab-separated, `-` for an empty field, with no header,
   padding, colour or glyph, and no output at all for no results.
 - **`json`** is an array of objects (one object for a single-item command); an absent value is
-  `null`, times are ISO-8601 with their offset, sizes are bytes.
+  `null`, times are ISO-8601 with their offset (a legacy date-only stamp is an ISO-8601 date,
+  an unreadable one `null`), sizes are bytes. A response isx cannot read is an error (exit 1),
+  never an empty result, which a script would take for "nothing there".
 - **The contract**: `plain` and `json` fields may be added at the end, never renamed, removed or
   reordered. Results go to stdout and only results: errors and diagnostics go to stderr.
 

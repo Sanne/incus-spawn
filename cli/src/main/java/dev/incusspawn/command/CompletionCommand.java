@@ -477,8 +477,10 @@ public class CompletionCommand extends BaseCommand {
             }
 
             _isx() {
-              local cur prev words cword
-              _init_completion || return
+              local cur prev words cword split
+              # -s splits --opt=value into prev=--opt and cur=value, so the "$prev" cases below
+              # complete values in both the --opt value and the --opt=value forms.
+              _init_completion -s || return
 
               local commands="init build clean project branch shell run list destroy reset update-all update-base proxy templates account mcp tools vm doctor help"
 
@@ -811,7 +813,7 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand build' -l with-parents    -d 'Rebuild the template and all its parents'
             complete -c isx -f -n '__isx_using_subcommand build' -l with-descendants -d 'Rebuild the template and all templates inheriting from it'
             complete -c isx -f -n '__isx_using_subcommand build' -l missing          -d 'Build only templates that don'"'"'t exist yet'
-            complete -c isx -f -n '__isx_using_subcommand build' -l type             -d 'Instance type: container, vm, or kvm' -a 'container vm kvm'
+            complete -c isx -f -n '__isx_using_subcommand build' -l type -x          -d 'Instance type: container, vm, or kvm' -a 'container vm kvm'
             complete -c isx -f -n '__isx_using_subcommand build' -l yes              -d 'Skip interactive confirmations'
 
             # ── clean ────────────────────────────────────────────────────────────────
@@ -838,10 +840,10 @@ public class CompletionCommand extends BaseCommand {
 
             # ── list ─────────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand list' -l format -d 'Output format' -a 'table plain json'
+            complete -c isx -f -n '__isx_using_subcommand list' -l format -x -d 'Output format' -a 'table plain json'
             complete -c isx -f -n '__isx_using_subcommand list' -l plain -d 'Same as --format=plain'
             complete -c isx -f -n '__isx_using_subcommand list' -s q -l quiet -d 'Print instance names only'
-            complete -c isx -f -n '__isx_using_subcommand list' -l status -d 'Only instances in this state' -a 'running stopped'
+            complete -c isx -f -n '__isx_using_subcommand list' -l status -x -d 'Only instances in this state' -a 'running stopped'
 
             # ── shell ────────────────────────────────────────────────────────────────────
 

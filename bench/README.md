@@ -231,7 +231,7 @@ runs (default 20), reported as median, p90 and min:
 | Operation | Command | What it covers |
 |---|---|---|
 | `startup` | `isx --help` | Process start alone; no daemon |
-| `instances` | `isx instances` | Connecting to Incus plus one listing |
+| `instances` | `isx list -q` | Connecting to Incus plus one listing at `recursion=1`. Before #1036 it ran `isx instances`, which made the same request but parsed less and filtered by name, so figures from earlier runs are not strictly comparable |
 | `accountShow` | `isx account show <instance>` | A typical read-only instance query |
 | `prepareRunning` | `isx run <instance> --action=<unknown>` | Everything `isx shell` does before attaching a terminal: instance checks, proxy health, IP/CA/resolv.conf repair |
 | `shellToPrompt` | `isx shell <instance>` | What a user waits for: from launch until the shell inside the running instance runs a command |

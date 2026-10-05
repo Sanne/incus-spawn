@@ -58,6 +58,8 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** The address a running instance's DHCP client got, where it is not its NIC's reservation. */
     private final Map<String, String> dhcpAnswers = new LinkedHashMap<>();
     private final Map<String, String> guestInterfaces = new LinkedHashMap<>();
+    /** What an instance listing answers in place of the instances, when set. */
+    private JsonNode listingOverride;
     private boolean refuseNextWrite;
     private int failReadsWith;
     private int nextOperation = 1;
@@ -113,6 +115,12 @@ public final class FakeIncusDaemon implements IncusTransport {
         instances.put(name, node);
         if (holdsLiveState(status)) pids.put(name, nextPid++);
         expand(name);
+        return this;
+    }
+
+    /** Answer instance listings with this metadata instead, as a broken or foreign server might. */
+    public FakeIncusDaemon listingAnswers(JsonNode metadata) {
+        listingOverride = metadata;
         return this;
     }
 
@@ -337,6 +345,7 @@ public final class FakeIncusDaemon implements IncusTransport {
             return sync(metadata);
         }
         if (path.startsWith("/1.0/instances?") && method.equals("GET")) {
+            if (listingOverride != null) return sync(listingOverride);
             var list = JSON.createArrayNode();
             instances.values().forEach(list::add);
             return sync(list);

@@ -2282,11 +2282,7 @@ public class IncusClient {
      * since it skips network state, memory usage, and disk usage.
      */
     public String listJsonConfig() {
-        var resp = http().get("/1.0/instances?recursion=1");
-        if (!resp.isSuccess()) {
-            throw new IncusException("Failed to list instances: " + resp.body().path("error").asText());
-        }
-        return resp.body().path("metadata").toString();
+        return instanceListing("/1.0/instances?recursion=1");
     }
 
     /**
@@ -2295,11 +2291,23 @@ public class IncusClient {
      * matching the output format of 'incus list --format=json'.
      */
     public String listJson() {
-        var resp = http().get("/1.0/instances?recursion=2");
+        return instanceListing("/1.0/instances?recursion=2");
+    }
+
+    /**
+     * The instance array of a listing. An answer without one is an error, never an empty
+     * listing: a caller (a script reading {@code isx list}) would take that for "no instances".
+     */
+    private String instanceListing(String path) {
+        var resp = http().get(path);
         if (!resp.isSuccess()) {
             throw new IncusException("Failed to list instances: " + resp.body().path("error").asText());
         }
-        return resp.body().path("metadata").toString();
+        var metadata = resp.body().path("metadata");
+        if (!metadata.isArray()) {
+            throw new IncusException("Cannot read the instance listing from Incus: expected a JSON array");
+        }
+        return metadata.toString();
     }
 
     /**

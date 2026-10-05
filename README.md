@@ -1177,7 +1177,8 @@ Commands that list things take `--format=table|plain|json`. So far that is `isx 
 
 - `table` is for people. It may change in any release, so don't parse it.
 - `plain` prints one record per line, its fields tab-separated, with `-` for an empty field. There is no header, padding, colour or glyph, and no results means no output.
-- `json` prints an array of objects. An absent value is `null`, times are ISO-8601 with their offset, and sizes are in bytes.
+- `json` prints an array of objects. An absent value is `null`, and sizes are in bytes. Times are ISO-8601 with their offset (`2026-10-05T12:34:56+02:00`). Instances stamped by older isx releases recorded only a date, which prints as an ISO-8601 date (`2026-09-01`). A time isx cannot read is `null` (`-` in `plain`).
+- When isx cannot read what Incus answered, the command fails (exit 1, the reason on stderr). It never prints an empty result.
 - Both `plain` and `json` are stable. Fields may be added at the end, but are never renamed, removed or reordered.
 - Results go to stdout. Errors and diagnostics go to stderr, so stdout holds only results.
 

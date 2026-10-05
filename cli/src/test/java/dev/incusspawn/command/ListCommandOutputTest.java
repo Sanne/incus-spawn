@@ -1,7 +1,9 @@
 package dev.incusspawn.command;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
 
@@ -90,7 +92,7 @@ class ListCommandOutputTest {
     @Test
     void jsonIsAnArrayOfObjectsWithStableFields() throws Exception {
         List<LinkedHashMap<String, Object>> json = new ObjectMapper().readValue(list(cmd("json")),
-                new com.fasterxml.jackson.core.type.TypeReference<>() {});
+                new TypeReference<>() {});
         assertEquals(3, json.size());
         var first = json.get(0);
         assertEquals(List.of("name", "status", "ipv4", "parent", "runtime", "created"),
@@ -147,6 +149,37 @@ class ListCommandOutputTest {
         assertEquals("", list(cmd("plain"), empty));
         assertEquals("[ ]\n", list(cmd("json"), empty));
         assertEquals("", list(quiet(), empty));
+    }
+
+    @Test
+    void aListingThatCannotBeReadIsAnErrorNeverAnEmptyList() {
+        // [] with exit 0 would tell a script there are no instances. The CLI reports an
+        // IncusException as "Error: ..." on stderr with exit 1, and the TUI shows it.
+        for (var listing : new String[] {"<html>bad gateway</html>", "{\"instances\": []}", ""}) {
+            var e = assertThrows(IncusException.class,
+                    () -> ListCommand.collectEntries(listing), listing);
+            assertTrue(e.getMessage().startsWith("Cannot read the instance listing"), e.getMessage());
+        }
+        assertEquals(List.of(), ListCommand.collectEntries("[]"), "an empty array is no instances");
+    }
+
+    @Test
+    void aListingAnswerWithoutAnArrayFailsEveryFormat() {
+        var broken = new FakeIncusDaemon().listingAnswers(new ObjectMapper().createObjectNode().put("oops", 1));
+        for (var cmd : List.of(cmd(null), cmd("plain"), cmd("json"), quiet())) {
+            var e = assertThrows(IncusException.class, () -> list(cmd, broken));
+            assertTrue(e.getMessage().startsWith("Cannot read the instance listing"), e.getMessage());
+        }
+    }
+
+    @Test
+    void aCreatedStampThatCannotBeReadIsNull() throws Exception {
+        var daemon = new FakeIncusDaemon().container("odd", Map.of(
+                Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.CREATED, "sometime"));
+        assertEquals("odd\tstopped\t-\t-\tcontainer\t-\n", list(cmd("plain"), daemon));
+        List<LinkedHashMap<String, Object>> json = new ObjectMapper().readValue(list(cmd("json"), daemon),
+                new TypeReference<>() {});
+        assertNull(json.get(0).get("created"));
     }
 
     @Test
