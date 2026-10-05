@@ -14,6 +14,8 @@ trap 'echo "Error: install.sh failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 # Path of a staged (not yet renamed) file, so we don't litter $INSTALL_DIR
 # with half-written copies when a build or copy dies partway.
 STAGED=""
+# install_wrapper's cache of jvm_options(): never inherited from the environment.
+unset LAUNCHER_JVM_OPTIONS
 trap '[ -n "$STAGED" ] && rm -f "$STAGED"; :' EXIT
 
 # Install a file by staging it beside the target and renaming over it.
@@ -35,13 +37,28 @@ atomic_install() {
     STAGED=""
 }
 
+# JVM options for the launchers. GraalVM's JIT sometimes computes a wrong AES-256
+# key schedule in AESCrypt.makeSessionKey while warming up, and the TLS connection
+# using it fails with bad_record_mac: an occasional 502 from isx-proxy (#940,
+# #1018, oracle/graal#14599). Keeping that one method interpreted avoids it; the
+# root pom's argLine does the same for tests. Only for a JDK whose JIT is Graal:
+# C2 is not affected, and a stock JDK has no UseJVMCICompiler flag at all.
+jvm_options() {
+    if "$JAVA_BIN" -XX:+PrintFlagsFinal -version 2>/dev/null \
+            | grep -Eq '^ *bool +UseJVMCICompiler += true'; then
+        echo "-XX:CompileCommand=quiet -XX:CompileCommand=exclude,com.sun.crypto.provider.AESCrypt::makeSessionKey"
+    fi
+}
+
 # Same, for the generated JVM launcher scripts.
 install_wrapper() {
     local dest="$1" jar="$2"
+    # Probed once per install, for the first launcher
+    LAUNCHER_JVM_OPTIONS="${LAUNCHER_JVM_OPTIONS-$(jvm_options)}"
     STAGED="$(mktemp "$dest.XXXXXX")"
     cat > "$STAGED" <<WRAPPER
 #!/bin/bash
-exec "$JAVA_BIN" -jar "$jar" "\$@"
+exec "$JAVA_BIN" ${LAUNCHER_JVM_OPTIONS:+$LAUNCHER_JVM_OPTIONS }-jar "$jar" "\$@"
 WRAPPER
     chmod 755 "$STAGED"
     mv -f "$STAGED" "$dest"

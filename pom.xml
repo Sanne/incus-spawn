@@ -52,7 +52,8 @@
           gets an AES-256 key schedule wrong, and TLS tests fail with bad_record_mac (#940,
           upstream: oracle/graal#14599, DESIGN.md "Testing"). A property rather than surefire
           configuration, so the Quarkus plugin can still add its own test JVM arguments.
-          JitWorkaroundTest pins it.
+          JitWorkaroundTest pins it. The JVM launchers (install.sh, jbang-catalog.json) carry the
+          same CompileCommand options for a GraalVM JDK (#1018); LauncherJitWorkaroundTest keeps them equal.
         -->
         <argLine>-XX:CompileCommand=quiet -XX:CompileCommand=exclude,com.sun.crypto.provider.AESCrypt::makeSessionKey</argLine>
     </properties>
