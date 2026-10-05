@@ -64,10 +64,7 @@ public class ProxyMain implements QuarkusApplication {
         installLogTee();
 
         var incus = new IncusClient();
-        if (!Environment.hasBeenInitialized()) {
-            System.err.println("Error: incus-spawn has not been initialized. Run 'isx init' first.");
-            return ProxyService.EXIT_CONFIG;
-        }
+        if (!ProxyService.initComplete()) return ProxyService.EXIT_CONFIG;
 
         var badOverride = checkGatewayOverride(gatewayIpOption, incus);
         if (badOverride != 0) return badOverride;
