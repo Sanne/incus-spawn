@@ -1502,7 +1502,8 @@ public class DoctorCommand extends BaseCommand {
         }
 
         // Check DNS resolution of an intercepted domain
-        var probeDomain = ProxyConfig.interceptedDomains().iterator().next();
+        // A relayed domain, never one the proxy answers itself (mcp.isx.internal refuses a plain GET)
+        var probeDomain = ProxyConfig.ANTHROPIC_DOMAINS.iterator().next();
         if (!gatewayIp.isEmpty()) {
             try {
                 var result = incus.shellExec(name, "sh", "-c",

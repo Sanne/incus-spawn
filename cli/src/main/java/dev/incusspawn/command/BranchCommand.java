@@ -8,6 +8,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
@@ -70,6 +71,11 @@ public class BranchCommand extends BaseCommand {
     @Option(name = "shell", description = "Open a plain shell instead of running the default action", hasValue = false)
     boolean shell;
 
+    @Option(name = "mcp-client", description = "Let this instance drive isx over MCP, at https://"
+            + ProxyConfig.MCP_DOMAIN + "/mcp (a coordinating agent). Never inherited by its copies.",
+            hasValue = false)
+    boolean mcpClient;
+
     @OptionList(name = "account",
             description = "Credential account to use, as <namespace>=<account> "
                     + "(e.g. claude=work). Repeatable; overrides the template's choice.")
@@ -88,6 +94,11 @@ public class BranchCommand extends BaseCommand {
             System.err.println("Error: --airgap and --proxy-only are mutually exclusive.");
             return CommandResult.valueOf(1);
         }
+        if (airgap && mcpClient) {
+            System.err.println("Error: an --airgap instance cannot reach " + ProxyConfig.MCP_DOMAIN
+                    + "; --mcp-client needs --proxy-only or full network.");
+            return CommandResult.valueOf(1);
+        }
         var networkMode = airgap ? NetworkMode.AIRGAP
                 : proxyOnly ? NetworkMode.PROXY_ONLY : NetworkMode.FULL;
         if (gui && noGui) {
@@ -97,7 +108,8 @@ public class BranchCommand extends BaseCommand {
         Boolean guiChoice = gui ? Boolean.TRUE : noGui ? Boolean.FALSE : null;
         Boolean kvmChoice = kvm ? Boolean.TRUE : noKvm ? Boolean.FALSE : null;
         var request = new BranchFlow.Request(resolvedSource, name, guiChoice, kvmChoice, networkMode,
-                inbox, cpuLimit, memoryLimit, diskLimit, accounts, !noStart, Map.of());
+                inbox, cpuLimit, memoryLimit, diskLimit, accounts, !noStart,
+                mcpClient ? Map.of(Metadata.MCP_CALLER, Metadata.now()) : Map.of());
 
         BranchFlow.Preflight preflight;
         InstanceLifecycle.RuntimeConfig prefetched;

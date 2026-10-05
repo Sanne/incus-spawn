@@ -355,6 +355,16 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void noCopyOfACoordinatorMayCallIsxMcp() {
+        // #915: only `isx branch --mcp-client` grants it, on the branch it makes; a copy of a
+        // coordinator, an agent's fork included, is an ordinary instance.
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(Metadata.MCP_CALLER, "2026-10-05T10:00:00"));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
+        assertFalse(daemon.instance(NAME).path("config").has(Metadata.MCP_CALLER));
+    }
+
+    @Test
     void anEmptyAccountSelectionKeepsTheCopiedPins() {
         // A caller passing no selection must not wipe what the copy carried.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(Metadata.accountKey("github"), "work"));

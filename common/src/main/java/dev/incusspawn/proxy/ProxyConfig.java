@@ -37,6 +37,12 @@ public final class ProxyConfig {
     );
     public static final Set<String> GRADLE_DOMAINS = Set.of("services.gradle.org");
     public static final Set<String> NPM_DOMAINS = Set.of("registry.npmjs.org");
+    /**
+     * Where an instance stamped {@code mcp-caller} reaches {@code isx mcp} (#915): served by the
+     * proxy itself, never relayed. Under {@code .internal}, which ICANN reserves for private
+     * use, so no real host can ever answer to it.
+     */
+    public static final String MCP_DOMAIN = "mcp.isx.internal";
 
     private static final Set<String> BUILTIN_INTERCEPTED_DOMAINS;
 
@@ -47,6 +53,7 @@ public final class ProxyConfig {
         all.addAll(MAVEN_DOMAINS);
         all.addAll(GRADLE_DOMAINS);
         all.addAll(NPM_DOMAINS);
+        all.add(MCP_DOMAIN);
         BUILTIN_INTERCEPTED_DOMAINS = Set.copyOf(all);
     }
 

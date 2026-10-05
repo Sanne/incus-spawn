@@ -109,6 +109,14 @@ public final class Metadata {
     public static final String MCP_CWD = MCP_PREFIX + "cwd";
     /** Set by {@code keep_instance}: the instance now belongs to the user and outlives the session. */
     public static final String MCP_KEPT = MCP_PREFIX + "kept";
+    /**
+     * Set by {@code isx branch --mcp-client}, and only there: this instance may call
+     * {@code isx mcp} over the network, through the proxy at {@link
+     * dev.incusspawn.proxy.ProxyConfig#MCP_DOMAIN} (#915). The value is when it was granted. An
+     * {@code mcp-} key, so no copy ever carries it ({@code configureBranch}), and the MCP
+     * create path refuses it: an agent cannot make another coordinator.
+     */
+    public static final String MCP_CALLER = MCP_PREFIX + "caller";
 
     public static final String TYPE_BASE = "base";
     public static final String TYPE_PROJECT = "project";
@@ -120,6 +128,12 @@ public final class Metadata {
     public static final String OP_DELETING = "deleting";
 
     private Metadata() {}
+
+    /** Whether an instance's config grants it {@link #MCP_CALLER}: any non-blank value does. */
+    public static boolean isMcpCaller(Map<String, String> config) {
+        var value = config == null ? null : config.get(MCP_CALLER);
+        return value != null && !value.isBlank();
+    }
 
     public static boolean isMcpKey(String key) {
         return key.startsWith(MCP_PREFIX);

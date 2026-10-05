@@ -245,4 +245,25 @@ class InstanceRegistryTest {
         assertEquals("running", registry.identify("10.0.0.5", running).instanceName());
         assertNull(registry.identify("10.0.0.5", stopped));
     }
+
+    @Test
+    void onlyAStampedInstanceIdentifiedByItsSecretMayCallIsxMcp() {
+        // #915: the stamp says which instance may; address and secret say which instance calls
+        var caller = InstanceSecret.generate();
+        var plain = InstanceSecret.generate();
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("coord", "container", "Stopped", java.util.Map.of(ADDRESS_KEY, "10.0.0.5",
+                        SECRET_KEY, InstanceSecret.sha256(caller),
+                        dev.incusspawn.incus.Metadata.MCP_CALLER, "2026-10-05T10:00:00"))
+                .instance("worker", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.6",
+                        SECRET_KEY, InstanceSecret.sha256(plain)));
+        var registry = new InstanceRegistry(daemon.client());
+        registry.refresh();
+        assertEquals("coord", registry.identifyMcpCaller("10.0.0.5", caller));
+        assertNull(registry.identifyMcpCaller("10.0.0.5", null), "the address alone");
+        assertNull(registry.identifyMcpCaller("10.0.0.6", caller), "its secret from another address");
+        assertNull(registry.identifyMcpCaller("10.0.0.6", plain), "an instance that was not granted it");
+        assertTrue(registry.isMcpCaller("coord"));
+        assertFalse(registry.isMcpCaller("worker"));
+    }
 }

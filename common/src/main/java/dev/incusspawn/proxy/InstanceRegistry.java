@@ -108,12 +108,15 @@ public final class InstanceRegistry {
      *                        last start ({@link InstanceSecret}). Kept beside the accounts rather
      *                        than in {@link InstanceAccounts}, which the proxy caches by value:
      *                        a key that changed on every restart would grow those caches.
+     * @param mcpCallers      the instances, of those owning an address, stamped
+     *                        {@link Metadata#MCP_CALLER}: allowed to call {@code isx mcp} (#915)
      */
-    record Parsed(Map<String, InstanceAccounts> byAddress, Map<String, String> secretByAddress) {}
+    record Parsed(Map<String, InstanceAccounts> byAddress, Map<String, String> secretByAddress,
+                  java.util.Set<String> mcpCallers) {}
 
     private record Snapshot(Parsed parsed, long takenAt) {}
 
-    private static final Snapshot EMPTY = new Snapshot(new Parsed(Map.of(), Map.of()), 0L);
+    private static final Snapshot EMPTY = new Snapshot(new Parsed(Map.of(), Map.of(), java.util.Set.of()), 0L);
 
     private final IncusClient incus;
     private final AtomicBoolean refreshing = new AtomicBoolean();
@@ -146,13 +149,33 @@ public final class InstanceRegistry {
      * guest presenting a wrong secret can make at will, and each refresh lists every instance.
      */
     public InstanceAccounts identify(String sourceAddress, String presentedSecret) {
+        return identify(snapshot.parsed(), sourceAddress, presentedSecret);
+    }
+
+    private static InstanceAccounts identify(Parsed current, String sourceAddress, String presentedSecret) {
         if (sourceAddress == null || sourceAddress.isBlank()) return null;
-        var current = snapshot.parsed();
         var address = normalize(sourceAddress);
         var instance = current.byAddress().get(address);
         if (instance == null
                 || !InstanceSecret.matches(presentedSecret, current.secretByAddress().get(address))) return null;
         return instance;
+    }
+
+    /**
+     * The name of the instance a caller is, if it may call {@code isx mcp} over the network:
+     * {@link #identify} by address and secret, and stamped {@link Metadata#MCP_CALLER}. Null
+     * otherwise -- the same refresh-and-retry advice as for {@link #identify} applies.
+     */
+    public String identifyMcpCaller(String sourceAddress, String presentedSecret) {
+        var current = snapshot.parsed();
+        var instance = identify(current, sourceAddress, presentedSecret);
+        return instance != null && current.mcpCallers().contains(instance.instanceName())
+                ? instance.instanceName() : null;
+    }
+
+    /** Whether the snapshot still has {@code instanceName} as an MCP caller. Non-blocking. */
+    public boolean isMcpCaller(String instanceName) {
+        return snapshot.parsed().mcpCallers().contains(instanceName);
     }
 
     /** Whether the snapshot is old enough that a refresh is worth doing. */
@@ -251,7 +274,7 @@ public final class InstanceRegistry {
         var claimants = new LinkedHashMap<String, List<Claimant>>();
         try {
             var root = JSON.readTree(instancesJson);
-            if (!root.isArray()) return new Parsed(Map.of(), Map.of());
+            if (!root.isArray()) return new Parsed(Map.of(), Map.of(), java.util.Set.of());
             for (var instance : root) {
                 var name = instance.path("name").asText("");
                 var config = instance.path("config");
@@ -263,23 +286,26 @@ public final class InstanceRegistry {
                 claimants.computeIfAbsent(normalize(address), a -> new ArrayList<>()).add(new Claimant(
                         new InstanceAccounts(name, accountsOf(config), identitiesOf(config)),
                         "Running".equalsIgnoreCase(instance.path("status").asText("")),
-                        config.path(Metadata.INSTANCE_SECRET_SHA256).asText("").strip()));
+                        config.path(Metadata.INSTANCE_SECRET_SHA256).asText("").strip(),
+                        !config.path(Metadata.MCP_CALLER).asText("").isBlank()));
             }
         } catch (Exception e) {
             ProxyLog.warn("Could not parse instance list for the account registry: " + e.getMessage());
         }
         var byAddress = new LinkedHashMap<String, InstanceAccounts>();
         var secretByAddress = new LinkedHashMap<String, String>();
+        var mcpCallers = new java.util.HashSet<String>();
         claimants.forEach((address, all) -> {
             var owner = owner(address, all);
             if (owner == null) return;
             byAddress.put(address, owner.accounts());
             if (!owner.secretSha256().isEmpty()) secretByAddress.put(address, owner.secretSha256());
+            if (owner.mcpCaller()) mcpCallers.add(owner.accounts().instanceName());
         });
-        return new Parsed(byAddress, secretByAddress);
+        return new Parsed(byAddress, secretByAddress, java.util.Set.copyOf(mcpCallers));
     }
 
-    private record Claimant(InstanceAccounts accounts, boolean running, String secretSha256) {}
+    private record Claimant(InstanceAccounts accounts, boolean running, String secretSha256, boolean mcpCaller) {}
 
     /**
      * Who an address belongs to. isx gives each address to one instance, but a copy made by an
