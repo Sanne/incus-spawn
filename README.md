@@ -252,6 +252,31 @@ What an agent gets is deliberately narrow:
 
 Delegated agents spend the Claude account of the template they run in. Text coming back from an instance -- command output, a delegate's report, a diff -- is data produced inside the sandbox, and the tool descriptions tell the host agent to treat it that way.
 
+### A coordinator in an instance
+
+The agent that coordinates the others can itself run in an isx instance, so that it acts with the instance's credentials -- a bot's GitHub login, say -- instead of yours, and reaches your machine only through the MCP tools. Branch it with `--mcp-client`:
+
+```shell
+isx branch coord --from tpl-dev --proxy-only --mcp-client
+```
+
+Inside it, `isx mcp` is served at `https://mcp.isx.internal/mcp` (MCP's Streamable HTTP transport) by the host proxy, which runs one host `isx mcp` for the instance. Each request must come from the instance's own address and carry the secret isx gives it at every start, in `X-Isx-Instance-Secret`; the file holding it is named by `$ISX_INSTANCE_SECRET_FILE`. In the instance:
+
+```shell
+claude mcp add-json --scope user isx "$(cat <<'EOF'
+{"type": "http", "url": "https://mcp.isx.internal/mcp",
+ "headersHelper": "printf '{\"X-Isx-Instance-Secret\":\"%s\"}' \"$(cat \"$ISX_INSTANCE_SECRET_FILE\")\""}
+EOF
+)"
+```
+
+Claude Code runs a `headersHelper` only in a workspace you have trusted, so start it once interactively in the directory the coordinator works in. It gets exactly the tools, approved templates and limits a host agent gets, and the same `mcp:` configuration applies. What differs:
+
+- **The session is the instance.** What it creates stays held by it across restarts of its Claude Code and of the instance itself, and is picked up again on the next connection: nothing to adopt. Its instances become orphans only once it is destroyed, or no longer allowed to call.
+- **One connection at a time.** A new connection from the instance ends its previous one.
+- **No coordinator makes another.** Only `isx branch --mcp-client` grants it, never to a copy: not to `isx branch --from coord`, and not to anything created through MCP.
+- **Only the host proxy is reached.** `mcp.isx.internal` resolves to the bridge gateway, so this works with `--proxy-only`; an `--airgap` instance cannot use it.
+
 ## Why full system containers?
 
 **Docker and Podman are built for shipping applications** — minimal filesystems, single-process isolation, fast startup. isx solves a different problem: full **system containers** powered by [Incus](https://linuxcontainers.org/incus/) that behave like real machines. Each environment runs its own init system, has real networking (`ping`, `strace`, nested Podman/Docker), and supports GUI and audio passthrough (Linux only). Templates pre-install your baseline tools and repos, but the environment is a real Linux system — agents and users can freely `dnf install`, `pip install`, build from source, or run Docker Compose just like on a workstation.
@@ -1306,6 +1331,7 @@ Create a new instance as a copy-on-write clone from a template or existing insta
 | `--no-start` | Don't start the instance after creation |
 | `--shell` | Open a plain shell instead of running the default action |
 | `--account <ns>=<account>` | Use this [credential account](#credential-accounts) instead of the template's or the default; repeatable |
+| `--mcp-client` | Let the instance drive isx over MCP, at `https://mcp.isx.internal/mcp`: a [coordinator in an instance](#a-coordinator-in-an-instance). Never inherited by its copies |
 
 ### `isx shell`
 
@@ -1624,6 +1650,8 @@ Serve isx to an agent on this machine over the Model Context Protocol (stdio). S
     claude mcp add isx -- isx mcp
 
 See [Delegating from an agent on your host](#delegating-from-an-agent-on-your-host-mcp) for what it offers and how to approve templates.
+
+`isx mcp --caller-instance <name>` serves an instance branched with `--mcp-client` instead; the proxy runs it for each connection that instance makes to `https://mcp.isx.internal/mcp` ([a coordinator in an instance](#a-coordinator-in-an-instance)).
 
 ### `isx completion`
 
