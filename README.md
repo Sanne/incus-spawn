@@ -1257,7 +1257,7 @@ Create a new instance as a copy-on-write clone from a template or existing insta
 | Option | Description |
 |--------|-------------|
 | `--from <source>` | Source instance to branch from (auto-detected from cwd if omitted) |
-| `--gui` | Enable GUI passthrough (Wayland + GPU + audio); the default when the template has `gui: true` |
+| `--gui` | Enable GUI passthrough (Wayland + GPU + audio); the default for a `gui: true` container template (not a project-local one) when isx runs in a Wayland session |
 | `--no-gui` | Disable GUI passthrough even if the template has `gui: true` |
 | `--kvm` | Expose /dev/kvm for nested virtualization |
 | `--no-kvm` | Disable KVM even if the template was built with `type: kvm` |

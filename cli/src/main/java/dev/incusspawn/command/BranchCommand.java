@@ -34,7 +34,7 @@ public class BranchCommand extends BaseCommand {
     String source;
 
     @Option(name = "gui", description = "Enable GUI passthrough (Wayland + GPU + audio); "
-            + "the default when the template has gui: true", hasValue = false)
+            + "the default for a gui: true container template, from a Wayland session", hasValue = false)
     boolean gui;
 
     @Option(name = "no-gui", description = "Disable GUI passthrough even if the template has gui: true", hasValue = false)

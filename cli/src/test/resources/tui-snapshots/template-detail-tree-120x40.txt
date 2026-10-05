@@ -9,7 +9,7 @@
 ║     unknown                                                                                                          ║
 ║     Nests VMs, so it needs KVM passthrough inside the container                                                      ║
 ║     Type: container with KVM passthrough                                                                             ║
-║     GUI: on by default for branches                                                                                  ║
+║     GUI: asked for by default                                                                                        ║
 ║     Shell command: tmux new -A -s main                                                                               ║
 ║     Default action: claude                                                                                           ║
 ║     Packages: qemu-kvm                                                                                               ║

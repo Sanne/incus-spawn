@@ -1690,9 +1690,10 @@ public class ListCommand extends BaseCommand {
         branchInboxCheck = new CheckboxState(false);
         branchInboxInput = new TextInputState("");
         branchSourceIsVm = defaults.machineType() == MachineType.VM;
-        vmCpuInput = new TextInputState(defaults.cpu() == null ? "" : String.valueOf(defaults.cpu()));
-        vmMemoryInput = new TextInputState(defaults.memory());
-        vmDiskInput = new TextInputState(defaults.disk());
+        // Only a VM's limits are fields: a container's would be worked out (a sysctl fork on macOS) and ignored
+        vmCpuInput = new TextInputState(branchSourceIsVm ? String.valueOf(defaults.cpu()) : "");
+        vmMemoryInput = new TextInputState(branchSourceIsVm ? defaults.memory() : "");
+        vmDiskInput = new TextInputState(branchSourceIsVm ? defaults.disk() : "");
         branchAccounts = branchAccountChoicesFor(sourceName, source);
         branchFieldIndex = 0;
         mode = Mode.BRANCH;

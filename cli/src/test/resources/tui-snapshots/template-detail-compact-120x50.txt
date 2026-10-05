@@ -2,7 +2,7 @@
 ║ Nests VMs, so it needs KVM passthrough inside the container                                                        █ ║
 ║                                                                                                                    █ ║
 ║ Type:           container with KVM passthrough                                                                     █ ║
-║ GUI:            on by default for branches                                                                         █ ║
+║ GUI:            on by default for branches made from a Wayland session                                             █ ║
 ║ Workdir:        /home/agentuser/app                                                                                █ ║
 ║ Shell command:  tmux new -A -s main                                                                                █ ║
 ║ Default action: claude                                                                                             █ ║

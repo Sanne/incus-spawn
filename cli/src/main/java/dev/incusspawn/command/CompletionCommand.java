@@ -154,7 +154,7 @@ public class CompletionCommand extends BaseCommand {
               _arguments \\
                 '(-h --help)'{-h,--help}'[Show help]' \\
                 '--from=[Source instance to branch from]:instance:_isx_instances' \\
-                '--gui[Enable GUI passthrough (Wayland + GPU + audio); the default when the template has gui: true]' \\
+                '--gui[Enable GUI passthrough (Wayland + GPU + audio); the default for a gui: true container template, from a Wayland session]' \\
                 '--kvm[Expose /dev/kvm for nested virtualization]' \\
                 '--no-gui[Disable GUI passthrough even if the template has gui: true]' \\
                 '--no-kvm[Disable KVM even if the template was built with type: kvm]' \\
@@ -779,7 +779,7 @@ public class CompletionCommand extends BaseCommand {
 
             complete -c isx -f -n '__isx_using_subcommand branch' -a '(__isx_instances)' -d 'Instance name'
             complete -c isx -f -n '__isx_using_subcommand branch' -l from        -d 'Source instance to branch from' -a '(__isx_instances)'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l gui         -d 'Enable GUI passthrough (Wayland + GPU + audio); the default when the template has gui: true'
+            complete -c isx -f -n '__isx_using_subcommand branch' -l gui         -d 'Enable GUI passthrough (Wayland + GPU + audio); the default for a gui: true container template, from a Wayland session'
             complete -c isx -f -n '__isx_using_subcommand branch' -l kvm         -d 'Expose /dev/kvm for nested virtualization'
             complete -c isx -f -n '__isx_using_subcommand branch' -l no-gui      -d 'Disable GUI passthrough even if the template has gui: true'
             complete -c isx -f -n '__isx_using_subcommand branch' -l no-kvm      -d 'Disable KVM even if the template was built with type: kvm'

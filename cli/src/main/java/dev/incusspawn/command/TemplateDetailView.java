@@ -180,7 +180,7 @@ final class TemplateDetailView {
                         warnStyle()));
             }
         }
-        lines.add(row("GUI:", details.gui() ? "on by default for branches" : "off", lineStyle));
+        lines.add(row("GUI:", details.gui() ? guiLabel(current, details.type(), source.imageDefs()) : "off", lineStyle));
         lines.add(row("Workdir:", orDefault(details.workdir(), "(home directory)"),
                 details.workdir() != null ? lineStyle : dimStyle));
         lines.add(row("Shell command:", orDefault(details.shellCommand(), "(login shell)"),
@@ -354,6 +354,15 @@ final class TemplateDetailView {
     }
 
     /** A section listed only when it has items. */
+    /** What a branch of a {@code gui: true} template gets by default: {@code BranchFlow.defaultsFor}'s rule. */
+    static String guiLabel(ImageDef def, String type, Map<String, ImageDef> defs) {
+        if ("vm".equals(type)) return "off by default: VM branches get it only with --gui";
+        if (ImageDef.chain(def, defs).stream().anyMatch(layer -> layer.getProjectRoot() != null)) {
+            return "off by default: project-local (--gui or the branch dialog turns it on)";
+        }
+        return "on by default for branches made from a Wayland session";
+    }
+
     private void addOptionalSection(List<Line> lines, String label, List<String> items) {
         if (items.isEmpty()) return;
         lines.add(Line.styled(label + ":", labelStyle()));
@@ -411,7 +420,7 @@ final class TemplateDetailView {
             // Settings this layer declares itself; a child inheriting them shows nothing
             var ownType = declaredType(def);
             if (ownType != null) treeRow(lines, contentIndent, "Type: ", TemplateDetails.typeLabel(ownType), lineStyle);
-            if (def.isGui()) treeRow(lines, contentIndent, "GUI: ", "on by default for branches", lineStyle);
+            if (def.isGui()) treeRow(lines, contentIndent, "GUI: ", "asked for by default", lineStyle);
             if (def.getWorkdir() != null) treeRow(lines, contentIndent, "Workdir: ", def.getWorkdir(), lineStyle);
             if (def.getShellCommand() != null) {
                 treeRow(lines, contentIndent, "Shell command: ", def.getShellCommand(), lineStyle);

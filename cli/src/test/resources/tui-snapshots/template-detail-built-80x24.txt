@@ -3,7 +3,7 @@
 ║                                                                            █ ║
 ║ Type:           container with KVM passthrough                             █ ║
 ║                 built as container — rebuild to apply                      █ ║
-║ GUI:            on by default for branches                                 █ ║
+║ GUI:            on by default for branches made from a Wayland session     █ ║
 ║ Workdir:        /home/agentuser/app                                        █ ║
 ║ Shell command:  tmux new -A -s main                                        █ ║
 ║ Default action: claude                                                     █ ║

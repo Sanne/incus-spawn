@@ -132,7 +132,7 @@ public final class BranchFlow {
         String guiNote = null;
         if (wantsGui && projectLocal(def, config)) {
             guiNote = "'" + source + "' asks for GUI passthrough from a project-local definition, "
-                    + "so it is off unless chosen (isx branch --gui).";
+                    + "so it is off unless chosen (--gui, or the branch dialog's GUI box).";
         } else if (wantsGui && !waylandSession.getAsBoolean()) {
             guiNote = "'" + source + "' asks for GUI passthrough, but isx is not running in a "
                     + "Wayland session, so it is off.";
