@@ -59,7 +59,8 @@ public final class BranchFlow {
      * What to branch. A null {@code gui}, {@code kvm}, {@code cpu}, {@code memory} or
      * {@code disk} means the {@linkplain #defaultsFor default} for the source.
      * {@code extraConfig} is stamped in the same writes as the branch's own metadata: on the copy
-     * request itself and again in {@link InstanceLifecycle#configureBranch}.
+     * request itself and again in {@link InstanceLifecycle#configureBranch}, as the {@code clone}
+     * type is.
      */
     public record Request(String source, String name, Boolean gui, Boolean kvm,
                           NetworkMode networkMode, Path inbox, Integer cpu, String memory,
@@ -271,6 +272,9 @@ public final class BranchFlow {
         // moment in which the new instance carries the hash of its source's
         var copyConfig = new LinkedHashMap<>(req.extraConfig());
         var secret = InstanceSecret.stampInto(copyConfig);
+        // An instance from the copy on, not its template's base: a branch interrupted before
+        // configureBranch would otherwise pass for a template, which isx list -q never shows.
+        copyConfig.put(Metadata.TYPE, Metadata.TYPE_CLONE);
         BuildOutput.stepStart("Copying from template...");
         incus.copy(source, name, copyPlan, copyConfig);
         BuildOutput.stepDone();

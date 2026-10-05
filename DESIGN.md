@@ -439,7 +439,10 @@ completion runs it on every TAB. `ListCommandOutputTest` pins both requests. The
 comes from `Metadata.createdIso`, next to `Metadata.now()` which writes the stamp, so every
 command that prints one prints the same instant. It tells templates apart by the
 `base` type every build stamps on them, so it needs no definitions, and never by the `tpl-`
-name prefix: a branch may be called `tpl-anything`. Incus instances isx did not create (no isx
+name prefix: a branch may be called `tpl-anything`. A copy carries its template's `base` type, so
+`BranchFlow` stamps `clone` in the copy request itself, as it does the instance secret: a branch
+interrupted before `configureBranch` (Ctrl-C, a failed write) is still listed, never mistaken for a
+template and leaked (`InterruptedBranchTest`). Incus instances isx did not create (no isx
 metadata) are not listed. `-q`/`--quiet` prints names only, and `--status=running|stopped`
 filters.
 
