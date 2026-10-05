@@ -486,8 +486,13 @@ class TaskScriptsTest {
         assertTrue(stat.contains("3 files changed, 3 insertions(+)"), stat);
         assertFalse(stat.contains("deletion"), "git leaves a zero count out: " + stat);
         assertFalse(stat.contains("+++"), "no patch: " + stat);
+        // Nor can the name forge a line in the text: control characters are C-quoted there, as git does.
+        assertTrue(stat.contains("1\t0\t\"a\\tb\\n1\\t0\\tforged\"\n"), stat);
+        assertFalse(stat.contains("\n1\t0\tforged"), stat);
         var read = sh(TaskScripts.diffForReading("t1-abc", null), "");
         assertFalse(read.contains("\0"), "what a model reads has no NULs");
+        assertTrue(read.contains("1\t0\t\"a\\tb\\n1\\t0\\tforged\"\n"), read);
+        assertFalse(read.contains("\n1\t0\tforged"), read);
         assertTrue(read.contains("\n1\t0\tNEW_FILE\n") && read.contains("+more"), read);
         var files = diff.structured().path("repos").get(0).path("files");
         assertEquals(java.util.List.of("NEW_FILE", odd, "tracked.txt"),

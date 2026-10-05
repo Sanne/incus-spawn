@@ -114,7 +114,9 @@ final class IncusInstanceBackend implements InstanceBackend {
             // The trusted definitions the template was just checked against, not a second load.
             preflight = BranchFlow.preflight(incus, request, info.definitions());
         } catch (BranchFlow.BranchException e) {
-            throw new ToolError(ToolError.Code.UNAVAILABLE, "cannot create an instance from " + template + ": " + e.getMessage());
+            // A missing credential, a CA mismatch, a name in use, the proxy down: the user has to
+            // act before this can succeed, so it is not a failure worth retrying as is.
+            throw new ToolError(ToolError.Code.REFUSED, "cannot create an instance from " + template + ": " + e.getMessage());
         }
         InstanceLifecycle.RuntimeConfig runtime;
         try {

@@ -48,7 +48,7 @@ record Diff(String text, ObjectNode structured) {
                 added += a == null ? 0 : a;
                 deleted += d == null ? 0 : d;
                 count++;
-                text.append(fields[0]).append('\t').append(fields[1]).append('\t').append(fields[2]).append('\n');
+                text.append(fields[0]).append('\t').append(fields[1]).append('\t').append(quoted(fields[2])).append('\n');
             }
             pos++; // the empty line that ends the repository
             if (count > 0) text.append(shortstat(count, added, deleted)).append('\n');
@@ -73,6 +73,39 @@ record Diff(String text, ObjectNode structured) {
             text.append(rest);
         }
         return new Diff(text.toString(), node);
+    }
+
+    /**
+     * A path as the text shows it: as is, unless it holds a control character, which could forge a
+     * {@code ## <repo>} or record line; then C-quoted, as {@code git} quotes it. The structure keeps
+     * the path verbatim.
+     */
+    static String quoted(String path) {
+        if (path.chars().noneMatch(Diff::control)) return path;
+        var sb = new StringBuilder(path.length() + 8).append('"');
+        for (int i = 0; i < path.length(); i++) {
+            char c = path.charAt(i);
+            switch (c) {
+                case '\u0007' -> sb.append("\\a");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                case '\u000b' -> sb.append("\\v");
+                case '\n' -> sb.append("\\n");
+                case '\t' -> sb.append("\\t");
+                case '\r' -> sb.append("\\r");
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                default -> {
+                    if (control(c)) sb.append(String.format("\\%03o", (int) c));
+                    else sb.append(c);
+                }
+            }
+        }
+        return sb.append('"').toString();
+    }
+
+    private static boolean control(int c) {
+        return c < 0x20 || c == 0x7f;
     }
 
     /** What {@code git diff --shortstat} says: a count that is zero is left out, unless both are. */

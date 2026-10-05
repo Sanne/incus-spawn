@@ -392,38 +392,39 @@ final class TaskScripts {
      * {@code ---} and no patch. Deterministic and small, whatever the size of the patch.
      */
     static String diff(String taskId, String path, int maxBytes, boolean statOnly) {
-        return diff(taskId, path, maxBytes, statOnly, "cat \"$stat\"; ");
+        return diff(taskId, path, maxBytes, statOnly, NUMSTAT);
     }
 
-    /** {@link #diff}, printing the full diff's stat records with {@code printStat}. */
-    private static String diff(String taskId, String path, int maxBytes, boolean statOnly, String printStat) {
+    /** {@link #diff}, with the stat records {@code numstat} asks git for. */
+    private static String diff(String taskId, String path, int maxBytes, boolean statOnly, String numstat) {
         var d = dir(taskId);
         var pathspec = path == null ? "" : " -- " + ExecScript.quote(path);
         if (statOnly) {
             return "D=" + d + "; [ -s \"$D/base.txt\" ] || { echo 'no git repository was found where the task started'; exit 0; }; "
                     + "while read -r base repo; do ( cd \"$repo\" || exit 0; "
                     + DIFF_INDEX
-                    + "echo \"## $repo\"; git diff --cached " + NUMSTAT + " \"$base\"" + pathspec + "; echo; "
+                    + "echo \"## $repo\"; git " + numstat + " \"$base\"" + pathspec + "; echo; "
                     + "rm -f \"$idx\" ); done < \"$D/base.txt\"; echo ---";
         }
         return "D=" + d + "; [ -s \"$D/base.txt\" ] || { echo 'no git repository was found where the task started'; exit 0; }; "
                 + "out=$(mktemp); stat=$(mktemp); "
                 + "while read -r base repo; do ( cd \"$repo\" || exit 0; "
                 + DIFF_INDEX
-                + "{ echo \"## $repo\"; git diff --cached " + NUMSTAT + " \"$base\"" + pathspec + "; echo; } >> \"$stat\"; "
+                + "{ echo \"## $repo\"; git " + numstat + " \"$base\"" + pathspec + "; echo; } >> \"$stat\"; "
                 + "git diff --cached --src-prefix=a/ --dst-prefix=b/ \"$base\"" + pathspec + " >> \"$out\"; "
                 + "rm -f \"$idx\" ); done < \"$D/base.txt\"; "
-                + printStat + "echo ---; "
+                + "cat \"$stat\"; echo ---; "
                 + "if [ $(stat -c %s \"$out\") -gt " + maxBytes + " ]; then echo \"(too large: $(stat -c %s \"$out\") bytes)\"; "
                 + "else cat \"$out\"; fi; rm -f \"$out\" \"$stat\"";
     }
 
     /**
-     * {@link #diff} for a model to read in the instance ({@code ask}): every change, with each
-     * NUL-ended stat record on a line of its own. Only the stat is translated, never the patch.
+     * {@link #diff} for a model to read in the instance ({@code ask}): every change, one stat
+     * record per line, git C-quoting a path that holds a control character (as {@link Diff}
+     * does), so no file name can forge a line; other names stay as they are.
      */
     static String diffForReading(String taskId, String path) {
-        return diff(taskId, path, Integer.MAX_VALUE, false, "tr '\\0' '\\n' < \"$stat\"; ");
+        return diff(taskId, path, Integer.MAX_VALUE, false, READABLE_NUMSTAT);
     }
 
     /**
@@ -431,7 +432,10 @@ final class TaskScripts {
      * file name can forge one ({@code -} counts for a binary file). Without renames, as a rename
      * touches two paths and a program comparing what tasks touch needs both.
      */
-    private static final String NUMSTAT = "--no-renames --numstat -z";
+    private static final String NUMSTAT = "diff --cached --no-renames --numstat -z";
+
+    /** {@link #NUMSTAT} with newline-ended records, for a model to read. */
+    private static final String READABLE_NUMSTAT = "-c core.quotePath=false diff --cached --no-renames --numstat";
 
     /**
      * A throwaway index holding the working tree, so a diff against it covers uncommitted and

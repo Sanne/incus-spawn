@@ -119,4 +119,15 @@ class IncusInstanceBackendTest {
         assertFalse(listed.containsKey(InstanceBackend.STATUS));
         assertTrue(InstanceBackend.running(listed), "asked, as the fake backend's instances are");
     }
+
+    @Test
+    void aPreflightRefusalIsRefusedNotUnavailable() {
+        // The user has to act on it (here: free the name), so a client must not retry it as is.
+        when(incus.exists("dev")).thenReturn(true);
+        var info = new InstanceBackend.TemplateInfo("tpl-a", "", true, false, java.util.List.of(), null, false,
+                java.util.Map.of());
+        var e = assertThrows(ToolError.class, () -> backend.create(info, "dev", java.util.Map.of()));
+        assertEquals(ToolError.Code.REFUSED, e.code);
+        assertTrue(e.getMessage().contains("already exists"), e.getMessage());
+    }
 }
