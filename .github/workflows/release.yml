@@ -53,7 +53,7 @@ jobs:
             os: linux
             arch: aarch64
             graalvm-version: '25.4'
-          - runner: macos-14
+          - runner: macos-15
             os: macos
             arch: aarch64
             graalvm-version: '25.4'
