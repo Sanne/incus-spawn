@@ -404,6 +404,49 @@ inline ANSI escapes, and do not leave a `Doing X...` line dangling. Pure
 reports/tables and interactive prompts (e.g. `proxy` status, `clean` summaries,
 the TUI) are not step sequences and stay as plain output.
 
+### Output for scripts: `--format=table|plain|json`
+
+A script driving isx needs output it can parse, and the human output is the wrong thing to
+parse: padded columns, a header, ages like `3h ago` that contain a space, prose when the list
+is empty. So query commands take `--format` (#1036), through one shared helper,
+`OutputFormat` (`common/.../util/OutputFormat.java`), rather than each inventing its own.
+
+- **`table`** is the human output and the default. It may change in any release.
+- **`plain`** is one record per line, tab-separated, `-` for an empty field, with no header,
+  padding, colour or glyph, and no output at all for no results.
+- **`json`** is an array of objects (one object for a single-item command); an absent value is
+  `null`, times are ISO-8601 with their offset, sizes are bytes.
+- **The contract**: `plain` and `json` fields may be added at the end, never renamed, removed or
+  reordered. Results go to stdout and only results: errors and diagnostics go to stderr.
+
+A command resolves its `--format`/`--plain` with `OutputFormat.resolve`, builds each record
+once, as an ordered map of field name to value, and hands the list to `OutputFormat.printPlain`
+or `printJson`. Both machine formats print the same map, so the
+field order of `plain` is the field order of `json` and the two cannot drift apart. Maps rather
+than records are what Jackson serializes without reflection registration in the native image.
+
+**`isx list` from the CLI is cheap.** Outside the TUI it reads the instance listing once
+(`GET /1.0/instances?recursion=2`) and nothing else: no definition reload, tool loader, pool
+or btrfs probes, which the TUI's `reloadData()` runs and a script polling `isx list` should
+not pay for. `-q` reads at `recursion=1`: names and states need no live state, and shell
+completion runs it on every TAB. `ListCommandOutputTest` pins both requests. The `created` time
+comes from `Metadata.createdIso`, next to `Metadata.now()` which writes the stamp, so every
+command that prints one prints the same instant. It tells templates apart by the
+`base` type every build stamps on them, so it needs no definitions, and never by the `tpl-`
+name prefix: a branch may be called `tpl-anything`. Incus instances isx did not create (no isx
+metadata) are not listed. `-q`/`--quiet` prints names only, and `--status=running|stopped`
+filters.
+
+**`isx instances` is deprecated.** It listed every Incus instance not named `tpl-*`, which
+disagreed with `isx list` both ways. Completion scripts installed by older releases call it by
+name, so it stays, hidden, as an alias for `isx list -q` until a later release removes it; the
+scripts this release generates call `isx list -q`.
+
+**Not yet covered**: the other query commands (`templates`, `tools`, `account`, `proxy status`,
+`doctor`, `vm status`, `update-base --list`), and clean stdout for the commands that act
+(`BuildOutput` colour off a terminal and under `NO_COLOR`, warnings to stderr). Each adopts the
+same helper and contract when it gains `--format`.
+
 ### Resource Limits (Adaptive)
 
 Detected at branch time from host resources (`ResourceLimits`):
