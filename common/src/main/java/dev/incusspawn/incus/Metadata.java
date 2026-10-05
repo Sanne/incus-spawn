@@ -171,6 +171,23 @@ public final class Metadata {
         return now();
     }
 
+    /**
+     * A {@link #now()} stamp, which is local time, as ISO-8601 with the offset that makes it an
+     * instant, to the second: what machine-readable output shows. A legacy date-only stamp stays a
+     * date, one that does not parse is passed through, and an empty one is {@code null}.
+     */
+    public static String createdIso(String created, java.time.ZoneId zone) {
+        if (created.isEmpty()) return null;
+        if (!created.contains("T")) return created;
+        try {
+            return LocalDateTime.parse(created, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+                    .truncatedTo(ChronoUnit.SECONDS).atZone(zone)
+                    .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        } catch (java.time.format.DateTimeParseException e) {
+            return created;
+        }
+    }
+
     public static String ageDescription(String created) {
         return ageDescription(created, LocalDateTime.now());
     }

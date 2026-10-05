@@ -104,4 +104,14 @@ class MetadataTest {
         }
         assertNotEquals(key, Metadata.ageRefreshKey(t.plusMinutes(1)));
     }
+
+    @Test
+    void createdIsoIsAnInstantToTheSecond() {
+        var zone = java.time.ZoneOffset.ofHours(2);
+        assertEquals("2026-10-05T10:15:30+02:00", Metadata.createdIso("2026-10-05T10:15:30.123456789", zone));
+        assertEquals("2026-10-05T11:00:00+02:00", Metadata.createdIso("2026-10-05T11:00", zone));
+        assertEquals("2026-09-01", Metadata.createdIso("2026-09-01", zone), "a legacy date-only stamp stays a date");
+        assertEquals("garbleTd", Metadata.createdIso("garbleTd", zone));
+        assertNull(Metadata.createdIso("", zone));
+    }
 }

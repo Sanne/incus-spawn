@@ -22,6 +22,7 @@ import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -97,13 +98,21 @@ import java.util.Optional;
 )
 public class ListCommand extends BaseCommand {
 
-    // Deprecated: `isx list` is always plain now, so this flag is a no-op kept only so existing
-    // scripts that pass it keep working. The bare `isx` command (no subcommand) opens the TUI.
-    @Option(name = "plain", hasValue = false, description = "Deprecated: plain output is the default for 'isx list' (no-op).")
+    // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+    @Option(name = "format", description = "Output format: table (default), plain or json")
+    String format;
+
+    @Option(name = "plain", hasValue = false, description = "Same as --format=plain")
     boolean plain;
 
+    @Option(shortName = 'q', name = "quiet", hasValue = false, description = "Print instance names only, one per line")
+    boolean quiet;
+
+    @Option(name = "status", description = "Only instances in this state: running or stopped")
+    String status;
+
     // True only on the bare `isx` no-subcommand path (via executeDirect), which opens the TUI.
-    // When 'list' is invoked explicitly, output is always plain.
+    // When 'list' is invoked explicitly, it prints the listing and never opens the TUI.
     private boolean launchedAsDefault;
 
     private IncusClient incus;
@@ -368,30 +377,85 @@ public class ListCommand extends BaseCommand {
     @Override
     protected CommandResult doExecute() {
         this.incus = RuntimeServices.incus();
-        this.toolDefLoader = RuntimeServices.toolDefLoader();
-        this.cdiTools = RuntimeServices.toolSetups();
-        this.backgroundTasks = RuntimeServices.backgroundTasks();
-        this.lockManager = RuntimeServices.lockManager();
-        // Bare `isx` opens the TUI; the explicit `list` command is always plain (it's a CLI listing).
+        // Bare `isx` opens the TUI; the explicit `list` command prints the listing, and nothing
+        // else: a script may poll it, so it reads Incus once and leaves the definitions alone.
         if (!launchedAsDefault) {
             try {
-                reloadData();
+                printListing(incus, System.out, java.time.ZoneId.systemDefault());
             } catch (IncusException e) {
                 System.err.println("Error: " + e.getMessage());
                 return CommandResult.FAILURE;
             }
+            return CommandResult.SUCCESS;
         }
-        if (!launchedAsDefault) {
-            if (entries.isEmpty() && templateEntries.stream().noneMatch(t -> !"not built".equals(t.buildStatus))) {
-                System.out.println("No incus-spawn environments found.");
-                System.out.println("Run 'isx build tpl-java' to create your first template.");
-            } else {
-                printPlain(entries);
-            }
-        } else {
-            runTuiLoop();
-        }
+        this.toolDefLoader = RuntimeServices.toolDefLoader();
+        this.cdiTools = RuntimeServices.toolSetups();
+        this.backgroundTasks = RuntimeServices.backgroundTasks();
+        this.lockManager = RuntimeServices.lockManager();
+        runTuiLoop();
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * {@code isx list} outside the TUI: one instance listing from Incus, in the format asked for.
+     * Templates are told apart by the type every build stamps on them, never by a name prefix,
+     * so this needs no definitions; Incus instances isx did not create are not listed.
+     */
+    void printListing(IncusClient incus, java.io.PrintStream out, java.time.ZoneId zone) {
+        var outputFormat = OutputFormat.resolve(format, plain);
+        if (quiet && (plain || format != null)) {
+            throw new IllegalArgumentException("--quiet prints names only; it cannot be combined with --format or --plain");
+        }
+        var wanted = statusFilter(status);
+
+        // Names and states need no live state: recursion=1 spares Incus gathering network and
+        // disk usage for every running instance, on every TAB the completion scripts answer.
+        var all = collectEntries(quiet ? incus.listJsonConfig() : incus.listJson());
+        var instances = all.stream()
+                .filter(i -> !Metadata.TYPE_BASE.equals(i.type))
+                .filter(i -> wanted == null || wanted.equalsIgnoreCase(i.status))
+                .toList();
+        if (quiet) {
+            instances.forEach(i -> out.println(i.name));
+            return;
+        }
+        switch (outputFormat) {
+            case PLAIN -> OutputFormat.printPlain(out, listingRecords(instances, zone));
+            case JSON -> OutputFormat.printJson(out, listingRecords(instances, zone));
+            case TABLE -> {
+                if (all.isEmpty()) {
+                    out.println("No incus-spawn environments found.");
+                    out.println("Run 'isx build tpl-java' to create your first template.");
+                } else {
+                    printTable(instances, out);
+                }
+            }
+        }
+    }
+
+    private static String statusFilter(String status) {
+        if (status == null) return null;
+        var value = status.strip().toLowerCase(java.util.Locale.ROOT);
+        if (!value.equals("running") && !value.equals("stopped")) {
+            throw new IllegalArgumentException("unknown status '" + status + "': expected running or stopped");
+        }
+        return value;
+    }
+
+    /** The fields of {@code isx list --format=plain|json}, in order: add to the end, never rename. */
+    private static List<Map<String, Object>> listingRecords(List<InstanceInfo> instances, java.time.ZoneId zone) {
+        var records = new ArrayList<Map<String, Object>>();
+        for (var i : instances) {
+            var record = new java.util.LinkedHashMap<String, Object>();
+            record.put("name", i.name);
+            record.put("status", i.status.toLowerCase(java.util.Locale.ROOT));
+            record.put("ipv4", i.ipv4.isEmpty() ? null : i.ipv4);
+            record.put("parent", i.parent.isEmpty() ? null : i.parent);
+            record.put("runtime", i.runtime);
+            record.put("created", Metadata.createdIso(i.created, zone));
+            records.add(record);
+        }
+        return records;
     }
 
     // --- TUI lifecycle ---
@@ -529,7 +593,7 @@ public class ListCommand extends BaseCommand {
                         frame -> render(frame, instanceTableState));
             } catch (Exception e) {
                 System.err.println("TUI unavailable: " + e.getMessage());
-                printPlain(entries);
+                printTable(entries, System.out);
                 return;
             } finally {
                 ProxyLog.setSuppressStderr(false);
@@ -5576,9 +5640,13 @@ public class ListCommand extends BaseCommand {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private List<InstanceInfo> collectEntries() {
+        return collectEntries(incus.listJson());
+    }
+
+    /** The isx-managed instances in an instance listing, templates included. */
+    private static List<InstanceInfo> collectEntries(String listingJson) {
         try {
-            var jsonStr = incus.listJson();
-            var nodes = JSON.readTree(jsonStr);
+            var nodes = JSON.readTree(listingJson);
             var entryList = new ArrayList<InstanceInfo>();
             for (var node : nodes) {
                 var config = node.path("config");
@@ -5663,20 +5731,20 @@ public class ListCommand extends BaseCommand {
         return any ? total : -1;
     }
 
-    private void printPlain(List<InstanceInfo> items) {
+    private static void printTable(List<InstanceInfo> items, java.io.PrintStream out) {
         var nameWidth = Math.max(20, items.stream().mapToInt(e -> e.name.length()).max().orElse(20));
         var fmt = "  %-" + nameWidth + "s  %-10s  %-15s  %-20s  %-10s  %s%n";
 
-        System.out.printf(fmt, "NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE");
-        System.out.printf(fmt, "-".repeat(nameWidth), "----------", "---------------",
+        out.printf(fmt, "NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE");
+        out.printf(fmt, "-".repeat(nameWidth), "----------", "---------------",
                 "--------------------", "----------", "---");
         for (var entry : items) {
             var age = entry.created.isEmpty() ? "-" : Metadata.ageDescription(entry.created);
             var parent = entry.parent.isEmpty() ? "-" : entry.parent;
             var ip = entry.ipv4.isEmpty() ? "-" : entry.ipv4;
-            System.out.printf(fmt, entry.name, entry.status, ip, parent, entry.runtime, age);
+            out.printf(fmt, entry.name, entry.status, ip, parent, entry.runtime, age);
         }
-        System.out.println();
+        out.println();
     }
 
     // Package-private so canUseReferencedModel(...) can be unit-tested with hand-built rows.
