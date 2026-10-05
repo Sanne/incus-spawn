@@ -250,7 +250,8 @@ public class ProxyMain implements QuarkusApplication {
      */
     private static void exitForRestart(GatewayMoved moved, MitmProxy proxy, AtomicInteger exitCode) {
         if (!exitCode.compareAndSet(0, 1)) return;
-        ProxyLog.warn(moved.getMessage() + "; stopping so the proxy service restarts on the new address");
+        ProxyLog.warn(moved.getMessage() + "; stopping (exit 1) to start again on the new address."
+                + " The proxy service restarts it; a proxy run in the foreground must be started again by hand.");
         proxy.stop();
     }
 

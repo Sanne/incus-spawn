@@ -673,6 +673,8 @@ public class MitmProxy {
                     ProxyLog.warn("DNS override update failed during reload: " + dnsEx.getMessage());
                 }
             }
+            // The writer stops the proxy when the bridge has moved (#966): this reload ends with it.
+            if (stopLatch.getCount() == 0) return;
             // Last, not in useConfig(): a reload that fails part-way keeps the old fingerprint,
             // so /health reports drift and the next command restarts the proxy.
             configFingerprint = loaded.fingerprint();
