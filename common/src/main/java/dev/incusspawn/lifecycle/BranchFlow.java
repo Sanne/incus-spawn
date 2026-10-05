@@ -139,8 +139,8 @@ public final class BranchFlow {
                     + "Wayland session, so it is off.";
         }
         var gui = wantsGui && guiNote == null;
-        // A template's own stamp records how it was built, never a per-branch choice; any other
-        // source carries how it was branched, and its type is inherited even through --no-kvm (#1034)
+        // A template's instance-mode records how it was built, never a per-branch choice; any other
+        // source decides by its own kvm-enabled, since it inherits instance-mode even through --no-kvm (#1034)
         var type = config.path(Metadata.TYPE).asText("");
         var template = def != null || Metadata.TYPE_BASE.equals(type) || Metadata.TYPE_PROJECT.equals(type);
         var kvm = template
