@@ -111,6 +111,11 @@ public class BranchCommand extends BaseCommand {
 
         BuildOutput.success(name + " is ready.");
         if (noStart) return CommandResult.SUCCESS;
+        if (!IncusClient.hasTerminal()) {
+            // The branch is done; only the shell needs a terminal (#1027).
+            System.out.println("No terminal, so no shell opened. From a terminal: isx shell " + name);
+            return CommandResult.SUCCESS;
+        }
 
         var shellPrep = prefetched.toShellPrep();
         if (!shell) {

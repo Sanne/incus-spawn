@@ -585,7 +585,19 @@ public class IncusClient {
         interactiveShell(container, user, prep, ShellMenu.NONE);
     }
 
+    /**
+     * Whether stdin and stdout are both a terminal, which an interactive shell needs. Callers
+     * that can do without the shell check this first; {@link #interactiveShell} throws
+     * {@link NoTerminalForShellException} otherwise.
+     */
+    public static boolean hasTerminal() {
+        // Since JDK 22 System.console() can be non-null with stdin redirected; isTerminal() says which.
+        var console = System.console();
+        return console != null && console.isTerminal();
+    }
+
     public void interactiveShell(String container, String user, ShellPrep prep, ShellMenu menu) {
+        if (!hasTerminal()) throw new NoTerminalForShellException(container);
         System.out.print("\033]0;isx:" + container + "\007");
         System.out.flush();
 

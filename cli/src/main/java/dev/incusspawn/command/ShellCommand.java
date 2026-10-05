@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.NoTerminalForShellException;
 import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.tool.ShellMenu;
 import org.aesh.command.CommandDefinition;
@@ -21,6 +22,8 @@ public class ShellCommand extends BaseCommand {
 
     @Override
     protected CommandResult doExecute() throws Exception {
+        // Refuse before starting the instance: without a terminal there is no shell to open.
+        if (!IncusClient.hasTerminal()) throw new NoTerminalForShellException(name);
         var incus = RuntimeServices.incus();
 
         var parent = InstancePrep.prepareInstance(incus, name);

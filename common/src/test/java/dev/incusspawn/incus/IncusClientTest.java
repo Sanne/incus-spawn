@@ -160,4 +160,21 @@ class IncusClientTest {
                 "no su -: the user's profile never runs before isx's probe");
         assertEquals("/home/agentuser", exec.environment().get("HOME"));
     }
+
+    @Test
+    void anInteractiveShellWithoutATerminalStartsNoExec() {
+        // Surefire's fork has pipes, not a terminal, on stdin and stdout: the case of #1027.
+        var console = System.console();
+        org.junit.jupiter.api.Assumptions.assumeTrue(console == null || !console.isTerminal());
+        var daemon = new FakeIncusDaemon().container("dev", Map.of());
+        var prep = IncusClient.ShellPrep.fromPrefetched(null, null, null, null, true, null);
+
+        var e = assertThrows(IncusException.class,
+                () -> daemon.client().interactiveShell("dev", "agentuser", prep));
+
+        assertTrue(e.getMessage().contains("no terminal"), e.getMessage());
+        // A PTY exec is never started, so there is no session to lose and nothing to reconnect to
+        assertEquals(java.util.List.of(), daemon.execs());
+        assertEquals(java.util.List.of(), daemon.requests());
+    }
 }

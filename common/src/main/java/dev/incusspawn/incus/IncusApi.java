@@ -693,6 +693,32 @@ class IncusApi {
     boolean execPty(String instance, List<String> command,
                     Integer uid, Integer gid, String cwd, Map<String, String> env,
                     int width, int height, ShellStatusBar statusBar) {
+        // Open a dedicated fd for stdin reading so we can close it to
+        // cleanly stop the stdinThread when the PTY session ends.
+        // Using System.in would leave the thread blocked on read()
+        // after the session — it then races with the TUI's input
+        // reader and eats the first keypress.
+        // Opened before the exec is posted: without a controlling terminal there is no session to
+        // start, and failing later would read as a lost connection and be retried (#1027).
+        java.nio.channels.FileChannel stdinChannel;
+        try {
+            stdinChannel = java.nio.channels.FileChannel.open(
+                    Path.of("/dev/tty"), java.nio.file.StandardOpenOption.READ);
+        } catch (IOException e) {
+            // No cause: an I/O failure in the chain is what the reconnect loop retries.
+            throw new NoTerminalForShellException(instance);
+        }
+        try {
+            return execPty(instance, command, uid, gid, cwd, env, width, height, statusBar, stdinChannel);
+        } finally {
+            try { stdinChannel.close(); } catch (IOException ignored) {}
+        }
+    }
+
+    private boolean execPty(String instance, List<String> command,
+                            Integer uid, Integer gid, String cwd, Map<String, String> env,
+                            int width, int height, ShellStatusBar statusBar,
+                            java.nio.channels.FileChannel stdinChannel) {
         var effectiveHeight = statusBar != null ? statusBar.effectiveHeight(height) : height;
         var exec = postExec(instance, command, uid, gid, cwd, env, true, width, effectiveHeight);
 
@@ -772,13 +798,6 @@ class IncusApi {
                     } catch (InterruptedException ignored) {}
                 });
 
-                // Open a dedicated fd for stdin reading so we can close it to
-                // cleanly stop the stdinThread when the PTY session ends.
-                // Using System.in would leave the thread blocked on read()
-                // after the session — it then races with the TUI's input
-                // reader and eats the first keypress.
-                var stdinChannel = java.nio.channels.FileChannel.open(
-                        Path.of("/dev/tty"), java.nio.file.StandardOpenOption.READ);
                 var f12Parser = inputParserFor(statusBar);
                 var stdinThread = Thread.ofPlatform().daemon().start(() -> {
                     try {
@@ -821,7 +840,6 @@ class IncusApi {
                     // closes the channel and aborts the read (InterruptibleChannel contract).
                     stdinThread.interrupt();
                     try { stdinThread.join(500); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
-                    try { stdinChannel.close(); } catch (IOException ignored) {}
                     keepaliveThread.interrupt();
                     resizeThread.interrupt();
                     if (statusBar != null) {
