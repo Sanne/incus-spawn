@@ -11,10 +11,12 @@ import java.util.Map;
  * One tool the server offers. Plain data plus a handler, so the tool list is ordinary code
  * with no annotation processing or reflection.
  *
+ * @param outputSchema what its {@link ToolResult#structured()} holds: every tool declares one, and
+ *                     every result it returns matches it
  * @param annotations MCP tool annotations ({@code readOnlyHint}, {@code destructiveHint}, ...)
  */
-record McpTool(String name, String description, ObjectNode inputSchema, ObjectNode annotations,
-               Handler handler) {
+record McpTool(String name, String description, ObjectNode inputSchema, ObjectNode outputSchema,
+               ObjectNode annotations, Handler handler) {
 
     @FunctionalInterface
     interface Handler {
@@ -30,6 +32,7 @@ record McpTool(String name, String description, ObjectNode inputSchema, ObjectNo
         node.put("name", name);
         node.put("description", description);
         node.set("inputSchema", inputSchema);
+        node.set("outputSchema", outputSchema);
         node.set("annotations", annotations);
         return node;
     }
@@ -49,14 +52,14 @@ record McpTool(String name, String description, ObjectNode inputSchema, ObjectNo
 
         String requireString(String name) {
             var value = string(name);
-            if (value == null || value.isBlank()) throw new ToolError("missing required argument '" + name + "'");
+            if (value == null || value.isBlank()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "missing required argument '" + name + "'");
             return value;
         }
 
         String string(String name) {
             var v = node.get(name);
             if (v == null || v.isNull()) return null;
-            if (!v.isTextual()) throw new ToolError("argument '" + name + "' must be a string");
+            if (!v.isTextual()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be a string");
             return v.asText();
         }
 
@@ -64,7 +67,7 @@ record McpTool(String name, String description, ObjectNode inputSchema, ObjectNo
             var v = node.get(name);
             if (v == null || v.isNull()) return null;
             if (!v.canConvertToInt() || !v.isIntegralNumber()) {
-                throw new ToolError("argument '" + name + "' must be an integer");
+                throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an integer");
             }
             return v.asInt();
         }
@@ -72,7 +75,7 @@ record McpTool(String name, String description, ObjectNode inputSchema, ObjectNo
         boolean bool(String name) {
             var v = node.get(name);
             if (v == null || v.isNull()) return false;
-            if (!v.isBoolean()) throw new ToolError("argument '" + name + "' must be a boolean");
+            if (!v.isBoolean()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be a boolean");
             return v.asBoolean();
         }
 
@@ -80,9 +83,9 @@ record McpTool(String name, String description, ObjectNode inputSchema, ObjectNo
             var v = node.get(name);
             var list = new java.util.ArrayList<String>();
             if (v == null || v.isNull()) return list;
-            if (!v.isArray()) throw new ToolError("argument '" + name + "' must be an array of strings");
+            if (!v.isArray()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an array of strings");
             for (var e : v) {
-                if (!e.isTextual()) throw new ToolError("argument '" + name + "' must be an array of strings");
+                if (!e.isTextual()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an array of strings");
                 list.add(e.asText());
             }
             return list;
@@ -92,10 +95,10 @@ record McpTool(String name, String description, ObjectNode inputSchema, ObjectNo
             var v = node.get(name);
             var map = new LinkedHashMap<String, String>();
             if (v == null || v.isNull()) return map;
-            if (!v.isObject()) throw new ToolError("argument '" + name + "' must be an object of strings");
+            if (!v.isObject()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an object of strings");
             for (var e : v.properties()) {
                 if (!e.getValue().isTextual()) {
-                    throw new ToolError("argument '" + name + "." + e.getKey() + "' must be a string");
+                    throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "." + e.getKey() + "' must be a string");
                 }
                 map.put(e.getKey(), e.getValue().asText());
             }

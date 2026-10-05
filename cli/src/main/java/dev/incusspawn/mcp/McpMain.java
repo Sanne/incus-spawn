@@ -98,10 +98,10 @@ public final class McpMain {
 
     /** Before {@code isx init} has run, every tool explains that instead of failing obscurely. */
     private static List<McpTool> requireInit(List<McpTool> tools, BooleanSupplier initialized) {
-        return tools.stream().map(t -> new McpTool(t.name(), t.description(), t.inputSchema(),
+        return tools.stream().map(t -> new McpTool(t.name(), t.description(), t.inputSchema(), t.outputSchema(),
                 t.annotations(), (args, ctx) -> {
                     if (!initialized.getAsBoolean()) {
-                        throw new ToolError("isx is not set up on this machine yet. "
+                        throw new ToolError(ToolError.Code.REFUSED, "isx is not set up on this machine yet. "
                                 + "Ask the user to run: isx init");
                     }
                     return t.handler().call(args, ctx);

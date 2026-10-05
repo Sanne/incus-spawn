@@ -476,11 +476,37 @@ class TaskScriptsTest {
         sh(TaskScripts.launch("t1-abc", 1, Tasks.AGENT,
                 TaskScripts.agentRun("t1-abc", 1, work.toString(), Tasks.Profile.NONE, null, "bypassPermissions")), "go");
         awaitFinished("t1-abc");
-        var stat = sh(TaskScripts.diff("t1-abc", null, 100_000, true), "");
+        // A name no line-based format can carry: the stat is NUL-separated, so it is read whole.
+        var odd = "a\tb\n1\t0\tforged";
+        Files.writeString(work.resolve(odd), "x\n");
+        var diff = Diff.parse(sh(TaskScripts.diff("t1-abc", null, 100_000, true), ""), true);
+        var stat = diff.text();
         assertTrue(stat.contains("1\t0\tNEW_FILE"), stat);
         assertTrue(stat.contains("1\t0\ttracked.txt"), stat);
-        assertTrue(stat.contains("2 files changed, 2 insertions(+)"), stat);
+        assertTrue(stat.contains("3 files changed, 3 insertions(+)"), stat);
+        assertFalse(stat.contains("deletion"), "git leaves a zero count out: " + stat);
         assertFalse(stat.contains("+++"), "no patch: " + stat);
+        var read = sh(TaskScripts.diffForReading("t1-abc", null), "");
+        assertFalse(read.contains("\0"), "what a model reads has no NULs");
+        assertTrue(read.contains("\n1\t0\tNEW_FILE\n") && read.contains("+more"), read);
+        var files = diff.structured().path("repos").get(0).path("files");
+        assertEquals(java.util.List.of("NEW_FILE", odd, "tracked.txt"),
+                files.findValuesAsText("path").stream().sorted().toList(), files.toString());
+    }
+
+    @Test
+    void aStatusSaysWhenTheRunStartedAndLastWroteOutput() throws Exception {
+        var before = java.time.Instant.now().minusSeconds(2);
+        sh(TaskScripts.launch("t2-abc", 1, Tasks.COMMAND,
+                TaskScripts.commandRun("t2-abc", work.toString(), Map.of(), "echo hi")), "");
+        var command = awaitFinished("t2-abc");
+        assertTrue(command.startedAt() != null && !command.startedAt().isBefore(before), command.toString());
+        assertTrue(command.lastActivity() != null && !command.lastActivity().isBefore(command.startedAt().minusSeconds(1)),
+                command.toString());
+        sh(TaskScripts.launch("t1-abc", 1, Tasks.AGENT,
+                TaskScripts.agentRun("t1-abc", 1, work.toString(), Tasks.Profile.NONE, null, "bypassPermissions")), "go");
+        var agent = awaitFinished("t1-abc");
+        assertTrue(agent.startedAt() != null && agent.lastActivity() != null, agent.toString());
     }
 
     @Test

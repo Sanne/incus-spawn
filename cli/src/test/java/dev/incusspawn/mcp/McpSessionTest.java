@@ -76,7 +76,7 @@ class McpSessionTest {
     void anInstanceIncusCannotAnswerForIsStillHeld() {
         var s = session(3);
         var name = create(s, backend);
-        backend.metadataFailure = new ToolError("cannot read it from Incus right now");
+        backend.metadataFailure = new ToolError(ToolError.Code.UNAVAILABLE, "cannot read it from Incus right now");
         assertEquals(McpSession.Hold.HELD, s.hold(name));
         assertThrows(RuntimeException.class, () -> s.requireOwned(name));
         backend.metadataFailure = null;

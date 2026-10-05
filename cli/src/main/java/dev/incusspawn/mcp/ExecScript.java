@@ -37,7 +37,7 @@ final class ExecScript {
                 .append(quote("echo $$ > " + RUN_DIR + "/" + runId + ".pid; exec \"$@\""))
                 .append(" isx-exec ");
         if (timeoutSeconds != null) {
-            if (timeoutSeconds <= 0) throw new ToolError("timeout_seconds must be positive");
+            if (timeoutSeconds <= 0) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "timeout_seconds must be positive");
             sb.append("timeout --kill-after=10s ").append(timeoutSeconds).append("s ");
         }
         sb.append("bash -c ").append(quote(command));
@@ -68,7 +68,7 @@ final class ExecScript {
     static void appendExports(StringBuilder sb, Map<String, String> env, String separator) {
         for (var e : env.entrySet()) {
             if (!ENV_KEY.matcher(e.getKey()).matches()) {
-                throw new ToolError("invalid environment variable name: " + e.getKey());
+                throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "invalid environment variable name: " + e.getKey());
             }
             sb.append("export ").append(e.getKey()).append('=').append(quote(e.getValue())).append(separator);
         }

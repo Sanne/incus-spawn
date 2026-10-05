@@ -1,6 +1,8 @@
 package dev.incusspawn.mcp;
 
-
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.incus.Metadata;
 
 import java.io.ByteArrayInputStream;
@@ -10,6 +12,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
@@ -67,6 +70,7 @@ final class McpTools {
                         + "cloned; credentials are injected by a host proxy and never enter the instance. "
                         + "Only templates the user approved are listed.",
                 Schema.object().build(),
+                OutputSchemas.listTemplates(),
                 McpTool.annotations(true, false, true),
                 (args, ctx) -> listTemplates()));
         tools.add(new McpTool("create_instance",
@@ -86,12 +90,14 @@ final class McpTools {
                         .string("purpose", "What the instance is for, shown by list_instances to you and to "
                                 + "later sessions (one line, e.g. '#870 implement')", false)
                         .build(),
+                OutputSchemas.createInstance(),
                 McpTool.annotations(false, false, false),
                 (args, ctx) -> createInstance(args, ctx)));
         tools.add(new McpTool("list_instances",
                 "List your instances: the ones this session holds (with their tasks), and the ones "
                         + "other sessions of yours hold or left orphaned, which adopt_instance takes over.",
                 Schema.object().build(),
+                OutputSchemas.listInstances(),
                 McpTool.annotations(true, false, true),
                 (args, ctx) -> listInstances()));
         tools.add(new McpTool("adopt_instance",
@@ -103,6 +109,7 @@ final class McpTools {
                         .bool("force", "Take it even though the session holding it is still running "
                                 + "(only if that session is stuck)")
                         .build(),
+                OutputSchemas.adoptInstance(),
                 McpTool.annotations(false, false, true),
                 this::adoptInstance));
         tools.add(new McpTool("exec",
@@ -131,6 +138,7 @@ final class McpTools {
                         .bool("background", "Run as a background task and return its task_id "
                                 + "immediately (stdin, timeout_seconds and ask do not apply)")
                         .build(),
+                OutputSchemas.exec(),
                 McpTool.annotations(false, false, false),
                 this::exec));
         tools.add(new McpTool("delegate",
@@ -156,6 +164,7 @@ final class McpTools {
                         .string("model", MODEL, false)
                         .integer("max_turns", MAX_TURNS, false)
                         .build(),
+                OutputSchemas.runStarted(),
                 McpTool.annotations(false, false, false),
                 this::delegate));
         tools.add(new McpTool("task_status",
@@ -169,6 +178,7 @@ final class McpTools {
                         .integer("wait_seconds", "Wait up to this long (max " + MAX_WAIT_SECONDS
                                 + ") for the task to finish", false)
                         .build(),
+                OutputSchemas.taskStatus(),
                 McpTool.annotations(true, false, true),
                 this::taskStatus));
         tools.add(new McpTool("wait_any",
@@ -179,6 +189,7 @@ final class McpTools {
                         .integer("timeout_seconds", "Wait up to this long (default and max "
                                 + MAX_WAIT_SECONDS + ")", false)
                         .build(),
+                OutputSchemas.waitAny(),
                 McpTool.annotations(true, false, true),
                 this::waitAny));
         tools.add(new McpTool("task_result",
@@ -191,6 +202,7 @@ final class McpTools {
                         .bool("events", "For an agent, also list what it did last (tools run, messages)")
                         .string("ask", ASK + " (the report, or the command's whole output).", false)
                         .build(),
+                OutputSchemas.taskResult(),
                 McpTool.annotations(true, false, true),
                 (args, ctx) -> taskResult(args)));
         tools.add(new McpTool("send_message",
@@ -204,11 +216,13 @@ final class McpTools {
                         .string("model", "Run this turn and later ones on this model instead (see delegate)", false)
                         .integer("max_turns", "This turn's and later ones' turn budget instead (see delegate)", false)
                         .build(),
+                OutputSchemas.runStarted(),
                 McpTool.annotations(false, false, false),
                 (args, ctx) -> sendMessage(args)));
         tools.add(new McpTool("cancel_task",
                 "Stop a background task and everything it started.",
                 Schema.object().string("task_id", "Task id", true).build(),
+                OutputSchemas.cancelTask(),
                 McpTool.annotations(false, true, true),
                 (args, ctx) -> cancelTask(args)));
         tools.add(new McpTool("get_diff",
@@ -227,6 +241,7 @@ final class McpTools {
                                 + ", max " + MAX_DIFF_BYTES + "); a larger one returns only the "
                                 + "summary, so narrow it with path, or use stat or ask", false)
                         .build(),
+                OutputSchemas.getDiff(),
                 McpTool.annotations(true, false, true),
                 (args, ctx) -> getDiff(args)));
         tools.add(new McpTool("instance_activity",
@@ -247,6 +262,7 @@ final class McpTools {
         tools.add(new McpTool("destroy_instance",
                 "Destroy one of your instances and everything in it.",
                 Schema.object().string("instance", "Instance name", true).build(),
+                OutputSchemas.destroyInstance(),
                 McpTool.annotations(false, true, true),
                 (args, ctx) -> destroyInstance(args)));
         tools.add(new McpTool("stop_instance",
@@ -258,6 +274,7 @@ final class McpTools {
                         .string("instance", "Instance name, from create_instance", true)
                         .bool("force", "Cancel its running tasks and stop it anyway")
                         .build(),
+                OutputSchemas.stopInstance(),
                 McpTool.annotations(false, false, true),
                 (args, ctx) -> stopInstance(args, ctx)));
         tools.add(new McpTool("start_instance",
@@ -265,6 +282,7 @@ final class McpTools {
                 Schema.object()
                         .string("instance", "Instance name, from create_instance", true)
                         .build(),
+                OutputSchemas.startInstance(),
                 McpTool.annotations(false, false, true),
                 (args, ctx) -> startInstance(args, ctx)));
         tools.add(new McpTool("keep_instance",
@@ -272,6 +290,7 @@ final class McpTools {
                         + "result): it is never destroyed as an orphan, and no later session can adopt "
                         + "it. You can keep using it until this session ends.",
                 Schema.object().string("instance", "Instance name", true).build(),
+                OutputSchemas.keepInstance(),
                 McpTool.annotations(false, false, true),
                 (args, ctx) -> keepInstance(args)));
         return tools;
@@ -279,31 +298,30 @@ final class McpTools {
 
     private ToolResult listTemplates() {
         var approved = policy.approved();
-        if (approved.isEmpty()) {
-            return ToolResult.text("No templates are approved for agents. " + TemplatePolicy.HOW_TO_APPROVE);
-        }
         var config = session.config();
-        var list = JsonRpc.JSON.createArrayNode();
+        var result = JsonRpc.JSON.createObjectNode();
+        var list = result.putArray("templates");
         for (var t : approved) {
             var node = list.addObject();
-            node.put("name", t.name());
+            node.put("template", t.name());
             node.put("description", t.description() == null ? "" : t.description());
             node.put("built", t.built());
-            if (t.stale()) node.put("stale", true);
+            node.put("stale", t.stale());
             var tools = node.putArray("tools");
             t.tools().forEach(tools::add);
             node.put("supports_delegate", t.supportsDelegate());
             if (t.supportsDelegate()) {
-                node.put("delegate_permission_mode", permissionMode(t.name()));
+                node.put("permission_mode", permissionMode(t.name()));
                 if (t.delegateModel() != null) node.put("delegate_model", t.delegateModel());
             }
         }
-        var result = JsonRpc.JSON.createObjectNode();
-        result.set("templates", list);
-        result.put("instance_limit", config.maxInstances());
-        result.put("task_limit", config.maxConcurrentTasks());
+        result.put("max_instances", config.maxInstances());
+        result.put("max_concurrent_tasks", config.maxConcurrentTasks());
         result.put("orphan_grace_hours", config.orphanGraceHours());
         if (config.delegateMaxTurns() != null) result.put("delegate_max_turns", config.delegateMaxTurns());
+        if (approved.isEmpty()) {
+            return ToolResult.text("No templates are approved for agents. " + TemplatePolicy.HOW_TO_APPROVE, result);
+        }
         return ToolResult.json(result);
     }
 
@@ -311,14 +329,14 @@ final class McpTools {
         try {
             return session.config().delegatePermissionMode(template);
         } catch (IllegalArgumentException e) {
-            throw new ToolError(e.getMessage() + ". Ask the user to fix it in their config.");
+            throw new ToolError(ToolError.Code.REFUSED, e.getMessage() + ". Ask the user to fix it in their config.");
         }
     }
 
     private ToolResult createInstance(McpTool.Args args, ToolContext ctx) {
         var template = blankToNull(args.string("template"));
         var source = blankToNull(args.string("from_instance"));
-        if ((template == null) == (source == null)) throw new ToolError("give exactly one of template or from_instance");
+        if ((template == null) == (source == null)) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "give exactly one of template or from_instance");
         InstanceBackend.TemplateInfo info;
         InstanceBackend.CreatedInstance created;
         if (template != null) {
@@ -327,7 +345,7 @@ final class McpTools {
         } else {
             var metadata = session.requireOwned(source);
             if (!InstanceBackend.stopped(metadata)) {
-                throw new ToolError("'" + source + "' is " + metadata.getOrDefault(InstanceBackend.STATUS, "running")
+                throw new ToolError(ToolError.Code.WRONG_STATE, "'" + source + "' is " + metadata.getOrDefault(InstanceBackend.STATUS, "running")
                         .toLowerCase(java.util.Locale.ROOT) + ", not stopped. Stop it with stop_instance first: a "
                         + "fork copies its files as they are, and a running instance's are still changing.");
             }
@@ -337,15 +355,17 @@ final class McpTools {
         var node = JsonRpc.JSON.createObjectNode();
         node.put("instance", created.name());
         node.put("template", info.name());
+        // As stored, so it matches what list_instances reports.
+        var purpose = McpSession.checkPurpose(args.string("purpose"));
+        if (purpose != null) node.put("purpose", purpose);
         if (source != null) node.put("forked_from", source);
         if (created.ip() != null) node.put("ip", created.ip());
         node.put("workdir", created.workdir());
         var tools = node.putArray("tools");
         info.tools().forEach(tools::add);
         node.put("supports_delegate", info.supportsDelegate());
-        node.put("note", "Run commands with exec. Destroy the instance with destroy_instance when you "
+        return ToolResult.json(node, "Run commands with exec. Destroy the instance with destroy_instance when you "
                 + "are done: it outlives this session.");
-        return ToolResult.json(node);
     }
 
     private InstanceBackend.CreatedInstance newInstance(InstanceBackend.TemplateInfo template, String hint,
@@ -373,7 +393,7 @@ final class McpTools {
                             removed = "removing the fork failed too (" + cleanup.getMessage()
                                     + "); ask the user to run: isx destroy " + name;
                         }
-                        throw new ToolError("forking " + source + " failed: could not clear its tasks in " + name
+                        throw new ToolError(ToolError.Code.UNAVAILABLE, "forking " + source + " failed: could not clear its tasks in " + name
                                 + " (" + e.getMessage() + "); " + removed + ".");
                     }
                     return created;
@@ -407,15 +427,16 @@ final class McpTools {
     }
 
     private ToolResult listInstances() {
-        var list = JsonRpc.JSON.createArrayNode();
+        var result = JsonRpc.JSON.createObjectNode();
+        var list = result.putArray("instances");
         for (var o : session.instances()) {
             var node = list.addObject();
             node.put("instance", o.name());
             node.put("template", o.template());
             if (o.purpose() != null) node.put("purpose", o.purpose());
             node.put("created", o.created().toString());
-            node.put("status", o.ready() ? "ready" : "creating");
-            if (o.kept()) node.put("kept", true);
+            node.put("state", o.ready() ? "ready" : "creating");
+            node.put("kept", o.kept());
             var owned = node.putArray("tasks");
             tasks.all().stream().filter(t -> t.instance().equals(o.name())).forEach(t -> {
                 var tn = owned.addObject();
@@ -432,21 +453,25 @@ final class McpTools {
             node.put("template", McpSession.templateOf(config));
             var purpose = config.get(Metadata.MCP_PURPOSE);
             if (purpose != null) node.put("purpose", purpose);
+            // othersOf leaves kept instances out today; read from the stamp, the field cannot lie if that changes.
+            node.put("kept", config.containsKey(Metadata.MCP_KEPT));
             if (other.orphaned()) {
-                node.put("status", "orphaned");
+                node.put("state", "orphaned");
                 var since = Orphans.orphanedSince(config);
                 if (since != null) {
                     node.put("orphaned_since", since.toString());
-                    node.put("destroyed_after", since.plus(grace).toString());
+                    node.put("orphan_until", since.plus(grace).toString());
                 }
             } else {
-                node.put("status", "held_by_another_session");
+                node.put("state", "held");
+                // Only a real session id: an unreadable stamp counts as held, but names nobody.
+                SessionId.parse(config.get(Metadata.MCP_SESSION)).ifPresent(holder -> node.put("held_by", holder.toString()));
                 var client = config.getOrDefault(Metadata.MCP_CLIENT, "");
-                node.put("held_by", "isx mcp " + config.getOrDefault(Metadata.MCP_SESSION, "?")
-                        + (client.isEmpty() ? "" : " (" + client + ")"));
+                if (!client.isEmpty()) node.put("held_by_client", client);
             }
+            node.putArray("tasks");
         }
-        return ToolResult.json(list);
+        return ToolResult.json(result);
     }
 
     private ToolResult adoptInstance(McpTool.Args args, ToolContext ctx) {
@@ -458,8 +483,8 @@ final class McpTools {
         node.put("template", adopted.template());
         if (adopted.purpose() != null) node.put("purpose", adopted.purpose());
         node.put("supports_delegate", adopted.supportsDelegate());
+        var ids = node.putArray("tasks");
         try {
-            var ids = node.putArray("tasks");
             tasks.adopt(name).forEach(ids::add);
         } catch (RuntimeException e) {
             node.put("warning", "its tasks could not be read, so their ids do not work here: " + e.getMessage());
@@ -478,15 +503,17 @@ final class McpTools {
         var env = args.stringMap("env");
         var stdin = args.string("stdin");
         if (stdin != null && stdin.getBytes(StandardCharsets.UTF_8).length > MAX_STDIN_BYTES) {
-            throw new ToolError("stdin is limited to " + MAX_STDIN_BYTES + " bytes");
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "stdin is limited to " + MAX_STDIN_BYTES + " bytes");
         }
         var ask = AskScript.checkQuestion(args.string("ask"));
         if (args.bool("background")) {
-            if (ask != null) throw new ToolError("ask does not apply to a background command; set it on task_result");
+            if (ask != null) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "ask does not apply to a background command; set it on task_result");
             var task = tasks.startCommand(name, cwd, env, command);
             McpAuditLog.record(session.id, "exec(background)", name, command, 0, "task=" + task.id());
+            var node = taskNode(task);
+            node.put("background", true);
             return ToolResult.text("Started task " + task.id() + " in " + name
-                    + ". Check it with task_status or wait_any.");
+                    + ". Check it with task_status or wait_any.", node);
         }
         var timeout = args.integer("timeout_seconds");
         var maxOutput = args.integer("max_output_bytes");
@@ -538,6 +565,21 @@ final class McpTools {
         McpAuditLog.record(session.id, ask == null ? "exec" : "exec(ask)", name, command, millis, "exit=" + exit);
 
         var timedOut = timeout != null && (exit == 124 || exit == 137);
+        var node = JsonRpc.JSON.createObjectNode();
+        node.put("background", false);
+        node.put("exit_code", exit);
+        node.put("duration_ms", millis);
+        node.put("timed_out", timedOut);
+        node.put("cancelled", ctx.cancelled());
+        if (answer != null) {
+            node.set("answer", answer(answer));
+        } else {
+            node.put("stdout", out.text());
+            node.put("stderr", err.text());
+            node.put("stdout_bytes", out.total());
+            node.put("stderr_bytes", err.total());
+            node.put("truncated", out.truncated() || err.truncated());
+        }
         var sb = new StringBuilder();
         sb.append("exit_code: ").append(exit);
         if (timedOut) sb.append(" (killed: timeout of ").append(timeout).append("s reached)");
@@ -550,14 +592,14 @@ final class McpTools {
             appendStream(sb, "stdout", out);
             appendStream(sb, "stderr", err);
         }
-        return ToolResult.text(sb.toString());
+        return ToolResult.text(sb.toString(), node);
     }
 
     private String summaryModel() {
         try {
             return session.config().summaryModel();
         } catch (IllegalArgumentException e) {
-            throw new ToolError(e.getMessage() + ". Ask the user to fix it in their config.");
+            throw new ToolError(ToolError.Code.REFUSED, e.getMessage() + ". Ask the user to fix it in their config.");
         }
     }
 
@@ -568,10 +610,17 @@ final class McpTools {
         var exit = backend.exec(instance, AskScript.build(producer, mergeStderr, question, summaryModel()),
                 stdin == null ? null : new ByteArrayInputStream(stdin.getBytes(StandardCharsets.UTF_8)), out, err);
         if (exit != 0) {
-            throw new ToolError("could not ask about it in " + instance + " (exit " + exit + "): "
+            throw new ToolError(ToolError.Code.UNAVAILABLE, "could not ask about it in " + instance + " (exit " + exit + "): "
                     + err.toString(StandardCharsets.UTF_8).strip());
         }
         return AskScript.parse(out.toString(StandardCharsets.UTF_8));
+    }
+
+    private static ObjectNode answer(AskScript.Answer answer) {
+        var node = JsonRpc.JSON.createObjectNode();
+        node.put("text", answer.text());
+        node.put("summarised", answer.summarised());
+        return node;
     }
 
     private void appendAnswer(StringBuilder sb, AskScript.Answer answer) {
@@ -601,7 +650,7 @@ final class McpTools {
         var instance = args.string("instance");
         var template = args.string("template");
         if ((instance == null) == (template == null)) {
-            throw new ToolError("give exactly one of instance or template");
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "give exactly one of instance or template");
         }
         if (template != null) {
             var info = policy.require(template);
@@ -617,7 +666,7 @@ final class McpTools {
         var name = instance;
         var entry = session.instances().stream().filter(o -> o.name().equals(name)).findFirst();
         if (entry.isEmpty() || !entry.get().supportsDelegate()) {
-            throw new ToolError("the template " + name + " came from has no Claude Code to delegate to. "
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "the template " + name + " came from has no Claude Code to delegate to. "
                     + "Use a template whose list_templates entry has supports_delegate, or exec.");
         }
         var from = entry.get().template();
@@ -636,10 +685,10 @@ final class McpTools {
         ModelCheck.requireName(model);
         var maxTurns = args.integer("max_turns");
         if (maxTurns != null) {
-            if (maxTurns < 1) throw new ToolError("max_turns must be at least 1");
+            if (maxTurns < 1) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "max_turns must be at least 1");
             var ceiling = session.config().delegateMaxTurns();
             if (ceiling != null && maxTurns > ceiling) {
-                throw new ToolError("max_turns " + maxTurns + " is more than the user allows (mcp.delegate-max-turns: "
+                throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "max_turns " + maxTurns + " is more than the user allows (mcp.delegate-max-turns: "
                         + ceiling + "); choose at most " + ceiling + ".");
             }
         }
@@ -652,14 +701,14 @@ final class McpTools {
         var skill = args.string("skill");
         var skillArgs = args.string("args");
         if ((instruction == null || instruction.isBlank()) == (skill == null || skill.isBlank())) {
-            throw new ToolError("give exactly one of instruction or skill");
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "give exactly one of instruction or skill");
         }
         if (instruction != null && !instruction.isBlank()) {
-            if (skillArgs != null) throw new ToolError("args go with skill, not with instruction");
+            if (skillArgs != null) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "args go with skill, not with instruction");
             return instruction;
         }
         if (!SKILL.matcher(skill).matches()) {
-            throw new ToolError("skill must be a skill's name (letters, digits, '_', ':', '.', '-'), without the '/'");
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "skill must be a skill's name (letters, digits, '_', ':', '.', '-'), without the '/'");
         }
         return "/" + skill + (skillArgs == null || skillArgs.isBlank() ? "" : " " + skillArgs.strip());
     }
@@ -690,16 +739,22 @@ final class McpTools {
         }
         McpAuditLog.record(session.id, "delegate", instance, prompt, 0, "task=" + task.id() + " mode=" + mode
                 + describe(profile));
-        var node = JsonRpc.JSON.createObjectNode();
-        node.put("task_id", task.id());
-        node.put("instance", instance);
-        node.put("permission_mode", mode);
-        if (profile.model() != null) node.put("model", profile.model());
-        if (profile.maxTurns() != null) node.put("max_turns", profile.maxTurns());
-        node.put("note", "The agent is working. Use task_status with wait_seconds, or wait_any, to wait "
-                + "for it, then task_result and get_diff.");
-        return ToolResult.json(node);
+        return ToolResult.json(runStarted(task, mode), "The agent is working. Use task_status with wait_seconds, "
+                + "or wait_any, to wait for it, then task_result and get_diff.");
     }
+
+    /** What {@code delegate} and {@code send_message} say about the run they started. */
+    private ObjectNode runStarted(Tasks.Task task, String mode) {
+        var node = taskNode(task);
+        node.put("run", task.runs());
+        node.put("permission_mode", mode);
+        if (task.profile().model() != null) node.put("model", task.profile().model());
+        var budget = tasks.turnBudget(task);
+        if (budget != null) node.put("max_turns", budget);
+        return node;
+    }
+
+
 
     /** The chosen parts of a profile, for the audit log. */
     private static String describe(Tasks.Profile profile) {
@@ -709,7 +764,7 @@ final class McpTools {
 
     private static void requireDelegate(InstanceBackend.TemplateInfo info) {
         if (!info.supportsDelegate()) {
-            throw new ToolError("template '" + info.name() + "' has no Claude Code to delegate to. "
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "template '" + info.name() + "' has no Claude Code to delegate to. "
                     + "Use a template whose list_templates entry has supports_delegate, or exec.");
         }
     }
@@ -719,6 +774,13 @@ final class McpTools {
         var wait = args.integer("wait_seconds");
         var status = wait == null || wait <= 0 ? tasks.status(task)
                 : tasks.await(task, Math.min(wait, MAX_WAIT_SECONDS), ctx);
+        var node = taskNode(task);
+        node.put("state", status.state());
+        if (status.exit() != null) node.put("exit_code", status.exit());
+        node.put("run", status.run());
+        if (status.attachedPid() != null) node.put("attached_pid", status.attachedPid());
+        if (status.startedAt() != null) node.put("started_at", status.startedAt().toString());
+        if (status.lastActivity() != null) node.put("last_activity", status.lastActivity().toString());
         var sb = new StringBuilder();
         sb.append("task: ").append(task.id()).append(" (").append(task.kind()).append(" in ")
                 .append(task.instance()).append(")\nstate: ").append(status.state());
@@ -730,31 +792,76 @@ final class McpTools {
         if (Tasks.AGENT.equals(task.kind())) {
             var summary = StreamJsonEvents.summarize(status.output(), 8);
             sb.append("\nturn: ").append(status.run());
-            if (task.profile().model() != null) sb.append("\nmodel: ").append(task.profile().model());
-            // The budget the run gets: the one chosen, within the ceiling the user set since.
-            if (task.profile().maxTurns() != null) {
-                sb.append("\nmax_turns: ").append(session.config().delegateMaxTurns(task.profile().maxTurns()));
+            if (task.profile().model() != null) {
+                sb.append("\nmodel: ").append(task.profile().model());
+                node.put("model", task.profile().model());
+            }
+            var budget = tasks.turnBudget(task);
+            if (budget != null) {
+                sb.append("\nmax_turns: ").append(budget);
+                node.put("max_turns", budget);
             }
             sb.append("\nassistant_messages: ").append(summary.assistantMessages());
+            node.put("assistant_messages", summary.assistantMessages());
             if (summary.finished()) {
                 sb.append("\ncost_usd: ").append(summary.result().path("total_cost_usd").asText("?"));
+                putNumber(node, "cost_usd", summary.result().path("total_cost_usd"));
                 appendDenials(sb, summary);
+                node.set("permission_denials", denials(summary));
                 sb.append("\nThe agent has finished: read its report with task_result.");
             }
             if (!summary.recent().isEmpty()) {
                 sb.append("\nrecent activity:");
                 summary.recent().forEach(r -> sb.append("\n- ").append(r));
             }
+            node.set("recent", strings(summary.recent()));
             if ("lost".equals(status.state()) || (status.exit() != null && status.exit() != 0 && !summary.finished())) {
                 sb.append("\nagent stderr:\n").append(status.stderr().strip());
+                node.put("agent_stderr", status.stderr().strip());
             }
         } else {
+            var stdoutTail = lastLines(status.output(), 20);
+            var stderrTail = lastLines(status.stderr(), 20);
             sb.append("\nstdout_bytes: ").append(status.outputBytes())
                     .append("\nstderr_bytes: ").append(status.stderrBytes())
-                    .append("\n--- stdout (tail) ---\n").append(lastLines(status.output(), 20))
-                    .append("\n--- stderr (tail) ---\n").append(lastLines(status.stderr(), 20));
+                    .append("\n--- stdout (tail) ---\n").append(stdoutTail)
+                    .append("\n--- stderr (tail) ---\n").append(stderrTail);
+            node.put("stdout_bytes", status.outputBytes());
+            node.put("stderr_bytes", status.stderrBytes());
+            node.put("stdout_tail", stdoutTail);
+            node.put("stderr_tail", stderrTail);
         }
-        return ToolResult.text(sb.toString());
+        return ToolResult.text(sb.toString(), node);
+    }
+
+    private static ArrayNode strings(Collection<String> values) {
+        var array = JsonRpc.JSON.createArrayNode();
+        values.forEach(array::add);
+        return array;
+    }
+
+    /** Each tool refused, once. */
+    private static List<String> distinctDenials(StreamJsonEvents.Summary summary) {
+        return summary.permissionDenials().stream().distinct().toList();
+    }
+
+    private static ArrayNode denials(StreamJsonEvents.Summary summary) {
+        return strings(distinctDenials(summary));
+    }
+
+    /** What every result about one task starts with. */
+    private static ObjectNode taskNode(Tasks.Task task) {
+        var node = JsonRpc.JSON.createObjectNode();
+        node.put("task_id", task.id());
+        node.put("instance", task.instance());
+        node.put("kind", task.kind());
+        return node;
+    }
+
+    /** Copies a number Claude Code reported; leaves it out if what it reported is not one. */
+    private static void putNumber(ObjectNode node, String key,
+                                  JsonNode value) {
+        if (value.isNumber()) node.set(key, value);
     }
 
     /** What the agent was not allowed to do: a headless agent cannot ask, so say so here. */
@@ -762,7 +869,7 @@ final class McpTools {
         var denials = summary.permissionDenials();
         if (denials.isEmpty()) return;
         sb.append("\npermission_denials: ").append(denials.size()).append(" (")
-                .append(String.join(", ", denials.stream().distinct().toList()))
+                .append(String.join(", ", distinctDenials(summary)))
                 .append(") -- the agent's permission mode refused these tools");
     }
 
@@ -772,7 +879,12 @@ final class McpTools {
         if (ids.isEmpty()) {
             // Not a run still launching: until it has, the probe cannot see it and would call it done.
             tasks.all().stream().filter(t -> t.running() && !t.launching()).forEach(watched::add);
-            if (watched.isEmpty()) return ToolResult.text("No task of this session is running.");
+            if (watched.isEmpty()) {
+                var none = JsonRpc.JSON.createObjectNode();
+                none.putArray("tasks");
+                none.putArray("finished");
+                return ToolResult.text("No task of this session is running.", none);
+            }
         } else {
             for (var id : ids) watched.add(tasks.requireHeld(id));
         }
@@ -781,26 +893,38 @@ final class McpTools {
         var states = tasks.awaitAny(watched, seconds, ctx);
         var sb = new StringBuilder();
         var finished = new ArrayList<String>();
+        var node = JsonRpc.JSON.createObjectNode();
+        var list = node.putArray("tasks");
         for (var t : watched) {
             var state = states.get(t.id());
+            var entry = taskNode(t);
+            list.add(entry);
             sb.append(t.id()).append(" (").append(t.kind()).append(" in ").append(t.instance()).append("): ");
             if ("done".equals(state)) {
                 finished.add(t.id());
                 try {
                     var status = tasks.status(t, 0);
                     sb.append(status.state());
-                    if (status.exit() != null) sb.append(", exit ").append(status.exit());
+                    entry.put("state", status.state());
+                    if (status.exit() != null) {
+                        sb.append(", exit ").append(status.exit());
+                        entry.put("exit_code", status.exit());
+                    }
                 } catch (RuntimeException e) {
-                    sb.append("finished (its instance is gone)");
+                    // Over, but finished or lost cannot be told without its status: never guess.
+                    sb.append("no longer running; its status could not be read (").append(e.getMessage()).append(")");
+                    entry.put("state", "unknown");
                 }
             } else {
                 sb.append(state);
+                entry.put("state", state);
             }
             sb.append('\n');
         }
+        node.set("finished", strings(finished));
         sb.append(finished.isEmpty() ? "None finished within " + seconds + "s."
                 : "Finished: " + String.join(", ", finished) + ". Read them with task_result.");
-        return ToolResult.text(sb.toString());
+        return ToolResult.text(sb.toString(), node);
     }
 
     private ToolResult taskResult(McpTool.Args args) {
@@ -811,45 +935,64 @@ final class McpTools {
         var agent = Tasks.AGENT.equals(task.kind());
         var status = agent ? tasks.status(task) : tasks.status(task, limit);
         if (status.running()) {
-            throw new ToolError("task " + task.id() + " is still running; use task_status with wait_seconds, or wait_any.");
+            throw new ToolError(ToolError.Code.WRONG_STATE, "task " + task.id() + " is still running; use task_status with wait_seconds, or wait_any.");
         }
         var sb = new StringBuilder();
         sb.append("task: ").append(task.id()).append("\nstate: ").append(status.state());
         if (status.exit() != null) sb.append("\nexit_code: ").append(status.exit());
+        var node = taskNode(task);
+        node.put("state", status.state());
+        if (status.exit() != null) node.put("exit_code", status.exit());
         if (!agent) {
+            node.put("stdout_bytes", status.outputBytes());
+            node.put("stderr_bytes", status.stderrBytes());
             if (ask != null) {
                 sb.append('\n');
-                appendAnswer(sb, ask(task.instance(), TaskScripts.output(task.id()), false, null, ask));
-                return ToolResult.text(sb.toString());
+                var answer = ask(task.instance(), TaskScripts.output(task.id()), false, null, ask);
+                appendAnswer(sb, answer);
+                node.set("answer", answer(answer));
+                return ToolResult.text(sb.toString(), node);
             }
             sb.append("\n--- stdout").append(tailNote(status.outputBytes(), limit)).append(" ---\n")
                     .append(status.output())
                     .append("\n--- stderr").append(tailNote(status.stderrBytes(), limit)).append(" ---\n")
                     .append(status.stderr());
-            return ToolResult.text(sb.toString());
+            node.put("stdout", status.output());
+            node.put("stderr", status.stderr());
+            node.put("truncated", status.outputBytes() > limit || status.stderrBytes() > limit);
+            return ToolResult.text(sb.toString(), node);
         }
         var summary = StreamJsonEvents.summarize(status.output(), args.bool("events") ? 20 : 0);
         if (!summary.finished()) {
             sb.append("\nThe agent ended without a final report.\nagent stderr:\n")
                     .append(status.stderr().strip());
-            return new ToolResult(sb.toString(), true);
+            throw new ToolError(ToolError.Code.TASK_FAILED, sb.toString());
         }
         var result = summary.result();
         sb.append("\noutcome: ").append(result.path("subtype").asText("?"))
                 .append(summary.isError() ? " (error)" : "")
                 .append("\nturns: ").append(result.path("num_turns").asText("?"))
                 .append("\ncost_usd: ").append(result.path("total_cost_usd").asText("?"));
+        if (result.path("subtype").isTextual()) node.put("outcome", result.path("subtype").asText());
+        node.put("is_error", summary.isError());
+        if (result.path("num_turns").canConvertToInt()) node.put("turns", result.path("num_turns").asInt());
+        putNumber(node, "cost_usd", result.path("total_cost_usd"));
         appendDenials(sb, summary);
+        node.set("permission_denials", denials(summary));
         if (!summary.recent().isEmpty()) {
             sb.append("\nlast activity:");
             summary.recent().forEach(r -> sb.append("\n- ").append(r));
         }
+        node.set("recent", strings(summary.recent()));
+        var report = summary.resultText();
+        var bytes = report.getBytes(StandardCharsets.UTF_8);
+        node.put("report_bytes", bytes.length);
         if (ask != null) {
             sb.append('\n');
-            appendAnswer(sb, ask(task.instance(), "cat", false, summary.resultText(), ask));
+            var answer = ask(task.instance(), "cat", false, report, ask);
+            appendAnswer(sb, answer);
+            node.set("answer", answer(answer));
         } else {
-            var report = summary.resultText();
-            var bytes = report.getBytes(StandardCharsets.UTF_8);
             sb.append("\n--- report");
             if (bytes.length > limit) {
                 report = new String(bytes, 0, limit, StandardCharsets.UTF_8);
@@ -857,9 +1000,11 @@ final class McpTools {
                         .append(" bytes; raise max_bytes, or set ask)");
             }
             sb.append(" ---\n").append(report).append("\n--- end of report ---");
+            node.put("report", report);
+            node.put("truncated", bytes.length > limit);
         }
         sb.append("\nReview the changes with get_diff; continue with send_message.");
-        return ToolResult.text(sb.toString());
+        return ToolResult.text(sb.toString(), node);
     }
 
     private static String tailNote(long total, int limit) {
@@ -878,38 +1023,43 @@ final class McpTools {
         // after an adoption the recorded model is only what the instance says. The cache makes
         // a repeat free.
         var account = owned.metadata().get(Metadata.accountKey(ModelCheck.NAMESPACE));
-        var updated = tasks.sendMessage(task, message, override, permissionMode(template),
+        var mode = permissionMode(template);
+        var updated = tasks.sendMessage(task, message, override, mode,
                 () -> modelCheck.require(task.instance(), template, account, override.model()));
         McpAuditLog.record(session.id, "send_message", task.instance(), message, 0,
                 "task=" + task.id() + " turn=" + updated.runs() + describe(override));
         return ToolResult.text("Sent. Task " + task.id() + " is running turn " + updated.runs()
-                + "; follow it with task_status or wait_any.");
+                + "; follow it with task_status or wait_any.", runStarted(updated, mode));
     }
 
     private ToolResult cancelTask(McpTool.Args args) {
         var task = tasks.require(args.requireString("task_id")).task();
         tasks.cancel(task);
         McpAuditLog.record(session.id, "cancel_task", task.instance(), null, 0, "task=" + task.id());
-        return ToolResult.text("Stopped task " + task.id() + ".");
+        return ToolResult.text("Stopped task " + task.id() + ".", taskNode(task));
     }
 
     private ToolResult getDiff(McpTool.Args args) {
         var task = tasks.require(args.requireString("task_id")).task();
         if (!Tasks.AGENT.equals(task.kind())) {
-            throw new ToolError("get_diff is for delegated tasks; for a command, run git diff with exec.");
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "get_diff is for delegated tasks; for a command, run git diff with exec.");
         }
         var ask = AskScript.checkQuestion(args.string("ask"));
         var stat = args.bool("stat");
-        if (stat && ask != null) throw new ToolError("give stat or ask, not both");
+        if (stat && ask != null) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "give stat or ask, not both");
         if (ask != null) {
             var sb = new StringBuilder();
-            appendAnswer(sb, ask(task.instance(),
-                    TaskScripts.diff(task.id(), args.string("path"), Integer.MAX_VALUE, false), false, null, ask));
-            return ToolResult.text(sb.toString());
+            var answer = ask(task.instance(),
+                    TaskScripts.diffForReading(task.id(), args.string("path")), false, null, ask);
+            appendAnswer(sb, answer);
+            var node = JsonRpc.JSON.createObjectNode();
+            node.set("answer", answer(answer));
+            return ToolResult.text(sb.toString(), node);
         }
         var max = args.integer("max_bytes");
         int limit = max == null ? DEFAULT_DIFF_BYTES : Math.clamp(max, 1024, MAX_DIFF_BYTES);
-        return ToolResult.text(tasks.diff(task, args.string("path"), limit, stat));
+        var diff = Diff.parse(tasks.diff(task, args.string("path"), limit, stat), stat);
+        return ToolResult.text(diff.text(), diff.structured());
     }
 
     private static String lastLines(String text, int n) {
@@ -924,16 +1074,21 @@ final class McpTools {
         tasks.forgetInstance(name);
         McpAuditLog.record(session.id, "destroy_instance", name, null, millisSince(start),
                 destroyed ? "destroyed" : "already-gone");
-        return ToolResult.text(destroyed ? "Destroyed " + name + "." : name + " was already gone.");
+        var node = JsonRpc.JSON.createObjectNode();
+        node.put("instance", name);
+        node.put("already", !destroyed);
+        return ToolResult.text(destroyed ? "Destroyed " + name + "." : name + " was already gone.", node);
     }
 
     private ToolResult stopInstance(McpTool.Args args, ToolContext ctx) {
         var name = args.requireString("instance");
-        if (InstanceBackend.stopped(session.requireOwned(name))) return ToolResult.text(name + " is already stopped.");
+        if (InstanceBackend.stopped(session.requireOwned(name))) {
+            return ToolResult.text(name + " is already stopped.", stopped(name, true, List.of()));
+        }
         var busy = tasks.busyIn(name);
         var ids = String.join(", ", busy.stream().map(Tasks.Task::id).toList());
         if (!busy.isEmpty() && !args.bool("force")) {
-            throw new ToolError(name + " has running tasks (" + ids
+            throw new ToolError(ToolError.Code.WRONG_STATE, name + " has running tasks (" + ids
                     + "). Wait for them, cancel_task them, or set force to cancel them and stop.");
         }
         var start = System.nanoTime();
@@ -943,15 +1098,33 @@ final class McpTools {
         backend.stop(name);
         McpAuditLog.record(session.id, "stop_instance", name, null, millisSince(start),
                 busy.isEmpty() ? "stopped" : "stopped, cancelled " + busy.size() + " task(s)");
-        return ToolResult.text("Stopped " + name + (busy.isEmpty() ? "" : ", after cancelling " + ids) + ".");
+        return ToolResult.text("Stopped " + name + (busy.isEmpty() ? "" : ", after cancelling " + ids) + ".",
+                stopped(name, false, busy));
+    }
+
+    private static ObjectNode stopped(String name, boolean already,
+                                                                         List<Tasks.Task> cancelled) {
+        var node = JsonRpc.JSON.createObjectNode();
+        node.put("instance", name);
+        node.put("already", already);
+        var ids = node.putArray("cancelled_tasks");
+        cancelled.forEach(t -> ids.add(t.id()));
+        return node;
     }
 
     private ToolResult startInstance(McpTool.Args args, ToolContext ctx) {
         var name = args.requireString("instance");
         var metadata = session.requireOwned(name);
-        if (InstanceBackend.running(metadata)) return ToolResult.text(name + " is already running.");
+        var node = JsonRpc.JSON.createObjectNode();
+        node.put("instance", name);
+        var taskIds = node.putArray("tasks");
+        if (InstanceBackend.running(metadata)) {
+            node.put("already", true);
+            return ToolResult.text(name + " is already running.", node);
+        }
+        node.put("already", false);
         if (!InstanceBackend.stopped(metadata)) {
-            throw new ToolError("'" + name + "' is " + metadata.get(InstanceBackend.STATUS).toLowerCase(java.util.Locale.ROOT)
+            throw new ToolError(ToolError.Code.WRONG_STATE, "'" + name + "' is " + metadata.get(InstanceBackend.STATUS).toLowerCase(java.util.Locale.ROOT)
                     + ", not stopped, and only a stopped instance can be started. Ask the user to look at it: "
                     + "isx shell " + name);
         }
@@ -968,11 +1141,14 @@ final class McpTools {
         var note = "";
         try {
             var ids = tasks.adopt(name);
+            ids.forEach(taskIds::add);
             if (!ids.isEmpty()) note = " Its tasks: " + String.join(", ", ids) + ".";
         } catch (RuntimeException e) {
-            note = " Its tasks could not be read, so their ids may not work here: " + e.getMessage();
+            var why = "could not be read, so their ids may not work here: " + e.getMessage();
+            node.put("warning", "its tasks " + why);
+            note = " Its tasks " + why;
         }
-        return ToolResult.text("Started " + name + "." + note);
+        return ToolResult.text("Started " + name + "." + note, node);
     }
 
     private ToolResult instanceActivity(McpTool.Args args) {
@@ -1002,8 +1178,10 @@ final class McpTools {
         var name = args.requireString("instance");
         session.keep(name);
         McpAuditLog.record(session.id, "keep_instance", name, null, 0, "kept");
+        var node = JsonRpc.JSON.createObjectNode();
+        node.put("instance", name);
         return ToolResult.text(name + " now belongs to the user: it is never destroyed as an orphan, and "
-                + "they can open it with: isx shell " + name);
+                + "they can open it with: isx shell " + name, node);
     }
 
     private static String blankToNull(String value) {

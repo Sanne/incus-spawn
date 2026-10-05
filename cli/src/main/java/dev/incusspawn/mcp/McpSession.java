@@ -139,7 +139,7 @@ final class McpSession {
     static String checkPurpose(String purpose) {
         if (purpose == null || purpose.isBlank()) return null;
         if (purpose.length() > MAX_PURPOSE || purpose.chars().anyMatch(Character::isISOControl)) {
-            throw new ToolError("purpose must be one line of at most " + MAX_PURPOSE + " characters");
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "purpose must be one line of at most " + MAX_PURPOSE + " characters");
         }
         return purpose.strip();
     }
@@ -152,7 +152,7 @@ final class McpSession {
      */
     String reserve(InstanceBackend.TemplateInfo template, String hint, String purpose) {
         if (hint != null && !NAME_HINT.matcher(hint).matches()) {
-            throw new ToolError("name_hint must be 1-16 characters of a-z, 0-9 and '-', "
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "name_hint must be 1-16 characters of a-z, 0-9 and '-', "
                     + "starting with a letter or digit");
         }
         purpose = checkPurpose(purpose);
@@ -172,7 +172,7 @@ final class McpSession {
             var mine = owned.values().stream().filter(o -> !o.kept()).count();
             var others = elsewhere.stream().filter(n -> !owned.containsKey(n)).count();
             if (mine + others >= max) {
-                throw new ToolError("you already have " + (mine + others) + " instance(s) ("
+                throw new ToolError(ToolError.Code.LIMIT, "you already have " + (mine + others) + " instance(s) ("
                         + mine + " in this session, " + others + " held by other sessions or orphaned), "
                         + "the most mcp.max-instances allows (" + max + "). Destroy one with "
                         + "destroy_instance first; list_instances shows them all.");
@@ -183,7 +183,7 @@ final class McpSession {
                 name = "mcp-" + base + (hint != null ? "-" + hint : "") + "-" + randomSuffix(5);
             } while (owned.containsKey(name));
             if (name.length() > 63) {
-                throw new ToolError("instance name '" + name + "' would exceed 63 characters; use a shorter name_hint");
+                throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "instance name '" + name + "' would exceed 63 characters; use a shorter name_hint");
             }
             owned.put(name, new Owned(name, template.name(), template.supportsDelegate(), purpose,
                     Instant.now(), false, false));
@@ -230,10 +230,10 @@ final class McpSession {
         var metadata = backend.metadata(name);
         if (metadata != null && owner.equals(metadata.get(Metadata.MCP_OWNER))
                 && metadata.containsKey(Metadata.MCP_SESSION)) {
-            throw new ToolError("'" + name + "' is one of your instances, but another session holds it. "
+            throw new ToolError(ToolError.Code.NOT_HELD, "'" + name + "' is one of your instances, but another session holds it. "
                     + "Take it with adopt_instance first.");
         }
-        throw new ToolError("'" + name + "' is not an instance this session holds. "
+        throw new ToolError(ToolError.Code.NOT_FOUND, "'" + name + "' is not an instance this session holds. "
                 + "Use list_instances to see yours, or create_instance to make one.");
     }
 
@@ -247,18 +247,18 @@ final class McpSession {
      * return the instance's {@code user.incus-spawn.*} config read for that check.
      */
     Map<String, String> requireOwned(String name) {
-        if (!lookup(name).ready()) throw new ToolError("'" + name + "' is still being created.");
+        if (!lookup(name).ready()) throw new ToolError(ToolError.Code.WRONG_STATE, "'" + name + "' is still being created.");
         var metadata = backend.metadata(name);
         if (metadata == null) {
             abandon(name, Hold.GONE);
-            throw new ToolError("'" + name + "' no longer exists.");
+            throw new ToolError(ToolError.Code.NOT_FOUND, "'" + name + "' no longer exists.");
         }
         if (!ours(metadata)) {
             abandon(name, Hold.RELEASED);
-            throw new ToolError("'" + name + "' is no longer held by this session: another session adopted it.");
+            throw new ToolError(ToolError.Code.NOT_HELD, "'" + name + "' is no longer held by this session: another session adopted it.");
         }
         var busy = Metadata.pendingOp(metadata);
-        if (!busy.isEmpty()) throw new ToolError("'" + name + "' is busy (" + busy + "); try again shortly.");
+        if (!busy.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is busy (" + busy + "); try again shortly.");
         return metadata;
     }
 
@@ -269,10 +269,10 @@ final class McpSession {
     Map<String, String> requireRunning(String name) {
         var metadata = requireOwned(name);
         if (InstanceBackend.stopped(metadata)) {
-            throw new ToolError("'" + name + "' is stopped. Start it with start_instance first.");
+            throw new ToolError(ToolError.Code.WRONG_STATE, "'" + name + "' is stopped. Start it with start_instance first.");
         }
         if (!InstanceBackend.running(metadata)) {
-            throw new ToolError("'" + name + "' is " + metadata.get(InstanceBackend.STATUS).toLowerCase(java.util.Locale.ROOT)
+            throw new ToolError(ToolError.Code.WRONG_STATE, "'" + name + "' is " + metadata.get(InstanceBackend.STATUS).toLowerCase(java.util.Locale.ROOT)
                     + ", which isx mcp cannot change. Ask the user to look at it: isx shell " + name);
         }
         return metadata;
@@ -290,39 +290,39 @@ final class McpSession {
             held = owned.get(name);
         }
         // Mid-create the copy already carries our stamp: adopting would mark it ready early.
-        if (held != null && !held.ready()) throw new ToolError("'" + name + "' is still being created.");
+        if (held != null && !held.ready()) throw new ToolError(ToolError.Code.WRONG_STATE, "'" + name + "' is still being created.");
         if (held != null) {
             // Outside the lock: a round trip to Incus must not hold up every other call.
             requireOwned(name);
             return held;
         }
         var metadata = backend.metadata(name);
-        if (metadata == null) throw new ToolError("'" + name + "' does not exist.");
+        if (metadata == null) throw new ToolError(ToolError.Code.NOT_FOUND, "'" + name + "' does not exist.");
         var session = metadata.get(Metadata.MCP_SESSION);
         if (session == null || !owner.equals(metadata.get(Metadata.MCP_OWNER))) {
-            throw new ToolError("'" + name + "' was not created through isx mcp by this user; "
+            throw new ToolError(ToolError.Code.REFUSED, "'" + name + "' was not created through isx mcp by this user; "
                     + "only those instances can be adopted.");
         }
         if (metadata.containsKey(Metadata.MCP_KEPT)) {
-            throw new ToolError("'" + name + "' was kept: it belongs to the user now, not to agents.");
+            throw new ToolError(ToolError.Code.REFUSED, "'" + name + "' was kept: it belongs to the user now, not to agents.");
         }
         var busy = Metadata.pendingOp(metadata);
-        if (!busy.isEmpty()) throw new ToolError("'" + name + "' is busy (" + busy + "); try again shortly.");
+        if (!busy.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is busy (" + busy + "); try again shortly.");
         var holder = SessionId.parse(session);
         if (!force && holder.isPresent() && !holder.get().equals(id) && alive.test(holder.get())) {
-            throw new ToolError("'" + name + "' is held by a session that is still running (isx mcp pid "
+            throw new ToolError(ToolError.Code.NOT_HELD, "'" + name + "' is held by a session that is still running (isx mcp pid "
                     + holder.get().pid() + describeClient(metadata) + "). Adopting it would take it away "
                     + "mid-work; set force: true only if that session is stuck.");
         }
         var template = templateOf(metadata);
         if (!config.get().templates().contains(template)) {
-            throw new ToolError("'" + name + "' comes from template '" + template + "', which is no longer "
+            throw new ToolError(ToolError.Code.NOT_APPROVED, "'" + name + "' comes from template '" + template + "', which is no longer "
                     + "approved for agents. " + TemplatePolicy.HOW_TO_APPROVE);
         }
         backend.stamp(name, holderStamps());
         // Two sessions adopting at once both write; only the last writer holds it.
         var after = backend.metadata(name);
-        if (after == null || !ours(after)) throw new ToolError("another session adopted '" + name + "' first.");
+        if (after == null || !ours(after)) throw new ToolError(ToolError.Code.NOT_HELD, "another session adopted '" + name + "' first.");
         after = settled(name, after);
         var delegate = backend.template(template).map(InstanceBackend.TemplateInfo::supportsDelegate).orElse(false);
         var adopted = new Owned(name, template, delegate, after.get(Metadata.MCP_PURPOSE),
@@ -354,14 +354,14 @@ final class McpSession {
                 Thread.sleep(settleStep);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new ToolError("interrupted while '" + name + "' was busy; adopt_instance again.");
+                throw new ToolError(ToolError.Code.UNAVAILABLE, "interrupted while '" + name + "' was busy; adopt_instance again.");
             }
             after = backend.metadata(name);
             if (after == null) {
-                throw new ToolError("'" + name + "' was removed as an orphan past its grace period "
+                throw new ToolError(ToolError.Code.NOT_FOUND, "'" + name + "' was removed as an orphan past its grace period "
                         + "before the adoption could take it.");
             }
-            if (!ours(after)) throw new ToolError("another session adopted '" + name + "' first.");
+            if (!ours(after)) throw new ToolError(ToolError.Code.NOT_HELD, "another session adopted '" + name + "' first.");
         }
         // Still marked after the wait: it is ours by its stamp, so held like any busy instance.
         return after;
@@ -432,11 +432,11 @@ final class McpSession {
     /** Destroy a held instance. Idempotent for instances already gone. */
     boolean destroy(String name) {
         // Mid-create the copy exists but is not stamped yet: it would read as someone else's.
-        if (!lookup(name).ready()) throw new ToolError("'" + name + "' is still being created; destroy it once it is.");
+        if (!lookup(name).ready()) throw new ToolError(ToolError.Code.WRONG_STATE, "'" + name + "' is still being created; destroy it once it is.");
         var metadata = backend.metadata(name);
         if (metadata != null && !ours(metadata)) {
             abandon(name, Hold.RELEASED);
-            throw new ToolError("'" + name + "' is no longer held by this session: another session adopted it.");
+            throw new ToolError(ToolError.Code.NOT_HELD, "'" + name + "' is no longer held by this session: another session adopted it.");
         }
         if (metadata != null) {
             backend.destroy(name);

@@ -1,0 +1,711 @@
+{
+  "list_templates" : {
+    "type" : "object",
+    "properties" : {
+      "templates" : {
+        "description" : "Approved templates; empty when none are",
+        "type" : "array",
+        "items" : {
+          "type" : "object",
+          "properties" : {
+            "template" : {
+              "type" : "string"
+            },
+            "description" : {
+              "type" : "string"
+            },
+            "built" : {
+              "type" : "boolean"
+            },
+            "stale" : {
+              "description" : "Built from a definition that has changed since",
+              "type" : "boolean"
+            },
+            "tools" : {
+              "type" : "array",
+              "items" : {
+                "type" : "string"
+              }
+            },
+            "supports_delegate" : {
+              "type" : "boolean"
+            },
+            "permission_mode" : {
+              "description" : "The delegated agent's permission mode",
+              "type" : "string"
+            },
+            "delegate_model" : {
+              "description" : "The delegated agent's default model",
+              "type" : "string"
+            }
+          },
+          "required" : [ "template", "description", "built", "stale", "tools", "supports_delegate" ],
+          "additionalProperties" : false
+        }
+      },
+      "max_instances" : {
+        "type" : "integer"
+      },
+      "max_concurrent_tasks" : {
+        "type" : "integer"
+      },
+      "orphan_grace_hours" : {
+        "type" : "integer"
+      },
+      "delegate_max_turns" : {
+        "type" : "integer"
+      }
+    },
+    "required" : [ "templates", "max_instances", "max_concurrent_tasks", "orphan_grace_hours" ],
+    "additionalProperties" : false
+  },
+  "create_instance" : {
+    "type" : "object",
+    "properties" : {
+      "instance" : {
+        "type" : "string"
+      },
+      "template" : {
+        "description" : "The template it descends from",
+        "type" : "string"
+      },
+      "purpose" : {
+        "type" : "string"
+      },
+      "forked_from" : {
+        "description" : "The instance it was forked from",
+        "type" : "string"
+      },
+      "ip" : {
+        "type" : "string"
+      },
+      "workdir" : {
+        "type" : "string"
+      },
+      "tools" : {
+        "type" : "array",
+        "items" : {
+          "type" : "string"
+        }
+      },
+      "supports_delegate" : {
+        "type" : "boolean"
+      }
+    },
+    "required" : [ "instance", "template", "workdir", "tools", "supports_delegate" ],
+    "additionalProperties" : false
+  },
+  "list_instances" : {
+    "type" : "object",
+    "properties" : {
+      "instances" : {
+        "type" : "array",
+        "items" : {
+          "type" : "object",
+          "properties" : {
+            "instance" : {
+              "type" : "string"
+            },
+            "template" : {
+              "type" : "string"
+            },
+            "purpose" : {
+              "type" : "string"
+            },
+            "created" : {
+              "description" : "ISO-8601",
+              "type" : "string"
+            },
+            "state" : {
+              "description" : "creating or ready: held by this session; held: by another live session; orphaned: by none, adopt_instance takes it",
+              "type" : "string",
+              "enum" : [ "creating", "ready", "held", "orphaned" ]
+            },
+            "kept" : {
+              "type" : "boolean"
+            },
+            "held_by" : {
+              "description" : "The session holding it, as <pid>-<start>",
+              "type" : "string"
+            },
+            "held_by_client" : {
+              "description" : "The MCP client of that session",
+              "type" : "string"
+            },
+            "orphaned_since" : {
+              "description" : "ISO-8601",
+              "type" : "string"
+            },
+            "orphan_until" : {
+              "description" : "ISO-8601: destroyed after this unless adopted",
+              "type" : "string"
+            },
+            "tasks" : {
+              "description" : "This session's tasks in it",
+              "type" : "array",
+              "items" : {
+                "type" : "object",
+                "properties" : {
+                  "task_id" : {
+                    "type" : "string"
+                  },
+                  "kind" : {
+                    "type" : "string",
+                    "enum" : [ "agent", "command" ]
+                  },
+                  "running" : {
+                    "description" : "Running as this session last saw it. Not a state: the session does not know whether one not running finished or was lost; task_status says",
+                    "type" : "boolean"
+                  }
+                },
+                "required" : [ "task_id", "kind", "running" ],
+                "additionalProperties" : false
+              }
+            }
+          },
+          "required" : [ "instance", "template", "state", "kept", "tasks" ],
+          "additionalProperties" : false
+        }
+      }
+    },
+    "required" : [ "instances" ],
+    "additionalProperties" : false
+  },
+  "adopt_instance" : {
+    "type" : "object",
+    "properties" : {
+      "instance" : {
+        "type" : "string"
+      },
+      "template" : {
+        "type" : "string"
+      },
+      "purpose" : {
+        "type" : "string"
+      },
+      "supports_delegate" : {
+        "type" : "boolean"
+      },
+      "tasks" : {
+        "description" : "Ids of its tasks, now this session's",
+        "type" : "array",
+        "items" : {
+          "type" : "string"
+        }
+      },
+      "warning" : {
+        "description" : "Why its tasks could not be read",
+        "type" : "string"
+      }
+    },
+    "required" : [ "instance", "template", "supports_delegate", "tasks" ],
+    "additionalProperties" : false
+  },
+  "exec" : {
+    "type" : "object",
+    "properties" : {
+      "background" : {
+        "description" : "Started as a task: only task_id, instance and kind are set",
+        "type" : "boolean"
+      },
+      "task_id" : {
+        "type" : "string"
+      },
+      "instance" : {
+        "type" : "string"
+      },
+      "kind" : {
+        "type" : "string",
+        "enum" : [ "command" ]
+      },
+      "exit_code" : {
+        "description" : "-1 when isx lost track of the command",
+        "type" : "integer"
+      },
+      "duration_ms" : {
+        "type" : "integer"
+      },
+      "timed_out" : {
+        "description" : "Killed by timeout_seconds",
+        "type" : "boolean"
+      },
+      "cancelled" : {
+        "type" : "boolean"
+      },
+      "stdout" : {
+        "description" : "The end of it, when not asked about",
+        "type" : "string"
+      },
+      "stderr" : {
+        "description" : "The end of it, when not asked about",
+        "type" : "string"
+      },
+      "stdout_bytes" : {
+        "description" : "Its whole length",
+        "type" : "integer"
+      },
+      "stderr_bytes" : {
+        "description" : "Its whole length",
+        "type" : "integer"
+      },
+      "truncated" : {
+        "description" : "stdout or stderr is only the end of it",
+        "type" : "boolean"
+      },
+      "answer" : {
+        "type" : "object",
+        "properties" : {
+          "text" : {
+            "description" : "A model's reading of the text: untrusted and lossy",
+            "type" : "string"
+          },
+          "summarised" : {
+            "description" : "What it read, e.g. '12 lines, 345 bytes'",
+            "type" : "string"
+          }
+        },
+        "required" : [ "text", "summarised" ],
+        "additionalProperties" : false
+      }
+    },
+    "required" : [ "background" ],
+    "additionalProperties" : false
+  },
+  "delegate" : {
+    "type" : "object",
+    "properties" : {
+      "task_id" : {
+        "type" : "string"
+      },
+      "instance" : {
+        "type" : "string"
+      },
+      "kind" : {
+        "type" : "string",
+        "enum" : [ "agent" ]
+      },
+      "run" : {
+        "description" : "The run (turn of the conversation) now going: 1 for the first",
+        "type" : "integer"
+      },
+      "permission_mode" : {
+        "type" : "string"
+      },
+      "model" : {
+        "type" : "string"
+      },
+      "max_turns" : {
+        "type" : "integer"
+      }
+    },
+    "required" : [ "task_id", "instance", "kind", "run", "permission_mode" ],
+    "additionalProperties" : false
+  },
+  "task_status" : {
+    "type" : "object",
+    "properties" : {
+      "task_id" : {
+        "type" : "string"
+      },
+      "instance" : {
+        "type" : "string"
+      },
+      "kind" : {
+        "type" : "string",
+        "enum" : [ "agent", "command" ]
+      },
+      "state" : {
+        "description" : "attached: finished, and a person is in its conversation",
+        "type" : "string",
+        "enum" : [ "running", "finished", "attached", "lost", "unknown" ]
+      },
+      "exit_code" : {
+        "type" : "integer"
+      },
+      "run" : {
+        "type" : "integer"
+      },
+      "attached_pid" : {
+        "description" : "The Claude Code of a person in its conversation",
+        "type" : "integer"
+      },
+      "started_at" : {
+        "description" : "ISO-8601: when the current run started",
+        "type" : "string"
+      },
+      "last_activity" : {
+        "description" : "ISO-8601: when the current run last wrote output",
+        "type" : "string"
+      },
+      "model" : {
+        "type" : "string"
+      },
+      "max_turns" : {
+        "description" : "The budget the run gets",
+        "type" : "integer"
+      },
+      "assistant_messages" : {
+        "type" : "integer"
+      },
+      "cost_usd" : {
+        "description" : "Once an agent has finished",
+        "type" : "number"
+      },
+      "permission_denials" : {
+        "description" : "Tools the agent's permission mode refused",
+        "type" : "array",
+        "items" : {
+          "type" : "string"
+        }
+      },
+      "recent" : {
+        "description" : "What an agent did lately",
+        "type" : "array",
+        "items" : {
+          "type" : "string"
+        }
+      },
+      "agent_stderr" : {
+        "description" : "An agent that failed or was lost: the end of its stderr",
+        "type" : "string"
+      },
+      "stdout_bytes" : {
+        "type" : "integer"
+      },
+      "stderr_bytes" : {
+        "type" : "integer"
+      },
+      "stdout_tail" : {
+        "description" : "A command's last lines",
+        "type" : "string"
+      },
+      "stderr_tail" : {
+        "description" : "A command's last lines",
+        "type" : "string"
+      }
+    },
+    "required" : [ "task_id", "instance", "kind", "state", "run" ],
+    "additionalProperties" : false
+  },
+  "wait_any" : {
+    "type" : "object",
+    "properties" : {
+      "tasks" : {
+        "description" : "Every task watched",
+        "type" : "array",
+        "items" : {
+          "type" : "object",
+          "properties" : {
+            "task_id" : {
+              "type" : "string"
+            },
+            "instance" : {
+              "type" : "string"
+            },
+            "kind" : {
+              "type" : "string",
+              "enum" : [ "agent", "command" ]
+            },
+            "state" : {
+              "description" : "unknown: over, but its status could not be read",
+              "type" : "string",
+              "enum" : [ "running", "finished", "attached", "lost", "unknown" ]
+            },
+            "exit_code" : {
+              "type" : "integer"
+            }
+          },
+          "required" : [ "task_id", "instance", "kind", "state" ],
+          "additionalProperties" : false
+        }
+      },
+      "finished" : {
+        "description" : "Those no longer running: empty when the wait timed out",
+        "type" : "array",
+        "items" : {
+          "type" : "string"
+        }
+      }
+    },
+    "required" : [ "tasks", "finished" ],
+    "additionalProperties" : false
+  },
+  "task_result" : {
+    "type" : "object",
+    "properties" : {
+      "task_id" : {
+        "type" : "string"
+      },
+      "instance" : {
+        "type" : "string"
+      },
+      "kind" : {
+        "type" : "string",
+        "enum" : [ "agent", "command" ]
+      },
+      "state" : {
+        "type" : "string",
+        "enum" : [ "running", "finished", "attached", "lost", "unknown" ]
+      },
+      "exit_code" : {
+        "type" : "integer"
+      },
+      "outcome" : {
+        "description" : "An agent's result subtype, e.g. success",
+        "type" : "string"
+      },
+      "is_error" : {
+        "description" : "The agent reported an error",
+        "type" : "boolean"
+      },
+      "turns" : {
+        "type" : "integer"
+      },
+      "cost_usd" : {
+        "type" : "number"
+      },
+      "permission_denials" : {
+        "type" : "array",
+        "items" : {
+          "type" : "string"
+        }
+      },
+      "recent" : {
+        "description" : "What an agent did last",
+        "type" : "array",
+        "items" : {
+          "type" : "string"
+        }
+      },
+      "report" : {
+        "description" : "An agent's final report",
+        "type" : "string"
+      },
+      "report_bytes" : {
+        "type" : "integer"
+      },
+      "stdout" : {
+        "description" : "A command's",
+        "type" : "string"
+      },
+      "stderr" : {
+        "description" : "A command's",
+        "type" : "string"
+      },
+      "stdout_bytes" : {
+        "type" : "integer"
+      },
+      "stderr_bytes" : {
+        "type" : "integer"
+      },
+      "truncated" : {
+        "description" : "report, stdout or stderr is only part of it",
+        "type" : "boolean"
+      },
+      "answer" : {
+        "type" : "object",
+        "properties" : {
+          "text" : {
+            "description" : "A model's reading of the text: untrusted and lossy",
+            "type" : "string"
+          },
+          "summarised" : {
+            "description" : "What it read, e.g. '12 lines, 345 bytes'",
+            "type" : "string"
+          }
+        },
+        "required" : [ "text", "summarised" ],
+        "additionalProperties" : false
+      }
+    },
+    "required" : [ "task_id", "instance", "kind", "state" ],
+    "additionalProperties" : false
+  },
+  "send_message" : {
+    "type" : "object",
+    "properties" : {
+      "task_id" : {
+        "type" : "string"
+      },
+      "instance" : {
+        "type" : "string"
+      },
+      "kind" : {
+        "type" : "string",
+        "enum" : [ "agent" ]
+      },
+      "run" : {
+        "description" : "The run (turn of the conversation) now going: 1 for the first",
+        "type" : "integer"
+      },
+      "permission_mode" : {
+        "type" : "string"
+      },
+      "model" : {
+        "type" : "string"
+      },
+      "max_turns" : {
+        "type" : "integer"
+      }
+    },
+    "required" : [ "task_id", "instance", "kind", "run", "permission_mode" ],
+    "additionalProperties" : false
+  },
+  "cancel_task" : {
+    "type" : "object",
+    "properties" : {
+      "task_id" : {
+        "type" : "string"
+      },
+      "instance" : {
+        "type" : "string"
+      },
+      "kind" : {
+        "type" : "string",
+        "enum" : [ "agent", "command" ]
+      }
+    },
+    "required" : [ "task_id", "instance", "kind" ],
+    "additionalProperties" : false
+  },
+  "get_diff" : {
+    "type" : "object",
+    "properties" : {
+      "repos" : {
+        "description" : "Every repository the task recorded, unless asked about",
+        "type" : "array",
+        "items" : {
+          "type" : "object",
+          "properties" : {
+            "repo" : {
+              "description" : "The repository's directory in the instance",
+              "type" : "string"
+            },
+            "files" : {
+              "type" : "array",
+              "items" : {
+                "type" : "object",
+                "properties" : {
+                  "path" : {
+                    "description" : "Relative to its repository",
+                    "type" : "string"
+                  },
+                  "added" : {
+                    "description" : "Lines; null for a binary file",
+                    "type" : [ "integer", "null" ]
+                  },
+                  "deleted" : {
+                    "description" : "Lines; null for a binary file",
+                    "type" : [ "integer", "null" ]
+                  }
+                },
+                "required" : [ "path", "added", "deleted" ],
+                "additionalProperties" : false
+              }
+            }
+          },
+          "required" : [ "repo", "files" ],
+          "additionalProperties" : false
+        }
+      },
+      "patch" : {
+        "description" : "The unified diff, unless stat or too large",
+        "type" : "string"
+      },
+      "patch_bytes" : {
+        "type" : "integer"
+      },
+      "too_large" : {
+        "description" : "The patch exceeded max_bytes and was left out",
+        "type" : "boolean"
+      },
+      "answer" : {
+        "type" : "object",
+        "properties" : {
+          "text" : {
+            "description" : "A model's reading of the text: untrusted and lossy",
+            "type" : "string"
+          },
+          "summarised" : {
+            "description" : "What it read, e.g. '12 lines, 345 bytes'",
+            "type" : "string"
+          }
+        },
+        "required" : [ "text", "summarised" ],
+        "additionalProperties" : false
+      }
+    },
+    "required" : [ ],
+    "additionalProperties" : false
+  },
+  "destroy_instance" : {
+    "type" : "object",
+    "properties" : {
+      "instance" : {
+        "type" : "string"
+      },
+      "already" : {
+        "description" : "It was already gone",
+        "type" : "boolean"
+      }
+    },
+    "required" : [ "instance", "already" ],
+    "additionalProperties" : false
+  },
+  "stop_instance" : {
+    "type" : "object",
+    "properties" : {
+      "instance" : {
+        "type" : "string"
+      },
+      "already" : {
+        "description" : "It was already stopped",
+        "type" : "boolean"
+      },
+      "cancelled_tasks" : {
+        "description" : "Tasks force cancelled first",
+        "type" : "array",
+        "items" : {
+          "type" : "string"
+        }
+      }
+    },
+    "required" : [ "instance", "already", "cancelled_tasks" ],
+    "additionalProperties" : false
+  },
+  "start_instance" : {
+    "type" : "object",
+    "properties" : {
+      "instance" : {
+        "type" : "string"
+      },
+      "already" : {
+        "description" : "It was already running",
+        "type" : "boolean"
+      },
+      "tasks" : {
+        "description" : "Ids of its tasks, read once it started",
+        "type" : "array",
+        "items" : {
+          "type" : "string"
+        }
+      },
+      "warning" : {
+        "description" : "Why its tasks could not be read",
+        "type" : "string"
+      }
+    },
+    "required" : [ "instance", "already", "tasks" ],
+    "additionalProperties" : false
+  },
+  "keep_instance" : {
+    "type" : "object",
+    "properties" : {
+      "instance" : {
+        "type" : "string"
+      }
+    },
+    "required" : [ "instance" ],
+    "additionalProperties" : false
+  }
+}

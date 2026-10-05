@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -74,9 +75,12 @@ final class Tasks {
      * Code), {@code lost} (its unit is gone without recording an exit: the instance restarted,
      * or it was killed), or {@code unknown} when systemd could not be asked. A person can also
      * join while a run is still going; the state stays {@code running}, with the pid set.
+     * {@code startedAt} and {@code lastActivity} are when the current run started and last
+     * wrote output, by the instance's clock; null when it has not.
      */
     record Status(String state, int run, Integer exit, long outputBytes,
-                  long stderrBytes, String output, String stderr, Long attachedPid) {
+                  long stderrBytes, String output, String stderr, Long attachedPid,
+                  Instant startedAt, Instant lastActivity) {
         boolean running() {
             return "running".equals(state);
         }
@@ -157,7 +161,7 @@ final class Tasks {
             task = tasks.get(id);
         }
         if (task == null) {
-            throw new ToolError("no task '" + id + "' in this session. Tasks are listed by list_instances; "
+            throw new ToolError(ToolError.Code.NOT_FOUND, "no task '" + id + "' in this session. Tasks are listed by list_instances; "
                     + "a task of an instance another session held becomes yours with adopt_instance.");
         }
         return task;
@@ -190,10 +194,10 @@ final class Tasks {
      * Checked when sent, so a person joining in the seconds after is not seen.
      */
     Task sendMessage(Task task, String message, Profile override, String permissionMode, Runnable check) {
-        if (!AGENT.equals(task.kind())) throw new ToolError("task " + task.id() + " is a command, not a delegated agent.");
+        if (!AGENT.equals(task.kind())) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "task " + task.id() + " is a command, not a delegated agent.");
         var attached = status(task, 0).attachedPid();
         if (attached != null) {
-            throw new ToolError("a person is in task " + task.id() + "'s conversation (Claude Code, pid " + attached
+            throw new ToolError(ToolError.Code.WRONG_STATE, "a person is in task " + task.id() + "'s conversation (Claude Code, pid " + attached
                     + ", in " + task.instance() + "). Messages would race with theirs: wait until task_status "
                     + "no longer says attached, or ask the user.");
         }
@@ -207,8 +211,15 @@ final class Tasks {
      * ceiling is held to the one the user set since.
      */
     private String agentRun(Task t, String permissionMode) {
-        return TaskScripts.agentRun(t.id(), t.runs(), t.cwd(), t.profile(),
-                config.get().delegateMaxTurns(t.profile().maxTurns()), permissionMode);
+        return TaskScripts.agentRun(t.id(), t.runs(), t.cwd(), t.profile(), turnBudget(t), permissionMode);
+    }
+
+    /**
+     * The turn budget {@code task}'s runs get: the one chosen, within the ceiling the user set
+     * since, else that ceiling; null for none. What launches a run and what every tool reports.
+     */
+    Integer turnBudget(Task task) {
+        return config.get().delegateMaxTurns(task.profile().maxTurns());
     }
 
     /**
@@ -392,11 +403,11 @@ final class Tasks {
                 var task = tasks.get(continuing);
                 // Forgotten by the refresh above: its instance went away or another session took it.
                 if (task == null) {
-                    throw new ToolError("task " + continuing + " is no longer this session's: its instance "
+                    throw new ToolError(ToolError.Code.NOT_HELD, "task " + continuing + " is no longer this session's: its instance "
                             + "is gone or another session adopted it.");
                 }
                 if (task.busy()) {
-                    throw new ToolError("task " + continuing + " is still running; wait for it (task_status "
+                    throw new ToolError(ToolError.Code.WRONG_STATE, "task " + continuing + " is still running; wait for it (task_status "
                             + "with wait_seconds) or cancel_task it first.");
                 }
                 checkLimit(elsewhere);
@@ -407,7 +418,7 @@ final class Tasks {
             if (AGENT.equals(fresh.kind())) {
                 for (var t : tasks.values()) {
                     if (t.busy() && AGENT.equals(t.kind()) && t.instance().equals(fresh.instance())) {
-                        throw new ToolError("task " + t.id() + " is already an agent working in "
+                        throw new ToolError(ToolError.Code.WRONG_STATE, "task " + t.id() + " is already an agent working in "
                                 + fresh.instance() + "; two would clash in one working tree. Delegate "
                                 + "with template instead of instance to get a fresh one.");
                     }
@@ -429,7 +440,7 @@ final class Tasks {
         var busy = mine + others;
         var max = config.get().maxConcurrentTasks();
         if (busy >= max) {
-            throw new ToolError(busy + " task(s) are running (" + mine + " in this session, " + others
+            throw new ToolError(ToolError.Code.LIMIT, busy + " task(s) are running (" + mine + " in this session, " + others
                     + " in other sessions or orphaned instances" + (others > 0 ? ": " + elsewhere.entrySet().stream()
                     .map(e -> e.getKey() + " " + e.getValue()).collect(Collectors.joining(", ")) : "")
                     + "), the most mcp.max-concurrent-tasks allows (" + max + "). Wait for one to finish, or "
@@ -486,7 +497,7 @@ final class Tasks {
                 // Could not be asked: counts as none.
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new ToolError("interrupted while counting this user's running tasks");
+                throw new ToolError(ToolError.Code.UNAVAILABLE, "interrupted while counting this user's running tasks");
             }
         }
         return counts;
@@ -502,7 +513,7 @@ final class Tasks {
                 var out = new ByteArrayOutputStream();
                 var began = System.nanoTime();
                 var exit = backend.probe(name, TaskScripts.busy(), out, elsewhereTimeout);
-                if (exit != 0) throw new ToolError("exit " + exit);
+                if (exit != 0) throw new ToolError(ToolError.Code.UNAVAILABLE, "exit " + exit);
                 var count = (long) TaskScripts.taskIds(out.toString(StandardCharsets.UTF_8).lines()).size();
                 // An instance that answers, but slowly -- after the caller gave up, or close to it --
                 // would cost every task start nearly the whole wait: it is treated as one that did
@@ -744,7 +755,7 @@ final class Tasks {
         InputStream in = stdin == null ? null : new ByteArrayInputStream(stdin.getBytes(StandardCharsets.UTF_8));
         var exit = backend.exec(instance, script, in, out, err);
         if (exit != 0) {
-            throw new ToolError("isx could not run its task control script in " + instance + " (exit " + exit
+            throw new ToolError(ToolError.Code.UNAVAILABLE, "isx could not run its task control script in " + instance + " (exit " + exit
                     + "): " + err.toString(StandardCharsets.UTF_8).strip());
         }
         return out.toString(StandardCharsets.UTF_8);
@@ -763,7 +774,7 @@ final class Tasks {
             else header.put(key, lines[i].substring(eq + 1));
         }
         if ("missing".equals(header.get("state"))) {
-            return new Status("lost", 0, null, 0, 0, "", "", null);
+            return new Status("lost", 0, null, 0, 0, "", "", null, null, null);
         }
         var rest = i < lines.length ? String.join("\n", List.of(lines).subList(i + 1, lines.length)) : "";
         var split = rest.indexOf("\n---stderr\n");
@@ -779,7 +790,14 @@ final class Tasks {
         long outputBytes = parseLong(header.getOrDefault(agent ? "events_bytes" : "stdout_bytes", "0"));
         return new Status(state, (int) parseLong(header.getOrDefault("run", "0")), exit,
                 outputBytes, parseLong(header.getOrDefault("stderr_bytes", "0")),
-                output.endsWith("\n") ? output.substring(0, output.length() - 1) : output, stderr, attached);
+                output.endsWith("\n") ? output.substring(0, output.length() - 1) : output, stderr, attached,
+                epochSeconds(header.get("started")), epochSeconds(header.get("activity")));
+    }
+
+    /** A time the guest reported in seconds since the epoch; null if it reported none. */
+    private static Instant epochSeconds(String value) {
+        var seconds = value == null ? 0 : parseLong(value);
+        return seconds > 0 ? Instant.ofEpochSecond(seconds) : null;
     }
 
     private static long parseLong(String s) {

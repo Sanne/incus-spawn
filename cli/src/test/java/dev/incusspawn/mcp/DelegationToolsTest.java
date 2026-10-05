@@ -47,6 +47,8 @@ class DelegationToolsTest {
     private volatile String modelRefusal;
     /** How many busy tasks the per-user count finds in each instance another session holds. */
     private volatile int busyElsewhere;
+    /** When set, reading a task's status fails, as an exec Incus cannot run would. */
+    private volatile boolean failStatus;
 
     private static final String EVENTS = """
             {"type":"system","subtype":"init","session_id":"s1"}
@@ -55,6 +57,7 @@ class DelegationToolsTest {
             """;
 
     private Tasks tasks;
+    private StructuredResults results;
 
     @BeforeEach
     void setUp() {
@@ -64,8 +67,9 @@ class DelegationToolsTest {
         // Every other session is dead: another session's instance is an orphan.
         var session = new McpSession(new SessionId(7, 1), "alice", 1, "/work", backend, () -> config, s -> false);
         tasks = new Tasks(session, backend, () -> config);
-        server = new McpServer(out, new McpTools(session, backend, new TemplatePolicy(backend, () -> config),
-                tasks).all(), "1", null, null);
+        var all = new McpTools(session, backend, new TemplatePolicy(backend, () -> config), tasks).all();
+        results = new StructuredResults(all);
+        server = new McpServer(out, all, "1", null, null);
         backend.responder = script -> {
             if (script.equals(TaskScripts.busy())) {
                 return java.util.stream.IntStream.range(0, busyElsewhere).mapToObj(i -> "task t" + i + "-other running\n")
@@ -89,7 +93,7 @@ class DelegationToolsTest {
                         Thread.currentThread().interrupt();
                     }
                 }
-                if (failLaunch) throw new ToolError("launch failed");
+                if (failLaunch) throw new ToolError(ToolError.Code.UNAVAILABLE, "launch failed");
                 return "";
             }
             if (script.contains(ModelCheck.MARKER)) {
@@ -98,7 +102,11 @@ class DelegationToolsTest {
             }
             if (script.startsWith("for d in")) return taskListing;
             if (script.startsWith("f=$(mktemp)")) return "exit=0\nsummarised=12 lines, 345 bytes\n---\nIt touches A.java only.\n";
-            if (script.contains("--numstat")) return "## /home/agentuser\n3\t1\tsrc/A.java\n 1 file changed\n---\n";
+            if (script.contains("--numstat")) {
+                return "## /home/agentuser\n3\t1\tsrc/A.java\0-\t-\tlogo.png\0\n---\n"
+                        + (script.contains("--src-prefix") ? "diff --git a/src/A.java b/src/A.java\n+fixed\n" : "");
+            }
+            if (failStatus && script.contains("echo run=")) throw new IllegalStateException("exec failed");
             if (!script.startsWith("D=") || !script.contains("echo run=")) return ""; // cancel
             if (taskState.equals("unknown")) return "run=1\nkind=agent\nstate=unknown\n---\n\n---stderr\n";
             var who = attached ? "cwd=/home/agentuser\nsession_id=s1\npresence=claude 77 /elsewhere\n"
@@ -125,7 +133,7 @@ class DelegationToolsTest {
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"tools/call\",\"params\":{\"name\":\""
                 + tool + "\",\"arguments\":" + args + "}}");
         server.awaitIdle();
-        return out.byId(id).path("result");
+        return results.check(tool, out.byId(id).path("result"));
     }
 
     private static String text(JsonNode r) {
@@ -135,7 +143,82 @@ class DelegationToolsTest {
     private String delegateFresh() throws Exception {
         var r = call("delegate", "{\"instruction\":\"fix the flaky test\",\"template\":\"tpl-agent\"}");
         assertFalse(r.path("isError").asBoolean(), text(r));
-        return JsonRpc.JSON.readTree(text(r)).path("task_id").asText();
+        return r.path("structuredContent").path("task_id").asText();
+    }
+
+    private static JsonNode structured(JsonNode result) {
+        assertFalse(result.path("isError").asBoolean(), text(result));
+        return result.path("structuredContent");
+    }
+
+    @Test
+    void everyToolReturnsStructuredContentMatchingItsSchema() throws Exception {
+        structured(call("list_templates", "{}"));
+        var created = structured(call("create_instance", "{\"template\":\"tpl-agent\",\"purpose\":\" #1010 \"}"));
+        var name = created.path("instance").asText();
+        assertEquals("#1010", created.path("purpose").asText(), "as stored and listed");
+        var exec = structured(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"ls\"}"));
+        assertEquals(0, exec.path("exit_code").asInt());
+        var command = structured(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"mvn verify\",\"background\":true}"));
+        assertEquals("command", command.path("kind").asText());
+        var agent = structured(call("delegate", "{\"instruction\":\"fix it\",\"template\":\"tpl-agent\"}"));
+        var task = agent.path("task_id").asText();
+        assertEquals(1, agent.path("run").asInt());
+        var listed = structured(call("list_instances", "{}")).path("instances");
+        assertTrue(listed.findValues("running").stream().allMatch(JsonNode::asBoolean), "tasks are running: " + listed);
+        assertEquals("running", structured(call("task_status", "{\"task_id\":\"" + task + "\"}")).path("state").asText());
+        structured(call("cancel_task", "{\"task_id\":\"" + command.path("task_id").asText() + "\"}"));
+
+        taskState = "finished";
+        var waited = structured(call("wait_any", "{\"task_ids\":[\"" + task + "\"]}"));
+        assertEquals(task, waited.path("finished").get(0).asText());
+        var status = structured(call("task_status", "{\"task_id\":\"" + task + "\"}"));
+        assertEquals(0, status.path("exit_code").asInt());
+        assertEquals(0.42, status.path("cost_usd").asDouble());
+        var result = structured(call("task_result", "{\"task_id\":\"" + task + "\"}"));
+        assertEquals("Fixed the race in A.java; tests pass.", result.path("report").asText());
+        assertEquals(7, result.path("turns").asInt());
+        var stat = structured(call("get_diff", "{\"task_id\":\"" + task + "\",\"stat\":true}"));
+        var files = stat.path("repos").get(0).path("files");
+        assertEquals("src/A.java", files.get(0).path("path").asText());
+        assertEquals(3, files.get(0).path("added").asInt());
+        assertTrue(files.get(1).path("added").isNull(), "a binary file has no line counts");
+        assertTrue(structured(call("get_diff", "{\"task_id\":\"" + task + "\"}")).path("patch").asText().contains("+fixed"));
+        var running = structured(call("list_instances", "{}")).path("instances").findValues("running");
+        assertFalse(running.isEmpty());
+        assertTrue(running.stream().noneMatch(JsonNode::asBoolean), "no task runs any more: " + running);
+        structured(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"push it\"}"));
+
+        taskState = "finished";
+        structured(call("stop_instance", "{\"instance\":\"" + name + "\"}"));
+        structured(call("start_instance", "{\"instance\":\"" + name + "\"}"));
+        structured(call("keep_instance", "{\"instance\":\"" + name + "\"}"));
+        backend.instance("mcp-agent-old-abcde", Map.of(
+                dev.incusspawn.incus.Metadata.PROFILE, "tpl-agent",
+                dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
+                dev.incusspawn.incus.Metadata.MCP_OWNER, "alice",
+                dev.incusspawn.incus.Metadata.MCP_ORPHANED, "2026-09-28T10:00:00Z"));
+        var orphan = structured(call("list_instances", "{}")).path("instances").findParent("orphaned_since");
+        assertEquals("orphaned", orphan.path("state").asText());
+        structured(call("adopt_instance", "{\"instance\":\"mcp-agent-old-abcde\"}"));
+        assertFalse(structured(call("destroy_instance", "{\"instance\":\"mcp-agent-old-abcde\"}")).path("already").asBoolean());
+
+        var refused = call("task_status", "{\"task_id\":\"t9-nope\"}");
+        assertEquals("not_found", refused.path("_meta").path(ToolResult.ERROR_META).path("code").asText());
+        assertEquals(new java.util.TreeSet<>(results.toolNames()), new java.util.TreeSet<>(results.succeeded),
+                "every tool returned a structured result checked against its schema");
+    }
+
+    @Test
+    void aFinishedTaskWhoseStatusCannotBeReadIsUnknownNotLost() throws Exception {
+        var task = delegateFresh();
+        taskState = "finished";
+        failStatus = true;
+        var waited = structured(call("wait_any", "{\"task_ids\":[\"" + task + "\"]}"));
+        assertEquals(task, waited.path("finished").get(0).asText(), "it is over");
+        var entry = waited.path("tasks").get(0);
+        assertEquals("unknown", entry.path("state").asText(), "finished or lost is not known: " + entry);
+        assertFalse(entry.has("exit_code"));
     }
 
     @Test
@@ -282,11 +365,11 @@ class DelegationToolsTest {
     @Test
     void aResumedAgentWorksWhereTheFirstRunDid() throws Exception {
         // Claude Code keeps its sessions per directory: --resume from elsewhere finds nothing.
-        var instance = JsonRpc.JSON.readTree(text(call("create_instance", "{\"template\":\"tpl-agent\"}")))
+        var instance = call("create_instance", "{\"template\":\"tpl-agent\"}").path("structuredContent")
                 .path("instance").asText();
         var r = call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance
                 + "\",\"cwd\":\"/home/agentuser/other-repo\"}");
-        var task = JsonRpc.JSON.readTree(text(r)).path("task_id").asText();
+        var task = r.path("structuredContent").path("task_id").asText();
         taskState = "finished";
         assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"more\"}")
                 .path("isError").asBoolean());
@@ -296,7 +379,7 @@ class DelegationToolsTest {
 
     @Test
     void concurrentDelegationsToOneInstanceCannotBothStart() throws Exception {
-        var instance = JsonRpc.JSON.readTree(text(call("create_instance", "{\"template\":\"tpl-agent\"}")))
+        var instance = call("create_instance", "{\"template\":\"tpl-agent\"}").path("structuredContent")
                 .path("instance").asText();
         launchEntered = new java.util.concurrent.CountDownLatch(1);
         launchRelease = new java.util.concurrent.CountDownLatch(1);
@@ -351,7 +434,7 @@ class DelegationToolsTest {
     }
 
     private String instanceOf(String task) throws Exception {
-        var listed = JsonRpc.JSON.readTree(text(call("list_instances", "{}")));
+        var listed = call("list_instances", "{}").path("structuredContent").path("instances");
         for (var inst : listed) {
             for (var t : inst.path("tasks")) {
                 if (t.path("task_id").asText().equals(task)) return inst.path("instance").asText();
@@ -382,7 +465,7 @@ class DelegationToolsTest {
 
     @Test
     void aStateNobodyCouldReadKeepsTheTaskCounted() throws Exception {
-        var instance = JsonRpc.JSON.readTree(text(call("create_instance", "{\"template\":\"tpl-agent\"}")))
+        var instance = call("create_instance", "{\"template\":\"tpl-agent\"}").path("structuredContent")
                 .path("instance").asText();
         assertFalse(call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance + "\"}")
                 .path("isError").asBoolean());
@@ -400,7 +483,7 @@ class DelegationToolsTest {
         var task = delegateFresh();
         var instance = instanceOf(task);
         // The daemon fails every read: neither the probe nor the existence check can answer.
-        backend.metadataFailure = new ToolError("cannot read it from Incus right now");
+        backend.metadataFailure = new ToolError(ToolError.Code.UNAVAILABLE, "cannot read it from Incus right now");
         var probe = backend.responder;
         backend.responder = script -> {
             throw new IncusException("exec failed (HTTP 500)");
@@ -414,7 +497,7 @@ class DelegationToolsTest {
     }
 
     private String instanceTask(String instance) throws Exception {
-        var listed = JsonRpc.JSON.readTree(text(call("list_instances", "{}")));
+        var listed = call("list_instances", "{}").path("structuredContent").path("instances");
         for (var inst : listed) {
             if (inst.path("instance").asText().equals(instance)) return inst.path("tasks").get(0).path("task_id").asText();
         }
@@ -433,7 +516,7 @@ class DelegationToolsTest {
         assertTrue(runScript(1).contains("--permission-mode 'bypassPermissions'"), runScript(1));
         config.setDelegatePermissionModes(java.util.Map.of("tpl-agent", "plan"));
         var listed = text(call("list_templates", "{}"));
-        assertTrue(listed.contains("\"delegate_permission_mode\" : \"plan\""), listed);
+        assertTrue(listed.contains("\"permission_mode\" : \"plan\""), listed);
         config.setMaxConcurrentTasks(5);
         var r = call("delegate", "{\"instruction\":\"review\",\"template\":\"tpl-agent\"}");
         assertTrue(text(r).contains("\"permission_mode\" : \"plan\""), text(r));
@@ -519,6 +602,8 @@ class DelegationToolsTest {
 
         var diff = text(call("get_diff", "{\"task_id\":\"" + task + "\",\"ask\":\"which areas?\"}"));
         assertTrue(diff.contains("It touches A.java only."), diff);
+        assertTrue(backend.scripts.getLast().contains(TaskScripts.diffForReading(task, null)),
+                "the model reads the stat one file per line, not NUL-separated");
         assertTrue(call("get_diff", "{\"task_id\":\"" + task + "\",\"ask\":\"x\",\"stat\":true}").path("isError").asBoolean());
     }
 
@@ -539,9 +624,9 @@ class DelegationToolsTest {
                 dev.incusspawn.incus.Metadata.MCP_PURPOSE, "#870 implement",
                 dev.incusspawn.incus.Metadata.MCP_ORPHANED, "2026-09-28T10:00:00Z"));
         var listed = text(call("list_instances", "{}"));
-        assertTrue(listed.contains("\"status\" : \"orphaned\""), listed);
+        assertTrue(listed.contains("\"state\" : \"orphaned\""), listed);
         assertTrue(listed.contains("#870 implement"), listed);
-        assertTrue(listed.contains("destroyed_after"), listed);
+        assertTrue(listed.contains("orphan_until"), listed);
         assertTrue(call("exec", "{\"instance\":\"mcp-agent-870-impl-abcde\",\"command\":\"ls\"}").path("isError").asBoolean(),
                 "not held until adopted");
 
@@ -582,7 +667,7 @@ class DelegationToolsTest {
     @Test
     void aRefusedEnvironmentNameGivesItsTaskSlotBack() throws Exception {
         config.setMaxConcurrentTasks(1);
-        var instance = JsonRpc.JSON.readTree(text(call("create_instance", "{\"template\":\"tpl-plain\"}")))
+        var instance = call("create_instance", "{\"template\":\"tpl-plain\"}").path("structuredContent")
                 .path("instance").asText();
         var bad = "{\"instance\":\"" + instance + "\",\"command\":\"true\",\"background\":true,\"env\":{\"FOO-BAR\":\"x\"}}";
         assertTrue(call("exec", bad).path("isError").asBoolean());
@@ -653,7 +738,7 @@ class DelegationToolsTest {
         var r = call("delegate", "{\"instruction\":\"rebase\",\"template\":\"tpl-agent\","
                 + "\"model\":\"claude-haiku-4-5\",\"max_turns\":7}");
         assertFalse(r.path("isError").asBoolean(), text(r));
-        var task = JsonRpc.JSON.readTree(text(r)).path("task_id").asText();
+        var task = r.path("structuredContent").path("task_id").asText();
         assertTrue(runScript(1).contains(" --model 'claude-haiku-4-5'"), runScript(1));
         assertTrue(runScript(1).contains(" --max-turns 7 "), runScript(1));
         assertTrue(text(call("task_status", "{\"task_id\":\"" + task + "\"}")).contains("model: claude-haiku-4-5"));
@@ -719,7 +804,7 @@ class DelegationToolsTest {
     void aModelIsCheckedPerTemplateAccountAndModel() throws Exception {
         config.setMaxConcurrentTasks(10);
         config.setMaxInstances(10);
-        var instance = JsonRpc.JSON.readTree(text(call("create_instance", "{\"template\":\"tpl-agent\"}")))
+        var instance = call("create_instance", "{\"template\":\"tpl-agent\"}").path("structuredContent")
                 .path("instance").asText();
         call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"haiku\"}");
         call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"haiku\"}");
@@ -746,9 +831,9 @@ class DelegationToolsTest {
     void listTemplatesSaysWhatAProfileOverrides() throws Exception {
         config.setDelegateMaxTurns(200);
         backend.delegateModel("tpl-agent", "claude-opus-5-5");
-        var listed = JsonRpc.JSON.readTree(text(call("list_templates", "{}")));
+        var listed = call("list_templates", "{}").path("structuredContent");
         var agent = listed.path("templates").get(0);
-        assertEquals("tpl-agent", agent.path("name").asText());
+        assertEquals("tpl-agent", agent.path("template").asText());
         assertEquals("claude-opus-5-5", agent.path("delegate_model").asText());
         assertEquals(200, listed.path("delegate_max_turns").asInt());
         assertTrue(listed.path("templates").get(1).path("delegate_model").isMissingNode(), listed.toString());
@@ -795,7 +880,7 @@ class DelegationToolsTest {
         call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"haiku\"}");
         assertEquals(reads, backend.metadataReads.get(), "no Incus read to learn what the branch wrote");
         // An instance pinned to the same account shares the check.
-        var instance = JsonRpc.JSON.readTree(text(call("create_instance", "{\"template\":\"tpl-agent\"}")))
+        var instance = call("create_instance", "{\"template\":\"tpl-agent\"}").path("structuredContent")
                 .path("instance").asText();
         assertFalse(call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance + "\",\"model\":\"haiku\"}")
                 .path("isError").asBoolean());
@@ -806,8 +891,30 @@ class DelegationToolsTest {
     void taskStatusShowsTheBudgetTheRunGets() throws Exception {
         config.setDelegateMaxTurns(200);
         var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":150}");
-        var task = JsonRpc.JSON.readTree(text(r)).path("task_id").asText();
+        var task = r.path("structuredContent").path("task_id").asText();
         config.setDelegateMaxTurns(50);
         assertTrue(text(call("task_status", "{\"task_id\":\"" + task + "\"}")).contains("max_turns: 50"));
+    }
+
+    @Test
+    void everyToolReportsTheBudgetTheRunGets() throws Exception {
+        // None chosen: the run gets the user's ceiling, and both tools say so.
+        config.setDelegateMaxTurns(30);
+        var started = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\"}").path("structuredContent");
+        var task = started.path("task_id").asText();
+        assertEquals(30, started.path("max_turns").asInt());
+        assertEquals(30, call("task_status", "{\"task_id\":\"" + task + "\"}").path("structuredContent").path("max_turns").asInt());
+
+        // Chosen under a higher ceiling that was lowered since: the lower one, everywhere.
+        config.setDelegateMaxTurns(200);
+        var second = call("delegate", "{\"instruction\":\"y\",\"template\":\"tpl-agent\",\"max_turns\":150}")
+                .path("structuredContent");
+        assertEquals(150, second.path("max_turns").asInt());
+        config.setDelegateMaxTurns(50);
+        taskState = "finished";
+        var id = second.path("task_id").asText();
+        var sent = call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"more\"}").path("structuredContent");
+        assertEquals(50, sent.path("max_turns").asInt(), sent.toString());
+        assertEquals(50, call("task_status", "{\"task_id\":\"" + id + "\"}").path("structuredContent").path("max_turns").asInt());
     }
 }

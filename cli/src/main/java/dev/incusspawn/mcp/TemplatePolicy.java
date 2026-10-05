@@ -42,7 +42,7 @@ final class TemplatePolicy {
     InstanceBackend.TemplateInfo require(String name) {
         var info = requireLineage(name);
         if (!info.built()) {
-            throw new ToolError("template '" + name + "' is approved but not built. "
+            throw new ToolError(ToolError.Code.WRONG_STATE, "template '" + name + "' is approved but not built. "
                     + "Ask the user to run: isx build " + name);
         }
         return info;
@@ -56,15 +56,15 @@ final class TemplatePolicy {
     InstanceBackend.TemplateInfo requireLineage(String name) {
         var listed = config.get().templates();
         if (!listed.contains(name)) {
-            throw new ToolError("template '" + name + "' is not approved for agents"
+            throw new ToolError(ToolError.Code.NOT_APPROVED, "template '" + name + "' is not approved for agents"
                     + (listed.isEmpty() ? " (none are)." : "; approved: " + String.join(", ", listed) + ".")
                     + " " + HOW_TO_APPROVE);
         }
         var info = backend.template(name)
-                .orElseThrow(() -> new ToolError("template '" + name + "' is approved but has no "
+                .orElseThrow(() -> new ToolError(ToolError.Code.NOT_APPROVED, "template '" + name + "' is approved but has no "
                         + "definition. Ask the user to check mcp.templates in their config."));
         if (info.projectLocal()) {
-            throw new ToolError("template '" + name + "' was built from a project-local definition "
+            throw new ToolError(ToolError.Code.NOT_APPROVED, "template '" + name + "' was built from a project-local definition "
                     + "(.incus-spawn/ in a repository), which agents may never use.");
         }
         return info;

@@ -35,7 +35,7 @@ final class AskScript {
 
     static String checkQuestion(String question) {
         if (question == null || question.isBlank()) return null;
-        if (question.length() > MAX_QUESTION) throw new ToolError("ask is limited to " + MAX_QUESTION + " characters");
+        if (question.length() > MAX_QUESTION) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "ask is limited to " + MAX_QUESTION + " characters");
         return question.strip();
     }
 

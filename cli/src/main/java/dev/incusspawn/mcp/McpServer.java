@@ -3,6 +3,7 @@ package dev.incusspawn.mcp;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.incusspawn.incus.IncusException;
 
 import java.io.IOException;
 import java.util.LinkedHashMap;
@@ -184,9 +185,14 @@ final class McpServer {
             try {
                 result = tool.handler().call(args, ctx);
             } catch (ToolError e) {
-                result = ToolResult.error(e.getMessage());
+                result = ToolResult.error(e.code, e.getMessage(), args.node());
+            } catch (IncusException e) {
+                // Incus did not answer as asked: worth a retry, unlike a bug in isx.
+                result = ToolResult.error(ToolError.Code.UNAVAILABLE, "Incus failed during " + name + ": " + e.getMessage(),
+                        args.node());
             } catch (Exception e) {
-                result = ToolResult.error("isx failed running " + name + ": " + e.getMessage());
+                result = ToolResult.error(ToolError.Code.INTERNAL, "isx failed running " + name + ": " + e.getMessage(),
+                        args.node());
                 System.err.println("isx mcp: " + name + " failed:");
                 e.printStackTrace();
             }

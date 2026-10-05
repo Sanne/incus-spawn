@@ -77,6 +77,14 @@
             <version>3.27.7</version>
             <scope>test</scope>
         </dependency>
+        <!-- Validates isx mcp's output schemas and results as a client would: the validator the
+             official MCP Java SDK uses. Not managed by the Quarkus BOM, so pinned here. -->
+        <dependency>
+            <groupId>com.networknt</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <version>1.5.6</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

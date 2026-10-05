@@ -48,7 +48,7 @@ class McpServerProtocolTest {
 
     private static McpTool tool(String name, McpTool.Handler handler) {
         return new McpTool(name, "does " + name, Schema.object().string("x", "an x", false).build(),
-                McpTool.annotations(true, false, true), handler);
+                Schema.object().string("x", "the x", true).build(), McpTool.annotations(true, false, true), handler);
     }
 
     private static String call(int id, String tool, String args) {
@@ -98,35 +98,56 @@ class McpServerProtocolTest {
 
     @Test
     void toolsAreListedWithSchemasAndAnnotations() {
-        tools.add(tool("a", (args, ctx) -> ToolResult.text("ok")));
+        tools.add(tool("a", (args, ctx) -> ToolResult.text("ok", x("ok"))));
         server().handle("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
         var listed = out.byId(2).path("result").path("tools").get(0);
         assertEquals("a", listed.path("name").asText());
         assertEquals("object", listed.path("inputSchema").path("type").asText());
+        assertEquals("string", listed.path("outputSchema").path("properties").path("x").path("type").asText());
         assertTrue(listed.path("annotations").path("readOnlyHint").asBoolean());
     }
 
+    private static com.fasterxml.jackson.databind.node.ObjectNode x(String value) {
+        var node = JsonRpc.JSON.createObjectNode();
+        node.put("x", value);
+        return node;
+    }
+
     @Test
-    void aToolResultAndAToolErrorBothComeBackAsResults() throws Exception {
-        tools.add(tool("ok", (args, ctx) -> ToolResult.text("x=" + args.string("x"))));
-        tools.add(tool("refuse", (args, ctx) -> { throw new ToolError("ask the user"); }));
+    void aToolResultCarriesItsStructureAndAToolErrorOnlyItsCodeInMeta() throws Exception {
+        tools.add(tool("ok", (args, ctx) -> ToolResult.text("x=" + args.string("x"), x(args.string("x")))));
+        tools.add(tool("json", (args, ctx) -> ToolResult.json(x("1"), "Then do y.")));
+        tools.add(tool("refuse", (args, ctx) -> { throw new ToolError(ToolError.Code.NOT_FOUND, "no such task"); }));
         tools.add(tool("crash", (args, ctx) -> { throw new IllegalStateException("boom"); }));
         var server = server();
         server.handle(call(1, "ok", "{\"x\":\"1\"}"));
-        server.handle(call(2, "refuse", "{}"));
-        server.handle(call(3, "crash", "{}"));
-        server.handle(call(4, "ok", "{\"x\":5}"));
+        server.handle(call(2, "json", "{}"));
+        server.handle(call(3, "refuse", "{\"task_id\":\"t1-ab\",\"instance\":\"box\",\"x\":\"y\"}"));
+        server.handle(call(4, "crash", "{}"));
+        server.handle(call(5, "ok", "{\"x\":5}"));
         server.awaitIdle();
 
-        var ok = out.byId(1).path("result");
-        assertFalse(ok.path("isError").asBoolean());
-        assertEquals("x=1", ok.path("content").get(0).path("text").asText());
-        var refused = out.byId(2).path("result");
-        assertTrue(refused.path("isError").asBoolean());
-        assertEquals("ask the user", refused.path("content").get(0).path("text").asText());
-        assertTrue(out.byId(3).path("result").path("isError").asBoolean());
-        assertTrue(out.byId(4).path("result").path("content").get(0).path("text").asText()
-                .contains("must be a string"));
+        var results = new StructuredResults(tools);
+        var ok = results.check("ok", out.byId(1).path("result"));
+        assertEquals("x=1", ok.path("content").get(0).path("text").asText(), "the text stays for the model");
+        assertEquals("1", ok.path("structuredContent").path("x").asText());
+        assertFalse(ok.has("_meta"));
+
+        var json = results.check("json", out.byId(2).path("result"));
+        assertEquals("{\n  \"x\" : \"1\"\n}\n\nThen do y.", json.path("content").get(0).path("text").asText(),
+                "the structure, then guidance that is not part of it");
+
+        var refused = results.check("refuse", out.byId(3).path("result"));
+        var error = refused.path("_meta").path("dev.incusspawn/error");
+        assertEquals("not_found", error.path("code").asText());
+        assertEquals("t1-ab", error.path("task_id").asText(), "what the call named");
+        assertEquals("box", error.path("instance").asText());
+        assertEquals(4, error.size(), "code, message, task_id, instance -- not x: " + error);
+        assertEquals("internal", results.check("crash", out.byId(4).path("result"))
+                .path("_meta").path("dev.incusspawn/error").path("code").asText());
+        var mistyped = results.check("ok", out.byId(5).path("result"));
+        assertEquals("invalid_argument", mistyped.path("_meta").path("dev.incusspawn/error").path("code").asText());
+        assertTrue(mistyped.path("content").get(0).path("text").asText().contains("must be a string"));
     }
 
     @Test
@@ -160,7 +181,7 @@ class McpServerProtocolTest {
         var release = new CountDownLatch(1);
         tools.add(tool("slow", (args, ctx) -> {
             release.await(10, TimeUnit.SECONDS);
-            return ToolResult.text("done");
+            return ToolResult.text("done", x("done"));
         }));
         var server = server();
         server.handle(call(1, "slow", "{}"));
@@ -181,7 +202,7 @@ class McpServerProtocolTest {
             ctx.onCancel(() -> { hookRan.set(true); stop.countDown(); });
             started.countDown();
             stop.await(10, TimeUnit.SECONDS);
-            return ToolResult.text("late");
+            return ToolResult.text("late", x("late"));
         }));
         var server = server();
         server.handle(call(5, "long", "{}"));
@@ -196,7 +217,7 @@ class McpServerProtocolTest {
     void progressIsSentOnlyWhenTheClientAskedForIt() throws Exception {
         tools.add(tool("chatty", (args, ctx) -> {
             ctx.progress("step 1");
-            return ToolResult.text("ok");
+            return ToolResult.text("ok", x("ok"));
         }));
         var server = server();
         server.handle(call(1, "chatty", "{}"));
@@ -218,7 +239,7 @@ class McpServerProtocolTest {
             ctx.onCancel(cancelled::countDown);
             started.countDown();
             cancelled.await(10, TimeUnit.SECONDS);
-            return ToolResult.text("x");
+            return ToolResult.text("x", x("x"));
         }));
         var lines = new java.util.ArrayDeque<>(List.of(call(1, "long", "{}")));
         var transport = new McpTransport() {

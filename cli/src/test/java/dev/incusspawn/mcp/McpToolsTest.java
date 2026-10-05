@@ -11,8 +11,11 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Predicate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -32,6 +35,7 @@ class McpToolsTest {
     private final McpServerProtocolTest.Captured out = new McpServerProtocolTest.Captured();
     private McpSession session;
     private McpServer server;
+    private StructuredResults results;
     private int nextId = 1;
 
     @BeforeEach
@@ -39,10 +43,16 @@ class McpToolsTest {
         realHome = System.getProperty("user.home");
         System.setProperty("user.home", home.toString()); // the audit log goes here
         config.setTemplates(List.of("tpl-java"));
-        session = new McpSession(new SessionId(4242, 1), "alice", 1, "/work", backend, () -> config, s -> false);
-        var tools = new McpTools(session, backend, new TemplatePolicy(backend, () -> config),
-                new Tasks(session, backend, () -> config));
-        server = new McpServer(out, tools.all(), "1", null, null);
+        wire(s -> false);
+    }
+
+    /** A session whose view of other sessions is {@code alive}, and the server over its tools. */
+    private void wire(Predicate<SessionId> alive) {
+        session = new McpSession(new SessionId(4242, 1), "alice", 1, "/work", backend, () -> config, alive);
+        var all = new McpTools(session, backend, new TemplatePolicy(backend, () -> config),
+                new Tasks(session, backend, () -> config)).all();
+        results = new StructuredResults(all);
+        server = new McpServer(out, all, "1", null, null);
     }
 
     @AfterEach
@@ -55,7 +65,7 @@ class McpToolsTest {
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"tools/call\",\"params\":{\"name\":\""
                 + tool + "\",\"arguments\":" + args + "}}");
         server.awaitIdle();
-        return out.byId(id).path("result");
+        return results.check(tool, out.byId(id).path("result"));
     }
 
     private static String text(JsonNode result) {
@@ -65,14 +75,14 @@ class McpToolsTest {
     private String createJava() throws Exception {
         var result = call("create_instance", "{\"template\":\"tpl-java\"}");
         assertFalse(result.path("isError").asBoolean(), text(result));
-        return JsonRpc.JSON.readTree(text(result)).path("instance").asText();
+        return result.path("structuredContent").path("instance").asText();
     }
 
     @Test
     void onlyApprovedTemplatesAreListed() throws Exception {
-        var listed = JsonRpc.JSON.readTree(text(call("list_templates", "{}"))).path("templates");
+        var listed = call("list_templates", "{}").path("structuredContent").path("templates");
         assertEquals(1, listed.size());
-        assertEquals("tpl-java", listed.get(0).path("name").asText());
+        assertEquals("tpl-java", listed.get(0).path("template").asText());
         assertTrue(listed.get(0).path("supports_delegate").asBoolean());
     }
 
@@ -80,9 +90,9 @@ class McpToolsTest {
     void theCeilingsAreListedWithTheTemplates() throws Exception {
         config.setMaxInstances(12);
         config.setMaxConcurrentTasks(10);
-        var listed = JsonRpc.JSON.readTree(text(call("list_templates", "{}")));
-        assertEquals(12, listed.path("instance_limit").asInt());
-        assertEquals(10, listed.path("task_limit").asInt());
+        var listed = call("list_templates", "{}").path("structuredContent");
+        assertEquals(12, listed.path("max_instances").asInt());
+        assertEquals(10, listed.path("max_concurrent_tasks").asInt());
     }
 
     @Test
@@ -109,7 +119,7 @@ class McpToolsTest {
     @Test
     void aFailedCreateLeavesNoReservationBehind() throws Exception {
         config.setMaxInstances(1);
-        backend.createFailure = new ToolError("proxy is down");
+        backend.createFailure = new ToolError(ToolError.Code.UNAVAILABLE, "proxy is down");
         assertTrue(call("create_instance", "{\"template\":\"tpl-java\"}").path("isError").asBoolean());
         backend.createFailure = null;
         createJava();
@@ -169,15 +179,46 @@ class McpToolsTest {
         assertTrue(call("destroy_instance", "{\"instance\":\"tpl-java\"}").path("isError").asBoolean());
         assertTrue(backend.instances.containsKey("tpl-java"));
 
-        var listed = JsonRpc.JSON.readTree(text(call("list_instances", "{}")));
+        var listed = call("list_instances", "{}").path("structuredContent").path("instances");
         assertEquals(1, listed.size());
         assertTrue(listed.get(0).path("kept").asBoolean());
+
+        // Deleted behind the session's back: destroying it says it was already gone, as stop and start do.
+        var c = createJava();
+        backend.instances.remove(c);
+        var gone = call("destroy_instance", "{\"instance\":\"" + c + "\"}");
+        assertTrue(gone.path("structuredContent").path("already").asBoolean(), gone.toString());
+    }
+
+    @Test
+    void anotherLiveSessionsInstanceIsListedWithWhatIsStampedAndNothingMade() throws Exception {
+        wire(s -> true);
+        backend.instance("mcp-java-a-abcde", Map.of(Metadata.PROFILE, "tpl-java", Metadata.MCP_OWNER, "alice",
+                Metadata.MCP_SESSION, "9-9", Metadata.MCP_CLIENT, "claude-code"));
+        backend.instance("mcp-java-b-abcde", Map.of(Metadata.PROFILE, "tpl-java", Metadata.MCP_OWNER, "alice",
+                Metadata.MCP_SESSION, "not-a-session"));
+        backend.instance("mcp-java-kept-abcde", Map.of(Metadata.PROFILE, "tpl-java", Metadata.MCP_OWNER, "alice",
+                Metadata.MCP_SESSION, "9-9", Metadata.MCP_KEPT, "true"));
+        var listed = call("list_instances", "{}").path("structuredContent").path("instances");
+        var byName = new HashMap<String, JsonNode>();
+        listed.forEach(i -> byName.put(i.path("instance").asText(), i));
+        assertEquals(Set.of("mcp-java-a-abcde", "mcp-java-b-abcde"), byName.keySet(),
+                "a kept instance is the user's, even while a live session still holds it");
+        var a = byName.get("mcp-java-a-abcde");
+        assertEquals("held", a.path("state").asText());
+        assertEquals("9-9", a.path("held_by").asText());
+        assertEquals("claude-code", a.path("held_by_client").asText());
+        assertFalse(a.path("kept").asBoolean());
+        var b = byName.get("mcp-java-b-abcde");
+        assertEquals("held", b.path("state").asText(), "an unreadable session stamp counts as held");
+        assertFalse(b.has("held_by"), "no session id is made up: " + b);
+        assertFalse(b.has("held_by_client"));
     }
 
     @Test
     void aPurposeIsStampedAndListed() throws Exception {
         var r = call("create_instance", "{\"template\":\"tpl-java\",\"name_hint\":\"870-impl\",\"purpose\":\"#870 implement\"}");
-        var name = JsonRpc.JSON.readTree(text(r)).path("instance").asText();
+        var name = r.path("structuredContent").path("instance").asText();
         assertEquals("#870 implement", backend.instances.get(name).get(Metadata.MCP_PURPOSE));
         assertTrue(text(call("list_instances", "{}")).contains("\"purpose\" : \"#870 implement\""));
     }
@@ -214,7 +255,7 @@ class McpToolsTest {
         var result = fork(source, ",\"name_hint\":\"review\",\"purpose\":\"correctness review\"");
         assertFalse(result.path("isError").asBoolean(), text(result));
         assertEquals(1, backend.metadataReads.get(), "ownership, status and lineage come from one read");
-        var node = JsonRpc.JSON.readTree(text(result));
+        var node = result.path("structuredContent");
         var name = node.path("instance").asText();
         assertTrue(name.startsWith("mcp-java-review-"), name);
         assertEquals("tpl-java", node.path("template").asText());
@@ -235,7 +276,7 @@ class McpToolsTest {
         call("stop_instance", "{\"instance\":\"" + name + "\"}");
         var again = fork(name, "");
         assertFalse(again.path("isError").asBoolean(), text(again));
-        assertEquals("tpl-java", JsonRpc.JSON.readTree(text(again)).path("template").asText());
+        assertEquals("tpl-java", again.path("structuredContent").path("template").asText());
     }
 
     @Test

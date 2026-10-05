@@ -170,14 +170,18 @@ final class TaskScripts {
         var d = dir(taskId);
         return "D=" + d + "; [ -d \"$D\" ] || { echo state=missing; exit 0; }; id=" + taskId + "; " + RUN_STATE
                 + "k=$([ -f \"$D/kind\" ] && cat \"$D/kind\"); echo run=$n; echo kind=$k; echo state=$s; "
+                // When the run started (it writes current once launched) and last wrote output.
+                + "echo started=$(stat -c %Y \"$D/current\" 2>/dev/null); "
                 + "[ $s = finished ] && echo exit=$(cat \"$D/exit-$n\"); "
                 + "if [ \"$k\" = agent ]; then "
                 + "echo cwd=$(cat \"$D/cwd\" 2>/dev/null); echo session_id=$(cat \"$D/session_id\" 2>/dev/null); "
                 + Presence.script("presence=") + "; "
-                + "echo events_bytes=$(stat -c %s \"$D/events-$n.jsonl\" 2>/dev/null || echo 0); echo ---; "
+                // Size and last write of the events in one stat: this runs on every status read.
+                + "set -- $(stat -c '%s %Y' \"$D/events-$n.jsonl\" 2>/dev/null); echo events_bytes=${1:-0}; echo activity=$2; echo ---; "
                 + "tail -c " + tailBytes + " \"$D/events-$n.jsonl\" 2>/dev/null; echo; echo ---stderr; "
                 + "tail -c 2000 \"$D/stderr-$n.log\" 2>/dev/null; "
-                + "else echo stdout_bytes=$(stat -c %s \"$D/stdout\" 2>/dev/null || echo 0); "
+                + "else a=; for t in $(stat -c %Y \"$D/stdout\" \"$D/stderr\" 2>/dev/null); do [ \"$t\" -gt \"${a:-0}\" ] && a=$t; done; echo activity=$a; "
+                + "echo stdout_bytes=$(stat -c %s \"$D/stdout\" 2>/dev/null || echo 0); "
                 + "echo stderr_bytes=$(stat -c %s \"$D/stderr\" 2>/dev/null || echo 0); echo ---; "
                 + "tail -c " + tailBytes + " \"$D/stdout\" 2>/dev/null; echo; echo ---stderr; "
                 + "tail -c " + tailBytes + " \"$D/stderr\" 2>/dev/null; fi; "
@@ -375,40 +379,59 @@ final class TaskScripts {
     /**
      * The changes since the task started, committed or not, in every repository it recorded a
      * base for: {@code git diff} against a throwaway index built from the working tree, so the
-     * instance's own index is untouched and untracked files are included. Prints a
-     * {@code --stat} summary, then {@code ---}, then the patch (or {@code (too large)}).
+     * instance's own index is untouched and untracked files are included. Prints, per
+     * repository, {@code ## <repo>}, its {@link #NUMSTAT} records and an empty line; then
+     * {@code ---}, then the patch (or {@code (too large: <n> bytes)}). {@link Diff} reads it.
      */
     static String diff(String taskId, String path, int maxBytes) {
         return diff(taskId, path, maxBytes, false);
     }
 
     /**
-     * {@link #diff}, or with {@code statOnly} just what it touched: per repository, a
-     * {@code --numstat} line per file (lines added, removed, path) and the {@code --shortstat}
-     * total, then {@code ---}. Deterministic and small, whatever the size of the patch.
+     * {@link #diff}, or with {@code statOnly} just what it touched: the same per repository, then
+     * {@code ---} and no patch. Deterministic and small, whatever the size of the patch.
      */
     static String diff(String taskId, String path, int maxBytes, boolean statOnly) {
+        return diff(taskId, path, maxBytes, statOnly, "cat \"$stat\"; ");
+    }
+
+    /** {@link #diff}, printing the full diff's stat records with {@code printStat}. */
+    private static String diff(String taskId, String path, int maxBytes, boolean statOnly, String printStat) {
         var d = dir(taskId);
         var pathspec = path == null ? "" : " -- " + ExecScript.quote(path);
         if (statOnly) {
             return "D=" + d + "; [ -s \"$D/base.txt\" ] || { echo 'no git repository was found where the task started'; exit 0; }; "
                     + "while read -r base repo; do ( cd \"$repo\" || exit 0; "
                     + DIFF_INDEX
-                    + "echo \"## $repo\"; git diff --cached --numstat \"$base\"" + pathspec + "; "
-                    + "git diff --cached --shortstat \"$base\"" + pathspec + "; "
+                    + "echo \"## $repo\"; git diff --cached " + NUMSTAT + " \"$base\"" + pathspec + "; echo; "
                     + "rm -f \"$idx\" ); done < \"$D/base.txt\"; echo ---";
         }
         return "D=" + d + "; [ -s \"$D/base.txt\" ] || { echo 'no git repository was found where the task started'; exit 0; }; "
                 + "out=$(mktemp); stat=$(mktemp); "
                 + "while read -r base repo; do ( cd \"$repo\" || exit 0; "
                 + DIFF_INDEX
-                + "echo \"## $repo\" >> \"$stat\"; git diff --cached --stat \"$base\"" + pathspec + " >> \"$stat\"; "
+                + "{ echo \"## $repo\"; git diff --cached " + NUMSTAT + " \"$base\"" + pathspec + "; echo; } >> \"$stat\"; "
                 + "git diff --cached --src-prefix=a/ --dst-prefix=b/ \"$base\"" + pathspec + " >> \"$out\"; "
                 + "rm -f \"$idx\" ); done < \"$D/base.txt\"; "
-                + "cat \"$stat\"; echo ---; "
+                + printStat + "echo ---; "
                 + "if [ $(stat -c %s \"$out\") -gt " + maxBytes + " ]; then echo \"(too large: $(stat -c %s \"$out\") bytes)\"; "
                 + "else cat \"$out\"; fi; rm -f \"$out\" \"$stat\"";
     }
+
+    /**
+     * {@link #diff} for a model to read in the instance ({@code ask}): every change, with each
+     * NUL-ended stat record on a line of its own. Only the stat is translated, never the patch.
+     */
+    static String diffForReading(String taskId, String path) {
+        return diff(taskId, path, Integer.MAX_VALUE, false, "tr '\\0' '\\n' < \"$stat\"; ");
+    }
+
+    /**
+     * One {@code <added>\t<deleted>\t<path>} record per file, each ended by a NUL so that no
+     * file name can forge one ({@code -} counts for a binary file). Without renames, as a rename
+     * touches two paths and a program comparing what tasks touch needs both.
+     */
+    private static final String NUMSTAT = "--no-renames --numstat -z";
 
     /**
      * A throwaway index holding the working tree, so a diff against it covers uncommitted and

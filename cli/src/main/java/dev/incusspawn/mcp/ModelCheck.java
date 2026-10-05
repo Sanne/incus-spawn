@@ -39,7 +39,7 @@ final class ModelCheck {
     /** Refuse, with a {@link ToolError} and before anything runs, what is not a model name. */
     static void requireName(String model) {
         if (model != null && !McpConfig.isModelName(model)) {
-            throw new ToolError("model must be a Claude Code model id or alias (e.g. claude-haiku-4-5, "
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "model must be a Claude Code model id or alias (e.g. claude-haiku-4-5, "
                     + "sonnet, opus[1m]): letters, digits and . _ : @ / [ ] -");
         }
     }
@@ -59,7 +59,7 @@ final class ModelCheck {
         var exit = backend.exec(instance, script(model), null, out, err);
         var refusal = refusal(exit, out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
         if (refusal != null) {
-            throw new ToolError("model '" + model + "' cannot be used in " + instance + " with the account its "
+            throw new ToolError(ToolError.Code.REFUSED, "model '" + model + "' cannot be used in " + instance + " with the account its "
                     + "template '" + template + "' uses: " + refusal + ". Leave model unset for the template's own "
                     + "(list_templates shows it), or choose another.");
         }

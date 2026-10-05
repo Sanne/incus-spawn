@@ -205,7 +205,7 @@ mcp:
   summary-model: haiku             # answers the tools' `ask` inside the instance (default haiku)
 ```
 
-`max-instances` and `max-concurrent-tasks` are the two knobs to raise for a controller, one session running many tasks at once. They are a safety net against runaway creation, not a budget: the only cost of a high number is host memory. `list_templates` reports both, as `instance_limit` and `task_limit`.
+`max-instances` and `max-concurrent-tasks` are the two knobs to raise for a controller, one session running many tasks at once. They are a safety net against runaway creation, not a budget: the only cost of a high number is host memory. `list_templates` reports both, under the same names (`max_instances`, `max_concurrent_tasks`). Every tool also returns its facts as `structuredContent` matching the `outputSchema` it lists, so a program need not parse the text; a refusal says why in `_meta["dev.incusspawn/error"].code`.
 
 | Tool | What it does |
 |------|--------------|

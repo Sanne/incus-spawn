@@ -114,7 +114,7 @@ final class IncusInstanceBackend implements InstanceBackend {
             // The trusted definitions the template was just checked against, not a second load.
             preflight = BranchFlow.preflight(incus, request, info.definitions());
         } catch (BranchFlow.BranchException e) {
-            throw new ToolError("cannot create an instance from " + template + ": " + e.getMessage());
+            throw new ToolError(ToolError.Code.UNAVAILABLE, "cannot create an instance from " + template + ": " + e.getMessage());
         }
         InstanceLifecycle.RuntimeConfig runtime;
         try {
@@ -130,7 +130,7 @@ final class IncusInstanceBackend implements InstanceBackend {
                 System.err.println("isx mcp: could not remove the failed instance " + name
                         + ": " + cleanup.getMessage());
             }
-            throw new ToolError("creating " + name + " from " + template + " failed: " + e.getMessage());
+            throw new ToolError(ToolError.Code.UNAVAILABLE, "creating " + name + " from " + template + " failed: " + e.getMessage());
         }
         // The request starts it, so the runtime config read before the start is always there.
         var ip = runtime.staticIp();
@@ -151,7 +151,7 @@ final class IncusInstanceBackend implements InstanceBackend {
     @Override
     public void destroy(String name) {
         var lock = locks.tryAcquire(name, Metadata.OP_DELETING);
-        if (lock.isEmpty()) throw new ToolError("'" + name + "' is locked by another isx process; try again.");
+        if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process; try again.");
         try (var held = lock.get()) {
             InstanceDestroyer.deleteHeld(incus, name);
         }
@@ -160,21 +160,21 @@ final class IncusInstanceBackend implements InstanceBackend {
     @Override
     public boolean destroyIfHeldBy(String name, String session, boolean onlyIfStopped) {
         var lock = locks.tryAcquire(name, Metadata.OP_DELETING);
-        if (lock.isEmpty()) throw new ToolError("'" + name + "' is locked by another isx process.");
+        if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process.");
         try (var held = lock.get()) {
             return InstanceDestroyer.deleteHeldIf(incus, name,
                     instance -> session.equals(instance.path("config").path(Metadata.MCP_SESSION).asText(null))
                             // Started since the caller saw it stopped: someone may be in it now.
                             && (!onlyIfStopped || "Stopped".equals(instance.path("status").asText())));
         } catch (IncusException e) {
-            throw new ToolError("cannot remove '" + name + "': " + e.getMessage());
+            throw new ToolError(ToolError.Code.UNAVAILABLE, "cannot remove '" + name + "': " + e.getMessage());
         }
     }
 
     @Override
     public void stop(String name) {
         var lock = locks.tryAcquire(name, Metadata.OP_STOPPING);
-        if (lock.isEmpty()) throw new ToolError("'" + name + "' is locked by another isx process; try again.");
+        if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process; try again.");
         try (var held = lock.get()) {
             incus.setPendingOperation(name, Metadata.OP_STOPPING);
             try {
@@ -183,19 +183,19 @@ final class IncusInstanceBackend implements InstanceBackend {
                 incus.clearPendingOperation(name);
             }
         } catch (IncusException e) {
-            throw new ToolError("could not stop '" + name + "': " + e.getMessage());
+            throw new ToolError(ToolError.Code.UNAVAILABLE, "could not stop '" + name + "': " + e.getMessage());
         }
     }
 
     @Override
     public void start(String name) {
         var lock = locks.tryAcquire(name, "starting");
-        if (lock.isEmpty()) throw new ToolError("'" + name + "' is locked by another isx process; try again.");
+        if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process; try again.");
         try (var held = lock.get()) {
             // Stdout is the protocol channel, but StdioGuard has sent System.out to stderr.
             InstancePrep.prepare(incus, name, System.err::println);
         } catch (InstancePrep.Refused | IncusException e) {
-            throw new ToolError("could not start '" + name + "': " + e.getMessage());
+            throw new ToolError(ToolError.Code.UNAVAILABLE, "could not start '" + name + "': " + e.getMessage());
         }
     }
 
@@ -226,7 +226,7 @@ final class IncusInstanceBackend implements InstanceBackend {
         try {
             instance = incus.instanceMetadataOrThrow(name);
         } catch (IncusException e) {
-            throw new ToolError("cannot read '" + name + "' from Incus right now (" + e.getMessage()
+            throw new ToolError(ToolError.Code.UNAVAILABLE, "cannot read '" + name + "' from Incus right now (" + e.getMessage()
                     + "); nothing was changed, try again.");
         }
         return instance == null ? null : configOf(instance);
@@ -263,7 +263,7 @@ final class IncusInstanceBackend implements InstanceBackend {
         try {
             list = JsonRpc.JSON.readTree(incus.listJsonConfig());
         } catch (Exception e) {
-            throw new ToolError("cannot list Incus instances: " + e.getMessage());
+            throw new ToolError(ToolError.Code.UNAVAILABLE, "cannot list Incus instances: " + e.getMessage());
         }
         for (var instance : list) {
             result.put(instance.path("name").asText(), configOf(instance));
