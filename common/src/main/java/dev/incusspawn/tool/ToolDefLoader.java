@@ -65,6 +65,24 @@ public class ToolDefLoader {
     private LayeredDefinitions<YamlToolSetup> defs;
     private List<String> warnings = List.of();
 
+    /** A loader that reads its search paths from {@code config.yaml} when it first loads. */
+    public ToolDefLoader() {}
+
+    /**
+     * A loader over the search paths of a config the caller already read, so the tools it
+     * serves come from that read and not from a second, later one (#890).
+     */
+    public ToolDefLoader(List<String> searchPaths) {
+        this.searchPaths = searchPaths;
+    }
+
+    /** The {@code tools/} directory of each search path, in search order. */
+    public static List<Path> searchPathToolDirs(List<String> searchPaths) {
+        return searchPaths.stream()
+                .map(searchPath -> Path.of(HostResourceSetup.expandHostTilde(searchPath)).resolve("tools"))
+                .toList();
+    }
+
     /** Override the project tools directory (for testing). */
     void setProjectToolsDir(Path dir) {
         this.projectToolsDir = dir;
@@ -175,10 +193,7 @@ public class ToolDefLoader {
             loadBuiltins();
             loadFromDirectory(userToolsDir());
             var paths = searchPaths != null ? searchPaths : SpawnConfig.load().getSearchPaths();
-            for (var searchPath : paths) {
-                var expandedPath = HostResourceSetup.expandHostTilde(searchPath);
-                loadFromDirectory(Path.of(expandedPath).resolve("tools"));
-            }
+            searchPathToolDirs(paths).forEach(this::loadFromDirectory);
             loadFromDirectory(projectToolsDir);
             warnings.forEach(Warnings::warn);
         }

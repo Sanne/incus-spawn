@@ -9,7 +9,7 @@ import java.util.function.Consumer;
  * <p>
  * Taking a {@code Consumer<String>} from the caller stays the first choice (see CLAUDE.md).
  * This is for the rest: code several layers below any command, such as the
- * {@code new ToolDefLoader()} that {@code ToolProxyResolver} builds for account validation,
+ * {@code ToolDefLoader} that {@code ToolProxyResolver} builds for account validation,
  * where threading a sink through every caller would mean changing all of them. Such code calls
  * {@link #warn} and whoever owns the terminal decides where warnings go: stderr by default, the
  * TUI's warning log while the TUI draws ({@link #redirect}).

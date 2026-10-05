@@ -51,7 +51,7 @@ public final class ToolProxyResolver {
      * {@link #resolve(SpawnConfig, Map, Map)} per request.
      */
     public static Map<String, ToolSetup> proxyToolSetups(SpawnConfig config) {
-        return proxyToolSetups(config, new ToolDefLoader());
+        return proxyToolSetups(config, new ToolDefLoader(config.getSearchPaths()));
     }
 
     /** As {@link #proxyToolSetups(SpawnConfig)}, from a loader the caller already holds. */
@@ -182,10 +182,7 @@ public final class ToolProxyResolver {
      * Excludes {@code type: anthropic} entries (those use relaxed resolution).
      */
     public static List<UnresolvedToolProxy> findUnresolved(SpawnConfig config) {
-        var loader = new ToolDefLoader();
-        var filtered = filterByFeatureGate(config, loader.allToolSetups());
-        rejectProjectLocalProxy(loader.projectLocalToolNames(), filtered);
-        return findUnresolved(config, filtered);
+        return findUnresolved(config, proxyToolSetups(config));
     }
 
     public static List<UnresolvedToolProxy> findUnresolved(SpawnConfig config, Map<String, ToolSetup> toolSetups) {

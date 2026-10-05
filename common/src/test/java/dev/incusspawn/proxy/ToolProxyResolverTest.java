@@ -3,7 +3,13 @@ package dev.incusspawn.proxy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.tool.ToolDef;
+import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.lifecycle.TempHome;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import java.util.List;
 import java.util.Map;
@@ -11,6 +17,31 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ToolProxyResolverTest {
+
+    @Test
+    @ExtendWith(TempHome.class)
+    void proxyToolSetupsReadTheSearchPathsOfTheConfigTheyAreGiven() throws Exception {
+        // #890: the loader re-read config.yaml for its search paths, so the proxy served the
+        // tools of a later read than the one it fingerprinted. Here config.yaml has none.
+        var home = Path.of(System.getProperty("user.home"));
+        var tools = Files.createDirectories(home.resolve("dotfiles/tools"));
+        Files.writeString(tools.resolve("foo.yaml"), """
+                name: foo
+                proxy:
+                  configuration:
+                    token:
+                      value: "t"
+                  auth:
+                    - domains:
+                        - foo.example
+                      type: bearer
+                      token: "${token}"
+                """);
+        var config = new SpawnConfig();
+        config.setSearchPaths(List.of(home.resolve("dotfiles").toString()));
+
+        assertTrue(ToolProxyResolver.proxyToolSetups(config).containsKey("foo"));
+    }
 
     @Test
     void fingerprintEmptyListReturnsEmpty() {
