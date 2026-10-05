@@ -776,6 +776,18 @@ public final class ProxyService {
     }
 
     /**
+     * The {@code isx} an {@code isx-proxy} at {@code proxyPath} runs: the one beside it (a native
+     * install), else {@link #resolveIsxPath()}. The mirror of {@link #proxyBinaryNextTo}.
+     */
+    public static String isxNextTo(Path proxyPath) {
+        if (proxyPath != null && proxyPath.getFileName().toString().equals("isx-proxy")) {
+            var sibling = proxyPath.resolveSibling("isx");
+            if (Files.isExecutable(sibling)) return sibling.toString();
+        }
+        return resolveIsxPath();
+    }
+
+    /**
      * The sibling-probe half of {@link #resolveProxyBinaryPath()}, split out so callers that have
      * already resolved {@code isx} do not fork a second {@code which}.
      */

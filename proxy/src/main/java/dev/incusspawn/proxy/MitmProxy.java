@@ -209,6 +209,16 @@ public class MitmProxy {
     /** Each instance's model calls, for {@code /activity} (#898). */
     final ApiActivity apiActivity = new ApiActivity();
 
+    /** {@code isx mcp} for coordinator instances, at {@link ProxyConfig#MCP_DOMAIN} (#915). */
+    private McpBridge mcpBridge;
+    /** What serves one instance's MCP session; tests replace the {@code isx} it runs. */
+    private java.util.function.Function<String, List<String>> mcpCommand = McpBridge::isxMcp;
+
+    /** Tests only: serve MCP sessions with {@code command} instead of {@code isx mcp}. */
+    void useMcpCommand(java.util.function.Function<String, List<String>> command) {
+        this.mcpCommand = command;
+    }
+
     /**
      * Everything derived from one read of the config: the default account's credentials and
      * routing, and what a pinned instance's request needs. Published whole, in one write, and
@@ -800,6 +810,10 @@ public class MitmProxy {
                 System.err.println("MITM server error: " + err.getMessage());
                 err.printStackTrace(System.err);
             });
+            if (mcpBridge == null) {
+                mcpBridge = new McpBridge(vertx, () -> instanceRegistry, mcpCommand);
+                mcpBridge.start();
+            }
             mitmServer.requestHandler(this::routeRequest);
             mitmServer.webSocketHandler(this::routeWebSocket);
             try {
@@ -877,6 +891,7 @@ public class MitmProxy {
             try {
                 if (wsUpstreamClient != null) wsUpstreamClient.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
             } catch (Exception ignored) {}
+            if (mcpBridge != null) mcpBridge.stop();
             try {
                 if (healthHttpServer != null) healthHttpServer.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
             } catch (Exception ignored) {}
@@ -965,7 +980,10 @@ public class MitmProxy {
                 return;
             }
 
-            if (REGISTRY_DOMAINS.contains(domain)) {
+            if (ProxyConfig.MCP_DOMAIN.equals(domain)) {
+                // Answered here, never relayed: it names no host outside this machine.
+                mcpBridge.handle(clientReq, sourceAddressOf(clientReq));
+            } else if (REGISTRY_DOMAINS.contains(domain)) {
                 handleRegistryRequest(clientReq, started, domain);
             } else if (MAVEN_DOMAINS.contains(domain)) {
                 handleArtifactRequest(clientReq, started, domain, path -> mavenTarget(domain, path));
@@ -1053,6 +1071,11 @@ public class MitmProxy {
         }
         var colon = host.indexOf(':');
         var domain = colon > 0 ? host.substring(0, colon) : host;
+        if (ProxyConfig.MCP_DOMAIN.equals(domain)) {
+            // MCP is plain HTTP here, and the name has no upstream to relay a socket to.
+            clientWs.reject(404);
+            return;
+        }
         RequestContext ctx;
         try {
             ctx = contextFor(domain, sourceAddressOf(clientWs));
