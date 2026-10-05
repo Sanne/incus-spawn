@@ -7,6 +7,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -228,6 +229,21 @@ final class McpTools {
                         .build(),
                 McpTool.annotations(true, false, true),
                 (args, ctx) -> getDiff(args)));
+        tools.add(new McpTool("instance_activity",
+                "What the isx proxy saw of an instance's Claude model calls, from every Claude Code in "
+                        + "it (your tasks and a person's session alike), without touching the instance: "
+                        + "calls made and in flight, when the last one started and ended, and the tokens "
+                        + "their responses reported. A call in flight or a recent one means working; "
+                        + "idle_seconds (since the last call ended, present only while none is in flight) "
+                        + "growing means stuck or finished. Counts run from counting_since, when the proxy "
+                        + "began counting this instance's calls; it is absent while the proxy does not know "
+                        + "the instance (yet), and then there is nothing to subtract from. For one task's "
+                        + "spend, read before and after it and subtract, only if both reads carry the same "
+                        + "counting_since: a different one means the proxy started counting afresh in "
+                        + "between (a restart) and the difference is not the task's.",
+                Schema.object().string("instance", "Instance name, from list_instances", true).build(),
+                McpTool.annotations(true, false, true),
+                (args, ctx) -> instanceActivity(args)));
         tools.add(new McpTool("destroy_instance",
                 "Destroy one of your instances and everything in it.",
                 Schema.object().string("instance", "Instance name", true).build(),
@@ -957,6 +973,29 @@ final class McpTools {
             note = " Its tasks could not be read, so their ids may not work here: " + e.getMessage();
         }
         return ToolResult.text("Started " + name + "." + note);
+    }
+
+    private ToolResult instanceActivity(McpTool.Args args) {
+        var name = args.requireString("instance");
+        session.requireOwned(name);
+        var activity = backend.proxyActivity();
+        var counted = activity.of(name);
+        var node = JsonRpc.JSON.createObjectNode();
+        node.put("instance", name);
+        if (counted.countingSince() != null) node.put("counting_since", counted.countingSince().toString());
+        node.put("requests", counted.requests());
+        node.put("requests_in_flight", counted.inFlight());
+        if (counted.lastRequestAt() != null) node.put("last_request_at", counted.lastRequestAt().toString());
+        if (counted.lastResponseAt() != null) node.put("last_response_at", counted.lastResponseAt().toString());
+        // Idle only while nothing is in flight: a long streamed call is work, not silence
+        if (counted.inFlight() == 0 && counted.lastResponseAt() != null) {
+            node.put("idle_seconds", Math.max(0, Duration.between(counted.lastResponseAt(), Instant.now()).toSeconds()));
+        }
+        node.put("input_tokens", counted.inputTokens());
+        node.put("output_tokens", counted.outputTokens());
+        node.put("cache_read_input_tokens", counted.cacheReadInputTokens());
+        node.put("cache_creation_input_tokens", counted.cacheCreationInputTokens());
+        return ToolResult.json(node);
     }
 
     private ToolResult keepInstance(McpTool.Args args) {

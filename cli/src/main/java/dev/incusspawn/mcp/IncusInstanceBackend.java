@@ -13,6 +13,8 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.proxy.ProxyActivity;
+import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.tui.InstanceLockManager;
 
 import java.io.InputStream;
@@ -200,6 +202,21 @@ final class IncusInstanceBackend implements InstanceBackend {
     @Override
     public void refreshProxy() {
         InstanceDestroyer.refreshProxy();
+    }
+
+    /** Where the proxy's health endpoint listens: on Linux a bridge read, so kept until it fails. */
+    private volatile String proxyAddress;
+
+    @Override
+    public ProxyActivity proxyActivity() {
+        try {
+            var address = proxyAddress;
+            if (address == null) proxyAddress = address = ProxyHealthCheck.healthAddress(incus);
+            return ProxyActivity.fetch(address);
+        } catch (RuntimeException e) {
+            proxyAddress = null;
+            throw new ToolError(e.getMessage() + "; ask the user to check it with: isx proxy status");
+        }
     }
 
     @Override

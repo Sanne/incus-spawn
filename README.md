@@ -218,12 +218,15 @@ mcp:
 | `task_status` / `wait_any` / `task_result` | Follow a task (optionally waiting), wait for whichever of several finishes first, read its outcome or the agent's report |
 | `send_message` | Continue a delegated agent's conversation (e.g. "push and open a PR") |
 | `get_diff` | What a delegated task changed, committed or not: a patch, or with `stat` just the files and line counts |
+| `instance_activity` | What the proxy saw of an instance's Claude model calls: made and in flight, when the last one ended, tokens spent |
 | `cancel_task` / `destroy_instance` | Stop a task, or throw an instance away |
 | `keep_instance` | Hand an instance over to you for good |
 
 A delegated task can run under its own profile: `model` (a Claude Code model id or alias, e.g. `haiku` for a rebase, the template's own for a design) and `max_turns`, which later `send_message` turns keep unless they choose again. A model is checked against the template's credential account first, with one tiny request inside the instance that is remembered for the session, so a model the account cannot use fails the call rather than the task. `max_turns` can only narrow your `delegate-max-turns`. The permission mode is never the agent's to choose.
 
 A client that drives `isx mcp` from code rather than from a model can ask to be told instead of waiting: list `isx/task_changed` under `capabilities.experimental` in `initialize`, and every change of a task's state arrives as a `notifications/isx/task_changed` (`task_id`, `instance`, `run`, `state`: `running`, `finished`, `lost`, `attached` or `released`, and `exit_code` once finished). Clients that do not ask are not polled for it.
+
+`instance_activity` answers from the host proxy's view, without touching the instance: a call in flight means the agent is working, a growing `idle_seconds` that it is stuck or finished without reporting. Its token counts (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, as the API reports them) run from `counting_since`, when the proxy began counting that instance (absent while the proxy does not know the instance yet). For what a task spent, read before and after it and subtract -- only when both reads carry the same `counting_since`; a different or missing one means the counts started afresh in between (the proxy restarted) and the difference is not the task's.
 
 `exec`, `task_result` and `get_diff` take an optional `ask`: instead of the text, a one-shot Claude Code on `summary-model` reads it *inside the instance* and answers the question ("which tests fail?"), so a long log or patch never fills the host agent's context. The answer is a model's reading -- untrusted and lossy -- so anything that gates a merge stays deterministic: `get_diff(stat)`, CI, a reviewer.
 

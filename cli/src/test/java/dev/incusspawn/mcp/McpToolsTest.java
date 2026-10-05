@@ -310,4 +310,59 @@ class McpToolsTest {
         backend.statuses.put(name, "Frozen");
         assertTrue(text(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"ls\"}")).contains("is frozen"));
     }
+
+    @Test
+    void activityIsWhatTheProxyCountedForTheInstance() throws Exception {
+        var name = createJava();
+        var since = java.time.Instant.parse("2026-10-05T08:00:00Z");
+        var ended = java.time.Instant.now().minusSeconds(90);
+        backend.activity = new dev.incusspawn.proxy.ProxyActivity(Map.of(
+                name, new dev.incusspawn.proxy.ProxyActivity.Instance(since, 12, 0, ended.minusSeconds(20), ended,
+                        1_000, 300, 40_000, 2_000),
+                "someone-elses", new dev.incusspawn.proxy.ProxyActivity.Instance(ended, 99, 1, ended, null, 1, 1, 1, 1)));
+
+        var result = call("instance_activity", "{\"instance\":\"" + name + "\"}");
+
+        assertFalse(result.path("isError").asBoolean(), text(result));
+        var node = JsonRpc.JSON.readTree(text(result));
+        assertEquals(name, node.path("instance").asText());
+        assertEquals("2026-10-05T08:00:00Z", node.path("counting_since").asText());
+        assertEquals(12, node.path("requests").asLong());
+        assertEquals(0, node.path("requests_in_flight").asLong());
+        assertEquals(ended.toString(), node.path("last_response_at").asText());
+        assertTrue(node.path("idle_seconds").asLong() >= 90, node.toString());
+        assertEquals(1_000, node.path("input_tokens").asLong());
+        assertEquals(300, node.path("output_tokens").asLong());
+        assertEquals(40_000, node.path("cache_read_input_tokens").asLong());
+        assertEquals(2_000, node.path("cache_creation_input_tokens").asLong());
+    }
+
+    @Test
+    void anInstanceThatNeverCalledReadsAsZeroAndACallInFlightIsNotIdle() throws Exception {
+        var name = createJava();
+        var silent = JsonRpc.JSON.readTree(text(call("instance_activity", "{\"instance\":\"" + name + "\"}")));
+        assertEquals(0, silent.path("requests").asLong());
+        assertFalse(silent.has("last_request_at"));
+        assertFalse(silent.has("counting_since"), "an instance the proxy does not know: nothing to subtract from");
+        assertFalse(silent.has("idle_seconds"));
+
+        var now = java.time.Instant.now();
+        backend.activity = new dev.incusspawn.proxy.ProxyActivity(Map.of(
+                name, new dev.incusspawn.proxy.ProxyActivity.Instance(now, 2, 1, now, now.minusSeconds(600), 0, 0, 0, 0)));
+        var busy = JsonRpc.JSON.readTree(text(call("instance_activity", "{\"instance\":\"" + name + "\"}")));
+        assertEquals(1, busy.path("requests_in_flight").asLong());
+        assertFalse(busy.has("idle_seconds"), "a long call in flight is work, not silence");
+    }
+
+    @Test
+    void activityIsOnlyForOwnInstancesAndSaysWhenTheProxyCannotAnswer() throws Exception {
+        backend.instance("users-box", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE));
+        assertTrue(call("instance_activity", "{\"instance\":\"users-box\"}").path("isError").asBoolean());
+
+        var name = createJava();
+        backend.activity = null;
+        var down = call("instance_activity", "{\"instance\":\"" + name + "\"}");
+        assertTrue(down.path("isError").asBoolean());
+        assertTrue(text(down).contains("isx proxy status"), text(down));
+    }
 }

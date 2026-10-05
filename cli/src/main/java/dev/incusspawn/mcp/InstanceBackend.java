@@ -106,6 +106,12 @@ interface InstanceBackend {
     void refreshProxy();
 
     /**
+     * What the proxy counted of every instance's model calls ({@code /activity}). Throws
+     * {@link ToolError} when the proxy cannot say: down, or older than the endpoint.
+     */
+    dev.incusspawn.proxy.ProxyActivity proxyActivity();
+
+    /**
      * The instance's {@code user.incus-spawn.*} config and its {@link #STATUS}, or null if Incus says it does not exist.
      * Throws when Incus cannot be asked, so that is never mistaken for the instance being gone.
      */

@@ -157,6 +157,17 @@ class FakeBackend implements InstanceBackend {
         proxyRefreshes++;
     }
 
+    /** What the proxy answers for {@link #proxyActivity()}; null as a proxy that is down. */
+    volatile dev.incusspawn.proxy.ProxyActivity activity =
+            new dev.incusspawn.proxy.ProxyActivity(Map.of());
+
+    @Override
+    public dev.incusspawn.proxy.ProxyActivity proxyActivity() {
+        var answer = activity;
+        if (answer == null) throw new ToolError("the isx proxy is not answering; ask the user to check it with: isx proxy status");
+        return answer;
+    }
+
     /** When set, every metadata read throws it, as a backend whose daemon cannot answer does. */
     volatile RuntimeException metadataFailure;
 
