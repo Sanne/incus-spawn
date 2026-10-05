@@ -2225,7 +2225,7 @@ public class MitmProxy {
             return new NpmCacheState(packageEtag, freshNpmHit(cacheFile, packageEtag));
         }).compose(state -> state.hit() != null
                 ? Future.succeededFuture(state.hit())
-                : fetchNpmVersion(domain, packageName, version).compose(document -> vertx.executeBlocking(
+                : fetchNpmVersion(domain, packageName, version, started).compose(document -> vertx.executeBlocking(
                         () -> checkNpmTarballCache(cacheFile, state.packageEtag(), ref, npmShasum(document))))
         ).onSuccess(result -> {
             if (result == null) {
@@ -2317,10 +2317,19 @@ public class MitmProxy {
      * which carries its shasum, through {@code probeClient} like every other checksum, so
      * lookups run concurrently on shared connections. Completes with the document, or null
      * on any failure; {@link #npmShasum} parses it, on a worker thread.
+     * <p>
+     * A 5xx is asked once more while over half the client's silence budget is left, so the
+     * tarball's head still has time: without a shasum the tarball is relayed uncached, and a
+     * relayed body that stalls cannot be resumed (#925, #929). A 429 is not: asked again at
+     * once, it would only be refused again.
      */
-    Future<byte[]> fetchNpmVersion(String domain, String packageName, String version) {
-        var encodedName = packageName.replace("/", "%2F");
-        return fetchSmallBody(domain, "/" + encodedName + "/" + version, MAX_NPM_VERSION_BYTES)
+    Future<byte[]> fetchNpmVersion(String domain, String packageName, String version, long started) {
+        var path = "/" + packageName.replace("/", "%2F") + "/" + version;
+        return fetchSmallBody(domain, path, MAX_NPM_VERSION_BYTES)
+                .compose(answer -> answer.status() >= 500
+                        && silenceLeftMillis(started) > TimeUnit.SECONDS.toMillis(clientSilenceBudgetSeconds) / 2
+                        ? fetchSmallBody(domain, path, MAX_NPM_VERSION_BYTES)
+                        : Future.succeededFuture(answer))
                 .map(answer -> answer.status() == 200 ? answer.body() : null);
     }
 

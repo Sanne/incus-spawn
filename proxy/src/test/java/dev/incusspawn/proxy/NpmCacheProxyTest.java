@@ -69,6 +69,11 @@ class NpmCacheProxyTest {
     /** Version lookups to this path are not answered within the test, like a connection that died silently. */
     static volatile String stalledLookup;
     static final List<HttpServerRequest> stalled = new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** Per path, how many more requests the registry answers with a 503, like an edge having a bad moment. */
+    static final Map<String, AtomicInteger> unavailable = new ConcurrentHashMap<>();
+    /** The status those answers carry, and how long each takes. */
+    static volatile int unavailableStatus;
+    static volatile long unavailableDelayMillis;
 
     @BeforeAll
     static void start() throws Exception {
@@ -129,6 +134,15 @@ class NpmCacheProxyTest {
             stalled.add(req);
             return;
         }
+        var failures = unavailable.get(path);
+        if (failures != null && failures.getAndDecrement() > 0) {
+            if (unavailableDelayMillis > 0) {
+                vertx.setTimer(unavailableDelayMillis, t -> req.response().setStatusCode(unavailableStatus).end("unavailable"));
+            } else {
+                req.response().setStatusCode(unavailableStatus).end("unavailable");
+            }
+            return;
+        }
         if (!path.contains("/-/") && lookupsToGather > 0) {
             synchronized (gathered) {
                 gathered.add(req);
@@ -166,6 +180,9 @@ class NpmCacheProxyTest {
         hits.clear();
         lookupsToGather = 0;
         stalledLookup = null;
+        unavailable.clear();
+        unavailableStatus = 503;
+        unavailableDelayMillis = 0;
         // Answered now, so a stall cannot outlive its test on the shared probe connection
         stalled.forEach(req -> req.response().setStatusCode(404).end());
         stalled.clear();
@@ -261,5 +278,57 @@ class NpmCacheProxyTest {
         assertEquals(0, hits.getOrDefault("/impostor/1.0.0", new AtomicInteger()).get(),
                 "no request reaches a server whose certificate names another host");
         assertFalse(Files.exists(cached(path)));
+    }
+
+    @Test
+    void lookupAnsweredWithAServerErrorIsAskedAgain() throws Exception {
+        // One bad answer used to relay the tarball uncached, where a stalled body cannot be resumed (#925)
+        var path = publish("flaky");
+        unavailable.put("/flaky/1.0.0", new AtomicInteger(1));
+
+        assertEquals(new Response(200, "tarball of flaky"), get(path, 10));
+
+        assertEquals(2, hits.get("/flaky/1.0.0").get(), "the lookup is asked again after its 503");
+        awaitCached(path);
+    }
+
+    @Test
+    void lookupThatKeepsFailingIsAskedOnceMoreThenRelayed() throws Exception {
+        var path = publish("down");
+        unavailable.put("/down/1.0.0", new AtomicInteger(Integer.MAX_VALUE));
+
+        assertEquals(new Response(200, "tarball of down"), get(path, 10));
+
+        assertEquals(2, hits.get("/down/1.0.0").get(), "a registry that keeps failing is not hammered");
+        assertFalse(Files.exists(cached(path)), "nothing unverified is cached");
+    }
+
+    @Test
+    void lookupThatIsThrottledIsNotAskedAgainAtOnce() throws Exception {
+        var path = publish("throttled");
+        unavailable.put("/throttled/1.0.0", new AtomicInteger(1));
+        unavailableStatus = 429;
+
+        assertEquals(new Response(200, "tarball of throttled"), get(path, 10));
+
+        assertEquals(1, hits.get("/throttled/1.0.0").get());
+        assertFalse(Files.exists(cached(path)));
+    }
+
+    @Test
+    void slowServerErrorIsNotAskedAgainWhenTheClientHasWaitedTooLong() throws Exception {
+        // Half of a 2s budget gone on the first answer: a second lookup could leave the tarball's head no time
+        var path = publish("slow");
+        unavailable.put("/slow/1.0.0", new AtomicInteger(1));
+        unavailableDelayMillis = 1200;
+        var budget = proxy.clientSilenceBudgetSeconds;
+        proxy.clientSilenceBudgetSeconds = 2;
+        try {
+            assertEquals(new Response(200, "tarball of slow"), get(path, 10));
+        } finally {
+            proxy.clientSilenceBudgetSeconds = budget;
+        }
+
+        assertEquals(1, hits.get("/slow/1.0.0").get());
     }
 }
