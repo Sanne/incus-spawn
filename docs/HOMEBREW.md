@@ -85,4 +85,4 @@ The dev formula is updated automatically by the release workflow when a tag with
 
 ## Supported Platforms
 
-The Homebrew formulas support both Apple Silicon (arm64) and Intel (x86_64) Macs.
+The Homebrew formulas support both Apple Silicon (arm64) and Intel (x86_64) Macs. Both binaries need **macOS 15 (Sequoia) or later**: nothing sets `MACOSX_DEPLOYMENT_TARGET`, so the minimum follows the macOS of the release runner (`macos-15` and `macos-15-intel`, see `.claude/rules/ci.md`).
