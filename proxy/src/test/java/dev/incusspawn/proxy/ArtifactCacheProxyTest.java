@@ -1186,6 +1186,24 @@ class ArtifactCacheProxyTest {
     }
 
     @Test
+    void relayStillConnectingIsA502AtTheClientsBudget() throws Exception {
+        // A GET has no body to wait for: the connect is upstream's time, not the client's
+        assumeTrue(Platform.isLinux(),
+                "needs Linux's full-accept-queue behaviour to make a connect time out");
+        try (var blackHole = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress());
+             var first = new java.net.Socket();
+             var second = new java.net.Socket()) {
+            first.connect(blackHole.getLocalSocketAddress());
+            second.connect(blackHole.getLocalSocketAddress());
+            proxy.overrideUpstream(CENTRAL, "127.0.0.1", blackHole.getLocalPort());
+            proxy.clientSilenceBudgetSeconds = 2;
+
+            assertEquals(502, getAsync(CENTRAL, RELAYED_JAR).toCompletionStage().toCompletableFuture()
+                    .get(8, TimeUnit.SECONDS).status());
+        }
+    }
+
+    @Test
     void relayIsNotCutWhileEverySilenceIsWithinTheBudget() throws Exception {
         // Longer than the budget in all, but each byte the client gets starts it again
         var content = publishCutJar(false);

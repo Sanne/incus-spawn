@@ -3061,6 +3061,10 @@ public class MitmProxy {
         var watchdog = new RelayWatchdog(clientReq, domain);
 
         requestWithAsyncDns(options).onSuccess(upReq -> {
+            if (watchdog.cut) {
+                upReq.reset();
+                return;
+            }
             watchdog.upReq = upReq;
             copyRequestHeaders(clientReq, upReq, domain);
 
@@ -3105,11 +3109,14 @@ public class MitmProxy {
         private boolean waitingOnClient = true;
         private boolean over;
         private long clientActive = System.nanoTime();
-        private long timer;
+        // Vert.x numbers timers from 0: cancelling 0 before one is set would cancel another's
+        private long timer = -1;
 
         RelayWatchdog(HttpServerRequest clientReq, String domain) {
             this.clientReq = clientReq;
             this.domain = domain;
+            // With no body to wait for, the DNS lookup and connect are already upstream's time
+            waitingOnClient = hasBody(clientReq);
             var clientResp = clientReq.response();
             clientResp.endHandler(v -> stop());
             clientResp.closeHandler(v -> stop());
@@ -3119,7 +3126,7 @@ public class MitmProxy {
         }
 
         void requestRead() {
-            waitingOnClient(false);
+            if (waitingOnClient) waitingOnClient(false);
         }
 
         void touch() {
@@ -3645,11 +3652,7 @@ public class MitmProxy {
     /** {@code whenRead} runs once the client's request body, if any, has all arrived. */
     private io.vertx.core.Future<HttpClientResponse> sendWithBody(
             HttpServerRequest clientReq, HttpClientRequest upReq, Runnable whenRead) {
-        var cl = clientReq.getHeader("Content-Length");
-        var te = clientReq.getHeader("Transfer-Encoding");
-        var hasBody = (cl != null && !"0".equals(cl))
-                || (te != null && te.toLowerCase().contains("chunked"));
-        if (hasBody) {
+        if (hasBody(clientReq)) {
             return clientReq.body().compose(body -> {
                 whenRead.run();
                 return upReq.send(body);
@@ -3657,6 +3660,13 @@ public class MitmProxy {
         }
         whenRead.run();
         return upReq.send();
+    }
+
+    private static boolean hasBody(HttpServerRequest clientReq) {
+        var cl = clientReq.getHeader("Content-Length");
+        var te = clientReq.getHeader("Transfer-Encoding");
+        return (cl != null && !"0".equals(cl))
+                || (te != null && te.toLowerCase().contains("chunked"));
     }
 
     private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp) {
