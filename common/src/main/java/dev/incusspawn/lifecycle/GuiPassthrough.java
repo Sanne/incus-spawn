@@ -36,10 +36,6 @@ public final class GuiPassthrough {
             Pattern.compile("[A-Za-z0-9._-]+");
 
     /**
-     * Configure GUI passthrough on a (stopped) container: GPU device, Wayland
-     * socket mount, environment variables, and tmpfiles.d for XDG_RUNTIME_DIR.
-     */
-    /**
      * Whether isx runs in a Wayland session it could pass through. Only a cheap look at the
      * environment: {@link #configureGui} still checks the socket and says what is wrong.
      */
@@ -47,6 +43,10 @@ public final class GuiPassthrough {
         return System.getenv("XDG_RUNTIME_DIR") != null && System.getenv("WAYLAND_DISPLAY") != null;
     }
 
+    /**
+     * Configure GUI passthrough on a (stopped) container: GPU device, Wayland
+     * socket mount, environment variables, and tmpfiles.d for XDG_RUNTIME_DIR.
+     */
     public static boolean configureGui(IncusClient incus, String name) {
         var xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
         var waylandDisplay = System.getenv("WAYLAND_DISPLAY");

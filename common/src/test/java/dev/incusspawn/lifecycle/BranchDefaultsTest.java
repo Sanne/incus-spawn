@@ -5,6 +5,8 @@ import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -19,6 +21,16 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @ExtendWith(TempHome.class)
 class BranchDefaultsTest {
+
+    @BeforeEach
+    void inAWaylandSession() {
+        BranchFlow.waylandSession = () -> true;
+    }
+
+    @AfterEach
+    void restoreSessionCheck() {
+        BranchFlow.waylandSession = GuiPassthrough::inWaylandSession;
+    }
 
     private static Map<String, ImageDef> template(String type, boolean gui) {
         var def = new ImageDef();
@@ -82,6 +94,30 @@ class BranchDefaultsTest {
         assertEquals(Math.max(1, ResourceLimits.hostProcessorCount() - 2), vm.cpu());
         assertEquals(ResourceLimits.defaultVmMemoryLimit(), vm.memory());
         assertEquals(ResourceLimits.defaultDiskLimit(), vm.disk());
+    }
+
+    @Test
+    void outsideAWaylandSessionGuiIsNotTheDefaultAndSaysWhy() {
+        // Both front ends ask defaultsFor, so the dialog does not tick what isx branch would skip
+        BranchFlow.waylandSession = () -> false;
+        var daemon = new FakeIncusDaemon().container("tpl-dev", Map.of());
+        var defaults = BranchFlow.defaultsFor("tpl-dev", daemon.client().instanceMetadata("tpl-dev"),
+                template("container", true));
+        assertFalse(defaults.gui());
+        assertNotNull(defaults.guiNote());
+        assertNull(BranchFlow.defaultsFor("tpl-dev", daemon.client().instanceMetadata("tpl-dev"),
+                template("container", false)).guiNote(), "nothing to explain when no GUI was asked for");
+    }
+
+    @Test
+    void anAgentsBranchNeverGetsGui() {
+        // isx mcp's request: GPU and the host's Wayland socket are never an agent's by default,
+        // even from a gui: true template in a Wayland session
+        var daemon = new FakeIncusDaemon().container("tpl-dev", Map.of(Metadata.GUI_ENABLED, "true"));
+        var defaults = BranchFlow.defaultsFor("tpl-dev", daemon.client().instanceMetadata("tpl-dev"),
+                template("container", true));
+        assertTrue(defaults.gui(), "the template asks for GUI");
+        assertFalse(BranchFlow.gui(BranchFlow.Request.defaults("tpl-dev", "agent-1"), defaults));
     }
 
     @Test

@@ -49,6 +49,9 @@ public final class BranchFlow {
 
     private BranchFlow() {}
 
+    /** Whether isx runs in a Wayland session; replaced by tests, so they do not depend on where they run. */
+    static java.util.function.BooleanSupplier waylandSession = GuiPassthrough::inWaylandSession;
+
     /** Whether the proxy is up, warning if not; replaced by tests, which have no proxy. */
     static java.util.function.Predicate<IncusClient> proxyHealthCheck = ProxyHealthCheck::checkOrWarn;
 
@@ -87,31 +90,42 @@ public final class BranchFlow {
      * What a branch of a source gets for each setting its {@link Request} leaves open. One rule
      * for {@code isx branch} and the TUI's branch dialog, which shows these as its initial values.
      *
-     * @param cpu null for a container, which gets no CPU limit
+     * @param cpu     null for a container, which gets no CPU limit
+     * @param guiNote why {@code gui} is off although the source asks for GUI, or null
      */
     public record Defaults(MachineType machineType, boolean gui, boolean kvm, Integer cpu,
-                           String memory, String disk) {}
+                           String memory, String disk, String guiNote) {}
 
     /**
      * The {@link Defaults} for a branch of {@code source}, given that instance as
      * {@link IncusClient#instanceMetadata} reads it. GUI and KVM follow the source's definition
      * when it is a template, and what the source was built or branched with either way. GUI only
-     * for a container: passthrough hands over a GPU device, which a VM cannot start with.
+     * for a container: passthrough hands over a GPU device, which a VM cannot start with. And
+     * only from a Wayland session: outside one (SSH, a headless host) it cannot work, and a
+     * default should not fail with errors where it was never asked for.
      */
     public static Defaults defaultsFor(String source, JsonNode instance, Map<String, ImageDef> defs) {
         var def = defs.get(source);
         var config = instance.path("config");
         var machineType = IncusClient.machineType(instance);
-        var gui = machineType == MachineType.CONTAINER && ((def != null && def.isGui())
+        var wantsGui = machineType == MachineType.CONTAINER && ((def != null && def.isGui())
                 || "true".equals(config.path(Metadata.GUI_ENABLED).asText("")));
+        var gui = wantsGui && waylandSession.getAsBoolean();
+        var guiNote = wantsGui && !gui ? "'" + source + "' has GUI passthrough, but isx is not "
+                + "running in a Wayland session; branching without it." : null;
         var kvm = (def != null && def.isKvm())
                 || "kvm".equals(config.path(Metadata.INSTANCE_MODE).asText(""));
         if (machineType == MachineType.VM) {
             return new Defaults(machineType, gui, kvm, Math.max(1, ResourceLimits.hostProcessorCount() - 2),
-                    ResourceLimits.defaultVmMemoryLimit(), ResourceLimits.defaultDiskLimit());
+                    ResourceLimits.defaultVmMemoryLimit(), ResourceLimits.defaultDiskLimit(), guiNote);
         }
         return new Defaults(machineType, gui, kvm, null, ResourceLimits.adaptiveMemoryLimit(),
-                ResourceLimits.defaultDiskLimit());
+                ResourceLimits.defaultDiskLimit(), guiNote);
+    }
+
+    /** Whether a branch made from {@code req} gets GUI passthrough: the request's choice, else the default. */
+    static boolean gui(Request req, Defaults defaults) {
+        return req.gui() != null ? req.gui() : defaults.gui();
     }
 
     /**
@@ -236,14 +250,8 @@ public final class BranchFlow {
 
         // Configure GUI before start so environment.* keys are visible to init. First, because
         // it may push files: any push lands well before the start (see prefetchAndStart).
-        var gui = req.gui() != null ? req.gui() : defaults.gui();
-        if (gui && req.gui() == null && !GuiPassthrough.inWaylandSession()) {
-            // Only the template's default: outside a Wayland session (SSH, a headless host) that is a note, not an error
-            System.err.println("Note: '" + source + "' has GUI passthrough, but isx is not running in a "
-                    + "Wayland session; branching without it.");
-            gui = false;
-        }
-        if (gui) {
+        if (req.gui() == null && defaults.guiNote() != null) BuildOutput.warn(defaults.guiNote());
+        if (gui(req, defaults)) {
             if (GuiPassthrough.configureGui(incus, name)) {
                 incus.configSet(name, Metadata.GUI_ENABLED, "true");
             } else {

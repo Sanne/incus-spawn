@@ -1680,6 +1680,7 @@ public class ListCommand extends BaseCommand {
         }
         var defaults = BranchFlow.defaultsFor(sourceName, source, imageDefs);
         branchGuiCheck = new CheckboxState(defaults.gui());
+        if (defaults.guiNote() != null) warningLog.add(defaults.guiNote());
         branchKvmCheck = new CheckboxState(defaults.kvm());
         branchNetworkModes = NetworkMode.values();
         branchNetworkSelect = new SelectState(java.util.Arrays.stream(branchNetworkModes)
