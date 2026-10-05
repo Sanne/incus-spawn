@@ -111,4 +111,17 @@ class CompletionCommandTest {
         assertTrue(fish.contains("-a resize"));
         assertTrue(fish.contains("-a reset"));
     }
+
+    // --- instance names come from isx list -q (#1036) ---
+
+    @Test
+    void instanceNamesComeFromListQuietNotTheDeprecatedInstancesCommand() {
+        for (var shell : CompletionCommand.Shell.values()) {
+            String script = CompletionCommand.rawScript(shell);
+            assertFalse(script.contains("isx instances"), shell + " must not call the deprecated isx instances");
+            assertTrue(script.contains("isx list -q 2>/dev/null"), shell + " must list instance names with isx list -q");
+            assertTrue(script.contains("table plain json"), shell + " must offer the --format values");
+            assertFalse(script.contains("no-op"), shell + " must not describe --plain as a no-op");
+        }
+    }
 }

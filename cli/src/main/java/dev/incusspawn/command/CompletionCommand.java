@@ -107,7 +107,7 @@ public class CompletionCommand extends BaseCommand {
 
             _isx_instances() {
               local -a instances
-              instances=(${(f)"$(isx instances 2>/dev/null)"})
+              instances=(${(f)"$(isx list -q 2>/dev/null)"})
               _describe -t instances 'instance' instances
             }
 
@@ -200,7 +200,10 @@ public class CompletionCommand extends BaseCommand {
             _isx_list() {
               _arguments \\
                 '(-h --help)'{-h,--help}'[Show help]' \\
-                '--plain[Deprecated: plain output is the default for list (no-op)]'
+                '--format=[Output format]:format:(table plain json)' \\
+                '--plain[Same as --format=plain]' \\
+                '(-q --quiet)'{-q,--quiet}'[Print instance names only]' \\
+                '--status=[Only instances in this state]:status:(running stopped)'
             }
 
             _isx_shell() {
@@ -462,7 +465,7 @@ public class CompletionCommand extends BaseCommand {
             # bash completion for isx (incus-spawn)
 
             _isx_list_instances() {
-              isx instances 2>/dev/null
+              isx list -q 2>/dev/null
             }
 
             _isx_list_templates() {
@@ -554,7 +557,15 @@ public class CompletionCommand extends BaseCommand {
                   COMPREPLY=( $(compgen -W "--help --skip-confirmation" -- "$cur") )
                   ;;
                 list)
-                  COMPREPLY=( $(compgen -W "--help --plain" -- "$cur") )
+                  case "$prev" in
+                    --format)
+                      COMPREPLY=( $(compgen -W "table plain json" -- "$cur") )
+                      return ;;
+                    --status)
+                      COMPREPLY=( $(compgen -W "running stopped" -- "$cur") )
+                      return ;;
+                  esac
+                  COMPREPLY=( $(compgen -W "--help --format --plain --quiet --status" -- "$cur") )
                   ;;
                 shell)
                   case "$prev" in
@@ -726,7 +737,7 @@ public class CompletionCommand extends BaseCommand {
 
             # Helper: list connectable instances (excludes templates)
             function __isx_instances
-              isx instances 2>/dev/null
+              isx list -q 2>/dev/null
             end
 
             # Helper: list available template definitions
@@ -827,7 +838,10 @@ public class CompletionCommand extends BaseCommand {
 
             # ── list ─────────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand list' -l plain -d 'Deprecated: plain output is the default for list (no-op)'
+            complete -c isx -f -n '__isx_using_subcommand list' -l format -d 'Output format' -a 'table plain json'
+            complete -c isx -f -n '__isx_using_subcommand list' -l plain -d 'Same as --format=plain'
+            complete -c isx -f -n '__isx_using_subcommand list' -s q -l quiet -d 'Print instance names only'
+            complete -c isx -f -n '__isx_using_subcommand list' -l status -d 'Only instances in this state' -a 'running stopped'
 
             # ── shell ────────────────────────────────────────────────────────────────────
 
