@@ -63,7 +63,7 @@ class ConfigFingerprintTest {
             } catch (java.io.IOException e) {
                 throw new java.io.UncheckedIOException(e);
             }
-            return null;
+            return new dev.incusspawn.config.SpawnConfig();
         });
 
         assertNotEquals(loaded.fingerprint(), ConfigFingerprint.capture(dir),

@@ -64,6 +64,21 @@ class ConfigDriftTest {
     }
 
     @Test
+    void anEditToAToolUnderASearchPathIsDrift() throws Exception {
+        // #890: only config.yaml and tools/ were stamped, so a proxy tool under a search path
+        // could change its domains or credential paths without the proxy ever reloading.
+        var tool = Files.writeString(Files.createDirectories(home.resolve("dotfiles/isx/tools"))
+                .resolve("foo.yaml"), "name: foo\n");
+        Files.writeString(configDir.resolve("config.yaml"), "searchPaths:\n  - ~/dotfiles/isx\n");
+        var proxy = proxy(ConfigFingerprint.load());
+
+        Files.writeString(tool, "name: foo\ndescription: edited\n");
+        Files.setLastModifiedTime(tool, FileTime.from(Instant.now().minus(Duration.ofDays(1))));
+
+        assertTrue(proxy.hasConfigChangedSinceLoad());
+    }
+
+    @Test
     void aMissingFingerprintIsRefused() {
         // Null compares unequal to every capture: the proxy would report drift forever.
         assertThrows(NullPointerException.class, () -> proxy(new ConfigFingerprint.Loaded(new SpawnConfig(), null)));

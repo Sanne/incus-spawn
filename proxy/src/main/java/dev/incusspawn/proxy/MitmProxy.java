@@ -194,7 +194,7 @@ public class MitmProxy {
             Set<String> allInterceptedDomains,
             List<String> suffixes
     ) {}
-    /** What {@code config.yaml} and {@code tools/} looked like when the running config was read. */
+    /** What {@code config.yaml} and the tool definitions looked like when the running config was read. */
     private volatile ConfigFingerprint configFingerprint;
     private java.util.function.Consumer<java.util.Set<String>> bridgeDnsWriter;
 
@@ -3503,7 +3503,12 @@ public class MitmProxy {
     }
 
     boolean hasConfigChangedSinceLoad() {
-        return !ConfigFingerprint.capture().equals(configFingerprint);
+        return !configFingerprint.isCurrent();
+    }
+
+    /** The directories of tool definitions the running config was read from, for the watcher. */
+    java.util.List<java.nio.file.Path> toolDirs() {
+        return configFingerprint.toolDirs();
     }
 
     private static String escapeJson(String s) {
