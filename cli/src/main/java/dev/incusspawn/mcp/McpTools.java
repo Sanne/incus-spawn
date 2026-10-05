@@ -520,7 +520,8 @@ final class McpTools {
         var maxOutput = args.integer("max_output_bytes");
         int limit = maxOutput == null ? DEFAULT_OUTPUT_BYTES : Math.clamp(maxOutput, 256, MAX_OUTPUT_BYTES);
 
-        var runId = "exec-" + session.id.pid() + "-" + runs.incrementAndGet();
+        // This process's pid, not the session's: an instance session has none, and spans processes.
+        var runId = "exec-" + ProcessHandle.current().pid() + "-" + runs.incrementAndGet();
         var script = ExecScript.build(runId, cwd, env, command, timeout);
         if (ask != null) {
             script = AskScript.build(script, true, ask, summaryModel());

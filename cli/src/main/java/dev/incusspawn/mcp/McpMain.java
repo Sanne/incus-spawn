@@ -4,6 +4,7 @@ import dev.incusspawn.BuildInfo;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.Metadata;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -12,12 +13,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
  * {@code isx mcp}: serve this session over stdio until the client goes away, then release the
  * instances it holds: they become orphans a later session may adopt, destroyed only once
  * {@code mcp.orphan-grace-hours} have passed with nobody working in them.
+ *
+ * <p>{@code isx mcp --caller-instance <name>} serves an isx instance instead (#915): the proxy
+ * runs it for each MCP connection the instance makes to {@code mcp.isx.internal}, its stdio
+ * bridged to that connection. The session is the instance, so it takes back what it held when
+ * it starts and releases nothing when it ends.
  */
 public final class McpMain {
 
@@ -34,7 +41,7 @@ public final class McpMain {
     private McpMain() {}
 
     /** Serve until end of input; returns the process exit code. */
-    public static int run(BooleanSupplier isInitialized) throws Exception {
+    public static int run(BooleanSupplier isInitialized, String callerInstance) throws Exception {
         var guard = StdioGuard.install();
         // Re-checked per call so `isx init` can run mid-session; once true it stays true.
         var initDone = new AtomicBoolean();
@@ -43,15 +50,39 @@ public final class McpMain {
             return initDone.get();
         };
 
-        var self = SessionId.current();
-        var owner = System.getProperty("user.name", "");
-        var clientPid = ProcessHandle.current().parent().map(ProcessHandle::pid).orElse(-1L);
-        var cwd = Path.of("").toAbsolutePath().toString();
         var backend = new IncusInstanceBackend(RuntimeServices.incus(), RuntimeServices.lockManager());
+        SessionId self;
+        long clientPid;
+        String cwd;
+        if (callerInstance != null) {
+            try {
+                self = SessionId.ofInstance(callerInstance);
+            } catch (IllegalArgumentException e) {
+                System.err.println("isx mcp: " + e.getMessage());
+                return 64;
+            }
+            // The proxy checked the stamp; a session is never served on that word alone.
+            var metadata = backend.metadata(callerInstance);
+            if (!Metadata.isMcpCaller(metadata)) {
+                System.err.println("isx mcp: instance '" + callerInstance + "' may not call isx mcp "
+                        + "(it was not branched with --mcp-client)");
+                return 78;
+            }
+            // Its client is in the instance: no host process, no host directory to stamp.
+            clientPid = -1;
+            cwd = null;
+        } else {
+            self = SessionId.current();
+            clientPid = ProcessHandle.current().parent().map(ProcessHandle::pid).orElse(-1L);
+            cwd = Path.of("").toAbsolutePath().toString();
+        }
+        var owner = System.getProperty("user.name", "");
         // Read on every use: a person narrowing the config affects a running session at once.
         Supplier<McpConfig> config = () -> SpawnConfig.load().mcp();
-        var session = new McpSession(self, owner, clientPid, cwd, backend, config, SessionId::isAlive);
+        var alive = new CallerLiveness(backend);
+        var session = new McpSession(self, owner, clientPid, cwd, backend, config, alive);
         var tasks = new Tasks(session, backend, config);
+        if (initialized.getAsBoolean()) resume(session, tasks);
         var tools = new McpTools(session, backend, new TemplatePolicy(backend, config), tasks);
 
         var released = new AtomicBoolean();
@@ -70,7 +101,7 @@ public final class McpMain {
                 clientInfo -> {
                     session.clientName(clientInfo.path("name").asText(""));
                     if (initialized.getAsBoolean()) {
-                        Thread.startVirtualThread(() -> sweepOrphans(backend, self, owner, config));
+                        Thread.startVirtualThread(() -> sweepOrphans(backend, self, owner, config, alive));
                     }
                 }, Map.of(TaskWatcher.CAPABILITY, watcher::start));
         watcher.sendTo(server::notify);
@@ -80,11 +111,38 @@ public final class McpMain {
         return 0;
     }
 
+    /**
+     * Take back what this instance session held before, then the tasks of those running, in the
+     * background: their ids work again once read, and a stopped one's are read by start_instance.
+     */
+    private static void resume(McpSession session, Tasks tasks) {
+        Map<String, Map<String, String>> resumed;
+        try {
+            resumed = session.resume();
+        } catch (RuntimeException e) {
+            System.err.println("isx mcp: could not list the instances this session held: " + e.getMessage());
+            return;
+        }
+        if (resumed.isEmpty()) return;
+        System.err.println("isx mcp: holding again " + String.join(", ", resumed.keySet()));
+        // One exec each, independent of one another.
+        resumed.forEach((name, metadata) -> {
+            if (!InstanceBackend.running(metadata)) return;
+            Thread.startVirtualThread(() -> {
+                try {
+                    tasks.adopt(name);
+                } catch (RuntimeException e) {
+                    System.err.println("isx mcp: could not read the tasks of " + name + ": " + e.getMessage());
+                }
+            });
+        });
+    }
+
     private static void sweepOrphans(InstanceBackend backend, SessionId self, String owner,
-                                     Supplier<McpConfig> config) {
+                                     Supplier<McpConfig> config, Predicate<SessionId> alive) {
         try {
             var grace = Duration.ofHours(config.get().orphanGraceHours());
-            var names = Orphans.sweep(backend, self, owner, SessionId::isAlive, grace, Instant.now(),
+            var names = Orphans.sweep(backend, self, owner, alive, grace, Instant.now(),
                     name -> Orphans.inUse(backend, name));
             if (!names.isEmpty()) {
                 System.err.println("isx mcp: destroyed orphaned instances past their grace period: "

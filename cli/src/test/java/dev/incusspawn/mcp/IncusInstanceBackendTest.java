@@ -27,6 +27,17 @@ class IncusInstanceBackendTest {
     private final IncusInstanceBackend backend = new IncusInstanceBackend(incus, mock(InstanceLockManager.class));
 
     @Test
+    void anAgentCannotMakeAnotherCoordinator() {
+        // #915: whatever the stamps say, no copy made through isx mcp may call isx mcp.
+        var info = new InstanceBackend.TemplateInfo("tpl-dev", "", true, false, java.util.List.of(), null, false,
+                java.util.Map.of());
+        var stamps = java.util.Map.of(Metadata.MCP_OWNER, "alice", Metadata.MCP_CALLER, "now");
+        assertThrows(IllegalArgumentException.class, () -> backend.create(info, "mcp-x", stamps));
+        assertThrows(IllegalArgumentException.class, () -> backend.fork(info, "mcp-src", "mcp-x", stamps));
+        org.mockito.Mockito.verifyNoInteractions(incus);
+    }
+
+    @Test
     void onlyAnInstanceIncusSaysIsMissingReadsAsGone() {
         when(incus.instanceMetadataOrThrow("gone")).thenReturn(null);
         assertNull(backend.metadata("gone"));

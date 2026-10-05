@@ -20,7 +20,8 @@ import java.util.stream.Collectors;
 
 /**
  * One MCP session: the instances it holds. Transport-agnostic -- over stdio the session is the
- * {@code isx mcp} process; over a future HTTP transport it would be a token.
+ * {@code isx mcp} process; over the network it is the isx instance that calls (#915), which
+ * holds what it made across every restart of its client or of itself ({@link #resume}).
  *
  * <p>An instance belongs to the host user who created it, and is held by one session at a time.
  * A session holds what it created, and what it adopted from a session that ended: a coordinating
@@ -310,8 +311,8 @@ final class McpSession {
         if (!busy.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is busy (" + busy + "); try again shortly.");
         var holder = SessionId.parse(session);
         if (!force && holder.isPresent() && !holder.get().equals(id) && alive.test(holder.get())) {
-            throw new ToolError(ToolError.Code.NOT_HELD, "'" + name + "' is held by a session that is still running (isx mcp pid "
-                    + holder.get().pid() + describeClient(metadata) + "). Adopting it would take it away "
+            throw new ToolError(ToolError.Code.NOT_HELD, "'" + name + "' is held by a session that is still running ("
+                    + holder.get().describe() + describeClient(metadata) + "). Adopting it would take it away "
                     + "mid-work; set force: true only if that session is stuck.");
         }
         var template = templateOf(metadata);
@@ -324,14 +325,22 @@ final class McpSession {
         var after = backend.metadata(name);
         if (after == null || !ours(after)) throw new ToolError(ToolError.Code.NOT_HELD, "another session adopted '" + name + "' first.");
         after = settled(name, after);
-        var delegate = backend.template(template).map(InstanceBackend.TemplateInfo::supportsDelegate).orElse(false);
-        var adopted = new Owned(name, template, delegate, after.get(Metadata.MCP_PURPOSE),
-                createdOf(after), true, false);
+        return register(name, template, supportsDelegate(template), after);
+    }
+
+    private boolean supportsDelegate(String template) {
+        return backend.template(template).map(InstanceBackend.TemplateInfo::supportsDelegate).orElse(false);
+    }
+
+    /** Hold {@code name}, ready, as {@code metadata} describes it: the way back into the registry. */
+    private Owned register(String name, String template, boolean delegate, Map<String, String> metadata) {
+        var held = new Owned(name, template, delegate, metadata.get(Metadata.MCP_PURPOSE),
+                createdOf(metadata), true, false);
         synchronized (this) {
-            owned.put(name, adopted);
+            owned.put(name, held);
             letGo.remove(name);
         }
-        return adopted;
+        return held;
     }
 
     /** How long {@link #adopt} waits for an operation it finds under way to end. */
@@ -447,6 +456,35 @@ final class McpSession {
     }
 
     /**
+     * Take back what an instance session held before this connection: the instances stamped
+     * with its id, not kept, as {@link #release} would have let go of them. From one listing,
+     * and before the first tool call, so the cap counts them from the start. Returns their
+     * names and what the listing said of each, for the caller to adopt their tasks.
+     *
+     * <p>Only for an instance session: a process session's id is new with every process, so
+     * nothing can carry it yet.
+     */
+    Map<String, Map<String, String>> resume() {
+        if (!id.isInstance()) return Map.of();
+        var resumed = new LinkedHashMap<String, Map<String, String>>();
+        // Workers mostly share a template; each lookup loads definitions and asks Incus.
+        var delegates = new HashMap<String, Boolean>();
+        backend.mcpInstances().forEach((name, config) -> {
+            if (!owner.equals(config.get(Metadata.MCP_OWNER)) || !ours(config)
+                    || config.containsKey(Metadata.MCP_KEPT)) return;
+            var template = templateOf(config);
+            // Stamped while this instance briefly could not call: held again, so that clock stops,
+            // or a later end of the instance would find its grace period long over.
+            if (config.containsKey(Metadata.MCP_ORPHANED)) {
+                backend.stamp(name, java.util.Collections.singletonMap(Metadata.MCP_ORPHANED, null));
+            }
+            register(name, template, delegates.computeIfAbsent(template, this::supportsDelegate), config);
+            resumed.put(name, config);
+        });
+        return resumed;
+    }
+
+    /**
      * Release every instance this session holds and did not keep, stamping when it became an
      * orphan: the grace period before any session may destroy it starts now. Called when the
      * session ends; runs the writes in parallel so it fits in the time a client gives a server
@@ -454,6 +492,8 @@ final class McpSession {
      * is orphaned and starts its grace period then.
      */
     List<String> release() {
+        // An instance session outlives its connection: the instance still holds what it made.
+        if (id.isInstance()) return List.of();
         List<Owned> targets;
         synchronized (this) {
             targets = owned.values().stream().filter(o -> o.ready() && !o.kept()).toList();

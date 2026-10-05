@@ -108,6 +108,10 @@ final class IncusInstanceBackend implements InstanceBackend {
     private CreatedInstance branch(TemplateInfo info, String template, String name, Map<String, String> stamps) {
         // Exactly `isx branch <name> --from <template>`: the template's network mode, accounts,
         // KVM and resource defaults; no GUI, no inbox. The agent chooses none of it.
+        // Nor may it make another coordinator (#915): only `isx branch --mcp-client` grants that.
+        if (stamps.containsKey(Metadata.MCP_CALLER)) {
+            throw new IllegalArgumentException("an instance made through isx mcp may not call isx mcp");
+        }
         var request = BranchFlow.Request.defaults(template, name).withExtraConfig(stamps);
         BranchFlow.Preflight preflight;
         try {
