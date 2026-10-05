@@ -242,16 +242,27 @@ public final class ProxyHealthCheck {
 
     public static ProxyInfo fetchProxyInfo(String gatewayIp, int timeoutMs) {
         try {
-            var url = URI.create("http://" + gatewayIp + ":" + ProxyConfig.DEFAULT_HEALTH_PORT + "/health").toURL();
-            var conn = (HttpURLConnection) url.openConnection();
-            conn.setConnectTimeout(timeoutMs);
-            conn.setReadTimeout(timeoutMs);
-            conn.setRequestMethod("GET");
-            if (conn.getResponseCode() != 200) return null;
-            var body = new String(conn.getInputStream().readAllBytes());
-            return parseProxyInfo(body);
+            var answer = get(gatewayIp, ProxyConfig.DEFAULT_HEALTH_PORT, "/health", timeoutMs);
+            return answer.status() == 200 ? parseProxyInfo(answer.body()) : null;
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    /** What the health port answered a GET; the body only for a 200. */
+    record Answer(int status, String body) {}
+
+    static Answer get(String address, int port, String path, int timeoutMs) throws java.io.IOException {
+        var conn = (HttpURLConnection) URI.create("http://" + address + ":" + port + path).toURL().openConnection();
+        conn.setConnectTimeout(timeoutMs);
+        conn.setReadTimeout(timeoutMs);
+        conn.setRequestMethod("GET");
+        try {
+            var status = conn.getResponseCode();
+            return new Answer(status, status == 200
+                    ? new String(conn.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8) : "");
+        } finally {
+            conn.disconnect();
         }
     }
 

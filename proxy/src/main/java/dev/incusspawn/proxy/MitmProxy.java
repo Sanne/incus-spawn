@@ -206,6 +206,9 @@ public class MitmProxy {
      */
     private volatile InstanceRegistry instanceRegistry;
 
+    /** Each instance's model calls, for {@code /activity} (#898). */
+    final ApiActivity apiActivity = new ApiActivity();
+
     /**
      * Everything derived from one read of the config: the default account's credentials and
      * routing, and what a pinned instance's request needs. Published whole, in one write, and
@@ -813,7 +816,13 @@ public class MitmProxy {
 
         // Health check HTTP server (plain, no TLS)
         healthHttpServer = vertx.createHttpServer()
-                .requestHandler(this::handleHealthCheck);
+                .requestHandler(req -> {
+                    switch (req.path()) {
+                        case "/health" -> handleHealthCheck(req);
+                        case "/activity" -> sendActivity(req);
+                        default -> req.response().setStatusCode(404).end();
+                    }
+                });
         healthHttpServer.listen(healthPort, healthBindAddress)
                 .toCompletionStage().toCompletableFuture().get();
 
@@ -1268,6 +1277,7 @@ public class MitmProxy {
         var credentials = ctx.creds();
         String upstreamHost;
         byte[] bodyBytes = bodyBuffer.getBytes();
+        var exchange = beginModelCall(clientReq, ctx);
         boolean isVertexRequest = false;
         boolean bodyRewritten = false;
         String originalDump = null;
@@ -1312,7 +1322,22 @@ public class MitmProxy {
 
         sendApiRequest(clientReq, requestOptions, upstreamHost, ctx,
                 bodyBytes, isVertexRequest, bodyRewritten, false,
-                originalDump, originalBody);
+                originalDump, originalBody, exchange);
+    }
+
+    /**
+     * Counts a model call from a known instance in {@link #apiActivity}, ending it however the
+     * client's response finishes; null for any other request.
+     */
+    private ApiActivity.Exchange beginModelCall(HttpServerRequest clientReq, RequestContext ctx) {
+        if (ctx.instanceName() == null || !ANTHROPIC_DOMAINS.contains(ctx.domain())
+                || !ApiActivity.isModelCall(clientReq.path())) {
+            return null;
+        }
+        var exchange = apiActivity.begin(ctx.instanceName());
+        clientReq.response().endHandler(v -> exchange.end());
+        clientReq.response().closeHandler(v -> exchange.end());
+        return exchange;
     }
 
     private Future<HttpClientRequest> requestWithAsyncDns(RequestOptions options) {
@@ -1395,11 +1420,13 @@ public class MitmProxy {
                                 String upstreamHost, RequestContext ctx,
                                 byte[] bodyBytes, boolean isVertexRequest,
                                 boolean bodyRewritten, boolean isRetry,
-                                String originalDump, byte[] originalBody) {
+                                String originalDump, byte[] originalBody, ApiActivity.Exchange exchange) {
         var domain = ctx.domain();
         var credentials = ctx.creds();
         requestWithAsyncDns(requestOptions).onSuccess(upReq -> {
             copyRequestHeaders(clientReq, upReq, domain);
+            // A compressed answer would hide its token usage from apiActivity
+            if (exchange != null) upReq.putHeader("Accept-Encoding", "identity");
             injectHeaders(upReq, ctx, upstreamHost, isVertexRequest).onSuccess(ok -> {
                 if (!ok) {
                     var err = authError;
@@ -1415,7 +1442,7 @@ public class MitmProxy {
                         invalidateVertexToken();
                         sendApiRequest(clientReq, requestOptions, upstreamHost, ctx,
                                 bodyBytes, isVertexRequest, bodyRewritten, true,
-                                originalDump, originalBody);
+                                originalDump, originalBody, exchange);
                         return;
                     }
 
@@ -1435,7 +1462,7 @@ public class MitmProxy {
                     }
 
                     relayApiResponse(clientReq, upResp, upstreamHost, domain,
-                            bodyBytes, bodyRewritten, originalDump, originalBody);
+                            bodyBytes, bodyRewritten, originalDump, originalBody, exchange);
                 }).onFailure(err -> {
                     System.err.println("Upstream send error (" + domain + "): " + err.getMessage());
                     sendError(clientReq.response(), 502, "Upstream error");
@@ -1450,15 +1477,19 @@ public class MitmProxy {
     private void relayApiResponse(HttpServerRequest clientReq, HttpClientResponse upResp,
                                    String upstreamHost, String domain,
                                    byte[] sentBody, boolean bodyRewritten,
-                                   String originalDump, byte[] originalBody) {
+                                   String originalDump, byte[] originalBody, ApiActivity.Exchange exchange) {
         var clientResp = clientReq.response();
         clientResp.setStatusCode(upResp.statusCode());
         clientResp.setStatusMessage(upResp.statusMessage());
         copyResponseHeaders(upResp, clientResp);
+        if (exchange != null) {
+            exchange.respond(upResp.statusCode(), upResp.getHeader("Content-Type"), upResp.getHeader("Content-Encoding"));
+        }
 
         if (debugLog != null) {
             upResp.body().onSuccess(respBody -> {
                 var respBytes = respBody.getBytes();
+                if (exchange != null) exchange.accept(respBody);
                 var responseDump = dumpResponse(upResp);
                 debugLog.logExchange(
                         originalDump, originalBody,
@@ -1471,7 +1502,7 @@ public class MitmProxy {
                 sendError(clientResp, 502, "Debug capture error");
             });
         } else {
-            pipeResponse(upResp, clientResp);
+            pipeResponse(upResp, clientResp, null, exchange == null ? null : exchange::accept);
         }
     }
 
@@ -3503,10 +3534,6 @@ public class MitmProxy {
     long authRevalidateIntervalMs = 10_000;
 
     private void handleHealthCheck(HttpServerRequest req) {
-        if (!"/health".equals(req.path())) {
-            req.response().setStatusCode(404).end();
-            return;
-        }
         // Credential state is otherwise only learned from real Vertex traffic, so a
         // status view can be wrong in both directions: reporting a failure the user
         // has already fixed, or reporting nothing at all because no request has been
@@ -3576,13 +3603,35 @@ public class MitmProxy {
                 + (err != null ? ",\"authError\":\"" + escapeJson(err) + "\"" : "")
                 // Lets the CLI signal this process (SIGUSR1: re-read the instance list)
                 // without fuser scanning every process on the host to find it.
-                + (isHostCaller(req.remoteAddress() == null ? null : req.remoteAddress().hostAddress(),
-                        req.localAddress() == null ? null : req.localAddress().hostAddress())
-                        ? ",\"pid\":" + ProcessHandle.current().pid() : "")
+                + (isHostCaller(req) ? ",\"pid\":" + ProcessHandle.current().pid() : "")
                 + "}";
         req.response()
                 .putHeader("Content-Type", "application/json")
                 .end(body);
+    }
+
+    /**
+     * Each instance's model calls ({@link ApiActivity}), for the host only: a container gets
+     * the 404 of an unknown path, since what its neighbours do is none of its business.
+     */
+    private void sendActivity(HttpServerRequest req) {
+        if (!isHostCaller(req)) {
+            req.response().setStatusCode(404).end();
+            return;
+        }
+        var registry = instanceRegistry;
+        var known = new java.util.HashSet<String>();
+        if (registry != null) {
+            for (var instance : registry.instances()) known.add(instance.instanceName());
+        }
+        req.response()
+                .putHeader("Content-Type", "application/json")
+                .end(apiActivity.snapshot(known).toJson());
+    }
+
+    private static boolean isHostCaller(HttpServerRequest req) {
+        return isHostCaller(req.remoteAddress() == null ? null : req.remoteAddress().hostAddress(),
+                req.localAddress() == null ? null : req.localAddress().hostAddress());
     }
 
     /**
@@ -3679,16 +3728,23 @@ public class MitmProxy {
     }
 
     private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp) {
-        pipeResponse(upResp, clientResp, null);
+        pipeResponse(upResp, clientResp, null, null);
     }
 
     private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp, RelayWatchdog watchdog) {
+        pipeResponse(upResp, clientResp, watchdog, null);
+    }
+
+    /** As above, showing each chunk to {@code tap} too, when there is one. */
+    private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp, RelayWatchdog watchdog,
+                              java.util.function.Consumer<Buffer> tap) {
         int status = clientResp.getStatusCode();
         if (upResp.getHeader("Content-Length") == null
                 && status != 204 && status != 304 && (status < 100 || status >= 200)) {
             clientResp.setChunked(true);
         }
         upResp.handler(chunk -> {
+            if (tap != null) tap.accept(chunk);
             clientResp.write(chunk);
             if (watchdog != null) watchdog.touch();
             if (clientResp.writeQueueFull()) {
