@@ -224,6 +224,12 @@ public final class FakeIncusDaemon implements IncusTransport {
         return instances.get(name).deepCopy();
     }
 
+    /** Set when {@code instanceName} last started, which Incus records on every start. */
+    public FakeIncusDaemon lastUsedAt(String instanceName, String at) {
+        instances.get(instanceName).put("last_used_at", at);
+        return this;
+    }
+
     public FakeIncusDaemon network(String name, Map<String, String> config) {
         var node = JSON.createObjectNode();
         node.put("name", name);
@@ -453,9 +459,11 @@ public final class FakeIncusDaemon implements IncusTransport {
             boolean force = request.path("force").asBoolean(false);
             stateActions.add(name + " " + action + (force ? " force" : ""));
             if (action.equals("stop") && !force && shutdownIgnored.contains(name)) return badRequest();
-            if (action.equals("start")) {
+            if (action.equals("start") || action.equals("restart")) {
                 instance.put("status", "Running");
                 pids.put(name, nextPid++);
+                // What Incus sets on every start, a reboot included
+                instance.put("last_used_at", java.time.Instant.now().plusNanos(nextPid).toString());
             } else {
                 instance.put("status", "Stopped");
                 pids.remove(name);

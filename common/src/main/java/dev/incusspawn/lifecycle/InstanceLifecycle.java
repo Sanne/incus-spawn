@@ -578,7 +578,10 @@ public final class InstanceLifecycle {
 
     /**
      * Make {@code name} answer exec before a shell or command runs in it: start it if stopped,
-     * or recover a VM whose agent does not answer ({@link VmAgentRecovery}). Then push a VM's
+     * or recover a VM whose agent does not answer ({@link VmAgentRecovery}). A running instance
+     * rebooted without isx -- {@code incus restart}, a reboot in the guest, autostart after a
+     * host reboot -- lost its secret with its {@code /run}, and gets a new one
+     * ({@link #giveSecretToThisBoot}). Then push a VM's
      * deferred {@code .network} file if it still owes one ({@link Metadata#NETWORK_PUSH_PENDING}),
      * whatever the status it was in: a VM repaired while stopped and then started outside isx
      * (plain {@code incus start}, autostart after a host reboot) boots its old file, and only this
@@ -594,8 +597,22 @@ public final class InstanceLifecycle {
         if ("Stopped".equalsIgnoreCase(instance.path("status").asText(""))) {
             say.accept("Starting " + name + "...");
             startForUse(incus, name, machineType, say);
-        } else if (machineType == MachineType.VM && !agentAnswers(incus, name)) {
-            VmAgentRecovery.restartForAgent(incus, name, say);
+        } else if (machineType == MachineType.VM) {
+            // QEMU may reboot a VM in place, which changes nothing the host can see: only the
+            // guest can tell, so the agent probe asks it on the way, for no request of its own
+            var probe = probeAgent(incus, name);
+            if (probe == null) {
+                VmAgentRecovery.restartForAgent(incus, name, say);
+            } else if (InstanceSecret.missingIn(probe)) {
+                giveSecretToThisBoot(incus, name, null, say);
+            }
+        } else {
+            // Every container reboot is a start: the instance already read says which boot it is
+            var bootedAt = bootOf(instance);
+            if (!bootedAt.isEmpty()
+                    && !bootedAt.equals(instance.path("config").path(Metadata.INSTANCE_SECRET_BOOT).asText(""))) {
+                giveSecretToThisBoot(incus, name, bootedAt, say);
+            }
         }
         // Only a VM is ever marked
         if (instance.path("config").has(Metadata.NETWORK_PUSH_PENDING)) {
@@ -618,6 +635,7 @@ public final class InstanceLifecycle {
         var secret = rotateInstanceSecret(incus, name);
         startInstance(incus, name, warn);
         incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT, InstanceSecret.guestEnv(secret));
+        recordSecretBoot(incus, name, machineType);
     }
 
     /**
@@ -631,6 +649,7 @@ public final class InstanceLifecycle {
         var secret = rotateInstanceSecret(incus, name);
         incus.restart(name);
         incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT, InstanceSecret.guestEnv(secret));
+        recordSecretBoot(incus, name, machineType);
     }
 
     /**
@@ -644,15 +663,83 @@ public final class InstanceLifecycle {
      * ({@link dev.incusspawn.proxy.InstanceRegistry#identify}).
      */
     static String rotateInstanceSecret(IncusClient incus, String name) {
-        var stamp = new HashMap<String, String>();
+        return rotateInstanceSecret(incus, name, Map.of());
+    }
+
+    /** {@link #rotateInstanceSecret}, with {@code alongside} recorded in the same write. */
+    private static String rotateInstanceSecret(IncusClient incus, String name, Map<String, String> alongside) {
+        var stamp = new HashMap<>(alongside);
         var secret = InstanceSecret.stampInto(stamp);
         incus.configSetAll(name, stamp);
         return secret;
     }
 
-    /** Whether a running VM's agent answers exec. */
-    private static boolean agentAnswers(IncusClient incus, String name) {
-        return execSucceeds(incus, name, "echo", "ready");
+    /** When Incus last started {@code instance} -- on every start, a reboot included -- or "". */
+    private static String bootOf(JsonNode instance) {
+        return instance.path("last_used_at").asText("");
+    }
+
+    /**
+     * Record which boot of container {@code name} its new secret went to, once the guest
+     * answers, so that {@link #ensureReady} can tell a later reboot from it at no cost
+     * ({@link Metadata#INSTANCE_SECRET_BOOT}). Its boot is only known after the start, so this is
+     * a read and a write of its own. Best-effort: without it, the next shell gives the box
+     * another secret, which is the safe way for it to go wrong. A VM is never stamped.
+     */
+    static void recordSecretBoot(IncusClient incus, String name, MachineType machineType) {
+        if (machineType == MachineType.VM) return;
+        try {
+            var bootedAt = bootOf(incus.instanceMetadata(name));
+            if (!bootedAt.isEmpty()) incus.configSet(name, Metadata.INSTANCE_SECRET_BOOT, bootedAt);
+        } catch (RuntimeException e) {
+            // The next ensureReady sees an unrecorded boot
+        }
+    }
+
+    /**
+     * Give running instance {@code name} a new secret, for a boot isx did not start (#1024):
+     * its hash recorded first -- with {@code bootedAt}, the container boot it goes to, when
+     * there is one -- then put in place by the script every start runs. Best-effort, like every
+     * delivery: a box left without its secret is refused, and the shell must still open.
+     */
+    private static void giveSecretToThisBoot(IncusClient incus, String name, String bootedAt,
+                                             Consumer<String> say) {
+        String failure;
+        try {
+            var secret = rotateInstanceSecret(incus, name,
+                    bootedAt == null ? Map.of() : Map.of(Metadata.INSTANCE_SECRET_BOOT, bootedAt));
+            var delivery = incus.shellExec(name, InstanceSecret.guestEnv(secret), "sh", "-c", InstanceSecret.GUEST_SCRIPT);
+            if (delivery.success()) return;
+            failure = "exit code " + delivery.exitCode();
+        } catch (RuntimeException e) {
+            failure = e.getMessage();
+        }
+        // The stamp went with the hash, before the guest had the secret: unset, so the next
+        // shell tries again rather than taking this boot for one that holds it. Only on this
+        // path, which costs the one that works nothing.
+        if (bootedAt != null) {
+            try {
+                incus.configSet(name, Metadata.INSTANCE_SECRET_BOOT, "");
+            } catch (RuntimeException ignored) {
+                // Then the box stays without a secret until isx starts it: refused, which is safe
+            }
+        }
+        say.accept(BuildOutput.STEP_INDENT + "Warning: could not give " + name
+                + " a new instance secret after its reboot: " + failure);
+    }
+
+    /**
+     * Ask a running VM's agent whether it answers, and its guest whether it still holds its
+     * secret ({@link InstanceSecret#GUEST_CHECK}): what the guest printed, or null if the agent
+     * does not answer.
+     */
+    private static String probeAgent(IncusClient incus, String name) {
+        try {
+            var result = incus.shellExec(name, "sh", "-c", InstanceSecret.GUEST_CHECK);
+            return result != null && result.success() ? result.stdout() : null;
+        } catch (RuntimeException agentDown) {
+            return null;
+        }
     }
 
     /** Whether a command runs and succeeds in a running instance; Incus refuses exec when its agent is down. */

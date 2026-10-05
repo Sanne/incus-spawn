@@ -62,6 +62,13 @@ public final class Metadata {
      */
     public static final String INSTANCE_SECRET_SHA256 = PREFIX + "instance-secret-sha256";
     /**
+     * The {@code last_used_at} of the container boot {@link #INSTANCE_SECRET_SHA256} was made for.
+     * Incus sets it on every start, a reboot isx did not do included, which empties the guest's
+     * {@code /run} and the secret with it: a running container whose value differs needs a new
+     * one (#1024). VMs are not stamped, since QEMU can reboot one in place without a new start.
+     */
+    public static final String INSTANCE_SECRET_BOOT = PREFIX + "instance-secret-boot";
+    /**
      * The {@link IncusClient#pid} of the boot isx last restarted a VM into because its agent did
      * not answer. Unresponsive again on that same boot, the VM is reported rather than restarted
      * a second time (#843).

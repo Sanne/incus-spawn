@@ -4,6 +4,7 @@ import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,6 +16,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.spy;
 
 /**
  * Pins how many Incus API round trips the flows behind {@code isx shell}, {@code isx branch}
@@ -61,6 +67,20 @@ class InstanceLifecycleRequestBudgetTest {
                 "PUT /1.0/instances/" + NAME + "/state"), beforeProbe.subList(0, 3), String.join("\n", requests));
         assertEquals(4, beforeProbe.size(), () -> "startForUse before its first probe:\n" + String.join("\n", requests)
                 + "\nMore is a latency regression; fewer is an improvement -- lower the budget.");
+    }
+
+    @Test
+    void aContainerStartRecordsItsBootOnceTheGuestAnswers() {
+        // After the wait: a read for the boot Incus recorded, and its stamp (#1024). Unknowable
+        // before the start, and what lets every later shell tell a reboot at no cost.
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
+        var incus = spy(daemon.client());
+        doNothing().when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
+        InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, msg -> {});
+        var requests = daemon.requests();
+        assertEquals(List.of("GET /1.0/instances/" + NAME, "PATCH /1.0/instances/" + NAME),
+                requests.subList(requests.size() - 2, requests.size()), String.join("\n", requests));
+        assertBudget(6, daemon, "startForUse (container, guest answering)");
     }
 
     @Test

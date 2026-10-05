@@ -338,6 +338,8 @@ public final class BranchFlow {
         }
 
         InstanceLifecycle.setupRuntime(incus, name, networkMode, prefetched, secret);
+        // Or the first shell would take this boot for one isx did not start, and replace its secret
+        InstanceLifecycle.recordSecretBoot(incus, name, machineType);
 
         if (networkMode != NetworkMode.AIRGAP) {
             CertificateAuthority.fixContainerCaIfNeeded(incus, name);

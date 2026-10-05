@@ -28,7 +28,8 @@ import java.util.Map;
  *       {@code user.*} keys through {@code /dev/incus}, so the secret itself never goes there.</li>
  *   <li>In the guest, at {@link #GUEST_PATH}, owned by root and readable by the instance user's
  *       group only. {@code /run} is a tmpfs: any reboot, including one isx did not do, leaves
- *       the box without a secret until isx starts it again, which fails closed. The login
+ *       the box without a secret, which fails closed, until isx starts it again or the next
+ *       {@code isx shell} notices the reboot and gives it one (#1024). The login
  *       profile exports {@link #FILE_ENV_VAR} pointing at it; the value is not exported, so it
  *       does not travel in the environment of every process or show up in an {@code env} dump.</li>
  *   <li>Never in an image: builds do not get one, and a branch is given its own before its
@@ -114,6 +115,22 @@ public final class InstanceSecret {
             + " && mv -f " + GUEST_PATH + ".new " + GUEST_PATH
             + " && printf '%s\\n' " + Container.shellQuote("export " + FILE_ENV_VAR + "=" + GUEST_PATH) + " > " + PROFILE_PATH
             + "; } >/dev/null 2>&1; unset isx_secret; true";
+
+    /** What {@link #GUEST_CHECK} prints for a guest that holds no secret. */
+    public static final String MISSING = "isx-instance-secret-missing";
+
+    /**
+     * Shell that prints {@link #MISSING} when the guest holds no secret, as after a reboot isx
+     * did not do, for a probe that already runs in the guest to ask on the way. Silent when
+     * {@code /run} is no tmpfs: {@link #GUEST_SCRIPT} would not write one there, so asking for
+     * a new secret on every probe could not help.
+     */
+    public static final String GUEST_CHECK = RUN_IS_TMPFS + " && ! [ -s " + GUEST_PATH + " ] && echo " + MISSING + "; true";
+
+    /** Whether the output of a probe running {@link #GUEST_CHECK} says the guest holds no secret. */
+    public static boolean missingIn(String stdout) {
+        return stdout != null && stdout.lines().anyMatch(MISSING::equals);
+    }
 
     /** The exec environment that hands {@code secret} to {@link #GUEST_SCRIPT}. */
     public static Map<String, String> guestEnv(String secret) {
