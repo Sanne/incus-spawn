@@ -1156,6 +1156,46 @@ class ArtifactCacheProxyTest {
         assertStaysAbsent(cached(CENTRAL, JAR));
     }
 
+    // A query string keeps a request out of the cache: relayed as it is
+    static final String RELAYED_JAR = JAR + "?relayed";
+
+    @Test
+    void relayThatStallsMidBodyIsCutAtTheClientsBudget() throws Exception {
+        // Not left to the MITM server's idle timeout, which drops the client silently at 120s (#929)
+        publishCutJar(false);
+        proxy.clientSilenceBudgetSeconds = 2;
+
+        try {
+            var response = getAsync(CENTRAL, RELAYED_JAR).toCompletionStage().toCompletableFuture()
+                    .get(8, TimeUnit.SECONDS);
+            fail("got " + response.status() + " with " + response.body().length + " bytes");
+        } catch (java.util.concurrent.ExecutionException e) {
+            // reset mid-body
+        }
+        assertEquals(0, rangesAsked.size(), "a relay is not resumed");
+    }
+
+    @Test
+    void relayWithNoAnswerIsA502AtTheClientsBudget() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        getsToIgnore.set(1);
+        proxy.clientSilenceBudgetSeconds = 2;
+
+        assertEquals(502, getAsync(CENTRAL, RELAYED_JAR).toCompletionStage().toCompletableFuture()
+                .get(8, TimeUnit.SECONDS).status());
+    }
+
+    @Test
+    void relayIsNotCutWhileEverySilenceIsWithinTheBudget() throws Exception {
+        // Longer than the budget in all, but each byte the client gets starts it again
+        var content = publishCutJar(false);
+        nextGetDelayMs = 2_000;
+        cutPauseMs = 2_000;
+        proxy.clientSilenceBudgetSeconds = 3;
+
+        assertEquals(content, get(CENTRAL, RELAYED_JAR).text());
+    }
+
     @Test
     void downloadGoesOnIntoTheCacheWhenTheClientLeftBeforeItsHead() throws Exception {
         // Left while the head was awaited: no budget for anyone, so the stall is resumed

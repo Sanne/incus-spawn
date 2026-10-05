@@ -728,9 +728,9 @@ public class MitmProxy {
                 .setMaxPoolSize(20)
                 .setKeepAliveTimeout(30)
                 .setConnectTimeout(UPSTREAM_CONNECT_TIMEOUT_MILLIS)
-                // Outlasts the MITM server's idle timeout, so a stalled relay is dropped by that,
-                // silently; waits for the cache take clientSilenceBudgetSeconds instead. Not lowered
-                // for everything: an upload gets no bytes back for as long as it sends.
+                // Outlasts the MITM server's idle timeout: a stalled relay or wait for the cache is
+                // ended by clientSilenceBudgetSeconds instead (RelayWatchdog, CachingDownload). Not
+                // lowered for everything: an upload gets no bytes back for as long as it sends.
                 .setReadIdleTimeout(300);
         var upstreamTrust = upstreamTrust();
         if (upstreamTrust != null) clientOptions.setTrustOptions(upstreamTrust);
@@ -1555,7 +1555,7 @@ public class MitmProxy {
             // and serve them directly via sendFile on cache hits.
             upReq.headers().remove("Accept-Encoding");
 
-            sendWithBody(clientReq, upReq).onSuccess(upResp -> {
+            sendWithBody(clientReq, upReq, () -> {}).onSuccess(upResp -> {
                 var statusCode = upResp.statusCode();
 
                 if (statusCode == 200) {
@@ -2233,7 +2233,7 @@ public class MitmProxy {
                         () -> checkNpmTarballCache(cacheFile, state.packageEtag(), ref, npmShasum(document))))
         ).onSuccess(result -> {
             if (result == null) {
-                // Said here, since a relay that stalls is dropped without a line (#929)
+                // Said here, so a relay that fails points at the lookup that sent it there
                 ProxyLog.warn("No npm shasum for " + ref + "; relaying it uncached");
                 relayRequest(clientReq, domain);
             } else if (result.cacheHit()) {
@@ -3058,11 +3058,14 @@ public class MitmProxy {
                 .setHost(domain)
                 .setPort(443)
                 .setURI(clientReq.uri());
+        var watchdog = new RelayWatchdog(clientReq, domain);
 
         requestWithAsyncDns(options).onSuccess(upReq -> {
+            watchdog.upReq = upReq;
             copyRequestHeaders(clientReq, upReq, domain);
 
-            sendWithBody(clientReq, upReq).onSuccess(upResp -> {
+            sendWithBody(clientReq, upReq, watchdog::requestRead).onSuccess(upResp -> {
+                if (watchdog.cut) return;
                 if (responseCallback != null) {
                     responseCallback.accept(upResp);
                 }
@@ -3070,15 +3073,88 @@ public class MitmProxy {
                 clientResp.setStatusCode(upResp.statusCode());
                 clientResp.setStatusMessage(upResp.statusMessage());
                 copyResponseHeaders(upResp, clientResp);
-                pipeResponse(upResp, clientResp);
+                watchdog.upResp = upResp;
+                pipeResponse(upResp, clientResp, watchdog);
             }).onFailure(err -> {
+                if (watchdog.cut) return;
                 System.err.println("Relay upstream error (" + domain + "): " + err.getMessage());
                 sendError(clientReq.response(), 502, "Upstream error");
             });
         }).onFailure(err -> {
+            if (watchdog.cut) return;
             System.err.println("Relay connect error (" + domain + "): " + err.getMessage());
             sendError(clientReq.response(), 502, "Upstream connection failed");
         });
+    }
+
+    /**
+     * Ends a relay whose client has gone {@link #clientSilenceBudgetSeconds} without a byte either
+     * way, with a line and a 502, or a reset once the head was sent (#929). Just short of the MITM
+     * server's idle timeout, which would drop the client silently with the upstream read still
+     * pending (the upstream client's read-idle timeout outlasts it), so it cuts nothing that
+     * would have lived: an upload counts as the client's bytes until its body is read. Not while
+     * upstream is paused because the client holds the response back.
+     */
+    private final class RelayWatchdog {
+        private final HttpServerRequest clientReq;
+        private final String domain;
+        HttpClientRequest upReq;
+        HttpClientResponse upResp;
+        boolean cut;
+        // Until the request body is read, and while the client holds the response back
+        private boolean waitingOnClient = true;
+        private boolean over;
+        private long clientActive = System.nanoTime();
+        private long timer;
+
+        RelayWatchdog(HttpServerRequest clientReq, String domain) {
+            this.clientReq = clientReq;
+            this.domain = domain;
+            var clientResp = clientReq.response();
+            clientResp.endHandler(v -> stop());
+            clientResp.closeHandler(v -> stop());
+            // It may have left during the lookups before the relay, with no handler yet to tell
+            if (clientResp.closed()) stop();
+            check();
+        }
+
+        void requestRead() {
+            waitingOnClient(false);
+        }
+
+        void touch() {
+            clientActive = System.nanoTime();
+        }
+
+        void waitingOnClient(boolean waiting) {
+            waitingOnClient = waiting;
+            touch();
+        }
+
+        private void stop() {
+            over = true;
+            vertx.cancelTimer(timer);
+        }
+
+        private void check() {
+            if (over) return;
+            // Not a stall
+            if (waitingOnClient) touch();
+            var left = silenceLeftMillis(clientActive);
+            if (left > 0) {
+                timer = vertx.setTimer(left, id -> check());
+                return;
+            }
+            stop();
+            cut = true;
+            var clientResp = clientReq.response();
+            ProxyLog.warn("Relay cut (" + domain + clientReq.path() + "): "
+                    + (clientResp.headWritten() ? "no data from upstream" : "no answer from upstream")
+                    + " for the client in " + clientSilenceBudgetSeconds + "s");
+            if (upResp != null) upResp.handler(null).endHandler(null).exceptionHandler(ignored -> {});
+            sendError(clientResp, 502, "Upstream timed out");
+            if (upReq != null) upReq.reset();
+        }
     }
 
     // --- Vertex AI translation ---
@@ -3566,19 +3642,28 @@ public class MitmProxy {
         clientResp.headers().remove("Transfer-Encoding");
     }
 
+    /** {@code whenRead} runs once the client's request body, if any, has all arrived. */
     private io.vertx.core.Future<HttpClientResponse> sendWithBody(
-            HttpServerRequest clientReq, HttpClientRequest upReq) {
+            HttpServerRequest clientReq, HttpClientRequest upReq, Runnable whenRead) {
         var cl = clientReq.getHeader("Content-Length");
         var te = clientReq.getHeader("Transfer-Encoding");
         var hasBody = (cl != null && !"0".equals(cl))
                 || (te != null && te.toLowerCase().contains("chunked"));
         if (hasBody) {
-            return clientReq.body().compose(body -> upReq.send(body));
+            return clientReq.body().compose(body -> {
+                whenRead.run();
+                return upReq.send(body);
+            });
         }
+        whenRead.run();
         return upReq.send();
     }
 
     private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp) {
+        pipeResponse(upResp, clientResp, null);
+    }
+
+    private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp, RelayWatchdog watchdog) {
         int status = clientResp.getStatusCode();
         if (upResp.getHeader("Content-Length") == null
                 && status != 204 && status != 304 && (status < 100 || status >= 200)) {
@@ -3586,9 +3671,14 @@ public class MitmProxy {
         }
         upResp.handler(chunk -> {
             clientResp.write(chunk);
+            if (watchdog != null) watchdog.touch();
             if (clientResp.writeQueueFull()) {
                 upResp.pause();
-                clientResp.drainHandler(v -> upResp.resume());
+                if (watchdog != null) watchdog.waitingOnClient(true);
+                clientResp.drainHandler(v -> {
+                    if (watchdog != null) watchdog.waitingOnClient(false);
+                    upResp.resume();
+                });
             }
         });
         upResp.endHandler(v -> clientResp.end());
