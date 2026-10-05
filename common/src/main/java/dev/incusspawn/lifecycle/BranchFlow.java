@@ -113,7 +113,8 @@ public final class BranchFlow {
     /**
      * The {@link Defaults} for a branch of {@code source}, given that instance as
      * {@link IncusClient#instanceMetadata} reads it. GUI and KVM follow the source's definition
-     * when it is a template, and what the source was built or branched with either way.
+     * when it is a template, and what the source was built or branched with either way. For KVM
+     * a template falls back to its type, a branch only to its own {@code kvm-enabled} stamp.
      *
      * <p>GUI is narrower, since it hands the branch the host's GPU and its whole
      * {@code XDG_RUNTIME_DIR}. Only for a container, which is all passthrough can start with;
@@ -138,8 +139,13 @@ public final class BranchFlow {
                     + "Wayland session, so it is off.";
         }
         var gui = wantsGui && guiNote == null;
-        var kvm = (def != null && def.isKvm())
-                || "kvm".equals(config.path(Metadata.INSTANCE_MODE).asText(""));
+        // A template's own stamp records how it was built, never a per-branch choice; any other
+        // source carries how it was branched, and its type is inherited even through --no-kvm (#1034)
+        var type = config.path(Metadata.TYPE).asText("");
+        var template = def != null || Metadata.TYPE_BASE.equals(type) || Metadata.TYPE_PROJECT.equals(type);
+        var kvm = template
+                ? (def != null && def.isKvm()) || "kvm".equals(config.path(Metadata.INSTANCE_MODE).asText(""))
+                : "true".equals(config.path(Metadata.KVM_ENABLED).asText(""));
         return new Defaults(machineType, gui, kvm, guiNote);
     }
 

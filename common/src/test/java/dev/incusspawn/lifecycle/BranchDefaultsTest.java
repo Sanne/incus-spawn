@@ -72,11 +72,36 @@ class BranchDefaultsTest {
     @Test
     void withoutADefinitionTheSourceDecides() {
         // A branch of a branch: no definition carries the instance's name
-        var daemon = new FakeIncusDaemon().container("dev-1",
-                Map.of(Metadata.GUI_ENABLED, "true", Metadata.INSTANCE_MODE, "kvm"));
+        var daemon = new FakeIncusDaemon().container("dev-1", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE,
+                Metadata.GUI_ENABLED, "true", Metadata.INSTANCE_MODE, "kvm", Metadata.KVM_ENABLED, "true"));
         var defaults = BranchFlow.defaultsFor("dev-1", daemon.client().instanceMetadata("dev-1"), template("container", false));
         assertTrue(defaults.gui());
         assertTrue(defaults.kvm());
+    }
+
+    @Test
+    void aBranchMadeWithoutKvmDoesNotHandItBackToItsOwnBranches() {
+        // #1034: dev-1 was branched with --no-kvm from a type: kvm template, so it inherited the
+        // template's instance-mode stamp but not kvm-enabled
+        var daemon = new FakeIncusDaemon().container("dev-1",
+                Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.INSTANCE_MODE, "kvm"));
+        var defaults = BranchFlow.defaultsFor("dev-1", daemon.client().instanceMetadata("dev-1"), template("kvm", false));
+        assertFalse(defaults.kvm(), "the instance's own kvm-enabled stamp decides, not the template's type");
+    }
+
+    @Test
+    void aBuiltTemplateWithoutItsDefinitionFallsBackToItsInstanceMode() {
+        var daemon = new FakeIncusDaemon().container("tpl-old",
+                Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.INSTANCE_MODE, "kvm"));
+        assertTrue(BranchFlow.defaultsFor("tpl-old", daemon.client().instanceMetadata("tpl-old"), Map.of()).kvm());
+    }
+
+    @Test
+    void aProjectTemplateFallsBackToTheInstanceModeItWasCopiedWith() {
+        // isx project create copies a template: instance-mode comes along, kvm-enabled never existed
+        var daemon = new FakeIncusDaemon().container("proj-x",
+                Map.of(Metadata.TYPE, Metadata.TYPE_PROJECT, Metadata.INSTANCE_MODE, "kvm"));
+        assertTrue(BranchFlow.defaultsFor("proj-x", daemon.client().instanceMetadata("proj-x"), Map.of()).kvm());
     }
 
     @Test
