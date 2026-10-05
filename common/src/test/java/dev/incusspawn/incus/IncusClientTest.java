@@ -148,4 +148,16 @@ class IncusClientTest {
                     "HTTP " + status);
         }
     }
+
+    @Test
+    void aProbeRunsTheScriptWithoutALoginShell() {
+        var daemon = new FakeIncusDaemon().container("dev", Map.of());
+        // This daemon serves no exec: the call fails, the request is what counts.
+        assertThrows(RuntimeException.class, () -> daemon.client().execProbe("dev", 1000, "/home/agentuser",
+                "echo hi", java.io.OutputStream.nullOutputStream(), java.time.Duration.ofMillis(100)));
+        var exec = daemon.execs().getLast();
+        assertEquals(java.util.List.of("sh", "-c", IncusClient.LOGIN_PATH_PREFIX + "echo hi"), exec.command(),
+                "no su -: the user's profile never runs before isx's probe");
+        assertEquals("/home/agentuser", exec.environment().get("HOME"));
+    }
 }

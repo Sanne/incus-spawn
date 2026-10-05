@@ -11,8 +11,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
@@ -91,6 +92,17 @@ final class Tasks {
     private final String tag = McpSession.randomSuffix(4);
     /** How long counting other sessions' tasks waits for an instance before counting it as none. */
     Duration elsewhereTimeout = Duration.ofSeconds(10);
+    /** How long an instance that did not answer in time is not asked again (counting as none). */
+    Duration elsewhereCooldown = Duration.ofMinutes(10);
+    /**
+     * Probes of other sessions' instances not yet over, by instance: never more than one each, so
+     * the reservations that arrive while a silent instance is first waited for share its probe
+     * rather than each starting another {@code su -} in it.
+     */
+    private final Map<String, CompletableFuture<Long>> probing = new ConcurrentHashMap<>();
+    /** Instances that did not answer in time, with when ({@link System#nanoTime}) to ask again. */
+    private final Map<String, Long> quietUntil = new ConcurrentHashMap<>();
+
 
     Tasks(McpSession session, InstanceBackend backend, Supplier<McpConfig> config) {
         this.session = session;
@@ -325,9 +337,10 @@ final class Tasks {
      * {@code continuing}. Refuses beyond {@code mcp.max-concurrent-tasks}, a second agent in one
      * working tree, or a run of a task still running. The check and the reservation happen under
      * one lock, so concurrent calls see each other's reservations; asking the instances which
-     * tasks have finished happens before it, outside the lock. Another session's reservation is
-     * not seen until it launched: two sessions may both take the last slot, as two may both take
-     * the last instance. The cap is a net against runaway creation, not a budget.
+     * tasks have finished happens before it, outside the lock. Another session's runs are seen
+     * only once launched, and this session's count of them is as old as its probe: between one
+     * session's count and another's launch, both may take the last slot, as two may both take the
+     * last instance. The cap is a net against runaway creation, not a budget.
      */
     private Task reserve(String continuing, Profile override, Task fresh, boolean refresh) {
         var elsewhere = busyElsewhere();
@@ -343,11 +356,11 @@ final class Tasks {
     }
 
     /**
-     * {@link #reserve} against the states as last known, with {@code elsewhere} busy in other
-     * sessions. A continued task's next run takes on {@code override}, so whoever reads the task
-     * meanwhile sees the profile it starts with.
+     * {@link #reserve} against the states as last known, with what is busy in other sessions. A
+     * continued task's next run takes on {@code override}, so whoever reads the task meanwhile
+     * sees the profile it starts with.
      */
-    private Task reserveNow(String continuing, Profile override, Task fresh, long elsewhere) {
+    private Task reserveNow(String continuing, Profile override, Task fresh, Map<String, Long> elsewhere) {
         synchronized (this) {
             if (continuing != null) {
                 var task = tasks.get(continuing);
@@ -381,19 +394,21 @@ final class Tasks {
     }
 
     /**
-     * Refuse a new run when as many as {@code mcp.max-concurrent-tasks} are busy, counting the
-     * {@code elsewhere} busy in this user's other sessions and orphans. Holds the lock.
+     * Refuse a new run when as many as {@code mcp.max-concurrent-tasks} are busy, counting what
+     * is busy in this user's other sessions and orphans. Holds the lock.
      */
-    private void checkLimit(long elsewhere) {
+    private void checkLimit(Map<String, Long> elsewhere) {
         var mine = tasks.values().stream().filter(Task::busy).count();
-        var busy = mine + elsewhere;
+        var others = elsewhere.values().stream().mapToLong(Long::longValue).sum();
+        var busy = mine + others;
         var max = config.get().maxConcurrentTasks();
         if (busy >= max) {
-            throw new ToolError(busy + " task(s) are running (" + mine + " in this session, "
-                    + elsewhere + " in other sessions or orphaned instances), the most "
-                    + "mcp.max-concurrent-tasks allows (" + max + "). Wait for one to finish, or cancel_task "
-                    + "one of this session's" + (elsewhere > 0 ? "; list_instances shows the other sessions' "
-                    + "instances and the orphans, which adopt_instance takes over" : "") + ".");
+            throw new ToolError(busy + " task(s) are running (" + mine + " in this session, " + others
+                    + " in other sessions or orphaned instances" + (others > 0 ? ": " + elsewhere.entrySet().stream()
+                    .map(e -> e.getKey() + " " + e.getValue()).collect(Collectors.joining(", ")) : "")
+                    + "), the most mcp.max-concurrent-tasks allows (" + max + "). Wait for one to finish, or "
+                    + "cancel_task one of this session's" + (others > 0 ? "; list_instances shows the other "
+                    + "sessions' instances and the orphans, which adopt_instance takes over" : "") + ".");
         }
     }
 
@@ -402,38 +417,81 @@ final class Tasks {
      * are orphaned ({@link McpSession#taskInstancesElsewhere}): the cap is per user, like
      * {@code mcp.max-instances}, since the machine runs them all whichever process holds them.
      * One listing, then one exec per such instance, in parallel; none when there are none.
-     * {@code unknown} counts as running, as this session keeps an unknown task's slot. An
-     * instance that cannot be asked, or does not answer within {@link #elsewhereTimeout}, counts
-     * nothing, so one broken instance cannot block every later task: {@code mcp.max-instances}
-     * still bounds it.
+     * {@code unknown} counts as running, as this session keeps an unknown task's slot; each task
+     * id once.
+     *
+     * <p>An instance that cannot be asked counts nothing, so one broken instance cannot block
+     * every later task: {@code mcp.max-instances} still bounds it. Nor can one that never answers
+     * (a login profile that hangs) hold up every task start, or pile up execs: its probe is bounded
+     * ({@link InstanceBackend#probe}: no login shell, killed at {@link #elsewhereTimeout}), there is never more
+     * than one per instance, and once it has not answered in time the instance counts as none
+     * without being asked for {@link #elsewhereCooldown}, as does one that answered but took more
+     * than half the timeout. A quiet instance counts none: what it said once may be long over, and
+     * a stale count must not block the user's starts for nothing.
      */
-    private long busyElsewhere() {
-        var asked = session.taskInstancesElsewhere();
-        if (asked.isEmpty()) return 0;
-        var pool = Executors.newVirtualThreadPerTaskExecutor();
-        var counts = asked.stream().map(name -> pool.submit(() -> {
-            try {
-                return run(name, TaskScripts.busy(), null).lines().filter(l -> l.startsWith("task ")).count();
-            } catch (RuntimeException e) {
-                return 0L;
-            }
-        })).toList();
-        // Not closed with try: that would wait for a guest that never answers.
-        pool.shutdown();
+    private Map<String, Long> busyElsewhere() {
+        var now = System.nanoTime();
+        // A cooldown over is forgotten, so the map holds only instances quiet now.
+        quietUntil.values().removeIf(until -> until - now <= 0);
+        var listed = session.taskInstancesElsewhere();
+        // One that left the listing (stopped, gone) is asked afresh if it comes back.
+        quietUntil.keySet().retainAll(listed);
+        var probes = new LinkedHashMap<String, CompletableFuture<Long>>();
+        for (var name : listed) {
+            if (!quietUntil.containsKey(name)) probes.put(name, probeElsewhere(name));
+        }
+        // From now, not from before the listing: each probe gets all of its time.
         var deadline = System.nanoTime() + elsewhereTimeout.toNanos();
-        long total = 0;
-        for (var count : counts) {
+        var counts = new LinkedHashMap<String, Long>();
+        for (var probe : probes.entrySet()) {
             try {
-                total += count.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
-            } catch (TimeoutException | ExecutionException e) {
-                count.cancel(true);
+                var count = probe.getValue().get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                if (count > 0) counts.put(probe.getKey(), count);
+            } catch (TimeoutException e) {
+                var answer = probe.getValue().isDone() && !probe.getValue().isCompletedExceptionally()
+                        ? probe.getValue().join() : null;
+                if (answer != null) {
+                    // It answered just as the wait ran out: use the answer (the probe has marked it quiet).
+                    if (answer > 0) counts.put(probe.getKey(), answer);
+                } else {
+                    quietUntil.put(probe.getKey(), System.nanoTime() + elsewhereCooldown.toNanos());
+                }
+            } catch (ExecutionException e) {
+                // Could not be asked: counts as none.
             } catch (InterruptedException e) {
-                pool.shutdownNow();
                 Thread.currentThread().interrupt();
                 throw new ToolError("interrupted while counting this user's running tasks");
             }
         }
-        return total;
+        return counts;
+    }
+
+    /** The probe of {@code name} under way, or a new one: never two at once for one instance. */
+    private CompletableFuture<Long> probeElsewhere(String name) {
+        var started = new CompletableFuture<Long>();
+        var probe = probing.putIfAbsent(name, started);
+        if (probe != null) return probe;
+        Thread.ofVirtual().start(() -> {
+            try {
+                var out = new ByteArrayOutputStream();
+                var began = System.nanoTime();
+                var exit = backend.probe(name, TaskScripts.busy(), out, elsewhereTimeout);
+                if (exit != 0) throw new ToolError("exit " + exit);
+                var count = (long) TaskScripts.taskIds(out.toString(StandardCharsets.UTF_8).lines()).size();
+                // An instance that answers, but slowly -- after the caller gave up, or close to it --
+                // would cost every task start nearly the whole wait: it is treated as one that did
+                // not answer, and not asked while it cools down.
+                if (System.nanoTime() - began > elsewhereTimeout.toNanos() / 2) {
+                    quietUntil.put(name, System.nanoTime() + elsewhereCooldown.toNanos());
+                }
+                started.complete(count);
+            } catch (RuntimeException e) {
+                started.completeExceptionally(e);
+            } finally {
+                probing.remove(name, started);
+            }
+        });
+        return started;
     }
 
     /** Ask each instance, once, which of the tasks believed running still are. */

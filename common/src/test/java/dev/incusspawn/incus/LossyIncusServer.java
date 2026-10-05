@@ -77,6 +77,8 @@ final class LossyIncusServer implements AutoCloseable {
     volatile String stdout = "";
     volatile String stderr = "";
     volatile int exitCode = 0;
+    /** How the operation ends: Success carries {@link #exitCode}; Failure or Cancelled carry none. */
+    volatile String finalStatus = "Success";
     /** How long the "command" runs after all fds connect, before it writes output and exits. */
     volatile long runMillis = 0;
     /** How many /wait calls answer "Running" before the operation reports its result. */
@@ -86,6 +88,14 @@ final class LossyIncusServer implements AutoCloseable {
     volatile long trailingGapMillis = 0;
     /** Keep writing stdout after completion until the client hangs up (never idle). */
     volatile boolean trickleForever = false;
+    /** The command never ends by itself: a login profile that never returns. */
+    volatile boolean runsForever = false;
+    /** With {@link #runsForever}, a signal on the control fd ends it, as Incus's does a killable process. */
+    volatile boolean diesOnSignal = false;
+    /** Each operation /wait is held this long before it is answered: a tunnel slower than its slack. */
+    volatile long waitStallMillis = 0;
+    /** Data messages the client sent on the control fd, in order. */
+    final List<String> controlMessages = new CopyOnWriteArrayList<>();
     /**
      * Runs on each fd's server thread after it registers, before deciding whether to start the
      * command. That fd's client frames (and PINGs) go unread while it blocks.
@@ -179,7 +189,7 @@ final class LossyIncusServer implements AutoCloseable {
             throws IOException {
         if (req.path().contains("/wait")) {
             waits.incrementAndGet();
-            respond(out, 200, waitBody(), Framing.LENGTH, req.close());
+            respond(out, 200, waitBody(req.path()), Framing.LENGTH, req.close());
             return !req.close();
         }
         requests.add(req.method() + " " + req.path());
@@ -277,17 +287,32 @@ final class LossyIncusServer implements AutoCloseable {
                 """.formatted(FD_STDIN, FD_STDOUT, FD_STDERR, FD_CONTROL);
     }
 
-    private String waitBody() {
+    private String waitBody(String path) {
+        var running = "{\"type\":\"sync\",\"status_code\":200,\"metadata\":{\"id\":\"op1\",\"status\":\"Running\"}}";
+        if (waitStallMillis > 0) {
+            try {
+                Thread.sleep(waitStallMillis);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
         synchronized (this) {
             if (runningWaits > 0) {
                 runningWaits--;
-                return "{\"type\":\"sync\",\"status_code\":200,\"metadata\":{\"id\":\"op1\",\"status\":\"Running\"}}";
+                return running;
             }
         }
+        // The long-poll's own timeout, as Incus honours it: Running if the command is still going.
+        var timeout = path.matches(".*[?&]timeout=\\d+.*")
+                ? Long.parseLong(path.replaceAll(".*[?&]timeout=(\\d+).*", "$1")) : 30;
         try {
-            operationDone.await(30, TimeUnit.SECONDS);
+            if (!operationDone.await(Math.min(timeout, 30), TimeUnit.SECONDS)) return running;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+        if (!finalStatus.equals("Success")) {
+            return "{\"type\":\"sync\",\"status_code\":200,\"metadata\":{\"id\":\"op1\",\"status\":\""
+                    + finalStatus + "\",\"err\":\"forkexec failed\",\"metadata\":{}}}";
         }
         return "{\"type\":\"sync\",\"status_code\":200,\"metadata\":{\"id\":\"op1\",\"status\":\"Success\","
                 + "\"metadata\":{\"return\":" + exitCode + "}}}";
@@ -328,6 +353,7 @@ final class LossyIncusServer implements AutoCloseable {
     }
 
     private void runCommand() {
+        if (runsForever) return; // only a signal, if anything, ends it
         try {
             if (runMillis > 0) Thread.sleep(runMillis);
             execFds.get("1").send(0x2, stdout.getBytes(StandardCharsets.UTF_8));
@@ -371,6 +397,14 @@ final class LossyIncusServer implements AutoCloseable {
                 var payload = in.readNBytes((int) len);
                 if (mask != null) for (int i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
                 if (opcode == 0x8) return;
+                if ((opcode == 0x1 || opcode == 0x2) && fd.equals("control")) {
+                    var message = new String(payload, StandardCharsets.UTF_8);
+                    controlMessages.add(message);
+                    if (diesOnSignal && message.contains("\"command\":\"signal\"")) {
+                        exitCode = 137;
+                        operationDone.countDown();
+                    }
+                }
                 if (opcode == 0x9) {
                     pingsByFd.computeIfAbsent(fd, k -> new AtomicInteger()).incrementAndGet();
                     peer.send(0xA, payload);

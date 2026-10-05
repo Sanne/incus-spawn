@@ -511,6 +511,55 @@ class TaskScriptsTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Timeout(20)
+    void aFifoInPlaceOfATaskFileHoldsNoProbe() throws Exception {
+        // Anyone in the instance can put a FIFO there; a read of it would wait for a writer.
+        recordedTask("t11-abc", Tasks.AGENT, true);
+        var current = Files.createDirectories(home.resolve(".isx-mcp/tasks/t18-abc"));
+        Files.writeString(current.resolve("kind"), "command\n");
+        sh("mkfifo " + current.resolve("current"), "");
+        var kind = Files.createDirectories(home.resolve(".isx-mcp/tasks/t19-abc"));
+        Files.writeString(kind.resolve("current"), "1\n");
+        sh("mkfifo " + kind.resolve("kind"), "");
+        long start = System.nanoTime();
+        assertEquals("task t11-abc running\n", sh(TaskScripts.busy(), ""));
+        assertEquals("task t11-abc running\n", sh(TaskScripts.unfinished(), ""));
+        assertTrue(System.nanoTime() - start < 10_000_000_000L, "neither probe waited on a FIFO");
+        var pid = Files.readString(home.resolve("units/isx-task-t11-abc-2")).strip();
+        sh("kill -TERM -- -" + pid, "");
+    }
+
+    @Test
+    void taskIdsAreReadFromTheTaskLinesAloneAndEachOnce() {
+        // The output is the guest's: anything its profile prints must neither count nor fail the read.
+        var lines = java.util.stream.Stream.of("task t1-a running", "task ", "task  x", "tasks t2-a running",
+                "welcome!", "task t1-a unknown", "task t3-a unknown");
+        assertEquals(java.util.Set.of("t1-a", "t3-a"), TaskScripts.taskIds(lines));
+    }
+
+    @Test
+    void theUsersTaskCountSeesEveryRunThatHasNotFinished() throws Exception {
+        recordedTask("t11-abc", Tasks.AGENT, true);
+        recordedTask("t12-abc", Tasks.AGENT, false);
+        recordedTask("t14-abc", Tasks.COMMAND, true); // a dev server uses the machine as much as an agent
+        recordedTask("t16-abc", Tasks.COMMAND, false);
+        assertEquals("task t11-abc running\ntask t14-abc running\n", sh(TaskScripts.busy(), ""));
+        Files.createDirectories(home.resolve(".isx-mcp/tasks/a b*"));
+        Files.writeString(home.resolve(".isx-mcp/tasks/a b*/kind"), "command\n");
+        Files.writeString(home.resolve(".isx-mcp/tasks/a b*/current"), "1\n"); // unfinished, but no task id
+        Files.createDirectories(home.resolve(".isx-mcp/tasks/t17-abc")); // no kind: not a task isx started
+        Files.writeString(home.resolve(".isx-mcp/tasks/t17-abc/current"), "1\n");
+        stub("systemctl", "exit 1"); // systemd cannot be asked: counted, as this session keeps such a slot
+        assertEquals("task t11-abc unknown\ntask t14-abc unknown\n", sh(TaskScripts.busy(), ""),
+                "only task ids with a kind are counted");
+        for (var id : java.util.List.of("t11-abc", "t14-abc")) {
+            var pid = Files.readString(home.resolve("units/isx-task-" + id + "-2")).strip();
+            sh("kill -TERM -- -" + pid, "");
+        }
+        assertEquals("", sh("HOME=" + home.resolve("empty") + "; " + TaskScripts.busy(), ""), "no tasks");
+    }
+
+    @Test
     void clearingRemovesEveryTaskAndNothingElse() throws Exception {
         recordedTask("t11-abc", Tasks.AGENT, false);
         recordedTask("t12-abc", Tasks.COMMAND, false);

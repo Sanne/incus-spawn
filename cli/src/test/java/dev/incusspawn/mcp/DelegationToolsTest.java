@@ -67,7 +67,10 @@ class DelegationToolsTest {
         server = new McpServer(out, new McpTools(session, backend, new TemplatePolicy(backend, () -> config),
                 tasks).all(), "1", null, null);
         backend.responder = script -> {
-            if (script.equals(TaskScripts.busy())) return "task tx-other running\n".repeat(busyElsewhere);
+            if (script.equals(TaskScripts.busy())) {
+                return java.util.stream.IntStream.range(0, busyElsewhere).mapToObj(i -> "task t" + i + "-other running\n")
+                        .collect(java.util.stream.Collectors.joining());
+            }
             if (isStateProbe(script)) { // one line per task asked about
                 var ids = java.util.regex.Pattern.compile("; id=(t[0-9a-z-]+); ").matcher(script).results()
                         .map(m -> m.group(1) + switch (taskState) {

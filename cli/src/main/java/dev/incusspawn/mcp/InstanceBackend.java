@@ -4,6 +4,7 @@ import dev.incusspawn.config.ImageDef;
 
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -125,4 +126,12 @@ interface InstanceBackend {
 
     /** Run a script as agentuser in a login shell. */
     int exec(String name, String script, InputStream stdin, OutputStream stdout, OutputStream stderr);
+
+    /**
+     * Run one of isx's own read-only scripts as agentuser, but without a login shell (nothing
+     * the user's profile does runs first), killed once {@code limit} has passed and given up on
+     * shortly after (throwing): for asking an instance that may never answer something the
+     * caller can do without.
+     */
+    int probe(String name, String script, OutputStream stdout, Duration limit);
 }

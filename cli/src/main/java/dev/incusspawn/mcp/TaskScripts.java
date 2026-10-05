@@ -3,9 +3,12 @@ package dev.incusspawn.mcp;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * The shell scripts behind background tasks: {@code exec(background)} and {@code delegate}.
@@ -203,7 +206,9 @@ final class TaskScripts {
      * in {@code $D}: done once its current run recorded an exit, otherwise as systemd sees its
      * unit. Through sudo, like {@link #status}.
      */
-    private static final String STATE = "n=$(cat \"$D/current\" 2>/dev/null); "
+    // Only regular files are read: a FIFO in their place (anyone in the instance can make one)
+    // would hold the read until something writes to it.
+    private static final String STATE = "n=$([ -f \"$D/current\" ] && cat \"$D/current\" 2>/dev/null); "
             + "if [ -z \"$n\" ] || [ -f \"$D/exit-$n\" ]; then s=done; else "
             + "s=$(sudo -n systemctl is-active \"" + UNIT_PREFIX + "$id-$n\" 2>/dev/null); "
             + "case \"$s\" in active|activating) s=running;; '') s=unknown;; *) s=done;; esac; fi; ";
@@ -230,7 +235,8 @@ final class TaskScripts {
      * background commands: a dev server never finishes, and would keep its orphan forever.
      */
     static String unfinished() {
-        return unfinished("read -r k < \"$D/kind\" 2>/dev/null && [ \"$k\" = " + Tasks.AGENT + " ] || continue; ");
+        return unfinished("[ -f \"$D/kind\" ] && read -r k < \"$D/kind\" 2>/dev/null && [ \"$k\" = "
+                + Tasks.AGENT + " ] || continue; ");
     }
 
     /**
@@ -239,6 +245,19 @@ final class TaskScripts {
      */
     static String busy() {
         return unfinished("[ -f \"$D/kind\" ] || continue; ");
+    }
+
+    /**
+     * The task ids in what {@link #unfinished} or {@link #busy} printed, each once. Anything else
+     * on the output -- it is the guest's -- is ignored, never an error.
+     */
+    static Set<String> taskIds(Stream<String> lines) {
+        var ids = new LinkedHashSet<String>();
+        lines.forEach(l -> {
+            var parts = l.split(" ");
+            if (parts.length >= 3 && parts[0].equals("task") && !parts[1].isEmpty()) ids.add(parts[1]);
+        });
+        return ids;
     }
 
     private static String unfinished(String filter) {

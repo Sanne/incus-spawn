@@ -78,11 +78,65 @@ class IncusApiLossyTunnelTest {
 
     @Test
     @Timeout(10)
+    void anOperationThatFailedHasNoExitCodeToReport() {
+        // The command may never have run: a probe must not read that as a clean, empty answer.
+        server.finalStatus = "Failure";
+        assertEquals(-1, exec(api()).exitCode());
+    }
+
+    @Test
+    @Timeout(10)
     void waitIsReissuedWhileTheOperationIsStillRunning() {
         server.runningWaits = 3; // three long-poll windows elapse before the command exits
         server.exitCode = 5;
         assertEquals(5, exec(api()).exitCode());
         assertEquals(4, server.waits.get(), "a Running answer must be re-polled, not taken as the result");
+    }
+
+    private IncusException execPastItsLimit() {
+        return assertThrows(IncusException.class, () -> api().execStreamWithin("c1", List.of("su", "-", "agentuser"),
+                null, null, null, null, null, null, java.time.Duration.ofMillis(300)));
+    }
+
+    @Test
+    @Timeout(10)
+    void aCommandPastItsLimitIsKilledAndGivenUpOn() {
+        server.runsForever = true;
+        server.diesOnSignal = true;
+        long start = System.nanoTime();
+        var e = execPastItsLimit();
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        assertEquals(List.of(IncusApi.signalMessage(9)), server.controlMessages, "killed through the control fd");
+        assertTrue(e.getMessage().contains("killed"), e.getMessage());
+        assertTrue(elapsedMs < 2500, "the limit, rounded up to Incus's whole-second wait, then the kill: " + elapsedMs + "ms");
+    }
+
+    @Test
+    @Timeout(15)
+    void aWaitThatOverrunsItsSlackStillKillsTheCommand() throws Exception {
+        server.runsForever = true;
+        server.waitStallMillis = 4000; // past the bounded /wait's one-second poll plus its two of slack
+        long start = System.nanoTime();
+        execPastItsLimit();
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        assertTrue(elapsedMs < 6000, "the host is free once the /wait overruns: " + elapsedMs + "ms");
+        // The frame is sent before the throw; give the server's reader a moment to see it.
+        for (int i = 0; i < 100 && server.controlMessages.isEmpty(); i++) Thread.sleep(10);
+        assertEquals(List.of(IncusApi.signalMessage(9)), server.controlMessages,
+                "the command is killed on this way out too, not left running in the guest");
+    }
+
+    @Test
+    @Timeout(15)
+    void aCommandTheKillDoesNotEndIsStillGivenUpOn() {
+        server.runsForever = true; // a child it left holds its output: the operation never ends
+        long start = System.nanoTime();
+        var e = execPastItsLimit();
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        assertEquals(List.of(IncusApi.signalMessage(9)), server.controlMessages, "killed once, not again and again");
+        assertTrue(e.getMessage().contains("given up on"), e.getMessage());
+        assertTrue(elapsedMs < (1 + IncusApi.KILL_GRACE_SECONDS + 2) * 1000,
+                "bounded by the limit and the grace, never by the command: " + elapsedMs + "ms");
     }
 
     @Test

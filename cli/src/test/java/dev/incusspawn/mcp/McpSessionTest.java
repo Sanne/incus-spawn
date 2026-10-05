@@ -353,7 +353,8 @@ class McpSessionTest {
     private Tasks tasksOf(McpSession session) {
         backend.instanceResponder = (instance, script) -> {
             if (script.equals(TaskScripts.busy())) {
-                return "task t1-x running\n".repeat(busyIn.getOrDefault(instance, 0));
+                return java.util.stream.IntStream.range(0, busyIn.getOrDefault(instance, 0))
+                        .mapToObj(i -> "task t" + i + "-x running\n").collect(java.util.stream.Collectors.joining());
             }
             return ""; // a launch, or a state probe of nothing believed running
         };
@@ -391,6 +392,8 @@ class McpSessionTest {
         assertTrue(e.getMessage().contains("mcp.max-concurrent-tasks") && e.getMessage().contains("(3)"),
                 e.getMessage());
         assertTrue(e.getMessage().contains("0 in this session, 3 in other sessions or orphaned"), e.getMessage());
+        assertTrue(e.getMessage().contains(aInstance + " 1") && e.getMessage().contains("mcp-orphan 1")
+                && e.getMessage().contains("mcp-kept-live 1"), "names where they run: " + e.getMessage());
 
         busyIn.put("mcp-orphan", 0);
         backend.scripts.clear();
@@ -399,30 +402,105 @@ class McpSessionTest {
         assertEquals(3, probed, "only alice's running instances held elsewhere are asked: " + backend.scripts);
     }
 
-    @Test
-    void anInstanceThatNeverAnswersCountsNothingAndBlocksNothing() throws Exception {
-        var a = session(8);
-        config.setMaxConcurrentTasks(1);
-        var tasks = tasksOf(a);
-        tasks.elsewhereTimeout = java.time.Duration.ofMillis(200);
-        var instance = create(a, backend);
-        other("mcp-hung", DEAD, "alice");
-        var release = new java.util.concurrent.CountDownLatch(1);
-        backend.instanceResponder = (name, script) -> {
-            if (name.equals("mcp-hung")) {
-                try {
-                    release.await(); // a su - that never returns
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                return "task t1-x running\n";
+    /** A session's tasks and its instance. */
+    private record Held(Tasks tasks, String instance) {}
+
+    /** A session whose only other instance, mcp-hung, never answers until released. */
+    private Held withAHungInstance(java.util.concurrent.CountDownLatch release,
+                                   java.util.concurrent.atomic.AtomicInteger asked) {
+        return withASlowInstance("mcp-hung", java.time.Duration.ofMillis(200), asked, () -> {
+            try {
+                release.await(); // a profile, or a FIFO, that never returns
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
-            return "";
+        });
+    }
+
+    /** A session whose only other instance, {@code other}, runs {@code answering} before saying it has one task. */
+    private Held withASlowInstance(String other, java.time.Duration timeout,
+                                   java.util.concurrent.atomic.AtomicInteger asked, Runnable answering) {
+        var a = session(8);
+        config.setMaxConcurrentTasks(5);
+        var tasks = tasksOf(a);
+        tasks.elsewhereTimeout = timeout;
+        var instance = create(a, backend);
+        other(other, DEAD, "alice");
+        backend.instanceResponder = (name, script) -> {
+            if (!name.equals(other)) return "";
+            asked.incrementAndGet();
+            answering.run();
+            return "task t1-x running\njunk\n";
         };
+        return new Held(tasks, instance);
+    }
+
+    @Test
+    void anInstanceThatNeverAnswersCountsNothingAndIsNotAskedAgainForAWhile() {
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var asked = new java.util.concurrent.atomic.AtomicInteger();
+        var held = withAHungInstance(release, asked);
+        var tasks = held.tasks();
+        var instance = held.instance();
         try {
+            tasks.startCommand(instance, "/", Map.of(), "make serve"); // waits out the timeout once
             var started = System.nanoTime();
-            tasks.startCommand(instance, "/", Map.of(), "make serve");
-            assertTrue(System.nanoTime() - started < 5_000_000_000L, "waited for the hung instance");
+            tasks.startCommand(instance, "/", Map.of(), "make test");
+            tasks.startCommand(instance, "/", Map.of(), "make lint");
+            assertTrue(System.nanoTime() - started < 150_000_000L, "a silent instance is not waited for again");
+            assertEquals(1, asked.get(), "nor asked again while it cools down");
+            assertEquals(List.of(java.time.Duration.ofMillis(200)), backend.limits,
+                    "the probe itself is bounded, by the same timeout");
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
+    void anInstanceThatAnswersLateStaysQuietAndCountsNothing() throws Exception {
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var asked = new java.util.concurrent.atomic.AtomicInteger();
+        var held = withAHungInstance(release, asked);
+        held.tasks().startCommand(held.instance(), "/", Map.of(), "make serve"); // times out: quiet
+        release.countDown(); // ...then it answers, one running task: too late to be believed for long
+        Thread.sleep(100);
+        config.setMaxConcurrentTasks(2); // ours and its would fill it
+        for (int i = 0; i < 3; i++) held.tasks().checkCapacityForNewAgent(); // not refused: it counts nothing
+        assertEquals(1, asked.get(), "and is not asked again while it cools down");
+    }
+
+    @Test
+    void anInstanceThatAnswersSlowlyIsCountedOnceThenCoolsDown() {
+        var asked = new java.util.concurrent.atomic.AtomicInteger();
+        var held = withASlowInstance("mcp-slow", java.time.Duration.ofMillis(400), asked, () -> {
+            try {
+                Thread.sleep(250); // in time, but past half of it: a FIFO a loop feeds just in time
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        var tasks = held.tasks();
+        var instance = held.instance();
+        config.setMaxConcurrentTasks(1); // its one task fills the cap, if its answer is counted
+        var e = assertThrows(ToolError.class, () -> tasks.startCommand(instance, "/", Map.of(), "make serve"));
+        assertTrue(e.getMessage().contains("mcp-slow 1"), "its slow answer still counts: " + e.getMessage());
+        var started = System.nanoTime();
+        tasks.startCommand(instance, "/", Map.of(), "make test"); // cap still 1: it counts nothing now
+        assertTrue(System.nanoTime() - started < 200_000_000L, "not waited for again");
+        assertEquals(1, asked.get(), "slow to answer, it cools down like one that did not");
+    }
+
+    @Test
+    void aHungProbeIsNeverJoinedByAnother() {
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var asked = new java.util.concurrent.atomic.AtomicInteger();
+        var held = withAHungInstance(release, asked);
+        var tasks = held.tasks();
+        var instance = held.instance();
+        tasks.elsewhereCooldown = java.time.Duration.ZERO; // asked again at once: only the probe under way holds it
+        try {
+            for (int i = 0; i < 3; i++) tasks.startCommand(instance, "/", Map.of(), "make t" + i);
+            assertEquals(1, asked.get(), "one exec in the instance, however many reservations wait on it");
         } finally {
             release.countDown();
         }

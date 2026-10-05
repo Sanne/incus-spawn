@@ -25,6 +25,9 @@ import java.util.function.Predicate;
  */
 final class Orphans {
 
+    /** How long the sweep waits for an orphan to say whether it is in use. */
+    static final Duration PROBE_LIMIT = Duration.ofSeconds(10);
+
     private Orphans() {}
 
     /** How another session's instance stands, as {@code list_instances} shows it. */
@@ -122,11 +125,12 @@ final class Orphans {
     static boolean inUse(InstanceBackend backend, String name) {
         try {
             var out = new ByteArrayOutputStream();
-            if (backend.exec(name, Presence.script("") + "; " + TaskScripts.unfinished(), null, out, null) != 0) {
+            // Bounded, and without the login shell a hung profile would hold forever: unanswered is in use.
+            if (backend.probe(name, Presence.script("") + "; " + TaskScripts.unfinished(), out, PROBE_LIMIT) != 0) {
                 return true;
             }
             var lines = out.toString(StandardCharsets.UTF_8).lines().toList();
-            return Presence.parse(lines).attended() || lines.stream().anyMatch(l -> l.startsWith("task "));
+            return Presence.parse(lines).attended() || !TaskScripts.taskIds(lines.stream()).isEmpty();
         } catch (RuntimeException e) {
             return true;
         }

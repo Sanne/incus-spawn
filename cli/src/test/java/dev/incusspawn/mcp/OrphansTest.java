@@ -95,6 +95,17 @@ class OrphansTest {
             return Orphans.inUse(backend, name);
         });
         assertEquals(List.of("idle"), destroyed);
+        assertEquals(List.of(Orphans.PROBE_LIMIT, Orphans.PROBE_LIMIT, Orphans.PROBE_LIMIT), backend.limits,
+                "each asked through the bounded probe: an orphan whose profile hangs cannot hold the sweep");
+    }
+
+    @Test
+    void anOrphanThatDoesNotAnswerInTimeIsInUse() {
+        var backend = new FakeBackend().instance("hung", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
+        backend.responder = script -> {
+            throw new dev.incusspawn.incus.IncusException("exec did not finish within its time limit; given up on");
+        };
+        assertTrue(Orphans.inUse(backend, "hung"), "unanswered is never taken for idle");
     }
 
     @Test

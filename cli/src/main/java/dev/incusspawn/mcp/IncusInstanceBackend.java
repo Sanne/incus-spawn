@@ -17,6 +17,7 @@ import dev.incusspawn.tui.InstanceLockManager;
 
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +33,8 @@ final class IncusInstanceBackend implements InstanceBackend {
 
     static final String AGENT_USER = "agentuser";
     static final String AGENT_HOME = "/home/agentuser";
+    /** agentuser's uid (and gid) in every isx base image, as InstanceLifecycle's file pushes assume. */
+    static final int AGENT_UID = 1000;
 
     private final IncusClient incus;
     private final InstanceLockManager locks;
@@ -229,6 +232,11 @@ final class IncusInstanceBackend implements InstanceBackend {
     @Override
     public int exec(String name, String script, InputStream stdin, OutputStream stdout, OutputStream stderr) {
         return incus.execScriptAsUser(name, AGENT_USER, script, stdin, stdout, stderr);
+    }
+
+    @Override
+    public int probe(String name, String script, OutputStream stdout, Duration limit) {
+        return incus.execProbe(name, AGENT_UID, AGENT_HOME, script, stdout, limit);
     }
 
     /** Every instance's {@code user.incus-spawn.*} config, from one listing. */

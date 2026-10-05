@@ -19,6 +19,7 @@ import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -600,6 +601,22 @@ class IncusApi {
     }
 
     /**
+     * {@link #execStream}, killed once {@code limit} has passed and given up on
+     * {@link #KILL_GRACE_SECONDS} later (throwing {@link IncusException}) whether or not the kill
+     * ended it: for a command in a guest the caller cannot trust to answer -- a login profile
+     * that never returns -- which must not hold the caller, or a host thread, past that.
+     */
+    int execStreamWithin(String instance, List<String> command,
+                         Integer uid, Integer gid, String cwd, Map<String, String> env,
+                         OutputStream stdout, OutputStream stderr, Duration limit) {
+        long deadline = System.nanoTime() + limit.toNanos(); // once: a retry does not extend it
+        return retryOnNotRunning(() -> {
+            var exec = postExec(instance, command, uid, gid, cwd, env, false, 0, 0);
+            return execWebSocket(exec, stdout, stderr, null, deadline);
+        });
+    }
+
+    /**
      * Non-interactive exec with optional PTY. When {@code pty} is false, stdout and stderr
      * are streamed separately. When true, a pseudo-terminal is allocated (so isatty() returns
      * true inside the container) and output is muxed into {@code stdout}; {@code stderr} is
@@ -922,6 +939,12 @@ class IncusApi {
      * @param stdin null → stdin is closed immediately; non-null → forwarded to the container.
      */
     private int execWebSocket(ExecOp exec, OutputStream stdout, OutputStream stderr, InputStream stdin) {
+        return execWebSocket(exec, stdout, stderr, stdin, 0);
+    }
+
+    /** {@link #execWebSocket}, killing the process at {@code deadline} ({@link System#nanoTime}; 0 for none). */
+    private int execWebSocket(ExecOp exec, OutputStream stdout, OutputStream stderr, InputStream stdin,
+                              long deadline) {
         var outDst = stdout != null ? stdout : OutputStream.nullOutputStream();
         var errDst = stderr != null ? stderr : OutputStream.nullOutputStream();
         try (var controlWs = transport.openWebSocket(wsUrl(exec, "control"));
@@ -955,7 +978,16 @@ class IncusApi {
             assertAllFdsConnected(exec.fds, Set.of("0", "1", "2", "control"));
 
             // Authoritative completion + exit code (HTTP, reliable over vsock).
-            int exitCode = waitForExecOp(exec.opPath);
+            int exitCode;
+            try {
+                exitCode = waitForExecOp(exec.opPath, deadline, controlWs);
+            } catch (IncusException timedOut) {
+                // Given up on: stop every helper now, the sockets close on the way out.
+                stdoutAlive.interrupt();
+                stderrAlive.interrupt();
+                keepalive.interrupt();
+                throw timedOut;
+            }
 
             // Process has exited: stop pinging the data fds, drain, then force-close so the
             // reader threads unblock even if no close frame arrives.
@@ -1119,27 +1151,84 @@ class IncusApi {
     // Well above any real command (4 hours); the per-iteration budget is WAIT_TIMEOUT_SECONDS.
     private static final long MAX_EXEC_WAIT_SECONDS = 4 * 3600L;
 
+    /** How long a killed command gets to be reported finished before it is given up on. */
+    static final long KILL_GRACE_SECONDS = 3;
+
     private int waitForExecOp(String opPath) {
+        return waitForExecOp(opPath, 0, null);
+    }
+
+    /**
+     * {@link #waitForExecOp(String)}, until {@code limit} ({@link System#nanoTime}; 0 for none):
+     * then the process is sent SIGKILL through {@code control}, and given up on, throwing, once
+     * it has had {@link #KILL_GRACE_SECONDS} to be reported finished. The kill may not end the
+     * operation -- a child the process left holding its output keeps it open -- so the wait
+     * never depends on it: the caller is free by {@code limit} plus the grace, and the few seconds
+     * a {@code /wait} request may overrun its poll, either way. (Starting the exec and opening its
+     * sockets, before this, are bounded by the transport's own timeouts.)
+     */
+    private int waitForExecOp(String opPath, long limit, IncusTransport.WsConnection control) {
         long deadline = System.nanoTime() + MAX_EXEC_WAIT_SECONDS * 1_000_000_000L;
-        while (System.nanoTime() < deadline) {
-            var waitResp = requestWithTimeout("GET",
-                    opPath + "/wait?timeout=" + WAIT_TIMEOUT_SECONDS,
-                    null, WAIT_TIMEOUT_SECONDS + 30);
-            if (!waitResp.isSuccess()) {
-                System.err.println("Warning: exec operation lost (HTTP " + waitResp.statusCode()
-                        + " on " + opPath + "/wait) — exit code unknown");
-                return -1;
+        long giveUp = limit + KILL_GRACE_SECONDS * 1_000_000_000L;
+        boolean killed = false;
+        boolean finished = false;
+        try {
+            while (System.nanoTime() < deadline) {
+                long pollSeconds = WAIT_TIMEOUT_SECONDS;
+                if (limit != 0) {
+                    long now = System.nanoTime();
+                    if (!killed && now - limit >= 0) {
+                        kill(control);
+                        killed = true;
+                    }
+                    long left = (killed ? giveUp : limit) - now;
+                    if (killed && left <= 0) {
+                        throw new IncusException("exec " + opPath + " did not finish within its time limit, "
+                                + "nor " + KILL_GRACE_SECONDS + "s after it was killed; given up on");
+                    }
+                    // Incus takes whole seconds: rounded down, so the kill is late by less than one;
+                    // never below one, or the long-poll would spin.
+                    pollSeconds = Math.clamp(left / 1_000_000_000L, 1, WAIT_TIMEOUT_SECONDS);
+                }
+                // Unbounded, the request may take its slack on a slow tunnel; bounded, it must not
+                // outlast the time left by much more than the poll itself.
+                var waitResp = requestWithTimeout("GET",
+                        opPath + "/wait?timeout=" + pollSeconds,
+                        null, (int) pollSeconds + (limit != 0 ? 2 : 30));
+                if (!waitResp.isSuccess()) {
+                    System.err.println("Warning: exec operation lost (HTTP " + waitResp.statusCode()
+                            + " on " + opPath + "/wait) — exit code unknown");
+                    return -1;
+                }
+                var meta = waitResp.body().path("metadata");
+                var status = meta.path("status").asText();
+                if ("Running".equals(status) || "Pending".equals(status)) {
+                    continue; // long-poll window elapsed; command still running
+                }
+                finished = true;
+                if (killed) throw new IncusException("exec " + opPath + " was killed: it ran past its time limit");
+                // Failure or Cancelled: the command may never have run, so there is no exit code to report.
+                if (!"Success".equals(status)) return -1;
+                return meta.path("metadata").path("return").asInt(0);
             }
-            var meta = waitResp.body().path("metadata");
-            var status = meta.path("status").asText();
-            if ("Running".equals(status) || "Pending".equals(status)) {
-                continue; // long-poll window elapsed; command still running
-            }
-            return meta.path("metadata").path("return").asInt(0);
+            System.err.println("Warning: exec operation timed out after "
+                    + MAX_EXEC_WAIT_SECONDS + "s on " + opPath + " — exit code unknown");
+            return -1;
+        } finally {
+            // Bounded, whatever ends the wait before the command was reported finished -- a /wait
+            // that failed or overran its slack, an operation lost, an interrupt -- leaves it
+            // killed, never running on unowned in the guest.
+            if (limit != 0 && !killed && !finished) kill(control);
         }
-        System.err.println("Warning: exec operation timed out after "
-                + MAX_EXEC_WAIT_SECONDS + "s on " + opPath + " — exit code unknown");
-        return -1;
+    }
+
+    /** Send the exec's process SIGKILL; a control socket already gone leaves nothing to try. */
+    private static void kill(IncusTransport.WsConnection control) {
+        try {
+            control.sendText(signalMessage(9));
+        } catch (IOException e) {
+            // Nothing more to do from here: the caller's own bound still holds.
+        }
     }
 
     private static void joinQuietly(Thread... threads) {
@@ -1202,6 +1291,11 @@ class IncusApi {
     }
 
     // ---- Incus control channel messages ----
+
+    /** The exec control message that sends the process {@code signal}. */
+    static String signalMessage(int signal) {
+        return "{\"command\":\"signal\",\"signal\":" + signal + "}";
+    }
 
     static String windowResizeMessage(int width, int height) {
         return "{\"command\":\"window-resize\",\"args\":{\"width\":\"" + width + "\",\"height\":\"" + height + "\"}}";

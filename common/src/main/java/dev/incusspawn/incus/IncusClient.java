@@ -211,7 +211,7 @@ public class IncusClient {
      */
     public int shellExecInteractiveAsUser(String container, String user, String script) {
         return http().execStream(container,
-                List.of("su", "-", user, "-c", LOGIN_PATH_PREFIX + script),
+                loginCommand(user, script),
                 0, 0, null, Map.of(), System.out, System.err);
     }
 
@@ -223,7 +223,7 @@ public class IncusClient {
     public ExecResult execInContainer(String container, String user, String... command) {
         var script = command.length > 0 ? String.join(" ", command) : "bash";
         return http().execCapture(container,
-                List.of("su", "-", user, "-c", LOGIN_PATH_PREFIX + script),
+                loginCommand(user, script),
                 0, 0, null, Map.of());
     }
 
@@ -234,11 +234,28 @@ public class IncusClient {
      */
     public int execScriptAsUser(String container, String user, String script,
                                 InputStream stdin, OutputStream stdout, OutputStream stderr) {
-        var command = List.of("su", "-", user, "-c", LOGIN_PATH_PREFIX + script);
+        var command = loginCommand(user, script);
         return stdin == null
                 ? http().execStream(container, command, 0, 0, null, Map.of(), stdout, stderr)
                 : http().execBidirectional(container, command, 0, 0, null, Map.of(),
                         stdin, stdout, stderr);
+    }
+
+    /** {@code script} run as {@code user} in a login shell, with isx's PATH. */
+    private static List<String> loginCommand(String user, String script) {
+        return List.of("su", "-", user, "-c", LOGIN_PATH_PREFIX + script);
+    }
+
+    /**
+     * Run one of isx's own scripts in a guest that may never answer, as {@code uid} (its group
+     * too) with {@code home} as HOME and working directory, and no login shell: nothing the
+     * guest user's profile does runs first, so it cannot hang the script. Killed once
+     * {@code limit} has passed and given up on shortly after, throwing {@link IncusException}.
+     */
+    public int execProbe(String container, int uid, String home, String script, OutputStream stdout,
+                         Duration limit) {
+        return http().execStreamWithin(container, List.of("sh", "-c", LOGIN_PATH_PREFIX + script),
+                uid, uid, home, Map.of("HOME", home), stdout, null, limit);
     }
 
     /**

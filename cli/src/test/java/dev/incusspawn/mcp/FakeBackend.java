@@ -204,6 +204,16 @@ class FakeBackend implements InstanceBackend {
         return result;
     }
 
+    /** The limit each {@link #probe} was given, in order. */
+    final List<java.time.Duration> limits = new CopyOnWriteArrayList<>();
+
+    /** Records the limit, then runs as {@link #exec}: the limit itself is IncusApi's to keep. */
+    @Override
+    public int probe(String name, String script, OutputStream stdout, java.time.Duration limit) {
+        limits.add(limit);
+        return exec(name, script, null, stdout, null);
+    }
+
     @Override
     public int exec(String name, String script, InputStream stdin, OutputStream stdout, OutputStream stderr) {
         if (!instances.containsKey(name)) throw new IllegalStateException("Instance not found: " + name);

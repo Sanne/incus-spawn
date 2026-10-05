@@ -90,6 +90,15 @@ class IncusInstanceBackendTest {
     }
 
     @Test
+    void aProbeRunsAsAgentuserWithoutItsLoginShell() {
+        var out = new java.io.ByteArrayOutputStream();
+        var limit = java.time.Duration.ofSeconds(10);
+        backend.probe("dev", "echo hi", out, limit);
+        // execProbe: uid 1000, no su -, so the user's profile cannot hang it.
+        verify(incus).execProbe("dev", 1000, "/home/agentuser", "echo hi", out, limit);
+    }
+
+    @Test
     void theMcpListingCarriesEachInstancesStatus() {
         // The per-user task count asks only running instances, from this same listing.
         when(incus.listJsonConfig()).thenReturn("""
