@@ -88,6 +88,13 @@ proxy started on a half-configured host into a clear message. The price is that 
 which fails after the marker leaves init recorded as complete, and nothing offers the service
 again; it is optional, its failure is printed, and `isx proxy install` remains.
 
+Outside init, the same marker gates `isx proxy install` itself (`ProxyService.initComplete()`, in
+`install()` for every caller and at the top of the command): before init, or after an upgrade that
+raised `INIT_VERSION`, it refuses with "run `isx init` first" instead of writing a service that can
+only report a proxy that is not responding (#968). The command checks before its running-service
+path too, because `install.sh` runs it after every upgrade: a restart there would replace a working
+proxy with one that refuses to start, while refusing leaves the old one serving until init runs.
+
 On macOS a restart of the service is `launchctl kickstart -k`, not `bootout` followed by
 `bootstrap`. `bootout` returns before launchd has removed the job: a proxy that does not exit on
 SIGTERM is killed about five seconds later, and until then `bootstrap` fails with

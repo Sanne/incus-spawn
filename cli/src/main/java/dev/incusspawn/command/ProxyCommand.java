@@ -163,6 +163,9 @@ public class ProxyCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
+            // Before the running-service path too: after an upgrade that bumped INIT_VERSION,
+            // restarting the proxy here would stop a working one for one that refuses to start.
+            if (!ProxyService.initComplete()) return CommandResult.FAILURE;
             var incus = RuntimeServices.incus();
             if (ProxyService.isActive()) {
                 ProxyService.upgradeIfNeeded();

@@ -156,6 +156,7 @@ public final class ProxyService {
     private static final int REQUIRED_JAVA_MAJOR = 25;
 
     public static boolean install() {
+        if (!initComplete()) return false;
         try (var ignored = acquireProxyLock()) {
             // Starting a service that is already running is a no-op, so only a service that was
             // down is known to be running the binary just written into its files.
@@ -164,6 +165,17 @@ public final class ProxyService {
             if (installed && !wasActive) DriftRestartRecord.write(resolveProxyBinaryPath());
             return installed;
         }
+    }
+
+    /**
+     * {@code isx-proxy} exits {@link #EXIT_CONFIG} until init has completed for this build, so a
+     * service installed or restarted before then only ever reports a proxy that is not responding
+     * (#968). Says so instead, and names the command that fixes it.
+     */
+    public static boolean initComplete() {
+        if (Environment.hasBeenInitialized()) return true;
+        System.err.println("Error: incus-spawn is not initialized for this version of isx. Run 'isx init' first.");
+        return false;
     }
 
     private static boolean installLocked() {
