@@ -160,7 +160,8 @@ public class MitmProxy {
     // queues behind large downloads on upstreamClient's
     private HttpClient probeClient;
     private HttpClient wsUpstreamClient;
-    private CountDownLatch stopLatch;
+    /** Created once, so a {@link #stop()} that comes before {@link #start} is not lost (#966). */
+    private final CountDownLatch stopLatch = new CountDownLatch(1);
 
     private ApiTrafficLog debugLog;
     // CA fingerprint computed at startup for the health endpoint
@@ -691,7 +692,8 @@ public class MitmProxy {
      *                Use this to enable DNS overrides so they are never visible without a healthy proxy.
      */
     public void start(Runnable onReady) throws Exception {
-        stopLatch = new CountDownLatch(1);
+        // A reload may already have stopped it, e.g. on finding the bridge moved.
+        if (stopLatch.getCount() == 0) return;
 
         // Per-domain certs chosen by SNI, with wildcards (*.domain) pre-minted so
         // subdomains resolved via dnsmasq address= overrides get a valid cert (e.g.
@@ -865,7 +867,7 @@ public class MitmProxy {
             } catch (Exception ignored) {}
         } finally {
             // Guarantee stopLatch is always counted down, even if an unexpected exception occurs
-            if (stopLatch != null) stopLatch.countDown();
+            stopLatch.countDown();
         }
     }
 

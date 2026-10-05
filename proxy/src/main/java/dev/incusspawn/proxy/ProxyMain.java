@@ -19,6 +19,7 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -131,7 +132,21 @@ public class ProxyMain implements QuarkusApplication {
         System.out.println();
 
         proxy.setIncusClient(incus);
-        proxy.setBridgeDnsWriter(domains -> addresses.writeBridgeDns(incus, domains));
+        var exitCode = new AtomicInteger();
+        proxy.setBridgeDnsWriter(reloadDnsWriter(addresses, incus, proxy, exitCode));
+        if (addresses.followsBridge()) {
+            // Unordered: an Incus read must never queue behind, or ahead of, MITM work.
+            vertx.setPeriodic(GATEWAY_CHECK_MILLIS, id -> {
+                if (exitCode.get() != 0) {
+                    vertx.cancelTimer(id);
+                    return;
+                }
+                vertx.executeBlocking(() -> {
+                    addresses.movedTo(incus).ifPresent(moved -> exitForRestart(moved, proxy, exitCode));
+                    return null;
+                }, false);
+            });
+        }
         if (!applyBenchUpstream(proxy)) return ProxyService.EXIT_CONFIG;
 
         if (debug) {
@@ -208,23 +223,83 @@ public class ProxyMain implements QuarkusApplication {
             System.err.println("If the iptables redirect rule is missing, re-run 'isx init'.");
             return 1;
         }
-        return 0;
+        return exitCode.get();
+    }
+
+    /** How often a proxy that follows the bridge checks it still has the address it listens on. */
+    static final long GATEWAY_CHECK_MILLIS = 60_000;
+
+    /** What a reload rewrites bridge DNS with: nothing once the bridge has moved, which stops the proxy. */
+    static java.util.function.Consumer<java.util.Set<String>> reloadDnsWriter(Addresses addresses,
+            IncusClient incus, MitmProxy proxy, AtomicInteger exitCode) {
+        return domains -> {
+            try {
+                addresses.writeBridgeDns(incus, domains);
+            } catch (GatewayMoved moved) {
+                exitForRestart(moved, proxy, exitCode);
+            }
+        };
+    }
+
+    /**
+     * The bridge's address changed under a running proxy (#966): stop and exit 1, so the
+     * service manager ({@code Restart=on-failure}) starts it again on the new address, which
+     * the startup path resolves and writes into bridge DNS. Rebinding in place would mean
+     * moving the listener, the health endpoint and the DNS block together; the restart already
+     * does exactly that.
+     */
+    private static void exitForRestart(GatewayMoved moved, MitmProxy proxy, AtomicInteger exitCode) {
+        if (!exitCode.compareAndSet(0, 1)) return;
+        ProxyLog.warn(moved.getMessage() + "; stopping so the proxy service restarts on the new address");
+        proxy.stop();
+    }
+
+    /** The bridge now has another address than the one the proxy listens on. */
+    static final class GatewayMoved extends RuntimeException {
+        GatewayMoved(String from, String to) {
+            super("Incus bridge address changed from " + from + " to " + to);
+        }
     }
 
     /**
      * Where the MITM listener serves instances, where the health endpoint listens, and where
      * bridge DNS sends intercepted domains -- null on macOS, where DNS inside the VM points at
      * the VM's own bridge gateway, not at the host address the proxy listens on.
+     * {@code followsBridge} when the gateway came from the Incus bridge rather than
+     * {@code --gateway-ip} or the VM link, and so moves when the bridge's address does (#966).
      */
-    record Addresses(String gateway, String healthBind, String bridgeDns) {
+    record Addresses(String gateway, String healthBind, String bridgeDns, boolean followsBridge) {
         /** Write the bridge DNS block at startup, and say where it points. */
         void configureBridgeDns(IncusClient incus, java.util.Set<String> domains) {
             ProxyConfig.configureBridgeDns(incus, domains, bridgeDnsTarget(incus));
         }
 
-        /** Rewrite the bridge DNS block on reload. */
+        /**
+         * Rewrite the bridge DNS block on reload; throws {@link GatewayMoved} instead of pointing
+         * every intercepted domain back at an address the bridge has given up.
+         */
         void writeBridgeDns(IncusClient incus, java.util.Set<String> domains) {
+            var moved = movedTo(incus);
+            if (moved.isPresent()) throw moved.get();
             ProxyConfig.writeBridgeDns(incus, domains, bridgeDnsTarget(incus));
+        }
+
+        /**
+         * Whether the bridge now has another address than {@link #gateway()}. Never for an
+         * explicit {@code --gateway-ip} (#933), which is not read from the bridge at all, nor
+         * for a bridge that cannot be read or has no address: a restart would find nothing
+         * better, and the cached gateway is not the bridge's word.
+         */
+        java.util.Optional<GatewayMoved> movedTo(IncusClient incus) {
+            if (!followsBridge) return java.util.Optional.empty();
+            String current;
+            try {
+                current = BridgeAddress.read(incus).map(BridgeAddress::gateway).orElse(null);
+            } catch (RuntimeException unreadable) {
+                return java.util.Optional.empty();
+            }
+            return current == null || current.equals(gateway) ? java.util.Optional.empty()
+                    : java.util.Optional.of(new GatewayMoved(gateway, current));
         }
 
         private String bridgeDnsTarget(IncusClient incus) {
@@ -241,6 +316,7 @@ public class ProxyMain implements QuarkusApplication {
      */
     static Addresses resolveAddresses(String gatewayIpOption, IncusClient incus) {
         String gatewayIp;
+        var followsBridge = false;
         if (gatewayIpOption != null && !gatewayIpOption.isBlank()) {
             gatewayIp = gatewayIpOption;
         } else if (Platform.isMacOS()) {
@@ -252,6 +328,7 @@ public class ProxyMain implements QuarkusApplication {
         } else {
             try {
                 gatewayIp = ProxyConfig.resolveGatewayIp(incus);
+                followsBridge = true;
             } catch (Exception e) {
                 System.err.println("Error: could not determine Incus bridge gateway IP.");
                 System.err.println(ProxyConfig.gatewayUnavailableHint(false));
@@ -259,7 +336,7 @@ public class ProxyMain implements QuarkusApplication {
             }
         }
         return new Addresses(gatewayIp, ProxyHealthCheck.healthAddress(gatewayIp),
-                Platform.isMacOS() ? null : gatewayIp);
+                Platform.isMacOS() ? null : gatewayIp, followsBridge);
     }
 
     /**
