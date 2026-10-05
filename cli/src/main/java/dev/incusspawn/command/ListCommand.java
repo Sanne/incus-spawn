@@ -242,7 +242,7 @@ public class ListCommand extends BaseCommand {
     private java.util.List<TemplateLocation> newTemplateLocations;
     private SelectState newTemplateLocationSelect;
     private int newTemplateFieldIndex;
-    private String statusMessage;
+    String statusMessage;
     private String progressMessage;
     // Search/filter state
     private boolean searchActive = false;
@@ -4344,7 +4344,7 @@ public class ListCommand extends BaseCommand {
         return dispatchAction(result.get(), buildActionContext(selected));
     }
 
-    private boolean dispatchAction(ToolAction action, ActionContext context) {
+    boolean dispatchAction(ToolAction action, ActionContext context) {
         var cmd = action.shellCommand(context);
         if (cmd.isPresent()) {
             pendingAction = PendingAction.SHELL_WITH_COMMAND;
@@ -4358,7 +4358,8 @@ public class ListCommand extends BaseCommand {
             pendingActionTarget = context;
             return true;
         }
-        var execResult = action.execute(context);
+        // The TUI still owns the terminal: an action that would ask on stdin says what to do instead.
+        var execResult = action.executeWithoutPrompting(context);
         statusMessage = execResult.message();
         return false;
     }
