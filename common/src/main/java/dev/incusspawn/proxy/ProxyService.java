@@ -395,7 +395,18 @@ public final class ProxyService {
             return;
         }
 
-        var pid = findProxyPid();
+        stopManualProxy(ProxyHealthCheck::reportedProxyPid, ProxyService::findProxyPid);
+    }
+
+    /**
+     * Stops a proxy run by hand rather than by the service (#155). Its PID comes from what
+     * {@code /health} reports, as {@link #sendAccountRefreshSignal()} finds it: {@code fuser}
+     * alone finds nothing on macOS, whose {@code fuser} has no {@code port/tcp} form, nor where
+     * psmisc is not installed, and the proxy was then left running behind "Proxy is not running."
+     */
+    static void stopManualProxy(java.util.function.LongSupplier reportedPid, java.util.function.LongSupplier pidOnPort) {
+        var pid = reportedPid.getAsLong();
+        if (pid == -1) pid = pidOnPort.getAsLong();
         if (pid != -1) {
             System.out.println("Stopping proxy (PID " + pid + ")...");
             runQuiet("kill", String.valueOf(pid));

@@ -201,6 +201,24 @@ class ProxyServiceTest {
     }
 
     /**
+     * #155: `isx proxy stop` must stop a proxy started by hand even where looking it up by its
+     * port finds nothing (macOS, no psmisc), using the PID the proxy reports in /health. The
+     * port lookup is a stub, so the test never reaches `fuser` and a real proxy on this machine.
+     */
+    @Test
+    @org.junit.jupiter.api.condition.DisabledOnOs(org.junit.jupiter.api.condition.OS.WINDOWS)
+    void stopManualProxyStopsTheProxyHealthReports() throws Exception {
+        var proxy = new ProcessBuilder("sleep", "600").start();
+        try {
+            ProxyService.stopManualProxy(proxy::pid, () -> -1);
+            assertTrue(proxy.waitFor(10, java.util.concurrent.TimeUnit.SECONDS),
+                    "the proxy /health reported is still running");
+        } finally {
+            proxy.destroyForcibly();
+        }
+    }
+
+    /**
      * Review on #916: several `isx` commands finding the proxy down at once must not each
      * restart it — the second one through the lock would {@code kickstart -k} (or, on macOS,
      * bootout+bootstrap) a proxy the first one just brought up.
