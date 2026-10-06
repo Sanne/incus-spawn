@@ -287,7 +287,7 @@ public final class InstanceRegistry {
                         new InstanceAccounts(name, accountsOf(config), identitiesOf(config)),
                         "Running".equalsIgnoreCase(instance.path("status").asText("")),
                         config.path(Metadata.INSTANCE_SECRET_SHA256).asText("").strip(),
-                        !config.path(Metadata.MCP_CALLER).asText("").isBlank()));
+                        Metadata.isMcpCallerGrant(config.path(Metadata.MCP_CALLER).asText(null))));
             }
         } catch (Exception e) {
             ProxyLog.warn("Could not parse instance list for the account registry: " + e.getMessage());

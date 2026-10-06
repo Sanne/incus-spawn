@@ -132,10 +132,18 @@ public final class Metadata {
 
     private Metadata() {}
 
-    /** Whether an instance's config grants it {@link #MCP_CALLER}: any non-blank value does. */
+    /** Whether an instance's config grants it {@link #MCP_CALLER}: a well-formed grant id does. */
     public static boolean isMcpCaller(Map<String, String> config) {
-        var value = config == null ? null : config.get(MCP_CALLER);
-        return value != null && !value.isBlank();
+        return isMcpCallerGrant(config == null ? null : config.get(MCP_CALLER));
+    }
+
+    /**
+     * Whether {@code value} is a grant id {@link #newMcpCallerGrant} could have made. The one
+     * definition the proxy and {@code isx mcp} both judge a stamp by: a value one accepts and the
+     * other refuses would pass the proxy and then end the session unexplained.
+     */
+    public static boolean isMcpCallerGrant(String value) {
+        return value != null && MCP_CALLER_GRANT.matcher(value).matches();
     }
 
     /** What a {@link #MCP_CALLER} grant id looks like. */

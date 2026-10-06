@@ -137,7 +137,7 @@ class McpBridgeTest {
                    "%s":"127.0.0.1", "%s":"%s"%s}}]
                 """.formatted(CALLER, Metadata.STATIC_IP, Metadata.INSTANCE_SECRET_SHA256,
                 InstanceSecret.sha256(SECRET),
-                caller ? ", \"" + Metadata.MCP_CALLER + "\":\"2026-10-05T10:00:00\"" : "");
+                caller ? ", \"" + Metadata.MCP_CALLER + "\":\"" + Metadata.newMcpCallerGrant() + "\"" : "");
         registry.refresh();
     }
 

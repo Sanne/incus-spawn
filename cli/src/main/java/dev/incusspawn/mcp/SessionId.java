@@ -54,7 +54,7 @@ record SessionId(long pid, long start, String instance, String grant) {
         if (name == null || !INSTANCE_NAME.matcher(name).matches()) {
             throw new IllegalArgumentException("not an instance name: " + name);
         }
-        if (grant == null || !dev.incusspawn.incus.Metadata.MCP_CALLER_GRANT.matcher(grant).matches()) {
+        if (!dev.incusspawn.incus.Metadata.isMcpCallerGrant(grant)) {
             throw new IllegalArgumentException("instance '" + name + "' carries no valid mcp-caller grant; "
                     + "branch a new coordinator with isx branch --mcp-client");
         }

@@ -266,4 +266,19 @@ class InstanceRegistryTest {
         assertTrue(registry.isMcpCaller("coord"));
         assertFalse(registry.isMcpCaller("worker"));
     }
+
+    @Test
+    void anMcpCallerStampIsAGrantIdOrNothing() {
+        // The proxy must refuse what isx mcp --caller-instance refuses, or the session it
+        // starts ends unexplained
+        var secret = InstanceSecret.generate();
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .instance("odd", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.5",
+                        SECRET_KEY, InstanceSecret.sha256(secret),
+                        dev.incusspawn.incus.Metadata.MCP_CALLER, "2026-10-05T10:00:00"));
+        var registry = new InstanceRegistry(daemon.client());
+        registry.refresh();
+        assertNull(registry.identifyMcpCaller("10.0.0.5", secret));
+        assertFalse(registry.isMcpCaller("odd"));
+    }
 }
