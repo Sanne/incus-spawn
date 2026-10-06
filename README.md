@@ -858,6 +858,8 @@ Wildcard domains (`*.internal.myservice.com`) match any subdomain. The most spec
 
 Configuration entries can also use `value` for hardcoded literals (no prompt during `isx init`) and `type: confirm` for yes/no prompts like license acceptance.
 
+If the tool insists on having a token locally before it will send a request, give it a placeholder through `env:` and let it read that variable whenever it runs. Never copy the value into a file with `files:` or a build step: the token an instance presents is tied to the instance and changes on every start, so a copy made at build time goes stale, and isx warns when it finds one.
+
 Tool YAML files with `proxy:` blocks must be placed in `~/.config/incus-spawn/tools/` or a configured search path -- project-local tools (`.incus-spawn/tools/`) cannot declare proxy rules because the proxy daemon runs independently of any project directory.
 
 ### Remote IDE Access
