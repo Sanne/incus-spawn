@@ -89,7 +89,8 @@ DESIGN.md "Build-time initialization must not capture host paths"). Eagerly reso
 in `RuntimeConstants` (`common`) or `RuntimeServices` (`cli`), both on the flag; everywhere else call
 the `Environment` method instead of storing its result. The flag is declared once per module, in its
 `resources-filtered/application.properties`; pom profiles add platform arguments through placeholders
-the list includes and never redefine the list itself (#489) -- `NativeImageInitializationTest` fails
+the list includes and never redefine the list itself (#489); `macos.min.args` is how every macOS build gets its
+minimum macOS (DESIGN.md "The minimum macOS is set by the build") -- `NativeImageInitializationTest` fails
 if a list stops deferring a class or registering a guard, or a pom redefines it, and
 `graal/BakedHostStateFeature` fails the native build if such a path reaches the image heap.
 

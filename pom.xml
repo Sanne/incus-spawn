@@ -55,6 +55,13 @@
           JitWorkaroundTest pins it. The JVM launchers (install.sh, jbang-catalog.json) carry the
           same CompileCommand options for a GraalVM JDK (#1018); LauncherJitWorkaroundTest keeps them equal.
         -->
+        <!--
+          The oldest macOS the native binaries load on (#1086), linked in by the
+          macos-deployment-target profile and checked on every release. Why it is set this way and
+          what else must move with it: DESIGN.md "The minimum macOS is set by the build".
+        -->
+        <macos.deployment.target>15.0</macos.deployment.target>
+        <macos.min.args/>
         <argLine>-XX:CompileCommand=quiet -XX:CompileCommand=exclude,com.sun.crypto.provider.AESCrypt::makeSessionKey</argLine>
     </properties>
 
@@ -126,6 +133,16 @@
             <properties>
                 <skipITs>false</skipITs>
                 <quarkus.native.enabled>true</quarkus.native.enabled>
+            </properties>
+        </profile>
+        <profile>
+            <!-- Every macOS native build, release or local, links for macos.deployment.target. -->
+            <id>macos-deployment-target</id>
+            <activation>
+                <os><family>mac</family></os>
+            </activation>
+            <properties>
+                <macos.min.args>,-H:NativeLinkerOption=-mmacosx-version-min=${macos.deployment.target}</macos.min.args>
             </properties>
         </profile>
     </profiles>

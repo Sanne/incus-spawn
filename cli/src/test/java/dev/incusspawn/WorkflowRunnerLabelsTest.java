@@ -15,9 +15,9 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * GitHub retires macOS runner images, and a job on a removed label waits for a runner that never
  * comes. The release matrix only runs on {@code v*} tags, so a retired label there is found by the
- * next release, which then ships no macOS binaries (#1000). A pinned version, never
- * {@code macos-latest}, keeps the released binary's minimum macOS from moving silently, and the
- * Homebrew formula declares that minimum, so the two have to move together.
+ * next release, which then ships no macOS binaries (#1000). The released binaries' minimum macOS is
+ * set by the build rather than the runner (#1086), and the Homebrew formula and a release check
+ * both follow it.
  */
 class WorkflowRunnerLabelsTest {
 
@@ -28,8 +28,10 @@ class WorkflowRunnerLabelsTest {
 
     private static final Pattern MACOS_RUNNER = Pattern.compile("macos-(\\d+)(?:-.*)?");
     private static final Pattern MACOS_MIN = Pattern.compile("(?m)^\\s*MACOS_MIN=(\\w+)$");
+    private static final Pattern DEPLOYMENT_TARGET =
+            Pattern.compile("<macos\\.deployment\\.target>(\\d+)\\.0</macos\\.deployment\\.target>");
 
-    /** Homebrew's names for the macOS versions a runner label can carry. */
+    /** Homebrew's names for the macOS versions the binaries can target. */
     private static final Map<Integer, String> HOMEBREW_MACOS = Map.of(
             15, "sequoia",
             26, "tahoe");
@@ -53,29 +55,35 @@ class WorkflowRunnerLabelsTest {
     }
 
     /**
-     * Nothing sets {@code MACOSX_DEPLOYMENT_TARGET}, so a release binary needs the macOS it was built
-     * on, and the newest runner in the release matrix is the minimum for every Mac the formula serves.
-     * The tap step writes that minimum as {@code depends_on macos:}; this fails when a runner label
-     * moves and it does not.
+     * The minimum macOS is pom.xml's {@code macos.deployment.target}, which every macOS native build
+     * links with (#1086). The tap step declares it as {@code depends_on macos:}, which may not drift
+     * from it, a release step checks every shipped macOS binary against it, and no release runner
+     * may be older than the macOS it targets.
      */
     @Test
-    void homebrewFormulaDeclaresTheReleaseRunnersMacOs() throws IOException {
+    void releaseDeclaresAndChecksTheDeploymentTarget() throws IOException {
+        var pom = DEPLOYMENT_TARGET.matcher(Files.readString(Path.of("../pom.xml")));
+        assertTrue(pom.find(), "pom.xml no longer sets macos.deployment.target");
+        int target = Integer.parseInt(pom.group(1));
+
         var release = WORKFLOWS.resolve("release.yml");
-        int newest = 0;
-        for (var entry : new YAMLMapper().readTree(release.toFile())
-                .path("jobs").path("build").path("strategy").path("matrix").path("include")) {
+        var jobs = new YAMLMapper().readTree(release.toFile()).path("jobs");
+        for (var entry : jobs.path("build").path("strategy").path("matrix").path("include")) {
             var runner = MACOS_RUNNER.matcher(entry.path("runner").asText());
             if (runner.matches()) {
-                newest = Math.max(newest, Integer.parseInt(runner.group(1)));
+                assertTrue(Integer.parseInt(runner.group(1)) >= target, entry.path("runner").asText()
+                        + " is older than the macOS " + target + " the release targets");
             }
         }
-        assertNotEquals(0, newest, "no macOS runner found in release.yml's build matrix");
-        var expected = HOMEBREW_MACOS.get(newest);
-        assertNotNull(expected, "add macOS " + newest + "'s Homebrew name to HOMEBREW_MACOS");
 
+        var expected = HOMEBREW_MACOS.get(target);
+        assertNotNull(expected, "add macOS " + target + "'s Homebrew name to HOMEBREW_MACOS");
         var declared = MACOS_MIN.matcher(Files.readString(release));
         assertTrue(declared.find(), "release.yml's Homebrew step no longer sets MACOS_MIN");
-        assertEquals(expected, declared.group(1), "release binaries are built on macos-" + newest
+        assertEquals(expected, declared.group(1), "the binaries target macOS " + target
                 + ", so the formula must declare depends_on macos: :" + expected);
+
+        assertTrue(Files.readString(release).contains("scripts/check-macos-minos.py artifacts/native-macos-*/*"),
+                "release.yml must check the minimum macOS of every macOS binary it uploads");
     }
 }

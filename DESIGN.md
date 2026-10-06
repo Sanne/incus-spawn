@@ -1232,6 +1232,43 @@ Reproduce with `bench/run.sh --load=maven`. Use that harness rather than a shell
 `curl`: process-spawn overhead caps such a loop around 550 req/s, which silently pins every
 build faster than v3 to the same wrong number and hides the differences between them.
 
+### The minimum macOS is set by the build
+
+isx supports **macOS 15 (Sequoia) or later**, on Apple Silicon and Intel; macOS 14 and older
+were dropped by decision (#1086). The value lives once, as `macos.deployment.target` in the root
+pom, and a profile activated on any macOS host adds
+`-H:NativeLinkerOption=-mmacosx-version-min=<it>` to both modules' argument lists
+(`macos.min.args`), so release builds and local `./install.sh --native` alike link for it.
+
+Before this nothing set it, and clang took the build host's own version: v0.3.9 shipped arm64
+binaries recording `minos 14.0` (built on `macos-14`) and Intel ones recording `minos 15.0`
+(built on `macos-15-intel`), so the minimum was an accident of the runner and differed by
+architecture. Two details decide how it is set:
+
+- **Not `MACOSX_DEPLOYMENT_TARGET`.** clang honours that variable, but `native-image` hands the
+  builder, and so the linker it spawns, only `PATH`, `PWD`, `HOME`, `LANG` and `LC_*`; a
+  workflow-level variable would be dropped without a word. Passing it through with `-E` is what
+  `NativeImageInitializationTest` forbids. The linker option reaches clang directly.
+- **The link step alone decides it.** GraalVM's own object file records only a 10.7
+  `LC_VERSION_MIN_MACOSX`, so the final `LC_BUILD_VERSION` is whatever the link targets.
+
+`release.yml` checks it on the very files it uploads: `scripts/check-macos-minos.py` reads each
+macOS artifact's `LC_BUILD_VERSION` and fails the release unless every `minos` equals the pom's
+value (or the file is not a thin Mach-O with one). It is plain Python so it runs on the Linux job that publishes, after the
+macOS builds, and it reads the expected value from the pom rather than repeating it. The
+Homebrew formula declares the same minimum (`depends_on macos: :sequoia`, from `MACOS_MIN` in
+the tap step), and `WorkflowRunnerLabelsTest` fails if `MACOS_MIN` is not the target's Homebrew
+name, if a release runner is older than the target, or if the check and the upload stop naming
+the same binaries. A runner newer than the target is fine: it builds for the older version.
+
+There is no runtime check in `isx`: on an older macOS, dyld refuses the native binary before any
+of its code runs, so such a message could never print. `install.sh --native` refuses on an older Mac
+instead (reading the pom's value), where it would otherwise build a binary its own host cannot
+load; its JVM install is left alone, since that still runs there, unsupported.
+
+Raising the minimum is changing the pom value, `MACOS_MIN` and the docs that state it (README,
+`docs/HOMEBREW.md`); the tests name `MACOS_MIN` if it is left behind, not the prose.
+
 ### CLI latency baseline: native vs JVM
 
 Measured with `bench/cli.sh` at 7d3389b on an AMD Ryzen 9 9950X3D2 (16 cores), Fedora 44,

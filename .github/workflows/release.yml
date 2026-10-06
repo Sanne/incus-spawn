@@ -208,6 +208,11 @@ jobs:
           done
           tar -czf artifacts/completions.tar.gz -C "$COMPLETIONS_DIR" isx.bash _isx isx.fish
 
+      # Every macOS binary gh release create uploads below, so nothing ships that needs another
+      # macOS than pom.xml's macos.deployment.target (#1086).
+      - name: Check macOS binaries' minimum macOS
+        run: scripts/check-macos-minos.py artifacts/native-macos-*/*
+
       - name: Create GitHub Release
         run: |
           gh release create $GITHUB_REF_NAME \
@@ -281,8 +286,8 @@ jobs:
             ' "$FORMULA" > "${FORMULA}.tmp" && mv "${FORMULA}.tmp" "$FORMULA"
           fi
 
-          # Release binaries need the macOS they were built on, see .claude/rules/ci.md;
-          # WorkflowRunnerLabelsTest keeps this in step with the runner labels. Rewritten
+          # Homebrew's name for pom.xml's macos.deployment.target, which the binaries were
+          # checked against above; WorkflowRunnerLabelsTest keeps the two equal. Rewritten
           # every release, ahead of the first depends_on as `brew style` orders it.
           MACOS_MIN=sequoia
           awk -v min="$MACOS_MIN" '

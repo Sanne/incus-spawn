@@ -82,6 +82,17 @@ if [ -n "$COMPLETIONS_SHELL" ]; then
     esac
 fi
 
+# The pom's macos.deployment.target is the minimum (#1086): a native build here links
+# for it, so on an older Mac the binary would not even load.
+if $NATIVE && [ "$(uname -s)" = "Darwin" ]; then
+    MACOS_VERSION="$(sw_vers -productVersion)"
+    MACOS_MIN="$(sed -n 's:.*<macos.deployment.target>\([0-9]*\)\..*:\1:p' "$SCRIPT_DIR/pom.xml")"
+    if [ "${MACOS_VERSION%%.*}" -lt "$MACOS_MIN" ]; then
+        echo "Error: isx needs macOS $MACOS_MIN or later; this Mac runs macOS $MACOS_VERSION."
+        exit 1
+    fi
+fi
+
 # Check we can install the result *before* spending minutes on a native build.
 mkdir -p "$INSTALL_DIR" 2>/dev/null || true
 if [ ! -d "$INSTALL_DIR" ] || [ ! -w "$INSTALL_DIR" ]; then

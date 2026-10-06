@@ -41,7 +41,7 @@ class NativeImageInitializationTest {
 
     /** Pom properties through which a platform adds its own arguments to its module's one list. */
     private static final List<String> PLATFORM_PLACEHOLDERS =
-            List.of("svm.target.name.args", "macos.plist.args", "native.march.args", "native.optimization");
+            List.of("svm.target.name.args", "macos.plist.args", "macos.min.args", "native.march.args", "native.optimization");
 
     private static final List<Class<?>> GUARDS =
             List.of(SyscallReachabilityFeature.class, BakedHostStateFeature.class);
@@ -111,10 +111,17 @@ class NativeImageInitializationTest {
             }
         }
 
-        var cliList = rawValue(Path.of("src/main/resources-filtered/application.properties"));
-        for (var placeholder : List.of("svm.target.name.args", "macos.plist.args")) {
-            assertTrue(cliList.contains("${" + placeholder + "}"), "The CLI's argument list no longer"
-                    + " includes ${" + placeholder + "}, so the builds setting it silently lose it.");
+        var required = Map.of(
+                Path.of("src/main/resources-filtered/application.properties"),
+                List.of("svm.target.name.args", "macos.plist.args", "macos.min.args"),
+                Path.of("../proxy/src/main/resources-filtered/application.properties"),
+                List.of("svm.target.name.args", "macos.min.args"));
+        for (var module : required.entrySet()) {
+            var list = rawValue(module.getKey());
+            for (var placeholder : module.getValue()) {
+                assertTrue(list.contains("${" + placeholder + "}"), module.getKey() + "'s argument list no"
+                        + " longer includes ${" + placeholder + "}, so the builds setting it silently lose it.");
+            }
         }
     }
 
