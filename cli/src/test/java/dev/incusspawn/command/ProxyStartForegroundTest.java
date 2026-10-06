@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -42,6 +43,14 @@ class ProxyStartForegroundTest {
         var proxy = terminateCliRunning(Duration.ofMillis(500),
                 "sh", "-c", "trap '' TERM; exec sleep 600");
         awaitExit(proxy, Duration.ofSeconds(10));
+    }
+
+    /** A SIGKILLed CLI runs no hook, so the proxy has to watch it itself (#923). */
+    @Test
+    void theProxyIsToldToExitWithTheCli() {
+        var cmd = new ProxyStartCommand().foregroundCommand("isx-proxy");
+        assertEquals(List.of("--exit-with-pid", String.valueOf(ProcessHandle.current().pid())),
+                cmd.subList(cmd.size() - 2, cmd.size()));
     }
 
     /** Start the CLI stand-in, wait for its proxy child, SIGTERM the CLI; returns the child. */

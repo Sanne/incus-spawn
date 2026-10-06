@@ -108,16 +108,7 @@ public class ProxyStartCommand extends BaseCommand {
         // before the next login finds it stale again.
         if (supervised) ProxyService.migrateMacOsPlistIfSupervised();
 
-        var cmd = new ArrayList<String>();
-        cmd.add(proxyBin);
-        if (port != ProxyConfig.DEFAULT_MITM_PORT) { cmd.add("--port"); cmd.add(String.valueOf(port)); }
-        if (healthPort != ProxyConfig.DEFAULT_HEALTH_PORT) { cmd.add("--health-port"); cmd.add(String.valueOf(healthPort)); }
-        if (gatewayIpOption != null && !gatewayIpOption.isBlank()) {
-            cmd.add("--gateway-ip"); cmd.add(gatewayIpOption);
-        }
-        if (debug) cmd.add("--debug");
-
-        var proxy = new ForegroundProxy(cmd, PROXY_STOP_GRACE);
+        var proxy = new ForegroundProxy(foregroundCommand(proxyBin), PROXY_STOP_GRACE);
         int code = proxy.run();
         // A proxy stopped because this process is exiting was asked to stop: nothing to diagnose.
         if (code != 0 && !proxy.stoppedOnShutdown()) {
@@ -127,10 +118,28 @@ public class ProxyStartCommand extends BaseCommand {
     }
 
     /**
+     * The foreground proxy's command line. {@code --exit-with-pid} makes it stop once this process
+     * is gone even when no shutdown hook ran, e.g. on SIGKILL (#923); the service units never pass it.
+     */
+    List<String> foregroundCommand(String proxyBin) {
+        var cmd = new ArrayList<String>();
+        cmd.add(proxyBin);
+        if (port != ProxyConfig.DEFAULT_MITM_PORT) { cmd.add("--port"); cmd.add(String.valueOf(port)); }
+        if (healthPort != ProxyConfig.DEFAULT_HEALTH_PORT) { cmd.add("--health-port"); cmd.add(String.valueOf(healthPort)); }
+        if (gatewayIpOption != null && !gatewayIpOption.isBlank()) {
+            cmd.add("--gateway-ip"); cmd.add(gatewayIpOption);
+        }
+        if (debug) cmd.add("--debug");
+        cmd.add("--exit-with-pid"); cmd.add(String.valueOf(ProcessHandle.current().pid()));
+        return cmd;
+    }
+
+    /**
      * The proxy run in the foreground, sharing this terminal. Ctrl+C signals the whole process
      * group, but a signal to this process alone (a {@code kill}, a supervisor, a cancelled CI
      * step) would leave the proxy orphaned and holding its ports (issue #882), so a shutdown hook
-     * stops it: SIGTERM, then SIGKILL once {@code grace} is up.
+     * stops it: SIGTERM, then SIGKILL once {@code grace} is up. A SIGKILL to this process runs no
+     * hook; for that the proxy watches this process itself ({@link #foregroundCommand}).
      */
     static final class ForegroundProxy {
         private final List<String> cmd;

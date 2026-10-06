@@ -59,10 +59,13 @@ public class ProxyMain implements QuarkusApplication {
                 case "--health-port" -> { if (i + 1 < args.length) healthPort = Integer.parseInt(args[++i]); }
                 case "--gateway-ip" -> { if (i + 1 < args.length) gatewayIpOption = args[++i]; }
                 case "--debug" -> debug = true;
+                case ExitWith.ARG -> i++; // internal, read by ExitWith.watchIfAsked
             }
         }
 
         installLogTee();
+
+        ExitWith.watchIfAsked(args);
 
         var incus = new IncusClient();
         if (!ProxyService.initComplete()) return ProxyService.EXIT_CONFIG;

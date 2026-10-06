@@ -144,6 +144,21 @@ longer than the proxy's own 10-second forced exit. Ctrl+C reaches both through t
 but a signal to the CLI alone (`kill`, a supervisor, a cancelled CI step) used to leave the proxy
 orphaned, holding its ports, and possibly serving an older build than the one being tested (#882).
 Exec'ing the proxy in place of the CLI would avoid the child entirely, but Java cannot exec.
+A CLI that runs no hook (SIGKILL, the OOM killer, a JVM crash) is covered from the other side
+(#923). The CLI passes the child `--exit-with-pid <its own pid>`. That is an internal argument
+between isx and its own proxy, not a user-facing option: it is not in `isx-proxy --help`, only
+`ProxyStartCommand.foregroundCommand()` sets it, and the service units never pass it, because their
+parent is the service manager. The proxy (`ExitWith`) checks every second that the pid is still
+among its ancestors, and once it is not, calls `System.exit`, the same shutdown path as SIGTERM.
+The check is about ancestry, not whether the process is alive. A SIGKILLed CLI whose own parent never
+reaps it (a script's `Popen` with no `wait()`, or a container whose PID 1 does not reap) stays a
+zombie, which `ProcessHandle.onExit()` counts as alive forever. Its children are still reparented
+the moment it dies, so it stops being an ancestor at once. That holds even when the CLI died
+before the proxy started watching, and through a launcher that does not `exec`. An explicit pid,
+not "the parent I started with", is what makes that last case and the startup race work.
+Alternatives were a pipe on the child's stdin with exit on EOF, which a service's `/dev/null` stdin
+would trip unless it was also behind a flag, and `prctl(PR_SET_PDEATHSIG)`, which is Linux-only and
+not reachable from Java.
 
 The uber-jars are what JBang users actually run, and nothing else in CI executes them, which is how
 the inline fallback's removal went unnoticed for six weeks. The `uber-jar-smoke` job in
