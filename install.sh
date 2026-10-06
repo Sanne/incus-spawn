@@ -87,6 +87,11 @@ fi
 if $NATIVE && [ "$(uname -s)" = "Darwin" ]; then
     MACOS_VERSION="$(sw_vers -productVersion)"
     MACOS_MIN="$(sed -n 's:.*<macos.deployment.target>\([0-9]*\)\..*:\1:p' "$SCRIPT_DIR/pom.xml")"
+    # Without it the comparison below errors, and an erroring test is false: say so instead.
+    if [ -z "$MACOS_MIN" ]; then
+        echo "Error: could not read macos.deployment.target from $SCRIPT_DIR/pom.xml."
+        exit 1
+    fi
     if [ "${MACOS_VERSION%%.*}" -lt "$MACOS_MIN" ]; then
         echo "Error: isx needs macOS $MACOS_MIN or later; this Mac runs macOS $MACOS_VERSION."
         exit 1
