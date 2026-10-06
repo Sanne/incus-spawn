@@ -383,6 +383,57 @@ class BuildCommandTest {
         });
     }
 
+    /**
+     * A multi-template rebuild asks once, up front, and says there everything it would otherwise
+     * have said after the answer: which images exist and will be replaced, and which tools a
+     * rebuild drops (#911).
+     */
+    @Test
+    void withParentsAsksOnceAndWarnsBeforeTheQuestion(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var parent = new ImageDef();
+            parent.setName("tpl-minimal");
+            var child = new ImageDef();
+            child.setName("tpl-dev");
+            child.setParent("tpl-minimal");
+            var defs = Map.of("tpl-minimal", parent, "tpl-dev", child);
+            var oldChild = new ImageDef();
+            oldChild.setName("tpl-dev");
+            oldChild.setTools(List.of(new ToolDef.ToolRef("claude")));
+            var oldSource = new BuildSource(Map.of("tpl-dev", oldChild), Map.of(), Map.of(), Map.of());
+
+            var incus = mock(IncusClient.class);
+            when(incus.exists(anyString())).thenReturn(true);
+            when(incus.configGet("tpl-dev", Metadata.BUILD_SOURCE)).thenReturn(oldSource.toJson());
+            var prompts = ScriptedPrompts.lines("y");
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            doReturn(prompts).when(cmd).prompts();
+            doNothing().when(cmd).buildInto(any(), any(), anyString());
+
+            var originalOut = System.out;
+            var out = new java.io.ByteArrayOutputStream();
+            System.setOut(new java.io.PrintStream(out, true, java.nio.charset.StandardCharsets.UTF_8));
+            try {
+                cmd.buildWithParents(child, defs);
+            } finally {
+                System.setOut(originalOut);
+            }
+
+            prompts.assertFullyConsumed();
+            verify(incus).rename("tpl-minimal-rebuilding", "tpl-minimal");
+            verify(incus).rename("tpl-dev-rebuilding", "tpl-dev");
+            var text = out.toString(java.nio.charset.StandardCharsets.UTF_8);
+            int question = text.indexOf("Continue?");
+            assertTrue(question >= 0, text);
+            assertTrue(text.indexOf("tpl-minimal, tpl-dev will be replaced") >= 0
+                    && text.indexOf("tpl-minimal, tpl-dev will be replaced") < question, text);
+            assertTrue(text.indexOf("Tools no longer included in tpl-dev: claude") >= 0
+                    && text.indexOf("Tools no longer included in tpl-dev: claude") < question, text);
+            assertEquals(-1, text.indexOf("Rebuild?"), text);
+        });
+    }
+
     @Test
     void buildThatFailedBeforeItsInstanceExistedDoesNotTryToRemoveDevices(@TempDir Path tmp) {
         // Otherwise each host resource prints a "failed to remove build device" warning.

@@ -126,14 +126,20 @@ public class BuildCommand extends BaseCommand {
      */
     private boolean confirm(String prompt) {
         if (yes) return true;
-        var console = System.console();
-        if (console == null) return true;
-        if (!askConfirmation(console, prompt, false)) {
+        var prompts = prompts();
+        if (prompts == null) return true;
+        if (!askConfirmation(prompts, prompt, false)) {
             System.out.println("Aborted.");
             return false;
         }
         return true;
     }
+
+    /** Where confirmations are read from; overridden by tests. */
+    Prompts prompts() {
+        return Prompts.console();
+    }
+
     private static final String DNF_CACHE_DEVICE = "dnf-cache";
     // 4 WebSocket fds (stdin, stdout, stderr, control) + 1 /wait long-poll per non-PTY exec
     private static final int CONNECTIONS_PER_EXEC = 5;
@@ -151,6 +157,9 @@ public class BuildCommand extends BaseCommand {
     private volatile ActiveBuild activeBuild;
 
     private HostRepoRefresh.AsyncRefresh hostRepoRefresh;
+
+    /** The user accepted a batch rebuild up front, which covers replacing each existing image. */
+    private boolean batchConfirmed;
 
     /** Root defs whose latest base image was already resolved this invocation (avoids re-fetching). */
     private final Set<String> resolvedRoots = new HashSet<>();
@@ -359,12 +368,30 @@ public class BuildCommand extends BaseCommand {
         }
         requireValidAccounts(templatesToRebuild, defs);
 
-        // Confirm with user
-        BuildOutput.step((outdatedOnly ? "Templates to rebuild: " : "This will rebuild: ")
-                + String.join(", ", templatesToRebuild));
-        if (!confirm(outdatedOnly ? "Rebuild?" : "Continue?")) return;
+        if (!confirmBatch(outdatedOnly ? "Templates to rebuild: " : "This will rebuild: ",
+                templatesToRebuild, defs, outdatedOnly ? "Rebuild?" : "Continue?")) return;
 
         rebuildAll(templatesToRebuild, defs);
+    }
+
+    /**
+     * Ask once for a whole batch, after showing everything a per-template prompt would have:
+     * which images exist and will be replaced, and which tools their rebuild drops (#911).
+     */
+    private boolean confirmBatch(String heading, List<String> templates, Map<String, ImageDef> defs,
+                                 String prompt) {
+        BuildOutput.step(heading + String.join(", ", templates));
+        var existing = templates.stream().filter(incus::exists).toList();
+        if (!yes && !existing.isEmpty()) {
+            BuildOutput.step(String.join(", ", existing)
+                    + " will be replaced, each only if its build succeeds.");
+        }
+        for (var name : existing) {
+            warnDroppedTools(name, defs.get(name), defs);
+        }
+        if (!confirm(prompt)) return false;
+        batchConfirmed = true;
+        return true;
     }
 
     /**
@@ -523,14 +550,13 @@ public class BuildCommand extends BaseCommand {
     /**
      * Unconditionally rebuild a template and all its ancestors.
      */
-    private void buildWithParents(ImageDef imageDef, Map<String, ImageDef> defs) {
+    void buildWithParents(ImageDef imageDef, Map<String, ImageDef> defs) {
         var chain = new ArrayList<String>();
         var seen = new LinkedHashSet<String>();
         collectAllRecursive(imageDef, defs, chain, seen);
         requireValidAccounts(chain, defs);
 
-        BuildOutput.step("This will rebuild: " + String.join(", ", chain));
-        if (!confirm("Continue?")) return;
+        if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
 
         rebuildAll(chain, defs);
     }
@@ -546,8 +572,7 @@ public class BuildCommand extends BaseCommand {
         collectDescendants(imageDef.getName(), defs, chain, seen);
         requireValidAccounts(chain, defs);
 
-        BuildOutput.step("This will rebuild: " + String.join(", ", chain));
-        if (!confirm("Continue?")) return;
+        if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
 
         rebuildAll(chain, defs);
     }
@@ -621,7 +646,7 @@ public class BuildCommand extends BaseCommand {
 
         requireNoStrandedStorage(canonicalName, tempName);
 
-        if (incus.exists(canonicalName)) {
+        if (!batchConfirmed && incus.exists(canonicalName)) {
             if (!yes) {
                 BuildOutput.step("Image already exists. It will be replaced if the build succeeds.");
             }
