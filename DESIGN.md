@@ -517,8 +517,13 @@ exits 1 like `not_running`, as the table always has, but no longer reads like it
 check fails, and `vm status` exits 1 when Incus is unreachable (#1037 made the table do so). Each command with more than one failing state keeps its codes in one `exitCode` method that
 every format returns, so they cannot drift. `account list` prints `null` for
 `pinned_by`/`following` when Incus could not be asked, never an empty list, which would read as
-"nobody". The template's built state and staleness (#1036) are not in `isx templates` yet: they
-live in the TUI's template rows and are added at the end of its record when that logic moves.
+"nobody". `isx templates` adds each definition's build state and staleness at the end of its record
+(#1115): `built`, `built_at`, and the TUI's three marks as `version_outdated`,
+`definition_changed`, `parent_rebuilt`. Both read one judgement, `TemplateStaleness`, which takes
+only what it is handed, so the CLI pays for one `GET /1.0/instances?recursion=1` (the table output
+still asks Incus nothing) and fingerprints tools only when a built template's definition is
+compared, never the TUI's reload. As for `account list`, a listing that cannot be read makes those
+fields `null` rather than "not built".
 Nothing the table tells a person about state is left out of the record: problems a template's
 choice causes (`account show`'s `template_problem`), whether a proxy restart can clear drift
 (`restart_helps`), a leaking vsock forwarder (`vsock_connections_high`) and a pinned base image
@@ -982,7 +987,7 @@ user.incus-spawn.host-resources=[...]        # (JSON, when host-resources declar
 
 **Metadata outside the fingerprint**: `default-action` changes nothing in the image, so it is left out of `definition-sha` and editing it does not make a template outdated. Its stamp (`user.incus-spawn.default-action`, which `ActionResolver` falls back to when the YAML chain is gone) was then only ever written by a rebuild, and diverged silently from the YAML (#284). So every `isx build` that returns, successfully or with a failed template build, ends with `syncDefaultActions()`: one `GET /1.0/instances?recursion=1` covers every existing template, and a stamp is written only where it differs from the definition chain. Because the value is inherited, the guard covers the whole chain, not just the template's own definition: the chain must reach a root in the loaded definitions (with a parent's YAML gone the inherited value is unknown, and the stamp is exactly the fallback for that case), the template's own `definition-sha` must be current, and its `build-source` must record every ancestor with the content and project root it has now. So an outdated template, or a child built before its parent added a tool, keeps the stamp matching what it has installed until it is rebuilt. Ancestors are compared by their own definitions, not their tools' YAML: a child built before a parent's tool gained an action can take a `default-action` naming that action, the same ref the YAML-first path already resolves for it. A project-local definition, parent overrides included, never reaches a template built from elsewhere (see "Project-local templates are confined to their project"). The build-source snapshots a build borrows for a template whose YAML is gone are not used, since they can be older than the template they describe. Hooking each skip branch instead (a parent `buildChain` leaves alone, the untouched templates of `--out-of-sync`) was tried first: it missed `--missing`, the type-change path and templates outside the chain built, and cost a round trip per template. Folding `default-action` into the fingerprint was rejected: a whole rebuild to change one metadata key.
 
-**Staleness detection**: The TUI uses `build-version` and `definition-sha` to display staleness indicators next to template names:
+**Staleness detection**: The TUI uses `build-version` and `definition-sha` to display staleness indicators next to template names, and `isx templates --format=plain|json` reports the same three as fields; both come from `TemplateStaleness` (`cli/.../command/`):
 - `!` — template was built with a different isx version than the running CLI
 - `△` — the image definition or its tool definitions have changed since the last build (fingerprint mismatch)
 - `↑` — a parent template was rebuilt more recently than this template

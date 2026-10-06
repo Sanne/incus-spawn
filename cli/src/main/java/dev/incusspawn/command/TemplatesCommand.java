@@ -1,7 +1,10 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.BuildInfo;
+import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.TemplateValidator;
+import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -12,10 +15,13 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Supplier;
 
 @CommandDefinition(
         name = "templates",
@@ -59,7 +65,17 @@ public class TemplatesCommand extends BaseCommand {
             var outputFormat = OutputFormat.parse(format);
             var defs = ImageDef.loadAll();
             if (outputFormat != OutputFormat.TABLE) {
-                outputFormat.print(System.out, records(defs));
+                // The definitions are listed even when Incus cannot say which are built: those
+                // fields are then null, never "not built", and the reason goes to stderr.
+                List<TemplateStaleness.Built> built = null;
+                try {
+                    built = ListCommand.builtTemplates(RuntimeServices.incus().listJsonConfig());
+                } catch (Exception e) {
+                    System.err.println("Could not read which templates are built: " + e.getMessage());
+                }
+                outputFormat.print(System.out, records(defs, built,
+                        () -> TemplateStaleness.toolFingerprints(defs.values(), RuntimeServices.toolDefLoader()),
+                        BuildInfo.instance().version(), ZoneId.systemDefault()));
                 return CommandResult.SUCCESS;
             }
             if (!verbose) {
@@ -77,8 +93,20 @@ public class TemplatesCommand extends BaseCommand {
             return CommandResult.SUCCESS;
         }
 
-        /** The fields of {@code isx templates --format=plain|json}, in order: add to the end, never rename. */
-        static List<Map<String, Object>> records(Map<String, ImageDef> defs) {
+        /**
+         * The fields of {@code isx templates --format=plain|json}, in order: add to the end, never
+         * rename. {@code built_at} is ISO-8601; the three staleness flags are the TUI's
+         * {@code ! △ ↑} ({@link TemplateStaleness}) and {@code null} for a template not built.
+         * Everything from {@code built} on is {@code null} when {@code built} (the built templates
+         * from one Incus listing) is: Incus could not be asked.
+         */
+        static List<Map<String, Object>> records(Map<String, ImageDef> defs, List<TemplateStaleness.Built> built,
+                                                 Supplier<Map<String, String>> toolFingerprints,
+                                                 String currentVersion, ZoneId zone) {
+            var builtByName = new LinkedHashMap<String, TemplateStaleness.Built>();
+            if (built != null) built.forEach(b -> builtByName.put(b.name(), b));
+            var staleness = TemplateStaleness.assess(builtByName.values(), defs, Set.of(),
+                    toolFingerprints, currentVersion);
             var records = new ArrayList<Map<String, Object>>();
             defs.forEach((name, def) -> {
                 var record = new LinkedHashMap<String, Object>();
@@ -86,6 +114,13 @@ public class TemplatesCommand extends BaseCommand {
                 record.put("parent", def.getParent());
                 record.put("source", def.getSource());
                 record.put("description", def.getDescription());
+                var b = builtByName.get(name);
+                var stale = staleness.get(name);
+                record.put("built", built == null ? null : b != null);
+                record.put("built_at", b == null ? null : Metadata.createdIso(b.created(), zone));
+                record.put("version_outdated", stale == null ? null : stale.versionOutdated());
+                record.put("definition_changed", stale == null ? null : stale.definitionChanged());
+                record.put("parent_rebuilt", stale == null ? null : stale.parentRebuilt());
                 records.add(record);
             });
             return records;

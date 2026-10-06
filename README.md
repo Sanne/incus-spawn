@@ -1227,7 +1227,7 @@ The fields of the other commands, in order:
 
 | Command | Fields |
 |---------|--------|
-| `isx templates` | `name`, `parent`, `source` (`built-in` or the file), `description` |
+| `isx templates` | `name`, `parent`, `source` (`built-in` or the file), `description`, `built`, `built_at`, `version_outdated` (built by another isx version), `definition_changed` (its definition or a tool it uses changed since), `parent_rebuilt` (its parent was built after it). The staleness flags are `null` for a template that is not built, and everything from `built` on is `null` when Incus could not be asked, with the reason on stderr. `isx build --out-of-sync` rebuilds the templates with `version_outdated` or `definition_changed` |
 | `isx tools list` | `name`, `source`, `description` |
 | `isx tools show <tool>` | `name`, `description`, `source`, `feature`, `requires`, `packages`, `parameters`, `actions` (labels), `downloads` (URLs), `proxy_domains` |
 | `isx account list` | one record per account: `namespace`, `account`, `description`, `default`, `problem` (`incomplete`, or `not-configured` for an account only a pin names), `pinned_by`, `following` (the instances that follow the default). The last two are `null` when Incus could not be asked, with the reason on stderr; `plain` prints that as `-`, like an empty list, so read `json` to tell them apart |

@@ -87,14 +87,16 @@ class QueryCommandFormatTest {
         assertEquals(CommandResult.SUCCESS, run.result());
         var keys = keysOf(run.out());
         assertFalse(keys.isEmpty());
-        keys.forEach(k -> assertEquals(List.of("name", "parent", "source", "description"), k));
+        // The values of the build fields depend on this host's Incus; TemplatesStalenessTest pins them.
+        keys.forEach(k -> assertEquals(List.of("name", "parent", "source", "description", "built", "built_at",
+                "version_outdated", "definition_changed", "parent_rebuilt"), k));
         assertTrue(run.out().contains("""
                 {
                   "name" : "tpl-dev",
                   "parent" : "tpl-minimal",
                   "source" : "built-in",
-                  "description" : "Podman, GitHub CLI, Starship"
-                }"""), run.out());
+                  "description" : "Podman, GitHub CLI, Starship",
+                  "built" : """), run.out());
     }
 
     @Test
@@ -102,7 +104,7 @@ class QueryCommandFormatTest {
         var cmd = new TemplatesCommand();
         cmd.format = "plain";
         var run = run(cmd::doExecute);
-        assertTrue(run.out().lines().anyMatch("tpl-minimal\t-\tbuilt-in\tBase OS only"::equals), run.out());
+        assertTrue(run.out().lines().anyMatch(l -> l.startsWith("tpl-minimal\t-\tbuilt-in\tBase OS only\t")), run.out());
         assertFalse(run.out().contains("NAME"), run.out());
     }
 

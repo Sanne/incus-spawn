@@ -1,0 +1,136 @@
+package dev.incusspawn.command;
+
+import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.util.OutputFormat;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * The build state and staleness {@code isx templates --format=plain|json} reports (#1115), and
+ * the one judgement ({@link TemplateStaleness}) the TUI's {@code ! △ ↑} marks share with it.
+ * A golden output: fields are added at the end, never renamed, removed or reordered.
+ */
+@ExtendWith(IsolatedHome.class)
+class TemplatesStalenessTest {
+
+    private static final ZoneOffset ZONE = ZoneOffset.ofHours(2);
+    private static final String CURRENT = "1.4.0";
+
+    /** The built-in minimal → dev → java chain. */
+    private static Map<String, ImageDef> chain() {
+        var all = ImageDef.loadAll();
+        var defs = new LinkedHashMap<String, ImageDef>();
+        for (var name : List.of("tpl-minimal", "tpl-dev", "tpl-java")) defs.put(name, all.get(name));
+        return defs;
+    }
+
+    private static Map<String, String> toolFingerprints(Map<String, ImageDef> defs) {
+        return TemplateStaleness.toolFingerprints(defs.values(), RuntimeServices.toolDefLoader());
+    }
+
+    private static String json(Object value) {
+        var bytes = new ByteArrayOutputStream();
+        OutputFormat.printJson(new PrintStream(bytes, true, StandardCharsets.UTF_8), value);
+        return bytes.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
+    }
+
+    @Test
+    void templatesReportTheirBuildAndWhyItIsStale() {
+        var defs = chain();
+        var fps = toolFingerprints(defs);
+        var minimalSha = defs.get("tpl-minimal").contentFingerprint(fps);
+        // tpl-minimal is current. tpl-dev was built by another isx, from another definition,
+        // before its parent was rebuilt. tpl-java is not built.
+        var built = List.of(
+                new TemplateStaleness.Built("tpl-minimal", "2026-10-05T10:00:00", CURRENT, minimalSha),
+                new TemplateStaleness.Built("tpl-dev", "2026-10-01T09:30:00", "1.3.0", "an-older-definition"));
+        var records = TemplatesCommand.ListSub.records(defs, built, () -> fps, CURRENT, ZONE);
+        assertEquals("""
+                [ {
+                  "name" : "tpl-minimal",
+                  "parent" : null,
+                  "source" : "built-in",
+                  "description" : "Base OS only",
+                  "built" : true,
+                  "built_at" : "2026-10-05T10:00:00+02:00",
+                  "version_outdated" : false,
+                  "definition_changed" : false,
+                  "parent_rebuilt" : false
+                }, {
+                  "name" : "tpl-dev",
+                  "parent" : "tpl-minimal",
+                  "source" : "built-in",
+                  "description" : "Podman, GitHub CLI, Starship",
+                  "built" : true,
+                  "built_at" : "2026-10-01T09:30:00+02:00",
+                  "version_outdated" : true,
+                  "definition_changed" : true,
+                  "parent_rebuilt" : true
+                }, {
+                  "name" : "tpl-java",
+                  "parent" : "tpl-dev",
+                  "source" : "built-in",
+                  "description" : "JDK + Maven",
+                  "built" : false,
+                  "built_at" : null,
+                  "version_outdated" : null,
+                  "definition_changed" : null,
+                  "parent_rebuilt" : null
+                } ]
+                """, json(records));
+    }
+
+    @Test
+    void whenIncusCannotBeAskedTheBuildFieldsAreUnknownNotFalse() {
+        var records = TemplatesCommand.ListSub.records(chain(), null,
+                () -> fail("nothing is built, so no definition is compared"), CURRENT, ZONE);
+        for (var record : records) {
+            assertTrue(record.containsKey("built"));
+            assertNull(record.get("built"), record.toString());
+            assertNull(record.get("parent_rebuilt"), record.toString());
+        }
+    }
+
+    @Test
+    void theBuiltTemplatesComeFromOneListingWithoutLiveState() {
+        var daemon = new FakeIncusDaemon()
+                .container("tpl-minimal", Map.of(Metadata.TYPE, Metadata.TYPE_BASE,
+                        Metadata.CREATED, "2026-10-05T10:00:00", Metadata.BUILD_VERSION, CURRENT))
+                .container("tpl-dev" + BuildCommand.REBUILDING_SUFFIX, Map.of(Metadata.TYPE, Metadata.TYPE_BASE))
+                .container("dev-1", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "tpl-minimal"))
+                .container("not-ours", Map.of());
+        daemon.clearRequests();
+        var built = ListCommand.builtTemplates(daemon.client().listJsonConfig());
+        assertEquals(List.of("GET /1.0/instances?recursion=1"), daemon.requests());
+        assertEquals(List.of(new TemplateStaleness.Built("tpl-minimal", "2026-10-05T10:00:00", CURRENT, "")), built);
+    }
+
+    @Test
+    void aBuildWithoutARecordedVersionIsOutdatedAndAStoredSourceIsNeverCompared() {
+        var defs = chain();
+        var calls = new AtomicInteger();
+        var stale = TemplateStaleness.assess(List.of(
+                        new TemplateStaleness.Built("tpl-minimal", "built", "", "x"),
+                        new TemplateStaleness.Built("tpl-dev", "2026-10-01", CURRENT, "")),
+                defs, Set.of("tpl-minimal"), () -> { calls.incrementAndGet(); return Map.of(); }, CURRENT);
+        assertEquals(new TemplateStaleness.Staleness(true, false, false), stale.get("tpl-minimal"));
+        // A parent with no readable build time cannot be said to be newer.
+        assertEquals(new TemplateStaleness.Staleness(false, false, false), stale.get("tpl-dev"));
+        assertEquals(0, calls.get(), "no definition was compared, so no tool was fingerprinted");
+    }
+}

@@ -5294,50 +5294,35 @@ public class ListCommand extends BaseCommand {
         var defChanged = new java.util.HashSet<String>();
         var parentRebuilt = new java.util.HashSet<String>();
 
-        var currentVersion = BuildInfo.instance().version();
-        var toolFpCache = computeAllToolFingerprints();
-
-        var timestamps = new java.util.HashMap<String, java.time.LocalDateTime>();
-        for (var t : templateEntries) {
-            if (!"not built".equals(t.buildStatus)) {
-                var ts = parseTimestamp(t.buildStatus);
-                if (ts != null) timestamps.put(t.name, ts);
-            }
-        }
+        var built = templateEntries.stream().filter(TemplateInfo::isBuilt)
+                .map(t -> new TemplateStaleness.Built(t.name, t.buildStatus, t.buildVersion, t.definitionSha))
+                .toList();
+        var staleness = TemplateStaleness.assess(built, imageDefs, storedSourceTemplates,
+                () -> TemplateStaleness.toolFingerprints(imageDefs.values(), toolDefLoader),
+                BuildInfo.instance().version());
 
         for (var t : templateEntries) {
             var statusDisplay = "not built".equals(t.buildStatus) ? "not built" : Metadata.ageDescription(t.buildStatus);
             var statusStyle = "not built".equals(t.buildStatus)
                     ? Style.EMPTY.fg(theme.statusStopped())
                     : Style.EMPTY.fg(theme.statusRunning());
-            if (!"not built".equals(t.buildStatus)) {
+            var stale = staleness.get(t.name);
+            if (stale != null) {
                 var symbols = new StringBuilder();
-                if (!t.buildVersion.isEmpty() && !t.buildVersion.equals(currentVersion)) {
-                    symbols.append('!');
-                    anyTemplateOutdated = true;
-                    versionOutdated.add(t.name);
-                } else if (t.buildVersion.isEmpty()) {
+                if (stale.versionOutdated()) {
                     symbols.append('!');
                     anyTemplateOutdated = true;
                     versionOutdated.add(t.name);
                 }
-                if (!t.definitionSha.isEmpty() && !storedSourceTemplates.contains(t.name)) {
-                    var def = imageDefs.get(t.name);
-                    if (def != null && !t.definitionSha.equals(def.contentFingerprint(toolFpCache))) {
-                        symbols.append('△');
-                        anyDefinitionChanged = true;
-                        defChanged.add(t.name);
-                    }
+                if (stale.definitionChanged()) {
+                    symbols.append('△');
+                    anyDefinitionChanged = true;
+                    defChanged.add(t.name);
                 }
-                var def = imageDefs.get(t.name);
-                if (def != null && !def.isRoot()) {
-                    var parentTs = timestamps.get(def.getParent());
-                    var childTs = timestamps.get(t.name);
-                    if (parentTs != null && childTs != null && parentTs.isAfter(childTs)) {
-                        symbols.append('↑');
-                        anyParentRebuilt = true;
-                        parentRebuilt.add(t.name);
-                    }
+                if (stale.parentRebuilt()) {
+                    symbols.append('↑');
+                    anyParentRebuilt = true;
+                    parentRebuilt.add(t.name);
                 }
                 if (!symbols.isEmpty()) {
                     statusDisplay += " " + symbols;
@@ -5366,33 +5351,17 @@ public class ListCommand extends BaseCommand {
         templatesOutOfSync = outOfSync;
     }
 
-    private java.util.Map<String, String> computeAllToolFingerprints() {
-        var rawFps = new java.util.TreeMap<String, String>();
-        var depMap = new java.util.TreeMap<String, java.util.List<String>>();
-        var visited = new java.util.HashSet<String>();
-        for (var def : imageDefs.values()) {
-            for (var toolRef : def.getTools()) {
-                collectToolFps(toolRef.getName(), rawFps, depMap, visited);
-            }
-        }
-        return dev.incusspawn.tool.ToolDef.compositeFingerprints(rawFps, depMap);
-    }
-
-    private void collectToolFps(String name, java.util.Map<String, String> rawFps,
-                                 java.util.Map<String, java.util.List<String>> depMap,
-                                 java.util.Set<String> visited) {
-        if (!visited.add(name)) return;
-        var tool = toolDefLoader.find(name);
-        if (tool instanceof YamlToolSetup yts) {
-            for (var depRef : yts.toolDef().getRequires()) {
-                collectToolFps(depRef.getName(), rawFps, depMap, visited);
-            }
-            rawFps.put(name, yts.toolDef().contentFingerprint());
-            var depNames = yts.toolDef().getRequires().stream()
-                .map(dev.incusspawn.tool.ToolDef.ToolRef::getName)
+    /**
+     * The built templates in an instance listing (recursion=1 is enough: only config is read),
+     * told apart by the {@code base} type every build stamps, as {@code isx list} does. A
+     * template mid-rebuild (its temporary {@code -rebuilding} copy) is not one.
+     */
+    static List<TemplateStaleness.Built> builtTemplates(String listingJson) {
+        return collectEntries(listingJson).stream()
+                .filter(i -> Metadata.TYPE_BASE.equals(i.type))
+                .filter(i -> !i.name.endsWith(BuildCommand.REBUILDING_SUFFIX))
+                .map(i -> new TemplateStaleness.Built(i.name, i.created, i.buildVersion, i.definitionSha))
                 .toList();
-            depMap.put(name, depNames);
-        }
     }
 
     static java.time.LocalDateTime parseTimestamp(String ts) {
