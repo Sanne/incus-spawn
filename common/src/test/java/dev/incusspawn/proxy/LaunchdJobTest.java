@@ -211,6 +211,25 @@ class LaunchdJobTest {
         assertNull(job.lastRun(), "a job launchd does not know has nothing to report");
     }
 
+    /** Review on #969: launchd names the signal instead of an exit code for a run that was killed. */
+    @Test
+    void lastRunReportsTheSignalThatEndedTheJob() {
+        var killed = new LaunchdJob((String... args) -> new LaunchdJob.Result(0, TARGET + """
+                 = {
+                \tactive count = 0
+                \tstate = spawn scheduled
+                \truns = 3
+                \tlast terminating signal = Killed: 9
+                \tendpoints = {
+                \t\tstate = active
+                \t}
+                }
+                """), () -> {}, DOMAIN, "dev.incusspawn.proxy", PLIST);
+
+        assertEquals("launchd: state = spawn scheduled, runs = 3, last terminating signal = Killed: 9",
+                killed.lastRun());
+    }
+
     /** Pinned separately from FAILED (review on #916): installMacOs reports this one differently. */
     @Test
     void restartGivesUpOnAJobThatNeverFinishesUnloading() {

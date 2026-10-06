@@ -157,13 +157,14 @@ final class LaunchdJob {
     /**
      * What launchd says of the job's runs, such as {@code launchd: state = spawn scheduled, runs =
      * 1, last exit code = 1} for a job waiting out {@code ThrottleInterval} after a failed start,
-     * or null when launchd does not know the job.
+     * or null when launchd does not know the job. For a run that a signal ended launchd prints
+     * {@code last terminating signal = Killed: 9} in place of the exit code.
      */
     String lastRun() {
         var lines = printedLines();
         if (lines == null) return null;
         // The first "state" is the job's own; nested blocks such as endpoints have one too.
-        var fields = java.util.stream.Stream.of("state = ", "runs = ", "last exit code = ")
+        var fields = java.util.stream.Stream.of("state = ", "runs = ", "last exit code = ", "last terminating signal = ")
                 .flatMap(key -> lines.stream().filter(l -> l.startsWith(key)).limit(1))
                 .toList();
         return fields.isEmpty() ? null : "launchd: " + String.join(", ", fields);

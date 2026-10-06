@@ -101,9 +101,12 @@ not discoverable yet, say) still reached a five-second wait for health that ende
 second start. On macOS the waits after the proxy job is started or restarted therefore outlast
 `ThrottleInterval` (`ProxyService.awaitStarted`, whose `startWaitSeconds` shares `LAUNCHD_THROTTLE_SECONDS` with
 the plist), and a wait that still times out prints what `launchctl print` says of the job
-(`state`, `runs`, `last exit code`), so "not responding" tells a job launchd is about to retry
-from one that keeps exiting (#969). Unlike making init wait out the throttle, this costs a healthy
-start nothing: the wait ends at the first answer from `/health`.
+(`state`, `runs`, and `last exit code` or the `last terminating signal`), so "not responding"
+tells a job launchd is about to retry from one that keeps exiting (#969). Unlike making init wait
+out the throttle, this costs a healthy start nothing: the wait ends at the first answer from
+`/health`. The price falls on the failures: a proxy that never comes up, one that exits on a
+configuration error at every retry included, is reported after fifteen seconds on macOS instead
+of five to ten, and the `launchd:` line under the message is what says the time went to retries.
 
 Outside init, the same marker gates `isx proxy install` itself (`ProxyService.initComplete()`, in
 `install()` for every caller and at the top of the command): before init, or after an upgrade that
