@@ -135,6 +135,20 @@ public class InitCommand extends BaseCommand {
         System.out.println();
     }
 
+    /**
+     * Init re-runs safely on a configured host, so a re-run must not read as a fresh setup that
+     * forgot the existing configuration (#1119). Any marker counts, not only a current one
+     * ({@link Environment#hasBeenInitialized()}): re-running init after an upgrade is the common case.
+     */
+    static void printSetupBanner(String platform, String info) {
+        var configured = Files.exists(Environment.initCompleteMarker())
+                || Files.exists(Environment.configDir().resolve("config.yaml"));
+        printBanner("incus-spawn — " + (configured ? "Setup" : "First-Time Setup") + platform,
+                configured ? "Reviewing your existing configuration"
+                        : "Configuring your isolated development environment",
+                info);
+    }
+
     void startStep(String title, String... hintLines) {
         currentStep++;
         String left = "  " + currentStep + "  " + title;
@@ -254,9 +268,7 @@ public class InitCommand extends BaseCommand {
         if (!requireLinux()) {
             return CommandResult.valueOf(1);
         }
-        printBanner("incus-spawn — First-Time Setup",
-                "Configuring your isolated development environment",
-                "~3 minutes · some steps require sudo");
+        printSetupBanner("", "~3 minutes · some steps require sudo");
 
         System.out.println();
         System.out.println("  Several steps need " + styled(BOLD, "sudo") + " to install packages, configure");
@@ -301,9 +313,7 @@ public class InitCommand extends BaseCommand {
     }
 
     private CommandResult doMacOsInit() throws Exception {
-        printBanner("incus-spawn — First-Time Setup (macOS)",
-                "Configuring your isolated development environment",
-                "~2 minutes");
+        printSetupBanner(" (macOS)", "~2 minutes");
 
         runSteps(List.of(this::setupMacOsCa, this::setupSshKeyPair),
                 finalSteps(() -> {
