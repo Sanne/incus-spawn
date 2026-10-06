@@ -44,6 +44,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -1265,13 +1266,21 @@ class ArtifactCacheProxyTest {
         etag = ETAG;
         // Not 1s: a pause of the whole JVM that long on a loaded runner would look like a stall
         proxy.downloadIdleSeconds = 2;
+        var rangesWhilePaused = new CompletableFuture<List<String>>();
+        var rangesJustAfter = new CompletableFuture<List<String>>();
 
         var body = sendAsync(CENTRAL, JAR, resp -> {
             var received = io.vertx.core.Promise.<Buffer>promise();
             var buffer = Buffer.buffer(content.length());
             resp.pause();
             // Longer than two stall checks
-            vertx.setTimer(4_500, t -> resp.resume());
+            vertx.setTimer(4_500, t -> {
+                rangesWhilePaused.complete(List.copyOf(rangesAsked));
+                resp.resume();
+                // Within downloadIdleSeconds of the resume: a cut by then is an idle clock the
+                // pause left running, not upstream going quiet
+                vertx.setTimer(1_000, t2 -> rangesJustAfter.complete(List.copyOf(rangesAsked)));
+            });
             resp.handler(buffer::appendBuffer);
             resp.endHandler(end -> received.complete(buffer));
             resp.exceptionHandler(received::tryFail);
@@ -1280,7 +1289,12 @@ class ArtifactCacheProxyTest {
 
         assertEquals(content.length(), body.length());
         assertEquals(hex("SHA-1", content.getBytes()), hex("SHA-1", body.getBytes()));
-        assertEquals(List.of(), rangesAsked, "a healthy upstream was not reset");
+        // Never while the client is paused, nor just after it resumes. Later, upstream has had
+        // downloadIdleSeconds to go on, and a connection held at a zero window for seconds can
+        // take that long to send again (TCP backs off its window probes): cutting that is the
+        // watchdog's job, and the client still gets every byte (#1116)
+        assertEquals(List.of(), rangesWhilePaused.getNow(null), "a healthy upstream was not reset");
+        assertEquals(List.of(), rangesJustAfter.get(5, TimeUnit.SECONDS), "resumed with a stale idle clock");
     }
 
     @Test
