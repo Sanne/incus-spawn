@@ -2632,7 +2632,7 @@ public class ListCommand extends BaseCommand {
         var hasParent = !parent.isEmpty() && !"-".equals(parent);
         if (!hasParent || diskUsage < 0) return "";
         return " Space reclaimed may be less than " + diskCell(diskUsage)
-                + " — blocks shared with " + parent
+                + " — blocks shared with " + OutputFormat.oneLine(parent)
                 + " stay until the parent is removed.";
     }
 
@@ -2955,7 +2955,7 @@ public class ListCommand extends BaseCommand {
             var spans = new ArrayList<Span>();
             spans.add(Span.styled(" " + instance.name, Style.EMPTY.bold().fg(theme.contextPrimaryFg()).bg(bg)));
             if (!instance.parent.isEmpty() && !"-".equals(instance.parent)) {
-                spans.add(Span.styled("  from " + instance.parent, Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
+                spans.add(Span.styled("  from " + OutputFormat.oneLine(instance.parent), Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
             }
             if (!instance.ipv4.isEmpty()) {
                 spans.add(Span.styled("  " + instance.ipv4, Style.EMPTY.fg(theme.contextAccentFg()).bg(bg)));
@@ -4139,13 +4139,13 @@ public class ListCommand extends BaseCommand {
 
         lines.add(Line.from(List.of(
                 Span.styled("Parent:         ", labelStyle),
-                Span.styled(info.parent.isEmpty() ? "-" : info.parent, lineStyle))));
+                Span.styled(info.parent.isEmpty() ? "-" : OutputFormat.oneLine(info.parent), lineStyle))));
 
         if (!info.created.isEmpty()) {
             var age = Metadata.ageDescription(info.created);
             lines.add(Line.from(List.of(
                     Span.styled("Created:        ", labelStyle),
-                    Span.styled(info.created, lineStyle),
+                    Span.styled(OutputFormat.oneLine(info.created), lineStyle),
                     Span.styled("  (" + age + ")", dimStyle))));
         }
 
@@ -4192,7 +4192,7 @@ public class ListCommand extends BaseCommand {
             var hasParent = !info.parent.isEmpty() && !"-".equals(info.parent);
             lines.add(Line.from(List.of(Span.styled(
                     hasParent
-                        ? "    thin-provisioned; shares blocks with " + info.parent
+                        ? "    thin-provisioned; shares blocks with " + OutputFormat.oneLine(info.parent)
                         : "    thin-provisioned; copy-on-write",
                     dimStyle))));
         }
@@ -5390,7 +5390,7 @@ public class ListCommand extends BaseCommand {
 
         for (var entry : sorted) {
             var age = entry.created.isEmpty() ? "-" : Metadata.ageDescription(entry.created);
-            var parent = entry.parent.isEmpty() ? "-" : entry.parent;
+            var parent = entry.parent.isEmpty() ? "-" : OutputFormat.oneLine(entry.parent);
             var statusStyle = switch (entry.status.toUpperCase()) {
                 case "RUNNING" -> Style.EMPTY.fg(theme.statusRunning());
                 case "STOPPED" -> Style.EMPTY.fg(theme.statusStopped());
@@ -5769,7 +5769,7 @@ public class ListCommand extends BaseCommand {
                 "--------------------", "----------", "---", "---");
         for (var entry : items) {
             var age = entry.created.isEmpty() ? "-" : Metadata.ageDescription(entry.created);
-            var parent = entry.parent.isEmpty() ? "-" : entry.parent;
+            var parent = entry.parent.isEmpty() ? "-" : OutputFormat.oneLine(entry.parent);
             var ip = entry.ipv4.isEmpty() ? "-" : entry.ipv4;
             out.printf(fmt, entry.name, entry.status, ip, parent, entry.runtime, age, mcpCell(entry.mcp));
         }

@@ -252,6 +252,16 @@ class ListCommandOutputTest {
     }
 
     @Test
+    void theTableShowsAHandSetParentWithoutItsEscapeSequence() {
+        // #1118: parent is a stamp too, and the table's PARENT column printed it raw.
+        var daemon = new FakeIncusDaemon().container("w", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE,
+                Metadata.PARENT, "tpl\u001b[2J\u009b2J"));
+        var table = list(cmd(null), daemon);
+        assertFalse(table.contains("\u001b") || table.contains("\u009b"), table);
+        assertTrue(table.contains("tpl [2J 2J"), table);
+    }
+
+    @Test
     void noFormatPassesAnEscapeSequenceInAStampToTheTerminal() throws Exception {
         // #1118: 7-bit (ESC [) and 8-bit (U+009B) CSI alike, in plain, the table and the details.
         var purpose = "\u001b[2J\u009b2Jhi";
