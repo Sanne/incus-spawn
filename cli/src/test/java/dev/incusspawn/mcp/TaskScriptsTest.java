@@ -972,6 +972,24 @@ class TaskScriptsTest {
     }
 
     @Test
+    @Timeout(30)
+    void anExitRecordThatCouldNotBeWrittenIsNeverPutInPlace() throws Exception {
+        // A full disk, say: the record is written aside, and an empty one must not become the exit.
+        sh(TaskScripts.launch("t61-abc", 1, Tasks.COMMAND, TaskScripts.commandRun("t61-abc", work.toString(), Map.of(), "sleep 300")), "");
+        var pb = new ProcessBuilder("bash", "-c", "echo() { return 1; }\n" + TaskScripts.cancel("t61-abc")).directory(home.toFile());
+        pb.environment().put("HOME", home.toString());
+        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        var p = pb.start();
+        assertTrue(p.waitFor(20, TimeUnit.SECONDS));
+        var d = home.resolve(".isx-mcp/tasks/t61-abc");
+        assertFalse(Files.exists(d.resolve("exit-1")), "no exit was recorded, so none is in place");
+        assertTrue(p.exitValue() != 0, "and the cancel says it failed");
+        try (var files = Files.list(d)) {
+            assertTrue(files.noneMatch(f -> f.getFileName().toString().startsWith(".tmp.")), "nothing left aside");
+        }
+    }
+
+    @Test
     void aTaskStartedUnderAKeyListsItForAnAdoptingSession() throws Exception {
         sh(TaskScripts.launch("t1-abc", 1, Tasks.COMMAND,
                 TaskScripts.commandRun("t1-abc", work.toString(), Map.of(), "true"), "issue-1011:impl.v2_x"), "");

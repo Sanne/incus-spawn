@@ -370,7 +370,7 @@ class DelegationToolsTest {
     private String runScript(int run) {
         var launch = backend.scripts.stream().filter(sc -> sc.contains("isx-task-") && sc.contains("-" + run + " --"))
                 .reduce((a, b) -> b).orElseThrow();
-        var m = java.util.regex.Pattern.compile("echo (\\S+) \\| base64 -d > \"\\$w\"; mv -fT \"\\$w\" \"\\$D/run-" + run + "\\.sh\"")
+        var m = java.util.regex.Pattern.compile("echo (\\S+) \\| base64 -d > \"\\$w\" && mv -fT \"\\$w\" \"\\$D/run-" + run + "\\.sh\"")
                 .matcher(launch);
         assertTrue(m.find(), launch);
         return new String(java.util.Base64.getDecoder().decode(m.group(1)), java.nio.charset.StandardCharsets.UTF_8);
@@ -1006,7 +1006,7 @@ class DelegationToolsTest {
         var first = structured(call("delegate", args));
         assertFalse(first.has("replayed"));
         var launch = backend.scripts.stream().filter(sc -> sc.contains("systemd-run")).findFirst().orElseThrow();
-        assertTrue(launch.contains("printf '%s' 't-1' > \"$w\"; mv -fT \"$w\" \"$D/key\""), "recorded with the task: " + launch);
+        assertTrue(launch.contains("printf '%s' 't-1' > \"$w\" && mv -fT \"$w\" \"$D/key\""), "recorded with the task: " + launch);
         taskState = "finished";
         var again = structured(call("delegate", args));
         assertEquals(first.path("task_id").asText(), again.path("task_id").asText());

@@ -69,7 +69,10 @@ final class TaskScripts {
      * waiting on it, until something writes to it. Checking the path first is not enough, as a
      * FIFO can be swapped in between the check and the open (#1080); so the file is opened
      * read-write, which never waits on a FIFO, and what was opened is checked. The path is still
-     * checked first, as opening read-write creates a file that is not there.
+     * checked first, as opening read-write creates a file that is not there. So a regular file
+     * agentuser may read but not write (read-only mode, another owner, a read-only mount) reads
+     * as missing too; isx writes every task file as agentuser, so only something else in the
+     * instance makes one.
      */
     private static String ifFile(String file, String command) {
         var quoted = "\"" + file + "\"";
@@ -91,10 +94,14 @@ final class TaskScripts {
      * without opening it: a FIFO there would hold an open for writing until something reads it
      * (#1074). Written into a file {@code mktemp} makes, then renamed into place, which replaces
      * whatever was there; a directory there fails it ({@code -T}), rather than receiving the file.
-     * A list of simple commands, so a script under {@code set -e} stops at the one that failed.
+     * If any step fails (a full disk, say), nothing is put in place, nothing is left aside, and the
+     * status is false: an exit record must never appear empty. A script under {@code set -e}
+     * follows it with {@code || exit}, as {@code set -e} ignores a failure inside an
+     * {@code &&} list. Sets {@code w}.
      */
     static String writeAside(String dir, String name, String command) {
-        return "w=$(mktemp \"" + dir + "/.tmp.XXXXXX\"); " + command + " > \"$w\"; mv -fT \"$w\" \"" + dir + "/" + name + "\"";
+        return "{ w=$(mktemp \"" + dir + "/.tmp.XXXXXX\") && { " + command + " > \"$w\" && mv -fT \"$w\" \"" + dir + "/" + name
+                + "\" || { rm -f \"$w\"; false; }; }; }";
     }
 
     /** The unit of one run; {@code run} may be a shell expression such as {@code $n}. */
@@ -188,11 +195,12 @@ final class TaskScripts {
         var d = dir(taskId);
         var sb = new StringBuilder();
         sb.append("set -e; D=").append(d).append("; mkdir -p \"$D\"; ");
-        if (key != null && run == 1) sb.append(writeAside("key", "printf '%s' " + ExecScript.quote(McpSession.checkKey(key)))).append("; ");
-        sb.append(writeAside("prompt-" + run + ".md", "cat")).append("; ");
-        sb.append(writeAside("run-" + run + ".sh", "echo " + b64(runScript) + " | base64 -d")).append("; ");
-        if (Tasks.AGENT.equals(kind) && run == 1) sb.append(writeAside("brief.md", "echo " + b64(DELEGATE_BRIEF) + " | base64 -d")).append("; ");
-        sb.append(writeAside("kind", "echo " + kind)).append("; ");
+        var orExit = " || exit 1; ";
+        if (key != null && run == 1) sb.append(writeAside("key", "printf '%s' " + ExecScript.quote(McpSession.checkKey(key)))).append(orExit);
+        sb.append(writeAside("prompt-" + run + ".md", "cat")).append(orExit);
+        sb.append(writeAside("run-" + run + ".sh", "echo " + b64(runScript) + " | base64 -d")).append(orExit);
+        if (Tasks.AGENT.equals(kind) && run == 1) sb.append(writeAside("brief.md", "echo " + b64(DELEGATE_BRIEF) + " | base64 -d")).append(orExit);
+        sb.append(writeAside("kind", "echo " + kind)).append(orExit);
         // A system unit, so the task survives this exec and any session; su - gives the same
         // login environment exec has.
         sb.append("sudo -n systemd-run --quiet --collect --unit=").append(unit(taskId, String.valueOf(run)))
