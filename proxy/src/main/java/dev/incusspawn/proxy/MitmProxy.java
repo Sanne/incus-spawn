@@ -1800,6 +1800,16 @@ public class MitmProxy {
         private long clientActive;
         private long upstreamActive = System.nanoTime();
         private long stallTimer;
+        private final StringBuilder trace = new StringBuilder();
+        private final long t0 = System.nanoTime();
+        private long chunksSince;
+        private void tr(String e) {
+            if (length < 1_000_000) return;
+            trace.append(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0)).append(' ').append(e)
+                    .append(" rcv=").append(received).append(" chunks=").append(chunksSince)
+                    .append(" w=").append(waitingForDrain).append(" [").append(Thread.currentThread().getName()).append("]\n");
+            chunksSince = 0;
+        }
 
         CachingDownload(HttpServerResponse clientResp, long started, HttpClientResponse first,
                         Path cacheFile, String ref, Verification verification) {
@@ -1894,6 +1904,7 @@ public class MitmProxy {
             upResp.handler(chunk -> {
                 if (upResp != current) return;
                 received += chunk.length();
+                chunksSince++;
                 resumes = 0;
                 clientActive = upstreamActive = System.nanoTime();
                 if (!clientGone) clientResp.write(chunk);
@@ -1901,6 +1912,7 @@ public class MitmProxy {
                 if (clientBackedUp() || file.writeQueueFull()) {
                     upResp.pause();
                     waitingForDrain = true;
+                    tr("pause client=" + clientBackedUp() + " file=" + file.writeQueueFull());
                     resumeWhenWritable();
                 }
             });
@@ -1920,20 +1932,24 @@ public class MitmProxy {
         private void resumeWhenWritable() {
             if (failed || done || file == null) return;
             if (clientBackedUp()) {
+                tr("wait-client");
                 clientResp.drainHandler(v -> {
+                    tr("client-drain backed=" + clientBackedUp());
                     // The client took what we had: it was not left waiting. A disk that drains
                     // tells it nothing, so only this renews its budget
                     clientActive = System.nanoTime();
                     resumeWhenWritable();
                 });
             } else if (file.writeQueueFull()) {
-                file.drainHandler(v -> resumeWhenWritable());
+                tr("wait-file");
+                file.drainHandler(v -> { tr("file-drain"); resumeWhenWritable(); });
             } else if (current != null) {
                 if (waitingForDrain) {
                     // Paused on us, upstream did not stall
                     waitingForDrain = false;
                     upstreamActive = System.nanoTime();
                 }
+                tr("resume");
                 current.resume();
                 // Checked again now, not an idle period after the pause began
                 vertx.cancelTimer(stallTimer);
@@ -1975,12 +1991,16 @@ public class MitmProxy {
                     why = "no data for " + quiet / 1000 + "s";
                 }
                 if (wait <= 0) {
+                    tr("CUT");
+                    System.err.println("DIAG trace\n" + trace);
+                    System.err.println("DIAG cut quiet=" + quiet + " drainWait=" + waitingForDrain + " backedUp=" + clientBackedUp() + " fileFull=" + file.writeQueueFull() + " received=" + received + " sinceClient=" + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - clientActive) + " thread=" + Thread.currentThread().getName() + " autoRead=" + ((io.vertx.core.net.impl.ConnectionBase) current.request().connection()).channel().config().isAutoRead() + " connLoop=" + ((io.vertx.core.net.impl.ConnectionBase) current.request().connection()).channel().eventLoop().inEventLoop());
                     broken(new java.util.concurrent.TimeoutException(why), false);
                     if (!failed) watchForStalls();
                     return;
                 }
             }
             stallTimer = vertx.setTimer(wait, id -> {
+                tr("timer");
                 if (!failed && !done) watchForStalls();
             });
         }
@@ -2018,6 +2038,7 @@ public class MitmProxy {
 
         private void broken(Throwable err, boolean resumeFailed) {
             if (failed || done) return;
+            System.err.println("DIAG broken " + err + " at " + received + " drainWait=" + waitingForDrain + " quietMs=" + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - upstreamActive));
             abandonCurrent();
             var cannot = whyNotResumable();
             if (cannot != null) {

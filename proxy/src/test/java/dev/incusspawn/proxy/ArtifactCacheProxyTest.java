@@ -1257,7 +1257,7 @@ class ArtifactCacheProxyTest {
         }
     }
 
-    @Test
+    @org.junit.jupiter.api.RepeatedTest(60)
     void clientThatStopsReadingIsNotTakenForAStalledUpstream() throws Exception {
         // Enough to fill every socket buffer between here and upstream, so upstream is paused
         var content = randomText(64 * 1024).repeat(256);
