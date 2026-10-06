@@ -35,6 +35,11 @@ class IncusApi {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int WAIT_TIMEOUT_SECONDS = 120;
+    /**
+     * How long an async operation is waited for, over successive {@code /wait} polls: as long as
+     * the exec ceiling, well past any real copy or image download, so only a stuck operation hits it.
+     */
+    private Duration operationWaitCeiling = Duration.ofSeconds(MAX_EXEC_WAIT_SECONDS);
 
     private final IncusTransport transport;
     private final long pingIntervalMs;
@@ -389,18 +394,41 @@ class IncusApi {
         return waitForOperation(opPath);
     }
 
+    /**
+     * Block until the operation leaves Running/Pending. A {@code /wait} whose long-poll times out
+     * answers HTTP 200 with the operation as it is, still running (#1089) -- a long copy, an image
+     * download, a large import -- so it is asked again, up to {@link #operationWaitCeiling}, past
+     * which the operation is reported as unfinished rather than taken for done.
+     */
     private ApiResponse waitForOperation(String operationPath) {
         var waitPath = operationPath + "/wait?timeout=" + WAIT_TIMEOUT_SECONDS;
-        var result = requestWithTimeout("GET", waitPath, null,
-                WAIT_TIMEOUT_SECONDS + 30);
-        if (!result.isSuccess()) {
-            throw new IncusException("Operation wait failed: " + result.body().path("error").asText());
+        long deadline = System.nanoTime() + operationWaitCeiling.toNanos();
+        while (true) {
+            var result = requestWithTimeout("GET", waitPath, null,
+                    WAIT_TIMEOUT_SECONDS + 30);
+            if (!result.isSuccess()) {
+                throw new IncusException("Operation wait failed: " + result.body().path("error").asText());
+            }
+            var metadata = result.body().path("metadata");
+            var status = metadata.path("status").asText();
+            if ("Failure".equals(status)) {
+                throw new IncusException("Operation failed: " + metadata.path("err").asText("unknown"));
+            }
+            if (!isUnfinished(status)) return result;
+            if (System.nanoTime() - deadline >= 0) {
+                throw new IncusException("Operation " + operationPath + " still running after "
+                        + operationWaitCeiling.toSeconds() + "s; given up on");
+            }
         }
-        var metadata = result.body().path("metadata");
-        if ("Failure".equals(metadata.path("status").asText())) {
-            throw new IncusException("Operation failed: " + metadata.path("err").asText("unknown"));
-        }
-        return result;
+    }
+
+    private static boolean isUnfinished(String status) {
+        return status.equals("Running") || status.equals("Pending");
+    }
+
+    /** For tests: how long {@link #waitForOperation} keeps asking before giving up. */
+    void operationWaitCeiling(Duration ceiling) {
+        operationWaitCeiling = ceiling;
     }
 
     /**
@@ -1204,7 +1232,7 @@ class IncusApi {
                 }
                 var meta = waitResp.body().path("metadata");
                 var status = meta.path("status").asText();
-                if ("Running".equals(status) || "Pending".equals(status)) {
+                if (isUnfinished(status)) {
                     continue; // long-poll window elapsed; command still running
                 }
                 finished = true;

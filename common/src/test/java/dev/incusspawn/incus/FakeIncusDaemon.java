@@ -62,6 +62,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     private JsonNode listingOverride;
     private boolean refuseNextWrite;
     private int failReadsWith;
+    private int runningWaits;
     private int nextOperation = 1;
     private long nextPid = 1000;
 
@@ -325,6 +326,15 @@ public final class FakeIncusDaemon implements IncusTransport {
         throw new IOException("FakeIncusDaemon does not serve WebSockets");
     }
 
+    /**
+     * Answer the next {@code waits} operation reads with the operation still {@code Running}, as
+     * Incus answers a {@code /wait} whose long-poll timed out: HTTP 200, not finished.
+     */
+    public FakeIncusDaemon operationsRunFor(int waits) {
+        runningWaits = waits;
+        return this;
+    }
+
     /** Advertise these in {@code GET /1.0}'s {@code api_extensions}. */
     public FakeIncusDaemon apiExtensions(String... extensions) {
         apiExtensions.clear();
@@ -347,7 +357,9 @@ public final class FakeIncusDaemon implements IncusTransport {
         }
         if (path.startsWith("/1.0/operations/") && method.equals("GET")) {
             var metadata = JSON.createObjectNode();
-            metadata.put("status", "Success");
+            boolean running = runningWaits > 0;
+            if (running) runningWaits--;
+            metadata.put("status", running ? "Running" : "Success");
             return sync(metadata);
         }
         if (path.startsWith("/1.0/instances?") && method.equals("GET")) {
