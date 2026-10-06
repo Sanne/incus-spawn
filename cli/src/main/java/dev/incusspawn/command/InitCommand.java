@@ -604,7 +604,7 @@ public class InitCommand extends BaseCommand {
             }
             case DetectionResult.UseUfw u -> {
                 useUfw = true;
-                configureUfw();
+                configureUfw(ProxyConfig.resolveGatewayIp(incus), UfwCheck.readBeforeRules());
             }
             case DetectionResult.NeitherInstalled n -> {
                 System.out.println("  No firewall detected. Installing firewalld...");
@@ -633,7 +633,7 @@ public class InitCommand extends BaseCommand {
         configureNetworkManager();
     }
 
-    private void configureFirewalld() {
+    void configureFirewalld() {
         var trustedZoneOutput = captureOutput("sudo", "firewall-cmd", "--zone=trusted", "--list-all");
         boolean hasInterface = trustedZoneOutput.contains("incusbr0");
         boolean hasMasquerade = trustedZoneOutput.contains("masquerade: yes");
@@ -687,11 +687,9 @@ public class InitCommand extends BaseCommand {
         System.out.println("  Firewall configured: incusbr0 in trusted zone with masquerading (firewalld).");
     }
 
-    private void configureUfw() {
-        var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
+    void configureUfw(String gatewayIp, String beforeRules) {
         var subnet = CidrUtils.deriveSubnet(gatewayIp);
 
-        var beforeRules = UfwCheck.readBeforeRules();
         if (beforeRules.isEmpty()) {
             System.err.println("  Error: could not read /etc/ufw/before.rules.");
             System.err.println("  Skipping UFW configuration to avoid overwriting existing rules.");
@@ -898,7 +896,7 @@ public class InitCommand extends BaseCommand {
         }
 
         if (useUfw) {
-            configureMitmProxyUfw(gatewayIp);
+            configureMitmProxyUfw(gatewayIp, UfwCheck.readBeforeRules());
         } else {
             configureMitmProxyFirewalld(gatewayIp);
         }
@@ -915,7 +913,7 @@ public class InitCommand extends BaseCommand {
         System.out.println("  MITM proxy configured.");
     }
 
-    private void configureMitmProxyFirewalld(String gatewayIp) {
+    void configureMitmProxyFirewalld(String gatewayIp) {
         var rulesOutput = captureOutput("firewall-cmd", "--direct", "--get-all-rules");
         boolean hasRedirect = FirewalldCheck.isPreRoutingRulePresent(rulesOutput, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp);
 
@@ -952,8 +950,7 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    private void configureMitmProxyUfw(String gatewayIp) {
-        var beforeRules = UfwCheck.readBeforeRules();
+    void configureMitmProxyUfw(String gatewayIp, String beforeRules) {
         if (beforeRules.isEmpty()) {
             System.err.println("  Warning: could not read /etc/ufw/before.rules. Skipping PREROUTING redirect.");
             return;
@@ -3712,7 +3709,7 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    private String captureOutput(String... command) {
+    String captureOutput(String... command) {
         try {
             var pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
