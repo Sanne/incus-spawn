@@ -237,6 +237,10 @@ public class UpdateBaseCommand extends BaseCommand {
      * The fields of {@code isx update-base --list --format=plain|json}, newest first, in order:
      * add to the end, never rename. {@code date} is the release's ISO-8601 publication date;
      * {@code pinned} marks the current release when it is pinned, so builds never move past it.
+     * {@code listed} is whether the release is among those fetched (the newest published ones):
+     * a current base image that is not -- older than all of them, unpublished, or deleted --
+     * gets a record of its own, last, with {@code listed} false and no date, so a script always
+     * finds the current one. Not being listed says nothing about its age.
      */
     static List<Map<String, Object>> releaseRecords(List<Release> available, String currentTag, boolean pinned) {
         var records = new ArrayList<Map<String, Object>>();
@@ -248,6 +252,17 @@ public class UpdateBaseCommand extends BaseCommand {
             record.put("latest", i == 0);
             record.put("current", r.tag().equals(currentTag));
             record.put("pinned", pinned && r.tag().equals(currentTag));
+            record.put("listed", true);
+            records.add(record);
+        }
+        if (currentTag != null && available.stream().noneMatch(r -> r.tag().equals(currentTag))) {
+            var record = new LinkedHashMap<String, Object>();
+            record.put("tag", currentTag);
+            record.put("date", null);
+            record.put("latest", false);
+            record.put("current", true);
+            record.put("pinned", pinned);
+            record.put("listed", false);
             records.add(record);
         }
         return records;

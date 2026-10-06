@@ -522,7 +522,9 @@ live in the TUI's template rows and are added at the end of its record when that
 Nothing the table tells a person about state is left out of the record: problems a template's
 choice causes (`account show`'s `template_problem`), whether a proxy restart can clear drift
 (`restart_helps`), a leaking vsock forwarder (`vsock_connections_high`) and a pinned base image
-(`pinned`) are fields; only descriptive detail (a tool's parameter types, the system diagnostics
+(`pinned`) are fields, and `update-base --list` gives the current base image a record of its own
+(`listed: false`, last, no date) when it is not among the releases fetched -- older than all of
+them, unpublished or deleted, so not a statement about its age -- and a script always finds it; only descriptive detail (a tool's parameter types, the system diagnostics
 under `vm status`) stays table-only. `doctor`'s `detail` and `remediation` are text for people, not values a script should parse; the
 table's wrapping parentheses are dropped from `detail`. `QueryCommandFormatTest` pins the JSON of each, and `ExitCodeTest` that each rejects
 `--format=yaml` alike.

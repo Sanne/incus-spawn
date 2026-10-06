@@ -433,15 +433,28 @@ class QueryCommandFormatTest {
                   "date" : "2026-10-01",
                   "latest" : true,
                   "current" : false,
-                  "pinned" : false
+                  "pinned" : false,
+                  "listed" : true
                 }, {
                   "tag" : "fedora-44-20260901",
                   "date" : null,
                   "latest" : false,
                   "current" : true,
-                  "pinned" : true
+                  "pinned" : true,
+                  "listed" : true
                 } ]
                 """, json(UpdateBaseCommand.releaseRecords(releases, "fedora-44-20260901", true)));
+    }
+
+    @Test
+    void aCurrentBaseOlderThanEveryFetchedReleaseStillHasARecord() {
+        var releases = List.of(new Release("fedora-44-20261001", "2026-10-01", "u1"));
+        assertEquals("""
+                fedora-44-20261001\t2026-10-01\ttrue\tfalse\tfalse\ttrue
+                fedora-44-20250101\t-\tfalse\ttrue\ttrue\tfalse
+                """, plain(UpdateBaseCommand.releaseRecords(releases, "fedora-44-20250101", true)));
+        // No current tag recorded: nothing to add.
+        assertEquals(1, UpdateBaseCommand.releaseRecords(releases, null, false).size());
     }
 
     // ── isx branch ──────────────────────────────────────────────────────────────
