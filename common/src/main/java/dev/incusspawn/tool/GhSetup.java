@@ -233,13 +233,29 @@ public class GhSetup implements ToolSetup {
                 .success();
     }
 
+    /**
+     * {@code GH_TOKEN} as a login shell in the instance has it, for a command run from the host:
+     * the token of this start once it has one, which changes on every start (#1108), and the
+     * build-time placeholder in a build, which has none. A token fixed here would be refused by
+     * a proxy that checks it.
+     */
+    static final String LOGIN_TOKEN = loginToken("/etc/profile");
+
+    static String loginToken(String profile) {
+        // Guarded: a '.' of a missing file ends a POSIX shell, and with it the printf. The
+        // fallback is outside the shell that sources the profile, which a profile script that
+        // exits or fails a special builtin ends early: that leaves the placeholder, never nothing
+        return "GH_TOKEN=\"$(t=$({ [ -r " + profile + " ] && . " + profile + "; } </dev/null >/dev/null 2>&1;"
+                + " printf %s \"$GH_TOKEN\"); printf %s \"${t:-" + PLACEHOLDER_TOKEN + "}\")\"";
+    }
+
     /** The git identity behind a GitHub account, as the API reports it. */
     record GitIdentity(String name, String email) {}
 
     /**
      * Ask the API who this account's token belongs to.
      *
-     * <p>The request carries only the placeholder token: it goes through the MITM proxy, which
+     * <p>The request carries only the instance's placeholder token: it goes through the MITM proxy, which
      * substitutes the real one for whichever account the caller is pinned to. That is why
      * neither this method nor its callers need the credential itself.
      *
@@ -249,8 +265,7 @@ public class GhSetup implements ToolSetup {
      */
     private GitIdentity resolveIdentity(Container c, SpawnConfig config,
                                         String accountName, boolean required) {
-        var command = "GH_TOKEN=" + PLACEHOLDER_TOKEN
-                + " gh api user --jq '[.login, .name, .email] | @tsv'";
+        var command = LOGIN_TOKEN + " gh api user --jq '[.login, .name, .email] | @tsv'";
         var tokenConfigured = !AccountResolver.value(config, NAMESPACE, accountName, "token").isBlank();
         var result = c.sh(command);
         if (tokenConfigured) {
@@ -307,8 +322,7 @@ public class GhSetup implements ToolSetup {
         String jq = preferNoreply
                 ? JQ_NOREPLY + " // " + JQ_PRIMARY + " // " + JQ_ANY_VERIFIED
                 : JQ_PRIMARY + " // " + JQ_ANY_VERIFIED;
-        var result = c.sh("GH_TOKEN=" + PLACEHOLDER_TOKEN
-                + " gh api user/emails --jq '" + jq + "'");
+        var result = c.sh(LOGIN_TOKEN + " gh api user/emails --jq '" + jq + "'");
         if (!result.success() || result.stdout().isBlank() || result.stdout().strip().equals("null")) {
             return null;
         }

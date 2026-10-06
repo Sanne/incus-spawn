@@ -5,6 +5,7 @@ import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
@@ -355,6 +356,56 @@ class GhSetupTest {
 
         verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"), contains("Acme Bot"));
         verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"), contains("bot@acme.example"));
+    }
+
+    /**
+     * A re-point runs on a started instance, whose token changes on every start (#1108): the
+     * lookup must present the one its login shells have, never a constant.
+     */
+    @Test
+    void aRepointPresentsTheTokenOfTheInstanceLoginEnvironment() {
+        var incus = stubIncus();
+        existingIdentity(incus);
+        ghApiUserReturns(incus, "acme-bot\tAcme Bot\t\n");
+        ghApiEmailsReturns(incus, "bot@acme.example\n");
+
+        new GhSetup().rebakeForAccount(new Container(incus, CONTAINER), "acme");
+
+        var captor = ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), captor.capture());
+        var apiCalls = captor.getAllValues().stream().filter(cmd -> cmd.contains("gh api")).toList();
+        assertEquals(2, apiCalls.size(), apiCalls.toString());
+        apiCalls.forEach(cmd -> assertTrue(cmd.startsWith(GhSetup.LOGIN_TOKEN + " gh api"), cmd));
+    }
+
+    @Test
+    void theLoginTokenIsTheOneTheProfileExports(@TempDir Path dir) throws Exception {
+        var profile = dir.resolve("profile");
+        Files.writeString(profile, "echo noise; echo more >&2; export GH_TOKEN=gho_isx_0123abcd\n");
+        assertEquals("gho_isx_0123abcd", tokenSeenBy(GhSetup.loginToken(profile.toString())));
+
+        Files.writeString(profile, "export OTHER=1\n");
+        assertEquals("gho_placeholder", tokenSeenBy(GhSetup.loginToken(profile.toString())),
+                "a build has only the placeholder");
+
+        assertEquals("gho_placeholder", tokenSeenBy(GhSetup.loginToken(dir.resolve("missing").toString())));
+    }
+
+    @Test
+    void aProfileThatEndsTheShellEarlyLeavesThePlaceholder(@TempDir Path dir) throws Exception {
+        // A failing special builtin ends a POSIX shell, and with it whatever was to follow
+        var profile = dir.resolve("profile");
+        Files.writeString(profile, "readonly A=1; A=2\nexport GH_TOKEN=gho_isx_0123abcd\n");
+        assertEquals("gho_placeholder", tokenSeenBy(GhSetup.loginToken(profile.toString())),
+                "a lookup always presents a token: the placeholder at worst, never none");
+
+        Files.writeString(profile, "exit 3\n");
+        assertEquals("gho_placeholder", tokenSeenBy(GhSetup.loginToken(profile.toString())));
+    }
+
+    private static String tokenSeenBy(String prefix) throws Exception {
+        return GuestShell.run(Path.of(System.getProperty("java.io.tmpdir")), Map.of(),
+                "sh", "-c", prefix + " sh -c 'printf %s \"$GH_TOKEN\"'");
     }
 
     /**
