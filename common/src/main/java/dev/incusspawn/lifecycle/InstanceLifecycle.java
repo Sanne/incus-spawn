@@ -21,6 +21,7 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.InstanceSecret;
+import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.util.BuildOutput;
@@ -686,11 +687,12 @@ public final class InstanceLifecycle {
     /** {@link #startForUse(IncusClient, String, MachineType, Consumer)}, with the stopped instance already read. */
     static JsonNode startForUse(IncusClient incus, String name, JsonNode instance, MachineType machineType,
                                 Consumer<String> warn) {
+        var placeholders = ProofToken.declaredInBackground();
         prepareHostDevicesForStart(incus, name, instance, warn);
         var secret = rotateInstanceSecret(incus, name);
         startInstance(incus, name, warn);
         incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
-                InstanceSecret.guestEnv(secret, Metadata.isMcpCaller(instance)));
+                InstanceSecret.guestEnv(secret, Metadata.isMcpCaller(instance), placeholders.join()));
         return recordSecretBoot(incus, name, machineType);
     }
 
@@ -706,9 +708,11 @@ public final class InstanceLifecycle {
         // Before, not after: once the restart returns the guest is booting, when Incus API calls
         // contend with it. A restart that then fails leaves a guest whose secret no longer
         // matches, which is refused -- the safe way for it to go wrong.
+        var placeholders = ProofToken.declaredInBackground();
         var secret = rotateInstanceSecret(incus, name);
         incus.restart(name);
-        incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT, InstanceSecret.guestEnv(secret, mcpCaller));
+        incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
+                InstanceSecret.guestEnv(secret, mcpCaller, placeholders.join()));
         recordSecretBoot(incus, name, machineType);
     }
 
@@ -777,11 +781,12 @@ public final class InstanceLifecycle {
                                              boolean mcpCaller, Consumer<String> say) {
         String failure;
         try {
+            var placeholders = ProofToken.declaredInBackground();
             var secret = rotateInstanceSecret(incus, name,
                     bootedAt == null ? Map.of() : Map.of(Metadata.INSTANCE_SECRET_BOOT, bootedAt));
             // GUEST_SCRIPT never fails, so the same exec asks whether the secret is now there:
             // a write it skipped would otherwise give a VM a new secret on every shell, silently
-            var delivery = incus.shellExec(name, InstanceSecret.guestEnv(secret, mcpCaller), "sh", "-c",
+            var delivery = incus.shellExec(name, InstanceSecret.guestEnv(secret, mcpCaller, placeholders.join()), "sh", "-c",
                     InstanceSecret.GUEST_SCRIPT + "\n" + InstanceSecret.GUEST_CHECK);
             if (delivery.success() && !InstanceSecret.missingIn(delivery.stdout())) return;
             failure = delivery.success() ? "the guest did not keep it" : "exit code " + delivery.exitCode();
@@ -1421,10 +1426,11 @@ public final class InstanceLifecycle {
      * @param secret     the instance secret to put in place (#934), or null for none
      * @param mcpCaller  whether the instance holds the {@code mcp-caller} grant, which the same
      *                   exec reconciles its Claude Code registration with (#1182)
+     * @param placeholders the variables to give the secret's proof tokens in (#1106)
      */
     public static void setupRuntime(IncusClient incus, String name,
                                    NetworkMode networkMode, RuntimeConfig prefetched, String secret,
-                                   boolean mcpCaller) {
+                                   boolean mcpCaller, List<ProofToken.Placeholder> placeholders) {
         if (networkMode == NetworkMode.PROXY_ONLY) {
             applyProxyOnlyFirewall(incus, name);
         }
@@ -1438,7 +1444,7 @@ public final class InstanceLifecycle {
         var sshKeys = prefetched != null && prefetched.hasSshKeys() ? sshKeysToInject() : List.<String>of();
         var setupScript = buildSetupScript(prefetched, buildSourceJson, networkMode, sshKeys, secret != null);
         BuildOutput.stepStart("Waiting for container...");
-        var env = secret != null ? InstanceSecret.guestEnv(secret, mcpCaller) : Map.<String, String>of();
+        var env = secret != null ? InstanceSecret.guestEnv(secret, mcpCaller, placeholders) : Map.<String, String>of();
         if (!incus.pollUntilReady(name, 30, env, "sh", "-c", setupScript)) {
             BuildOutput.stepBreak();
             System.err.println(BuildOutput.STEP_INDENT + "Warning: container setup may not be complete.");
@@ -1460,7 +1466,7 @@ public final class InstanceLifecycle {
     }
 
     public static void setupRuntime(IncusClient incus, String name, NetworkMode networkMode) {
-        setupRuntime(incus, name, networkMode, null, null, false);
+        setupRuntime(incus, name, networkMode, null, null, false, List.of());
     }
 
     /**

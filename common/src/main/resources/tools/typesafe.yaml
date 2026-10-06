@@ -6,6 +6,9 @@ env:
     value: ts-placeholder
 proxy:
   config-namespace: typesafe
+  placeholders:
+    - env: TYPESAFE_API_KEY
+      prefix: ts-
   configuration:
     api-key:
       config-path: apiKey

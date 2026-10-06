@@ -18,6 +18,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.proxy.CertificateAuthority.CaStatus;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -171,7 +172,8 @@ public final class BranchFlow {
      */
     public record Preflight(Request request, Map<String, ImageDef> defs,
                             Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins,
-                            JsonNode sourceInstance, String template) {}
+                            JsonNode sourceInstance, String template,
+                            List<ProofToken.Placeholder> placeholders) {}
 
     /** An account selection and who chose each pin in it. */
     /** @param template the leaf template the source was built from ({@link Inherited#template}) */
@@ -252,7 +254,7 @@ public final class BranchFlow {
             throw new BranchException(e.getMessage());
         }
         return new Preflight(req, defs, accounts.accounts(), accounts.origins(), sourceInstance,
-                accounts.inherited().template());
+                accounts.inherited().template(), ProofToken.declaredBy(served.values()));
     }
 
     /**
@@ -348,7 +350,7 @@ public final class BranchFlow {
 
         // The grant is the request's own: a copy never carries its source's (configureBranch)
         InstanceLifecycle.setupRuntime(incus, name, networkMode, prefetched, secret,
-                Metadata.isMcpCaller(req.extraConfig()));
+                Metadata.isMcpCaller(req.extraConfig()), preflight.placeholders());
         // Or the first shell would take this boot for one isx did not start, and replace its secret
         var booted = InstanceLifecycle.recordSecretBoot(incus, name, machineType);
 

@@ -6,11 +6,15 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /** The per-start instance secret (#934): what it is, how it is checked, and how the guest gets it. */
 class InstanceSecretTest {
+
+    private static final List<ProofToken.Placeholder> PLACEHOLDERS =
+            List.of(new ProofToken.Placeholder("GH_TOKEN", "gho_", "github"));
 
     @Test
     void everySecretIsNewAndOnlyItsHashIsRecorded() {
@@ -39,8 +43,8 @@ class InstanceSecretTest {
 
     @Test
     void theGuestScriptOnlyEverCarriesASecret() {
-        assertThrows(IllegalArgumentException.class, () -> InstanceSecret.guestEnv("x'; rm -rf / #", false));
-        assertThrows(IllegalArgumentException.class, () -> InstanceSecret.guestEnv("", false));
+        assertThrows(IllegalArgumentException.class, () -> InstanceSecret.guestEnv("x'; rm -rf / #", false, List.of()));
+        assertThrows(IllegalArgumentException.class, () -> InstanceSecret.guestEnv("", false, List.of()));
     }
 
     /**
@@ -57,7 +61,7 @@ class InstanceSecretTest {
 
         // Twice: it rides in probes and setup scripts that are retried until one answers
         for (int i = 0; i < 2; i++) {
-            var run = run(script + "\necho \"ready${ISX_INSTANCE_SECRET}${isx_secret}\"", secret);
+            var run = run(script + "\necho \"ready${ISX_INSTANCE_SECRET}${isx_secret}${ISX_PROOF_TOKENS}${isx_proofs}\"", secret);
             assertEquals("ready", new String(run.getInputStream().readAllBytes()).strip(),
                     "the secret does not outlive the script's own use of it");
             assertEquals(0, run.waitFor());
@@ -68,9 +72,47 @@ class InstanceSecretTest {
         assertEquals("r--r-----", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)),
                 "readable by the instance user's group, by nobody else");
         assertFalse(Files.exists(root.resolve("run/isx/instance-secret.new")));
-        assertEquals("export " + InstanceSecret.FILE_ENV_VAR + "=" + file + "\n",
+        var proofs = root.resolve("run/isx/proof-tokens");
+        assertEquals("export " + InstanceSecret.FILE_ENV_VAR + "=" + file + "\n"
+                        + "if [ -r " + proofs + " ]; then . " + proofs + "; fi\n",
                 Files.readString(root.resolve("etc/profile.d/isx-instance-secret.sh")),
                 "the profile names the file; the secret stays out of every process's environment");
+        assertEquals(ProofToken.profile(secret, PLACEHOLDERS), Files.readString(proofs));
+        assertEquals("r--r-----", PosixFilePermissions.toString(Files.getPosixFilePermissions(proofs)),
+                "a proof opens a credential: the instance user's group only, like the secret");
+    }
+
+    /**
+     * A login shell sources {@code isx-env.sh} first, then the secret's profile: this start's
+     * proofs replace the build's static placeholders, and only the variables the build exported.
+     */
+    @Test
+    void aLoginShellSeesThisStartsProofsInPlaceOfTheStaticPlaceholders(@TempDir Path root) throws Exception {
+        var gid = new String(new ProcessBuilder("id", "-g").start().getInputStream().readAllBytes()).strip();
+        var script = guestScriptUnder(root, "tmpfs /run tmpfs rw 0 0\n").replace("chgrp 1000 ", "chgrp " + gid + " ");
+        var placeholders = List.of(
+                new ProofToken.Placeholder("GH_TOKEN", "gho_", "github"),
+                new ProofToken.Placeholder("ANTHROPIC_API_KEY", "sk-ant-", "claude"),
+                new ProofToken.Placeholder("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-", "claude"));
+        var envFile = root.resolve("etc/profile.d/isx-env.sh");
+        Files.writeString(envFile, "export GH_TOKEN=gho_placeholder\nexport CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-placeholder\n");
+
+        for (var secret : List.of(InstanceSecret.generate(), InstanceSecret.generate())) {
+            var start = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true);
+            start.environment().putAll(InstanceSecret.guestEnv(secret, false, placeholders));
+            assertEquals(0, start.start().waitFor());
+
+            var login = new ProcessBuilder("sh", "-c", ". " + envFile + "; . " + root.resolve("etc/profile.d/isx-instance-secret.sh")
+                    + "; echo \"$GH_TOKEN\"; echo \"$CLAUDE_CODE_OAUTH_TOKEN\"; echo \"${ANTHROPIC_API_KEY-unset}\"; env")
+                    .redirectErrorStream(true);
+            login.environment().clear();
+            var lines = new String(login.start().getInputStream().readAllBytes()).lines().toList();
+            assertEquals("gho_isx_" + ProofToken.derive(secret, "github"), lines.get(0));
+            assertEquals("sk-ant-oat01-isx_" + ProofToken.derive(secret, "claude"), lines.get(1));
+            assertEquals("unset", lines.get(2), "an OAuth-configured instance never grows an API key");
+            assertTrue(lines.stream().noneMatch(l -> l.contains(secret)),
+                    "the environment carries proofs, never the secret itself");
+        }
     }
 
     /** The script with its guest paths moved under {@code root}, as if {@code mounts} were the guest's. */
@@ -106,7 +148,7 @@ class InstanceSecretTest {
     /** {@code script} run as the guest would, handed {@code secret} the way the exec hands it. */
     private static Process run(String script, String secret) throws Exception {
         var pb = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true);
-        pb.environment().putAll(InstanceSecret.guestEnv(secret, false));
+        pb.environment().putAll(InstanceSecret.guestEnv(secret, false, PLACEHOLDERS));
         return pb.start();
     }
 }

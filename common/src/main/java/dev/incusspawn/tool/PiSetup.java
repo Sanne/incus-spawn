@@ -3,6 +3,7 @@ package dev.incusspawn.tool;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.util.BuildOutput;
 
 import java.util.ArrayList;
@@ -73,6 +74,16 @@ public class PiSetup implements ToolSetup {
     @Override
     public java.util.Set<String> credentialNamespaces() {
         return new java.util.LinkedHashSet<>(List.of(SpawnConfig.ClaudeConfig.NAMESPACE, "openai"));
+    }
+
+    /**
+     * Pi reads {@code ANTHROPIC_API_KEY} and {@code OPENAI_API_KEY} as Claude Code and Codex do,
+     * which declare them, and Claude's OAuth token under a name of its own, declared here.
+     */
+    @Override
+    public List<ProofToken.Placeholder> placeholders() {
+        return List.of(new ProofToken.Placeholder("ANTHROPIC_OAUTH_TOKEN",
+                SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX, SpawnConfig.ClaudeConfig.NAMESPACE));
     }
 
     /** Only the one its {@code provider} spends, once the template has said which. */

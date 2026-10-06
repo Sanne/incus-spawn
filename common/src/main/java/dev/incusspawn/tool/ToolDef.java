@@ -357,6 +357,7 @@ public class ToolDef {
         private String configNamespace = "";
         private Map<String, ConfigEntry> configuration = Map.of();
         private List<AuthDef> auth = List.of();
+        private List<PlaceholderDef> placeholders = List.of();
 
         public String getConfigNamespace() { return configNamespace; }
         public void setConfigNamespace(String configNamespace) {
@@ -368,6 +369,10 @@ public class ToolDef {
         }
         public List<AuthDef> getAuth() { return auth; }
         public void setAuth(List<AuthDef> auth) { this.auth = auth != null ? auth : List.of(); }
+        public List<PlaceholderDef> getPlaceholders() { return placeholders; }
+        public void setPlaceholders(List<PlaceholderDef> placeholders) {
+            this.placeholders = placeholders != null ? placeholders : List.of();
+        }
 
         public String fullConfigPath(ConfigEntry entry) {
             var path = entry.getConfigPath();
@@ -442,6 +447,30 @@ public class ToolDef {
         public void setHelp(List<String> help) { this.help = help != null ? help : List.of(); }
         public boolean isSelfResolving() { return !configPath.isBlank() || !this.value.isBlank(); }
         public boolean isConfirm() { return "confirm".equals(type); }
+    }
+
+    /**
+     * An environment variable the tool reads its credential from, which an instance's start fills
+     * with a proof token for the proxy's namespace ({@code dev.incusspawn.proxy.ProofToken}, #1106):
+     * {@code prefix} plus {@code isx_} plus a digest of the instance's per-start secret. The prefix
+     * is whatever the tool checks a credential's shape by, e.g. {@code gho_}.
+     */
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class PlaceholderDef {
+        private String env = "";
+        private String prefix = "";
+
+        public PlaceholderDef() {}
+        public PlaceholderDef(String env, String prefix) {
+            setEnv(env);
+            setPrefix(prefix);
+        }
+
+        public String getEnv() { return env; }
+        public void setEnv(String env) { this.env = env != null ? env : ""; }
+        public String getPrefix() { return prefix; }
+        public void setPrefix(String prefix) { this.prefix = prefix != null ? prefix : ""; }
     }
 
     @RegisterForReflection

@@ -6,6 +6,7 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.InstanceSecret;
+import dev.incusspawn.proxy.ProofToken;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -136,5 +137,61 @@ class InstanceSecretRotationTest {
         assertNotEquals(previous, recorded);
         assertEquals(List.of(NAME + " restart"), daemon.stateActions());
         assertEquals(recorded, InstanceSecret.sha256(secretIn(daemon.execs().getFirst())));
+    }
+
+    /**
+     * The exec that delivers a start's secret carries the proof of every declared placeholder
+     * (#1106), derived from that same secret: one exec, nothing the start did not already send.
+     */
+    @Test
+    void aStartsProbeCarriesTheProofOfEveryDeclaredPlaceholder() {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
+        assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(
+                daemon.clientWithShortReadyWait(), NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {}));
+
+        var declared = ProofToken.declared();
+        assertTrue(declared.stream().map(ProofToken.Placeholder::namespace).collect(java.util.stream.Collectors.toSet())
+                .containsAll(List.of("github", "claude", "openai", "bob")), declared.toString());
+        var probes = daemon.execs();
+        assertFalse(probes.isEmpty());
+        for (var probe : probes) {
+            var secret = secretIn(probe);
+            assertProofsFor(secret, declared, probe.environment().get(InstanceSecret.PROOFS_DELIVERY_ENV));
+            assertFalse(String.join(" ", probe.command()).contains(ProofToken.derive(secret, "github")),
+                    "a proof opens a credential: it travels in the environment, not on a command line");
+        }
+    }
+
+    @Test
+    void aBranchsFirstStartCarriesItsOwnProofs() {
+        var daemon = new FakeIncusDaemon().container("dev-1", Map.of(Metadata.PROFILE, "tpl-dev"));
+        var incus = org.mockito.Mockito.spy(daemon.client());
+        var env = org.mockito.ArgumentCaptor.<Map<String, String>>captor();
+        org.mockito.Mockito.doReturn(true).when(incus).pollUntilReady(org.mockito.ArgumentMatchers.eq("dev-2"),
+                org.mockito.ArgumentMatchers.anyInt(), env.capture(), org.mockito.ArgumentMatchers.any(String[].class));
+        var request = new BranchFlow.Request("dev-1", "dev-2", false, false, NetworkMode.AIRGAP,
+                null, null, null, null, List.of(), true, Map.of());
+        try {
+            BranchFlow.create(incus, BranchFlow.preflight(incus, request, Map.of()));
+        } catch (RuntimeException afterTheSetupScript) {
+            // What follows the setup exec is not what this test is about
+        }
+
+        var delivered = env.getAllValues().stream().filter(e -> e.containsKey(InstanceSecret.DELIVERY_ENV)).toList();
+        assertFalse(delivered.isEmpty(), "the branch's setup script carries its secret");
+        var secret = delivered.getFirst().get(InstanceSecret.DELIVERY_ENV);
+        assertEquals(recordedHash(daemon, "dev-2"), InstanceSecret.sha256(secret));
+        assertProofsFor(secret, ProofToken.declared(), delivered.getFirst().get(InstanceSecret.PROOFS_DELIVERY_ENV));
+    }
+
+    private static void assertProofsFor(String secret, List<ProofToken.Placeholder> declared, String exports) {
+        assertNotNull(exports, "the probe that delivers the secret delivers its proofs");
+        for (var placeholder : declared) {
+            var line = "if [ -n \"${" + placeholder.env() + "+x}\" ]; then export " + placeholder.env() + "='"
+                    + placeholder.prefix() + ProofToken.MARKER + ProofToken.derive(secret, placeholder.namespace()) + "'; fi";
+            assertTrue(exports.lines().anyMatch(line::equals), () -> "no proof for " + placeholder + " in:\n" + exports);
+        }
+        assertEquals(declared.size(), exports.lines().count(), exports);
+        assertFalse(exports.contains(secret), "never the secret itself");
     }
 }

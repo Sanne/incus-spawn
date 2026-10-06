@@ -3,6 +3,9 @@ package dev.incusspawn.tool;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.proxy.ProofToken;
+
+import java.util.List;
 
 /**
  * A tool that can be installed into a template image during build.
@@ -34,6 +37,26 @@ public interface ToolSetup {
 
     /** Proxy definition for credential injection by the MITM proxy. Null if this tool has no proxy config. */
     default ToolDef.ProxyDef proxy() { return null; }
+
+    /**
+     * The environment variables this tool reads a proxied credential from, each filled at every
+     * start with the instance's proof token for its namespace (#1106) -- a declaration, so the
+     * start, the proxy and {@code isx doctor} all read the same one and nothing lists variables
+     * by name. Derived from {@link #proxy()}'s {@code placeholders}, in the namespace its
+     * credential belongs to; override for a tool that spends another tool's credential without
+     * a proxy entry of its own, as pi does. Declaring a variable sets nothing: a start only
+     * replaces a variable the build exported.
+     */
+    default List<ProofToken.Placeholder> placeholders() {
+        var proxy = proxy();
+        if (proxy == null) return List.of();
+        var namespaces = credentialNamespaces();
+        // No single namespace: the declarations are refused (ProofToken.Placeholder.problem)
+        var namespace = namespaces.size() == 1 ? namespaces.iterator().next() : "";
+        return proxy.getPlaceholders().stream()
+                .map(p -> new ProofToken.Placeholder(p.getEnv(), p.getPrefix(), namespace))
+                .toList();
+    }
 
     /**
      * Whether this tool's {@link #proxy()} configuration is its own credential, rather than

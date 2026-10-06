@@ -47,6 +47,7 @@ public class CodexSetup implements ToolSetup {
         proxy.setConfigNamespace("openai");
         proxy.setConfiguration(Map.of("api-key", apiKey));
         proxy.setAuth(List.of(auth));
+        proxy.setPlaceholders(List.of(new ToolDef.PlaceholderDef("OPENAI_API_KEY", "sk-")));
         return proxy;
     }
 

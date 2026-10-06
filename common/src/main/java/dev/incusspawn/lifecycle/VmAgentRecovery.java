@@ -6,6 +6,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.VmAgentFailure;
 import dev.incusspawn.proxy.InstanceSecret;
+import dev.incusspawn.proxy.ProofToken;
 
 import java.util.HashMap;
 import java.util.function.Consumer;
@@ -63,6 +64,7 @@ public final class VmAgentRecovery {
         }
 
         say.accept("VM agent not responding, restarting " + name + "...");
+        var placeholders = ProofToken.declaredInBackground();
         try {
             incus.stop(name, GRACEFUL_STOP_SECONDS);
         } catch (RuntimeException guestIgnoredShutdown) {
@@ -79,7 +81,7 @@ public final class VmAgentRecovery {
         if (restarted > 0) stamps.put(Metadata.AGENT_RESTART_BOOT, Long.toString(restarted));
         incus.configSetAll(name, stamps);
         incus.waitForReady(name, MachineType.VM, InstanceSecret.GUEST_SCRIPT,
-                InstanceSecret.guestEnv(secret, Metadata.isMcpCaller(instance)));
+                InstanceSecret.guestEnv(secret, Metadata.isMcpCaller(instance), placeholders.join()));
     }
 
     private static IncusException refusal(String name, String why) {

@@ -73,6 +73,12 @@ public class ClaudeSetup implements ToolSetup {
         proxy.setConfigNamespace(SpawnConfig.ClaudeConfig.NAMESPACE);
         proxy.setConfiguration(Map.of("api-key", apiKey, "oauth-token", oauthToken));
         proxy.setAuth(List.of(auth));
+        // One per auth mode: the build exports the one its account's mode reads. Vertex's is the
+        // token a login script puts in ANTHROPIC_CUSTOM_HEADERS and the gcloud stub prints (#1108)
+        proxy.setPlaceholders(List.of(
+                new ToolDef.PlaceholderDef("ANTHROPIC_API_KEY", "sk-ant-"),
+                new ToolDef.PlaceholderDef("CLAUDE_CODE_OAUTH_TOKEN", SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX),
+                new ToolDef.PlaceholderDef(VERTEX_TOKEN_ENV, "ya29.")));
         return proxy;
     }
 

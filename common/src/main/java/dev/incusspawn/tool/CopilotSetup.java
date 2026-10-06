@@ -46,6 +46,7 @@ public class CopilotSetup implements ToolSetup {
         var proxy = new ToolDef.ProxyDef();
         proxy.setConfiguration(Map.of("token", token));
         proxy.setAuth(List.of(bearerAuth));
+        proxy.setPlaceholders(List.of(new ToolDef.PlaceholderDef("COPILOT_GITHUB_TOKEN", "gho_")));
         return proxy;
     }
 

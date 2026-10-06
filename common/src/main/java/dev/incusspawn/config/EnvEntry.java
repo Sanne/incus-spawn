@@ -103,6 +103,11 @@ public class EnvEntry {
         return new EnvEntry(name, substitutor.apply(value), strategy, separator, expandAtLogin);
     }
 
+    /** Whether {@code name} is a variable name an env entry may set. */
+    public static boolean isValidName(String name) {
+        return name != null && ListDeserializer.VALID_NAME.matcher(name).matches();
+    }
+
     public String fingerprintString() {
         return "env=" + name + "," + value + "," + strategy + "," + separator
                 + (expandAtLogin ? ",expand" : "");

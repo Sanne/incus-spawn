@@ -81,6 +81,7 @@ public class BobSetup implements ToolSetup {
         config.put("license", license);
         proxy.setConfiguration(config);
         proxy.setAuth(List.of(auth));
+        proxy.setPlaceholders(List.of(new ToolDef.PlaceholderDef("BOBSHELL_API_KEY", "bob-")));
         return proxy;
     }
 

@@ -53,6 +53,7 @@ public class GhSetup implements ToolSetup {
         proxy.setConfigNamespace(NAMESPACE);
         proxy.setConfiguration(Map.of("token", token));
         proxy.setAuth(List.of(basicAuth, bearerAuth));
+        proxy.setPlaceholders(List.of(new ToolDef.PlaceholderDef("GH_TOKEN", "gho_")));
         return proxy;
     }
 

@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -34,6 +35,8 @@ import java.util.Map;
  *       does not travel in the environment of every process or show up in an {@code env} dump.</li>
  *   <li>Never in an image: builds do not get one, and a branch is given its own before its
  *       first start, replacing whatever hash its source carried.</li>
+ *   <li>Beside it, at {@link #PROOFS_PATH}, the proof tokens derived from it ({@link ProofToken}),
+ *       which the login profile does export: they take the place of the tools' placeholders.</li>
  * </ul>
  *
  * <p>A caller presents it in {@link #HEADER}; {@link InstanceRegistry#identify} checks it.
@@ -50,6 +53,14 @@ public final class InstanceSecret {
 
     /** The exec environment variable {@link #GUEST_SCRIPT} takes the secret from. */
     public static final String DELIVERY_ENV = "ISX_INSTANCE_SECRET";
+    /** The exec environment variable {@link #GUEST_SCRIPT} takes this start's proof exports from. */
+    public static final String PROOFS_DELIVERY_ENV = "ISX_PROOF_TOKENS";
+    /**
+     * Where the guest keeps this start's proof exports ({@link ProofToken}), for its login
+     * profile to source. In {@code /run} with the secret, so no image or copy carries them.
+     */
+    public static final String PROOFS_PATH = GUEST_DIR + "/proof-tokens";
+    /** Sourced after {@code isx-env.sh}, whose static placeholders the proofs replace. */
     static final String PROFILE_PATH = "/etc/profile.d/isx-instance-secret.sh";
     static final String RUN_IS_TMPFS = "grep -qs '^[^ ]* /run tmpfs ' /proc/mounts";
     private static final int BYTES = 32;
@@ -92,16 +103,20 @@ public final class InstanceSecret {
     }
 
     /**
-     * Shell that puts the secret in {@link #guestEnv} in place in a running guest, and the
-     * profile line that names it. Idempotent, since it rides in scripts that are retried until
-     * they answer. Every step is best-effort: a box left without its secret is refused by
-     * whatever checks it, which is the safe way for this to fail, and must not stop the start it
-     * rides on.
+     * Shell that puts the secret in {@link #guestEnv} in place in a running guest, with this
+     * start's proof tokens ({@link ProofToken}) beside it, and the profile lines that name the
+     * one and export the other. Idempotent, since it rides in scripts that are retried until
+     * they answer. Every step is best-effort: a box left without its secret or its proofs is
+     * refused by whatever checks them, which is the safe way for this to fail, and must not stop
+     * the start it rides on. The previous proofs go first, so none outlive the secret they were
+     * derived from.
      *
-     * <p>The secret arrives in the exec's environment, never on its command line: any user in
-     * the guest can read a process's {@code /proc/<pid>/cmdline}, only its own uid and root its
-     * {@code environ}. The script moves it into an unexported variable at once, so nothing it
-     * runs inherits it, and writes it with the shell's builtin {@code printf}.
+     * <p>Both arrive in the exec's environment, never on its command line: any user in the
+     * guest can read a process's {@code /proc/<pid>/cmdline}, only its own uid and root its
+     * {@code environ}. The script moves them into unexported variables at once, so nothing it
+     * runs inherits them, and writes them with the shell's builtin {@code printf}. The proofs are
+     * readable by the instance user's group only, like the secret: other users of the guest get
+     * neither.
      *
      * <p>A container answers exec as soon as its init runs, possibly before systemd has mounted
      * the tmpfs on /run: a secret written then would land on the rootfs -- hidden by the mount,
@@ -111,15 +126,29 @@ public final class InstanceSecret {
      * instance's {@code mcp-caller} grant ({@link McpClientRegistration}), so every start that
      * delivers a secret reconciles it too.
      */
-    public static final String GUEST_SCRIPT = "isx_secret=$" + DELIVERY_ENV + "; unset " + DELIVERY_ENV + "; "
+    public static final String GUEST_SCRIPT = "isx_secret=$" + DELIVERY_ENV + "; isx_proofs=$" + PROOFS_DELIVERY_ENV
+            + "; unset " + DELIVERY_ENV + " " + PROOFS_DELIVERY_ENV + "; "
             + "[ -n \"$isx_secret\" ] && { i=0; until " + RUN_IS_TMPFS + "; do i=$((i+1)); [ $i -ge 60 ] && break; sleep 0.05; done; "
             + RUN_IS_TMPFS + " && install -d -m 755 " + GUEST_DIR
-            + " && (umask 077 && printf '%s\\n' \"$isx_secret\" > " + GUEST_PATH + ".new)"
-            + " && chgrp 1000 " + GUEST_PATH + ".new && chmod 440 " + GUEST_PATH + ".new"
-            + " && mv -f " + GUEST_PATH + ".new " + GUEST_PATH
-            + " && printf '%s\\n' " + Container.shellQuote("export " + FILE_ENV_VAR + "=" + GUEST_PATH) + " > " + PROFILE_PATH
-            + "; } >/dev/null 2>&1; unset isx_secret; true\n"
+            + " && rm -f " + PROOFS_PATH
+            + " && " + writeForInstanceUser("'%s\\n' \"$isx_secret\"", GUEST_PATH)
+            + " && " + writeForInstanceUser("'%s' \"$isx_proofs\"", PROOFS_PATH)
+            + " && printf '%s\\n' " + Container.shellQuote("export " + FILE_ENV_VAR + "=" + GUEST_PATH)
+            + " " + Container.shellQuote("if [ -r " + PROOFS_PATH + " ]; then . " + PROOFS_PATH + "; fi")
+            + " > " + PROFILE_PATH
+            + "; } >/dev/null 2>&1; unset isx_secret isx_proofs; true\n"
             + McpClientRegistration.GUEST_SCRIPT;
+
+    /**
+     * Shell that replaces {@code path} with what {@code printf} prints for {@code printfArgs},
+     * root-owned and readable by the instance user's group only, never readable by anyone else
+     * on the way.
+     */
+    private static String writeForInstanceUser(String printfArgs, String path) {
+        return "(umask 077 && printf " + printfArgs + " > " + path + ".new)"
+                + " && chgrp 1000 " + path + ".new && chmod 440 " + path + ".new"
+                + " && mv -f " + path + ".new " + path;
+    }
 
     /** What {@link #GUEST_CHECK} prints for a guest that holds no secret. */
     public static final String MISSING = "isx-instance-secret-missing";
@@ -141,14 +170,17 @@ public final class InstanceSecret {
      * The exec environment that hands {@code secret} to {@link #GUEST_SCRIPT}, and says whether
      * the instance holds the {@code mcp-caller} grant ({@link Metadata#isMcpCallerGrant}): the
      * caller reads it from the instance it already holds, never assumes it, since a wrong answer
-     * either way would remove a coordinator's registration or leave a copy with one.
+     * either way would remove a coordinator's registration or leave a copy with one. With them,
+     * the proof tokens {@code secret} derives for {@code placeholders} ({@link ProofToken#declared}).
      */
-    public static Map<String, String> guestEnv(String secret, boolean mcpCaller) {
-        return Map.of(DELIVERY_ENV, requireHex(secret), McpClientRegistration.ENV, mcpCaller ? "1" : "0");
+    public static Map<String, String> guestEnv(String secret, boolean mcpCaller,
+                                               List<ProofToken.Placeholder> placeholders) {
+        return Map.of(DELIVERY_ENV, requireHex(secret), McpClientRegistration.ENV, mcpCaller ? "1" : "0",
+                PROOFS_DELIVERY_ENV, ProofToken.profile(secret, placeholders));
     }
 
     /** Only what {@link #generate} makes is ever handed to the guest as a secret. */
-    private static String requireHex(String secret) {
+    static String requireHex(String secret) {
         if (secret == null || secret.isEmpty() || !secret.chars().allMatch(c -> Character.digit(c, 16) >= 0)) {
             throw new IllegalArgumentException("Not an instance secret");
         }

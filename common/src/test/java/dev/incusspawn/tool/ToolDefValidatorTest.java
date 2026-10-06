@@ -368,4 +368,30 @@ class ToolDefValidatorTest {
         Files.writeString(file, content);
         return file;
     }
+
+    @Test
+    void aPlaceholderTheStartCannotFillIsAnError(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: my-tool
+                proxy:
+                  config-namespace: acme
+                  placeholders:
+                    - env: ACME_TOKEN
+                      prefix: "acme'$(id)"
+                    - env: "ACME TOKEN"
+                  configuration:
+                    token:
+                      config-path: token
+                      description: Acme token
+                      secret: true
+                  auth:
+                    - domains: [api.acme.example]
+                      type: bearer
+                      token: "${token}"
+                """);
+        var errors = ToolDefValidator.validate(file).errors();
+        assertTrue(errors.stream().anyMatch(e -> e.contains("prefix of ACME_TOKEN")), errors.toString());
+        assertTrue(errors.stream().anyMatch(e -> e.contains("'ACME TOKEN' is not a variable name")), errors.toString());
+    }
 }

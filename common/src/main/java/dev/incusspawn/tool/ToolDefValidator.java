@@ -164,6 +164,13 @@ public class ToolDefValidator {
                     }
                 }
             }
+
+            for (var placeholder : new YamlToolSetup(def).placeholders()) {
+                var problem = placeholder.problem();
+                if (!problem.isEmpty()) {
+                    errors.add("placeholder in proxy for '" + def.getName() + "': " + problem);
+                }
+            }
         }
     }
 
