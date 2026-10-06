@@ -381,7 +381,11 @@ there; individual commands should not define their own ANSI constants or
 formatting patterns. Beyond build/branch, this governs the other lifecycle
 commands too — `vm` (start/stop/resize), `destroy`, `update-all`, `update-base`,
 and `project` — plus the shared `VmManager`. (`isx init`'s large interactive
-first-run flow is the one deliberate exception, kept in its own style for now.)
+first-run flow is the one deliberate exception, kept in its own style for now:
+its boxed, numbered headers stay, but the lines under them report outcomes rather
+than attempts, its `[n/N]` counter is counted from the list of steps rather than
+written down, and host commands show their output only when they fail (#906; the
+rules are in `.claude/rules/commands.md`, "Init output").)
 
 **Structure:**
 

@@ -48,6 +48,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -128,7 +129,7 @@ public class InitCommand extends BaseCommand {
         System.out.println();
     }
 
-    private void startStep(String title, String... hintLines) {
+    void startStep(String title, String... hintLines) {
         currentStep++;
         String left = "  " + currentStep + "  " + title;
         String right = "[" + currentStep + "/" + totalSteps + "]  ";
@@ -247,8 +248,6 @@ public class InitCommand extends BaseCommand {
         if (!requireLinux()) {
             return CommandResult.valueOf(1);
         }
-        totalSteps = 14;
-        currentStep = 0;
         printBanner("incus-spawn — First-Time Setup",
                 "Configuring your isolated development environment",
                 "~3 minutes · some steps require sudo");
@@ -263,44 +262,26 @@ public class InitCommand extends BaseCommand {
         }
 
         installDependencies();
-        checkIncusInstalled();
-        configureSubuidSubgid();
-        initializeIncus();
-        checkBridgeSubnet();
-        configureFirewall();
-        configureMitmProxy();
-        setupSshKeyPair();
-        var loader = new ToolDefLoader();
-        var allTools = loader.allToolSetups();
-        var credentials = selectCredentials(allTools);
-        totalSteps = 11 + credentials.size();
-        for (var toolName : credentials) {
-            switch (toolName) {
-                case "claude" -> setupClaudeAuth();
-                case "gh" -> setupGitHubAuth();
-                default -> setupGenericToolCredentials(toolName, allTools.get(toolName));
-            }
-        }
-        closeHttpClient();
-        setupSearchPaths();
-        setupHostPaths();
-        setupMcp();
+        var proxyServiceInstalled = new AtomicBoolean();
+        runSteps(List.of(
+                        this::checkIncusInstalled,
+                        this::configureSubuidSubgid,
+                        this::initializeIncus,
+                        this::configureFirewall,
+                        this::configureMitmProxy,
+                        this::setupSshKeyPair),
+                finalSteps(() -> {
+                    startStep("Proxy Service",
+                            "The MITM proxy intercepts HTTPS traffic from containers",
+                            "and injects real credentials (API keys, tokens) so that",
+                            "containers only ever hold placeholder values. Installing",
+                            "it as a systemd service means it starts automatically on",
+                            "boot — otherwise you'll need to run 'isx proxy start'",
+                            "before launching containers.");
+                    proxyServiceInstalled.set(completeWithProxyService(Prompts.console()));
+                }));
 
-        installGitRemoteShim();
-
-        startStep("DNS Configuration", DNS_HINT);
-        ProxyConfig.configureBridgeDns(incus);
-
-        startStep("Proxy Service",
-                "The MITM proxy intercepts HTTPS traffic from containers",
-                "and injects real credentials (API keys, tokens) so that",
-                "containers only ever hold placeholder values. Installing",
-                "it as a systemd service means it starts automatically on",
-                "boot — otherwise you'll need to run 'isx proxy start'",
-                "before launching containers.");
-        boolean proxyServiceInstalled = completeWithProxyService(Prompts.console());
-
-        var proxyStep = proxyServiceInstalled
+        var proxyStep = proxyServiceInstalled.get()
                 ? "   2. Proxy is running as a systemd service"
                 : "   2. Start the auth proxy:  isx proxy start";
         printCompletionBox(
@@ -314,12 +295,78 @@ public class InitCommand extends BaseCommand {
     }
 
     private CommandResult doMacOsInit() throws Exception {
-        totalSteps = 11;
-        currentStep = 0;
         printBanner("incus-spawn — First-Time Setup (macOS)",
                 "Configuring your isolated development environment",
                 "~2 minutes");
 
+        runSteps(List.of(this::setupMacOsCa, this::setupSshKeyPair),
+                finalSteps(() -> {
+                    startStep("macOS Services",
+                            "Installs the Incus VM and MITM proxy as macOS launch",
+                            "agents so they start automatically on login and survive",
+                            "reboots. Without this you'll need to manually run",
+                            "'isx vm start' and 'isx proxy start' before launching",
+                            "containers.");
+                    completeWithMacOsServices(Prompts.console());
+                }));
+
+        printCompletionBox(
+                "   " + GREEN_BOLD + "✓" + RESET + BOLD + " Setup complete!" + RESET,
+                "",
+                "   " + BOLD + "Next steps:" + RESET,
+                "   1. Build a template:  isx build tpl-java",
+                "   2. Launch the TUI:    isx");
+        return CommandResult.SUCCESS;
+    }
+
+    /** One numbered step of init: it shows exactly one header, through {@link #startStep}. */
+    @FunctionalInterface
+    interface Step {
+        void run() throws Exception;
+    }
+
+    /**
+     * Runs init's numbered steps: {@code setup}, Credential Setup, a step for each credential
+     * chosen there, then {@code finish}. The total is counted from these lists rather than written
+     * down, so {@code [n/N]} adds up on every path and the last step reads {@code [N/N]} (#906).
+     * Until the choice is made it assumes no credentials, which is what Enter picks.
+     */
+    void runSteps(List<Step> setup, List<Step> finish) throws Exception {
+        currentStep = 0;
+        totalSteps = setup.size() + 1 + finish.size();
+        for (var step : setup) step.run();
+        var credentialSteps = credentialSteps();
+        totalSteps += credentialSteps.size();
+        for (var step : credentialSteps) step.run();
+        closeHttpClient();
+        installGitRemoteShim();
+        for (var step : finish) step.run();
+    }
+
+    /** Credential Setup, which returns a step for each credential chosen. */
+    List<Step> credentialSteps() {
+        var tools = new ToolDefLoader().allToolSetups();
+        return selectCredentials(tools).stream().<Step>map(name -> switch (name) {
+            case "claude" -> this::setupClaudeAuth;
+            case "gh" -> this::setupGitHubAuth;
+            default -> () -> setupGenericToolCredentials(name, tools.get(name));
+        }).toList();
+    }
+
+    /** The steps both platforms end with, the last being {@code service}. */
+    private List<Step> finalSteps(Step service) {
+        return List.of(
+                this::setupSearchPaths,
+                this::setupHostPaths,
+                this::setupMcp,
+                () -> {
+                    startStep("DNS Configuration", DNS_HINT);
+                    ProxyConfig.configureBridgeDns(incus);
+                },
+                service);
+    }
+
+    private void setupMacOsCa() {
         startStep("MITM CA Certificate",
                 "Generates a custom Certificate Authority for the MITM",
                 "proxy. Containers trust this CA so the proxy can intercept",
@@ -335,44 +382,6 @@ public class InitCommand extends BaseCommand {
             CertificateAuthority.loadOrCreate();
             System.out.println("  CA certificate generated.");
         }
-
-        setupSshKeyPair();
-        var macLoader = new ToolDefLoader();
-        var macTools = macLoader.allToolSetups();
-        var macCredentials = selectCredentials(macTools);
-        totalSteps = 8 + macCredentials.size();
-        for (var toolName : macCredentials) {
-            switch (toolName) {
-                case "claude" -> setupClaudeAuth();
-                case "gh" -> setupGitHubAuth();
-                default -> setupGenericToolCredentials(toolName, macTools.get(toolName));
-            }
-        }
-        closeHttpClient();
-        setupSearchPaths();
-        setupHostPaths();
-        setupMcp();
-
-        installGitRemoteShim();
-
-        startStep("DNS Configuration", DNS_HINT);
-        ProxyConfig.configureBridgeDns(incus);
-
-        startStep("macOS Services",
-                "Installs the Incus VM and MITM proxy as macOS launch",
-                "agents so they start automatically on login and survive",
-                "reboots. Without this you'll need to manually run",
-                "'isx vm start' and 'isx proxy start' before launching",
-                "containers.");
-        completeWithMacOsServices(Prompts.console());
-
-        printCompletionBox(
-                "   " + GREEN_BOLD + "✓" + RESET + BOLD + " Setup complete!" + RESET,
-                "",
-                "   " + BOLD + "Next steps:" + RESET,
-                "   1. Build a template:  isx build tpl-java",
-                "   2. Launch the TUI:    isx");
-        return CommandResult.SUCCESS;
     }
 
     /**
@@ -718,7 +727,10 @@ public class InitCommand extends BaseCommand {
     }
 
     private void configureNetworkManager() {
-        var confDir = Path.of("/etc/NetworkManager/conf.d");
+        configureNetworkManager(Path.of("/etc/NetworkManager/conf.d"));
+    }
+
+    void configureNetworkManager(Path confDir) {
         if (!Files.isDirectory(confDir)) return;
         var confFile = confDir.resolve("99-unmanaged-veth.conf");
         if (Files.exists(confFile)) return;
@@ -728,8 +740,12 @@ public class InitCommand extends BaseCommand {
             Files.writeString(tempFile,
                     "[keyfile]\nunmanaged-devices=interface-name:veth*\n");
             if (installHostFile(tempFile, confFile.toString()) != 0) return;
-            runHostQuiet("sudo", "nmcli", "general", "reload");
-            System.out.println("  Configured NetworkManager to ignore veth devices.");
+            if (runHostQuiet("sudo", "nmcli", "general", "reload") != 0) {
+                System.err.println("  Warning: wrote " + confFile
+                        + " but could not reload NetworkManager; it applies after a reboot.");
+            } else {
+                System.out.println("  Configured NetworkManager to ignore veth devices.");
+            }
         } catch (IOException e) {
             System.err.println("  Warning: could not configure NetworkManager: " + e.getMessage());
         } finally {
@@ -764,7 +780,11 @@ public class InitCommand extends BaseCommand {
     private static final String SYSCTL_CONF = "/etc/sysctl.d/99-incus-spawn.conf";
 
     private void configureHostSysctls() {
-        var sysctlPath = Path.of(SYSCTL_CONF);
+        configureHostSysctls(Path.of(SYSCTL_CONF));
+    }
+
+    void configureHostSysctls(Path sysctlPath) {
+        var sysctlConf = sysctlPath.toString();
         var content = """
                 # All containers share one host UID range, so they draw on the same
                 # per-UID inotify budget.  The kernel default (128 instances) runs out
@@ -786,8 +806,12 @@ public class InitCommand extends BaseCommand {
             }
             var tempFile = Files.createTempFile("isx-sysctl-", ".conf");
             Files.writeString(tempFile, content);
-            if (installHostFile(tempFile, SYSCTL_CONF) == 0) {
-                runHostQuiet("sudo", "sysctl", "-p", SYSCTL_CONF);
+            if (installHostFile(tempFile, sysctlConf) != 0) {
+                System.err.println("  Warning: could not write " + sysctlConf + ".");
+            } else if (runHostQuiet("sudo", "sysctl", "-p", sysctlConf) != 0) {
+                System.err.println("  Warning: wrote " + sysctlConf
+                        + " but could not apply it now; it applies after a reboot.");
+            } else {
                 System.out.println("  Configured host sysctls (inotify, perf_event_paranoid).");
             }
             Files.deleteIfExists(tempFile);
@@ -1144,6 +1168,7 @@ public class InitCommand extends BaseCommand {
         checkStorageDriver();
         configureBtrfsUsageAccess();
         ensureDefaultProfile();
+        checkBridgeSubnet();
     }
 
     private static final String BTRFS_SUDOERS = "/etc/sudoers.d/incus-spawn-btrfs";
@@ -3619,7 +3644,7 @@ public class InitCommand extends BaseCommand {
         return true;
     }
 
-    private void installGitRemoteShim() {
+    void installGitRemoteShim() {
         if (System.getProperty("org.graalvm.version") != null) return;
 
         try {
@@ -3684,37 +3709,22 @@ public class InitCommand extends BaseCommand {
     }
 
     /**
-     * Run a host command, capturing stderr and suppressing benign warnings.
-     * Use this for commands like firewall-cmd that emit noisy "ALREADY_ENABLED" warnings.
+     * Run a host command with its output captured, shown only when it fails, as
+     * {@code Container.runQuiet()} does during build: firewall-cmd's {@code ALREADY_ENABLED} and
+     * {@code NOT_ENABLED} warnings on a successful call are noise in the step (#906). The caller
+     * reports the outcome.
      */
-    private int runHostQuiet(String... command) {
+    int runHostQuiet(String... command) {
         try {
             var pb = new ProcessBuilder(command);
-            pb.redirectErrorStream(false);
+            pb.redirectErrorStream(true);
             pb.redirectInput(ProcessBuilder.Redirect.INHERIT);
             var process = pb.start();
-            // Drain stdout (show it)
-            var stdout = new String(process.getInputStream().readAllBytes());
-            if (!stdout.isBlank()) {
-                System.out.print(stdout);
-            }
-            // Capture stderr and filter out benign warnings
-            var stderr = new String(process.getErrorStream().readAllBytes());
+            var output = new String(process.getInputStream().readAllBytes());
             var exitCode = process.waitFor();
-            if (!stderr.isBlank()) {
-                for (var line : stderr.split("\n")) {
-                    var trimmed = line.strip();
-                    if (trimmed.isEmpty()) continue;
-                    // Suppress benign firewalld warnings about already-configured rules
-                    if (trimmed.contains("ALREADY_ENABLED")
-                            || trimmed.contains("ALREADY_SET")
-                            || trimmed.contains("ALREADY_ACTIVE")) {
-                        // Silently ignore — the rule is already in place, which is what we want
-                        continue;
-                    }
-                    // Print any other stderr as a non-alarming note
-                    System.out.println("  " + trimmed);
-                }
+            if (exitCode != 0) {
+                output.lines().map(String::strip).filter(line -> !line.isEmpty())
+                        .forEach(line -> System.err.println("  " + line));
             }
             return exitCode;
         } catch (IOException | InterruptedException e) {
