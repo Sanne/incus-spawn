@@ -2,6 +2,7 @@ package dev.incusspawn.mcp;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
@@ -11,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -709,7 +711,7 @@ class TaskScriptsTest {
     }
 
     @Test
-    @org.junit.jupiter.api.Timeout(30)
+    @Timeout(30)
     void aFifoInPlaceOfATaskFileHoldsNeitherAdoptionNorStatus() throws Exception {
         // adopt_instance lists the tasks another session left; task_status reads one. Either reads
         // files anyone in the instance can replace with a FIFO, which would wait for a writer.
@@ -720,7 +722,7 @@ class TaskScriptsTest {
         Files.writeString(agent.resolve("kind"), "agent\n");
         Files.writeString(agent.resolve("current"), "1\n");
         Files.writeString(agent.resolve("exit-1"), "0\n");
-        for (var f : java.util.List.of("cwd", "model", "max-turns", "session_id", "events-1.jsonl", "stderr-1.log")) {
+        for (var f : List.of("cwd", "model", "max-turns", "session_id", "events-1.jsonl", "stderr-1.log")) {
             sh("mkfifo " + agent.resolve(f), "");
         }
         var command = Files.createDirectories(home.resolve(".isx-mcp/tasks/t33-abc"));
