@@ -414,7 +414,11 @@ class IncusApi {
             if ("Failure".equals(status)) {
                 throw new IncusException("Operation failed: " + metadata.path("err").asText("unknown"));
             }
-            if (!isUnfinished(status)) return result;
+            // Cancelled ends the operation without its effect; Cancelling is on its way there.
+            if ("Cancelled".equals(status)) {
+                throw new IncusException("Operation " + operationPath + " was cancelled");
+            }
+            if (!isUnfinished(status) && !"Cancelling".equals(status)) return result;
             if (System.nanoTime() - deadline >= 0) {
                 throw new IncusException("Operation " + operationPath + " still running after "
                         + operationWaitCeiling.toSeconds() + "s; given up on");

@@ -19,7 +19,7 @@ class OperationWaitTest {
 
     @Test
     void anOperationStillRunningWhenItsWaitTimesOutIsWaitedForAgain() {
-        var daemon = new FakeIncusDaemon().container("src", Map.of()).operationsRunFor(2);
+        var daemon = new FakeIncusDaemon().container("src", Map.of()).operationsAnswer("Running", "Running");
         daemon.client().copy("src", "dst");
         assertEquals(3, waits(daemon), String.join("\n", daemon.requests()));
     }
@@ -33,11 +33,19 @@ class OperationWaitTest {
 
     @Test
     void anOperationStillRunningAtTheCeilingFails() {
-        var daemon = new FakeIncusDaemon().container("src", Map.of()).operationsRunFor(Integer.MAX_VALUE);
+        var daemon = new FakeIncusDaemon().container("src", Map.of()).operationsAnswer("Running");
         var api = new IncusApi(daemon);
         api.operationWaitCeiling(Duration.ZERO);
         var e = assertThrows(IncusException.class, () -> new IncusClient(api).copy("src", "dst"));
         assertTrue(e.getMessage().contains("still running"), e.getMessage());
         assertEquals(1, waits(daemon), String.join("\n", daemon.requests()));
+    }
+
+    @Test
+    void aCancelledOperationFails() {
+        var daemon = new FakeIncusDaemon().container("src", Map.of()).operationsAnswer("Cancelling", "Cancelled");
+        var e = assertThrows(IncusException.class, () -> daemon.client().copy("src", "dst"));
+        assertTrue(e.getMessage().contains("cancelled"), e.getMessage());
+        assertEquals(2, waits(daemon), String.join("\n", daemon.requests()));
     }
 }

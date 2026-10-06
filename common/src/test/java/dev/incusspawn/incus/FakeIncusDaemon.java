@@ -62,7 +62,8 @@ public final class FakeIncusDaemon implements IncusTransport {
     private JsonNode listingOverride;
     private boolean refuseNextWrite;
     private int failReadsWith;
-    private int runningWaits;
+    /** What the next operation reads answer, in order; {@code Success} once it is empty. */
+    private final ArrayDeque<String> operationStatuses = new ArrayDeque<>();
     private int nextOperation = 1;
     private long nextPid = 1000;
 
@@ -327,11 +328,12 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /**
-     * Answer the next {@code waits} operation reads with the operation still {@code Running}, as
-     * Incus answers a {@code /wait} whose long-poll timed out: HTTP 200, not finished.
+     * Answer the next operation reads with these statuses, in order, then {@code Success}. A
+     * {@code Running} is what Incus answers a {@code /wait} whose long-poll timed out: HTTP 200,
+     * not finished.
      */
-    public FakeIncusDaemon operationsRunFor(int waits) {
-        runningWaits = waits;
+    public FakeIncusDaemon operationsAnswer(String... statuses) {
+        operationStatuses.addAll(List.of(statuses));
         return this;
     }
 
@@ -357,9 +359,8 @@ public final class FakeIncusDaemon implements IncusTransport {
         }
         if (path.startsWith("/1.0/operations/") && method.equals("GET")) {
             var metadata = JSON.createObjectNode();
-            boolean running = runningWaits > 0;
-            if (running) runningWaits--;
-            metadata.put("status", running ? "Running" : "Success");
+            var status = operationStatuses.poll();
+            metadata.put("status", status != null ? status : "Success");
             return sync(metadata);
         }
         if (path.startsWith("/1.0/instances?") && method.equals("GET")) {
