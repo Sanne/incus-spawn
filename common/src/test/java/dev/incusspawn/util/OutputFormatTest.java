@@ -45,4 +45,19 @@ class OutputFormatTest {
         assertEquals("[ {\n  \"b\" : 1,\n  \"a\" : null\n}, { } ]\n",
                 bytes.toString(StandardCharsets.UTF_8).replace("\r\n", "\n"));
     }
+
+    @Test
+    void aListIsCommaJoinedInPlainAndAnArrayInJson() {
+        var record = new LinkedHashMap<String, Object>();
+        record.put("name", "a");
+        record.put("tags", List.of("x", "y"));
+        record.put("none", List.of());
+        var plain = new ByteArrayOutputStream();
+        OutputFormat.PLAIN.printOne(new PrintStream(plain, true, StandardCharsets.UTF_8), record);
+        assertEquals("a\tx,y\t-\n", plain.toString(StandardCharsets.UTF_8));
+        var json = new ByteArrayOutputStream();
+        OutputFormat.JSON.printOne(new PrintStream(json, true, StandardCharsets.UTF_8), record);
+        assertEquals("{\n  \"name\" : \"a\",\n  \"tags\" : [ \"x\", \"y\" ],\n  \"none\" : [ ]\n}\n",
+                json.toString(StandardCharsets.UTF_8).replace("\r\n", "\n"));
+    }
 }

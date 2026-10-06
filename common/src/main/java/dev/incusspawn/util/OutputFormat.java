@@ -19,7 +19,8 @@ import java.util.stream.Collectors;
  * colour, glyphs, padding, headers or prose, and no results means empty output (or {@code []}),
  * never a sentence. A command builds each record once, as an ordered map of field name to value,
  * and both machine formats print that same map, so they cannot drift apart. Values are strings,
- * numbers or booleans; times are ISO-8601 and sizes are bytes, never "3h ago" or "2.1G".
+ * numbers, booleans or lists of strings; times are ISO-8601 and sizes are bytes, never "3h ago"
+ * or "2.1G". A list is a JSON array, and in {@code plain} its elements joined by {@code ,}.
  */
 public enum OutputFormat {
     TABLE, PLAIN, JSON;
@@ -54,6 +55,27 @@ public enum OutputFormat {
     }
 
     /**
+     * Print {@code records} in this machine format: one line each in {@code plain}, an array in
+     * {@code json}. {@code table} is the command's own and never comes here.
+     */
+    public void print(PrintStream out, List<? extends Map<String, ?>> records) {
+        switch (this) {
+            case PLAIN -> printPlain(out, records);
+            case JSON -> printJson(out, records);
+            case TABLE -> throw new IllegalStateException("table output is the command's own");
+        }
+    }
+
+    /** Print the one record of a single-item command: one line in {@code plain}, an object in {@code json}. */
+    public void printOne(PrintStream out, Map<String, ?> record) {
+        switch (this) {
+            case PLAIN -> printPlain(out, List.of(record));
+            case JSON -> printJson(out, record);
+            case TABLE -> throw new IllegalStateException("table output is the command's own");
+        }
+    }
+
+    /**
      * One record per line, its values tab-separated in field order, {@code -} for an empty one.
      * A tab or line break inside a value becomes a space, so a record is always one line.
      */
@@ -65,7 +87,9 @@ public enum OutputFormat {
     }
 
     static String plainField(Object value) {
-        var text = value == null ? "" : value.toString();
+        var text = value == null ? ""
+                : value instanceof List<?> list ? list.stream().map(String::valueOf).collect(Collectors.joining(","))
+                : value.toString();
         return text.isEmpty() ? "-" : LINE_BREAKING.matcher(text).replaceAll(" ");
     }
 
