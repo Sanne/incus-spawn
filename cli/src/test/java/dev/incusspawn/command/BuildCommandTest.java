@@ -7,6 +7,7 @@ import dev.incusspawn.Platform;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
@@ -3022,12 +3023,134 @@ class BuildCommandTest {
         cmd.incus = incus;
 
         assertThrows(IllegalStateException.class,
-                () -> cmd.requireImageTrustedFor("fedora-44-base", trusted("tpl-mine")));
+                () -> cmd.requireImageTrustedFor("fedora-44-base", trusted("tpl-mine"), null));
         assertThrows(IllegalStateException.class,
-                () -> cmd.requireImageTrustedFor("fedora-44-base", projectLocal("tpl-other", Path.of("/elsewhere"))));
+                () -> cmd.requireImageTrustedFor("fedora-44-base", projectLocal("tpl-other", Path.of("/elsewhere")), null));
         cmd.requireImageTrustedFor("fedora-44-base", projectLocal("tpl-proj", Path.of("/work/repo")));
         cmd.requireImageTrustedFor("legacy", trusted("tpl-mine")); // imported before the stamp existed
         cmd.requireImageTrustedFor("images:fedora/44", trusted("tpl-mine"));
+        // A fingerprint names the same local image, and gets the same gate (#1138)
+        assertThrows(IllegalStateException.class,
+                () -> cmd.requireImageTrustedFor("sha256:abc", trusted("tpl-mine"), null));
+    }
+
+    private static IncusClient projectImportedBaseImage() {
+        var incus = mock(IncusClient.class);
+        when(incus.imageAliasTargetOrThrow("fedora-44-base")).thenReturn("abc");
+        when(incus.imagePropertyOrThrow("abc", BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn("/work/repo");
+        return incus;
+    }
+
+    @Test
+    void refusedProjectImportIsDeletedOnlyWhenSomeoneAtATerminalSaysSo() {
+        var incus = projectImportedBaseImage();
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+
+        // No terminal: the image stays, and the message says how to remove it without naming incus.
+        var e = assertThrows(IllegalStateException.class,
+                () -> cmd.requireImageTrustedFor("fedora-44-base", trusted("tpl-mine"), null));
+        assertTrue(e.getMessage().contains("in a terminal"), e.getMessage());
+        assertFalse(e.getMessage().contains("incus "), e.getMessage());
+        // Declined: kept.
+        var no = ScriptedPrompts.lines("n");
+        e = assertThrows(IllegalStateException.class,
+                () -> cmd.requireImageTrustedFor("fedora-44-base", trusted("tpl-mine"), no));
+        no.assertFullyConsumed();
+        assertFalse(e.getMessage().contains("incus "), e.getMessage());
+        verify(incus, never()).deleteImageOrThrow(any());
+        // Accepted: deleted, and the build still stops, since its base image is gone.
+        var yes = ScriptedPrompts.lines("y");
+        e = assertThrows(IllegalStateException.class,
+                () -> cmd.requireImageTrustedFor("fedora-44-base", trusted("tpl-mine"), yes));
+        yes.assertFullyConsumed();
+        assertTrue(e.getMessage().contains("re-run the build"), e.getMessage());
+        verify(incus).deleteImageOrThrow("abc");
+    }
+
+    // ---- A cached image whose /sbin/init cannot exec (#986), in the order a real build meets it ----
+
+    /** A build launch against {@code daemon}, started the way a build starts it. */
+    private static BuildCommand.Launched launch(FakeIncusDaemon daemon, String image, boolean reimportable) {
+        var cmd = new BuildCommand();
+        cmd.incus = daemon.client();
+        var def = trusted("tpl-x");
+        return cmd.launchBuildInstance(image, "tpl-x-rebuilding", MachineType.CONTAINER, "tpl-x", reimportable,
+                () -> new BuildCommand.Launched(cmd.startBuild("tpl-x-rebuilding", def, Map.of("tpl-x", def)), null));
+    }
+
+    @Test
+    void aRemoteImageWhoseInitCannotExecIsDeletedAndFetchedAgain() {
+        var daemon = new FakeIncusDaemon().containerSubvolumes("tpl-x-rebuilding").nextFetchBrokenInit("fedora/44");
+
+        launch(daemon, "images:fedora/44", false);
+
+        assertFalse(daemon.hasImage("fetched-1"), "the broken cached copy is deleted");
+        var refetched = daemon.fetchedAs("fedora/44");
+        assertEquals("fetched-2", refetched);
+        assertEquals(refetched, daemon.instance("tpl-x-rebuilding").path("config").path("volatile.base_image").asText());
+        assertEquals("Running", daemon.instance("tpl-x-rebuilding").path("status").asText());
+    }
+
+    @Test
+    void aLocalImageWhoseInitCannotExecIsDeletedForTheNextBuildToReimport() {
+        var daemon = new FakeIncusDaemon().containerSubvolumes("tpl-x-rebuilding")
+                .imageAlias("fedora-44-base", "fp-broken").brokenInit("fp-broken");
+
+        var e = assertThrows(RuntimeException.class, () -> launch(daemon, "fedora-44-base", true));
+
+        assertTrue(e.getMessage().contains("re-run 'isx build tpl-x'"), e.getMessage());
+        assertFalse(e.getMessage().contains("incus "), e.getMessage());
+        assertFalse(daemon.hasImage("fp-broken"));
+        assertFalse(daemon.client().exists("tpl-x-rebuilding"), "the failed build instance is removed");
+    }
+
+    @Test
+    void aBrokenLocalImageIsxDidNotImportIsKept() {
+        var daemon = new FakeIncusDaemon().containerSubvolumes("tpl-x-rebuilding")
+                .imageAlias("hand-imported", "fp-only-copy").brokenInit("fp-only-copy");
+
+        var e = assertThrows(RuntimeException.class, () -> launch(daemon, "hand-imported", false));
+
+        // No image_url: nothing would import it again, so it is the only copy and stays.
+        assertTrue(daemon.hasImage("fp-only-copy"));
+        assertTrue(e.getMessage().contains("left in place"), e.getMessage());
+        assertFalse(e.getMessage().contains("import it again"), e.getMessage());
+        assertFalse(e.getMessage().contains("incus "), e.getMessage());
+    }
+
+    @Test
+    void aLocalImageNamedByFingerprintIsNotTakenForARemoteOne() {
+        var daemon = new FakeIncusDaemon().containerSubvolumes("tpl-x-rebuilding")
+                .imageAlias("hand-imported", "fp-only-copy").brokenInit("fp-only-copy");
+
+        assertThrows(RuntimeException.class, () -> launch(daemon, "sha256:fp-only-copy", false));
+
+        assertTrue(daemon.hasImage("fp-only-copy"));
+    }
+
+    @Test
+    void aRemoteImageBrokenAgainAfterTheFetchSaysSo() {
+        var daemon = new FakeIncusDaemon().containerSubvolumes("tpl-x-rebuilding")
+                .nextFetchBrokenInit("fedora/44").nextFetchBrokenInit("fedora/44");
+
+        var e = assertThrows(RuntimeException.class, () -> launch(daemon, "images:fedora/44", false));
+
+        assertTrue(e.getMessage().contains("broken /sbin/init too"), e.getMessage());
+    }
+
+    @Test
+    void anotherStartFailureDeletesNothing() {
+        var daemon = new FakeIncusDaemon().containerSubvolumes("tpl-x-rebuilding")
+                .imageAlias("fedora-44-base", "fp");
+        var cmd = new BuildCommand();
+        cmd.incus = daemon.client();
+
+        assertThrows(IncusException.class, () -> cmd.launchBuildInstance("fedora-44-base", "tpl-x-rebuilding",
+                MachineType.CONTAINER, "tpl-x", true, () -> { throw new IncusException("Failed to start tpl-x-rebuilding"); }));
+
+        assertTrue(daemon.hasImage("fp"));
+        assertTrue(daemon.client().exists("tpl-x-rebuilding"));
     }
 
     @Test

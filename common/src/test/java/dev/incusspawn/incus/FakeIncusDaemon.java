@@ -64,6 +64,14 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final Map<String, String> pools = new LinkedHashMap<>();
     private String subvolumeListing;
     private final java.util.Set<String> images = new java.util.LinkedHashSet<>();
+    /** Local image aliases, and the image a remote alias was last fetched as. */
+    private final Map<String, String> aliases = new LinkedHashMap<>();
+    private final Map<String, String> fetched = new LinkedHashMap<>();
+    /** Images whose /sbin/init cannot run: an instance created from one fails to start. */
+    private final java.util.Set<String> brokenInit = new java.util.LinkedHashSet<>();
+    private final Map<String, String> lxcLogs = new LinkedHashMap<>();
+    private final List<String> brokenFetches = new ArrayList<>();
+    private int nextFetch = 1;
     private boolean refuseNextWrite;
     private int failReadsWith;
     /** What the next operation reads answer, in order; {@code Success} once it is empty. */
@@ -128,6 +136,33 @@ public final class FakeIncusDaemon implements IncusTransport {
     public FakeIncusDaemon image(String fingerprint) {
         images.add(fingerprint);
         return this;
+    }
+
+    /** A local image under {@code alias}. */
+    public FakeIncusDaemon imageAlias(String alias, String fingerprint) {
+        images.add(fingerprint);
+        aliases.put(alias, fingerprint);
+        return this;
+    }
+
+    /**
+     * The image's {@code /sbin/init} fails to exec: starting an instance made from it fails, as
+     * Incus's forkstart does, and the instance's {@code lxc.log} says why, as LXC writes it.
+     */
+    public FakeIncusDaemon brokenInit(String fingerprint) {
+        brokenInit.add(fingerprint);
+        return this;
+    }
+
+    /** The next fetch of the remote {@code alias} comes back with a broken init; call it again for the one after. */
+    public FakeIncusDaemon nextFetchBrokenInit(String alias) {
+        brokenFetches.add(alias);
+        return this;
+    }
+
+    /** The image a remote alias was fetched as, or null if it never was. */
+    public String fetchedAs(String remoteAlias) {
+        return fetched.get(remoteAlias);
     }
 
     public boolean hasImage(String fingerprint) {
@@ -420,10 +455,14 @@ public final class FakeIncusDaemon implements IncusTransport {
             return sync(list);
         }
         if (path.equals("/1.0/instances") && method.equals("POST")) {
-            return copy(JSON.readTree(body));
+            var request = JSON.readTree(body);
+            return "image".equals(request.path("source").path("type").asText())
+                    ? createFromImage(request) : copy(request);
         }
         if (path.startsWith("/1.0/images/") && !path.startsWith("/1.0/images/aliases") && method.equals("DELETE")) {
-            return images.remove(path.substring("/1.0/images/".length())) ? async() : notFound();
+            var fingerprint = path.substring("/1.0/images/".length());
+            aliases.values().removeIf(fingerprint::equals);
+            return images.remove(fingerprint) ? async() : notFound();
         }
         if (path.startsWith("/1.0/profiles/") && method.equals("GET")) {
             var profile = profiles.get(path.substring("/1.0/profiles/".length()));
@@ -510,6 +549,15 @@ public final class FakeIncusDaemon implements IncusTransport {
             expand(name);
             return sync(JSON.createObjectNode());
         }
+        if (rest.equals("/logs") && method.equals("GET")) {
+            var list = JSON.createArrayNode();
+            if (lxcLogs.containsKey(name)) list.add("/1.0/instances/" + name + "/logs/lxc.log");
+            return sync(list);
+        }
+        if (rest.equals("/logs/lxc.log") && method.equals("GET")) {
+            var log = lxcLogs.get(name);
+            return log == null ? notFound() : new RawResponse(200, log.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
         if (rest.equals("/console") && method.equals("GET")) {
             var log = consoleLogs.getOrDefault(name, "");
             return new RawResponse(200, log.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -537,6 +585,12 @@ public final class FakeIncusDaemon implements IncusTransport {
             boolean force = request.path("force").asBoolean(false);
             stateActions.add(name + " " + action + (force ? " force" : ""));
             if (action.equals("stop") && !force && shutdownIgnored.contains(name)) return badRequest();
+            if (action.equals("start") && brokenInit.contains(instance.path("config").path("volatile.base_image").asText())) {
+                instance.put("status", "Error");
+                lxcLogs.put(name, "lxc " + name + " 20261006133238.740 ERROR    start - ../src/lxc/start.c:start:2208"
+                        + " - Exec format error - Failed to exec \"/sbin/init\"\n");
+                return badRequest();
+            }
             if (action.equals("start") || action.equals("restart")) {
                 instance.put("status", "Running");
                 pids.put(name, nextPid++);
@@ -572,6 +626,35 @@ public final class FakeIncusDaemon implements IncusTransport {
         request.path("devices").properties().forEach(e -> devices.set(e.getKey(), e.getValue()));
         instances.put(name, copy);
         expand(name);
+        return async();
+    }
+
+    /**
+     * Create a stopped container from an image, recording it in {@code volatile.base_image} as
+     * Incus does. A remote alias is fetched once and then served from the cache, until that
+     * cached image is deleted.
+     */
+    private RawResponse createFromImage(JsonNode request) {
+        var source = request.path("source");
+        var alias = source.path("alias").asText();
+        String fingerprint;
+        if (source.has("server")) {
+            fingerprint = fetched.get(alias);
+            if (fingerprint == null || !images.contains(fingerprint)) {
+                fingerprint = "fetched-" + nextFetch++;
+                images.add(fingerprint);
+                fetched.put(alias, fingerprint);
+                if (brokenFetches.remove(alias)) brokenInit.add(fingerprint);
+            }
+        } else if (source.has("fingerprint")) {
+            fingerprint = source.path("fingerprint").asText();
+            if (!images.contains(fingerprint)) return notFound();
+        } else {
+            fingerprint = aliases.get(alias);
+            if (fingerprint == null || !images.contains(fingerprint)) return notFound();
+        }
+        var name = request.path("name").asText();
+        instance(name, "container", "Stopped", Map.of("volatile.base_image", fingerprint));
         return async();
     }
 

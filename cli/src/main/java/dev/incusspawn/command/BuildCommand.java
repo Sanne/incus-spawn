@@ -75,6 +75,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -1243,31 +1244,20 @@ public class BuildCommand extends BaseCommand {
 
         // Create instance — for VMs, expand the disk before first boot so
         // cloud-init's growpart module handles partition + filesystem resize.
-        BuildOutput.stepStart("Launching " + image + (machineType == MachineType.VM ? " (VM)..." : "..."));
-        try {
-            incus.create(image, buildName, machineType);
-        } catch (IncusException e) {
-            BuildOutput.stepBreak();
-            if (incus.exists(buildName)) {
-                var log = incus.getLog(buildName);
-                if (log.contains("Exec format error")) {
-                    throw new RuntimeException(
-                            "The cached image for '" + image + "' has a broken /sbin/init " +
-                            "(Exec format error). " +
-                            "Delete it with 'incus image list' + 'incus image delete <fingerprint>' " +
-                            "and retry the build.", e);
-                }
-            }
-            throw e;
-        }
-        if (machineType == MachineType.VM) {
-            incus.deviceConfigSet(buildName, "root", "size", ResourceLimits.defaultDiskLimit());
-            incus.configSet(buildName, "limits.memory", ResourceLimits.defaultVmMemoryLimit());
-            InstanceLifecycle.enableFreePageReporting(incus, buildName);
-        }
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
-        var dnfCacheWarning = attachBootDevices(buildName, hostResources, machineType);
-        var started = startBuild(buildName, imageDef, defs);
+        // Only an image isx imported from a URL comes back on the next build if it is deleted
+        var reimportable = prebaked && !isRemoteImage(image);
+        var launched = launchBuildInstance(image, buildName, machineType, canonicalName, reimportable, () -> {
+            if (machineType == MachineType.VM) {
+                incus.deviceConfigSet(buildName, "root", "size", ResourceLimits.defaultDiskLimit());
+                incus.configSet(buildName, "limits.memory", ResourceLimits.defaultVmMemoryLimit());
+                InstanceLifecycle.enableFreePageReporting(incus, buildName);
+            }
+            var dnfWarning = attachBootDevices(buildName, hostResources, machineType);
+            return new Launched(startBuild(buildName, imageDef, defs), dnfWarning);
+        });
+        var started = launched.started();
+        var dnfCacheWarning = launched.dnfCacheWarning();
         incus.waitForReady(buildName, machineType);
         BuildOutput.stepDone();
         announceBuildAccounts(imageDef, defs);
@@ -1801,16 +1791,105 @@ public class BuildCommand extends BaseCommand {
      * {@link #downloadAndAliasImage}, so this is where a project's import is kept out of it.
      */
     void requireImageTrustedFor(String image, ImageDef rootDef) {
-        if (image.contains(":")) return; // a remote image, fetched by Incus itself
-        var fingerprint = incus.imageAliasTargetOrThrow(image);
+        requireImageTrustedFor(image, rootDef, prompts());
+    }
+
+    /**
+     * The gate stays shut either way: a refused image is deleted only when someone at a terminal
+     * says so, and the build still stops, since what it was about to start from is gone.
+     */
+    void requireImageTrustedFor(String image, ImageDef rootDef, Prompts prompts) {
+        if (isRemoteImage(image)) return; // fetched by Incus itself
+        var fingerprint = image.startsWith("sha256:") ? image.substring("sha256:".length())
+                : incus.imageAliasTargetOrThrow(image);
         if (fingerprint == null) return;
         var importedBy = importingProject(fingerprint);
         if (importedBy.isEmpty() || importedBy.equals(projectOf(rootDef))) return;
-        throw new IllegalStateException("Local image '" + image + "' was imported by a project-local template in "
+        var refused = "Local image '" + image + "' was imported by a project-local template in "
                 + importedBy + ",\n"
-                + "  so '" + rootDef.getName() + "' will not be built on it.\n"
-                + "  Delete it with 'incus image delete " + fingerprint + "' and rebuild"
-                + " (a template with an image_url re-imports it automatically).");
+                + "  so '" + rootDef.getName() + "' will not be built on it.\n";
+        var reimport = " (a template with an image_url re-imports it automatically).";
+        if (prompts == null) {
+            throw new IllegalStateException(refused + "  Re-run the build in a terminal to remove it" + reimport);
+        }
+        if (!askConfirmation(prompts, "  Delete local image '" + image + "' (imported by project "
+                + importedBy + ")?", false)) {
+            throw new IllegalStateException(refused + "  It was kept, so the build cannot start from it.");
+        }
+        incus.deleteImageOrThrow(fingerprint);
+        throw new IllegalStateException(refused + "  It has been deleted: re-run the build" + reimport);
+    }
+
+    /** A started build instance, and the DNF cache warning its boot devices left, if any. */
+    record Launched(BuildAccounts.Started started, String dnfCacheWarning) {}
+
+    /**
+     * Create the build instance from {@code image} and have {@code prepareAndStart} configure and
+     * start it. A cached image whose {@code /sbin/init} cannot exec ("Exec format error", which
+     * Incus reports when the start fails and LXC writes to the instance's log) is known to be
+     * corrupt. A copy isx can get back is deleted without asking, along with the failed instance:
+     * a remote image is fetched again by one more launch, and a local one isx imported from the
+     * template's URL ({@code reimportable}) by the next build. A local image isx did not import
+     * (no URL to import it from) is left in place: deleting it would lose the only copy.
+     */
+    <T> T launchBuildInstance(String image, String buildName, MachineType machineType, String templateName,
+                              boolean reimportable, Supplier<T> prepareAndStart) {
+        var launching = "Launching " + image + (machineType == MachineType.VM ? " (VM)..." : "...");
+        for (int attempt = 1; ; attempt++) {
+            BuildOutput.stepStart(launching);
+            try {
+                incus.create(image, buildName, machineType);
+                return prepareAndStart.get();
+            } catch (IncusException e) {
+                BuildOutput.stepBreak();
+                if (attempt > 1) {
+                    if (hasBrokenInit(buildName)) {
+                        throw new RuntimeException("The image fetched again for '" + image
+                                + "' has a broken /sbin/init too (Exec format error).", e);
+                    }
+                    throw e;
+                }
+                if (!removeBrokenImage(image, buildName, templateName, reimportable, e)) throw e;
+            }
+        }
+    }
+
+    /** {@code remote:alias}; a {@code sha256:} fingerprint names a local image. */
+    private static boolean isRemoteImage(String image) {
+        return image.contains(":") && !image.startsWith("sha256:");
+    }
+
+    private boolean hasBrokenInit(String buildName) {
+        return incus.exists(buildName) && incus.getLog(buildName).contains("Exec format error");
+    }
+
+    /**
+     * Whether a failed start was a broken cached image, now removed so a fetch can replace it;
+     * throws when it was one but cannot be fetched again here. False leaves everything as it was.
+     */
+    private boolean removeBrokenImage(String image, String buildName, String templateName, boolean reimportable,
+                                      IncusException e) {
+        if (!hasBrokenInit(buildName)) return false;
+        var remote = isRemoteImage(image);
+        if (!remote && !reimportable) {
+            throw new RuntimeException("The local image '" + image + "' has a broken /sbin/init (Exec format error)."
+                    + " isx did not import it, as '" + templateName + "' has no image_url to import it from,"
+                    + " so it is left in place: replace the image under that alias, or give the template an"
+                    + " image_url, then re-run 'isx build " + templateName + "'.", e);
+        }
+        var fingerprint = incus.configGet(buildName, "volatile.base_image");
+        incus.delete(buildName, true);
+        var broken = "The cached image for '" + image + "' has a broken /sbin/init (Exec format error)";
+        if (fingerprint.isEmpty()) {
+            throw new RuntimeException(broken + ", and Incus did not record which image it was.", e);
+        }
+        incus.deleteImageOrThrow(fingerprint);
+        if (!remote) {
+            throw new RuntimeException(broken + ". isx removed it: re-run 'isx build " + templateName
+                    + "' to import it again.", e);
+        }
+        BuildOutput.step(broken + "; removed it, fetching it again.");
+        return true;
     }
 
     private void prepareContainerForPackageInstall(Container container) {
