@@ -274,6 +274,21 @@ class ListCommandOutputTest {
         assertEquals("  Purpose:|review #12", text.getLast());
     }
 
+    @Test
+    void theDetailPaneSaysWhenAnOrphanWasStoppedAsDormantAndWhatComesNext() {
+        // #1028: past its grace an orphan kept only for an idle delegate is stopped, not destroyed.
+        var dead = "instance:gone:0123456789abcdef0123456789abcdef";
+        var daemon = new FakeIncusDaemon().container("idle", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE,
+                Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, dead,
+                Metadata.MCP_ORPHANED, "2026-10-04T08:00:00Z " + dead,
+                Metadata.MCP_DORMANT, "2026-10-05T09:00:00Z " + dead));
+        var idle = ListCommand.collectEntries(daemon.client().listJson()).getFirst();
+        var text = rows(ListCommand.mcpDetailRows(idle.mcp()));
+        assertEquals("MCP:|orphaned since 2026-10-04T08:00:00Z, stopped as dormant since 2026-10-05T09:00:00Z", text.get(0));
+        assertTrue(text.stream().anyMatch(r -> r.contains("mcp.dormant-grace-hours")), text.toString());
+        assertTrue(text.stream().noneMatch(r -> r.contains("mcp.orphan-grace-hours")), "its orphan grace is over: " + text);
+    }
+
     private static List<String> rows(List<ListCommand.DetailRow> rows) {
         return rows.stream().map(r -> r.label() + "|" + r.value()).toList();
     }

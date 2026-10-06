@@ -119,6 +119,15 @@ final class Orphans {
         return stampedSince(config, Metadata.MCP_DORMANT, false);
     }
 
+    /**
+     * When a sweep stopped the instance as dormant, if it still is: stopped, by the
+     * {@link InstanceBackend#STATUS} its metadata carries. What {@code list_instances} reports as
+     * {@code dormant_since}.
+     */
+    static Instant dormantNow(Map<String, String> config) {
+        return InstanceBackend.stopped(config) ? dormantSince(config) : null;
+    }
+
     /** The sweep's periods: before an orphan is destroyed, found dormant, and destroyed once dormant. */
     record Windows(Duration grace, Duration dormantAfter, Duration dormantGrace) {
         static Windows of(McpConfig config) {

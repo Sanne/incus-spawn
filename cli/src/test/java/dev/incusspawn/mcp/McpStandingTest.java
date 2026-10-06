@@ -65,6 +65,17 @@ class McpStandingTest {
     }
 
     @Test
+    void anOrphanStoppedAsDormantSaysSinceWhenAsListInstancesDoes() {
+        var stamp = "2026-10-05T09:00:00Z " + DEAD;
+        assertEquals(Instant.parse("2026-10-05T09:00:00Z"), standing(stamped(DEAD, Metadata.MCP_DORMANT, stamp,
+                InstanceBackend.STATUS, "Stopped")).dormantSince());
+        assertNull(standing(stamped(DEAD, Metadata.MCP_DORMANT, stamp, InstanceBackend.STATUS, "Running")).dormantSince(),
+                "started since: not dormant now");
+        assertNull(standing(stamped(DEAD, Metadata.MCP_DORMANT, "2026-10-05T09:00:00Z " + ALIVE,
+                InstanceBackend.STATUS, "Stopped")).dormantSince(), "a stamp for an earlier holder");
+    }
+
+    @Test
     void keptIsTheUsersWhoeverHeldIt() {
         assertEquals(McpStanding.State.KEPT, standing(stamped(ALIVE, Metadata.MCP_KEPT, "2026-10-05")).state());
         assertEquals(McpStanding.State.KEPT, standing(stamped(DEAD, Metadata.MCP_KEPT, "2026-10-05")).state());

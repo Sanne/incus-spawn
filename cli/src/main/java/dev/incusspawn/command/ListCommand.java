@@ -89,7 +89,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -4092,9 +4091,15 @@ public class ListCommand extends BaseCommand {
                             + (mcp.client() == null ? "" : " (" + oneLine(mcp.client()) + ")")));
             case ORPHANED -> {
                 rows.add(new DetailRow("MCP:", "orphaned"
-                        + (mcp.orphanedSince() == null ? "" : " since " + mcp.orphanedSince())));
-                rows.add(new DetailRow(null, "its session ended: another may adopt it, and one destroys it"));
-                rows.add(new DetailRow(null, "after mcp.orphan-grace-hours unless someone is working in it"));
+                        + (mcp.orphanedSince() == null ? "" : " since " + mcp.orphanedSince())
+                        + (mcp.dormantSince() == null ? "" : ", stopped as dormant since " + mcp.dormantSince())));
+                if (mcp.dormantSince() == null) {
+                    rows.add(new DetailRow(null, "its session ended: another may adopt it, and one destroys it"));
+                    rows.add(new DetailRow(null, "after mcp.orphan-grace-hours unless someone is working in it"));
+                } else {
+                    rows.add(new DetailRow(null, "its delegate never finished and stopped moving: another session"));
+                    rows.add(new DetailRow(null, "may adopt it, or destroys it after mcp.dormant-grace-hours"));
+                }
             }
             case KEPT -> {
                 rows.add(new DetailRow("MCP:", "kept"));
@@ -5697,11 +5702,7 @@ public class ListCommand extends BaseCommand {
                 throw new IncusException("Cannot read the instance listing from Incus: expected a JSON array");
             }
             // Whether a coordinator instance still holds its workers is read from this listing.
-            var callerGrants = new HashMap<String, String>();
-            for (var node : nodes) {
-                var grant = configVal(node.path("config"), Metadata.MCP_CALLER, "");
-                if (!grant.isEmpty()) callerGrants.put(node.path("name").asText(), grant);
-            }
+            var callerGrants = McpStanding.callerGrants(nodes);
             var entryList = new ArrayList<InstanceInfo>();
             for (var node : nodes) {
                 var config = node.path("config");
@@ -5751,21 +5752,12 @@ public class ListCommand extends BaseCommand {
                         diskUsage, referencedBytes,
                         configVal(config, Metadata.INSTANCE_MODE, ""),
                         config.has(Metadata.KVM_ENABLED),
-                        config.has(Metadata.MCP_OWNER) ? McpStanding.of(mcpStamps(config), callerGrants) : null));
+                        McpStanding.fromListing(node, callerGrants)));
             }
             return entryList;
         } catch (JsonProcessingException e) {
             throw new IncusException("Cannot read the instance listing from Incus: " + e.getOriginalMessage(), e);
         }
-    }
-
-    /** The {@code mcp-} stamps of an instance's config. */
-    private static Map<String, String> mcpStamps(JsonNode config) {
-        var stamps = new HashMap<String, String>();
-        config.properties().forEach(e -> {
-            if (Metadata.isMcpKey(e.getKey())) stamps.put(e.getKey(), e.getValue().asText(""));
-        });
-        return stamps;
     }
 
     private static String configVal(JsonNode config, String key, String defaultValue) {

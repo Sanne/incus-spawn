@@ -602,7 +602,7 @@ final class McpTools {
                     node.put("orphaned_since", since.toString());
                     node.put("orphan_until", since.plus(windows.grace()).toString());
                 }
-                var dormant = InstanceBackend.stopped(config) ? Orphans.dormantSince(config) : null;
+                var dormant = Orphans.dormantNow(config);
                 if (dormant != null) {
                     node.put("dormant_since", dormant.toString());
                     node.put("dormant_until", dormant.plus(windows.dormantGrace()).toString());
