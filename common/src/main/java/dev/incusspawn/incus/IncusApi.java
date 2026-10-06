@@ -931,17 +931,6 @@ class IncusApi {
                 opMeta.path("metadata").path("fds"));
     }
 
-    // After the operation completes we drain the data sockets before force-closing them, so
-    // trailing output isn't truncated when close frames never arrive (macOS vsock). Rather than
-    // a blind fixed wait (too short risks truncation on a slow tunnel; too long adds that latency
-    // to *every* exec on machines where close frames don't arrive), the drain is adaptive: wait a
-    // short minimum for in-flight bytes, extend while output is still arriving, and close once it
-    // has been idle briefly — bounded by an absolute cap. On the healthy path the close frames
-    // arrive and the reader threads finish at once, so none of this is reached.
-    private static final long DRAIN_MIN_MS  = 200;   // always wait this for bytes in flight
-    private static final long DRAIN_IDLE_MS = 200;   // then close once output has been idle this long
-    private static final long DRAIN_MAX_MS  = 5000;  // absolute ceiling
-
     /**
      * Unified non-interactive exec over WebSockets, used for capture, streaming and
      * bidirectional (git) exec — the destination streams just differ.
@@ -1055,24 +1044,19 @@ class IncusApi {
 
     /**
      * Wait for reader threads to finish on their own, extending while output is still arriving.
-     * Returns immediately on the healthy path (close frames arrived). Otherwise waits at least
-     * {@link #DRAIN_MIN_MS} for bytes in flight, extends while output keeps arriving, and
-     * returns once idle for {@link #DRAIN_IDLE_MS} — bounded by {@link #DRAIN_MAX_MS}.
+     * Returns immediately on the healthy path (close frames arrived); otherwise {@link OutputDrain}
+     * decides when to give up on them.
      */
     private static void awaitDrain(java.util.concurrent.atomic.AtomicLong lastData,
                                    Thread... threads) {
-        long start = System.nanoTime();
+        var drain = new OutputDrain(System.nanoTime());
         while (true) {
             boolean anyAlive = false;
             for (var t : threads) if (t.isAlive()) { anyAlive = true; break; }
             if (!anyAlive) break;
-            long now = System.nanoTime();
-            long sinceStartMs = (now - start) / 1_000_000L;
-            long sinceDataMs  = (now - lastData.get()) / 1_000_000L;
-            if (sinceStartMs >= DRAIN_MAX_MS) break;
-            if (sinceStartMs >= DRAIN_MIN_MS && sinceDataMs >= DRAIN_IDLE_MS) break;
+            if (drain.done(System.nanoTime(), lastData.get())) break;
             try {
-                Thread.sleep(20);
+                Thread.sleep(OutputDrain.POLL_MS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
