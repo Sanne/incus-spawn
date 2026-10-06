@@ -77,7 +77,11 @@ public final class ZmxSocketForward {
         incus.devicesRemoveAll(name, java.util.List.of(DEVICE_NAME));
         var args = new java.util.ArrayList<>(java.util.List.of(
                 "source=" + containerDir.toAbsolutePath(),
-                "path=" + CONTAINER_ZMX_DIR));
+                "path=" + CONTAINER_ZMX_DIR,
+                // The source sits on a tmpfs wiped at reboot: a start that
+                // bypasses isx (plain `incus start`, boot.autostart) must not
+                // fail on it.  isx's own starts recreate it first (#1044).
+                "required=false"));
         HostResourceSetup.addShiftIfSupported(args, dev.incusspawn.incus.MachineType.CONTAINER);
         incus.deviceAdd(name, DEVICE_NAME, "disk", args.toArray(String[]::new));
 
@@ -109,16 +113,19 @@ public final class ZmxSocketForward {
                                       JsonNode instanceMetadata) {
         if (Platform.isMacOS()) return;
 
-        var source = IncusClient.deviceSource(instanceMetadata, DEVICE_NAME);
+        var device = instanceMetadata.path("devices").path(DEVICE_NAME);
+        var source = device.path("source").asText("");
         if (source.isEmpty()) return; // no device — nothing to repair
 
         // Healthy only if the device points at this name's directory and that
         // directory is there: a source left over from a rename can still exist
         // (it may belong to another instance by now), and the right directory
-        // can exist while the device points elsewhere.  Anything else is
-        // handed to configure(), which is idempotent.
+        // can exist while the device points elsewhere.  A device added before
+        // it was optional (#1044) is upgraded too.  Anything else is handed
+        // to configure(), which is idempotent.
         var containerDir = zmxDir.resolve(CONTAINERS_SUBDIR).resolve(name).toAbsolutePath();
-        if (source.equals(containerDir.toString()) && Files.isDirectory(containerDir)) return;
+        var optional = "false".equals(device.path("required").asText(""));
+        if (optional && source.equals(containerDir.toString()) && Files.isDirectory(containerDir)) return;
 
         configure(incus, name, zmxDir);
     }

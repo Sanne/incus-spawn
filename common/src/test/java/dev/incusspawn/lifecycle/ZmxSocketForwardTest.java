@@ -53,6 +53,14 @@ class ZmxSocketForwardTest {
 
     /** An instance as {@code IncusClient.instanceMetadata} returns it. */
     private JsonNode instanceWithZmxDevice(String source) {
+        var metadata = legacyInstanceWithZmxDevice(source);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) metadata.path("devices").path(DEVICE))
+                .put("required", "false");
+        return metadata;
+    }
+
+    /** An instance branched before the device was optional (#1044): no {@code required} key. */
+    private JsonNode legacyInstanceWithZmxDevice(String source) {
         var metadata = JSON.createObjectNode();
         metadata.putObject("devices").putObject(DEVICE)
                 .put("type", "disk")
@@ -70,6 +78,22 @@ class ZmxSocketForwardTest {
         // The healthy path must cost a single stat and no Incus call at all,
         // or every start pays for the repair.
         verifyNoInteractions(incus);
+    }
+
+    /**
+     * A device added before #1044 is required, so a plain {@code incus start}
+     * after a reboot fails on the wiped tmpfs.  The isx start that finds it
+     * re-adds it as optional, from the metadata it already has.
+     */
+    @Test
+    void ensureHostDirForStart_requiredDevice_upgradesToOptional() throws IOException {
+        Files.createDirectories(containerDir());
+
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir,
+                legacyInstanceWithZmxDevice(containerDir().toAbsolutePath().toString()));
+
+        verify(incus).devicesRemoveAll(NAME, List.of(DEVICE));
+        assertTrue(deviceAddArgs().contains("required=false"));
     }
 
     @Test
@@ -148,6 +172,9 @@ class ZmxSocketForwardTest {
         assertEquals(
                 List.of("source=" + containerDir().toAbsolutePath(),
                         "path=/home/agentuser/.zmx",
+                        // The source sits on a tmpfs: a start that bypasses isx
+                        // after a reboot must not fail on it (#1044).
+                        "required=false",
                         "shift=true"),
                 deviceAddArgs());
     }
