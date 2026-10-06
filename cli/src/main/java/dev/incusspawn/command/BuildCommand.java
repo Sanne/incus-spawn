@@ -1110,6 +1110,9 @@ public class BuildCommand extends BaseCommand {
         if (CertificateAuthority.fixContainerCaIfNeeded(incus, buildName)) {
             BuildOutput.step("Refreshed MITM proxy CA certificate.");
         }
+        if (CertificateAuthority.installHostCaIfNeeded(incus, buildName)) {
+            BuildOutput.step("Installed host MITM CA certificate (nested setup).");
+        }
 
         requireBuildAddress(buildName, started);
         waitForNetwork(buildName);
@@ -1265,6 +1268,14 @@ public class BuildCommand extends BaseCommand {
                 ca.caCertPem() +
                 "CERTEOF")
                 .assertSuccess("Failed to install MITM CA certificate");
+        var hostCaPem = CertificateAuthority.hostMitmCaPem();
+        if (hostCaPem != null) {
+            container.sh(
+                    "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm-host.crt << 'CERTEOF'\n" +
+                    hostCaPem +
+                    "CERTEOF")
+                    .assertSuccess("Failed to install host MITM CA certificate");
+        }
         container.exec("update-ca-trust")
                 .assertSuccess("Failed to update CA trust");
         BuildOutput.stepDone();

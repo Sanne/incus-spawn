@@ -161,6 +161,33 @@ public class CertificateAuthority {
         return loadOrCreate().caFingerprint();
     }
 
+    /**
+     * Path where the host's own MITM CA is installed as a trust anchor.
+     * In a nested incus-spawn setup the outer build installs its CA here;
+     * the inner build must propagate it into containers so that traffic
+     * bypassing the inner proxy (non-intercepted domains) is still trusted.
+     */
+    private static final Path HOST_MITM_ANCHOR =
+            Path.of("/etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt");
+
+    /**
+     * Returns the PEM content of the host's MITM CA anchor if it exists
+     * and is different from this proxy's own CA (i.e. we are nested).
+     * Returns {@code null} when not nested or when the host anchor is
+     * the same as the local CA.
+     */
+    public static String hostMitmCaPem() {
+        if (!Files.exists(HOST_MITM_ANCHOR)) return null;
+        try {
+            var hostPem = Files.readString(HOST_MITM_ANCHOR);
+            if (!exists()) return hostPem;
+            var localPem = loadOrCreate().caCertPem();
+            return hostPem.strip().equals(localPem.strip()) ? null : hostPem;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
     /** How an image's stored CA fingerprint relates to the CA on this host. */
     public enum CaStatus {
         /** Built against the current CA cert. */
@@ -245,6 +272,21 @@ public class CertificateAuthority {
                 "CERTEOF");
         incus.shellExec(container, "update-ca-trust");
         incus.configSet(container, Metadata.CA_FINGERPRINT, ca.caFingerprint());
+        return true;
+    }
+
+    /**
+     * Install the host's MITM CA into a container if running nested.
+     * Returns true if a cert was installed, false if not nested.
+     */
+    public static boolean installHostCaIfNeeded(IncusClient incus, String container) {
+        var hostPem = hostMitmCaPem();
+        if (hostPem == null) return false;
+        incus.shellExec(container, "sh", "-c",
+                "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm-host.crt << 'CERTEOF'\n" +
+                hostPem +
+                "CERTEOF");
+        incus.shellExec(container, "update-ca-trust");
         return true;
     }
 
