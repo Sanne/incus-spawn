@@ -123,6 +123,24 @@ class ExecScriptTest {
     }
 
     @Test
+    void aFifoInPlaceOfThePidFileHoldsNoRun() throws Exception {
+        // Run ids are predictable: one could be waiting there before the run writes its pid.
+        var pidFile = Files.createDirectories(home.resolve(".isx-mcp/run")).resolve("exec-1-1.pid");
+        new ProcessBuilder("mkfifo", pidFile.toString()).start().waitFor();
+        var pb = new ProcessBuilder("bash", "-c", build(home.toString(), Map.of(), "echo ran", null));
+        pb.environment().put("HOME", home.toString());
+        var p = pb.start();
+        try {
+            assertTrue(p.waitFor(10, TimeUnit.SECONDS), "the run waited on a FIFO");
+            assertEquals("ran\n", new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+            assertTrue(Files.isRegularFile(pidFile), "the FIFO is replaced, never written through");
+        } finally {
+            p.descendants().forEach(ProcessHandle::destroyForcibly);
+            p.destroyForcibly();
+        }
+    }
+
+    @Test
     void aFifoInPlaceOfThePidFileHoldsNoKill() throws Exception {
         // Anyone in the instance can put one there; reading it would wait for a writer.
         var pidFile = Files.createDirectories(home.resolve(".isx-mcp/run")).resolve("exec-1-1.pid");

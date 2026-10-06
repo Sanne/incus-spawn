@@ -797,7 +797,7 @@ class TaskScriptsTest {
     }
 
     /** A finished agent, a finished command and an agent being cancelled, from scratch; every file of theirs. */
-    private List<Path> swappableTaskFiles() throws IOException {
+    private List<Path> swappableTaskFiles() throws Exception {
         var agent = finishedTaskFiles("t32-abc", Tasks.AGENT);
         for (var f : List.of("cwd", "model", "max-turns", "key", "session_id", "events-1.jsonl", "stderr-1.log")) {
             Files.writeString(agent.resolve(f), "x\n");
@@ -814,18 +814,15 @@ class TaskScriptsTest {
         }
     }
 
-    /** A finished run 1 of task {@code id}, recreated from scratch. */
-    private Path finishedTaskFiles(String id, String kind) throws IOException {
+    /** A finished run 1 of task {@code id} ({@link #recordedTask}), recreated from scratch. */
+    private Path finishedTaskFiles(String id, String kind) throws Exception {
         var d = home.resolve(".isx-mcp/tasks/" + id);
         if (Files.exists(d)) {
             try (var files = Files.list(d)) {
                 for (var f : files.toList()) Files.delete(f);
             }
         }
-        Files.createDirectories(d);
-        Files.writeString(d.resolve("kind"), kind + "\n");
-        Files.writeString(d.resolve("current"), "1\n");
-        Files.writeString(d.resolve("exit-1"), "0\n");
+        recordedTask(id, kind, false);
         return d;
     }
 
@@ -835,6 +832,7 @@ class TaskScriptsTest {
         // Opening a FIFO for writing waits for a reader: cancel_task and send_message write task files.
         var d = home.resolve(".isx-mcp/tasks/t41-abc");
         sh(TaskScripts.launch("t41-abc", 1, Tasks.COMMAND, TaskScripts.commandRun("t41-abc", work.toString(), Map.of(), "sleep 300")), "");
+        // exit-1.tmp: where the exit record used to be written aside.
         sh("mkfifo " + d.resolve("cancelling-1") + " " + d.resolve("exit-1.tmp"), "");
         sh(TaskScripts.cancel("t41-abc"), "", 15);
         assertEquals(143, awaitFinished("t41-abc").exit());

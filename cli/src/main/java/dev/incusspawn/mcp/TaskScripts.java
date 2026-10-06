@@ -81,14 +81,20 @@ final class TaskScripts {
         return ifFile(file, "cat");
     }
 
+    /** {@link #writeAside(String, String, String)} for a file in the task directory {@code $D}. */
+    private static String writeAside(String name, String command) {
+        return writeAside("$D", name, command);
+    }
+
     /**
-     * Write what {@code command} prints to {@code file} in {@code $D} without opening it: a FIFO
-     * there would hold an open for writing until something reads it (#1074). Written into a file
-     * {@code mktemp} makes, then renamed into place, which replaces whatever was there. A list of
-     * simple commands, so a script under {@code set -e} stops at the one that failed.
+     * Write what {@code command} prints to {@code name} in {@code dir} (which the shell expands)
+     * without opening it: a FIFO there would hold an open for writing until something reads it
+     * (#1074). Written into a file {@code mktemp} makes, then renamed into place, which replaces
+     * whatever was there. A list of simple commands, so a script under {@code set -e} stops at
+     * the one that failed.
      */
-    private static String writeAside(String file, String command) {
-        return "w=$(mktemp \"$D/.tmp.XXXXXX\"); " + command + " > \"$w\"; mv -f \"$w\" \"" + file + "\"";
+    static String writeAside(String dir, String name, String command) {
+        return "w=$(mktemp \"" + dir + "/.tmp.XXXXXX\"); " + command + " > \"$w\"; mv -f \"$w\" \"" + dir + "/" + name + "\"";
     }
 
     /** The unit of one run; {@code run} may be a shell expression such as {@code $n}. */
@@ -164,7 +170,7 @@ final class TaskScripts {
      * file exists, so it must never be seen empty: written aside, then renamed into place.
      */
     private static String recordExit(String run, String code) {
-        return writeAside("$D/exit-" + run, "echo " + code);
+        return writeAside("exit-" + run, "echo " + code);
     }
 
     /**
@@ -182,11 +188,11 @@ final class TaskScripts {
         var d = dir(taskId);
         var sb = new StringBuilder();
         sb.append("set -e; D=").append(d).append("; mkdir -p \"$D\"; ");
-        if (key != null && run == 1) sb.append(writeAside("$D/key", "printf '%s' " + ExecScript.quote(McpSession.checkKey(key)))).append("; ");
-        sb.append(writeAside("$D/prompt-" + run + ".md", "cat")).append("; ");
-        sb.append(writeAside("$D/run-" + run + ".sh", "echo " + b64(runScript) + " | base64 -d")).append("; ");
-        if (Tasks.AGENT.equals(kind) && run == 1) sb.append(writeAside("$D/brief.md", "echo " + b64(DELEGATE_BRIEF) + " | base64 -d")).append("; ");
-        sb.append(writeAside("$D/kind", "echo " + kind)).append("; ");
+        if (key != null && run == 1) sb.append(writeAside("key", "printf '%s' " + ExecScript.quote(McpSession.checkKey(key)))).append("; ");
+        sb.append(writeAside("prompt-" + run + ".md", "cat")).append("; ");
+        sb.append(writeAside("run-" + run + ".sh", "echo " + b64(runScript) + " | base64 -d")).append("; ");
+        if (Tasks.AGENT.equals(kind) && run == 1) sb.append(writeAside("brief.md", "echo " + b64(DELEGATE_BRIEF) + " | base64 -d")).append("; ");
+        sb.append(writeAside("kind", "echo " + kind)).append("; ");
         // A system unit, so the task survives this exec and any session; su - gives the same
         // login environment exec has.
         sb.append("sudo -n systemd-run --quiet --collect --unit=").append(unit(taskId, String.valueOf(run)))
@@ -194,7 +200,7 @@ final class TaskScripts {
                 .append(run).append(".sh\"; ");
         // Only once the unit started (set -e): a run that never started must not become the
         // current one, hiding the previous run's result behind a run with no exit and no unit.
-        sb.append(writeAside("$D/current", "echo " + run));
+        sb.append(writeAside("current", "echo " + run));
         return sb.toString();
     }
 
@@ -241,8 +247,8 @@ final class TaskScripts {
         return sb.append("exit 0").toString();
     }
 
-    /** Where {@link #cancel} stamps the time it started cancelling run {@code $n} in {@code $D}. */
-    private static final String CANCEL_STAMP = "$D/cancelling-$n";
+    /** Where in {@code $D} {@link #cancel} stamps the time it started cancelling run {@code $n}. */
+    private static final String CANCEL_STAMP = "cancelling-$n";
 
     /**
      * True while run {@code $n} in {@code $D} is being cancelled: {@link #cancel} stamps the time
@@ -253,7 +259,7 @@ final class TaskScripts {
      * anything but digits never reaches the arithmetic, where bash would evaluate it. No fork
      * unless a stamp exists, since this runs on every poll of a running task.
      */
-    private static final String CANCELLING = "{ " + ifFile(CANCEL_STAMP, "read -r c")
+    private static final String CANCELLING = "{ " + ifFile("$D/" + CANCEL_STAMP, "read -r c")
             + " && case $c in ''|*[!0-9]*) false;; esac && t=$(date +%s) "
             + "&& [ $(( t - c )) -ge 0 ] && [ $(( t - c )) -lt 300 ]; }";
 
@@ -441,7 +447,7 @@ final class TaskScripts {
                 + "sudo -n systemctl stop " + unit(taskId, "$n") + " 2>/dev/null; "
                 + "{ sudo -n bash -c " + quoted + " 2>/dev/null || bash -c " + quoted + "; }; "
                 // The sweep is over either way: the stamp goes, and the cancel keeps its own status.
-                + "[ -f \"$D/exit-$n\" ] || { " + recordExit("$n", "143") + "; }; r=$?; rm -f \"" + CANCEL_STAMP + "\"; exit $r";
+                + "[ -f \"$D/exit-$n\" ] || { " + recordExit("$n", "143") + "; }; r=$?; rm -f \"$D/" + CANCEL_STAMP + "\"; exit $r";
     }
 
     /**
