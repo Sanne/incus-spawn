@@ -762,6 +762,94 @@ class TaskScriptsTest {
         assertEquals("--- stdout\n\n--- stderr\n", sh(TaskScripts.output("t33-abc"), "", 5));
     }
 
+    /**
+     * A {@code [} that, having found the task file {@code $SWAP} to be a regular file, puts a FIFO
+     * in its place: the race of #1080 (something in the instance swapping the two between check
+     * and open), made to happen every time.
+     */
+    private static final String SWAP_AFTER_CHECK = """
+            [() {
+              builtin [ "$@"; local r=$?
+              if builtin [ $r = 0 ] && builtin [ "$1" = -f ] && builtin [ "$2" = "$SWAP" ]; then
+                rm -f -- "$2"; mkfifo -- "$2"
+              fi
+              return $r
+            }
+            """;
+
+    @Test
+    @Timeout(120)
+    void aFifoSwappedInAfterTheCheckHoldsNoRead() throws Exception {
+        var reads = List.of(TaskScripts.list(), TaskScripts.status("t32-abc", 1000), TaskScripts.status("t33-abc", 1000),
+                TaskScripts.status("t34-abc", 1000), TaskScripts.output("t33-abc"),
+                TaskScripts.watch(List.of("t32-abc", "t33-abc", "t34-abc")), TaskScripts.busy(), TaskScripts.unfinished(),
+                TaskScripts.agentIdle());
+        var files = swappableTaskFiles();
+        for (var script : reads) {
+            for (var file : files) {
+                swappableTaskFiles();
+                sh("SWAP=" + file + "\n" + SWAP_AFTER_CHECK + script, "", 5);
+            }
+        }
+        // The kill sweep waits between TERM and KILL: cancel reads one file, its current run.
+        swappableTaskFiles();
+        sh("SWAP=" + home.resolve(".isx-mcp/tasks/t33-abc/current") + "\n" + SWAP_AFTER_CHECK + TaskScripts.cancel("t33-abc"), "", 10);
+    }
+
+    /** A finished agent, a finished command and an agent being cancelled, from scratch; every file of theirs. */
+    private List<Path> swappableTaskFiles() throws IOException {
+        var agent = finishedTaskFiles("t32-abc", Tasks.AGENT);
+        for (var f : List.of("cwd", "model", "max-turns", "key", "session_id", "events-1.jsonl", "stderr-1.log")) {
+            Files.writeString(agent.resolve(f), "x\n");
+        }
+        var command = finishedTaskFiles("t33-abc", Tasks.COMMAND);
+        Files.writeString(command.resolve("stdout"), "out\n");
+        Files.writeString(command.resolve("stderr"), "err\n");
+        // No exit yet and no unit: a state read reads its stamp.
+        var cancelling = finishedTaskFiles("t34-abc", Tasks.AGENT);
+        Files.delete(cancelling.resolve("exit-1"));
+        Files.writeString(cancelling.resolve("cancelling-1"), System.currentTimeMillis() / 1000 + "\n");
+        try (var all = Files.walk(home.resolve(".isx-mcp/tasks"))) {
+            return all.filter(Files::isRegularFile).sorted().toList();
+        }
+    }
+
+    /** A finished run 1 of task {@code id}, recreated from scratch. */
+    private Path finishedTaskFiles(String id, String kind) throws IOException {
+        var d = home.resolve(".isx-mcp/tasks/" + id);
+        if (Files.exists(d)) {
+            try (var files = Files.list(d)) {
+                for (var f : files.toList()) Files.delete(f);
+            }
+        }
+        Files.createDirectories(d);
+        Files.writeString(d.resolve("kind"), kind + "\n");
+        Files.writeString(d.resolve("current"), "1\n");
+        Files.writeString(d.resolve("exit-1"), "0\n");
+        return d;
+    }
+
+    @Test
+    @Timeout(60)
+    void aFifoWhereATaskFileIsWrittenHoldsNeitherCancelNorTheNextRun() throws Exception {
+        // Opening a FIFO for writing waits for a reader: cancel_task and send_message write task files.
+        var d = home.resolve(".isx-mcp/tasks/t41-abc");
+        sh(TaskScripts.launch("t41-abc", 1, Tasks.COMMAND, TaskScripts.commandRun("t41-abc", work.toString(), Map.of(), "sleep 300")), "");
+        sh("mkfifo " + d.resolve("cancelling-1") + " " + d.resolve("exit-1.tmp"), "");
+        sh(TaskScripts.cancel("t41-abc"), "", 15);
+        assertEquals(143, awaitFinished("t41-abc").exit());
+
+        for (var f : List.of("prompt-2.md", "run-2.sh", "kind", "current")) {
+            Files.deleteIfExists(d.resolve(f));
+            sh("mkfifo " + d.resolve(f), "");
+        }
+        sh(TaskScripts.launch("t41-abc", 2, Tasks.COMMAND, "true"), "the next prompt", 5);
+        assertEquals("the next prompt", Files.readString(d.resolve("prompt-2.md")), "the FIFO is replaced, never written through");
+        assertEquals("true", Files.readString(d.resolve("run-2.sh")));
+        assertEquals("2\n", Files.readString(d.resolve("current")));
+        assertEquals("command\n", Files.readString(d.resolve("kind")));
+    }
+
     @Test
     void taskIdsAreReadFromTheTaskLinesAloneAndEachOnce() {
         // The output is the guest's: anything its profile prints must neither count nor fail the read.
@@ -836,7 +924,7 @@ class TaskScriptsTest {
         sh(TaskScripts.launch("t13-abc", 1, Tasks.COMMAND, scripts.get(0)), "");
         assertEquals(0, awaitFinished("t13-abc").exit());
         try (var files = Files.list(home.resolve(".isx-mcp/tasks/t13-abc"))) {
-            assertTrue(files.noneMatch(f -> f.getFileName().toString().endsWith(".tmp")), "nothing left aside");
+            assertTrue(files.noneMatch(f -> f.getFileName().toString().startsWith(".tmp.")), "nothing left aside");
         }
     }
 

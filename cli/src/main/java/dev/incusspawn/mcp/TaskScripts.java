@@ -62,18 +62,33 @@ final class TaskScripts {
     }
 
     /**
-     * {@code command} on {@code file} (a path the shell expands, quoted here) if it is a regular file, else nothing (and a false status).
-     * Every task file is read this way: a FIFO in its place (anyone in the instance can make one)
-     * would hold the read, and the tool call waiting on it, until something writes to it.
+     * {@code command} reading {@code file} (a path the shell expands, quoted here) on its stdin if
+     * it is a regular file, else nothing (and a false status). In the current shell, so a
+     * {@code read} sets its variable. Every task file is read this way: a FIFO in its place
+     * (anyone in the instance can make one) would hold an open for reading, and the tool call
+     * waiting on it, until something writes to it. Checking the path first is not enough, as a
+     * FIFO can be swapped in between the check and the open (#1080); so the file is opened
+     * read-write, which never waits on a FIFO, and what was opened is checked. The path is still
+     * checked first, as opening read-write creates a file that is not there.
      */
     private static String ifFile(String file, String command) {
         var quoted = "\"" + file + "\"";
-        return "{ [ -f " + quoted + " ] && " + command + " " + quoted + " 2>/dev/null; }";
+        return "{ [ -f " + quoted + " ] && { [ -f /dev/fd/3 ] && " + command + " <&3; } 3<> " + quoted + "; } 2>/dev/null";
     }
 
     /** The contents of {@code file} if it is a regular file ({@link #ifFile}). */
-    private static String readFile(String file) {
+    static String readFile(String file) {
         return ifFile(file, "cat");
+    }
+
+    /**
+     * Write what {@code command} prints to {@code file} in {@code $D} without opening it: a FIFO
+     * there would hold an open for writing until something reads it (#1074). Written into a file
+     * {@code mktemp} makes, then renamed into place, which replaces whatever was there. A list of
+     * simple commands, so a script under {@code set -e} stops at the one that failed.
+     */
+    private static String writeAside(String file, String command) {
+        return "w=$(mktemp \"$D/.tmp.XXXXXX\"); " + command + " > \"$w\"; mv -f \"$w\" \"" + file + "\"";
     }
 
     /** The unit of one run; {@code run} may be a shell expression such as {@code $n}. */
@@ -149,7 +164,7 @@ final class TaskScripts {
      * file exists, so it must never be seen empty: written aside, then renamed into place.
      */
     private static String recordExit(String run, String code) {
-        return "echo " + code + " > \"$D/exit-" + run + ".tmp\" && mv -f \"$D/exit-" + run + ".tmp\" \"$D/exit-" + run + "\"";
+        return writeAside("$D/exit-" + run, "echo " + code);
     }
 
     /**
@@ -167,11 +182,11 @@ final class TaskScripts {
         var d = dir(taskId);
         var sb = new StringBuilder();
         sb.append("set -e; D=").append(d).append("; mkdir -p \"$D\"; ");
-        if (key != null && run == 1) sb.append("printf '%s' ").append(ExecScript.quote(McpSession.checkKey(key))).append(" > \"$D/key\"; ");
-        sb.append("cat > \"$D/prompt-").append(run).append(".md\"; ");
-        sb.append("echo ").append(b64(runScript)).append(" | base64 -d > \"$D/run-").append(run).append(".sh\"; ");
-        if (Tasks.AGENT.equals(kind) && run == 1) sb.append("echo ").append(b64(DELEGATE_BRIEF)).append(" | base64 -d > \"$D/brief.md\"; ");
-        sb.append("echo ").append(kind).append(" > \"$D/kind\"; ");
+        if (key != null && run == 1) sb.append(writeAside("$D/key", "printf '%s' " + ExecScript.quote(McpSession.checkKey(key)))).append("; ");
+        sb.append(writeAside("$D/prompt-" + run + ".md", "cat")).append("; ");
+        sb.append(writeAside("$D/run-" + run + ".sh", "echo " + b64(runScript) + " | base64 -d")).append("; ");
+        if (Tasks.AGENT.equals(kind) && run == 1) sb.append(writeAside("$D/brief.md", "echo " + b64(DELEGATE_BRIEF) + " | base64 -d")).append("; ");
+        sb.append(writeAside("$D/kind", "echo " + kind)).append("; ");
         // A system unit, so the task survives this exec and any session; su - gives the same
         // login environment exec has.
         sb.append("sudo -n systemd-run --quiet --collect --unit=").append(unit(taskId, String.valueOf(run)))
@@ -179,7 +194,7 @@ final class TaskScripts {
                 .append(run).append(".sh\"; ");
         // Only once the unit started (set -e): a run that never started must not become the
         // current one, hiding the previous run's result behind a run with no exit and no unit.
-        sb.append("echo ").append(run).append(" > \"$D/current\"");
+        sb.append(writeAside("$D/current", "echo " + run));
         return sb.toString();
     }
 
@@ -227,7 +242,7 @@ final class TaskScripts {
     }
 
     /** Where {@link #cancel} stamps the time it started cancelling run {@code $n} in {@code $D}. */
-    private static final String CANCEL_STAMP = "\"$D/cancelling-$n\"";
+    private static final String CANCEL_STAMP = "$D/cancelling-$n";
 
     /**
      * True while run {@code $n} in {@code $D} is being cancelled: {@link #cancel} stamps the time
@@ -238,7 +253,7 @@ final class TaskScripts {
      * anything but digits never reaches the arithmetic, where bash would evaluate it. No fork
      * unless a stamp exists, since this runs on every poll of a running task.
      */
-    private static final String CANCELLING = "{ [ -f " + CANCEL_STAMP + " ] && read -r c 2>/dev/null < " + CANCEL_STAMP
+    private static final String CANCELLING = "{ " + ifFile(CANCEL_STAMP, "read -r c")
             + " && case $c in ''|*[!0-9]*) false;; esac && t=$(date +%s) "
             + "&& [ $(( t - c )) -ge 0 ] && [ $(( t - c )) -lt 300 ]; }";
 
@@ -281,7 +296,7 @@ final class TaskScripts {
         for (var id : taskIds) {
             sb.append("D=").append(dir(id)).append("; id=").append(id).append("; ").append(RUN_STATE)
                     .append("if [ $s = finished ]; then echo \"task $id $n finished $(").append(readFile("$D/exit-$n")).append(")\"; ")
-                    .append("k=; [ -f \"$D/kind\" ] && read -r k < \"$D/kind\"; if [ \"$k\" = ").append(Tasks.AGENT).append(" ]; then ")
+                    .append("k=; ").append(ifFile("$D/kind", "read -r k")).append("; if [ \"$k\" = ").append(Tasks.AGENT).append(" ]; then ")
                     .append("p=1; echo \"sid $id $(").append(readFile("$D/session_id")).append(")\"; ")
                     .append("echo \"cwd $id $(").append(readFile("$D/cwd")).append(")\"; fi; ")
                     .append("else echo \"task $id ${n:-0} $s\"; fi; ");
@@ -326,7 +341,7 @@ final class TaskScripts {
             + "case $id in ''|*[!a-z0-9-]*) continue;; esac; ";
 
     /** In a loop over task directories {@code $D}: skips all but delegated agents'. */
-    private static final String AGENTS_ONLY = "[ -f \"$D/kind\" ] && read -r k < \"$D/kind\" 2>/dev/null && [ \"$k\" = "
+    private static final String AGENTS_ONLY = ifFile("$D/kind", "read -r k") + " && [ \"$k\" = "
             + Tasks.AGENT + " ] || continue; ";
 
     /**
@@ -422,11 +437,11 @@ final class TaskScripts {
         var quoted = ExecScript.quote(kill);
         return "D=" + d + "; n=$(" + readFile("$D/current") + ") || exit 0; "
                 // Before the stop: until the exit is recorded below, a state read says running.
-                + "[ -f \"$D/exit-$n\" ] || date +%s > " + CANCEL_STAMP + "; "
+                + "[ -f \"$D/exit-$n\" ] || { " + writeAside(CANCEL_STAMP, "date +%s") + "; }; "
                 + "sudo -n systemctl stop " + unit(taskId, "$n") + " 2>/dev/null; "
                 + "{ sudo -n bash -c " + quoted + " 2>/dev/null || bash -c " + quoted + "; }; "
                 // The sweep is over either way: the stamp goes, and the cancel keeps its own status.
-                + "[ -f \"$D/exit-$n\" ] || { " + recordExit("$n", "143") + "; }; r=$?; rm -f " + CANCEL_STAMP + "; exit $r";
+                + "[ -f \"$D/exit-$n\" ] || { " + recordExit("$n", "143") + "; }; r=$?; rm -f \"" + CANCEL_STAMP + "\"; exit $r";
     }
 
     /**

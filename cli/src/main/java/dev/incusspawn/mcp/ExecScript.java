@@ -48,7 +48,7 @@ final class ExecScript {
     static String kill(String runId) {
         requireId(runId);
         var pidFile = RUN_DIR + "/" + runId + ".pid";
-        return "p=$(cat " + pidFile + " 2>/dev/null) || exit 0; "
+        return "p=$(" + TaskScripts.readFile(pidFile) + ") || exit 0; "
                 + "kill -TERM -- -\"$p\" 2>/dev/null; "
                 + "command -v pkill >/dev/null && pkill -TERM -s \"$p\"; "
                 + "sleep 3; kill -KILL -- -\"$p\" 2>/dev/null; "

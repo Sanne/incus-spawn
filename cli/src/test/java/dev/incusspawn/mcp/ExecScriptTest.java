@@ -123,6 +123,22 @@ class ExecScriptTest {
     }
 
     @Test
+    void aFifoInPlaceOfThePidFileHoldsNoKill() throws Exception {
+        // Anyone in the instance can put one there; reading it would wait for a writer.
+        var pidFile = Files.createDirectories(home.resolve(".isx-mcp/run")).resolve("exec-1-1.pid");
+        new ProcessBuilder("mkfifo", pidFile.toString()).start().waitFor();
+        var pb = new ProcessBuilder("bash", "-c", ExecScript.kill("exec-1-1"));
+        pb.environment().put("HOME", home.toString());
+        var p = pb.start();
+        try {
+            assertTrue(p.waitFor(10, TimeUnit.SECONDS), "the kill waited on a FIFO");
+        } finally {
+            p.descendants().forEach(ProcessHandle::destroyForcibly);
+            p.destroyForcibly();
+        }
+    }
+
+    @Test
     void killingARunThatAlreadyEndedIsHarmless() throws Exception {
         assertEquals(0, run(ExecScript.kill("exec-9-9")).exit());
     }
