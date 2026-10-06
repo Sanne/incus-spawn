@@ -90,7 +90,8 @@ public final class ToolProxyResolver {
             if (!ns.isBlank()) {
                 var existing = namespaces.putIfAbsent(ns, toolName);
                 if (existing != null) {
-                    System.err.println("Warning: tool '" + toolName + "' shares config-namespace '"
+                    // Once per channel: every selection resolved re-detects it (#891).
+                    dev.incusspawn.Warnings.warn("tool '" + toolName + "' shares config-namespace '"
                             + ns + "' with tool '" + existing + "' — skipping");
                     continue;
                 }

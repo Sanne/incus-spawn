@@ -293,6 +293,33 @@ class PerInstanceCredentialsTest {
         assertAllTokens(ToolProxyResolver.resolve(config, tools, Map.of("github", "acme")), "ghp_acme");
     }
 
+    /**
+     * Two tools on one namespace are reported once per config read, not once per account the
+     * across-accounts pass resolves (#891).
+     */
+    @Test
+    void aNamespaceCollisionIsReportedOnce() throws Exception {
+        var config = YAML.readValue("""
+                github:
+                  accounts:
+                    personal:
+                      token: "ghp_personal"
+                    acme:
+                      token: "ghp_acme"
+                  default: personal
+                """, SpawnConfig.class);
+        var tools = new java.util.LinkedHashMap<String, ToolSetup>();
+        tools.put("gh", new dev.incusspawn.tool.GhSetup());
+        tools.put("gh-twin", new dev.incusspawn.tool.GhSetup());
+
+        var reported = new java.util.ArrayList<String>();
+        try (var ignored = dev.incusspawn.Warnings.redirect(new dev.incusspawn.Warnings.Channel(reported::add))) {
+            ToolProxyResolver.resolveAcrossAccounts(config, tools);
+        }
+        assertEquals(1, reported.size(), reported.toString());
+        assertTrue(reported.getFirst().contains("shares config-namespace 'github'"), reported.getFirst());
+    }
+
     /** A pre-accounts github block keeps working for the real tool too. */
     @Test
     void theRealGhToolStillResolvesAFlatToken() throws Exception {
