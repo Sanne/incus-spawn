@@ -17,8 +17,12 @@ import java.util.function.Supplier;
 
 /**
  * Why a built template no longer matches what a build would make now (#1115): the TUI's
- * {@code ! △ ↑} marks and {@code isx templates --format=plain|json} read this one judgement, so
- * the two cannot disagree. It reads only what it is handed -- the built templates' stamps from one
+ * {@code ! △ ↑} marks, {@code isx templates --format=plain|json} and {@code isx build
+ * --out-of-sync} ({@link #versionOutdated} and {@link #definitionChanged}, read lazily from
+ * the instance's config) all apply these rules, so a rule cannot change for one of them only.
+ * The tool fingerprints a definition is compared with are each caller's input: the build
+ * computes them per chain ({@code BuildCommand.computeToolFingerprints}), the others with
+ * {@link #toolFingerprints}. It reads only what it is handed -- the built templates' stamps from one
  * Incus listing, the definitions, and the tool fingerprints, asked for only when a definition is
  * compared -- so the CLI pays for none of the TUI's reload.
  */
@@ -60,12 +64,12 @@ final class TemplateStaleness {
         Map<String, String> fingerprints = null;
         var result = new HashMap<String, Staleness>();
         for (var t : built) {
-            var versionOutdated = !t.buildVersion().equals(currentVersion);
+            var versionOutdated = versionOutdated(t.buildVersion(), currentVersion);
             var def = defs.get(t.name());
             var definitionChanged = false;
             if (!t.definitionSha().isEmpty() && !storedSource.contains(t.name()) && def != null) {
                 if (fingerprints == null) fingerprints = toolFingerprints.get();
-                definitionChanged = !t.definitionSha().equals(def.contentFingerprint(fingerprints));
+                definitionChanged = definitionChanged(t.definitionSha(), def, fingerprints);
             }
             var parentRebuilt = false;
             if (def != null && !def.isRoot()) {
@@ -76,6 +80,20 @@ final class TemplateStaleness {
             result.put(t.name(), new Staleness(versionOutdated, definitionChanged, parentRebuilt));
         }
         return result;
+    }
+
+    /** Built by another isx version, or by one that recorded none ({@code null} or empty). */
+    static boolean versionOutdated(String buildVersion, String currentVersion) {
+        return buildVersion == null || buildVersion.isEmpty() || !buildVersion.equals(currentVersion);
+    }
+
+    /**
+     * The definition differs from the one the template was built from. A template with no
+     * recorded fingerprint ({@code null} or empty) has nothing to compare, so it has not changed.
+     */
+    static boolean definitionChanged(String definitionSha, ImageDef def, Map<String, String> toolFingerprints) {
+        return definitionSha != null && !definitionSha.isEmpty()
+                && !definitionSha.equals(def.contentFingerprint(toolFingerprints));
     }
 
     /** The composite fingerprints of every tool {@code defs} use, their {@code requires} folded in. */

@@ -4,6 +4,7 @@ import dev.incusspawn.BuildInfo;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.TemplateValidator;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
@@ -70,7 +71,8 @@ public class TemplatesCommand extends BaseCommand {
                 List<TemplateStaleness.Built> built = null;
                 try {
                     built = ListCommand.builtTemplates(RuntimeServices.incus().listJsonConfig());
-                } catch (Exception e) {
+                } catch (IncusException e) {
+                    // Only Incus failing to answer is "unknown"; anything else is a bug, reported as one.
                     System.err.println("Could not read which templates are built: " + e.getMessage());
                 }
                 outputFormat.print(System.out, records(defs, built,

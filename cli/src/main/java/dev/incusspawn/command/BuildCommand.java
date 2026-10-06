@@ -852,35 +852,19 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * Check if an image is outdated (built with an older version of isx or with a different definition).
+     * Check if an image is outdated (built with an older version of isx or with a different
+     * definition), by {@link TemplateStaleness}'s rules. The definition stamp is read only when
+     * the version matches, so an outdated build costs one config read.
      */
     static boolean isImageOutdated(String imageName, ImageDef imageDef,
                                     IncusClient incus, ToolDefLoader toolDefLoader,
                                     Map<String, ImageDef> defs) {
-        var currentVersion = BuildInfo.instance().version();
         var buildVersion = incus.configGet(imageName, Metadata.BUILD_VERSION);
-
-        // Check if built with an older version of isx
-        if (buildVersion != null && !buildVersion.isEmpty() && !buildVersion.equals(currentVersion)) {
-            return true;
-        }
-
-        // Check if built with a missing version (very old build)
-        if (buildVersion == null || buildVersion.isEmpty()) {
-            return true;
-        }
-
-        // Check if definition has changed
+        if (TemplateStaleness.versionOutdated(buildVersion, BuildInfo.instance().version())) return true;
         var storedSha = incus.configGet(imageName, Metadata.DEFINITION_SHA);
-        if (storedSha != null && !storedSha.isEmpty()) {
-            var currentSha = imageDef.contentFingerprint(
-                    computeToolFingerprints(imageDef, toolDefLoader, defs));
-            if (!storedSha.equals(currentSha)) {
-                return true;
-            }
-        }
-
-        return false;
+        // Checked here too so the tools are fingerprinted only when there is a stamp to compare.
+        return storedSha != null && !storedSha.isEmpty() && TemplateStaleness.definitionChanged(storedSha,
+                imageDef, computeToolFingerprints(imageDef, toolDefLoader, defs));
     }
 
     private String printBuildDiagnostics(String buildName) {

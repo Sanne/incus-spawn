@@ -96,6 +96,28 @@ class TemplatesStalenessTest {
     }
 
     @Test
+    void eachReasonStandsAlone() {
+        var defs = chain();
+        var fps = toolFingerprints(defs);
+        var sha = (java.util.function.Function<String, String>) n -> defs.get(n).contentFingerprint(fps);
+        // Every one current; tpl-java built before tpl-dev, so only its parent_rebuilt is set.
+        var stale = TemplateStaleness.assess(List.of(
+                        new TemplateStaleness.Built("tpl-minimal", "2026-10-01T08:00:00", CURRENT, sha.apply("tpl-minimal")),
+                        new TemplateStaleness.Built("tpl-dev", "2026-10-03T08:00:00", CURRENT, sha.apply("tpl-dev")),
+                        new TemplateStaleness.Built("tpl-java", "2026-10-02T08:00:00", CURRENT, sha.apply("tpl-java"))),
+                defs, Set.of(), () -> fps, CURRENT);
+        assertEquals(new TemplateStaleness.Staleness(false, false, false), stale.get("tpl-minimal"));
+        assertEquals(new TemplateStaleness.Staleness(false, false, false), stale.get("tpl-dev"));
+        assertEquals(new TemplateStaleness.Staleness(false, false, true), stale.get("tpl-java"));
+
+        // Only the definition: same version, same times, another fingerprint.
+        var changed = TemplateStaleness.assess(List.of(
+                        new TemplateStaleness.Built("tpl-minimal", "2026-10-01T08:00:00", CURRENT, "another")),
+                defs, Set.of(), () -> fps, CURRENT);
+        assertEquals(new TemplateStaleness.Staleness(false, true, false), changed.get("tpl-minimal"));
+    }
+
+    @Test
     void whenIncusCannotBeAskedTheBuildFieldsAreUnknownNotFalse() {
         var records = TemplatesCommand.ListSub.records(chain(), null,
                 () -> fail("nothing is built, so no definition is compared"), CURRENT, ZONE);

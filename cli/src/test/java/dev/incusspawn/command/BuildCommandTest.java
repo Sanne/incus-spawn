@@ -2157,6 +2157,41 @@ class BuildCommandTest {
                 "Image with changed definition should be outdated");
     }
 
+    /**
+     * {@code --out-of-sync} judges a template by {@link TemplateStaleness}'s rules, read lazily:
+     * the definition stamp is read only once the version matches, so an outdated build costs
+     * one config read, as before the rules were shared (#1115).
+     */
+    @Test
+    void isImageOutdatedReadsTheDefinitionStampOnlyWhenTheVersionMatches() {
+        var incus = mock(IncusClient.class);
+        when(incus.configGet("tpl-test", "user.incus-spawn.build-version")).thenReturn("0.0.1");
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        var defs = java.util.Map.of("tpl-test", imageDef);
+
+        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus,
+                mock(dev.incusspawn.tool.ToolDefLoader.class), defs));
+        verify(incus, never()).configGet("tpl-test", "user.incus-spawn.definition-sha");
+    }
+
+    @Test
+    void isImageOutdatedWithAMatchingDefinitionIsCurrentAndNeverRecordedIsOutdated() {
+        var incus = mock(IncusClient.class);
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        var defs = java.util.Map.of("tpl-test", imageDef);
+        var loader = mock(dev.incusspawn.tool.ToolDefLoader.class);
+        // configGet answers null for a key never stamped: a build with no recorded version.
+        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, loader, defs));
+
+        when(incus.configGet("tpl-test", "user.incus-spawn.build-version"))
+                .thenReturn(dev.incusspawn.BuildInfo.instance().version());
+        when(incus.configGet("tpl-test", "user.incus-spawn.definition-sha"))
+                .thenReturn(imageDef.contentFingerprint(java.util.Map.of()));
+        assertFalse(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, loader, defs));
+    }
+
     // --- default-action sync after every build (#284) ---
 
     private static Map<String, ImageDef> parentAndChild(String parentDefaultAction) throws Exception {
