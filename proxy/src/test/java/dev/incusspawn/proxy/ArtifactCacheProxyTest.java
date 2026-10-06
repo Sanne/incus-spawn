@@ -1201,6 +1201,10 @@ class ArtifactCacheProxyTest {
             assertEquals(502, getAsync(CENTRAL, RELAYED_JAR).toCompletionStage().toCompletableFuture()
                     .get(8, TimeUnit.SECONDS).status());
         }
+        // The relay's connect is still pending (its timeout is 30 s), and the closed black hole
+        // refuses it: that backs Central off. Let it land here, where reset() clears it, rather
+        // than in the middle of the next test, whose hits it would serve unconfirmed (#1066)
+        await("the connect the relay left behind to be refused", () -> proxy.inBackoff(CENTRAL));
     }
 
     @Test
