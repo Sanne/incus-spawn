@@ -2,12 +2,17 @@ package dev.incusspawn.proxy;
 
 import dev.incusspawn.Platform;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -206,16 +211,30 @@ class ProxyServiceTest {
      * port lookup is a stub, so the test never reaches `fuser` and a real proxy on this machine.
      */
     @Test
-    @org.junit.jupiter.api.condition.DisabledOnOs(org.junit.jupiter.api.condition.OS.WINDOWS)
+    @DisabledOnOs(OS.WINDOWS)
     void stopManualProxyStopsTheProxyHealthReports() throws Exception {
         var proxy = new ProcessBuilder("sleep", "600").start();
         try {
             ProxyService.stopManualProxy(proxy::pid, () -> -1);
-            assertTrue(proxy.waitFor(10, java.util.concurrent.TimeUnit.SECONDS),
+            assertTrue(proxy.waitFor(10, TimeUnit.SECONDS),
                     "the proxy /health reported is still running");
         } finally {
             proxy.destroyForcibly();
         }
+    }
+
+    /** A PID of 0 or below would make `kill` signal a whole process group: never sent. */
+    @Test
+    void stopManualProxyNeverSignalsAProcessGroup() {
+        var out = new ByteArrayOutputStream();
+        var original = System.out;
+        System.setOut(new PrintStream(out, true));
+        try {
+            ProxyService.stopManualProxy(() -> 0, () -> -1);
+        } finally {
+            System.setOut(original);
+        }
+        assertEquals("Proxy is not running.", out.toString().strip());
     }
 
     /**

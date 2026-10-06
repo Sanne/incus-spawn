@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.LongSupplier;
 
 public final class ProxyService {
 
@@ -404,13 +405,17 @@ public final class ProxyService {
      * alone finds nothing on macOS, whose {@code fuser} has no {@code port/tcp} form, nor where
      * psmisc is not installed, and the proxy was then left running behind "Proxy is not running."
      */
-    static void stopManualProxy(java.util.function.LongSupplier reportedPid, java.util.function.LongSupplier pidOnPort) {
+    static void stopManualProxy(LongSupplier reportedPid, LongSupplier pidOnPort) {
         var pid = reportedPid.getAsLong();
-        if (pid == -1) pid = pidOnPort.getAsLong();
-        if (pid != -1) {
+        if (pid <= 0) pid = pidOnPort.getAsLong();
+        // The PID came over HTTP: 0 or a negative one would make `kill` signal a process group.
+        if (pid > 0) {
             System.out.println("Stopping proxy (PID " + pid + ")...");
-            runQuiet("kill", String.valueOf(pid));
-            System.out.println("Proxy stopped.");
+            if (runQuiet("kill", String.valueOf(pid))) {
+                System.out.println("Proxy stopped.");
+            } else {
+                System.err.println("Could not stop the proxy (PID " + pid + "); is it another user's?");
+            }
             return;
         }
 
