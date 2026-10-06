@@ -38,15 +38,19 @@ import java.util.stream.Collectors;
 final class McpSession {
 
     private static final Pattern NAME_HINT = Pattern.compile("[a-z0-9][a-z0-9-]{0,15}");
+    private static final Pattern IDEMPOTENCY_KEY = Pattern.compile("[A-Za-z0-9._:-]{1,64}");
     private static final int MAX_PURPOSE = 200;
     private static final String ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
 
-    /** An instance this session holds (or is creating). */
+    /** An instance this session holds (or is creating); {@code key} is its idempotency key, null for none. */
     record Owned(String name, String template, boolean supportsDelegate, String purpose, Instant created,
-                 boolean ready, boolean kept) {
-        Owned asReady() { return new Owned(name, template, supportsDelegate, purpose, created, true, kept); }
-        Owned asKept() { return new Owned(name, template, supportsDelegate, purpose, created, ready, true); }
+                 boolean ready, boolean kept, String key) {
+        Owned asReady() { return new Owned(name, template, supportsDelegate, purpose, created, true, kept, key); }
+        Owned asKept() { return new Owned(name, template, supportsDelegate, purpose, created, ready, true, key); }
     }
+
+    /** One listing of this user's instances, with the names this session had ready before it was read. */
+    record Listing(Set<String> readyBefore, Map<String, Map<String, String>> instances) {}
 
     final SessionId id;
     final String owner;
@@ -115,12 +119,16 @@ final class McpSession {
         client = name == null ? "" : name;
     }
 
-    /** The config every instance this session creates is stamped with, by the copy itself. */
-    Map<String, String> stamps(String purpose) {
+    /**
+     * The config every instance this session creates is stamped with, by the copy itself, with
+     * its idempotency key {@code key} (null for none).
+     */
+    Map<String, String> stamps(String purpose, String key) {
         var stamps = holderStamps();
         stamps.values().removeIf(java.util.Objects::isNull);
         stamps.put(Metadata.MCP_OWNER, owner);
         if (purpose != null && !purpose.isBlank()) stamps.put(Metadata.MCP_PURPOSE, purpose.strip());
+        if (key != null) stamps.put(Metadata.MCP_IDEMPOTENCY_KEY, key);
         return stamps;
     }
 
@@ -134,6 +142,23 @@ final class McpSession {
         if (cwd != null) stamps.put(Metadata.MCP_CWD, cwd);
         stamps.put(Metadata.MCP_ORPHANED, null);
         return stamps;
+    }
+
+    /** Refuse an idempotency key that is not 1-64 of {@code A-Za-z0-9._:-}; null for none. */
+    static String checkKey(String key) {
+        if (key != null && !IDEMPOTENCY_KEY.matcher(key).matches()) {
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "idempotency_key must be 1-64 characters of A-Z, a-z, 0-9, "
+                    + "'.', '_', ':' and '-'");
+        }
+        return key;
+    }
+
+    /**
+     * {@code value} if it is an idempotency key, else null. For what was read back: from an
+     * instance's config, or from a task's directory in the guest, which anyone in it can write.
+     */
+    static String keyOf(String value) {
+        return value != null && IDEMPOTENCY_KEY.matcher(value).matches() ? value : null;
     }
 
     /** Refuse a purpose that would not read as one line in a listing. */
@@ -150,26 +175,27 @@ final class McpSession {
      * it exists: two concurrent creates must not both pass a cap of one. The cap is per host
      * user, so the instances other sessions hold and the orphans awaiting adoption count too.
      * Registered before the copy, so a session that ends mid-create still releases it.
+     *
+     * <p>Under idempotency key {@code key} (null for none), against {@code listing}: the one a
+     * keyed create read to look for the key, or null to read one. A key this session is creating
+     * an instance under already is refused as busy: the create in flight is the one being repeated.
      */
-    String reserve(InstanceBackend.TemplateInfo template, String hint, String purpose) {
+    String reserve(InstanceBackend.TemplateInfo template, String hint, String purpose, String key, Listing listing) {
         if (hint != null && !NAME_HINT.matcher(hint).matches()) {
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "name_hint must be 1-16 characters of a-z, 0-9 and '-', "
                     + "starting with a letter or digit");
         }
         purpose = checkPurpose(purpose);
-        // Only what was ready before the listing can be missing from it for being deleted.
-        Set<String> readyBefore;
-        synchronized (this) {
-            readyBefore = owned.values().stream().filter(Owned::ready).map(Owned::name).collect(Collectors.toSet());
-        }
-        // Read before the lock: it is a round trip to Incus.
-        var listing = backend.mcpInstances();
-        var elsewhere = others(listing).keySet();
+        if (listing == null) listing = listing();
+        var instances = listing.instances();
+        var elsewhere = others(instances).keySet();
         synchronized (this) {
             var max = config.get().maxInstances();
             // A held instance deleted behind the session's back (from the TUI, say) is let go.
-            readyBefore.stream().filter(n -> owned.containsKey(n) && !listing.containsKey(n))
+            listing.readyBefore().stream().filter(n -> owned.containsKey(n) && !instances.containsKey(n))
                     .forEach(n -> abandon(n, Hold.GONE));
+            // Not in the listing the caller looked in: a create with the same key began since.
+            if (key != null && owned.values().stream().anyMatch(o -> key.equals(o.key()))) throw stillUnderWay(key);
             var mine = owned.values().stream().filter(o -> !o.kept()).count();
             var others = elsewhere.stream().filter(n -> !owned.containsKey(n)).count();
             if (mine + others >= max) {
@@ -187,10 +213,100 @@ final class McpSession {
                 throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "instance name '" + name + "' would exceed 63 characters; use a shorter name_hint");
             }
             owned.put(name, new Owned(name, template.name(), template.supportsDelegate(), purpose,
-                    Instant.now(), false, false));
+                    Instant.now(), false, false, key));
             letGo.remove(name);
             return name;
         }
+    }
+
+    /** This user's instances, from one read. */
+    Listing listing() {
+        // Only what was ready before the listing can be missing from it for being deleted.
+        Set<String> readyBefore;
+        synchronized (this) {
+            readyBefore = owned.values().stream().filter(Owned::ready).map(Owned::name).collect(Collectors.toSet());
+        }
+        // Read outside the lock: it is a round trip to Incus.
+        return new Listing(readyBefore, backend.mcpInstances());
+    }
+
+    /**
+     * Which of two instances made under one idempotency key counts as made first: the earlier
+     * Incus record ({@link InstanceBackend#CREATED_AT}), then the name. Every choice between
+     * them uses it, so that of two creates racing under one key exactly one gives way. Each
+     * looks again once its copy is listed, and Incus lists a copy, stamps and all, from the
+     * moment its record is made, at the time it records: if only one of the two sees the other,
+     * it was made after the other looked, so later, and it gives way. Never
+     * {@code user.incus-spawn.created}: a copy carries its source's until the branch writes its
+     * own, and that is taken before the write.
+     */
+    static final java.util.Comparator<Map.Entry<String, Map<String, String>>> FIRST_MADE =
+            java.util.Comparator.<Map.Entry<String, Map<String, String>>, Instant>comparing(e -> createdAt(e.getValue()))
+                    .thenComparing(Map.Entry::getKey);
+
+    private static Instant createdAt(Map<String, String> config) {
+        try {
+            return java.time.OffsetDateTime.parse(config.getOrDefault(InstanceBackend.CREATED_AT, "")).toInstant();
+        } catch (RuntimeException e) {
+            // Never displaces one whose time is known; between two unknown, the name decides.
+            return Instant.MAX;
+        }
+    }
+
+    /**
+     * The instance this user made under idempotency key {@code key}, from {@code listing}: its
+     * name and config, or null. A race between sessions can leave two, until the later one
+     * gives way: the one {@link #FIRST_MADE} is the answer. A copy a session that has since
+     * died never finished (it has no address, which the branch gives it after the copy) is
+     * not an instance a create promised, and never counts; the orphan sweep removes it.
+     */
+    Map.Entry<String, Map<String, String>> keyed(Listing listing, String key) {
+        return listing.instances().entrySet().stream()
+                .filter(e -> owner.equals(e.getValue().get(Metadata.MCP_OWNER))
+                        && key.equals(keyOf(e.getValue().get(Metadata.MCP_IDEMPOTENCY_KEY))))
+                .filter(e -> !e.getValue().getOrDefault(Metadata.STATIC_IP, "").isEmpty()
+                        || SessionId.parse(e.getValue().get(Metadata.MCP_SESSION))
+                                .filter(h -> h.equals(id) || alive.test(h)).isPresent())
+                .min(FIRST_MADE).orElse(null);
+    }
+
+    /**
+     * Whether {@code name}, which a create under idempotency key {@code key} made ({@code listed}:
+     * its config from the listing it was found in), can be returned for a call repeating that
+     * create, before anything about it is compared with the call: returns whether it must be
+     * adopted first ({@link #adopt}, with all its checks), false if this session holds it.
+     * Refused while the first create is still under way -- this session's ({@code busy}) or a
+     * live session's ({@code not_held}) -- as a copy carries its source's config until it is
+     * configured, so what it was made from cannot be told yet; and once it was kept (it is the
+     * user's). An orphan, or one its holder released, is adopted.
+     */
+    boolean replayable(String name, Map<String, String> listed, String key) {
+        synchronized (this) {
+            var held = owned.get(name);
+            if (held != null && !held.ready()) throw stillUnderWay(key);
+        }
+        if (listed.containsKey(Metadata.MCP_KEPT)) {
+            throw new ToolError(ToolError.Code.REFUSED, "idempotency_key '" + key + "' made '" + name + "', which was kept: it "
+                    + "belongs to the user now, not to agents. Look it up with list_instances instead of repeating the call.");
+        }
+        var holder = SessionId.parse(listed.get(Metadata.MCP_SESSION));
+        if (holder.isPresent() && holder.get().equals(id) && holds(name)) {
+            var busy = Metadata.pendingOp(listed);
+            if (!busy.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is busy (" + busy + "); try again shortly.");
+            return false;
+        }
+        if (holder.isPresent() && !holder.get().equals(id) && alive.test(holder.get()) && !Orphans.releasedByHolder(listed)) {
+            throw new ToolError(ToolError.Code.NOT_HELD, "idempotency_key '" + key + "' made '" + name + "', which a session "
+                    + "that is still running holds (isx mcp pid " + holder.get().pid() + describeClient(listed)
+                    + "), and may still be making. Take it with adopt_instance, with force only if that session is stuck.");
+        }
+        return true;
+    }
+
+    /** A call under {@code key} while one with the same key is still under way in this session. */
+    static ToolError stillUnderWay(String key) {
+        return new ToolError(ToolError.Code.BUSY, "a call with idempotency_key '" + key + "' is still under way in this "
+                + "session; call again once it has returned, which gives its result.");
     }
 
     synchronized void created(String name) {
@@ -336,7 +452,7 @@ final class McpSession {
     /** Hold {@code name}, ready, as {@code metadata} describes it: the way back into the registry. */
     private Owned register(String name, String template, boolean delegate, Map<String, String> metadata) {
         var held = new Owned(name, template, delegate, metadata.get(Metadata.MCP_PURPOSE),
-                createdOf(metadata), true, false);
+                createdOf(metadata), true, false, keyOf(metadata.get(Metadata.MCP_IDEMPOTENCY_KEY)));
         synchronized (this) {
             owned.put(name, held);
             letGo.remove(name);

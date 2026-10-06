@@ -48,7 +48,12 @@ class McpToolsTest {
 
     /** A session whose view of other sessions is {@code alive}, and the server over its tools. */
     private void wire(Predicate<SessionId> alive) {
-        session = new McpSession(new SessionId(4242, 1), "alice", 1, "/work", backend, () -> config, alive);
+        wire(new SessionId(4242, 1), alive);
+    }
+
+    /** {@link #wire(Predicate)}, as session {@code id}: a later session of the same user. */
+    private void wire(SessionId id, Predicate<SessionId> alive) {
+        session = new McpSession(id, "alice", 1, "/work", backend, () -> config, alive);
         var all = new McpTools(session, backend, new TemplatePolicy(backend, () -> config),
                 new Tasks(session, backend, () -> config)).all();
         results = new StructuredResults(all);
@@ -406,5 +411,313 @@ class McpToolsTest {
         assertTrue(down.path("isError").asBoolean());
         assertTrue(text(down).contains("isx proxy status"), text(down));
         assertEquals("unavailable", down.path("_meta").path(ToolResult.ERROR_META).path("code").asText());
+    }
+
+    // --- idempotency keys (#1011) ---
+
+    private JsonNode createKeyed(String key) throws Exception {
+        return call("create_instance", "{\"template\":\"tpl-java\",\"idempotency_key\":\"" + key + "\"}");
+    }
+
+    private static String code(JsonNode result) {
+        return result.path("_meta").path(ToolResult.ERROR_META).path("code").asText();
+    }
+
+    /** The instances made through isx mcp, by name. */
+    private Set<String> made() {
+        return backend.mcpInstances().keySet();
+    }
+
+    @Test
+    void theSameKeyTwiceMakesOneInstanceAndSaysTheSecondCallMadeNothing() throws Exception {
+        var first = createKeyed("issue-1011:impl");
+        assertFalse(first.path("isError").asBoolean(), text(first));
+        var name = first.path("structuredContent").path("instance").asText();
+        assertFalse(first.path("structuredContent").has("replayed"), "a create that made it says nothing of replays");
+        assertEquals("issue-1011:impl", backend.instances.get(name).get(Metadata.MCP_IDEMPOTENCY_KEY));
+
+        var again = createKeyed("issue-1011:impl");
+        assertFalse(again.path("isError").asBoolean(), text(again));
+        var replayed = again.path("structuredContent");
+        assertEquals(name, replayed.path("instance").asText());
+        assertTrue(replayed.path("replayed").asBoolean());
+        assertEquals("tpl-java", replayed.path("template").asText());
+        assertEquals("10.0.0.2", replayed.path("ip").asText(), "rebuilt from what Incus holds: " + replayed);
+        assertEquals("/home/agentuser", replayed.path("workdir").asText());
+        assertTrue(replayed.path("supports_delegate").asBoolean());
+        assertEquals(Set.of(name), made());
+
+        var other = createKeyed("issue-1011:review");
+        assertFalse(other.path("isError").asBoolean(), text(other));
+        assertEquals(2, made().size(), "a different key is a different instance");
+    }
+
+    @Test
+    void aKeyedCreateLooksForItsKeyInTheListingItReservesWith() throws Exception {
+        backend.listings.set(0);
+        createJava();
+        assertEquals(1, backend.listings.get(), "a create without a key reads what it always did");
+        backend.listings.set(0);
+        var reads = backend.metadataReads.get();
+        createKeyed("k1");
+        assertEquals(2, backend.listings.get(), "one listing before the copy, one after it");
+        assertEquals(reads, backend.metadataReads.get(), "and nothing else");
+        backend.listings.set(0);
+        createKeyed("k1");
+        assertEquals(1, backend.listings.get(), "a replay held here is one listing");
+        assertEquals(reads, backend.metadataReads.get());
+    }
+
+    @Test
+    void aKeyThatIsNotOneIsRefused() throws Exception {
+        for (var bad : List.of("", "has space", "semi;colon", "x".repeat(65), "\u00e9t\u00e9")) {
+            var r = createKeyed(bad);
+            assertTrue(r.path("isError").asBoolean(), bad);
+            assertEquals("invalid_argument", code(r), bad);
+        }
+        assertEquals(Set.of(), made());
+        assertFalse(createKeyed("A-z.0_9:" + "x".repeat(56)).path("isError").asBoolean(), "64 of the allowed characters");
+    }
+
+    @Test
+    void aKeyRepeatedForAnotherInstanceIsRefusedNotRedirected() throws Exception {
+        config.setTemplates(List.of("tpl-java", "tpl-secret"));
+        var name = createKeyed("k1").path("structuredContent").path("instance").asText();
+        var otherTemplate = call("create_instance", "{\"template\":\"tpl-secret\",\"idempotency_key\":\"k1\"}");
+        assertTrue(otherTemplate.path("isError").asBoolean());
+        assertEquals("invalid_argument", code(otherTemplate));
+        assertTrue(text(otherTemplate).contains(name) && text(otherTemplate).contains("tpl-java"), text(otherTemplate));
+
+        var source = createJava();
+        call("stop_instance", "{\"instance\":\"" + source + "\"}");
+        var asFork = fork(source, ",\"idempotency_key\":\"k1\"");
+        assertTrue(asFork.path("isError").asBoolean());
+        assertEquals("invalid_argument", code(asFork));
+        assertEquals(List.of(), backend.forks);
+
+        var forked = fork(source, ",\"idempotency_key\":\"k2\"");
+        assertFalse(forked.path("isError").asBoolean(), text(forked));
+        var fromTemplate = createKeyed("k2");
+        assertEquals("invalid_argument", code(fromTemplate), "a fork's key is not its template's: " + text(fromTemplate));
+        var forkAgain = fork(source, ",\"idempotency_key\":\"k2\"");
+        assertTrue(forkAgain.path("structuredContent").path("replayed").asBoolean(), text(forkAgain));
+        assertEquals(source, forkAgain.path("structuredContent").path("forked_from").asText());
+    }
+
+    @Test
+    void aForkCarriesItsOwnKeyOrNone() throws Exception {
+        var source = createKeyed("k1").path("structuredContent").path("instance").asText();
+        call("stop_instance", "{\"instance\":\"" + source + "\"}");
+
+        var plain = fork(source, "").path("structuredContent").path("instance").asText();
+        assertFalse(backend.forkStamps.getLast().containsKey(Metadata.MCP_IDEMPOTENCY_KEY));
+        assertFalse(backend.instances.get(plain).containsKey(Metadata.MCP_IDEMPOTENCY_KEY),
+                "the copy drops its source's (InterruptedBranchTest has it on a real copy request)");
+
+        var keyed = fork(source, ",\"idempotency_key\":\"k2\"").path("structuredContent").path("instance").asText();
+        assertEquals("k2", backend.forkStamps.getLast().get(Metadata.MCP_IDEMPOTENCY_KEY));
+        assertEquals("k2", backend.instances.get(keyed).get(Metadata.MCP_IDEMPOTENCY_KEY));
+
+        var replay = createKeyed("k1").path("structuredContent");
+        assertEquals(source, replay.path("instance").asText(), "the source's key names the source, never a fork of it");
+    }
+
+    @Test
+    void aKeptInstancesKeyIsRefused() throws Exception {
+        var name = createKeyed("k1").path("structuredContent").path("instance").asText();
+        call("keep_instance", "{\"instance\":\"" + name + "\"}");
+        var r = createKeyed("k1");
+        assertTrue(r.path("isError").asBoolean());
+        assertEquals("refused", code(r));
+        assertTrue(text(r).contains("list_instances"), text(r));
+        assertEquals(Set.of(name), made(), "refused, not made again");
+    }
+
+    /** An instance another session made under {@code key}: held by {@code session}, from tpl-java. */
+    private void madeElsewhere(String name, String key, String session, boolean finished) {
+        var config = new HashMap<>(Map.of(Metadata.PROFILE, "tpl-java", Metadata.PARENT, "tpl-java",
+                Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, session, Metadata.MCP_IDEMPOTENCY_KEY, key));
+        if (finished) config.put(Metadata.STATIC_IP, "10.0.0.9");
+        backend.instance(name, config);
+    }
+
+    @Test
+    void aKeyAnotherLiveSessionHoldsIsRefusedPointingAtAdoption() throws Exception {
+        wire(s -> true);
+        madeElsewhere("mcp-java-theirs", "k1", "9-9", true);
+        var r = createKeyed("k1");
+        assertTrue(r.path("isError").asBoolean());
+        assertEquals("not_held", code(r));
+        assertTrue(text(r).contains("adopt_instance"), text(r));
+        assertEquals(Set.of("mcp-java-theirs"), made());
+        assertEquals("9-9", backend.instances.get("mcp-java-theirs").get(Metadata.MCP_SESSION), "and not taken");
+    }
+
+    @Test
+    void anotherUsersKeyIsNotMine() throws Exception {
+        madeElsewhere("mcp-java-bobs", "k1", "9-9", true);
+        backend.stamp("mcp-java-bobs", Metadata.MCP_OWNER, "bob");
+        var r = createKeyed("k1");
+        assertFalse(r.path("structuredContent").path("replayed").asBoolean(), text(r));
+        assertEquals("bob", backend.instances.get("mcp-java-bobs").get(Metadata.MCP_OWNER));
+    }
+
+    @Test
+    void afterTheSessionIsReplacedTheKeyAdoptsTheOrphan() throws Exception {
+        var name = createKeyed("k1").path("structuredContent").path("instance").asText();
+        session.release();
+        wire(new SessionId(5151, 2), s -> false);
+        var r = createKeyed("k1");
+        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertEquals(name, r.path("structuredContent").path("instance").asText());
+        assertTrue(r.path("structuredContent").path("replayed").asBoolean());
+        assertEquals("5151-2", backend.instances.get(name).get(Metadata.MCP_SESSION), "adopted, with adopt's checks");
+        assertFalse(backend.instances.get(name).containsKey(Metadata.MCP_ORPHANED));
+        assertTrue(session.holds(name));
+        assertEquals(Set.of(name), made());
+    }
+
+    @Test
+    void anOrphanWhoseTemplateIsNoLongerApprovedIsNotReplayed() throws Exception {
+        madeElsewhere("mcp-java-old", "k1", "9-9", true);
+        config.setTemplates(List.of("tpl-secret"));
+        var r = createKeyed("k1");
+        assertEquals("not_approved", code(r), text(r));
+        assertEquals("9-9", backend.instances.get("mcp-java-old").get(Metadata.MCP_SESSION));
+    }
+
+    @Test
+    void aKeyedCreateThatRacedAnEarlierCopyGivesWayToIt() throws Exception {
+        // A session that died while Incus went on copying: its copy is listed after this create looked.
+        backend.onCreate = () -> {
+            backend.onCreate = null;
+            madeElsewhere("mcp-java-earlier", "k1", "9-9", true);
+            backend.createdAt.put("mcp-java-earlier", "2026-10-06T07:00:00Z");
+        };
+        var r = createKeyed("k1");
+        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertEquals("mcp-java-earlier", r.path("structuredContent").path("instance").asText());
+        assertTrue(r.path("structuredContent").path("replayed").asBoolean());
+        assertEquals(1, backend.destroyed.size(), "its own copy is gone: " + backend.destroyed);
+        assertEquals(Set.of("mcp-java-earlier"), made());
+        assertEquals("4242-1", backend.instances.get("mcp-java-earlier").get(Metadata.MCP_SESSION));
+        assertEquals(List.of("mcp-java-earlier"), session.instances().stream().map(McpSession.Owned::name).toList());
+    }
+
+    @Test
+    void aKeyedCreateThatRacedALaterCopyKeepsItsOwn() throws Exception {
+        // The other create began after this one: it is the one to give way, when it looks again.
+        backend.onCreate = () -> {
+            backend.onCreate = null;
+            madeElsewhere("mcp-java-later", "k1", "9-9", true);
+            backend.createdAt.put("mcp-java-later", "2026-10-06T09:00:00Z");
+        };
+        var r = createKeyed("k1");
+        var name = r.path("structuredContent").path("instance").asText();
+        assertTrue(name.startsWith("mcp-java-") && !name.equals("mcp-java-later"), text(r));
+        assertFalse(r.path("structuredContent").has("replayed"));
+        assertEquals(List.of(), backend.destroyed);
+    }
+
+    @Test
+    void aCopyADeadSessionNeverFinishedIsNoInstanceTheKeyMade() throws Exception {
+        // Cut off between the copy and the branch's configuration: no address, never started.
+        madeElsewhere("mcp-java-halfmade", "k1", "9-9", false);
+        var r = createKeyed("k1");
+        var name = r.path("structuredContent").path("instance").asText();
+        assertFalse(r.path("structuredContent").has("replayed"), text(r));
+        assertTrue(!name.equals("mcp-java-halfmade"), name);
+        // From now on the key answers with the one made properly, however the two compare.
+        assertEquals(name, createKeyed("k1").path("structuredContent").path("instance").asText());
+    }
+
+    @Test
+    void aKeyedCreateStillUnderWayIsBusyNotDoubled() throws Exception {
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        backend.onCreate = () -> {
+            entered.countDown();
+            try {
+                release.await(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        var args = "{\"template\":\"tpl-java\",\"idempotency_key\":\"k1\"}";
+        server.handle("{\"jsonrpc\":\"2.0\",\"id\":901,\"method\":\"tools/call\",\"params\":{\"name\":\"create_instance\",\"arguments\":" + args + "}}");
+        assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS), "first copy under way");
+        server.handle("{\"jsonrpc\":\"2.0\",\"id\":902,\"method\":\"tools/call\",\"params\":{\"name\":\"create_instance\",\"arguments\":" + args + "}}");
+        var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (out.sent.stream().noneMatch(m -> m.path("id").asInt() == 902) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        assertEquals("busy", code(out.byId(902).path("result")), out.byId(902).toString());
+        release.countDown();
+        server.awaitIdle();
+        backend.onCreate = null;
+        var name = out.byId(901).path("result").path("structuredContent").path("instance").asText();
+        assertEquals(Set.of(name), made());
+        assertEquals(name, createKeyed("k1").path("structuredContent").path("instance").asText());
+    }
+
+    /** A copy a live session is still making from tpl-java under {@code key}: as Incus lists it before configureBranch. */
+    private void inFlightElsewhere(String name, String key) {
+        var config = new HashMap<>(backend.instances.get("tpl-java"));
+        config.put(Metadata.TYPE, Metadata.TYPE_CLONE);
+        config.putAll(Map.of(Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, "9-9", Metadata.MCP_IDEMPOTENCY_KEY, key));
+        backend.instance(name, config);
+    }
+
+    @Test
+    void aRepeatWhileAnotherSessionIsStillMakingTheInstanceIsNotHeldNotAMismatch() throws Exception {
+        wire(s -> true);
+        // Still the template's copy: its parent is the template's own, which would read as a fork of it.
+        inFlightElsewhere("mcp-java-theirs", "k1");
+        var r = createKeyed("k1");
+        assertEquals("not_held", code(r), text(r));
+        assertFalse(text(r).contains("new key"), "never advice that makes a second instance: " + text(r));
+    }
+
+    @Test
+    void aCreateThatGivesWayToACopyStillBeingMadeIsNotHeldNotAMismatch() throws Exception {
+        wire(s -> true);
+        backend.onCreate = () -> {
+            backend.onCreate = null;
+            inFlightElsewhere("mcp-java-theirs", "k1");
+            backend.createdAt.put("mcp-java-theirs", "2026-10-06T07:00:00Z");
+        };
+        var r = createKeyed("k1");
+        assertEquals("not_held", code(r), text(r));
+        assertEquals(Set.of("mcp-java-theirs"), made(), "its own copy gave way");
+    }
+
+    @Test
+    void aForkADeadSessionNeverFinishedIsNoInstanceTheKeyMade() throws Exception {
+        var source = createJava();
+        call("stop_instance", "{\"instance\":\"" + source + "\"}");
+        // The session dies between the fork's copy and its configuration.
+        backend.onCreate = () -> {
+            backend.onCreate = null;
+            throw new IllegalStateException("killed");
+        };
+        assertTrue(fork(source, ",\"idempotency_key\":\"k1\"").path("isError").asBoolean());
+        session.release();
+        wire(new SessionId(5151, 2), s -> false);
+        call("adopt_instance", "{\"instance\":\"" + source + "\"}");
+        var r = fork(source, ",\"idempotency_key\":\"k1\"");
+        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("structuredContent").has("replayed"), "the half-made fork is not what the key made: " + text(r));
+        assertEquals("10.0.0.3", r.path("structuredContent").path("ip").asText(), "its own address, never its source's");
+    }
+
+    @Test
+    void anInstanceItsHolderReleasedIsAdoptedForTheKey() throws Exception {
+        // An instance session (#915) lives on after releasing what it held.
+        wire(s -> true);
+        madeElsewhere("mcp-java-released", "k1", "9-9", true);
+        backend.stamp("mcp-java-released", Metadata.MCP_ORPHANED, Orphans.orphanedStamp(java.time.Instant.now(), "9-9"));
+        var r = createKeyed("k1");
+        assertTrue(r.path("structuredContent").path("replayed").asBoolean(), text(r));
+        assertEquals("4242-1", backend.instances.get("mcp-java-released").get(Metadata.MCP_SESSION));
     }
 }

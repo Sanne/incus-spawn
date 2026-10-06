@@ -38,4 +38,28 @@ class InterruptedBranchTest {
         assertEquals(Metadata.TYPE_BASE, daemon.instance("tpl-dev").path("config").path(Metadata.TYPE).asText(),
                 "the template keeps its own");
     }
+
+    @Test
+    void aCopyNeverCarriesItsSourcesAgentOwnershipEvenBeforeItIsConfigured() {
+        // An agent's instance, forked through isx mcp: the copy is listed before configureBranch
+        // drops the source's mcp-* keys, and its idempotency key would answer for the source (#1011).
+        var daemon = new FakeIncusDaemon()
+                .container("mcp-src", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.MCP_OWNER, "alice",
+                        Metadata.MCP_SESSION, "1-1", Metadata.MCP_IDEMPOTENCY_KEY, "k1", Metadata.MCP_KEPT, "yes",
+                        Metadata.STATIC_IP, "10.166.11.9"))
+                .refuseWritesContaining("limits.memory");
+        var request = new BranchFlow.Request("mcp-src", "dev-1", false, false, NetworkMode.AIRGAP,
+                null, null, null, null, List.of(), false, Map.of(Metadata.MCP_SESSION, "2-2", Metadata.MCP_OWNER, "alice"));
+
+        assertThrows(RuntimeException.class,
+                () -> BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, Map.of())));
+
+        var config = daemon.instance("dev-1").path("config");
+        assertFalse(config.has(Metadata.MCP_IDEMPOTENCY_KEY), config.toString());
+        assertFalse(config.has(Metadata.MCP_KEPT), config.toString());
+        // isx mcp takes an address as the sign a copy was configured: the copy never has its source's.
+        assertFalse(config.has(Metadata.STATIC_IP), config.toString());
+        assertEquals("2-2", config.path(Metadata.MCP_SESSION).asText(), "what the caller stamps, it keeps");
+        assertEquals("k1", daemon.instance("mcp-src").path("config").path(Metadata.MCP_IDEMPOTENCY_KEY).asText());
+    }
 }

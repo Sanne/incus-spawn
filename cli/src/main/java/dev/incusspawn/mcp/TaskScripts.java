@@ -155,12 +155,19 @@ final class TaskScripts {
     /**
      * Start run {@code run} of a task: write its files, then hand the run script to systemd.
      * The exec's stdin becomes the prompt file (empty for a command task). An agent's first run
-     * also writes the brief its runs append to their system prompt.
+     * also writes the brief its runs append to their system prompt; a first run started under an
+     * idempotency key, the key, which {@link #list} reads back.
      */
     static String launch(String taskId, int run, String kind, String runScript) {
+        return launch(taskId, run, kind, runScript, null);
+    }
+
+    /** {@link #launch}, for a task started under idempotency key {@code key} (null for none). */
+    static String launch(String taskId, int run, String kind, String runScript, String key) {
         var d = dir(taskId);
         var sb = new StringBuilder();
         sb.append("set -e; D=").append(d).append("; mkdir -p \"$D\"; ");
+        if (key != null && run == 1) sb.append("printf '%s' ").append(ExecScript.quote(McpSession.checkKey(key))).append(" > \"$D/key\"; ");
         sb.append("cat > \"$D/prompt-").append(run).append(".md\"; ");
         sb.append("echo ").append(b64(runScript)).append(" | base64 -d > \"$D/run-").append(run).append(".sh\"; ");
         if (Tasks.AGENT.equals(kind) && run == 1) sb.append("echo ").append(b64(DELEGATE_BRIEF)).append(" | base64 -d > \"$D/brief.md\"; ");
@@ -284,7 +291,8 @@ final class TaskScripts {
 
     /**
      * Every task recorded in the instance, one per line: {@code <id> <kind> <run> <running|done>
-     * <model> <max-turns> <cwd>}, with {@code -} for a profile value never chosen. How an
+     * <model> <max-turns> <key> <cwd>}, with {@code -} for a profile value never chosen; the key
+     * is {@code =<key>}, or {@code -} for a task started without one ({@code -} is a key too). How an
      * adopting session learns the tasks the previous one started; whether a {@code running} one
      * really is, it then asks systemd with {@link #states}.
      */
@@ -294,8 +302,10 @@ final class TaskScripts {
                 + "if [ -f \"$d/exit-$n\" ]; then r=done; else r=running; fi; "
                 + "m=$(" + ifFile("$d/model", "head -c 200") + " | tr -d ' \\n'); "
                 + "t=$(" + ifFile("$d/max-turns", "head -c 20") + " | tr -d ' \\n'); "
-                + "printf '%s %s %s %s %s %s %s\\n' \"$(basename \"$d\")\" \"$(" + readFile("$d/kind") + ")\" \"$n\" \"$r\" "
-                + "\"${m:--}\" \"${t:--}\" \"$(" + readFile("$d/cwd") + ")\"; done; exit 0";
+                // '=' marks a key: '-' is one too, so it cannot also mean none.
+                + "k=-; [ -f \"$d/key\" ] && k==$(" + ifFile("$d/key", "head -c 64") + " | tr -d ' \\n'); "
+                + "printf '%s %s %s %s %s %s %s %s\\n' \"$(basename \"$d\")\" \"$(" + readFile("$d/kind") + ")\" \"$n\" \"$r\" "
+                + "\"${m:--}\" \"${t:--}\" \"$k\" \"$(" + readFile("$d/cwd") + ")\"; done; exit 0";
     }
 
     /**

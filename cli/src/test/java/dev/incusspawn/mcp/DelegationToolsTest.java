@@ -43,6 +43,8 @@ class DelegationToolsTest {
     private volatile String finishedEvents;
     /** What the tasks listing of an adopted instance answers. */
     private volatile String taskListing = "";
+    /** When set, reading the tasks listing fails, as an exec the guest did not answer would. */
+    private volatile boolean failListing;
     /** What the model check answers; null for a model the account can use. */
     private volatile String modelRefusal;
     /** How many busy tasks the per-user count finds in each instance another session holds. */
@@ -101,7 +103,10 @@ class DelegationToolsTest {
                 return "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":" + (modelRefusal != null) + ",\"result\":\""
                         + (modelRefusal == null ? "OK" : modelRefusal) + "\"}\n";
             }
-            if (script.startsWith("for d in")) return taskListing;
+            if (script.startsWith("for d in")) {
+                if (failListing) throw new ToolError(ToolError.Code.UNAVAILABLE, "exec failed");
+                return taskListing;
+            }
             if (script.startsWith("f=$(mktemp)")) return "exit=0\nsummarised=12 lines, 345 bytes\n---\nIt touches A.java only.\n";
             if (script.contains("--numstat")) {
                 return "## /home/agentuser\n3\t1\tsrc/A.java\0-\t-\tlogo.png\0\n---\n"
@@ -639,7 +644,7 @@ class DelegationToolsTest {
         assertTrue(call("exec", "{\"instance\":\"mcp-agent-870-impl-abcde\",\"command\":\"ls\"}").path("isError").asBoolean(),
                 "not held until adopted");
 
-        taskListing = "t3-old agent 2 done claude-haiku-4-5 9 /home/agentuser/repo dir\nnot a task line\n";
+        taskListing = "t3-old agent 2 done claude-haiku-4-5 9 - /home/agentuser/repo dir\nnot a task line\n";
         var adopted = text(call("adopt_instance", "{\"instance\":\"mcp-agent-870-impl-abcde\"}"));
         assertTrue(adopted.contains("\"t3-old\""), adopted);
         taskState = "finished";
@@ -726,7 +731,7 @@ class DelegationToolsTest {
         backend.onCreate = () -> {
             // While the new instance is copied, a background command takes the last slot, and
             // the first task finishes: only asking the instances again shows the slot free.
-            tasks.startCommand(first.instance(), "/home/agentuser", Map.of(), "make");
+            tasks.startCommand(first.instance(), "/home/agentuser", Map.of(), "make", null);
             taskState = "done";
         };
         var r = call("delegate", "{\"instruction\":\"next\",\"template\":\"tpl-agent\"}");
@@ -925,5 +930,238 @@ class DelegationToolsTest {
         var sent = call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"more\"}").path("structuredContent");
         assertEquals(50, sent.path("max_turns").asInt(), sent.toString());
         assertEquals(50, call("task_status", "{\"task_id\":\"" + id + "\"}").path("structuredContent").path("max_turns").asInt());
+    }
+
+    // --- idempotency keys (#1011) ---
+
+    private static String code(JsonNode result) {
+        return result.path("_meta").path(ToolResult.ERROR_META).path("code").asText();
+    }
+
+    private long launches() {
+        return backend.scripts.stream().filter(sc -> sc.contains("systemd-run")).count();
+    }
+
+    private String instanceFor(String purpose) throws Exception {
+        return structured(call("create_instance", "{\"template\":\"tpl-agent\",\"purpose\":\"" + purpose + "\"}"))
+                .path("instance").asText();
+    }
+
+    @Test
+    void theSameKeyStartsOneTaskOfEachKind() throws Exception {
+        var instance = instanceFor("keys");
+        var args = "{\"instruction\":\"fix it\",\"instance\":\"" + instance + "\",\"idempotency_key\":\"t-1\"}";
+        var first = structured(call("delegate", args));
+        assertFalse(first.has("replayed"));
+        var launch = backend.scripts.stream().filter(sc -> sc.contains("systemd-run")).findFirst().orElseThrow();
+        assertTrue(launch.contains("printf '%s' 't-1' > \"$D/key\""), "recorded with the task: " + launch);
+        taskState = "finished";
+        var again = structured(call("delegate", args));
+        assertEquals(first.path("task_id").asText(), again.path("task_id").asText());
+        assertTrue(again.path("replayed").asBoolean());
+        assertEquals(1, again.path("run").asInt());
+        assertEquals(first.path("permission_mode").asText(), again.path("permission_mode").asText());
+        assertEquals(1, launches());
+
+        var cmd = "{\"instance\":\"" + instance + "\",\"command\":\"make test\",\"background\":true,\"idempotency_key\":\"c-1\"}";
+        var started = structured(call("exec", cmd));
+        var repeated = structured(call("exec", cmd));
+        assertEquals(started.path("task_id").asText(), repeated.path("task_id").asText());
+        assertTrue(repeated.path("replayed").asBoolean());
+        assertTrue(repeated.path("background").asBoolean());
+        assertEquals(2, launches());
+        structured(call("exec", cmd.replace("c-1", "c-2")));
+        assertEquals(3, launches(), "a different key is a different task");
+    }
+
+    @Test
+    void aTaskKeyRepeatedForAnotherInstanceOrKindIsRefused() throws Exception {
+        var a = instanceFor("a");
+        var b = instanceFor("b");
+        structured(call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + a + "\",\"idempotency_key\":\"k\"}"));
+        taskState = "finished";
+        var elsewhere = call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + b + "\",\"idempotency_key\":\"k\"}");
+        assertEquals("invalid_argument", code(elsewhere), text(elsewhere));
+        assertTrue(text(elsewhere).contains(a), "names where the key was used: " + text(elsewhere));
+        var asCommand = call("exec", "{\"instance\":\"" + a + "\",\"command\":\"x\",\"background\":true,\"idempotency_key\":\"k\"}");
+        assertEquals("invalid_argument", code(asCommand), text(asCommand));
+        var waited = call("exec", "{\"instance\":\"" + a + "\",\"command\":\"x\",\"idempotency_key\":\"w\"}");
+        assertEquals("invalid_argument", code(waited), "a command waited for has nothing to repeat: " + text(waited));
+        assertEquals(1, launches());
+    }
+
+    @Test
+    void aKeyedDelegationStillLaunchingIsBusyNotDoubled() throws Exception {
+        var instance = instanceFor("busy");
+        launchEntered = new java.util.concurrent.CountDownLatch(1);
+        launchRelease = new java.util.concurrent.CountDownLatch(1);
+        var args = "{\"instruction\":\"x\",\"instance\":\"" + instance + "\",\"idempotency_key\":\"k\"}";
+        server.handle("{\"jsonrpc\":\"2.0\",\"id\":301,\"method\":\"tools/call\",\"params\":{\"name\":\"delegate\",\"arguments\":" + args + "}}");
+        assertTrue(launchEntered.await(5, java.util.concurrent.TimeUnit.SECONDS), "first launch under way");
+        server.handle("{\"jsonrpc\":\"2.0\",\"id\":302,\"method\":\"tools/call\",\"params\":{\"name\":\"delegate\",\"arguments\":" + args + "}}");
+        var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (out.sent.stream().noneMatch(m -> m.path("id").asInt() == 302) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        var second = out.byId(302).path("result");
+        assertEquals("busy", code(second), second.toString());
+        assertTrue(text(second).contains("call again"), text(second));
+        launchRelease.countDown();
+        server.awaitIdle();
+        var first = out.byId(301).path("result");
+        assertFalse(first.path("isError").asBoolean(), first.toString());
+        launchEntered = null;
+        var third = structured(call("delegate", args));
+        assertEquals(first.path("structuredContent").path("task_id").asText(), third.path("task_id").asText());
+        assertTrue(third.path("replayed").asBoolean());
+        assertEquals(1, launches());
+    }
+
+    @Test
+    void aReplayIsNotRefusedByTheTaskLimitItAlreadyCountsIn() throws Exception {
+        config.setMaxConcurrentTasks(1);
+        var instance = instanceFor("cap");
+        var args = "{\"instruction\":\"x\",\"instance\":\"" + instance + "\",\"idempotency_key\":\"k\"}";
+        structured(call("delegate", args));
+        assertTrue(structured(call("delegate", args)).path("replayed").asBoolean());
+    }
+
+    @Test
+    void anAdoptedInstancesTaskKeysStillReplayThere() throws Exception {
+        backend.instance("mcp-agent-870-impl-abcde", Map.of(
+                dev.incusspawn.incus.Metadata.PROFILE, "tpl-agent",
+                dev.incusspawn.incus.Metadata.PARENT, "tpl-agent",
+                dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
+                dev.incusspawn.incus.Metadata.MCP_OWNER, "alice"));
+        taskListing = "t3-old agent 1 done - - =issue-870 /home/agentuser\n"
+                + "t4-old command 1 done - - =$(reboot) /home/agentuser\n"
+                + "t5-old command 1 done - - - /home/agentuser\n";
+        structured(call("adopt_instance", "{\"instance\":\"mcp-agent-870-impl-abcde\"}"));
+        taskState = "finished";
+        var r = structured(call("delegate", "{\"instruction\":\"x\",\"instance\":\"mcp-agent-870-impl-abcde\","
+                + "\"idempotency_key\":\"issue-870\"}"));
+        assertEquals("t3-old", r.path("task_id").asText());
+        assertTrue(r.path("replayed").asBoolean());
+        assertEquals(0, launches());
+        // What the guest wrote is a key only if it reads as one.
+        structured(call("exec", "{\"instance\":\"mcp-agent-870-impl-abcde\",\"command\":\"x\",\"background\":true,"
+                + "\"idempotency_key\":\"reboot\"}"));
+        assertEquals(1, launches());
+        // A task without a key lists '-', which is a key too: it is no task's.
+        var dash = structured(call("exec", "{\"instance\":\"mcp-agent-870-impl-abcde\",\"command\":\"x\",\"background\":true,"
+                + "\"idempotency_key\":\"-\"}"));
+        assertFalse(dash.has("replayed"), dash.toString());
+        assertEquals(2, launches());
+    }
+
+    @Test
+    void delegatingToATemplateUnderAKeyReplaysTheInstanceAndItsTask() throws Exception {
+        var args = "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"idempotency_key\":\"issue-1011\"}";
+        var first = structured(call("delegate", args));
+        var instance = first.path("instance").asText();
+        assertEquals("issue-1011", backend.instances.get(instance).get(dev.incusspawn.incus.Metadata.MCP_IDEMPOTENCY_KEY),
+                "the instance carries the key");
+        taskState = "finished";
+        var again = structured(call("delegate", args));
+        assertEquals(first.path("task_id").asText(), again.path("task_id").asText());
+        assertEquals(instance, again.path("instance").asText());
+        assertTrue(again.path("replayed").asBoolean());
+        assertEquals(1, launches());
+        assertEquals(1, backend.mcpInstances().size());
+
+        var asTemplate = call("delegate", args.replace("tpl-agent", "tpl-plain"));
+        assertEquals("invalid_argument", code(asTemplate), text(asTemplate));
+    }
+
+    @Test
+    void aKeyedInstanceWithoutItsTaskGetsTheTaskNotASecondInstance() throws Exception {
+        // The first call made the instance and was cut off before the task started; its session ended.
+        backend.instance("mcp-agent-task-abcde", Map.of(
+                dev.incusspawn.incus.Metadata.PROFILE, "tpl-agent",
+                dev.incusspawn.incus.Metadata.PARENT, "tpl-agent",
+                dev.incusspawn.incus.Metadata.STATIC_IP, "10.0.0.7",
+                dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
+                dev.incusspawn.incus.Metadata.MCP_OWNER, "alice",
+                dev.incusspawn.incus.Metadata.MCP_IDEMPOTENCY_KEY, "issue-1011"));
+        var r = structured(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\","
+                + "\"idempotency_key\":\"issue-1011\"}"));
+        assertEquals("mcp-agent-task-abcde", r.path("instance").asText());
+        assertFalse(r.has("replayed"), "the task is new: " + r);
+        assertEquals(1, launches());
+        assertEquals(1, backend.mcpInstances().size());
+        assertEquals("7-1", backend.instances.get("mcp-agent-task-abcde").get(dev.incusspawn.incus.Metadata.MCP_SESSION),
+                "adopted first");
+    }
+
+    @Test
+    void aKeyOfATaskAnotherSessionTookIsNoLongerThisSessions() throws Exception {
+        var a = instanceFor("a");
+        var b = instanceFor("b");
+        structured(call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + a + "\",\"idempotency_key\":\"k\"}"));
+        backend.stamp(a, dev.incusspawn.incus.Metadata.MCP_SESSION, "8-8"); // forced adoption
+        assertEquals("not_held", code(call("exec", "{\"instance\":\"" + a + "\",\"command\":\"ls\"}")));
+        var r = call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + b + "\",\"idempotency_key\":\"k\"}");
+        assertFalse(r.path("isError").asBoolean(), "not refused as a mismatch with a task this session let go: " + text(r));
+    }
+
+    @Test
+    void aTaskKeyUsedElsewhereIsRefusedBeforeAnInstanceIsMadeForIt() throws Exception {
+        var a = instanceFor("a");
+        structured(call("exec", "{\"instance\":\"" + a + "\",\"command\":\"make serve\",\"background\":true,"
+                + "\"idempotency_key\":\"k\"}"));
+        var instances = backend.mcpInstances().keySet();
+        var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"idempotency_key\":\"k\"}");
+        assertEquals("invalid_argument", code(r), "not busy, which a retry would loop on: " + text(r));
+        assertEquals(instances, backend.mcpInstances().keySet());
+        assertEquals(List.of(), backend.destroyed);
+    }
+
+    @Test
+    void aRepeatThatStartedTheTaskInTheInstanceKeepsItFromBeingRemoved() throws Exception {
+        // The repeat arrives once the first call's instance is ready, before its task is reserved:
+        // it finds the instance and starts the task there. The first call must not remove it.
+        var args = "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"idempotency_key\":\"k\"}";
+        backend.onListing = () -> {
+            if (backend.instances.values().stream().noneMatch(c -> "k".equals(c.get(dev.incusspawn.incus.Metadata.MCP_IDEMPOTENCY_KEY)))) return;
+            backend.onListing = null;
+            server.handle("{\"jsonrpc\":\"2.0\",\"id\":401,\"method\":\"tools/call\",\"params\":{\"name\":\"delegate\",\"arguments\":" + args + "}}");
+            var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+            while (out.sent.stream().noneMatch(m -> m.path("id").asInt() == 401) && System.nanoTime() < deadline) {
+                Thread.onSpinWait();
+            }
+        };
+        var first = call("delegate", args);
+        server.awaitIdle();
+        var repeat = out.byId(401).path("result");
+        assertFalse(repeat.path("isError").asBoolean(), repeat.toString());
+        var instance = repeat.path("structuredContent").path("instance").asText();
+        assertEquals("busy", code(first), first.toString());
+        assertEquals(List.of(), backend.destroyed, "the instance its repeat started the task in stays");
+        assertEquals(java.util.Set.of(instance), backend.mcpInstances().keySet());
+        assertEquals(1, launches());
+        assertTrue(structured(call("delegate", args)).path("replayed").asBoolean());
+    }
+
+    @Test
+    void aReplayedInstanceWhoseTasksCannotBeReadStartsNoSecondAgent() throws Exception {
+        backend.instance("mcp-agent-task-abcde", Map.of(
+                dev.incusspawn.incus.Metadata.PROFILE, "tpl-agent",
+                dev.incusspawn.incus.Metadata.PARENT, "tpl-agent",
+                dev.incusspawn.incus.Metadata.STATIC_IP, "10.0.0.7",
+                dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
+                dev.incusspawn.incus.Metadata.MCP_OWNER, "alice",
+                dev.incusspawn.incus.Metadata.MCP_IDEMPOTENCY_KEY, "issue-1011"));
+        var args = "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"idempotency_key\":\"issue-1011\"}";
+        failListing = true;
+        var r = call("delegate", args);
+        assertEquals("unavailable", code(r), text(r));
+        assertEquals(0, launches());
+        failListing = false;
+        taskListing = "t3-old agent 1 done - - =issue-1011 /home/agentuser\n";
+        taskState = "finished";
+        var again = structured(call("delegate", args));
+        assertEquals("t3-old", again.path("task_id").asText());
+        assertTrue(again.path("replayed").asBoolean());
+        assertEquals(0, launches());
     }
 }

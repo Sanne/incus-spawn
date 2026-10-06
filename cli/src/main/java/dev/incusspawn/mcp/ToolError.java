@@ -11,17 +11,23 @@ final class ToolError extends RuntimeException {
 
     /** What kind of refusal, on the wire in lower case: a program branches on this, so keep it stable. */
     enum Code {
-        /** An argument is missing, mistyped, out of range, or combined with one it excludes. */
+        /**
+         * An argument is missing, mistyped, out of range, or combined with one it excludes -- or an
+         * {@code idempotency_key} repeated for something other than what it made (never for one still being made).
+         */
         INVALID_ARGUMENT,
         /** The template is not approved for agents, or no longer is. */
         NOT_APPROVED,
         /** No such instance or task. */
         NOT_FOUND,
-        /** It exists, but another session holds it. */
+        /** It exists, but another session holds it (or, for an {@code idempotency_key}, is still making it). */
         NOT_HELD,
         /** It is in a state that does not allow this: stopped, running, attached, still being created, not built. */
         WRONG_STATE,
-        /** Another isx operation holds it right now: try again shortly. */
+        /**
+         * Another isx operation holds it right now, or a call with the same {@code idempotency_key} is
+         * still under way in this session: try again shortly.
+         */
         BUSY,
         /** The user's instance or task limit is reached. */
         LIMIT,

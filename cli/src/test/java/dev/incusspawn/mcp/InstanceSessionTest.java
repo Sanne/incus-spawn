@@ -59,8 +59,8 @@ class InstanceSessionTest {
     }
 
     private String create(McpSession session) {
-        var name = session.reserve(TEMPLATE, null, null);
-        backend.create(TEMPLATE, name, session.stamps(null));
+        var name = session.reserve(TEMPLATE, null, null, null, null);
+        backend.create(TEMPLATE, name, session.stamps(null, null));
         session.created(name);
         return name;
     }
@@ -102,7 +102,7 @@ class InstanceSessionTest {
         next.requireOwned(worker);
         // The cap counts it from the start: one more fits, a third does not.
         create(next);
-        assertThrows(ToolError.class, () -> next.reserve(TEMPLATE, null, null));
+        assertThrows(ToolError.class, () -> next.reserve(TEMPLATE, null, null, null, null));
     }
 
     @Test
@@ -114,8 +114,8 @@ class InstanceSessionTest {
         // The predecessor is gone: its worker is an orphan, on the clock and counted as such.
         var others = Orphans.othersOf(backend.mcpInstances(), "alice", new SessionId(1, 1), alive);
         assertTrue(others.get(worker).orphaned());
-        successor.reserve(TEMPLATE, null, null);
-        assertThrows(ToolError.class, () -> successor.reserve(TEMPLATE, null, null),
+        successor.reserve(TEMPLATE, null, null, null, null);
+        assertThrows(ToolError.class, () -> successor.reserve(TEMPLATE, null, null, null, null),
                 "the orphan still counts against the cap until it is reaped");
     }
 
@@ -132,11 +132,11 @@ class InstanceSessionTest {
         assertTrue(others.get(worker).orphaned(), "an orphan to every session, though its holder may still call");
         // To the coordinator itself too: it counts against its cap, and its own sweep reaps it.
         assertTrue(next.others().containsKey(worker), "listed and counted by the session that released it");
-        next.reserve(TEMPLATE, null, null);
-        assertThrows(ToolError.class, () -> next.reserve(TEMPLATE, null, null));
+        next.reserve(TEMPLATE, null, null, null, null);
+        assertThrows(ToolError.class, () -> next.reserve(TEMPLATE, null, null, null, null));
         var later = Instant.now().plus(Duration.ofHours(2));
         assertEquals(List.of(worker), Orphans.sweep(backend, SELF, "alice", alive, Duration.ofHours(1), later, n -> false));
-        backend.create(TEMPLATE, worker, connect().stamps(null));
+        backend.create(TEMPLATE, worker, connect().stamps(null, null));
         backend.stamp(worker, Metadata.MCP_ORPHANED, Orphans.orphanedStamp(Instant.now(), SELF.toString()));
         // And it stays released: approving the template again does not hand it back silently.
         config.setTemplates(List.of("tpl-dev"));

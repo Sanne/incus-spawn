@@ -281,6 +281,12 @@ public final class BranchFlow {
         // An instance from the copy on, not its template's base: a branch interrupted before
         // configureBranch would otherwise pass for a template, which isx list -q never shows.
         copyConfig.put(Metadata.TYPE, Metadata.TYPE_CLONE);
+        // Nor its source's isx mcp ownership: configureBranch drops what the caller did not
+        // stamp, but the copy is listed before that, and an agent's idempotency key would make it
+        // answer for its source's create meanwhile (#1011). An empty value unsets.
+        sourceInstance.path("config").fieldNames().forEachRemaining(key -> {
+            if (Metadata.isMcpKey(key)) copyConfig.putIfAbsent(key, "");
+        });
         BuildOutput.stepStart("Copying from template...");
         incus.copy(source, name, copyPlan, copyConfig);
         BuildOutput.stepDone();

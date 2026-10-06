@@ -113,8 +113,8 @@ public final class InstanceLifecycle {
         if (mode == NetworkMode.AIRGAP) {
             BuildOutput.step("Enabling network airgap.");
             maskNics(instance, update);
-            // A copy of a networked instance carries its address: the proxy must not take this
-            // one for its source.
+            // No address: the copy request already removed its source's (IncusClient.copy), and an
+            // airgapped instance must not keep one the proxy could take for another's.
             update.unset(Metadata.STATIC_IP);
             update.unset(Metadata.STATIC_GATEWAY);
         } else {

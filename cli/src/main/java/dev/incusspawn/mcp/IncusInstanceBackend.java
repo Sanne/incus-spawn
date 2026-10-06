@@ -286,6 +286,8 @@ final class IncusInstanceBackend implements InstanceBackend {
         });
         var status = instance.path("status").asText("");
         if (!status.isEmpty()) config.put(STATUS, status);
+        var createdAt = instance.path("created_at").asText("");
+        if (!createdAt.isEmpty()) config.put(CREATED_AT, createdAt);
         return config;
     }
 }

@@ -20,6 +20,10 @@ final class OutputSchemas {
     static final String[] TASK_STATES = {"running", "finished", "attached", "lost", "unknown"};
     static final String[] KINDS = {Tasks.AGENT, Tasks.COMMAND};
 
+    /** On a result that an earlier call with the same idempotency_key produced. */
+    private static final String REPLAYED = "true when an earlier call with this idempotency_key made it, "
+            + "and this one made nothing";
+
     private OutputSchemas() {}
 
     private static Schema answer() {
@@ -57,6 +61,7 @@ final class OutputSchemas {
                 .string("workdir", null, true)
                 .stringList("tools", null, true)
                 .bool("supports_delegate", null, true)
+                .bool("replayed", REPLAYED, false)
                 .build();
     }
 
@@ -109,11 +114,21 @@ final class OutputSchemas {
                 .integer("stderr_bytes", "Its whole length", false)
                 .bool("truncated", "stdout or stderr is only the end of it", false)
                 .object("answer", null, false, answer())
+                .bool("replayed", REPLAYED, false)
                 .build();
     }
 
-    /** {@code delegate} and {@code send_message}: a run started. */
+    /** {@code send_message}: a run started. */
     static ObjectNode runStarted() {
+        return runStartedSchema().build();
+    }
+
+    /** {@code delegate}: a run started, or the one an earlier call with its idempotency_key started. */
+    static ObjectNode delegate() {
+        return runStartedSchema().bool("replayed", REPLAYED, false).build();
+    }
+
+    private static Schema runStartedSchema() {
         return Schema.object()
                 .string("task_id", null, true)
                 .string("instance", null, true)
@@ -121,8 +136,7 @@ final class OutputSchemas {
                 .integer("run", "The run (turn of the conversation) now going: 1 for the first", true)
                 .string("permission_mode", null, true)
                 .string("model", null, false)
-                .integer("max_turns", null, false)
-                .build();
+                .integer("max_turns", null, false);
     }
 
     static ObjectNode taskStatus() {

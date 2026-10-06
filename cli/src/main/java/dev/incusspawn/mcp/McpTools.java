@@ -46,6 +46,10 @@ final class McpTools {
             + "against the template's account before the task starts; later turns keep it.";
     private static final String MAX_TURNS = "Most agent turns this task may take (default and ceiling: "
             + "delegate_max_turns from list_templates, when the user set one); later turns keep it.";
+    private static final String IDEMPOTENCY_KEY = "Makes the call safe to repeat (1-64 characters of A-Z, a-z, "
+            + "0-9, '.', '_', ':', '-'): a later call with the same key returns what this one made, with "
+            + "replayed: true, instead of making another, for as long as that exists. A repeat must ask for "
+            + "the same thing, or it is refused";
 
     private final McpSession session;
     private final InstanceBackend backend;
@@ -89,6 +93,9 @@ final class McpTools {
                                 + "(1-16 chars of a-z, 0-9, '-'), e.g. '870-impl'", false)
                         .string("purpose", "What the instance is for, shown by list_instances to you and to "
                                 + "later sessions (one line, e.g. '#870 implement')", false)
+                        .string("idempotency_key", IDEMPOTENCY_KEY + " (the same template or from_instance). "
+                                + "The key is your instances', across sessions: one another live session holds "
+                                + "is refused, and an orphan is adopted.", false)
                         .build(),
                 OutputSchemas.createInstance(),
                 McpTool.annotations(false, false, false),
@@ -137,6 +144,8 @@ final class McpTools {
                                 + "in the instance.", false)
                         .bool("background", "Run as a background task and return its task_id "
                                 + "immediately (stdin, timeout_seconds and ask do not apply)")
+                        .string("idempotency_key", "Only with background. " + IDEMPOTENCY_KEY
+                                + " (the same instance, as a command).", false)
                         .build(),
                 OutputSchemas.exec(),
                 McpTool.annotations(false, false, false),
@@ -163,8 +172,12 @@ final class McpTools {
                         .string("cwd", "Directory to work in (default: the template's workdir)", false)
                         .string("model", MODEL, false)
                         .integer("max_turns", MAX_TURNS, false)
+                        .string("idempotency_key", IDEMPOTENCY_KEY + " (the same instance, or the same "
+                                + "template: then the fresh instance carries the key too, as create_instance's "
+                                + "does, and a repeat finds the task in it, or starts it there if the first "
+                                + "call made the instance but never started it).", false)
                         .build(),
-                OutputSchemas.runStarted(),
+                OutputSchemas.delegate(),
                 McpTool.annotations(false, false, false),
                 this::delegate));
         tools.add(new McpTool("task_status",
@@ -338,47 +351,164 @@ final class McpTools {
         var template = blankToNull(args.string("template"));
         var source = blankToNull(args.string("from_instance"));
         if ((template == null) == (source == null)) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "give exactly one of template or from_instance");
-        InstanceBackend.TemplateInfo info;
-        InstanceBackend.CreatedInstance created;
-        if (template != null) {
-            info = policy.require(template);
-            created = newInstance(info, args.string("name_hint"), args.string("purpose"), ctx);
-        } else {
-            var metadata = session.requireOwned(source);
-            if (!InstanceBackend.stopped(metadata)) {
-                throw new ToolError(ToolError.Code.WRONG_STATE, "'" + source + "' is " + metadata.getOrDefault(InstanceBackend.STATUS, "running")
-                        .toLowerCase(java.util.Locale.ROOT) + ", not stopped. Stop it with stop_instance first: a "
-                        + "fork copies its files as they are, and a running instance's are still changing.");
+        var key = McpSession.checkKey(args.string("idempotency_key"));
+        var hint = args.string("name_hint");
+        var purpose = args.string("purpose");
+        return underKey(key, made -> instanceReplayed(made, key, template, source), listing -> {
+            InstanceBackend.TemplateInfo info;
+            InstanceBackend.CreatedInstance created;
+            if (template != null) {
+                info = policy.require(template);
+                created = newInstance(info, hint, purpose, key, listing, ctx);
+            } else {
+                var metadata = session.requireOwned(source);
+                if (!InstanceBackend.stopped(metadata)) {
+                    throw new ToolError(ToolError.Code.WRONG_STATE, "'" + source + "' is " + metadata.getOrDefault(InstanceBackend.STATUS, "running")
+                            .toLowerCase(java.util.Locale.ROOT) + ", not stopped. Stop it with stop_instance first: a "
+                            + "fork copies its files as they are, and a running instance's are still changing.");
+                }
+                info = policy.requireLineage(McpSession.templateOf(metadata));
+                created = fork(info, source, hint, purpose, key, listing, ctx);
             }
-            info = policy.requireLineage(McpSession.templateOf(metadata));
-            created = fork(info, source, args.string("name_hint"), args.string("purpose"), ctx);
-        }
+            // As stored, so it matches what list_instances reports.
+            return new Made(created, () -> ToolResult.json(instanceNode(created.name(), info, McpSession.checkPurpose(purpose),
+                    source, created.ip(), created.workdir()), "Run commands with exec. Destroy the instance with "
+                    + "destroy_instance when you are done: it outlives this session."));
+        });
+    }
+
+    /** What {@code create_instance} says about an instance, made now or by an earlier call with its key. */
+    private static ObjectNode instanceNode(String name, InstanceBackend.TemplateInfo info,
+            String purpose, String forkedFrom, String ip, String workdir) {
         var node = JsonRpc.JSON.createObjectNode();
-        node.put("instance", created.name());
+        node.put("instance", name);
         node.put("template", info.name());
-        // As stored, so it matches what list_instances reports.
-        var purpose = McpSession.checkPurpose(args.string("purpose"));
         if (purpose != null) node.put("purpose", purpose);
-        if (source != null) node.put("forked_from", source);
-        if (created.ip() != null) node.put("ip", created.ip());
-        node.put("workdir", created.workdir());
+        if (forkedFrom != null) node.put("forked_from", forkedFrom);
+        if (ip != null && !ip.isEmpty()) node.put("ip", ip);
+        node.put("workdir", workdir);
         var tools = node.putArray("tools");
         info.tools().forEach(tools::add);
         node.put("supports_delegate", info.supportsDelegate());
-        return ToolResult.json(node, "Run commands with exec. Destroy the instance with destroy_instance when you "
-                + "are done: it outlives this session.");
+        return node;
+    }
+
+    /** An instance just made, and what to answer if it stays: if it is the first made under its key. */
+    private record Made(InstanceBackend.CreatedInstance instance, java.util.function.Supplier<ToolResult> result) {}
+
+    /**
+     * Make an instance with {@code make}, which gets the listing a keyed call read to look for
+     * its key (null without one) -- unless the idempotency {@code key} made one already, or
+     * another create under it made its copy first: then {@code replay}'s answer for that one.
+     */
+    private ToolResult underKey(String key,
+                                java.util.function.Function<java.util.Map.Entry<String, java.util.Map<String, String>>, ToolResult> replay,
+                                java.util.function.Function<McpSession.Listing, Made> make) {
+        McpSession.Listing listing = null;
+        if (key != null) {
+            // The listing the reservation reads anyway: looking for the key costs no request.
+            listing = session.listing();
+            var made = session.keyed(listing, key);
+            if (made != null) return replay.apply(made);
+        }
+        var made = make.apply(listing);
+        if (key != null) {
+            var first = firstMadeUnder(key, made.instance().name());
+            if (first != null) return replay.apply(first);
+        }
+        return made.result().get();
+    }
+
+    /**
+     * What a create under idempotency key {@code key} answers once it finds the instance
+     * {@code made} under that key: the instance, as the create that made it returned it, after
+     * taking it up ({@link #adoptForReplay}). Refused if the call asks for another template or source
+     * than that create did.
+     */
+    private ToolResult instanceReplayed(java.util.Map.Entry<String, java.util.Map<String, String>> made, String key,
+                                        String template, String source) {
+        var name = made.getKey();
+        var config = made.getValue();
+        var adopt = session.replayable(name, config, key);
+        requireSameInstance(key, name, config, template, source);
+        var info = policy.requireLineage(McpSession.templateOf(config));
+        if (adopt) adoptForReplay(name, config, key);
+        McpAuditLog.record(session.id, "create_instance", name, null, 0, "replayed key=" + key);
+        var node = instanceNode(name, info, config.get(Metadata.MCP_PURPOSE), forkedFrom(config),
+                config.get(Metadata.STATIC_IP), IncusInstanceBackend.workdir(config));
+        node.put("replayed", true);
+        return ToolResult.json(node, "An earlier call with this idempotency_key made it; nothing new was made.");
+    }
+
+    /** Refuse a call under {@code key} that asks for another instance than the one the key made. */
+    private static void requireSameInstance(String key, String name, java.util.Map<String, String> config,
+                                            String template, String source) {
+        var forkedFrom = forkedFrom(config);
+        var same = source != null ? source.equals(forkedFrom)
+                : forkedFrom == null && template.equals(McpSession.templateOf(config));
+        if (same) return;
+        throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "idempotency_key '" + key + "' made '" + name + "' "
+                + (forkedFrom != null ? "as a fork of " + forkedFrom : "from " + McpSession.templateOf(config))
+                + "; a call repeating it must ask for the same. Use a new key for a different instance.");
+    }
+
+    /** The instance an instance was forked from; null for one made from its template. */
+    private static String forkedFrom(java.util.Map<String, String> config) {
+        var parent = config.get(Metadata.PARENT);
+        return parent == null || parent.equals(McpSession.templateOf(config)) ? null : parent;
+    }
+
+    /**
+     * Adopt {@code name} for a call repeating the create that made it under {@code key}, with
+     * its tasks, as adopt_instance does. A running instance whose tasks cannot be read is let go
+     * of again and the call refused: without them, a repeated delegate would not find its task
+     * and start a second one. A stopped one has its tasks read by start_instance.
+     */
+    private void adoptForReplay(String name, java.util.Map<String, String> config, String key) {
+        session.adopt(name, false);
+        try {
+            tasks.adopt(name);
+        } catch (RuntimeException e) {
+            if (!InstanceBackend.running(config)) return;
+            session.abandon(name, McpSession.Hold.RELEASED);
+            throw new ToolError(ToolError.Code.UNAVAILABLE, "idempotency_key '" + key + "' made '" + name + "', but its tasks "
+                    + "could not be read (" + e.getMessage() + "); call again.");
+        }
+    }
+
+    /**
+     * After a create under {@code key} made {@code name}: null if it is the first instance made
+     * under the key, else the one that is, once {@code name} has been destroyed. Another session
+     * can make one under the same key after this one looked -- a second live one, or one that
+     * died while Incus went on copying -- and the later of the two gives way, by the comparison
+     * every session uses ({@link McpSession#FIRST_MADE}). One more listing, keyed creates only.
+     */
+    private java.util.Map.Entry<String, java.util.Map<String, String>> firstMadeUnder(String key, String name) {
+        var first = session.keyed(session.listing(), key);
+        if (first == null || first.getKey().equals(name)) return null;
+        try {
+            session.destroy(name);
+        } catch (RuntimeException e) {
+            throw new ToolError(ToolError.Code.UNAVAILABLE, "'" + first.getKey() + "' was made under idempotency_key '" + key
+                    + "' before '" + name + "', and removing '" + name + "' failed (" + e.getMessage() + "). Call again "
+                    + "to get '" + first.getKey() + "', and remove '" + name + "' with destroy_instance.");
+        }
+        McpAuditLog.record(session.id, "create_instance", name, null, 0,
+                "destroyed: " + first.getKey() + " was made under its key first");
+        return first;
     }
 
     private InstanceBackend.CreatedInstance newInstance(InstanceBackend.TemplateInfo template, String hint,
-                                                        String purpose, ToolContext ctx) {
-        return provision(template, hint, purpose, ctx, name -> "Creating " + name + " from " + template.name(),
+                                                        String purpose, String key, McpSession.Listing listing,
+                                                        ToolContext ctx) {
+        return provision(template, hint, purpose, key, listing, ctx, name -> "Creating " + name + " from " + template.name(),
                 template.name(), "created", (name, stamps) -> backend.create(template, name, stamps));
     }
 
     /** A fork of {@code source}, which descends from {@code lineage}: as {@link #newInstance}, without the source's tasks. */
     private InstanceBackend.CreatedInstance fork(InstanceBackend.TemplateInfo lineage, String source, String hint,
-                                                 String purpose, ToolContext ctx) {
-        return provision(lineage, hint, purpose, ctx, name -> "Forking " + source + " into " + name, source, "forked",
+                                                 String purpose, String key, McpSession.Listing listing, ToolContext ctx) {
+        return provision(lineage, hint, purpose, key, listing, ctx, name -> "Forking " + source + " into " + name, source, "forked",
                 (name, stamps) -> {
                     var created = backend.fork(lineage, source, name, stamps);
                     try {
@@ -403,19 +533,21 @@ final class McpTools {
 
     /**
      * Reserve a name under {@code lineage}, make the instance with {@code make}, and register it,
-     * or give the reservation back if making it failed.
+     * or give the reservation back if making it failed. {@code key} is its idempotency key, and
+     * {@code listing} the one read to look for it; both null for a create without one.
      */
     private InstanceBackend.CreatedInstance provision(
-            InstanceBackend.TemplateInfo lineage, String hint, String purpose, ToolContext ctx,
+            InstanceBackend.TemplateInfo lineage, String hint, String purpose, String key, McpSession.Listing listing,
+            ToolContext ctx,
             java.util.function.Function<String, String> progress,
             String from, String outcome,
             java.util.function.BiFunction<String, java.util.Map<String, String>, InstanceBackend.CreatedInstance> make) {
-        var name = session.reserve(lineage, hint, purpose);
+        var name = session.reserve(lineage, hint, purpose, key, listing);
         ctx.progress(progress.apply(name));
         var start = System.nanoTime();
         InstanceBackend.CreatedInstance created;
         try {
-            created = make.apply(name, session.stamps(purpose));
+            created = make.apply(name, session.stamps(purpose, key));
         } catch (RuntimeException e) {
             session.abandon(name, McpSession.Hold.GONE);
             McpAuditLog.record(session.id, "create_instance", name, from, millisSince(start),
@@ -507,14 +639,27 @@ final class McpTools {
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "stdin is limited to " + MAX_STDIN_BYTES + " bytes");
         }
         var ask = AskScript.checkQuestion(args.string("ask"));
+        var key = McpSession.checkKey(args.string("idempotency_key"));
         if (args.bool("background")) {
             if (ask != null) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "ask does not apply to a background command; set it on task_result");
-            var task = tasks.startCommand(name, cwd, env, command);
+            var replayed = key == null ? null : tasks.keyed(name, Tasks.COMMAND, key);
+            if (replayed != null) {
+                var node = taskNode(replayed);
+                node.put("background", true);
+                node.put("replayed", true);
+                return ToolResult.text("Task " + replayed.id() + " in " + name + " was started by an earlier call with this "
+                        + "idempotency_key; nothing new was started. Check it with task_status or wait_any.", node);
+            }
+            var task = tasks.startCommand(name, cwd, env, command, key);
             McpAuditLog.record(session.id, "exec(background)", name, command, 0, "task=" + task.id());
             var node = taskNode(task);
             node.put("background", true);
             return ToolResult.text("Started task " + task.id() + " in " + name
                     + ". Check it with task_status or wait_any.", node);
+        }
+        if (key != null) {
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "idempotency_key applies to a background command only; "
+                    + "set background: true");
         }
         var timeout = args.integer("timeout_seconds");
         var maxOutput = args.integer("max_output_bytes");
@@ -654,27 +799,59 @@ final class McpTools {
         if ((instance == null) == (template == null)) {
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "give exactly one of instance or template");
         }
+        var key = McpSession.checkKey(args.string("idempotency_key"));
+        var cwd = args.string("cwd");
         if (template != null) {
-            var info = policy.require(template);
-            requireDelegate(info);
-            var mode = permissionMode(info.name());
-            // Refuse before branching an instance the task could not start in.
-            tasks.checkCapacityForNewAgent();
-            var created = newInstance(info, "task", args.string("purpose"), ctx);
-            return startDelegate(created.name(), info.name(), created.accounts().get(ModelCheck.NAMESPACE),
-                    args.string("cwd"), created.workdir(), prompt, profile, mode, true);
+            return underKey(key, made -> delegateInReplayed(made, key, template, cwd, prompt, profile), listing -> {
+                // A task key used elsewhere would only be refused once the instance is made for nothing.
+                if (key != null) tasks.keyed(null, Tasks.AGENT, key);
+                var info = policy.require(template);
+                requireDelegate(info);
+                var mode = permissionMode(info.name());
+                // Refuse before branching an instance the task could not start in.
+                tasks.checkCapacityForNewAgent();
+                var created = newInstance(info, "task", args.string("purpose"), key, listing, ctx);
+                return new Made(created, () -> startDelegate(created.name(), info.name(),
+                        created.accounts().get(ModelCheck.NAMESPACE), cwd, created.workdir(), prompt, profile, mode, true, key));
+            });
         }
-        var metadata = session.requireRunning(instance);
-        var name = instance;
+        return delegateIn(instance, cwd, prompt, profile, key);
+    }
+
+    /**
+     * {@code delegate(template)} under {@code key}, once it found the instance {@code made} under
+     * that key: the task in it, as the call that made it started it -- or, if that call never got
+     * as far as starting it, started now, which finishes what it meant rather than making a
+     * second instance. Refused if the instance did not come from {@code template}.
+     */
+    private ToolResult delegateInReplayed(java.util.Map.Entry<String, java.util.Map<String, String>> made, String key,
+                                          String template, String cwd, String prompt, Tasks.Profile profile) {
+        var adopt = session.replayable(made.getKey(), made.getValue(), key);
+        requireSameInstance(key, made.getKey(), made.getValue(), template, null);
+        requireDelegate(policy.requireLineage(template));
+        if (adopt) adoptForReplay(made.getKey(), made.getValue(), key);
+        return delegateIn(made.getKey(), cwd, prompt, profile, key);
+    }
+
+    /** {@code delegate(instance)}: the task this session started under {@code key} there, or a new one. */
+    private ToolResult delegateIn(String name, String cwd, String prompt, Tasks.Profile profile, String key) {
+        var metadata = session.requireRunning(name);
         var entry = session.instances().stream().filter(o -> o.name().equals(name)).findFirst();
         if (entry.isEmpty() || !entry.get().supportsDelegate()) {
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "the template " + name + " came from has no Claude Code to delegate to. "
                     + "Use a template whose list_templates entry has supports_delegate, or exec.");
         }
         var from = entry.get().template();
-        return startDelegate(name, from, metadata.get(Metadata.accountKey(ModelCheck.NAMESPACE)), args.string("cwd"),
-                IncusInstanceBackend.workdir(metadata),
-                prompt, profile, permissionMode(from), false);
+        var mode = permissionMode(from);
+        var replayed = key == null ? null : tasks.keyed(name, Tasks.AGENT, key);
+        if (replayed != null) {
+            var node = runStarted(replayed, mode);
+            node.put("replayed", true);
+            return ToolResult.json(node, "An earlier call with this idempotency_key started this task; nothing new was "
+                    + "started. Use task_status with wait_seconds, or wait_any, to wait for it.");
+        }
+        return startDelegate(name, from, metadata.get(Metadata.accountKey(ModelCheck.NAMESPACE)), cwd,
+                IncusInstanceBackend.workdir(metadata), prompt, profile, mode, false, key);
     }
 
     /**
@@ -721,16 +898,17 @@ final class McpTools {
      * once the task's slot is reserved, so a call refused anyway spends no request on it.
      */
     private ToolResult startDelegate(String instance, String template, String account, String cwd, String workdir,
-                                     String prompt, Tasks.Profile profile, String mode, boolean fresh) {
+                                     String prompt, Tasks.Profile profile, String mode, boolean fresh, String key) {
         Tasks.Task task;
         try {
             // A fresh instance's caller just ran checkCapacityForNewAgent: its own tasks need not
             // be asked again. Other sessions' are: they may have started some while it branched.
             task = tasks.delegate(instance, cwd == null || cwd.isBlank() ? workdir : cwd, prompt, profile, mode, !fresh,
-                    () -> modelCheck.require(instance, template, account, profile.model()));
+                    () -> modelCheck.require(instance, template, account, profile.model()), key);
         } catch (RuntimeException e) {
-            // An instance made for this task alone is no use to the agent, which never learns its name.
-            if (fresh) {
+            // An instance made for this task alone is no use to the agent, which never learns its name
+            // -- unless a call repeating this one under its key found it, and started the task there.
+            if (fresh && (key == null || !tasks.startedUnder(instance, key))) {
                 try {
                     session.destroy(instance);
                 } catch (RuntimeException cleanup) {

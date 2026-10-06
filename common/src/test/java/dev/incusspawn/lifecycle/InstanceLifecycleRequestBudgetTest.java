@@ -327,6 +327,20 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void anEmptyValueInTheCopyRequestRemovesTheSourcesKey() {
+        // How BranchFlow drops its source's isx mcp keys from a copy (#1011): no write of its own.
+        var daemon = new FakeIncusDaemon().container("mcp-src",
+                Map.of(Metadata.MCP_IDEMPOTENCY_KEY, "k1", Metadata.MCP_OWNER, "alice"));
+        daemon.client().copy("mcp-src", NAME,
+                new IncusClient.CopyPlan("cow", "btrfs", "cow", true, Map.of()),
+                Map.of(Metadata.MCP_IDEMPOTENCY_KEY, ""));
+        assertBudget(2, daemon, "copy (the POST and its operation wait)");
+        var config = daemon.instance(NAME).path("config");
+        assertFalse(config.has(Metadata.MCP_IDEMPOTENCY_KEY), config.toString());
+        assertEquals("alice", config.path(Metadata.MCP_OWNER).asText());
+    }
+
+    @Test
     void extraConfigRidesInTheBranchsOneWrite() {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
         InstanceLifecycle.configureBranch(daemon.client(), NAME, new InstanceLifecycle.BranchSettings(

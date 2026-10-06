@@ -34,8 +34,8 @@ class McpSessionTest {
     }
 
     private static String create(McpSession session, FakeBackend backend) {
-        var name = session.reserve(TEMPLATE, null, null);
-        backend.create(TEMPLATE, name, session.stamps(null));
+        var name = session.reserve(TEMPLATE, null, null, null, null);
+        backend.create(TEMPLATE, name, session.stamps(null, null));
         session.created(name);
         return name;
     }
@@ -86,8 +86,8 @@ class McpSessionTest {
     @Test
     void anInstanceStillBeingCreatedCannotBeAdoptedIntoReadiness() {
         var s = session(3);
-        var name = s.reserve(TEMPLATE, null, null);
-        backend.create(TEMPLATE, name, s.stamps(null)); // the copy exists and carries our stamp
+        var name = s.reserve(TEMPLATE, null, null, null, null);
+        backend.create(TEMPLATE, name, s.stamps(null, null)); // the copy exists and carries our stamp
         assertThrows(ToolError.class, () -> s.adopt(name, false));
         var e = assertThrows(ToolError.class, () -> s.requireOwned(name));
         assertTrue(e.getMessage().contains("still being created"), e.getMessage());
@@ -98,7 +98,7 @@ class McpSessionTest {
         var s = session(1);
         var name = create(s, backend);
         backend.instances.remove(name); // deleted from the TUI: the session was not told
-        s.reserve(TEMPLATE, null, null);
+        s.reserve(TEMPLATE, null, null, null, null);
     }
 
     /**
@@ -141,32 +141,32 @@ class McpSessionTest {
     @Test
     void namesSayWhereTheyCameFrom() {
         var s = session(3);
-        assertTrue(s.reserve(TEMPLATE, null, null).matches("mcp-dev-[a-z2-7]{5}"));
-        assertTrue(s.reserve(TEMPLATE, "870-impl", null).matches("mcp-dev-870-impl-[a-z2-7]{5}"));
+        assertTrue(s.reserve(TEMPLATE, null, null, null, null).matches("mcp-dev-[a-z2-7]{5}"));
+        assertTrue(s.reserve(TEMPLATE, "870-impl", null, null, null).matches("mcp-dev-870-impl-[a-z2-7]{5}"));
     }
 
     @Test
     void aHintCannotSmuggleCharactersIntoTheName() {
         var s = session(3);
         for (var hint : List.of("Upper", "semi;colon", "-leading", "much-too-long-a-hint", "a b")) {
-            assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, hint, null), hint);
+            assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, hint, null, null, null), hint);
         }
     }
 
     @Test
     void aPurposeIsOneLine() {
         var s = session(3);
-        assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, null, "two\nlines"));
-        assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, null, "x".repeat(201)));
-        assertEquals("#870 implement", s.stamps("  #870 implement ").get(Metadata.MCP_PURPOSE));
-        assertFalse(s.stamps(" ").containsKey(Metadata.MCP_PURPOSE));
+        assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, null, "two\nlines", null, null));
+        assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, null, "x".repeat(201), null, null));
+        assertEquals("#870 implement", s.stamps("  #870 implement ", null).get(Metadata.MCP_PURPOSE));
+        assertFalse(s.stamps(" ", null).containsKey(Metadata.MCP_PURPOSE));
     }
 
     @Test
     void theCapCountsCreatesStillInFlight() {
         var s = session(1);
-        s.reserve(TEMPLATE, null, null); // not created yet
-        var e = assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, null, null));
+        s.reserve(TEMPLATE, null, null, null, null); // not created yet
+        var e = assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, null, null, null, null));
         assertTrue(e.getMessage().contains("mcp.max-instances"), e.getMessage());
     }
 
@@ -177,16 +177,16 @@ class McpSessionTest {
         other("kept", DEAD, "alice", Metadata.MCP_KEPT, "2026-09-27");
         other("bobs", DEAD, "bob");
         var s = session(3);
-        s.reserve(TEMPLATE, null, null);
-        var e = assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, null, null));
+        s.reserve(TEMPLATE, null, null, null, null);
+        var e = assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, null, null, null, null));
         assertTrue(e.getMessage().contains("1 in this session, 2 held by other sessions or orphaned"), e.getMessage());
     }
 
     @Test
     void anAbandonedCreateFreesItsSlot() {
         var s = session(1);
-        s.abandon(s.reserve(TEMPLATE, null, null), McpSession.Hold.GONE);
-        s.reserve(TEMPLATE, null, null);
+        s.abandon(s.reserve(TEMPLATE, null, null, null, null), McpSession.Hold.GONE);
+        s.reserve(TEMPLATE, null, null, null, null);
     }
 
     @Test
@@ -200,7 +200,7 @@ class McpSessionTest {
     void everyInstanceIsStampedWithItsOwnerAndHolder() {
         var s = session(3);
         s.clientName("claude-code");
-        var stamps = s.stamps("#870 implement");
+        var stamps = s.stamps("#870 implement", null);
         assertEquals("4242-1700000000000", stamps.get(Metadata.MCP_SESSION));
         assertEquals("alice", stamps.get(Metadata.MCP_OWNER));
         assertEquals("claude-code", stamps.get(Metadata.MCP_CLIENT));
@@ -250,7 +250,7 @@ class McpSessionTest {
     @Test
     void anInstanceStillBeingCreatedIsNotUsable() {
         var s = session(3);
-        var name = s.reserve(TEMPLATE, null, null);
+        var name = s.reserve(TEMPLATE, null, null, null, null);
         assertThrows(ToolError.class, () -> s.requireOwned(name));
     }
 
@@ -359,7 +359,7 @@ class McpSessionTest {
     @Test
     void anInstanceStillBeingCreatedCannotBeDestroyed() {
         var s = session(3);
-        var name = s.reserve(TEMPLATE, null, null);
+        var name = s.reserve(TEMPLATE, null, null, null, null);
         // The copy exists, but its stamp arrives with the configuring write.
         backend.instance(name, Map.of(Metadata.TYPE, Metadata.TYPE_CLONE));
         var e = assertThrows(ToolError.class, () -> s.destroy(name));
@@ -401,7 +401,7 @@ class McpSessionTest {
         other("mcp-stopped", DEAD, "alice");
         backend.stopped.add("mcp-stopped");
 
-        aTasks.startCommand(aInstance, "/", Map.of(), "make serve");
+        aTasks.startCommand(aInstance, "/", Map.of(), "make serve", null);
         busyIn.put(aInstance, 1);
         busyIn.put("mcp-orphan", 1);
         busyIn.put("mcp-bobs", 5);
@@ -409,7 +409,7 @@ class McpSessionTest {
         busyIn.put("mcp-kept-live", 1);
         busyIn.put("mcp-stopped", 5);
 
-        var e = assertThrows(ToolError.class, () -> bTasks.startCommand(bInstance, "/", Map.of(), "make test"));
+        var e = assertThrows(ToolError.class, () -> bTasks.startCommand(bInstance, "/", Map.of(), "make test", null));
         assertTrue(e.getMessage().contains("mcp.max-concurrent-tasks") && e.getMessage().contains("(3)"),
                 e.getMessage());
         assertTrue(e.getMessage().contains("0 in this session, 3 in other sessions or orphaned"), e.getMessage());
@@ -418,7 +418,7 @@ class McpSessionTest {
 
         busyIn.put("mcp-orphan", 0);
         backend.scripts.clear();
-        bTasks.startCommand(bInstance, "/", Map.of(), "make test");
+        bTasks.startCommand(bInstance, "/", Map.of(), "make test", null);
         var probed = backend.scripts.stream().filter(sc -> sc.equals(TaskScripts.busy())).count();
         assertEquals(3, probed, "only alice's running instances held elsewhere are asked: " + backend.scripts);
     }
@@ -464,10 +464,10 @@ class McpSessionTest {
         var tasks = held.tasks();
         var instance = held.instance();
         try {
-            tasks.startCommand(instance, "/", Map.of(), "make serve"); // waits out the timeout once
+            tasks.startCommand(instance, "/", Map.of(), "make serve", null); // waits out the timeout once
             var started = System.nanoTime();
-            tasks.startCommand(instance, "/", Map.of(), "make test");
-            tasks.startCommand(instance, "/", Map.of(), "make lint");
+            tasks.startCommand(instance, "/", Map.of(), "make test", null);
+            tasks.startCommand(instance, "/", Map.of(), "make lint", null);
             assertTrue(System.nanoTime() - started < 150_000_000L, "a silent instance is not waited for again");
             assertEquals(1, asked.get(), "nor asked again while it cools down");
             assertEquals(List.of(java.time.Duration.ofMillis(200)), backend.limits,
@@ -482,7 +482,7 @@ class McpSessionTest {
         var release = new java.util.concurrent.CountDownLatch(1);
         var asked = new java.util.concurrent.atomic.AtomicInteger();
         var held = withAHungInstance(release, asked);
-        held.tasks().startCommand(held.instance(), "/", Map.of(), "make serve"); // times out: quiet
+        held.tasks().startCommand(held.instance(), "/", Map.of(), "make serve", null); // times out: quiet
         release.countDown(); // ...then it answers, one running task: too late to be believed for long
         Thread.sleep(100);
         config.setMaxConcurrentTasks(2); // ours and its would fill it
@@ -503,10 +503,10 @@ class McpSessionTest {
         var tasks = held.tasks();
         var instance = held.instance();
         config.setMaxConcurrentTasks(1); // its one task fills the cap, if its answer is counted
-        var e = assertThrows(ToolError.class, () -> tasks.startCommand(instance, "/", Map.of(), "make serve"));
+        var e = assertThrows(ToolError.class, () -> tasks.startCommand(instance, "/", Map.of(), "make serve", null));
         assertTrue(e.getMessage().contains("mcp-slow 1"), "its slow answer still counts: " + e.getMessage());
         var started = System.nanoTime();
-        tasks.startCommand(instance, "/", Map.of(), "make test"); // cap still 1: it counts nothing now
+        tasks.startCommand(instance, "/", Map.of(), "make test", null); // cap still 1: it counts nothing now
         assertTrue(System.nanoTime() - started < 200_000_000L, "not waited for again");
         assertEquals(1, asked.get(), "slow to answer, it cools down like one that did not");
     }
@@ -520,7 +520,7 @@ class McpSessionTest {
         var instance = held.instance();
         tasks.elsewhereCooldown = java.time.Duration.ZERO; // asked again at once: only the probe under way holds it
         try {
-            for (int i = 0; i < 3; i++) tasks.startCommand(instance, "/", Map.of(), "make t" + i);
+            for (int i = 0; i < 3; i++) tasks.startCommand(instance, "/", Map.of(), "make t" + i, null);
             assertEquals(1, asked.get(), "one exec in the instance, however many reservations wait on it");
         } finally {
             release.countDown();
@@ -533,11 +533,63 @@ class McpSessionTest {
         config.setMaxConcurrentTasks(2);
         var tasks = tasksOf(a);
         var instance = create(a, backend);
-        tasks.startCommand(instance, "/", Map.of(), "make serve");
-        tasks.startCommand(instance, "/", Map.of(), "make test");
+        tasks.startCommand(instance, "/", Map.of(), "make serve", null);
+        tasks.startCommand(instance, "/", Map.of(), "make test", null);
         assertFalse(backend.scripts.stream().anyMatch(sc -> sc.equals(TaskScripts.busy())), backend.scripts.toString());
-        var e = assertThrows(ToolError.class, () -> tasks.startCommand(instance, "/", Map.of(), "make more"));
+        var e = assertThrows(ToolError.class, () -> tasks.startCommand(instance, "/", Map.of(), "make more", null));
         assertTrue(e.getMessage().contains("2 in this session, 0 in other sessions"), e.getMessage());
         assertFalse(e.getMessage().contains("adopt_instance"), "nothing elsewhere to point at: " + e.getMessage());
+    }
+
+    // --- idempotency keys (#1011) ---
+
+    private static Map.Entry<String, Map<String, String>> made(String name, String createdAt) {
+        return Map.entry(name, createdAt == null ? Map.of() : Map.of(InstanceBackend.CREATED_AT, createdAt));
+    }
+
+    @Test
+    void ofTwoInstancesUnderOneKeyEverySessionPicksTheSameOne() {
+        var earlier = made("mcp-dev-zz", "2026-10-06T08:40:45.118936073Z");
+        var later = made("mcp-dev-aa", "2026-10-06T08:40:45.118936074Z");
+        var tie = made("mcp-dev-ab", "2026-10-06T08:40:45.118936074Z");
+        var unknown = made("mcp-dev-00", null);
+        for (var order : List.of(List.of(earlier, later, tie, unknown), List.of(unknown, tie, later, earlier))) {
+            assertEquals("mcp-dev-zz", order.stream().min(McpSession.FIRST_MADE).orElseThrow().getKey(),
+                    "by Incus's record, whatever the names or the order listed");
+        }
+        assertTrue(McpSession.FIRST_MADE.compare(later, tie) < 0, "a tie goes by name");
+        assertTrue(McpSession.FIRST_MADE.compare(unknown, later) > 0, "an unreadable time never comes first");
+        assertEquals(-McpSession.FIRST_MADE.compare(later, tie), McpSession.FIRST_MADE.compare(tie, later));
+    }
+
+    @Test
+    void aKeyThisSessionIsCreatingUnderIsBusyUntilTheCreateReturns() {
+        var s = session(3);
+        var name = s.reserve(TEMPLATE, null, null, "k1", null);
+        var again = assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, null, null, "k1", null));
+        assertEquals(ToolError.Code.BUSY, again.code);
+        backend.create(TEMPLATE, name, s.stamps(null, "k1"));
+        // Listed already, as Incus lists a copy from the start: still the create in flight.
+        var listing = s.listing();
+        var found = s.keyed(listing, "k1");
+        assertEquals(name, found.getKey());
+        assertEquals(ToolError.Code.BUSY, assertThrows(ToolError.class, () -> s.replayable(name, found.getValue(), "k1")).code);
+        s.created(name);
+        assertFalse(s.replayable(name, s.keyed(s.listing(), "k1").getValue(), "k1"), "held: nothing to adopt");
+        assertEquals("k1", s.instances().getFirst().key());
+    }
+
+    @Test
+    void aSessionsOwnUnfinishedCopyCountsUnderItsKeyButADeadOnesDoesNot() {
+        var s = session(3);
+        other("mcp-dev-dead", DEAD, "alice", Metadata.MCP_IDEMPOTENCY_KEY, "k1");
+        other("mcp-dev-live", ALIVE, "alice", Metadata.MCP_IDEMPOTENCY_KEY, "k2");
+        other("mcp-dev-mine", SELF.toString(), "alice", Metadata.MCP_IDEMPOTENCY_KEY, "k3");
+        var listing = s.listing();
+        assertNull(s.keyed(listing, "k1"), "a dead session's copy that never got its address");
+        assertEquals("mcp-dev-live", s.keyed(listing, "k2").getKey(), "a live one may still be configuring it");
+        assertEquals("mcp-dev-mine", s.keyed(listing, "k3").getKey());
+        backend.stamp("mcp-dev-dead", Metadata.STATIC_IP, "10.0.0.5");
+        assertEquals("mcp-dev-dead", s.keyed(s.listing(), "k1").getKey(), "finished, it is an orphan like any other");
     }
 }

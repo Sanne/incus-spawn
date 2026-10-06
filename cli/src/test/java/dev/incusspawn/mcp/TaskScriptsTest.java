@@ -18,6 +18,8 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -476,8 +478,8 @@ class TaskScriptsTest {
                 TaskScripts.commandRun("t2-abc", work.toString(), Map.of(), "sleep 300")), "");
         var listing = sh(TaskScripts.list(), "");
         var physical = work.toRealPath().toString();
-        assertTrue(listing.contains("t1-abc agent 1 done - - " + physical + "\n"), listing);
-        assertTrue(listing.contains("t2-abc command 1 running - - " + physical + "\n"), listing);
+        assertTrue(listing.contains("t1-abc agent 1 done - - - " + physical + "\n"), listing);
+        assertTrue(listing.contains("t2-abc command 1 running - - - " + physical + "\n"), listing);
         sh(TaskScripts.cancel("t2-abc"), "");
         assertEquals("", sh("HOME=" + home.resolve("empty") + "; " + TaskScripts.list(), ""), "no tasks, no output");
     }
@@ -722,7 +724,7 @@ class TaskScriptsTest {
         Files.writeString(agent.resolve("kind"), "agent\n");
         Files.writeString(agent.resolve("current"), "1\n");
         Files.writeString(agent.resolve("exit-1"), "0\n");
-        for (var f : List.of("cwd", "model", "max-turns", "session_id", "events-1.jsonl", "stderr-1.log")) {
+        for (var f : List.of("cwd", "model", "max-turns", "key", "session_id", "events-1.jsonl", "stderr-1.log")) {
             sh("mkfifo " + agent.resolve(f), "");
         }
         var command = Files.createDirectories(home.resolve(".isx-mcp/tasks/t33-abc"));
@@ -731,7 +733,7 @@ class TaskScriptsTest {
         Files.writeString(command.resolve("exit-1"), "0\n");
         sh("mkfifo " + command.resolve("stdout") + " " + command.resolve("stderr"), "");
 
-        assertEquals("t32-abc agent 1 done - - \nt33-abc command 1 done - - \n", sh(TaskScripts.list(), "", 5));
+        assertEquals("t32-abc agent 1 done - - - \nt33-abc command 1 done - - - \n", sh(TaskScripts.list(), "", 5));
         var status = Tasks.parse(sh(TaskScripts.status("t32-abc", 1000), "", 5));
         assertEquals("finished", status.state());
         assertEquals(0, status.exit());
@@ -816,5 +818,41 @@ class TaskScriptsTest {
         try (var files = Files.list(home.resolve(".isx-mcp/tasks/t13-abc"))) {
             assertTrue(files.noneMatch(f -> f.getFileName().toString().endsWith(".tmp")), "nothing left aside");
         }
+    }
+
+    @Test
+    void aTaskStartedUnderAKeyListsItForAnAdoptingSession() throws Exception {
+        sh(TaskScripts.launch("t1-abc", 1, Tasks.COMMAND,
+                TaskScripts.commandRun("t1-abc", work.toString(), Map.of(), "true"), "issue-1011:impl.v2_x"), "");
+        awaitFinished("t1-abc");
+        var physical = work.toRealPath().toString();
+        assertTrue(sh(TaskScripts.list(), "").contains("t1-abc command 1 done - - =issue-1011:impl.v2_x " + physical + "\n"));
+        // A later run does not write it again; the first one's stays.
+        sh(TaskScripts.launch("t1-abc", 2, Tasks.COMMAND, "true", "other"), "");
+        assertEquals("issue-1011:impl.v2_x", Files.readString(home.resolve(".isx-mcp/tasks/t1-abc/key")));
+        assertThrows(ToolError.class, () -> TaskScripts.launch("t2-abc", 1, Tasks.COMMAND, "true", "a'b"),
+                "nothing that is not a key reaches the script");
+    }
+
+    @Test
+    void aKeyFileAnyoneInTheInstanceWroteIsReadAsOneField() throws Exception {
+        recordedTask("t1-abc", Tasks.AGENT, false);
+        var planted = "a key\nwith  spaces $(touch pwned)" + "x".repeat(100);
+        Files.writeString(home.resolve(".isx-mcp/tasks/t1-abc/key"), planted);
+        recordedTask("t2-abc", Tasks.AGENT, false);
+        var fifo = home.resolve(".isx-mcp/tasks/t2-abc/key");
+        new ProcessBuilder("mkfifo", fifo.toString()).start().waitFor();
+        var pb = new ProcessBuilder("bash", "-c", TaskScripts.list()).directory(home.toFile());
+        pb.environment().put("HOME", home.toString());
+        var p = pb.start();
+        assertTrue(p.waitFor(10, TimeUnit.SECONDS), "a FIFO in place of the key holds nothing up");
+        var lines = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).lines().toList();
+        assertFalse(Files.exists(home.resolve("pwned")));
+        var hostile = lines.stream().filter(l -> l.startsWith("t1-abc ")).findFirst().orElseThrow();
+        var fields = hostile.split(" ", 8);
+        assertEquals(8, fields.length, hostile);
+        assertEquals("=" + planted.substring(0, 64).replaceAll("[ \n]", ""), fields[6], "at most 64 bytes, no space or newline");
+        assertNull(McpSession.keyOf(fields[6].substring(1)), "and not a key");
+        assertTrue(lines.stream().anyMatch(l -> l.startsWith("t2-abc agent 1 done - - - ")), lines.toString());
     }
 }

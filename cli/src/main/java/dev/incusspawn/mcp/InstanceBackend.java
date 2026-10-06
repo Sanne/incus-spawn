@@ -21,6 +21,14 @@ interface InstanceBackend {
      */
     String STATUS = "status";
 
+    /**
+     * Not a config key either: when Incus made the instance's record ({@code created_at}), from
+     * the same read as {@link #STATUS}. A copy is listed, with the config its request stamped,
+     * from that moment, while its files are still being copied, and the time never changes:
+     * of two instances, the one made first was always visible first.
+     */
+    String CREATED_AT = "created_at";
+
     static boolean stopped(Map<String, String> metadata) {
         return "Stopped".equals(metadata.get(STATUS));
     }

@@ -57,13 +57,14 @@ final class Tasks {
      * a run whose slot is reserved but whose launch has not returned: it counts as running, and
      * the state probe (which cannot see it yet) must not say otherwise. {@code state} is its
      * state as this session last saw it, in {@link OutputSchemas#TASK_STATES}'s words.
+     * {@code key} is the idempotency key it was started under, null for none.
      */
     record Task(String id, String instance, String kind, String cwd, Profile profile, int runs, String state,
-                boolean launching) {
-        Task launchingRun(int n) { return new Task(id, instance, kind, cwd, profile, n, TaskWatcher.RUNNING, true); }
-        Task launched() { return new Task(id, instance, kind, cwd, profile, runs, TaskWatcher.RUNNING, false); }
-        Task withState(String s) { return launching ? this : new Task(id, instance, kind, cwd, profile, runs, s, false); }
-        Task withProfile(Profile p) { return new Task(id, instance, kind, cwd, p, runs, state, launching); }
+                boolean launching, String key) {
+        Task launchingRun(int n) { return new Task(id, instance, kind, cwd, profile, n, TaskWatcher.RUNNING, true, key); }
+        Task launched() { return new Task(id, instance, kind, cwd, profile, runs, TaskWatcher.RUNNING, false, key); }
+        Task withState(String s) { return launching ? this : new Task(id, instance, kind, cwd, profile, runs, s, false, key); }
+        Task withProfile(Profile p) { return new Task(id, instance, kind, cwd, p, runs, state, launching, key); }
         boolean running() { return TaskWatcher.RUNNING.equals(state); }
         boolean busy() { return running() || launching; }
     }
@@ -169,10 +170,51 @@ final class Tasks {
         return task;
     }
 
-    /** Start a background command in {@code instance}, which the caller checked is owned. */
-    Task startCommand(String instance, String cwd, Map<String, String> env, String command) {
-        var task = reserve(null, null, new Task(nextId(), instance, COMMAND, cwd, Profile.NONE, 1, TaskWatcher.RUNNING, true), true);
+    /**
+     * Start a background command in {@code instance}, which the caller checked is owned, under
+     * idempotency key {@code key} (null for none), which the caller looked for with {@link #keyed}.
+     */
+    Task startCommand(String instance, String cwd, Map<String, String> env, String command, String key) {
+        var task = reserve(null, null, new Task(nextId(), instance, COMMAND, cwd, Profile.NONE, 1, TaskWatcher.RUNNING, true, key), true);
         return launch(task, null, null, t -> TaskScripts.commandRun(t.id(), cwd, env, command), "");
+    }
+
+    /**
+     * This session's task started under idempotency key {@code key} in {@code instance}, which
+     * a call repeating that start gets back instead of a second task; null if there is none.
+     * Refused when the key started a task of the other kind, or in another instance: a repeat
+     * names what the first call named, and is never redirected. Refused too while the first call
+     * is still launching it: call again once it has returned. A key is matched only among this
+     * session's tasks, those it started and those {@link #adopt} read from an instance it holds.
+     * A null {@code instance} is one not made yet: any task under the key is refused.
+     */
+    Task keyed(String instance, String kind, String key) {
+        // Not a task of an instance another session has taken since: that key is not this session's.
+        forgetUnheld();
+        synchronized (this) {
+            var t = keyedLocked(instance, kind, key);
+            if (t != null && t.launching() && t.runs() == 1) throw McpSession.stillUnderWay(key);
+            return t;
+        }
+    }
+
+    /** {@link #keyed}'s match, without the launching check. Holds the lock. */
+    private Task keyedLocked(String instance, String kind, String key) {
+        for (var t : tasks.values()) {
+            if (!key.equals(t.key())) continue;
+            if (!t.instance().equals(instance) || !t.kind().equals(kind)) {
+                throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "idempotency_key '" + key + "' started task " + t.id()
+                        + ", " + (AGENT.equals(t.kind()) ? "an agent" : "a command") + " in " + t.instance()
+                        + "; a call repeating it must name the same instance and kind of task. Use a new key for a new task.");
+            }
+            return t;
+        }
+        return null;
+    }
+
+    /** Whether a task of {@code instance} was started under {@code key}: its instance is in use for it. */
+    synchronized boolean startedUnder(String instance, String key) {
+        return tasks.values().stream().anyMatch(t -> key.equals(t.key()) && t.instance().equals(instance));
     }
 
     /**
@@ -180,11 +222,12 @@ final class Tasks {
      * {@code profile}. Without {@code refresh}, the caller has just asked the instances
      * ({@link #checkCapacityForNewAgent}), so this session's are asked again only if the states as
      * last known would refuse: a refresh only ever frees slots. Other sessions' tasks are always
-     * counted anew: they may have started more while the caller branched an instance.
+     * counted anew: they may have started more while the caller branched an instance. {@code key}
+     * is its idempotency key (null for none), which the caller looked for with {@link #keyed}.
      */
     Task delegate(String instance, String cwd, String instruction, Profile profile, String permissionMode,
-                  boolean refresh, Runnable check) {
-        var task = reserve(null, null, new Task(nextId(), instance, AGENT, cwd, profile, 1, TaskWatcher.RUNNING, true), refresh);
+                  boolean refresh, Runnable check, String key) {
+        var task = reserve(null, null, new Task(nextId(), instance, AGENT, cwd, profile, 1, TaskWatcher.RUNNING, true, key), refresh);
         return launch(task, null, check, t -> agentRun(t, permissionMode), instruction);
     }
 
@@ -231,7 +274,7 @@ final class Tasks {
     List<String> adopt(String instance) {
         var adopted = new java.util.ArrayList<String>();
         for (var line : run(instance, TaskScripts.list(), null).split("\n")) {
-            var parts = line.strip().split(" ", 7);
+            var parts = line.strip().split(" ", 8);
             if (parts.length < 4 || !parts[0].matches("[a-z0-9-]+")) continue;
             var kind = parts[1];
             if (!AGENT.equals(kind) && !COMMAND.equals(kind)) continue;
@@ -241,11 +284,13 @@ final class Tasks {
             } catch (NumberFormatException e) {
                 continue;
             }
-            var cwd = parts.length > 6 && !parts[6].isBlank() ? parts[6] : IncusInstanceBackend.AGENT_HOME;
+            var cwd = parts.length > 7 && !parts[7].isBlank() ? parts[7] : IncusInstanceBackend.AGENT_HOME;
             var profile = parts.length > 5 ? recordedProfile(parts[4], parts[5]) : Profile.NONE;
+            // Written in the guest: a key only if it reads as one, and matched only in this instance.
+            var key = parts.length > 6 && parts[6].startsWith("=") ? McpSession.keyOf(parts[6].substring(1)) : null;
             // An exit recorded is finished (attached, if a person is in it, is read by task_status).
             var state = "running".equals(parts[3]) ? TaskWatcher.RUNNING : "finished";
-            var task = new Task(parts[0], instance, kind, cwd, profile, runs, state, false);
+            var task = new Task(parts[0], instance, kind, cwd, profile, runs, state, false, key);
             synchronized (this) {
                 // Once reported released, a task this session takes back is reported again.
                 if (tasks.putIfAbsent(task.id(), task) == null) watcher.revive(task.id());
@@ -418,6 +463,10 @@ final class Tasks {
                 var next = task.launchingRun(task.runs() + 1).withProfile(task.profile().with(override));
                 tasks.put(continuing, next);
                 return next;
+            }
+            // Not there when the caller looked (keyed): a call with the same key started it since.
+            if (fresh.key() != null && keyedLocked(fresh.instance(), fresh.kind(), fresh.key()) != null) {
+                throw McpSession.stillUnderWay(fresh.key());
             }
             if (AGENT.equals(fresh.kind())) {
                 for (var t : tasks.values()) {
@@ -710,7 +759,7 @@ final class Tasks {
         try {
             if (check != null) check.run();
             run(reserved.instance(), TaskScripts.launch(reserved.id(), reserved.runs(), reserved.kind(),
-                    runScript.apply(reserved)), stdin);
+                    runScript.apply(reserved), reserved.key()), stdin);
         } catch (RuntimeException e) {
             synchronized (this) {
                 if (previous == null) tasks.remove(reserved.id());

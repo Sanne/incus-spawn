@@ -39,7 +39,9 @@ class FakeBackend implements InstanceBackend {
 
     FakeBackend template(String name, boolean built, String... tools) {
         templates.add(new TemplateInfo(name, name + " template", built, false, List.of(tools), null, false, Map.of()));
-        if (built) instances.put(name, new ConcurrentHashMap<>(Map.of(Metadata.TYPE, Metadata.TYPE_BASE)));
+        // As a build leaves it: its own profile, and the template it was built from as its parent.
+        if (built) instances.put(name, new ConcurrentHashMap<>(Map.of(Metadata.TYPE, Metadata.TYPE_BASE,
+                Metadata.PROFILE, name, Metadata.PARENT, "tpl-minimal")));
         return this;
     }
 
@@ -66,7 +68,25 @@ class FakeBackend implements InstanceBackend {
 
     FakeBackend instance(String name, Map<String, String> config) {
         instances.put(name, new ConcurrentHashMap<>(config));
+        made(name);
         return this;
+    }
+
+    /** When Incus made each instance's record, as it lists it: one second apart, in order made. */
+    final Map<String, String> createdAt = new ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong();
+
+    private void made(String name) {
+        createdAt.put(name, java.time.Instant.parse("2026-10-06T08:00:00.123456789Z")
+                .plusSeconds(clock.incrementAndGet()).toString());
+    }
+
+    /** {@code stamps} laid over {@code config} as a copy request lays them: an empty value removes the key. */
+    private static void layOver(Map<String, String> config, Map<String, String> stamps) {
+        stamps.forEach((k, v) -> {
+            if (v.isEmpty()) config.remove(k);
+            else config.put(k, v);
+        });
     }
 
     @Override
@@ -78,29 +98,49 @@ class FakeBackend implements InstanceBackend {
     public CreatedInstance create(TemplateInfo info, String name, Map<String, String> stamps) {
         var template = info.name();
         if (createFailure != null) throw createFailure;
+        var config = copy(template, name, stamps);
         if (onCreate != null) onCreate.run();
-        var config = new ConcurrentHashMap<String, String>(stamps);
-        config.put(Metadata.TYPE, Metadata.TYPE_CLONE);
-        config.put(Metadata.PARENT, template);
+        configure(config, template, "10.0.0.2");
         config.put(Metadata.PROFILE, template); // every copy of a template carries it
         createdAccounts.forEach((ns, account) -> config.put(Metadata.accountKey(ns), account));
-        instances.put(name, config);
         return new CreatedInstance(name, "10.0.0.2", "/home/agentuser", Map.copyOf(createdAccounts));
+    }
+
+    /**
+     * The copy request (BranchFlow, IncusClient.copy): listed from now on, with its source's
+     * config and the stamps over it, never its address or the source's other mcp-* keys --
+     * until {@link #configure}. {@link #onCreate} runs in between.
+     */
+    private Map<String, String> copy(String source, String name, Map<String, String> stamps) {
+        var config = new ConcurrentHashMap<String, String>(instances.getOrDefault(source, Map.of()));
+        config.remove(Metadata.STATIC_IP);
+        config.keySet().removeIf(k -> Metadata.isMcpKey(k) && !stamps.containsKey(k));
+        layOver(config, stamps);
+        config.put(Metadata.TYPE, Metadata.TYPE_CLONE);
+        instances.put(name, config);
+        made(name);
+        return config;
+    }
+
+    /** configureBranch: its parent and its own address. */
+    private static void configure(Map<String, String> config, String parent, String ip) {
+        config.put(Metadata.PARENT, parent);
+        config.put(Metadata.STATIC_IP, ip);
     }
 
     /** Every fork, as {@code source -> name}. */
     final List<String> forks = new CopyOnWriteArrayList<>();
+    /** The stamps each fork's copy request carried, in order. */
+    final List<Map<String, String>> forkStamps = new CopyOnWriteArrayList<>();
 
     /** As Incus's copy and configureBranch: the source's config, its mcp-* keys replaced by the stamps. */
     @Override
     public CreatedInstance fork(TemplateInfo lineage, String source, String name, Map<String, String> stamps) {
         if (createFailure != null) throw createFailure;
-        var config = new ConcurrentHashMap<String, String>(instances.get(source));
-        config.keySet().removeIf(Metadata::isMcpKey);
-        config.putAll(stamps);
-        config.put(Metadata.TYPE, Metadata.TYPE_CLONE);
-        config.put(Metadata.PARENT, source);
-        instances.put(name, config);
+        forkStamps.add(Map.copyOf(stamps));
+        var config = copy(source, name, stamps);
+        if (onCreate != null) onCreate.run();
+        configure(config, source, "10.0.0.3");
         forks.add(source + " -> " + name);
         var accounts = new LinkedHashMap<String, String>();
         config.forEach((k, v) -> {
@@ -189,6 +229,8 @@ class FakeBackend implements InstanceBackend {
     private Map<String, String> withStatus(String name, Map<String, String> config) {
         var result = new LinkedHashMap<>(config);
         result.put(STATUS, stopped.contains(name) ? "Stopped" : statuses.getOrDefault(name, "Running"));
+        var created = createdAt.get(name);
+        if (created != null) result.put(CREATED_AT, created);
         return result;
     }
 
@@ -206,8 +248,17 @@ class FakeBackend implements InstanceBackend {
         stamp(name, java.util.Collections.singletonMap(key, value));
     }
 
+    /** Every {@link #mcpInstances} call, as a real backend's listings. */
+    final java.util.concurrent.atomic.AtomicInteger listings = new java.util.concurrent.atomic.AtomicInteger();
+
+    /** Run before each {@link #mcpInstances} listing: what happened meanwhile. */
+    volatile Runnable onListing;
+
     @Override
     public Map<String, Map<String, String>> mcpInstances() {
+        listings.incrementAndGet();
+        var hook = onListing;
+        if (hook != null) hook.run();
         var result = new LinkedHashMap<String, Map<String, String>>();
         instances.forEach((name, config) -> {
             if (config.containsKey(Metadata.MCP_SESSION)) result.put(name, withStatus(name, config));

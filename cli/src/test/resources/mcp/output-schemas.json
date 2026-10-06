@@ -90,6 +90,10 @@
       },
       "supports_delegate" : {
         "type" : "boolean"
+      },
+      "replayed" : {
+        "description" : "true when an earlier call with this idempotency_key made it, and this one made nothing",
+        "type" : "boolean"
       }
     },
     "required" : [ "instance", "template", "workdir", "tools", "supports_delegate" ],
@@ -267,6 +271,10 @@
         },
         "required" : [ "text", "summarised" ],
         "additionalProperties" : false
+      },
+      "replayed" : {
+        "description" : "true when an earlier call with this idempotency_key made it, and this one made nothing",
+        "type" : "boolean"
       }
     },
     "required" : [ "background" ],
@@ -297,6 +305,10 @@
       },
       "max_turns" : {
         "type" : "integer"
+      },
+      "replayed" : {
+        "description" : "true when an earlier call with this idempotency_key made it, and this one made nothing",
+        "type" : "boolean"
       }
     },
     "required" : [ "task_id", "instance", "kind", "run", "permission_mode" ],
