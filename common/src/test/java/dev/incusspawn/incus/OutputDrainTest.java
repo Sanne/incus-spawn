@@ -14,7 +14,11 @@ class OutputDrainTest {
 
     /** Polls on schedule from {@code fromMs} to {@code toMs}; the first time it says done, or -1. */
     private static long pollUntilDone(OutputDrain drain, long fromMs, long toMs, long lastDataMs) {
-        for (long t = fromMs; t <= toMs; t += OutputDrain.POLL_MS) {
+        return pollUntilDone(drain, fromMs, toMs, lastDataMs, OutputDrain.POLL_MS);
+    }
+
+    private static long pollUntilDone(OutputDrain drain, long fromMs, long toMs, long lastDataMs, long everyMs) {
+        for (long t = fromMs; t <= toMs; t += everyMs) {
             if (drain.done(t * MS, lastDataMs * MS)) return t;
         }
         return -1;
@@ -48,12 +52,11 @@ class OutputDrainTest {
     }
 
     @Test
-    void aPauseStillGetsAWholeIdleWindowAfterIt() {
+    void thePollAfterAPauseNeverEndsTheDrain() {
         var drain = new OutputDrain(0);
         assertEquals(-1, pollUntilDone(drain, 0, 100, 0));
-        assertFalse(drain.done(450 * MS, 0));
-        assertEquals(450 + OutputDrain.IDLE_MS, pollUntilDone(drain, 470, 2000, 0),
-                "idle is counted only while the drain was watching");
+        assertFalse(drain.done(450 * MS, 0), "the readers have not run since the pause");
+        assertTrue(drain.done(470 * MS, 0), "they had the sleep since, and nothing came");
     }
 
     @Test
@@ -65,12 +68,23 @@ class OutputDrainTest {
         assertTrue(drain.done(OutputDrain.MAX_MS * MS, OutputDrain.MAX_MS * MS));
     }
 
+    // #1122: on the macOS runners polls come late again and again. Restarting the window on each
+    // late poll held the drain to its ceiling (5031ms) for output that had been quiet from the start.
+    @Test
+    void aDrainWhosePollsAreAllLateStillEndsOnceIdle() {
+        var drain = new OutputDrain(0);
+        long late = OutputDrain.PAUSE_MS + 50;
+        assertEquals(3 * late, pollUntilDone(drain, 0, OutputDrain.MAX_MS, 0, late),
+                "a late poll slows the drain, it must not hold it to the ceiling");
+    }
+
     @Test
     void theCeilingHoldsThroughRepeatedPauses() {
         var drain = new OutputDrain(0);
         for (long t = 0; t < OutputDrain.MAX_MS; t += 300) {
-            assertFalse(drain.done(t * MS, 0), "at " + t + "ms");
+            assertFalse(drain.done(t * MS, t * MS - 10 * MS), "at " + t + "ms");
         }
-        assertTrue(drain.done(OutputDrain.MAX_MS * MS, 0), "pauses never extend it past its ceiling");
+        assertTrue(drain.done(OutputDrain.MAX_MS * MS, OutputDrain.MAX_MS * MS - 10 * MS),
+                "pauses never extend it past its ceiling");
     }
 }

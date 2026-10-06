@@ -13,8 +13,12 @@ package dev.incusspawn.incus;
  * Idle is counted only while the drain was watching (#1062, #1084). When the host process
  * pauses (a VM's vCPU descheduled, a GC), the first poll after the pause would otherwise read it
  * as quiet output and close the sockets before the reader threads, paused too, had taken the
- * bytes that arrived meanwhile. So a poll that comes late starts the idle window again; the
- * ceiling stays wall time, so pauses never hold the caller past it.
+ * bytes that arrived meanwhile. So the time between two polls counts as idle for at most
+ * {@link #PAUSE_MS}, and a late poll ends the drain only if the poll before it already found the
+ * output idle: the readers get the sleep in between to catch up. Restarting the window on every
+ * late poll instead held the drain to its ceiling on the macOS runners, where polls come late
+ * again and again (#1122): lateness may slow the drain, never hold it there.
+ * The ceiling stays wall time, so pauses never hold the caller past it.
  *
  * Times are {@link System#nanoTime} values, passed in so the decision can be tested without
  * waiting.
@@ -27,22 +31,30 @@ final class OutputDrain {
     /** A poll this late after the previous one means the drain itself was not running. */
     static final long PAUSE_MS = IDLE_MS / 2;
 
+    private static final long IDLE_NS = IDLE_MS * 1_000_000L;
+    private static final long MAX_NS = MAX_MS * 1_000_000L;
+    private static final long PAUSE_NS = PAUSE_MS * 1_000_000L;
+
     private final long start;
     private long lastPoll;
-    private long watchingSince;
+    private long countingFrom; // the lastData idle is counted since
+    private long idleNanos;
 
     OutputDrain(long now) {
         this.start = now;
         this.lastPoll = now;
-        this.watchingSince = now;
     }
 
     /** @param lastData when the latest byte arrived on any data fd */
     boolean done(long now, long lastData) {
-        if ((now - lastPoll) / 1_000_000L > PAUSE_MS) watchingSince = now;
+        if (lastData != countingFrom) {
+            countingFrom = lastData;
+            idleNanos = 0;
+        }
+        boolean late = now - lastPoll > PAUSE_NS;
+        long idleBefore = idleNanos; // a gap counts for less than a window: this was the last poll's verdict
+        idleNanos += Math.clamp(now - Math.max(lastPoll, lastData), 0, PAUSE_NS);
         lastPoll = now;
-        long sinceStartMs = (now - start) / 1_000_000L;
-        long idleMs = (now - Math.max(lastData, watchingSince)) / 1_000_000L;
-        return sinceStartMs >= MAX_MS || idleMs >= IDLE_MS;
+        return now - start >= MAX_NS || (late ? idleBefore : idleNanos) >= IDLE_NS;
     }
 }
