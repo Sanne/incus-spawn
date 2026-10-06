@@ -90,11 +90,11 @@ final class TaskScripts {
      * Write what {@code command} prints to {@code name} in {@code dir} (which the shell expands)
      * without opening it: a FIFO there would hold an open for writing until something reads it
      * (#1074). Written into a file {@code mktemp} makes, then renamed into place, which replaces
-     * whatever was there. A list of simple commands, so a script under {@code set -e} stops at
-     * the one that failed.
+     * whatever was there; a directory there fails it ({@code -T}), rather than receiving the file.
+     * A list of simple commands, so a script under {@code set -e} stops at the one that failed.
      */
     static String writeAside(String dir, String name, String command) {
-        return "w=$(mktemp \"" + dir + "/.tmp.XXXXXX\"); " + command + " > \"$w\"; mv -f \"$w\" \"" + dir + "/" + name + "\"";
+        return "w=$(mktemp \"" + dir + "/.tmp.XXXXXX\"); " + command + " > \"$w\"; mv -fT \"$w\" \"" + dir + "/" + name + "\"";
     }
 
     /** The unit of one run; {@code run} may be a shell expression such as {@code $n}. */

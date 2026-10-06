@@ -846,6 +846,10 @@ class TaskScriptsTest {
         assertEquals("true", Files.readString(d.resolve("run-2.sh")));
         assertEquals("2\n", Files.readString(d.resolve("current")));
         assertEquals("command\n", Files.readString(d.resolve("kind")));
+        // A directory in its place is not written into, which would leave run 2 current unseen.
+        Files.createDirectories(d.resolve("prompt-3.md"));
+        assertThrows(AssertionError.class, () -> sh(TaskScripts.launch("t41-abc", 3, Tasks.COMMAND, "true"), "", 5));
+        assertEquals("2\n", Files.readString(d.resolve("current")));
     }
 
     @Test
