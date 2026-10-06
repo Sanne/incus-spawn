@@ -11,6 +11,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,9 +78,9 @@ class ListCommandOutputTest {
     @Test
     void plainIsOneTabSeparatedRecordPerInstance() {
         assertEquals("""
-                dev-1\trunning\t10.166.11.20\ttpl-java\tcontainer\t2026-10-05T10:15:30+02:00
-                dev-2\tstopped\t-\ttpl-java\tvirtual-machine\t2026-09-01
-                tpl-scratch\tstopped\t-\tdev-1\tcontainer\t2026-10-05T11:00:00+02:00
+                dev-1\trunning\t10.166.11.20\ttpl-java\tcontainer\t2026-10-05T10:15:30+02:00\t-\t-
+                dev-2\tstopped\t-\ttpl-java\tvirtual-machine\t2026-09-01\t-\t-
+                tpl-scratch\tstopped\t-\tdev-1\tcontainer\t2026-10-05T11:00:00+02:00\t-\t-
                 """, list(cmd("plain")));
     }
 
@@ -95,10 +97,10 @@ class ListCommandOutputTest {
                 new TypeReference<>() {});
         assertEquals(3, json.size());
         var first = json.get(0);
-        assertEquals(List.of("name", "status", "ipv4", "parent", "runtime", "created"),
+        assertEquals(List.of("name", "status", "ipv4", "parent", "runtime", "created", "mcp_state", "mcp_purpose"),
                 List.copyOf(first.keySet()));
-        assertEquals(List.of("dev-1", "running", "10.166.11.20", "tpl-java", "container",
-                "2026-10-05T10:15:30+02:00"), List.copyOf(first.values()));
+        assertEquals(Arrays.asList("dev-1", "running", "10.166.11.20", "tpl-java", "container",
+                "2026-10-05T10:15:30+02:00", null, null), new ArrayList<>(first.values()));
         assertTrue(json.get(1).containsKey("ipv4"));
         assertNull(json.get(1).get("ipv4"), "an absent value is null, never \"-\"");
     }
@@ -176,7 +178,7 @@ class ListCommandOutputTest {
     void aCreatedStampThatCannotBeReadIsNull() throws Exception {
         var daemon = new FakeIncusDaemon().container("odd", Map.of(
                 Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.CREATED, "sometime"));
-        assertEquals("odd\tstopped\t-\t-\tcontainer\t-\n", list(cmd("plain"), daemon));
+        assertEquals("odd\tstopped\t-\t-\tcontainer\t-\t-\t-\n", list(cmd("plain"), daemon));
         List<LinkedHashMap<String, Object>> json = new ObjectMapper().readValue(list(cmd("json"), daemon),
                 new TypeReference<>() {});
         assertNull(json.get(0).get("created"));
@@ -188,6 +190,100 @@ class ListCommandOutputTest {
         assertTrue(table.contains("NAME"), table);
         assertTrue(table.contains("dev-1"), table);
         assertTrue(table.lines().noneMatch(l -> l.strip().startsWith("tpl-java ")), "no row for the template:\n" + table);
+    }
+
+    /**
+     * Instances an {@code isx mcp} session made (#1053), held by a coordinator instance's session
+     * so that liveness is decided from the listing alone: one held (its coordinator exists with
+     * the grant), one whose coordinator is gone, one its holder released, and one kept.
+     */
+    private static FakeIncusDaemon mcpDaemon() {
+        var grant = "0123456789abcdef0123456789abcdef";
+        var held = "instance:coord:" + grant;
+        var gone = "instance:old-coord:" + grant;
+        return new FakeIncusDaemon()
+                .container("coord", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "tpl-java",
+                        Metadata.MCP_CALLER, grant))
+                .container("worker", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "tpl-java",
+                        Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, held,
+                        Metadata.MCP_PURPOSE, "#870 implement"))
+                .container("stray", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "tpl-java",
+                        Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, gone))
+                .container("released", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "tpl-java",
+                        Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, held,
+                        Metadata.MCP_ORPHANED, "2026-10-05T08:00:00Z " + held, Metadata.MCP_PURPOSE, "review\t#12"))
+                .container("mine-now", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "tpl-java",
+                        Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, held,
+                        Metadata.MCP_KEPT, "2026-10-05T09:00:00Z", Metadata.MCP_PURPOSE, "spike"));
+    }
+
+    @Test
+    void plainAndJsonSayWhichInstancesAnMcpSessionMadeAndWhatFor() throws Exception {
+        var mcp = mcpDaemon();
+        // Fields at the end only: what a script reads by position stays where it was.
+        assertEquals("""
+                coord\tstopped\t-\ttpl-java\tcontainer\t-\t-\t-
+                worker\tstopped\t-\ttpl-java\tcontainer\t-\theld\t#870 implement
+                stray\tstopped\t-\ttpl-java\tcontainer\t-\torphaned\t-
+                released\tstopped\t-\ttpl-java\tcontainer\t-\torphaned\treview #12
+                mine-now\tstopped\t-\ttpl-java\tcontainer\t-\tkept\tspike
+                """, list(cmd("plain"), mcp));
+        List<LinkedHashMap<String, Object>> json = new ObjectMapper().readValue(list(cmd("json"), mcp),
+                new TypeReference<>() {});
+        assertNull(json.get(0).get("mcp_state"), "an instance no isx mcp session made");
+        assertEquals("held", json.get(1).get("mcp_state"));
+        assertEquals("#870 implement", json.get(1).get("mcp_purpose"));
+        assertTrue(json.get(2).containsKey("mcp_purpose"));
+        assertNull(json.get(2).get("mcp_purpose"), "no purpose given is null, never \"-\"");
+        assertEquals("orphaned", json.get(3).get("mcp_state"));
+        assertEquals("review\t#12", json.get(3).get("mcp_purpose"), "json keeps the value as stamped");
+        assertEquals("kept", json.get(4).get("mcp_state"));
+    }
+
+    @Test
+    void theTableShowsAnMcpColumnOnlyWhenAnInstanceHasOne() {
+        var table = list(cmd(null), mcpDaemon());
+        var header = table.lines().filter(l -> l.contains("NAME")).findFirst().orElseThrow();
+        assertTrue(header.strip().endsWith("MCP"), table);
+        assertTrue(table.lines().anyMatch(l -> l.contains("worker") && l.endsWith("held: #870 implement")), table);
+        assertTrue(table.lines().anyMatch(l -> l.contains("stray") && l.endsWith("orphaned")), table);
+        assertTrue(table.lines().anyMatch(l -> l.contains("mine-now") && l.endsWith("kept: spike")), table);
+        assertFalse(list(cmd(null)).contains("MCP"), "nobody using isx mcp sees no column for it");
+    }
+
+    @Test
+    void aStampSetByHandCannotWriteEscapeSequencesToTheTerminal() {
+        var daemon = new FakeIncusDaemon().container("w", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE,
+                Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, "garbled", Metadata.MCP_PURPOSE, "\u001b[2Jhi"));
+        var table = list(cmd(null), daemon);
+        assertFalse(table.contains("\u001b"), table);
+        assertTrue(table.contains("held:  [2Jhi"), table);
+    }
+
+    @Test
+    void theDetailPaneSaysWhoHoldsItWhatForAndWhatHappensToAnOrphan() {
+        assertEquals(List.of(), ListCommand.mcpDetailRows(null));
+        var held = ListCommand.collectEntries(mcpDaemon().client().listJson());
+        var rows = held.stream().filter(i -> i.name().equals("worker")).findFirst().orElseThrow();
+        assertEquals(List.of("MCP:|held by isx instance coord", "  Purpose:|#870 implement"),
+                rows(ListCommand.mcpDetailRows(rows.mcp())));
+        var released = held.stream().filter(i -> i.name().equals("released")).findFirst().orElseThrow();
+        var text = rows(ListCommand.mcpDetailRows(released.mcp()));
+        assertEquals("MCP:|orphaned since 2026-10-05T08:00:00Z", text.get(0));
+        assertTrue(text.stream().anyMatch(r -> r.contains("mcp.orphan-grace-hours")), text.toString());
+        assertEquals("  Purpose:|review #12", text.getLast());
+    }
+
+    private static List<String> rows(List<ListCommand.DetailRow> rows) {
+        return rows.stream().map(r -> r.label() + "|" + r.value()).toList();
+    }
+
+    @Test
+    void listingMcpInstancesStillReadsIncusOnce() {
+        // Whether a coordinator instance still holds its workers is read from the same listing.
+        var mcp = mcpDaemon();
+        list(cmd("json"), mcp);
+        assertEquals(List.of("GET /1.0/instances?recursion=2"), mcp.requests());
     }
 
     @Test

@@ -53,7 +53,7 @@ final class CallerLiveness implements Predicate<SessionId> {
     private boolean mayCall(SessionId session) {
         try {
             var metadata = backend.metadata(session.instance());
-            return metadata != null && session.grant().equals(metadata.get(Metadata.MCP_CALLER));
+            return metadata != null && session.grantedBy(metadata.get(Metadata.MCP_CALLER));
         } catch (RuntimeException e) {
             return true;
         }

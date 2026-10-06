@@ -71,6 +71,14 @@ record SessionId(long pid, long start, String instance, String grant) {
         return isInstance() ? INSTANCE_PREFIX + instance + ":" + grant : pid + "-" + start;
     }
 
+    /**
+     * Whether this instance session is the one of an instance whose {@code mcp-caller} stamp is
+     * {@code grant} (null for none): the same instance, not a successor by its name.
+     */
+    boolean grantedBy(String grant) {
+        return isInstance() && this.grant.equals(grant);
+    }
+
     /** The holder as a person reads it: {@code isx mcp pid 123}, {@code isx instance coord}. */
     String describe() {
         return isInstance() ? "isx instance " + instance : "isx mcp pid " + pid;

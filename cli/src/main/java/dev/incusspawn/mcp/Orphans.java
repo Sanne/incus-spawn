@@ -49,12 +49,19 @@ final class Orphans {
             var session = SessionId.parse(config.get(Metadata.MCP_SESSION));
             // What this session released is an orphan to it as well: counted, listed and swept.
             if (session.isPresent() && session.get().equals(self) && !releasedByHolder(config)) return;
-            // Released by its holder (Orphans.orphanedStamp naming it), or the holder is gone. An
-            // instance session outlives its holding of what it released.
-            var orphaned = session.isPresent() && (releasedByHolder(config) || !alive.test(session.get()));
-            result.put(name, new Other(name, config, orphaned));
+            result.put(name, new Other(name, config, orphaned(config, session, alive)));
         });
         return result;
+    }
+
+    /**
+     * Whether an unkept instance held by {@code session} (its parsed {@code mcp-session}) is an
+     * orphan: released by its holder ({@link #orphanedStamp} naming it), or the holder is gone. An
+     * instance session outlives its holding of what it released. An unreadable stamp is held.
+     */
+    static boolean orphaned(Map<String, String> config, java.util.Optional<SessionId> session,
+                            Predicate<SessionId> alive) {
+        return session.isPresent() && (releasedByHolder(config) || !alive.test(session.get()));
     }
 
     /**

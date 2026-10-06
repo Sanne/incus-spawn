@@ -28,6 +28,7 @@ import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyLog;
 import dev.incusspawn.lifecycle.ZmxSocketForward;
+import dev.incusspawn.mcp.McpStanding;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tool.ActionResolver;
@@ -88,6 +89,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -454,6 +456,9 @@ public class ListCommand extends BaseCommand {
             record.put("parent", i.parent.isEmpty() ? null : i.parent);
             record.put("runtime", i.runtime);
             record.put("created", Metadata.createdIso(i.created, zone));
+            // #1053: which instances an isx mcp session made, how they stand, and what for.
+            record.put("mcp_state", i.mcp == null ? null : i.mcp.state().label());
+            record.put("mcp_purpose", i.mcp == null ? null : i.mcp.purpose());
             records.add(record);
         }
         return records;
@@ -791,7 +796,7 @@ public class ListCommand extends BaseCommand {
                                     inst.architecture, inst.buildVersion, inst.definitionSha,
                                     inst.type, inst.buildSourceJson, "", inst.defaultAction,
                                     inst.diskUsage, inst.referencedBytes, inst.instanceMode,
-                                    inst.kvmEnabled)
+                                    inst.kvmEnabled, inst.mcp)
                             : inst)
                     .toList();
         }
@@ -4074,6 +4079,33 @@ public class ListCommand extends BaseCommand {
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
 
+    /** A row of the detail pane; a null label explains the row above. */
+    record DetailRow(String label, String value) {}
+
+    /** The detail pane's rows for an instance an isx mcp session made; none for any other. */
+    static List<DetailRow> mcpDetailRows(McpStanding mcp) {
+        var rows = new ArrayList<DetailRow>();
+        if (mcp == null) return rows;
+        switch (mcp.state()) {
+            case HELD -> rows.add(new DetailRow("MCP:",
+                    "held by " + (mcp.holder() == null ? "an isx mcp session" : mcp.holder())
+                            + (mcp.client() == null ? "" : " (" + oneLine(mcp.client()) + ")")));
+            case ORPHANED -> {
+                rows.add(new DetailRow("MCP:", "orphaned"
+                        + (mcp.orphanedSince() == null ? "" : " since " + mcp.orphanedSince())));
+                rows.add(new DetailRow(null, "its session ended: another may adopt it, and one destroys it"));
+                rows.add(new DetailRow(null, "after mcp.orphan-grace-hours unless someone is working in it"));
+            }
+            case KEPT -> {
+                rows.add(new DetailRow("MCP:", "kept"));
+                rows.add(new DetailRow(null, "an agent handed it to you: no session adopts or destroys it"));
+            }
+        }
+        if (mcp.purpose() != null) rows.add(new DetailRow("  Purpose:", oneLine(mcp.purpose())));
+        if (mcp.cwd() != null) rows.add(new DetailRow("  Session cwd:", oneLine(mcp.cwd())));
+        return rows;
+    }
+
     private List<Line> buildInstanceDetailLines(InstanceInfo info) {
         var lines = new ArrayList<Line>();
         var lineStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
@@ -4111,6 +4143,14 @@ public class ListCommand extends BaseCommand {
                     Span.styled("Created:        ", labelStyle),
                     Span.styled(info.created, lineStyle),
                     Span.styled("  (" + age + ")", dimStyle))));
+        }
+
+        // #1053: no column for it in the instance table, which has no width to spare.
+        for (var row : mcpDetailRows(info.mcp)) {
+            lines.add(row.label() == null
+                    ? Line.from(List.of(Span.styled(" ".repeat(16) + row.value(), dimStyle)))
+                    : Line.from(List.of(Span.styled(String.format("%-16s", row.label()), labelStyle),
+                            Span.styled(row.value(), lineStyle))));
         }
 
         lines.add(Line.styled("", lineStyle));
@@ -5656,6 +5696,12 @@ public class ListCommand extends BaseCommand {
             if (!nodes.isArray()) {
                 throw new IncusException("Cannot read the instance listing from Incus: expected a JSON array");
             }
+            // Whether a coordinator instance still holds its workers is read from this listing.
+            var callerGrants = new HashMap<String, String>();
+            for (var node : nodes) {
+                var grant = configVal(node.path("config"), Metadata.MCP_CALLER, "");
+                if (!grant.isEmpty()) callerGrants.put(node.path("name").asText(), grant);
+            }
             var entryList = new ArrayList<InstanceInfo>();
             for (var node : nodes) {
                 var config = node.path("config");
@@ -5704,12 +5750,22 @@ public class ListCommand extends BaseCommand {
                         configVal(config, Metadata.DEFAULT_ACTION, ""),
                         diskUsage, referencedBytes,
                         configVal(config, Metadata.INSTANCE_MODE, ""),
-                        config.has(Metadata.KVM_ENABLED)));
+                        config.has(Metadata.KVM_ENABLED),
+                        config.has(Metadata.MCP_OWNER) ? McpStanding.of(mcpStamps(config), callerGrants) : null));
             }
             return entryList;
         } catch (JsonProcessingException e) {
             throw new IncusException("Cannot read the instance listing from Incus: " + e.getOriginalMessage(), e);
         }
+    }
+
+    /** The {@code mcp-} stamps of an instance's config. */
+    private static Map<String, String> mcpStamps(JsonNode config) {
+        var stamps = new HashMap<String, String>();
+        config.properties().forEach(e -> {
+            if (Metadata.isMcpKey(e.getKey())) stamps.put(e.getKey(), e.getValue().asText(""));
+        });
+        return stamps;
     }
 
     private static String configVal(JsonNode config, String key, String defaultValue) {
@@ -5740,19 +5796,38 @@ public class ListCommand extends BaseCommand {
 
     private static void printTable(List<InstanceInfo> items, java.io.PrintStream out) {
         var nameWidth = Math.max(20, items.stream().mapToInt(e -> e.name.length()).max().orElse(20));
-        var fmt = "  %-" + nameWidth + "s  %-10s  %-15s  %-20s  %-10s  %s%n";
+        // The MCP column only for someone who uses isx mcp: without it, the format has no
+        // conversion for the last argument, which printf ignores. AGE is padded when MCP follows.
+        var mcp = items.stream().anyMatch(e -> e.mcp != null);
+        var fmt = "  %-" + nameWidth + "s  %-10s  %-15s  %-20s  %-10s  " + (mcp ? "%-13s  %s%n" : "%s%n");
 
-        out.printf(fmt, "NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE");
+        out.printf(fmt, "NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "MCP");
         out.printf(fmt, "-".repeat(nameWidth), "----------", "---------------",
-                "--------------------", "----------", "---");
+                "--------------------", "----------", "---", "---");
         for (var entry : items) {
             var age = entry.created.isEmpty() ? "-" : Metadata.ageDescription(entry.created);
             var parent = entry.parent.isEmpty() ? "-" : entry.parent;
             var ip = entry.ipv4.isEmpty() ? "-" : entry.ipv4;
-            out.printf(fmt, entry.name, entry.status, ip, parent, entry.runtime, age);
+            out.printf(fmt, entry.name, entry.status, ip, parent, entry.runtime, age, mcpCell(entry.mcp));
         }
         out.println();
     }
+
+    /** {@code held: #870 implement}: how an isx mcp instance stands, and what it is for. */
+    private static String mcpCell(McpStanding mcp) {
+        if (mcp == null) return "-";
+        return mcp.state().label() + (mcp.purpose() == null ? "" : ": " + oneLine(mcp.purpose()));
+    }
+
+    /**
+     * A stamp as a person sees it: control characters, an escape sequence's included, become
+     * spaces. isx mcp refuses them in a purpose, but a stamp can be set by hand.
+     */
+    private static String oneLine(String value) {
+        return CONTROL.matcher(value).replaceAll(" ");
+    }
+
+    private static final java.util.regex.Pattern CONTROL = java.util.regex.Pattern.compile("\\p{Cntrl}");
 
     // Package-private so canUseReferencedModel(...) can be unit-tested with hand-built rows.
     record TemplateInfo(String name, String description,
@@ -5784,7 +5859,7 @@ public class ListCommand extends BaseCommand {
         }
     }
 
-    private record InstanceInfo(String name, String status,
+    record InstanceInfo(String name, String status,
                                 String project, String profile, String created,
                                 String runtime, String parent,
                                 String limitsCpu, String limitsMemory, String rootSize,
@@ -5792,7 +5867,8 @@ public class ListCommand extends BaseCommand {
                                 String buildVersion, String definitionSha,
                                 String type, String buildSourceJson, String pendingOp,
                                 String defaultAction, long diskUsage, long referencedBytes,
-                                String instanceMode, boolean kvmEnabled) {
+                                String instanceMode, boolean kvmEnabled,
+                                McpStanding mcp) {
         MachineType machineType() { return MachineType.fromIncus(runtime); }
     }
 }
