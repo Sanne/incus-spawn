@@ -252,12 +252,21 @@ class ListCommandOutputTest {
     }
 
     @Test
-    void aStampSetByHandCannotWriteEscapeSequencesToTheTerminal() {
+    void noFormatPassesAnEscapeSequenceInAStampToTheTerminal() throws Exception {
+        // #1118: 7-bit (ESC [) and 8-bit (U+009B) CSI alike, in plain, the table and the details.
+        var purpose = "\u001b[2J\u009b2Jhi";
         var daemon = new FakeIncusDaemon().container("w", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE,
-                Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, "garbled", Metadata.MCP_PURPOSE, "\u001b[2Jhi"));
+                Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, "garbled", Metadata.MCP_PURPOSE, purpose));
+        assertEquals("w\tstopped\t-\t-\tcontainer\t-\theld\t [2J 2Jhi\n", list(cmd("plain"), daemon));
         var table = list(cmd(null), daemon);
-        assertFalse(table.contains("\u001b"), table);
-        assertTrue(table.contains("held:  [2Jhi"), table);
+        assertFalse(table.contains("\u009b"), table);
+        assertTrue(table.contains("held:  [2J 2Jhi"), table);
+        var entry = ListCommand.collectEntries(daemon.client().listJson()).getFirst();
+        assertEquals("  Purpose:| [2J 2Jhi", rows(ListCommand.mcpDetailRows(entry.mcp())).getLast());
+        var json = list(cmd("json"), daemon);
+        assertFalse(json.contains("\u001b") || json.contains("\u009b"), json);
+        List<LinkedHashMap<String, Object>> parsed = new ObjectMapper().readValue(json, new TypeReference<>() {});
+        assertEquals(purpose, parsed.getFirst().get("mcp_purpose"), "json keeps the value as stamped");
     }
 
     @Test

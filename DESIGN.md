@@ -517,6 +517,16 @@ is empty. So query commands take `--format` (#1036), through one shared helper,
   command, so the contract documents it rather than remapping it; `ExitCodeTest` pins both.
 - **The contract**: `plain` and `json` fields may be added at the end, never renamed, removed or
   reordered. Results go to stdout and only results: errors and diagnostics go to stderr.
+- **Control characters** (#1118): both formats are read on terminals too, and a value can be a
+  stamp someone set by hand, so neither writes a control character in a value raw. `plain` is
+  lossy: every C0 control (tab and line breaks included), DEL, C1 control and U+2028/U+2029
+  becomes a space (`OutputFormat.oneLine`), which keeps a record one safe line. `json` is exact:
+  Jackson escapes C0 as JSON requires, and `OutputFormat` also escapes DEL, C1 and U+2028/U+2029
+  as `\uXXXX`, which JSON allows and every parser reverses. A script that needs a value exactly
+  reads `json`. Escaping in `plain` instead (`\e`, `\\`) was rejected: it would make every reader
+  decode, and change the many values with a backslash for the rare one with a control character.
+  The table and the TUI show a stamp through the same `oneLine`, so the three cannot disagree;
+  `\p{Cntrl}`, which they used before, is ASCII-only and let U+009B (8-bit CSI) through.
 
 A command parses its `--format` with `OutputFormat.parse` (`isx list`, which also has
 `--plain`, with `OutputFormat.resolve`), builds each record once, as an ordered map of field name

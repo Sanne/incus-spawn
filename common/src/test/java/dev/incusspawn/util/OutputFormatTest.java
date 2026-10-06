@@ -60,4 +60,33 @@ class OutputFormatTest {
         assertEquals("{\n  \"name\" : \"a\",\n  \"tags\" : [ \"x\", \"y\" ],\n  \"none\" : [ ]\n}\n",
                 json.toString(StandardCharsets.UTF_8).replace("\r\n", "\n"));
     }
+
+    @Test
+    void noControlCharacterInAValueReachesTheTerminalInPlain() {
+        // #1118: an escape sequence a value carries, 7-bit (ESC [) or 8-bit (U+009B CSI), DEL,
+        // or a Unicode line separator, becomes a space like a tab does; everything else is kept.
+        var record = new LinkedHashMap<String, Object>();
+        record.put("esc", "a\u001b[2Jb");
+        record.put("csi", "a\u009b2Jb");
+        record.put("others", "\u0000\u0007\u007f\u0085\u2028\u2029x");
+        record.put("kept", "caf\u00e9 \\ \uD83D\uDC69\u200D\uD83D\uDCBB");
+        record.put("list", List.of("x\u001b]0;t\u0007", "y"));
+        var bytes = new ByteArrayOutputStream();
+        OutputFormat.PLAIN.printOne(new PrintStream(bytes, true, StandardCharsets.UTF_8), record);
+        assertEquals("a [2Jb\ta 2Jb\t      x\tcaf\u00e9 \\ \uD83D\uDC69\u200D\uD83D\uDCBB\tx ]0;t ,y\n",
+                bytes.toString(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void jsonKeepsAControlCharacterExactButNeverRaw() throws Exception {
+        // #1118: json is where a value is exact. Jackson escapes C0 itself; DEL, C1 and the
+        // Unicode line separators would otherwise go out as raw bytes a terminal may act on.
+        var value = "a\u001b[2J\u007f\u009b\u0085\u2028\u2029\u00e9b";
+        var bytes = new ByteArrayOutputStream();
+        OutputFormat.JSON.printOne(new PrintStream(bytes, true, StandardCharsets.UTF_8), Map.of("v", value));
+        var text = bytes.toString(StandardCharsets.UTF_8);
+        assertEquals("{\n  \"v\" : \"a\\u001B[2J\\u007F\\u009B\\u0085\\u2028\\u2029\u00e9b\"\n}\n",
+                text.replace("\r\n", "\n"));
+        assertEquals(value, new com.fasterxml.jackson.databind.ObjectMapper().readTree(text).get("v").asText());
+    }
 }

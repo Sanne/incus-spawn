@@ -4087,7 +4087,7 @@ public class ListCommand extends BaseCommand {
         switch (mcp.state()) {
             case HELD -> rows.add(new DetailRow("MCP:",
                     "held by " + (mcp.holder() == null ? "an isx mcp session" : mcp.holder())
-                            + (mcp.client() == null ? "" : " (" + oneLine(mcp.client()) + ")")));
+                            + (mcp.client() == null ? "" : " (" + OutputFormat.oneLine(mcp.client()) + ")")));
             case ORPHANED -> {
                 rows.add(new DetailRow("MCP:", "orphaned"
                         + (mcp.orphanedSince() == null ? "" : " since " + mcp.orphanedSince())
@@ -4105,8 +4105,8 @@ public class ListCommand extends BaseCommand {
                 rows.add(new DetailRow(null, "an agent handed it to you: no session adopts or destroys it"));
             }
         }
-        if (mcp.purpose() != null) rows.add(new DetailRow("  Purpose:", oneLine(mcp.purpose())));
-        if (mcp.cwd() != null) rows.add(new DetailRow("  Session cwd:", oneLine(mcp.cwd())));
+        if (mcp.purpose() != null) rows.add(new DetailRow("  Purpose:", OutputFormat.oneLine(mcp.purpose())));
+        if (mcp.cwd() != null) rows.add(new DetailRow("  Session cwd:", OutputFormat.oneLine(mcp.cwd())));
         return rows;
     }
 
@@ -5776,21 +5776,15 @@ public class ListCommand extends BaseCommand {
         out.println();
     }
 
-    /** {@code held: #870 implement}: how an isx mcp instance stands, and what it is for. */
+    /**
+     * {@code held: #870 implement}: how an isx mcp instance stands, and what it is for.
+     * A stamp is shown through {@link OutputFormat#oneLine}: isx mcp refuses control characters
+     * in a purpose, but a stamp can be set by hand, escape sequence and all.
+     */
     private static String mcpCell(McpStanding mcp) {
         if (mcp == null) return "-";
-        return mcp.state().label() + (mcp.purpose() == null ? "" : ": " + oneLine(mcp.purpose()));
+        return mcp.state().label() + (mcp.purpose() == null ? "" : ": " + OutputFormat.oneLine(mcp.purpose()));
     }
-
-    /**
-     * A stamp as a person sees it: control characters, an escape sequence's included, become
-     * spaces. isx mcp refuses them in a purpose, but a stamp can be set by hand.
-     */
-    private static String oneLine(String value) {
-        return CONTROL.matcher(value).replaceAll(" ");
-    }
-
-    private static final java.util.regex.Pattern CONTROL = java.util.regex.Pattern.compile("\\p{Cntrl}");
 
     // Package-private so canUseReferencedModel(...) can be unit-tested with hand-built rows.
     record TemplateInfo(String name, String description,
