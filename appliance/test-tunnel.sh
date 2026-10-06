@@ -193,12 +193,22 @@ if [ "${TUNNEL_BACKSTOP:-0}" = "1" ]; then
         echo "  INFO: incusd stalls new connections behind the silent one (StarttlsListener peek)"
     fi
 
+    # The wait is silent by nature and lasts the whole backstop. Say so, and report progress, so a
+    # run cut short here is not mistaken for a hang: #1093 was two CI cancellations two minutes into
+    # this wait, read as a stuck teardown.
+    echo "  waiting for the backstop to reap it (up to $((BACKSTOP_SECONDS + 30))s)"
     reaped_at=""
     deadline=$((idle_opened + BACKSTOP_SECONDS + 30))
+    next_report=$((idle_opened + 30))
     while [ "$(date +%s)" -lt "$deadline" ]; do
-        if [ "$(socat_count)" = "$baseline" ]; then
+        count=$(socat_count)
+        if [ "$count" = "$baseline" ]; then
             reaped_at=$(( $(date +%s) - idle_opened ))
             break
+        fi
+        if [ "$(date +%s)" -ge "$next_report" ]; then
+            echo "  ... $(( $(date +%s) - idle_opened ))s, forwarder count $count"
+            next_report=$((next_report + 30))
         fi
         sleep 5
     done
