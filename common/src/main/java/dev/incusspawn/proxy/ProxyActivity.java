@@ -30,8 +30,15 @@ public record ProxyActivity(Map<String, Instance> instances) {
     }
 
     /** No answer worth reading: the proxy is down, or older than {@code /activity}. */
-    public static final class Unavailable extends RuntimeException {
+    public static class Unavailable extends RuntimeException {
         public Unavailable(String message) {
+            super(message);
+        }
+    }
+
+    /** The running proxy predates {@code /activity}: no retry helps until it is restarted. */
+    public static final class Outdated extends Unavailable {
+        public Outdated(String message) {
             super(message);
         }
     }
@@ -53,7 +60,7 @@ public record ProxyActivity(Map<String, Instance> instances) {
         } catch (Exception e) {
             throw new Unavailable("the isx proxy is not answering (" + e.getMessage() + ")");
         }
-        if (answer.status() == 404) throw new Unavailable("the running isx proxy does not report activity; it predates this isx");
+        if (answer.status() == 404) throw new Outdated("the running isx proxy does not report activity; it predates this isx");
         if (answer.status() != 200) throw new Unavailable("the isx proxy answered HTTP " + answer.status());
         return parse(answer.body());
     }

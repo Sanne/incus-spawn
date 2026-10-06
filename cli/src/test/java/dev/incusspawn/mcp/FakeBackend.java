@@ -164,7 +164,7 @@ class FakeBackend implements InstanceBackend {
     @Override
     public dev.incusspawn.proxy.ProxyActivity proxyActivity() {
         var answer = activity;
-        if (answer == null) throw new ToolError("the isx proxy is not answering; ask the user to check it with: isx proxy status");
+        if (answer == null) throw new ToolError(ToolError.Code.UNAVAILABLE, "the isx proxy is not answering; ask the user to check it with: isx proxy status");
         return answer;
     }
 

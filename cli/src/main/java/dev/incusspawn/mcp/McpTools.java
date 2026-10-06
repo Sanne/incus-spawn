@@ -257,6 +257,7 @@ final class McpTools {
                         + "counting_since: a different one means the proxy started counting afresh in "
                         + "between (a restart) and the difference is not the task's.",
                 Schema.object().string("instance", "Instance name, from list_instances", true).build(),
+                OutputSchemas.instanceActivity(),
                 McpTool.annotations(true, false, true),
                 (args, ctx) -> instanceActivity(args)));
         tools.add(new McpTool("destroy_instance",

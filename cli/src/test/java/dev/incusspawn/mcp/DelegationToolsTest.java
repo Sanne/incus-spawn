@@ -193,6 +193,7 @@ class DelegationToolsTest {
         taskState = "finished";
         structured(call("stop_instance", "{\"instance\":\"" + name + "\"}"));
         structured(call("start_instance", "{\"instance\":\"" + name + "\"}"));
+        structured(call("instance_activity", "{\"instance\":\"" + name + "\"}"));
         structured(call("keep_instance", "{\"instance\":\"" + name + "\"}"));
         backend.instance("mcp-agent-old-abcde", Map.of(
                 dev.incusspawn.incus.Metadata.PROFILE, "tpl-agent",

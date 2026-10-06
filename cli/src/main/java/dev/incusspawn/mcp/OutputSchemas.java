@@ -236,6 +236,23 @@ final class OutputSchemas {
                 .build();
     }
 
+    static ObjectNode instanceActivity() {
+        return Schema.object()
+                .string("instance", null, true)
+                .string("counting_since", "ISO-8601: when the proxy began counting this instance's calls; "
+                        + "absent while it does not know the instance", false)
+                .integer("requests", null, true)
+                .integer("requests_in_flight", null, true)
+                .string("last_request_at", "ISO-8601", false)
+                .string("last_response_at", "ISO-8601", false)
+                .integer("idle_seconds", "Since the last call ended; only while none is in flight", false)
+                .integer("input_tokens", null, true)
+                .integer("output_tokens", null, true)
+                .integer("cache_read_input_tokens", null, true)
+                .integer("cache_creation_input_tokens", null, true)
+                .build();
+    }
+
     static ObjectNode keepInstance() {
         return Schema.object()
                 .string("instance", null, true)

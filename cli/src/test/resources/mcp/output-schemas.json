@@ -639,6 +639,50 @@
     "required" : [ ],
     "additionalProperties" : false
   },
+  "instance_activity" : {
+    "type" : "object",
+    "properties" : {
+      "instance" : {
+        "type" : "string"
+      },
+      "counting_since" : {
+        "description" : "ISO-8601: when the proxy began counting this instance's calls; absent while it does not know the instance",
+        "type" : "string"
+      },
+      "requests" : {
+        "type" : "integer"
+      },
+      "requests_in_flight" : {
+        "type" : "integer"
+      },
+      "last_request_at" : {
+        "description" : "ISO-8601",
+        "type" : "string"
+      },
+      "last_response_at" : {
+        "description" : "ISO-8601",
+        "type" : "string"
+      },
+      "idle_seconds" : {
+        "description" : "Since the last call ended; only while none is in flight",
+        "type" : "integer"
+      },
+      "input_tokens" : {
+        "type" : "integer"
+      },
+      "output_tokens" : {
+        "type" : "integer"
+      },
+      "cache_read_input_tokens" : {
+        "type" : "integer"
+      },
+      "cache_creation_input_tokens" : {
+        "type" : "integer"
+      }
+    },
+    "required" : [ "instance", "requests", "requests_in_flight", "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens" ],
+    "additionalProperties" : false
+  },
   "destroy_instance" : {
     "type" : "object",
     "properties" : {

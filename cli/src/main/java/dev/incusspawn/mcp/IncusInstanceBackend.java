@@ -217,7 +217,9 @@ final class IncusInstanceBackend implements InstanceBackend {
             return ProxyActivity.fetch(address);
         } catch (RuntimeException e) {
             proxyAddress = null;
-            throw new ToolError(e.getMessage() + "; ask the user to check it with: isx proxy status");
+            // An outdated proxy answers the same until the user restarts it: a retry cannot help.
+            var code = e instanceof ProxyActivity.Outdated ? ToolError.Code.REFUSED : ToolError.Code.UNAVAILABLE;
+            throw new ToolError(code, e.getMessage() + "; ask the user to check it with: isx proxy status");
         }
     }
 

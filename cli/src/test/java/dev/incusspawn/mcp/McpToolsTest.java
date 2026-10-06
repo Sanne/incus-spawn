@@ -405,5 +405,6 @@ class McpToolsTest {
         var down = call("instance_activity", "{\"instance\":\"" + name + "\"}");
         assertTrue(down.path("isError").asBoolean());
         assertTrue(text(down).contains("isx proxy status"), text(down));
+        assertEquals("unavailable", down.path("_meta").path(ToolResult.ERROR_META).path("code").asText());
     }
 }
