@@ -437,33 +437,7 @@ public class DoctorCommand extends BaseCommand {
             for (var e : pools.entrySet()) {
                 if (IncusClient.isCowDriver(e.getValue())) { pool = e.getKey(); break; }
             }
-            if (pool == null) {
-                var poolDesc = pools.isEmpty() ? "no storage pools configured"
-                        : String.join(", ", pools.entrySet().stream()
-                                .map(e -> "'" + e.getKey() + "' (" + e.getValue() + ")")
-                                .toList());
-                Remediation remediation = null;
-                if (Platform.isLinux()) {
-                    remediation = new Remediation(
-                            "Create a btrfs pool: sudo incus storage create cow btrfs size=100GiB",
-                            false,
-                            () -> {
-                                var r1 = new ProcessBuilder("sudo", "mkdir", "-p", "/var/lib/incus/disks")
-                                        .inheritIO().start().waitFor();
-                                if (r1 != 0) throw new RuntimeException(
-                                        "Failed to create /var/lib/incus/disks directory");
-                                var r2 = new ProcessBuilder("sudo", "incus", "storage", "create",
-                                        "cow", "btrfs", "size=100GiB")
-                                        .inheritIO().start().waitFor();
-                                if (r2 != 0) throw new RuntimeException(
-                                        "Failed to create pool — ensure the 'loop' kernel module is loaded (sudo modprobe loop)");
-                            });
-                }
-                return List.of(Finding.fail("No copy-on-write storage pool",
-                        poolDesc + " — every branch and derived build is a full rsync copy:"
-                                + " minutes instead of seconds, and the template's full size on disk each time",
-                        remediation));
-            }
+            if (pool == null) return List.of(noCowPoolFinding(pools, Platform.isLinux()));
             var findings = new ArrayList<Finding>();
             findings.addAll(checkProfilePool(incus, pool, pools));
             findings.addAll(checkInstancesOffCowPool(incus, pool, pools));
@@ -485,7 +459,35 @@ public class DoctorCommand extends BaseCommand {
         }
     }
 
-    private List<Finding> checkProfilePool(IncusClient incus, String cowPool,
+    static Finding noCowPoolFinding(Map<String, String> pools, boolean linux) {
+        var poolDesc = pools.isEmpty() ? "no storage pools configured"
+                : String.join(", ", pools.entrySet().stream()
+                        .map(e -> "'" + e.getKey() + "' (" + e.getValue() + ")")
+                        .toList());
+        Remediation remediation = null;
+        if (linux) {
+            remediation = new Remediation(
+                    "Create a 100 GiB btrfs copy-on-write pool 'cow'",
+                    false,
+                    () -> {
+                        var r1 = new ProcessBuilder("sudo", "mkdir", "-p", "/var/lib/incus/disks")
+                                .inheritIO().start().waitFor();
+                        if (r1 != 0) throw new RuntimeException(
+                                "Failed to create /var/lib/incus/disks directory");
+                        var r2 = new ProcessBuilder("sudo", "incus", "storage", "create",
+                                "cow", "btrfs", "size=100GiB")
+                                .inheritIO().start().waitFor();
+                        if (r2 != 0) throw new RuntimeException(
+                                "Failed to create pool — ensure the 'loop' kernel module is loaded (sudo modprobe loop)");
+                    });
+        }
+        return Finding.fail("No copy-on-write storage pool",
+                poolDesc + " — every branch and derived build is a full rsync copy:"
+                        + " minutes instead of seconds, and the template's full size on disk each time",
+                remediation);
+    }
+
+    static List<Finding> checkProfilePool(IncusClient incus, String cowPool,
                                           Map<String, String> pools) {
         try {
             var devices = incus.profileDevices("default");
@@ -496,11 +498,9 @@ public class DoctorCommand extends BaseCommand {
             return List.of(Finding.warn(
                     "Default profile root disk on non-CoW pool '" + profilePool + "'",
                     "the default profile's root disk uses '" + profilePool + "' (" + driver
-                            + ") instead of CoW pool '" + cowPool + "'"
-                            + " — run 'isx init' to upgrade it, or manually:"
-                            + " incus profile device set default root pool=" + cowPool,
+                            + ") instead of CoW pool '" + cowPool + "', so new instances land on it",
                     new Remediation(
-                            "Update default profile: incus profile device set default root pool=" + cowPool,
+                            "Point the default profile's root disk at pool '" + cowPool + "'",
                             false,
                             () -> {
                                 if (!incus.updateProfileRootDiskPool("default", cowPool)) {
@@ -660,9 +660,19 @@ public class DoctorCommand extends BaseCommand {
         return findings;
     }
 
-    private List<Finding> checkInstancesOffCowPool(IncusClient incus, String cowPool,
-                                                    Map<String, String> pools) {
-        var instancePools = incus.instanceRootPools();
+    /**
+     * Instances whose root disk is on a pool without copy-on-write. A stopped one can be moved to
+     * the CoW pool in place (a full copy, once); a running one cannot, so it is only listed.
+     */
+    static List<Finding> checkInstancesOffCowPool(IncusClient incus, String cowPool,
+                                                   Map<String, String> pools) {
+        var roots = incus.listInstanceRoots();
+        var instancePools = new LinkedHashMap<String, String>();
+        var running = new HashSet<String>();
+        for (var r : roots) {
+            instancePools.put(r.name(), r.pool());
+            if (r.running()) running.add(r.name());
+        }
         var offPool = classifyOffCowPool(cowPool, pools, instancePools);
         if (offPool.isEmpty()) return List.of();
         var findings = new ArrayList<Finding>();
@@ -672,12 +682,29 @@ public class DoctorCommand extends BaseCommand {
             var names = entry.getValue();
             var listed = names.size() <= 5 ? String.join(", ", names)
                     : String.join(", ", names.subList(0, 5)) + ", … (" + names.size() + " total)";
-            findings.add(Finding.warn(
-                    names.size() + " instance(s) not on CoW pool '" + cowPool + "'",
-                    "on '" + poolName + "' (" + driver + "): " + listed
-                            + " — branching from these is a full copy;"
-                            + " rebuild templates with 'isx build <name>' or move with 'incus move <name> --storage " + cowPool + "'",
-                    null));
+            var movable = names.stream().filter(n -> !running.contains(n)).toList();
+            var busy = names.stream().filter(running::contains).toList();
+            var detail = "on '" + poolName + "' (" + driver + "): " + listed
+                    + " — branching from these is a full copy; rebuild templates with 'isx build <name>' or move them"
+                    + (busy.isEmpty() ? "" : "; " + String.join(", ", busy) + (busy.size() == 1
+                            ? " is running: stop it and re-run 'isx doctor' to move it"
+                            : " are running: stop them and re-run 'isx doctor' to move them"));
+            var remediation = movable.isEmpty() ? null : new Remediation(
+                    "Move " + movable.size() + " stopped instance(s) to pool '" + cowPool + "' (a full copy, once)",
+                    false,
+                    () -> {
+                        var failures = new ArrayList<String>();
+                        for (var name : movable) {
+                            try {
+                                incus.moveToPool(name, cowPool);
+                            } catch (RuntimeException e) {
+                                failures.add(name + ": " + e.getMessage());
+                            }
+                        }
+                        if (!failures.isEmpty()) throw new IOException(String.join("; ", failures));
+                    });
+            findings.add(Finding.warn(names.size() + " instance(s) not on CoW pool '" + cowPool + "'",
+                    detail, remediation));
         }
         return findings;
     }

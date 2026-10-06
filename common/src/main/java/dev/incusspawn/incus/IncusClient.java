@@ -909,12 +909,6 @@ public class IncusClient {
         return roots == null ? List.of() : roots;
     }
 
-    public Map<String, String> instanceRootPools() {
-        var result = new LinkedHashMap<String, String>();
-        listInstanceRoots().forEach(r -> result.put(r.name(), r.pool()));
-        return result;
-    }
-
     /** An instance with its Incus type, its status and the pool its root disk is on. */
     public record InstanceRoot(String name, String type, String pool, String status) {
         /** Running or frozen: Incus moves neither between pools without a stop. */

@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.InstanceSubvolumes;
 import dev.incusspawn.proxy.BridgeDns;
@@ -416,6 +417,92 @@ class DoctorCommandTest {
         var pools = Map.of("cow", "btrfs", "default", "dir");
         var result = DoctorCommand.classifyOffCowPool("cow", pools, Map.of());
         assertTrue(result.isEmpty(), "no instances means no findings");
+    }
+
+    // ---- Storage remediations act through isx, never name an incus command (#986) ----
+
+    /** The Incus CLI is not on a macOS host, and on Linux it is an implementation detail. */
+    private static void assertNoIncusCommand(DoctorCommand.Finding f) {
+        assertFalse(f.detail().contains("incus "), f.detail());
+        if (f.remediation() != null) {
+            assertFalse(f.remediation().description().contains("incus "), f.remediation().description());
+        }
+    }
+
+    private static final Map<String, String> DIR_AND_COW = Map.of("default", "dir", "cow", "btrfs");
+
+    private static FakeIncusDaemon dirDefaultWithCowPool() {
+        return new FakeIncusDaemon().pool("default", "dir").pool("cow", "btrfs");
+    }
+
+    @Test
+    void noCowPoolFindingNamesNoIncusCommand() {
+        var linux = DoctorCommand.noCowPoolFinding(Map.of("default", "dir"), true);
+        assertNoIncusCommand(linux);
+        assertNotNull(linux.remediation().action());
+        // The macOS remediation is still to be decided (#1085).
+        var mac = DoctorCommand.noCowPoolFinding(Map.of("default", "dir"), false);
+        assertNoIncusCommand(mac);
+        assertNull(mac.remediation());
+    }
+
+    @Test
+    void profileOnANonCowPoolIsFixedThroughIsx() throws Exception {
+        var daemon = dirDefaultWithCowPool();
+        var incus = daemon.client();
+
+        var findings = DoctorCommand.checkProfilePool(incus, "cow", DIR_AND_COW);
+
+        assertEquals(1, findings.size());
+        findings.forEach(DoctorCommandTest::assertNoIncusCommand);
+        findings.getFirst().remediation().action().run();
+        assertEquals("cow", IncusClient.rootDiskPoolFromDevices(incus.profileDevices("default")));
+    }
+
+    @Test
+    void stoppedInstancesOffTheCowPoolAreMovedRunningOnesOnlyListed() throws Exception {
+        var daemon = dirDefaultWithCowPool()
+                .container("tpl-old", Map.of())
+                .instance("dev-1", "container", "Running", Map.of())
+                .containerSubvolumes("tpl-old");
+        var incus = daemon.client();
+
+        var findings = DoctorCommand.checkInstancesOffCowPool(incus, "cow", DIR_AND_COW);
+
+        assertEquals(1, findings.size());
+        var f = findings.getFirst();
+        assertNoIncusCommand(f);
+        assertTrue(f.detail().contains("dev-1 is running: stop it and re-run 'isx doctor'"), f.detail());
+        assertEquals("Move 1 stopped instance(s) to pool 'cow' (a full copy, once)", f.remediation().description());
+
+        daemon.clearRequests();
+        f.remediation().action().run();
+        assertTrue(daemon.requests().contains("POST /1.0/instances/tpl-old"), daemon.requests().toString());
+        assertFalse(daemon.requests().contains("POST /1.0/instances/dev-1"), daemon.requests().toString());
+        var pools = new java.util.HashMap<String, String>();
+        incus.listInstanceRoots().forEach(r -> pools.put(r.name(), r.pool()));
+        assertEquals(Map.of("tpl-old", "cow", "dev-1", "default"), pools);
+    }
+
+    @Test
+    void anInstanceLeftInErrorIsMovedAFrozenOneIsNot() {
+        var daemon = dirDefaultWithCowPool()
+                .instance("failed-start", "container", "Error", Map.of())
+                .instance("paused", "container", "Frozen", Map.of());
+
+        var f = DoctorCommand.checkInstancesOffCowPool(daemon.client(), "cow", DIR_AND_COW).getFirst();
+
+        assertEquals("Move 1 stopped instance(s) to pool 'cow' (a full copy, once)", f.remediation().description());
+        assertTrue(f.detail().contains("paused is running"), f.detail());
+    }
+
+    @Test
+    void onlyRunningInstancesOffTheCowPoolOfferNoMove() {
+        var daemon = dirDefaultWithCowPool().instance("dev-1", "container", "Running", Map.of());
+
+        var f = DoctorCommand.checkInstancesOffCowPool(daemon.client(), "cow", DIR_AND_COW).getFirst();
+
+        assertNull(f.remediation());
     }
 
     // ---- Root disk btrfs superblock validation ----
