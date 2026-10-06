@@ -92,7 +92,7 @@ public class CodexSetup implements ToolSetup {
     @Override
     public List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
         var entries = new ArrayList<EnvEntry>();
-        entries.add(EnvEntry.set("OPENAI_API_KEY", "sk-placeholder"));
+        entries.add(EnvEntry.set("OPENAI_API_KEY", PLACEHOLDER_API_KEY));
         return entries;
     }
 
@@ -112,6 +112,8 @@ public class CodexSetup implements ToolSetup {
         NpmGlobalInstall.install(c, NPM_CLI);
         BuildOutput.stepDone();
     }
+
+    static final String PLACEHOLDER_API_KEY = "sk-placeholder";
 
     public static final String CONFIG_PATH = "/home/agentuser/.codex/config.toml";
     static final String AUTH_PATH = "/home/agentuser/.codex/auth.json";
@@ -146,15 +148,52 @@ public class CodexSetup implements ToolSetup {
         var authJson = """
                 {
                   "auth_mode": "apikey",
-                  "OPENAI_API_KEY": "sk-placeholder"
+                  "OPENAI_API_KEY": "%s"
                 }
-                """;
+                """.formatted(PLACEHOLDER_API_KEY);
         c.sh("mkdir -p /home/agentuser/.codex");
         c.writeFile(CONFIG_PATH, configToml);
         c.writeFile(AUTH_PATH, authJson);
         c.chown("/home/agentuser/.codex", "agentuser:agentuser");
+        c.writeFile(LOGIN_AUTH_PATH, LOGIN_AUTH_SCRIPT);
         BuildOutput.stepDone();
     }
+
+    /** Sorts after every other {@code isx-*.sh}, so it sees the key a start exports (#1106). */
+    static final String LOGIN_AUTH_PATH = "/etc/profile.d/isx-zz-codex-auth.sh";
+
+    /**
+     * Brings {@code auth.json} in line with the {@code OPENAI_API_KEY} a login exports, which
+     * changes on every start (#1108). Codex sends the key in {@code auth.json} and never reads
+     * the variable, and the built-in {@code openai} provider cannot be pointed at one. Only a
+     * file still holding a key isx put there is rewritten -- the build's placeholder or a
+     * start's -- so a {@code codex login} of the user's own is left alone. Sourced by every
+     * login shell: POSIX sh, silent, a grep when nothing changed, no variables left behind.
+     */
+    static final String LOGIN_AUTH_SCRIPT = """
+            # Written by isx: Codex reads its key from auth.json, and the key changes on every start (#1108)
+            if [ -n "${OPENAI_API_KEY:-}" ] && [ -f "$HOME/.codex/auth.json" ] && [ -w "$HOME/.codex/auth.json" ]; then
+              case $OPENAI_API_KEY in
+                *[!A-Za-z0-9_-]*) ;;
+                *)
+                  if ! grep -qF "\\"OPENAI_API_KEY\\": \\"$OPENAI_API_KEY\\"" "$HOME/.codex/auth.json" 2>/dev/null; then
+                    isx_key=$(sed -n 's/^ *"OPENAI_API_KEY": *"\\([^"]*\\)".*$/\\1/p' "$HOME/.codex/auth.json" 2>/dev/null)
+                    case $isx_key in
+                      %s|*isx_*)
+                        if grep -q '"auth_mode": *"apikey"' "$HOME/.codex/auth.json" 2>/dev/null; then
+                          (umask 077 && printf '{\\n  "auth_mode": "apikey",\\n  "OPENAI_API_KEY": "%%s"\\n}\\n' \\
+                              "$OPENAI_API_KEY" > "$HOME/.codex/auth.json.isx-$$") 2>/dev/null \\
+                            && mv -f "$HOME/.codex/auth.json.isx-$$" "$HOME/.codex/auth.json" 2>/dev/null
+                          rm -f "$HOME/.codex/auth.json.isx-$$"
+                        fi
+                        ;;
+                    esac
+                    unset isx_key
+                  fi
+                  ;;
+              esac
+            fi
+            """.formatted(PLACEHOLDER_API_KEY);
 
     private static void appendIfPresent(StringBuilder toml, Map<String, String> params,
                                         String paramKey, String tomlKey) {
