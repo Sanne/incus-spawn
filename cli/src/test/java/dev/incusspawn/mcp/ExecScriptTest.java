@@ -123,6 +123,12 @@ class ExecScriptTest {
     }
 
     @Test
+    void theRunsOwnBookkeepingLeavesTheCallersEnvironmentAlone() throws Exception {
+        var r = run(build(home.toString(), Map.of("w", "mine"), "echo \"$w\"", null));
+        assertEquals("mine\n", r.stdout());
+    }
+
+    @Test
     void aFifoInPlaceOfThePidFileHoldsNoRun() throws Exception {
         // Run ids are predictable: one could be waiting there before the run writes its pid.
         var pidFile = Files.createDirectories(home.resolve(".isx-mcp/run")).resolve("exec-1-1.pid");

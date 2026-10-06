@@ -34,7 +34,8 @@ final class ExecScript {
         // $$ of the inner bash is the new session's id (setsid made it the leader); exec keeps
         // it for the command, so the pid file names the session every descendant belongs to.
         sb.append("exec setsid --wait bash -c ")
-                .append(quote(TaskScripts.writeAside(RUN_DIR, runId + ".pid", "echo $$") + "; exec \"$@\""))
+                // In a subshell: its variable must not replace one the command was given.
+                .append(quote("( " + TaskScripts.writeAside(RUN_DIR, runId + ".pid", "echo $$") + " ); exec \"$@\""))
                 .append(" isx-exec ");
         if (timeoutSeconds != null) {
             if (timeoutSeconds <= 0) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "timeout_seconds must be positive");
