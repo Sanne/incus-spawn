@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.AdditionalMatchers.and;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -143,8 +144,9 @@ class ClaudeSetupTest {
 
         new ClaudeSetup().configureSettings(new Container(incus, CONTAINER), claude, Map.of());
 
-        verify(incus, never()).shellExec(eq(CONTAINER),
-                eq("sh"), eq("-c"), contains("customApiKeyResponses"));
+        // The login script names the field too, to approve the key of each start (#1108)
+        verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"),
+                and(contains("cat > '/home/agentuser/.claude.json'"), contains("customApiKeyResponses")));
     }
 
     @Test

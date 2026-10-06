@@ -191,6 +191,7 @@ public class ClaudeSetup implements ToolSetup {
             entries.add(EnvEntry.set("CLOUD_ML_REGION", account.getCloudMlRegion()));
             entries.add(EnvEntry.set("ANTHROPIC_VERTEX_PROJECT_ID", account.getVertexProjectId()));
             entries.add(EnvEntry.set("ANTHROPIC_VERTEX_BASE_URL", "https://api.anthropic.com/v1"));
+            entries.add(EnvEntry.set(VERTEX_TOKEN_ENV, VERTEX_PLACEHOLDER_TOKEN));
         } else if (type == SpawnConfig.ClaudeAccountType.OAUTH) {
             entries.add(EnvEntry.set("CLAUDE_CODE_OAUTH_TOKEN", SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN));
         } else {
@@ -261,19 +262,35 @@ public class ClaudeSetup implements ToolSetup {
 
     static final String GCLOUD_STUB_PATH = "/usr/local/bin/gcloud";
 
-    private static final String GCLOUD_STUB_SCRIPT = """
-            #!/bin/bash
+    /**
+     * Carries the token a Vertex instance presents to the proxy. Claude Code cannot read it
+     * itself: under {@code CLAUDE_CODE_SKIP_VERTEX_AUTH} it sends no Authorization header of
+     * its own, only what {@code ANTHROPIC_CUSTOM_HEADERS} holds, which {@link #LOGIN_AUTH_SCRIPT}
+     * fills from this at login.
+     */
+    static final String VERTEX_TOKEN_ENV = "ISX_VERTEX_ACCESS_TOKEN";
+    /** In every stub isx wrote, before #1108 too: how {@link #syncGcloudStub} tells its own. */
+    private static final String STUB_MARKER = "placeholder-for-proxy";
+    /** What {@link #VERTEX_TOKEN_ENV} holds until a start exports the instance's own. */
+    static final String VERTEX_PLACEHOLDER_TOKEN = "ya29." + STUB_MARKER;
+
+    /**
+     * Prints the token of the environment it is called from, never one fixed at build time: the
+     * one a start exports changes on every start (#1108). The fallback carries the stub marker.
+     */
+    static final String GCLOUD_STUB_SCRIPT = """
+            #!/bin/sh
             case "$*" in
-              *auth*print-access-token*) echo "ya29.placeholder-for-proxy" ;;
+              *auth*print-access-token*) printf '%%s\\n' "${%s:-%s}" ;;
               *) echo "gcloud stub: unsupported command: $*" >&2; exit 1 ;;
             esac
-            """;
+            """.formatted(VERTEX_TOKEN_ENV, VERTEX_PLACEHOLDER_TOKEN);
 
     /**
      * Ensure the gcloud stub state matches the current Vertex config.
      * In Vertex mode: install a stub that satisfies credential-refresh attempts
-     * inside the container — the MITM proxy replaces the Authorization header,
-     * so the token value is irrelevant.  Never overwrites an existing non-stub gcloud.
+     * inside the container with the instance's own token, which the MITM proxy
+     * replaces with a real one.  Never overwrites an existing non-stub gcloud.
      * Outside Vertex mode: remove a leftover stub (from a parent built with Vertex)
      * so it doesn't shadow a real gcloud installed later.
      */
@@ -285,7 +302,7 @@ public class ClaudeSetup implements ToolSetup {
             c.writeFile(GCLOUD_STUB_PATH, GCLOUD_STUB_SCRIPT);
             c.exec("chmod", "+x", GCLOUD_STUB_PATH);
         } else {
-            c.sh("grep -q 'placeholder-for-proxy' " + GCLOUD_STUB_PATH + " 2>/dev/null && rm -f " + GCLOUD_STUB_PATH);
+            c.sh("grep -q '" + STUB_MARKER + "' " + GCLOUD_STUB_PATH + " 2>/dev/null && rm -f " + GCLOUD_STUB_PATH);
         }
     }
 
@@ -361,6 +378,7 @@ public class ClaudeSetup implements ToolSetup {
         c.writeFile(MANAGED_SETTINGS_PATH, managedSettingsJson);
         c.writeFile(STATUSLINE_PATH, STATUSLINE_SH);
         c.exec("chmod", "+x", STATUSLINE_PATH);
+        c.writeFile(LOGIN_AUTH_PATH, LOGIN_AUTH_SCRIPT);
 
         var settingsJson = buildUserSettings(params);
         var claudeJsonBuilder = new StringBuilder();
@@ -400,6 +418,71 @@ public class ClaudeSetup implements ToolSetup {
         c.chown("/home/agentuser/.claude.json", "agentuser:agentuser");
         BuildOutput.stepDone();
     }
+
+    /**
+     * Sorts after every other {@code isx-*.sh} in {@code /etc/profile.d}, so it sees the tokens
+     * a start exports (#1106) rather than the build-time placeholders.
+     */
+    static final String LOGIN_AUTH_PATH = "/etc/profile.d/isx-zz-claude-auth.sh";
+
+    /**
+     * Adapts the instance's Claude tokens, as exported at login, to what Claude Code reads (#1108).
+     * They change on every start, so nothing fixed at build time can hold them:
+     * <ul>
+     *   <li>Vertex: Claude Code under {@code CLAUDE_CODE_SKIP_VERTEX_AUTH} sends only the
+     *       headers in {@code ANTHROPIC_CUSTOM_HEADERS}, so the token goes there, on a line of
+     *       its own after any headers a template or an earlier profile script set. It replaces
+     *       any Authorization line already there, which can only be a stale token, so it is sent
+     *       once however often the script is sourced. Builtins only: no fork per login.</li>
+     *   <li>API key: an interactive Claude Code asks before using an {@code ANTHROPIC_API_KEY}
+     *       whose last 20 characters are not in {@code customApiKeyResponses.approved} of
+     *       {@code ~/.claude.json}, defaulting to no. The key of this start is approved by
+     *       appending the field after the last one, or replacing the one an earlier start
+     *       appended if Claude Code has not rewritten the file since: {@code JSON.parse} keeps
+     *       the last of a repeated key, and Claude Code rewrites the file with one. Only a file shaped as
+     *       Claude Code writes it is touched, and only when the key is not in it yet, so the
+     *       steady state is a grep; anything unexpected leaves the prompt, never a broken file.
+     *       Approvals of earlier starts' keys are dropped with it.</li>
+     * </ul>
+     * Sourced by every login shell, so POSIX sh, silent, and leaves no variables behind.
+     */
+    static final String LOGIN_AUTH_SCRIPT = """
+            # Written by isx: Claude Code's tokens change on every start (#1108)
+            if [ "${CLAUDE_CODE_USE_VERTEX:-}" = 1 ] && [ -n "${%1$s:-}" ]; then
+              isx_nl='
+            '
+              isx_rest=${ANTHROPIC_CUSTOM_HEADERS:-} isx_kept=
+              while [ -n "$isx_rest" ]; do
+                isx_line=${isx_rest%%%%"$isx_nl"*}
+                case $isx_rest in *"$isx_nl"*) isx_rest=${isx_rest#*"$isx_nl"} ;; *) isx_rest= ;; esac
+                case $isx_line in
+                  ''|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]:*) ;;
+                  *) isx_kept=${isx_kept:+$isx_kept$isx_nl}$isx_line ;;
+                esac
+              done
+              export ANTHROPIC_CUSTOM_HEADERS="${isx_kept:+$isx_kept$isx_nl}Authorization: Bearer $%1$s"
+              unset isx_nl isx_rest isx_kept isx_line
+            fi
+            if [ -n "${ANTHROPIC_API_KEY:-}" ] && [ -f "$HOME/.claude.json" ] && [ -w "$HOME/.claude.json" ]; then
+              isx_tail=${ANTHROPIC_API_KEY#"${ANTHROPIC_API_KEY%%????????????????????}"}
+              [ -n "$isx_tail" ] || isx_tail=$ANTHROPIC_API_KEY
+              case $isx_tail in
+                ''|*[!A-Za-z0-9_-]*) ;;
+                *)
+                  if ! grep -qF "\\"$isx_tail\\"" "$HOME/.claude.json" 2>/dev/null \
+                      && [ "$(head -n 1 "$HOME/.claude.json")" = "{" ] \
+                      && case $(tail -n 1 "$HOME/.claude.json") in '}'|',"customApiKeyResponses":{'*'}}') true ;; *) false ;; esac; then
+                    cp -p "$HOME/.claude.json" "$HOME/.claude.json.isx-$$" 2>/dev/null \
+                      && sed '$ s/^.*}$/,"customApiKeyResponses":{"approved":["'"$isx_tail"'"],"rejected":[]}}/' \
+                          "$HOME/.claude.json" > "$HOME/.claude.json.isx-$$" 2>/dev/null \
+                      && mv -f "$HOME/.claude.json.isx-$$" "$HOME/.claude.json" 2>/dev/null
+                    rm -f "$HOME/.claude.json.isx-$$"
+                  fi
+                  ;;
+              esac
+              unset isx_tail
+            fi
+            """.formatted(VERTEX_TOKEN_ENV);
 
     private static final String STATUSLINE_SH = """
             #!/bin/bash

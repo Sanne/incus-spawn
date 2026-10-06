@@ -57,4 +57,7 @@ keywords = ["sk-ant-oat01-"]
     '''sk-ant-api03-[A-Za-z0-9]{1,35}["']''',
     '''sk-ant-oat01-[A-Za-z0-9]{1,35}["']''',
     '''ghp_legacy["']''',
+    # Per-start proof tokens in the guest-script tests (#1108): a tool's placeholder prefix,
+    # then isx_ and hex. Not a credential shape any service issues, and capped at 40 hex.
+    '''^(?:gho_|sk-ant-|sk-|ya29\.)isx_[0-9a-f]{8,40}$''',
   ]
