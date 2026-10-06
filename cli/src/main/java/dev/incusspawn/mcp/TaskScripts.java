@@ -61,6 +61,21 @@ final class TaskScripts {
         return TASKS_DIR + "/" + taskId;
     }
 
+    /**
+     * {@code command} on {@code file} (a path the shell expands, quoted here) if it is a regular file, else nothing (and a false status).
+     * Every task file is read this way: a FIFO in its place (anyone in the instance can make one)
+     * would hold the read, and the tool call waiting on it, until something writes to it.
+     */
+    private static String ifFile(String file, String command) {
+        var quoted = "\"" + file + "\"";
+        return "{ [ -f " + quoted + " ] && " + command + " " + quoted + " 2>/dev/null; }";
+    }
+
+    /** The contents of {@code file} if it is a regular file ({@link #ifFile}). */
+    private static String readFile(String file) {
+        return ifFile(file, "cat");
+    }
+
     /** The unit of one run; {@code run} may be a shell expression such as {@code $n}. */
     static String unit(String taskId, String run) {
         ExecScript.requireId(taskId);
@@ -169,22 +184,22 @@ final class TaskScripts {
     static String status(String taskId, int tailBytes) {
         var d = dir(taskId);
         return "D=" + d + "; [ -d \"$D\" ] || { echo state=missing; exit 0; }; id=" + taskId + "; " + RUN_STATE
-                + "k=$([ -f \"$D/kind\" ] && cat \"$D/kind\"); echo run=$n; echo kind=$k; echo state=$s; "
+                + "k=$(" + readFile("$D/kind") + "); echo run=$n; echo kind=$k; echo state=$s; "
                 // When the run started (it writes current once launched) and last wrote output.
                 + "echo started=$(stat -c %Y \"$D/current\" 2>/dev/null); "
-                + "[ $s = finished ] && echo exit=$(cat \"$D/exit-$n\"); "
+                + "[ $s = finished ] && echo exit=$(" + readFile("$D/exit-$n") + "); "
                 + "if [ \"$k\" = agent ]; then "
-                + "echo cwd=$(cat \"$D/cwd\" 2>/dev/null); echo session_id=$(cat \"$D/session_id\" 2>/dev/null); "
+                + "echo cwd=$(" + readFile("$D/cwd") + "); echo session_id=$(" + readFile("$D/session_id") + "); "
                 + Presence.script("presence=") + "; "
                 // Size and last write of the events in one stat: this runs on every status read.
                 + "set -- $(stat -c '%s %Y' \"$D/events-$n.jsonl\" 2>/dev/null); echo events_bytes=${1:-0}; echo activity=$2; echo ---; "
-                + "tail -c " + tailBytes + " \"$D/events-$n.jsonl\" 2>/dev/null; echo; echo ---stderr; "
-                + "tail -c 2000 \"$D/stderr-$n.log\" 2>/dev/null; "
+                + ifFile("$D/events-$n.jsonl", "tail -c " + tailBytes) + "; echo; echo ---stderr; "
+                + ifFile("$D/stderr-$n.log", "tail -c 2000") + "; "
                 + "else a=; for t in $(stat -c %Y \"$D/stdout\" \"$D/stderr\" 2>/dev/null); do [ \"$t\" -gt \"${a:-0}\" ] && a=$t; done; echo activity=$a; "
                 + "echo stdout_bytes=$(stat -c %s \"$D/stdout\" 2>/dev/null || echo 0); "
                 + "echo stderr_bytes=$(stat -c %s \"$D/stderr\" 2>/dev/null || echo 0); echo ---; "
-                + "tail -c " + tailBytes + " \"$D/stdout\" 2>/dev/null; echo; echo ---stderr; "
-                + "tail -c " + tailBytes + " \"$D/stderr\" 2>/dev/null; fi; "
+                + ifFile("$D/stdout", "tail -c " + tailBytes) + "; echo; echo ---stderr; "
+                + ifFile("$D/stderr", "tail -c " + tailBytes) + "; fi; "
                 // A run that just started has no output files yet: that is not a failure.
                 + "exit 0";
     }
@@ -229,9 +244,7 @@ final class TaskScripts {
      * after the {@link #CANCELLING} check, since a cancel records it before removing its stamp:
      * only a unit seen inactive with no exit file after both, and no fresh stamp, died without one.
      */
-    // Only regular files are read: a FIFO in their place (anyone in the instance can make one)
-    // would hold the read until something writes to it.
-    private static final String RUN_STATE = "n=$([ -f \"$D/current\" ] && cat \"$D/current\" 2>/dev/null); s=lost; "
+    private static final String RUN_STATE = "n=$(" + readFile("$D/current") + "); s=lost; "
             + "if [ -n \"$n\" ]; then "
             + "[ -f \"$D/exit-$n\" ] || s=$(sudo -n systemctl is-active \"" + UNIT_PREFIX + "$id-$n\" 2>/dev/null); "
             + "if [ -f \"$D/exit-$n\" ]; then s=finished; else "
@@ -260,11 +273,10 @@ final class TaskScripts {
         var sb = new StringBuilder("p=; ");
         for (var id : taskIds) {
             sb.append("D=").append(dir(id)).append("; id=").append(id).append("; ").append(RUN_STATE)
-                    .append("if [ $s = finished ]; then echo \"task $id $n finished $(cat \"$D/exit-$n\")\"; ")
-                    // Regular files only, as in RUN_STATE: a FIFO would hold the poller for good.
+                    .append("if [ $s = finished ]; then echo \"task $id $n finished $(").append(readFile("$D/exit-$n")).append(")\"; ")
                     .append("k=; [ -f \"$D/kind\" ] && read -r k < \"$D/kind\"; if [ \"$k\" = ").append(Tasks.AGENT).append(" ]; then ")
-                    .append("p=1; echo \"sid $id $([ -f \"$D/session_id\" ] && cat \"$D/session_id\")\"; ")
-                    .append("echo \"cwd $id $([ -f \"$D/cwd\" ] && cat \"$D/cwd\")\"; fi; ")
+                    .append("p=1; echo \"sid $id $(").append(readFile("$D/session_id")).append(")\"; ")
+                    .append("echo \"cwd $id $(").append(readFile("$D/cwd")).append(")\"; fi; ")
                     .append("else echo \"task $id ${n:-0} $s\"; fi; ");
         }
         return sb.append("[ -n \"$p\" ] && ").append(Presence.script("presence ")).toString();
@@ -278,11 +290,12 @@ final class TaskScripts {
      */
     static String list() {
         return "for d in " + TASKS_DIR + "/*/; do [ -f \"$d/kind\" ] || continue; "
-                + "n=$(cat \"$d/current\" 2>/dev/null); [ -n \"$n\" ] || continue; "
+                + "n=$(" + readFile("$d/current") + "); [ -n \"$n\" ] || continue; "
                 + "if [ -f \"$d/exit-$n\" ]; then r=done; else r=running; fi; "
-                + "m=$(head -c 200 \"$d/model\" 2>/dev/null | tr -d ' \\n'); t=$(head -c 20 \"$d/max-turns\" 2>/dev/null | tr -d ' \\n'); "
-                + "printf '%s %s %s %s %s %s %s\\n' \"$(basename \"$d\")\" \"$(cat \"$d/kind\")\" \"$n\" \"$r\" "
-                + "\"${m:--}\" \"${t:--}\" \"$(cat \"$d/cwd\" 2>/dev/null)\"; done; exit 0";
+                + "m=$(" + ifFile("$d/model", "head -c 200") + " | tr -d ' \\n'); "
+                + "t=$(" + ifFile("$d/max-turns", "head -c 20") + " | tr -d ' \\n'); "
+                + "printf '%s %s %s %s %s %s %s\\n' \"$(basename \"$d\")\" \"$(" + readFile("$d/kind") + ")\" \"$n\" \"$r\" "
+                + "\"${m:--}\" \"${t:--}\" \"$(" + readFile("$d/cwd") + ")\"; done; exit 0";
     }
 
     /**
@@ -337,8 +350,8 @@ final class TaskScripts {
     /** All of a command task's output, stdout then stderr, each under a heading. */
     static String output(String taskId) {
         var d = dir(taskId);
-        return "D=" + d + "; echo '--- stdout'; cat \"$D/stdout\" 2>/dev/null; "
-                + "echo; echo '--- stderr'; cat \"$D/stderr\" 2>/dev/null; exit 0";
+        return "D=" + d + "; echo '--- stdout'; " + readFile("$D/stdout") + "; "
+                + "echo; echo '--- stderr'; " + readFile("$D/stderr") + "; exit 0";
     }
 
     /**
@@ -368,7 +381,7 @@ final class TaskScripts {
                 + "grep -qzx '" + TASK_ENV + "=" + taskId + "' \"$p/environ\" 2>/dev/null && kill -$s \"${p#/proc/}\" 2>/dev/null; "
                 + "done; [ $s = TERM ] && sleep 2; done; exit 0";
         var quoted = ExecScript.quote(kill);
-        return "D=" + d + "; n=$(cat \"$D/current\" 2>/dev/null) || exit 0; "
+        return "D=" + d + "; n=$(" + readFile("$D/current") + ") || exit 0; "
                 // Before the stop: until the exit is recorded below, a state read says running.
                 + "[ -f \"$D/exit-$n\" ] || date +%s > " + CANCEL_STAMP + "; "
                 + "sudo -n systemctl stop " + unit(taskId, "$n") + " 2>/dev/null; "

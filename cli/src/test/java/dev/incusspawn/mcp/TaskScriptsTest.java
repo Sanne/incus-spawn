@@ -93,13 +93,22 @@ class TaskScriptsTest {
     }
 
     private String sh(String script, String stdin) throws Exception {
+        return sh(script, stdin, 30);
+    }
+
+    /** {@link #sh}, failing (and killing the script) unless it ends within {@code seconds}. */
+    private String sh(String script, String stdin, int seconds) throws Exception {
         var pb = new ProcessBuilder("bash", "-c", script).directory(home.toFile());
         pb.environment().put("HOME", home.toString());
         pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
         var p = pb.start();
         p.getOutputStream().write(stdin.getBytes(StandardCharsets.UTF_8));
         p.getOutputStream().close();
-        assertTrue(p.waitFor(30, TimeUnit.SECONDS));
+        if (!p.waitFor(seconds, TimeUnit.SECONDS)) {
+            p.descendants().forEach(ProcessHandle::destroyForcibly);
+            p.destroyForcibly();
+            throw new AssertionError("still waiting after " + seconds + " s: " + script);
+        }
         var out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         var err = new String(p.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
         assertEquals(0, p.exitValue(), "script failed: " + err + "\n" + script);
@@ -697,6 +706,36 @@ class TaskScriptsTest {
         assertTrue(System.nanoTime() - start < 10_000_000_000L, "no probe waited on a FIFO");
         var pid = Files.readString(home.resolve("units/isx-task-t11-abc-2")).strip();
         sh("kill -TERM -- -" + pid, "");
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(30)
+    void aFifoInPlaceOfATaskFileHoldsNeitherAdoptionNorStatus() throws Exception {
+        // adopt_instance lists the tasks another session left; task_status reads one. Either reads
+        // files anyone in the instance can replace with a FIFO, which would wait for a writer.
+        var current = Files.createDirectories(home.resolve(".isx-mcp/tasks/t31-abc"));
+        Files.writeString(current.resolve("kind"), "agent\n");
+        sh("mkfifo " + current.resolve("current"), "");
+        var agent = Files.createDirectories(home.resolve(".isx-mcp/tasks/t32-abc"));
+        Files.writeString(agent.resolve("kind"), "agent\n");
+        Files.writeString(agent.resolve("current"), "1\n");
+        Files.writeString(agent.resolve("exit-1"), "0\n");
+        for (var f : java.util.List.of("cwd", "model", "max-turns", "session_id", "events-1.jsonl", "stderr-1.log")) {
+            sh("mkfifo " + agent.resolve(f), "");
+        }
+        var command = Files.createDirectories(home.resolve(".isx-mcp/tasks/t33-abc"));
+        Files.writeString(command.resolve("kind"), "command\n");
+        Files.writeString(command.resolve("current"), "1\n");
+        Files.writeString(command.resolve("exit-1"), "0\n");
+        sh("mkfifo " + command.resolve("stdout") + " " + command.resolve("stderr"), "");
+
+        assertEquals("t32-abc agent 1 done - - \nt33-abc command 1 done - - \n", sh(TaskScripts.list(), "", 5));
+        var status = Tasks.parse(sh(TaskScripts.status("t32-abc", 1000), "", 5));
+        assertEquals("finished", status.state());
+        assertEquals(0, status.exit());
+        assertEquals("finished", Tasks.parse(sh(TaskScripts.status("t33-abc", 1000), "", 5)).state());
+        assertEquals("lost", Tasks.parse(sh(TaskScripts.status("t31-abc", 1000), "", 5)).state());
+        assertEquals("--- stdout\n\n--- stderr\n", sh(TaskScripts.output("t33-abc"), "", 5));
     }
 
     @Test
