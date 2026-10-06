@@ -64,8 +64,8 @@ final class OutputSchemas {
         var task = Schema.object()
                 .string("task_id", null, true)
                 .choice("kind", null, true, KINDS)
-                .bool("running", "Running as this session last saw it. Not a state: the session does not know whether "
-                        + "one not running finished or was lost; task_status says", true);
+                .choice("state", "As this session last saw it; unknown: nothing has read how it ended "
+                        + "(as after cancel_task). task_status reads it now", true, TASK_STATES);
         var instance = Schema.object()
                 .string("instance", null, true)
                 .string("template", null, true)

@@ -80,7 +80,8 @@ class DelegationToolsTest {
                         .map(m -> m.group(1) + switch (taskState) {
                             case "running" -> " running";
                             case "unknown" -> " unknown";
-                            default -> " done";
+                            case "lost" -> " lost";
+                            default -> " finished";
                         }).toList();
                 return String.join("\n", ids) + "\n";
             }
@@ -165,7 +166,7 @@ class DelegationToolsTest {
         var task = agent.path("task_id").asText();
         assertEquals(1, agent.path("run").asInt());
         var listed = structured(call("list_instances", "{}")).path("instances");
-        assertTrue(listed.findValues("running").stream().allMatch(JsonNode::asBoolean), "tasks are running: " + listed);
+        assertEquals(Map.of(task, "running", command.path("task_id").asText(), "running"), taskStates(listed));
         assertEquals("running", structured(call("task_status", "{\"task_id\":\"" + task + "\"}")).path("state").asText());
         structured(call("cancel_task", "{\"task_id\":\"" + command.path("task_id").asText() + "\"}"));
 
@@ -184,9 +185,9 @@ class DelegationToolsTest {
         assertEquals(3, files.get(0).path("added").asInt());
         assertTrue(files.get(1).path("added").isNull(), "a binary file has no line counts");
         assertTrue(structured(call("get_diff", "{\"task_id\":\"" + task + "\"}")).path("patch").asText().contains("+fixed"));
-        var running = structured(call("list_instances", "{}")).path("instances").findValues("running");
-        assertFalse(running.isEmpty());
-        assertTrue(running.stream().noneMatch(JsonNode::asBoolean), "no task runs any more: " + running);
+        // As last seen: the agent's end was read; the cancel did not read how the command ended.
+        assertEquals(Map.of(task, "finished", command.path("task_id").asText(), "unknown"),
+                taskStates(structured(call("list_instances", "{}")).path("instances")));
         structured(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"push it\"}"));
 
         taskState = "finished";
@@ -207,6 +208,13 @@ class DelegationToolsTest {
         assertEquals("not_found", refused.path("_meta").path(ToolResult.ERROR_META).path("code").asText());
         assertEquals(new java.util.TreeSet<>(results.toolNames()), new java.util.TreeSet<>(results.succeeded),
                 "every tool returned a structured result checked against its schema");
+    }
+
+    /** list_instances' task entries, as task id to state. */
+    private static Map<String, String> taskStates(JsonNode instances) {
+        var states = new java.util.HashMap<String, String>();
+        instances.forEach(i -> i.path("tasks").forEach(t -> states.put(t.path("task_id").asText(), t.path("state").asText())));
+        return states;
     }
 
     @Test
@@ -460,7 +468,7 @@ class DelegationToolsTest {
         backend.instances.remove(instance);
         var r = call("delegate", "{\"instruction\":\"next\",\"template\":\"tpl-agent\"}");
         assertFalse(r.path("isError").asBoolean(), text(r));
-        assertTrue(text(call("list_instances", "{}")).contains("\"running\" : true"));
+        assertTrue(text(call("list_instances", "{}")).contains("\"state\" : \"running\""));
     }
 
     @Test

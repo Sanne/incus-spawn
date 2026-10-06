@@ -55,15 +55,17 @@ final class Tasks {
      * A task. {@code cwd} is where every run of it works: Claude Code keeps its sessions per
      * directory, so a resumed agent must start where the first run did. {@code launching} marks
      * a run whose slot is reserved but whose launch has not returned: it counts as running, and
-     * the state probe (which cannot see it yet) must not say otherwise.
+     * the state probe (which cannot see it yet) must not say otherwise. {@code state} is its
+     * state as this session last saw it, in {@link OutputSchemas#TASK_STATES}'s words.
      */
-    record Task(String id, String instance, String kind, String cwd, Profile profile, int runs, boolean running,
+    record Task(String id, String instance, String kind, String cwd, Profile profile, int runs, String state,
                 boolean launching) {
-        Task launchingRun(int n) { return new Task(id, instance, kind, cwd, profile, n, true, true); }
-        Task launched() { return new Task(id, instance, kind, cwd, profile, runs, true, false); }
-        Task withRunning(boolean r) { return launching ? this : new Task(id, instance, kind, cwd, profile, runs, r, false); }
-        Task withProfile(Profile p) { return new Task(id, instance, kind, cwd, p, runs, running, launching); }
-        boolean busy() { return running || launching; }
+        Task launchingRun(int n) { return new Task(id, instance, kind, cwd, profile, n, TaskWatcher.RUNNING, true); }
+        Task launched() { return new Task(id, instance, kind, cwd, profile, runs, TaskWatcher.RUNNING, false); }
+        Task withState(String s) { return launching ? this : new Task(id, instance, kind, cwd, profile, runs, s, false); }
+        Task withProfile(Profile p) { return new Task(id, instance, kind, cwd, p, runs, state, launching); }
+        boolean running() { return TaskWatcher.RUNNING.equals(state); }
+        boolean busy() { return running() || launching; }
     }
 
     /** A task, with its instance's config as read when checking that this session owns it. */
@@ -169,7 +171,7 @@ final class Tasks {
 
     /** Start a background command in {@code instance}, which the caller checked is owned. */
     Task startCommand(String instance, String cwd, Map<String, String> env, String command) {
-        var task = reserve(null, null, new Task(nextId(), instance, COMMAND, cwd, Profile.NONE, 1, true, true), true);
+        var task = reserve(null, null, new Task(nextId(), instance, COMMAND, cwd, Profile.NONE, 1, TaskWatcher.RUNNING, true), true);
         return launch(task, null, null, t -> TaskScripts.commandRun(t.id(), cwd, env, command), "");
     }
 
@@ -182,7 +184,7 @@ final class Tasks {
      */
     Task delegate(String instance, String cwd, String instruction, Profile profile, String permissionMode,
                   boolean refresh, Runnable check) {
-        var task = reserve(null, null, new Task(nextId(), instance, AGENT, cwd, profile, 1, true, true), refresh);
+        var task = reserve(null, null, new Task(nextId(), instance, AGENT, cwd, profile, 1, TaskWatcher.RUNNING, true), refresh);
         return launch(task, null, check, t -> agentRun(t, permissionMode), instruction);
     }
 
@@ -241,7 +243,9 @@ final class Tasks {
             }
             var cwd = parts.length > 6 && !parts[6].isBlank() ? parts[6] : IncusInstanceBackend.AGENT_HOME;
             var profile = parts.length > 5 ? recordedProfile(parts[4], parts[5]) : Profile.NONE;
-            var task = new Task(parts[0], instance, kind, cwd, profile, runs, "running".equals(parts[3]), false);
+            // An exit recorded is finished (attached, if a person is in it, is read by task_status).
+            var state = "running".equals(parts[3]) ? TaskWatcher.RUNNING : "finished";
+            var task = new Task(parts[0], instance, kind, cwd, profile, runs, state, false);
             synchronized (this) {
                 // Once reported released, a task this session takes back is reported again.
                 if (tasks.putIfAbsent(task.id(), task) == null) watcher.revive(task.id());
@@ -288,7 +292,7 @@ final class Tasks {
     Status status(Task task, int tailBytes) {
         var status = parse(run(task.instance(), TaskScripts.status(task.id(), tailBytes), null));
         // "unknown" says nothing about the task: keep what we last knew rather than free its slot.
-        if (!"unknown".equals(status.state())) markRunning(Map.of(task.id(), status.running()));
+        if (!"unknown".equals(status.state())) markStates(Map.of(task.id(), status.state()));
         // A task whose directory is gone reads as run 0.
         watcher.observe(task.id(), task.instance(), status.run() > 0 ? status.run() : task.runs(),
                 status.state(), status.exit());
@@ -361,7 +365,7 @@ final class Tasks {
         var ids = list.stream().map(Task::id).toList();
         var watching = watcher.enabled();
         var out = run(instance, TaskScripts.cancelAll(ids, watching ? TaskScripts.watchBody(ids) : ""), null);
-        markRunning(list.stream().collect(Collectors.toMap(Task::id, t -> false)));
+        markStates(list.stream().collect(Collectors.toMap(Task::id, t -> "unknown")));
         if (watching) observeWatch(instance, ids, out);
     }
 
@@ -676,7 +680,7 @@ final class Tasks {
             }
         }
         var who = Presence.parse(presence);
-        var known = new HashMap<String, Boolean>();
+        var known = new HashMap<String, String>();
         seen.forEach((id, task) -> {
             int runs;
             synchronized (this) {
@@ -688,10 +692,10 @@ final class Tasks {
             if (task.run == 0) task.run = runs;
             var state = task.state.equals("finished") && task.session != null
                     && who.holderOf(task.session, task.cwd) != null ? "attached" : task.state;
-            if (!state.equals("unknown")) known.put(id, state.equals(TaskWatcher.RUNNING));
+            if (!state.equals("unknown")) known.put(id, state);
             watcher.observe(id, instance, task.run, state, task.exit);
         });
-        markRunning(known);
+        markStates(known);
     }
 
     /**
@@ -725,23 +729,23 @@ final class Tasks {
 
     /**
      * {@code running}, {@code done} or {@code unknown} for each of these tasks in one instance,
-     * from one cheap exec. Records what it learned, except for {@code unknown}.
+     * from one cheap exec. Records what it learned (finished or lost), except for {@code unknown}.
      */
     private Map<String, String> probe(String instance, List<String> ids) {
         var result = new HashMap<String, String>();
-        var known = new HashMap<String, Boolean>();
+        var known = new HashMap<String, String>();
         for (var line : run(instance, TaskScripts.states(ids), null).split("\n")) {
             var parts = line.strip().split(" ");
             if (parts.length != 2) continue;
-            result.put(parts[0], parts[1]);
-            if (!parts[1].equals("unknown")) known.put(parts[0], parts[1].equals("running"));
+            result.put(parts[0], parts[1].equals("finished") || parts[1].equals(TaskWatcher.LOST) ? "done" : parts[1]);
+            if (!parts[1].equals("unknown")) known.put(parts[0], parts[1]);
         }
-        markRunning(known);
+        markStates(known);
         return result;
     }
 
-    private synchronized void markRunning(Map<String, Boolean> states) {
-        states.forEach((id, r) -> tasks.computeIfPresent(id, (k, t) -> t.withRunning(r)));
+    private synchronized void markStates(Map<String, String> states) {
+        states.forEach((id, s) -> tasks.computeIfPresent(id, (k, t) -> t.withState(s)));
     }
 
     private String nextId() {

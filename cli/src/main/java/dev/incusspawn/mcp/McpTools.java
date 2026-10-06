@@ -442,7 +442,7 @@ final class McpTools {
                 var tn = owned.addObject();
                 tn.put("task_id", t.id());
                 tn.put("kind", t.kind());
-                tn.put("running", t.busy());
+                tn.put("state", t.state());
             });
         }
         var grace = Duration.ofHours(session.config().orphanGraceHours());

@@ -190,14 +190,15 @@ final class TaskScripts {
     }
 
     /**
-     * Just whether each task is still running: {@code <id> running|done|unknown} per line, where
+     * Just whether each task is still running: {@code <id> running|finished|lost|unknown} per line
+     * ({@link #RUN_STATE}), where
      * {@code unknown} means systemd could not be asked. Cheap enough to poll, unlike
      * {@link #status}, which also carries the output.
      */
     static String states(Collection<String> taskIds) {
         var sb = new StringBuilder();
         for (var id : taskIds) {
-            sb.append("D=").append(dir(id)).append("; id=").append(id).append("; ").append(STATE)
+            sb.append("D=").append(dir(id)).append("; id=").append(id).append("; ").append(RUN_STATE)
                     .append("echo $id $s; ");
         }
         return sb.append("exit 0").toString();

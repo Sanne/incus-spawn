@@ -153,12 +153,13 @@
                     "type" : "string",
                     "enum" : [ "agent", "command" ]
                   },
-                  "running" : {
-                    "description" : "Running as this session last saw it. Not a state: the session does not know whether one not running finished or was lost; task_status says",
-                    "type" : "boolean"
+                  "state" : {
+                    "description" : "As this session last saw it; unknown: nothing has read how it ended (as after cancel_task). task_status reads it now",
+                    "type" : "string",
+                    "enum" : [ "running", "finished", "attached", "lost", "unknown" ]
                   }
                 },
-                "required" : [ "task_id", "kind", "running" ],
+                "required" : [ "task_id", "kind", "state" ],
                 "additionalProperties" : false
               }
             }

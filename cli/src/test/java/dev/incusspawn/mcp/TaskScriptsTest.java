@@ -303,13 +303,13 @@ class TaskScriptsTest {
     }
 
     @Test
-    void theStateProbeTellsRunningFromDone() throws Exception {
+    void theStateProbeTellsRunningFinishedAndLost() throws Exception {
         sh(TaskScripts.launch("t6-abc", 1, Tasks.COMMAND,
                 TaskScripts.commandRun("t6-abc", work.toString(), Map.of(), "sleep 300")), "");
         sh(TaskScripts.launch("t7-abc", 1, Tasks.COMMAND,
                 TaskScripts.commandRun("t7-abc", work.toString(), Map.of(), "true")), "");
         awaitFinished("t7-abc");
-        assertEquals("t6-abc running\nt7-abc done\nt8-abc done\n",
+        assertEquals("t6-abc running\nt7-abc finished\nt8-abc lost\n",
                 sh(TaskScripts.states(java.util.List.of("t6-abc", "t7-abc", "t8-abc")), ""));
         sh(TaskScripts.cancel("t6-abc"), "");
     }

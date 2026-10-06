@@ -64,7 +64,7 @@ class McpOutputSchemaTest {
             }
         }
         // Every tool that reports a task's state offers every state, and only these report one.
-        assertEquals(Map.of("task_status", all, "wait_any", all, "task_result", all), byTool);
+        assertEquals(Map.of("task_status", all, "wait_any", all, "task_result", all, "list_instances", all), byTool);
         // The notification: the same words, never unknown, and released when another session took the task.
         var notified = new HashSet<>(TaskWatcher.ATTACHABLE);
         notified.addAll(List.of(TaskWatcher.RUNNING, TaskWatcher.LOST, "unknown"));

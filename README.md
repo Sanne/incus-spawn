@@ -205,7 +205,7 @@ mcp:
   summary-model: haiku             # answers the tools' `ask` inside the instance (default haiku)
 ```
 
-`max-instances` and `max-concurrent-tasks` are the two knobs to raise for a controller, one session running many tasks at once. They are a safety net against runaway creation, not a budget: the only cost of a high number is host memory. `list_templates` reports both, under the same names (`max_instances`, `max_concurrent_tasks`). Every tool also returns its facts as `structuredContent` matching the `outputSchema` it lists, so a program need not parse the text; a refusal says why in `_meta["dev.incusspawn/error"].code`.
+`max-instances` and `max-concurrent-tasks` are the two knobs to raise for a controller, one session running many tasks at once. They are a safety net against runaway creation, not a budget: the only cost of a high number is host memory. `list_templates` reports both, under the same names (`max_instances`, `max_concurrent_tasks`). Every tool also returns its facts as `structuredContent` matching the `outputSchema` it lists, so a program need not parse the text. A task's `state` is the same word in every tool: `running`, `finished`, `attached` (finished, and a person is in its conversation), `lost` or `unknown` (`list_instances` gives it as the session last saw it, so `unknown` there means nothing has read how it ended yet, as after `cancel_task`; `task_status` reads it). A refusal says why in `_meta["dev.incusspawn/error"].code`.
 
 | Tool | What it does |
 |------|--------------|

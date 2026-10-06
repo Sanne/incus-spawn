@@ -25,7 +25,7 @@ final class ToolError extends RuntimeException {
         BUSY,
         /** The user's instance or task limit is reached. */
         LIMIT,
-        /** Incus or the instance could not be reached or did not do what was asked: worth a retry. */
+        /** Incus or the instance could not be reached or did not do what was asked: may succeed on a retry. */
         UNAVAILABLE,
         /** A delegated task ended without a report. */
         TASK_FAILED,
