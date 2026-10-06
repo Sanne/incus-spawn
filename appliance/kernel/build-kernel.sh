@@ -14,7 +14,7 @@ set -euo pipefail
 #
 # Requirements: build-essential flex bison bc libelf-dev libssl-dev
 
-KERNEL_VERSION="7.2.8"
+KERNEL_VERSION="7.2.9"
 KERNEL_MAJOR="${KERNEL_VERSION%%.*}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
