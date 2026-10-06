@@ -406,26 +406,31 @@ public class BuildCommand extends BaseCommand {
         buildTotal = templates.size();
         buildIndex = 0;
 
-        for (var templateName : templates) {
-            buildIndex++;
-            var imageDef = defs.get(templateName);
-            if (imageDef == null) {
-                System.err.println("Template definition not found: " + templateName);
-                failedBuilds.add(templateName);
-                continue;
-            }
-            if (shouldSkipDueToFailedParent(imageDef, defs, failedBuilds)) {
-                BuildOutput.buildHeader(templateName, buildIndex, buildTotal);
-                BuildOutput.step("Skipped — parent failed to build.");
-                failedBuilds.add(templateName);
-                continue;
-            }
+        try {
+            for (var templateName : templates) {
+                buildIndex++;
+                var imageDef = defs.get(templateName);
+                if (imageDef == null) {
+                    System.err.println("Template definition not found: " + templateName);
+                    failedBuilds.add(templateName);
+                    continue;
+                }
+                if (shouldSkipDueToFailedParent(imageDef, defs, failedBuilds)) {
+                    BuildOutput.buildHeader(templateName, buildIndex, buildTotal);
+                    BuildOutput.step("Skipped — parent failed to build.");
+                    failedBuilds.add(templateName);
+                    continue;
+                }
 
-            try {
-                buildSingleImage(imageDef, defs);
-            } catch (BuildFailedException e) {
-                failedBuilds.add(templateName);
+                try {
+                    buildSingleImage(imageDef, defs);
+                } catch (BuildFailedException e) {
+                    failedBuilds.add(templateName);
+                }
             }
+        } finally {
+            // The answer covered this batch only.
+            batchConfirmed = false;
         }
 
         if (!failedBuilds.isEmpty()) {

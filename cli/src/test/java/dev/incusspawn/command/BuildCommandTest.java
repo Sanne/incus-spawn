@@ -431,6 +431,33 @@ class BuildCommandTest {
             assertTrue(text.indexOf("Tools no longer included in tpl-dev: claude") >= 0
                     && text.indexOf("Tools no longer included in tpl-dev: claude") < question, text);
             assertEquals(-1, text.indexOf("Rebuild?"), text);
+
+            // The batch's answer does not carry over to a later build.
+            var later = ScriptedPrompts.lines("n");
+            doReturn(later).when(cmd).prompts();
+            cmd.buildSingleImage(parent, defs);
+            later.assertFullyConsumed();
+        });
+    }
+
+    /** A single-template build still asks before replacing an existing image, and "n" keeps it. */
+    @Test
+    void singleBuildStillAsksBeforeReplacingAnExistingImage(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-minimal");
+            var incus = mock(IncusClient.class);
+            when(incus.exists(anyString())).thenReturn(true);
+            var prompts = ScriptedPrompts.lines("n");
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            doReturn(prompts).when(cmd).prompts();
+
+            cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef));
+
+            prompts.assertFullyConsumed();
+            verify(cmd, never()).buildInto(any(), any(), anyString());
+            verify(incus, never()).rename(anyString(), anyString());
         });
     }
 
