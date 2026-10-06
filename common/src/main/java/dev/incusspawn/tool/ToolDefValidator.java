@@ -1,5 +1,7 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.EnvEntry;
+import dev.incusspawn.config.SecretRedactor;
 import dev.incusspawn.config.YamlErrors;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ToolProxyResolver;
@@ -9,6 +11,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 public class ToolDefValidator {
 
@@ -162,5 +165,63 @@ public class ToolDefValidator {
                 }
             }
         }
+    }
+
+    /** Shorter values ({@code 1}, {@code true}) are settings, and would match by accident. */
+    private static final int MIN_TOKEN_LENGTH = 8;
+
+    /**
+     * What a placeholder looks like: one word that is no path or URL. With a variable named as
+     * a credential ({@link SecretRedactor#looksSecret}), this keeps {@code FOO_HOME=/opt/foo} or
+     * an endpoint from being taken for a token, while base64 ({@code /}) and {@code user:secret}
+     * values still count. Looser than {@link SecretRedactor#hasSecretShape}, which knows real
+     * issuers' tokens, not placeholders. A guess until a tool declares which variable the proxy
+     * checks (#1106).
+     */
+    private static final Pattern TOKEN_SHAPE = Pattern.compile("(?![/~.$])(?!.*://)\\S+");
+
+    /**
+     * Warnings for a tool that bakes the value of one of its own credential variables into a
+     * file or a build step, when it has credentials the proxy injects. The token a tool presents
+     * to the proxy changes on every start (#1108): a copy taken at build time is stale after the
+     * next one, so the tool must read the variable whenever it runs. Reported by the loader
+     * only, so once per load.
+     */
+    public static List<String> embeddedTokens(ToolDef def) {
+        var proxy = def.getProxy();
+        if (proxy == null || proxy.getAuth() == null || proxy.getAuth().isEmpty()) return List.of();
+        var warnings = new ArrayList<String>();
+        // A key left empty in YAML ('run:') arrives as null, list and items alike
+        var steps = java.util.stream.Stream.of(def.getRun(), def.getRunAsUser())
+                .filter(java.util.Objects::nonNull).flatMap(List::stream)
+                .filter(java.util.Objects::nonNull).toList();
+        for (var env : orEmpty(def.getEnv())) {
+            if (env == null) continue;
+            var value = env.getValue();
+            if (env.getName() == null || value == null || value.length() < MIN_TOKEN_LENGTH
+                    || !SecretRedactor.looksSecret(env.getName()) || !TOKEN_SHAPE.matcher(value).matches()
+                    || env.getStrategy() == EnvEntry.Strategy.PREPEND
+                    || env.getStrategy() == EnvEntry.Strategy.APPEND) continue;
+            var where = new ArrayList<String>();
+            for (var file : orEmpty(def.getFiles())) {
+                if (file != null && file.getContent() != null && file.getContent().contains(value)) {
+                    where.add("file '" + file.getPath() + "'");
+                }
+            }
+            if (steps.stream().anyMatch(c -> c.contains(value))) {
+                where.add("a build step");
+            }
+            if (!where.isEmpty()) {
+                warnings.add("tool '" + def.getName() + "': " + String.join(" and ", where)
+                        + " holds the value of $" + env.getName() + ", fixed at build time; the token"
+                        + " the proxy expects changes on every start, so read $" + env.getName()
+                        + " when the tool runs instead");
+            }
+        }
+        return warnings;
+    }
+
+    private static <T> List<T> orEmpty(List<T> list) {
+        return list == null ? List.of() : list;
     }
 }

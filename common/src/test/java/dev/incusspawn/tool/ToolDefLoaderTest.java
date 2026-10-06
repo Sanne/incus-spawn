@@ -343,6 +343,187 @@ class ToolDefLoaderTest {
         assertEquals("built-in", loader.getSource("podman"));
     }
 
+    /**
+     * The token a tool presents to the proxy changes on every start (#1108): a tool that copies
+     * its placeholder into a file at build time presents a stale one after the next start.
+     */
+    @Test
+    void aToolBakingItsTokenIntoAFileIsWarned(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("mytool.yaml"), """
+                name: mytool
+                env:
+                  - name: MYTOOL_TOKEN
+                    value: mytool-placeholder
+                  - name: MYTOOL_COLOR
+                    value: "1"
+                files:
+                  - path: ~/.mytool/config
+                    content: |
+                      token = mytool-placeholder
+                      color = 1
+                proxy:
+                  config-namespace: mytool
+                  configuration:
+                    token:
+                      config-path: token
+                      secret: true
+                      description: MyTool token
+                  auth:
+                    - domains: [api.mytool.example]
+                      type: bearer
+                      token: "${token}"
+                """);
+        var reported = new ArrayList<String>();
+        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+            var loader = new ToolDefLoader();
+            loader.setProjectToolsDir(tempDir);
+            assertNotNull(loader.find("mytool"), "a warning, not a refusal");
+
+            assertEquals(1, loader.warnings().size(), loader.warnings().toString());
+            var warning = loader.warnings().get(0);
+            assertTrue(warning.contains("'~/.mytool/config'") && warning.contains("$MYTOOL_TOKEN"), warning);
+            assertEquals(List.of(warning), reported);
+        }
+    }
+
+    @Test
+    void onlyACredentialShapedVariableCountsAsAToken(@TempDir Path tempDir) throws Exception {
+        // Paths, endpoints and model names are reused in files all the time, and are no token
+        Files.writeString(tempDir.resolve("mytool.yaml"), """
+                name: mytool
+                env:
+                  - name: MYTOOL_HOME
+                    value: /opt/mytool
+                  - name: MYTOOL_ENDPOINT
+                    value: https://api.mytool.example
+                  - name: MYTOOL_MODEL
+                    value: mytool-large-2
+                  - name: MYTOOL_API_KEY
+                    value: https://not-a-key.example/x
+                  - name: MYTOOL_KEY_FILE
+                    value: ~/.mytool/key.pem
+                files:
+                  - path: ~/.mytool/config
+                    content: |
+                      home = /opt/mytool
+                      endpoint = https://api.mytool.example
+                      model = mytool-large-2
+                      key_url = https://not-a-key.example/x
+                      key_file = ~/.mytool/key.pem
+                run:
+                  - ln -s /opt/mytool/bin/mytool /usr/local/bin/mytool
+                proxy:
+                  config-namespace: mytool
+                  configuration:
+                    token:
+                      config-path: token
+                      secret: true
+                      description: MyTool token
+                  auth:
+                    - domains: [api.mytool.example]
+                      type: bearer
+                      token: "${token}"
+                """);
+        var reported = new ArrayList<String>();
+        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+            var loader = new ToolDefLoader();
+            loader.setProjectToolsDir(tempDir);
+            assertNotNull(loader.find("mytool"));
+            assertEquals(List.of(), loader.warnings());
+            assertEquals(List.of(), reported);
+        }
+    }
+
+    @Test
+    void aBase64OrUserColonTokenStillCounts(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("mytool.yaml"), """
+                name: mytool
+                env:
+                  - name: MYTOOL_TOKEN
+                    value: mytool/placeholder==
+                  - name: MYTOOL_AUTH
+                    value: user:placeholder
+                files:
+                  - path: ~/.mytool/config
+                    content: |
+                      token = mytool/placeholder==
+                      auth = user:placeholder
+                proxy:
+                  config-namespace: mytool
+                  configuration:
+                    token:
+                      config-path: token
+                      secret: true
+                      description: MyTool token
+                  auth:
+                    - domains: [api.mytool.example]
+                      type: bearer
+                      token: "${token}"
+                """);
+        try (var ignored = Warnings.redirect(new Warnings.Channel(w -> {}))) {
+            var loader = new ToolDefLoader();
+            loader.setProjectToolsDir(tempDir);
+            assertEquals(2, loader.warnings().size(), loader.warnings().toString());
+        }
+    }
+
+    @Test
+    void anEmptyKeyInAProxyToolStillLoads(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("mytool.yaml"), """
+                name: mytool
+                env:
+                  - name: MYTOOL_TOKEN
+                    value: mytool-placeholder
+                run:
+                run_as_user:
+                  -
+                files:
+                proxy:
+                  config-namespace: mytool
+                  configuration:
+                    token:
+                      config-path: token
+                      secret: true
+                      description: MyTool token
+                  auth:
+                    - domains: [api.mytool.example]
+                      type: bearer
+                      token: "${token}"
+                """);
+        var loader = new ToolDefLoader();
+        loader.setProjectToolsDir(tempDir);
+        assertNotNull(loader.find("mytool"));
+    }
+
+    @Test
+    void aToolReadingItsTokenWhenItRunsIsNotWarned(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("mytool.yaml"), """
+                name: mytool
+                env:
+                  - name: MYTOOL_TOKEN
+                    value: mytool-placeholder
+                files:
+                  - path: ~/.mytool/config
+                    content: |
+                      token_env = MYTOOL_TOKEN
+                proxy:
+                  config-namespace: mytool
+                  configuration:
+                    token:
+                      config-path: token
+                      secret: true
+                      description: MyTool token
+                  auth:
+                    - domains: [api.mytool.example]
+                      type: bearer
+                      token: "${token}"
+                """);
+        var loader = new ToolDefLoader();
+        loader.setProjectToolsDir(tempDir);
+        assertNotNull(loader.find("mytool"));
+        assertEquals(List.of(), loader.warnings());
+    }
+
     /** Loaders are built deep in code the TUI reaches, so they must never print (#872). */
     @Test
     void unreadableFilesAreWarningsNotStderr(@TempDir Path tempDir) throws Exception {

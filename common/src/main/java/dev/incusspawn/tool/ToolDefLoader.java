@@ -228,6 +228,7 @@ public class ToolDefLoader {
                 try (var is = Files.newInputStream(path)) {
                     var def = ToolDef.loadFromStream(is);
                     if (def.getName() != null) {
+                        warnings.addAll(ToolDefValidator.embeddedTokens(def));
                         var source = path.toAbsolutePath().normalize();
                         defs.put(def.getName(), new YamlToolSetup(def), source);
                     }
