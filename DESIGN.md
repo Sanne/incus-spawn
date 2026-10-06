@@ -520,10 +520,20 @@ disagreed with `isx list` both ways. Completion scripts installed by older relea
 name, so it stays, hidden, as an alias for `isx list -q` until a later release removes it; the
 scripts this release generates call `isx list -q`.
 
+**Commands that act need clean stdout, not a format** (#1037). `BuildOutput` writes colour only
+when `TerminalProgress.isAnsiTerminal()` says so, and that check is false without a console, for
+`TERM=dumb`, and when `NO_COLOR` is set to anything non-empty (no-color.org), so the live spinner
+also falls back to `label... done.` lines. Its `warn`, `stepWarn` and `note` go to stderr: a step
+line is what the command did, a warning or note is a diagnostic about it. So a line that is the command's
+result, such as `clean --dry-run`'s "Would delete ...", is a step, not a note. A status command's
+report is its result whatever it says: `isx proxy status` prints it on stdout in every state and
+tells them apart by exit code (1 not running, 2 stale DNS overrides, 3 stale bridge address), and
+`isx vm status` exits 1, the reason on stderr, when Incus is unreachable.
+`BuildOutputTest` and `StatusCommandOutputTest` pin these.
+
 **Not yet covered**: the other query commands (`templates`, `tools`, `account`, `proxy status`,
-`doctor`, `vm status`, `update-base --list`), and clean stdout for the commands that act
-(`BuildOutput` colour off a terminal and under `NO_COLOR`, warnings to stderr). Each adopts the
-same helper and contract when it gains `--format`.
+`doctor`, `vm status`, `update-base --list`) have no `--format` yet. Each adopts the same helper
+and contract when it gains one.
 
 ### Resource Limits (Adaptive)
 

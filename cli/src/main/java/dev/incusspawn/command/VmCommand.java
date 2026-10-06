@@ -13,6 +13,7 @@ import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
@@ -107,18 +108,22 @@ public class VmCommand extends BaseCommand {
     public static class Status extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
-            System.out.println(VmManager.status());
-            var incus = RuntimeServices.incus();
+            return CommandResult.valueOf(report(VmManager.status(), RuntimeServices.incus(), System.out, System.err));
+        }
+
+        /** Print the VM's status and Incus's diagnostics; 1, with the reason on {@code err}, when Incus is unreachable. */
+        static int report(String vmStatus, IncusClient incus, PrintStream out, PrintStream err) {
+            out.println(vmStatus);
             var connError = incus.checkConnectivity();
             if (connError != null) {
-                System.out.println("\nIncus not reachable: " + connError);
-            } else {
-                var pool = incus.findCowPool();
-                System.out.println();
-                System.out.println(incus.getSystemDiagnostics(pool));
-                System.out.println("  (full VM log at " + Environment.vmLogFile() + ")");
+                err.println("\nIncus not reachable: " + connError);
+                return 1;
             }
-            return CommandResult.SUCCESS;
+            var pool = incus.findCowPool();
+            out.println();
+            out.println(incus.getSystemDiagnostics(pool));
+            out.println("  (full VM log at " + Environment.vmLogFile() + ")");
+            return 0;
         }
     }
 

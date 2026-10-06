@@ -411,13 +411,18 @@ class BuildCommandTest {
             doReturn(prompts).when(cmd).prompts();
             doNothing().when(cmd).buildInto(any(), any(), anyString());
 
+            // Both streams into one, as a terminal shows them: the warnings are on stderr.
             var originalOut = System.out;
+            var originalErr = System.err;
             var out = new java.io.ByteArrayOutputStream();
-            System.setOut(new java.io.PrintStream(out, true, java.nio.charset.StandardCharsets.UTF_8));
+            var sink = new java.io.PrintStream(out, true, java.nio.charset.StandardCharsets.UTF_8);
+            System.setOut(sink);
+            System.setErr(sink);
             try {
                 cmd.buildWithParents(child, defs);
             } finally {
                 System.setOut(originalOut);
+                System.setErr(originalErr);
             }
 
             prompts.assertFullyConsumed();

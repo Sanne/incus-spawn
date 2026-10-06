@@ -1210,7 +1210,8 @@ Commands that list things take `--format=table|plain|json`. So far that is `isx 
 - `json` prints an array of objects. An absent value is `null`, and sizes are in bytes. Times are ISO-8601 with their offset: `2026-10-05T12:34:56+02:00`, or `2026-10-05T12:34:56Z` on a host whose zone is UTC, so match both forms. Instances stamped by older isx releases recorded only a date, which prints as an ISO-8601 date (`2026-09-01`). A time isx cannot read is `null` (`-` in `plain`).
 - When isx cannot read what Incus answered, the command fails (exit 1, the reason on stderr). It never prints an empty result.
 - Both `plain` and `json` are stable. Fields may be added at the end, but are never renamed, removed or reordered.
-- Results go to stdout. Errors and diagnostics go to stderr, so stdout holds only results.
+- Results go to stdout. Errors and diagnostics go to stderr, so stdout holds only results. Commands that act (`build`, `branch`, `destroy`, ...) report their steps on stdout and their warnings and notes on stderr. A status command's report is its result in every state: `isx proxy status` prints it on stdout whether or not the proxy is healthy, and the exit code says which.
+- isx writes colour and animated progress only to a terminal. Off one, and when `NO_COLOR` is set to a non-empty value, output holds no escape sequences.
 
 `isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`) and `created`, in that order. For names alone, use `isx list -q`:
 
@@ -1224,7 +1225,7 @@ Exit codes:
 | Code | Meaning |
 |------|---------|
 | 0 | Success, including a listing with no results |
-| 1 | The command failed, with the reason on stderr: a value it rejects (`--format=yaml`, `--status=frozen`), Incus unreachable, ... `isx doctor` also exits 1 when a check fails, and `isx proxy status` when the proxy is not running |
+| 1 | The command failed, with the reason on stderr: a value it rejects (`--format=yaml`, `--status=frozen`), Incus unreachable, ... `isx doctor` also exits 1 when a check fails, `isx vm status` when Incus is unreachable, and `isx proxy status` when the proxy is not running (that report is on stdout) |
 | 2 | The command line could not be parsed (an unknown option, an option missing its value, a stray argument), with the usage on stderr. For `isx proxy status` only, 2 also means the proxy is down but its DNS overrides are still active |
 | 3 | `isx proxy status` only: the proxy runs on an old bridge address |
 | 78 | `isx proxy start` cannot run the proxy at all, e.g. `isx-proxy` is not installed |

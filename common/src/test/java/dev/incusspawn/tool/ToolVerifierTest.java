@@ -108,13 +108,18 @@ class ToolVerifierTest {
         return out.toString();
     }
 
+    /** Both streams, as a terminal shows them: a step goes to stdout, its warning to stderr. */
     private static void capture(java.io.ByteArrayOutputStream out, Runnable body) {
-        var original = System.out;
-        System.setOut(new java.io.PrintStream(out, true));
+        var originalOut = System.out;
+        var originalErr = System.err;
+        var sink = new java.io.PrintStream(out, true);
+        System.setOut(sink);
+        System.setErr(sink);
         try {
             body.run();
         } finally {
-            System.setOut(original);
+            System.setOut(originalOut);
+            System.setErr(originalErr);
         }
     }
 }

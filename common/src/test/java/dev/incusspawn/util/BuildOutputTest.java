@@ -186,6 +186,48 @@ class BuildOutputTest {
     }
 
     @Test
+    void plainOutputHasNoEscapes() {
+        BuildOutput.forceAnsi = false;
+        BuildOutput.header("Building tpl-dev");
+        BuildOutput.header("Resizing", "1G → 2G");
+        BuildOutput.buildHeader("tpl-dev", 1, 2);
+        BuildOutput.branchHeader("dev-1", "tpl-dev");
+        try (var group = BuildOutput.group("Tools", "maven-3")) {
+            BuildOutput.stepNote("version 1");
+            BuildOutput.stepWarn("broken");
+        }
+        BuildOutput.ok("verified");
+        BuildOutput.note("a note");
+        BuildOutput.warn("careful", "what to do");
+        BuildOutput.success("built");
+        BuildOutput.warnBanner("Subnet conflict", "body");
+        assertEquals(BuildOutput.stripAnsi(text()), text(), "no escape off an ANSI terminal");
+        assertTrue(text().contains("● Building tpl-dev"));
+    }
+
+    @Test
+    void warningsAndNotesGoToStderr() {
+        var out = new ByteArrayOutputStream();
+        var err = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(out, true));
+        System.setErr(new PrintStream(err, true));
+        BuildOutput.forceAnsi = false;
+        BuildOutput.step("result");
+        BuildOutput.warn("careful", "what to do");
+        BuildOutput.note("a note");
+        BuildOutput.stepWarn("broken");
+        assertEquals("    result\n", out.toString(), "stdout holds only the step");
+        assertEquals("""
+                    ⚠ careful
+                      what to do
+
+                    a note
+                      ⚠ broken
+
+                """, err.toString());
+    }
+
+    @Test
     void elapsedTimeFormatting() {
         assertEquals("2.5s", BuildOutput.formatElapsed(2_500));
         assertEquals("41s", BuildOutput.formatElapsed(41_000));

@@ -10,6 +10,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
+import java.util.function.UnaryOperator;
 
 /**
  * Runs a batch of independent tasks concurrently while rendering per-task
@@ -63,9 +64,19 @@ public final class TerminalProgress {
         return s;
     }
 
+    /**
+     * Whether output may carry colour and cursor movement: a console, a {@code TERM} that is
+     * not {@code dumb}, and no {@code NO_COLOR} (any non-empty value, per no-color.org).
+     */
     public static boolean isAnsiTerminal() {
-        if (Headless.active() || System.console() == null) return false;
-        var term = System.getenv("TERM");
+        return !Headless.active() && isAnsiTerminal(System.console() != null, System::getenv);
+    }
+
+    static boolean isAnsiTerminal(boolean console, UnaryOperator<String> env) {
+        if (!console) return false;
+        var noColor = env.apply("NO_COLOR");
+        if (noColor != null && !noColor.isEmpty()) return false;
+        var term = env.apply("TERM");
         return term != null && !term.equals("dumb");
     }
 

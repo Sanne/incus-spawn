@@ -558,7 +558,7 @@ public class CleanCommand extends BaseCommand {
 
             BuildOutput.header("Reclaim pool space");
             var usage = incus.getStoragePoolUsage(pool);
-            BuildOutput.note(usage);
+            BuildOutput.step(usage);
 
             boolean found = false;
 
@@ -600,7 +600,7 @@ public class CleanCommand extends BaseCommand {
             }
 
             if (dryRun) {
-                BuildOutput.note("Would delete " + failed.size() + " failed build instance(s).");
+                BuildOutput.step("Would delete " + failed.size() + " failed build instance(s).");
                 return true;
             }
 
@@ -625,7 +625,7 @@ public class CleanCommand extends BaseCommand {
             }
 
             if (dryRun) {
-                BuildOutput.note("Would delete " + images.size() + " " + noun + ".");
+                BuildOutput.step("Would delete " + images.size() + " " + noun + ".");
                 return true;
             }
 

@@ -20,17 +20,21 @@ import java.util.Iterator;
  * never drawn over. Code that hands the terminal to a child process (inherited IO, or a
  * {@code sudo} that may prompt on the tty) calls {@link #releaseTerminal} first, since that
  * output bypasses the Java streams.
+ *
+ * <p>Colour is only written to an ANSI terminal without {@code NO_COLOR}
+ * ({@link TerminalProgress#isAnsiTerminal}), and warnings and notes go to stderr, so piped
+ * output holds no escapes and stdout holds no diagnostics.
  */
 public final class BuildOutput {
 
     private BuildOutput() {}
 
-    private static final String BOLD = "\033[1m";
-    private static final String DIM  = "\033[2m";
-    private static final String RED = "\033[31m";
-    private static final String GREEN = "\033[32m";
-    private static final String YELLOW = "\033[33m";
-    private static final String CYAN = "\033[36m";
+    public static final String BOLD = "\033[1m";
+    public static final String DIM  = "\033[2m";
+    public static final String RED = "\033[31m";
+    public static final String GREEN = "\033[32m";
+    public static final String YELLOW = "\033[33m";
+    public static final String CYAN = "\033[36m";
     private static final String RESET = "\033[0m";
 
     /** Green check that marks a finished step. */
@@ -40,6 +44,19 @@ public final class BuildOutput {
 
     private static final java.util.regex.Pattern ANSI_PATTERN =
             java.util.regex.Pattern.compile("\u001B\\[[0-9;?]*[A-Za-z]");
+
+    /** Whether to style output: on an ANSI terminal without {@code NO_COLOR}, or as a test forces. */
+    private static boolean ansi() {
+        return forceAnsi != null ? forceAnsi : TerminalProgress.isAnsiTerminal();
+    }
+
+    /**
+     * {@code text} in {@code style} (one or more of the constants above) on an ANSI terminal,
+     * unchanged otherwise. Every escape written outside a live step goes through here.
+     */
+    public static String styled(String style, String text) {
+        return ansi() ? style + text + RESET : text;
+    }
 
     /** Strip ANSI escape sequences (colour, cursor, erase) from a string. */
     public static String stripAnsi(String s) {
@@ -84,9 +101,8 @@ public final class BuildOutput {
      * outside the group. Use with try-with-resources.
      */
     public static Group group(String title, String detail) {
-        var sb = new StringBuilder(indent()).append(CYAN).append("▸ ").append(RESET)
-                .append(BOLD).append(title).append(RESET);
-        if (detail != null && !detail.isEmpty()) sb.append("  ").append(DIM).append(detail).append(RESET);
+        var sb = new StringBuilder(indent()).append(styled(CYAN, "▸ ")).append(styled(BOLD, title));
+        if (detail != null && !detail.isEmpty()) sb.append("  ").append(styled(DIM, detail));
         blankLine();
         System.out.println(sb);
         var group = new Group(depth);
@@ -121,23 +137,23 @@ public final class BuildOutput {
     public static void stepNote(String msg) {
         if (msg == null || msg.isBlank()) return;
         blankLineEnded = false;
-        System.out.println(indent() + GROUP_INDENT + DIM + msg + RESET);
+        System.out.println(indent() + GROUP_INDENT + styled(DIM, msg));
     }
 
     /**
      * Print a yellow warning about the step above, one level under it, then a blank line
-     * separating it from the regular flow.
+     * separating it from the regular flow. Like every warning, to stderr.
      */
     public static void stepWarn(String msg) {
         if (msg == null || msg.isBlank()) return;
-        System.out.println(indent() + GROUP_INDENT + YELLOW + "⚠ " + msg + RESET);
+        System.err.println(indent() + GROUP_INDENT + styled(YELLOW, "⚠ " + msg));
         endWithBlankLine();
     }
 
     /** Print a finished step: {@code ✓ msg}. For a result known at once, without a live step. */
     public static void ok(String msg) {
         blankLineEnded = false;
-        System.out.println(indent() + (TerminalProgress.isAnsiTerminal() ? CHECK : "✓") + " " + msg);
+        System.out.println(indent() + styled(GREEN, "✓") + " " + msg);
     }
 
     /**
@@ -246,7 +262,7 @@ public final class BuildOutput {
         synchronized (LOCK) {
             if (live != null) endLocked(live, null);
             blankLineEnded = false;
-            var ansi = forceAnsi != null ? forceAnsi : TerminalProgress.isAnsiTerminal();
+            var ansi = ansi();
             var step = new LiveStep(msg, ansi, System.out, System.err);
             if (!ansi) {
                 step.raw.print(step.indent + msg);
@@ -441,7 +457,7 @@ public final class BuildOutput {
     public static void header(String msg) {
         depth = 0;
         blankLine();
-        System.out.println("  " + BOLD + "● " + msg + RESET);
+        System.out.println("  " + styled(BOLD, "● " + msg));
     }
 
     /**
@@ -452,7 +468,7 @@ public final class BuildOutput {
     public static void header(String msg, String detail) {
         depth = 0;
         blankLine();
-        System.out.println("  " + BOLD + "● " + msg + RESET + " " + DIM + detail + RESET);
+        System.out.println("  " + styled(BOLD, "● " + msg) + " " + styled(DIM, detail));
     }
 
     /** Print a bold bullet header: {@code  ● Building tpl-dev  [1/3]} */
@@ -463,8 +479,8 @@ public final class BuildOutput {
             var counter = "[" + index + "/" + total + "]";
             var label = "Building " + name;
             int gap = Math.max(2, 62 - 4 - label.length() - counter.length());
-            System.out.println("  " + BOLD + "● " + label + RESET
-                    + " ".repeat(gap) + DIM + counter + RESET);
+            System.out.println("  " + styled(BOLD, "● " + label)
+                    + " ".repeat(gap) + styled(DIM, counter));
         } else {
             header("Building " + name);
         }
@@ -474,40 +490,43 @@ public final class BuildOutput {
     public static void branchHeader(String name, String source) {
         depth = 0;
         blankLine();
-        System.out.println("  " + BOLD + "● " + name + RESET
-                + " " + DIM + "← " + source + RESET);
+        System.out.println("  " + styled(BOLD, "● " + name) + " " + styled(DIM, "← " + source));
     }
 
     /**
      * Print a yellow warning line and any dim {@code details} under it (e.g. what to do about
      * it), then a blank line separating them from the regular flow. Blank messages are skipped.
+     * To stderr, so stdout holds only what a command reports.
      */
     public static void warn(String msg, String... details) {
         if (msg == null || msg.isBlank()) return;
-        System.out.println(indent() + YELLOW + "⚠ " + msg + RESET);
+        System.err.println(indent() + styled(YELLOW, "⚠ " + msg));
         for (var detail : details) {
-            System.out.println(indent() + GROUP_INDENT + DIM + detail + RESET);
+            System.err.println(indent() + GROUP_INDENT + styled(DIM, detail));
         }
         endWithBlankLine();
     }
 
-    /** Close a block with a blank line, which a following group or section does not repeat. */
+    /** Close a warning with a blank line, which a following group or section does not repeat. */
     private static void endWithBlankLine() {
-        System.out.println();
+        System.err.println();
         blankLineEnded = true;
     }
 
-    /** Print an indented dim note (informational, not a warning). Blank messages are skipped. */
+    /**
+     * Print an indented dim note (informational, not a warning) to stderr, beside the warnings.
+     * Blank messages are skipped.
+     */
     public static void note(String msg) {
         if (msg == null || msg.isBlank()) return;
         blankLineEnded = false;
-        System.out.println(indent() + DIM + msg + RESET);
+        System.err.println(indent() + styled(DIM, msg));
     }
 
     /** Print a green checkmark success line. */
     public static void success(String msg) {
         blankLine();
-        System.out.println(STEP_INDENT + GREEN + "✓" + RESET + " " + msg);
+        System.out.println(STEP_INDENT + styled(GREEN, "✓") + " " + msg);
     }
 
     /**
@@ -515,9 +534,9 @@ public final class BuildOutput {
      * Use for diagnostic warnings that need to stand out (subnet conflicts, CA mismatches, etc.).
      */
     public static void warnBanner(String title, String... lines) {
-        var sep = YELLOW + "─".repeat(60) + RESET;
+        var sep = styled(YELLOW, "─".repeat(60));
         System.err.println(sep);
-        System.err.println(BOLD + YELLOW + title + RESET);
+        System.err.println(styled(BOLD + YELLOW, title));
         for (var line : lines) {
             System.err.println(line);
         }

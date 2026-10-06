@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -12,6 +13,20 @@ import static org.junit.jupiter.api.Assertions.*;
 class TerminalProgressTest {
 
     // Tests run headless (no console), so run() takes the plain, non-animated path.
+
+    @Test
+    void noColorTurnsTheTerminalPlain() {
+        Map<String, String> xterm = Map.of("TERM", "xterm-256color");
+        assertTrue(TerminalProgress.isAnsiTerminal(true, xterm::get));
+        assertFalse(TerminalProgress.isAnsiTerminal(false, xterm::get), "no console");
+        Map<String, String> dumb = Map.of("TERM", "dumb");
+        assertFalse(TerminalProgress.isAnsiTerminal(true, dumb::get));
+        Map<String, String> noColor = Map.of("TERM", "xterm-256color", "NO_COLOR", "1");
+        assertFalse(TerminalProgress.isAnsiTerminal(true, noColor::get), "NO_COLOR set");
+        // no-color.org: an empty NO_COLOR does not count.
+        Map<String, String> emptyNoColor = Map.of("TERM", "xterm-256color", "NO_COLOR", "");
+        assertTrue(TerminalProgress.isAnsiTerminal(true, emptyNoColor::get));
+    }
 
     @Test
     void runExecutesEveryTask() {

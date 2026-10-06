@@ -52,7 +52,7 @@ public class UpdateBaseCommand extends BaseCommand {
         BuildOutput.header("Checking for base image updates");
         var currentTag = minimal.getImageTag();
         var isPinned = minimal.isPinned();
-        BuildOutput.note("Current base image: " + (currentTag != null ? currentTag : "unknown")
+        BuildOutput.step("Current base image: " + (currentTag != null ? currentTag : "unknown")
                 + (isPinned ? " [pinned]" : ""));
 
         BuildOutput.stepStart("Fetching available releases...");

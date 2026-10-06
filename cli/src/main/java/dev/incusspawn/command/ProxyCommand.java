@@ -15,6 +15,7 @@ import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
 
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -82,12 +83,12 @@ public class ProxyCommand extends BaseCommand {
                         System.out.println("  DNS overrides:   " + (proxyInfo.dnsConfigured() ? "active" : "pending"));
                         var drift = ProxyHealthCheck.assessDrift(proxyInfo);
                         for (var d : drift.drifts()) {
-                            System.out.println("  \033[1;33m>>> " + d + "\033[0m");
+                            System.out.println("  " + BuildOutput.styled(BuildOutput.BOLD + BuildOutput.YELLOW, ">>> " + d));
                         }
                         if (drift.futileReason() != null) System.out.println("      " + drift.futileReason());
                     }
                     if (proxyInfo != null && proxyInfo.hasAuthError()) {
-                        System.out.println("  \033[1;31m>>> Auth error: " + proxyInfo.authError() + "\033[0m");
+                        System.out.println("  " + BuildOutput.styled(BuildOutput.BOLD + BuildOutput.RED, ">>> Auth error: " + proxyInfo.authError()));
                     }
                     System.out.println("  Health endpoint: http://" + healthIp + ":" + ProxyConfig.DEFAULT_HEALTH_PORT + "/health");
                     System.out.println("  MITM port:       " + ProxyConfig.DEFAULT_MITM_PORT);
@@ -98,29 +99,43 @@ public class ProxyCommand extends BaseCommand {
                         System.out.println("  Managed by:      manual (foreground process)");
                     }
                 }
-                case NOT_RUNNING -> {
-                    System.err.println("Proxy is not running.");
-                    if (serviceInstalled) {
-                        System.err.println("Service is installed but not active. Start it with: isx proxy install");
-                    } else {
-                        System.err.println("Start it with: isx proxy start");
-                        System.err.println("Or install as a service: isx proxy install");
-                    }
-                    return CommandResult.valueOf(1);
-                }
-                case STALE_DNS -> {
-                    System.err.println("Proxy is not running, but DNS overrides are still active.");
-                    System.err.println("Start the proxy to restore connectivity: isx proxy start");
-                    return CommandResult.valueOf(2);
-                }
-                case STALE_GATEWAY -> {
-                    System.err.println("Proxy is running, but on an old address of incusbr0 that instances cannot reach.");
-                    System.err.println("Restart it to bind the current address: "
-                            + (serviceActive ? "isx proxy restart" : "isx proxy stop && isx proxy start"));
-                    return CommandResult.valueOf(3);
+                case NOT_RUNNING, STALE_DNS, STALE_GATEWAY -> {
+                    return CommandResult.valueOf(reportDown(status, serviceInstalled, serviceActive, System.out));
                 }
             }
             return CommandResult.SUCCESS;
+        }
+
+        /**
+         * Report a proxy that instances cannot use, on {@code out} like a healthy one's: the
+         * report is the command's result, and the exit code tells the states apart.
+         */
+        static int reportDown(ProxyHealthCheck.ProxyStatus status, boolean serviceInstalled,
+                              boolean serviceActive, PrintStream out) {
+            switch (status) {
+                case NOT_RUNNING -> {
+                    out.println("Proxy is not running.");
+                    if (serviceInstalled) {
+                        out.println("Service is installed but not active. Start it with: isx proxy install");
+                    } else {
+                        out.println("Start it with: isx proxy start");
+                        out.println("Or install as a service: isx proxy install");
+                    }
+                    return 1;
+                }
+                case STALE_DNS -> {
+                    out.println("Proxy is not running, but DNS overrides are still active.");
+                    out.println("Start the proxy to restore connectivity: isx proxy start");
+                    return 2;
+                }
+                case STALE_GATEWAY -> {
+                    out.println("Proxy is running, but on an old address of incusbr0 that instances cannot reach.");
+                    out.println("Restart it to bind the current address: "
+                            + (serviceActive ? "isx proxy restart" : "isx proxy stop && isx proxy start"));
+                    return 3;
+                }
+                default -> throw new IllegalArgumentException("not a down state: " + status);
+            }
         }
     }
 
@@ -173,7 +188,7 @@ public class ProxyCommand extends BaseCommand {
                 if (ProxyService.reinstallIfChanged(incus, info)) {
                     BuildOutput.success("Proxy service restarted with updated binary.");
                 } else {
-                    BuildOutput.note("Proxy service is already installed and running.");
+                    BuildOutput.step("Proxy service is already installed and running.");
                     // Drift it declined to restart for would otherwise go unexplained here.
                     var futile = ProxyHealthCheck.assessDrift(info).futileReason();
                     if (futile != null) BuildOutput.note(futile);
