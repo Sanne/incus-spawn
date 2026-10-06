@@ -9,6 +9,7 @@ import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.Platform;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -18,6 +19,9 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 
 @CommandDefinition(
         name = "proxy",
@@ -51,8 +55,13 @@ public class ProxyCommand extends BaseCommand {
     )
     public static class Status extends BaseCommand {
 
+        // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+        @Option(name = "format", description = "Output format: table (default), plain or json")
+        String format;
+
         @Override
         protected CommandResult doExecute() throws Exception {
+            var outputFormat = OutputFormat.parse(format);
             var incus = RuntimeServices.incus();
             // On macOS a healthy proxy answers on loopback without asking Incus, so the gateway
             // is only looked up, and only fails, when the check actually needs it.
@@ -64,10 +73,26 @@ public class ProxyCommand extends BaseCommand {
             } catch (Exception e) {
                 System.err.println("Could not determine Incus bridge gateway IP: " + e.getMessage());
                 System.err.println(ProxyConfig.gatewayUnavailableHint(Platform.isMacOS()));
+                if (outputFormat != OutputFormat.TABLE) {
+                    // Exit 1 as in the table, but the record says the state is unknown, so a
+                    // script tells "could not check" from "not running".
+                    var serviceInstalled = ProxyService.isInstalled();
+                    outputFormat.printOne(System.out, record(null, null, null, serviceInstalled,
+                            serviceInstalled && ProxyService.isActive() ? (Platform.isMacOS() ? "launchd" : "systemd") : null,
+                            ("Could not determine Incus bridge gateway IP: " + e.getMessage()).strip()));
+                }
                 return CommandResult.valueOf(1);
             }
             var serviceInstalled = ProxyService.isInstalled();
             var serviceActive = serviceInstalled && ProxyService.isActive();
+            if (outputFormat != OutputFormat.TABLE) {
+                var running = status == ProxyHealthCheck.ProxyStatus.RUNNING
+                        || status == ProxyHealthCheck.ProxyStatus.WAITING_FOR_DNS;
+                var proxyInfo = running ? ProxyHealthCheck.fetchProxyInfo(healthIp) : null;
+                outputFormat.printOne(System.out, record(status, proxyInfo, healthIp, serviceInstalled,
+                        managedBy(status, serviceActive, Platform.isMacOS()), null));
+                return CommandResult.valueOf(exitCode(status));
+            }
             switch (status) {
                 case RUNNING, WAITING_FOR_DNS -> {
                     System.out.println(status == ProxyHealthCheck.ProxyStatus.RUNNING
@@ -121,21 +146,78 @@ public class ProxyCommand extends BaseCommand {
                         out.println("Start it with: isx proxy start");
                         out.println("Or install as a service: isx proxy install");
                     }
-                    return 1;
+                    return exitCode(status);
                 }
                 case STALE_DNS -> {
                     out.println("Proxy is not running, but DNS overrides are still active.");
                     out.println("Start the proxy to restore connectivity: isx proxy start");
-                    return 2;
+                    return exitCode(status);
                 }
                 case STALE_GATEWAY -> {
                     out.println("Proxy is running, but on an old address of incusbr0 that instances cannot reach.");
                     out.println("Restart it to bind the current address: "
                             + (serviceActive ? "isx proxy restart" : "isx proxy stop && isx proxy start"));
-                    return 3;
+                    return exitCode(status);
                 }
                 default -> throw new IllegalArgumentException("not a down state: " + status);
             }
+        }
+
+        /**
+         * Who runs the proxy: {@code launchd} or {@code systemd} whenever the service is active,
+         * in any state; otherwise {@code manual} for a foreground process -- one on an old gateway
+         * address included, which still has to be stopped -- and {@code null} when nothing runs it.
+         */
+        static String managedBy(ProxyHealthCheck.ProxyStatus status, boolean serviceActive, boolean macOS) {
+            if (serviceActive) return macOS ? "launchd" : "systemd";
+            return switch (status) {
+                case RUNNING, WAITING_FOR_DNS, STALE_GATEWAY -> "manual";
+                case NOT_RUNNING, STALE_DNS -> null;
+            };
+        }
+
+        /** The exit code of every format: 0 when instances can use the proxy, else 1, 2 or 3 by state. */
+        static int exitCode(ProxyHealthCheck.ProxyStatus status) {
+            return switch (status) {
+                case RUNNING, WAITING_FOR_DNS -> 0;
+                case NOT_RUNNING -> 1;
+                case STALE_DNS -> 2;
+                case STALE_GATEWAY -> 3;
+            };
+        }
+
+        /**
+         * The fields of {@code isx proxy status --format=plain|json}, in order: add to the end,
+         * never rename. {@code status} is the state the exit code reports, in lower case; what
+         * the running proxy says of itself is {@code null} when it is not running or too old to say.
+         * {@code drift} is the drift sentences as one string ({@code null} for none): they
+         * contain commas, so a list would not survive {@code plain}; {@code restart_helps} says
+         * whether restarting the service clears it ({@code null} for none). A {@code null}
+         * {@code status} is {@code unknown}: the state could not be checked, and
+         * {@code check_error} says why.
+         */
+        static Map<String, Object> record(ProxyHealthCheck.ProxyStatus status, ProxyHealthCheck.ProxyInfo info,
+                                          String healthIp, boolean serviceInstalled, String managedBy,
+                                          String checkError) {
+            var known = info != null && !info.isLegacy();
+            var record = new LinkedHashMap<String, Object>();
+            record.put("status", status == null ? "unknown" : status.name().toLowerCase(Locale.ROOT));
+            record.put("version", known ? info.version() : null);
+            record.put("git_sha", known ? info.gitSha() : null);
+            record.put("runtime", known && info.runtime() != null && !info.runtime().isEmpty() ? info.runtime() : null);
+            record.put("dns_overrides", info == null ? null : info.dnsConfigured());
+            var drift = info == null ? null : ProxyHealthCheck.assessDrift(info);
+            var drifted = drift != null && !drift.isEmpty();
+            record.put("drift", drifted ? String.join(" ", drift.drifts()) : null);
+            record.put("auth_error", info != null && info.hasAuthError() ? info.authError() : null);
+            record.put("health_endpoint", healthIp == null ? null
+                    : "http://" + healthIp + ":" + ProxyConfig.DEFAULT_HEALTH_PORT + "/health");
+            record.put("mitm_port", ProxyConfig.DEFAULT_MITM_PORT);
+            record.put("service_installed", serviceInstalled);
+            record.put("managed_by", managedBy);
+            record.put("restart_helps", drifted ? drift.restartHelps() : null);
+            record.put("check_error", checkError);
+            return record;
         }
     }
 

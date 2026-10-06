@@ -494,11 +494,38 @@ is empty. So query commands take `--format` (#1036), through one shared helper,
 - **The contract**: `plain` and `json` fields may be added at the end, never renamed, removed or
   reordered. Results go to stdout and only results: errors and diagnostics go to stderr.
 
-A command resolves its `--format`/`--plain` with `OutputFormat.resolve`, builds each record
-once, as an ordered map of field name to value, and hands the list to `OutputFormat.printPlain`
-or `printJson`. Both machine formats print the same map, so the
+A command parses its `--format` with `OutputFormat.parse` (`isx list`, which also has
+`--plain`, with `OutputFormat.resolve`), builds each record once, as an ordered map of field name
+to value, and hands the list to `format.print` (or one record to `format.printOne`, an object in
+`json`). Both machine formats print the same map, so the
 field order of `plain` is the field order of `json` and the two cannot drift apart. Maps rather
 than records are what Jackson serializes without reflection registration in the native image.
+A list value (`tools show`'s `packages`, `account list`'s `pinned_by`) is a JSON array and, in
+`plain`, its elements joined by `,`, so a record stays one line.
+
+Every query command takes it (#1038): `templates`, `tools list`/`show`, `account list`/`show`,
+`proxy status`, `doctor`, `vm status`, `update-base --list`, and `branch`, whose record is the new
+name alone so that `$(isx branch ... --format=plain)` captures it. The bare group commands
+(`isx templates`, `isx tools`, `isx account`) run their `list` and take its `--format`. A command
+whose work prints progress on the way (`doctor`'s checks, `branch`'s flow) runs it under
+`BaseCommand.withStdoutOnStderr`, so stdout holds only the result whatever the code underneath
+prints. The machine formats never prompt: `doctor` offers no remediation and `branch` opens no
+shell. Exit codes are those of the table output, so a script reads the same state from either:
+`proxy status` prints its record in every state and exits 0/1/2/3 (when it cannot check at all,
+on Linux with Incus unreachable, the record says `status: "unknown"` with a `check_error`: it
+exits 1 like `not_running`, as the table always has, but no longer reads like it), `doctor` exits 1 when a
+check fails, and `vm status` exits 1 when Incus is unreachable (#1037 made the table do so). Each command with more than one failing state keeps its codes in one `exitCode` method that
+every format returns, so they cannot drift. `account list` prints `null` for
+`pinned_by`/`following` when Incus could not be asked, never an empty list, which would read as
+"nobody". The template's built state and staleness (#1036) are not in `isx templates` yet: they
+live in the TUI's template rows and are added at the end of its record when that logic moves.
+Nothing the table tells a person about state is left out of the record: problems a template's
+choice causes (`account show`'s `template_problem`), whether a proxy restart can clear drift
+(`restart_helps`), a leaking vsock forwarder (`vsock_connections_high`) and a pinned base image
+(`pinned`) are fields; only descriptive detail (a tool's parameter types, the system diagnostics
+under `vm status`) stays table-only. `doctor`'s `detail` and `remediation` are text for people, not values a script should parse; the
+table's wrapping parentheses are dropped from `detail`. `QueryCommandFormatTest` pins the JSON of each, and `ExitCodeTest` that each rejects
+`--format=yaml` alike.
 
 **`isx list` from the CLI is cheap.** Outside the TUI it reads the instance listing once
 (`GET /1.0/instances?recursion=2`) and nothing else: no definition reload, tool loader, pool

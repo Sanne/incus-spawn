@@ -1206,11 +1206,11 @@ tui-live-refresh: false
 
 ## Scripting isx
 
-Commands that list things take `--format=table|plain|json`. So far that is `isx list`; the other query commands will follow.
+Query commands take `--format=table|plain|json`: `isx list`, `isx templates [list]`, `isx tools list`, `isx tools show`, `isx account list`, `isx account show`, `isx proxy status`, `isx doctor`, `isx vm status` (macOS), `isx update-base --list` and `isx branch`.
 
 - `table` is for people. It may change in any release, so don't parse it.
 - `plain` prints one record per line, its fields tab-separated, with `-` for an empty field. There is no header, padding, colour or glyph, and no results means no output.
-- `json` prints an array of objects. An absent value is `null`, and sizes are in bytes. Times are ISO-8601 with their offset: `2026-10-05T12:34:56+02:00`, or `2026-10-05T12:34:56Z` on a host whose zone is UTC, so match both forms. Instances stamped by older isx releases recorded only a date, which prints as an ISO-8601 date (`2026-09-01`). A time isx cannot read is `null` (`-` in `plain`).
+- `json` prints an array of objects, or one object for a command about one thing (`tools show`, `proxy status`, `vm status`, `branch`). A list value is an array in `json` and its elements joined by `,` in `plain`. An absent value is `null`, and sizes are in bytes. Times are ISO-8601 with their offset: `2026-10-05T12:34:56+02:00`, or `2026-10-05T12:34:56Z` on a host whose zone is UTC, so match both forms. Instances stamped by older isx releases recorded only a date, which prints as an ISO-8601 date (`2026-09-01`). A time isx cannot read is `null` (`-` in `plain`).
 - When isx cannot read what Incus answered, the command fails (exit 1, the reason on stderr). It never prints an empty result.
 - Both `plain` and `json` are stable. Fields may be added at the end, but are never renamed, removed or reordered.
 - Results go to stdout. Errors and diagnostics go to stderr, so stdout holds only results. Commands that act (`build`, `branch`, `destroy`, ...) report their steps on stdout and their warnings and notes on stderr. A status command's report is its result in every state: `isx proxy status` prints it on stdout whether or not the proxy is healthy, and the exit code says which.
@@ -1222,6 +1222,21 @@ Commands that list things take `--format=table|plain|json`. So far that is `isx 
 for name in $(isx list -q --status=stopped); do isx destroy "$name" --skip-confirmation; done
 isx list --format=json | jq -r '.[] | select(.parent == "tpl-java") | .name'
 ```
+
+The fields of the other commands, in order:
+
+| Command | Fields |
+|---------|--------|
+| `isx templates` | `name`, `parent`, `source` (`built-in` or the file), `description` |
+| `isx tools list` | `name`, `source`, `description` |
+| `isx tools show <tool>` | `name`, `description`, `source`, `feature`, `requires`, `packages`, `parameters`, `actions` (labels), `downloads` (URLs), `proxy_domains` |
+| `isx account list` | one record per account: `namespace`, `account`, `description`, `default`, `problem` (`incomplete`, or `not-configured` for an account only a pin names), `pinned_by`, `following` (the instances that follow the default). The last two are `null` when Incus could not be asked, with the reason on stderr; `plain` prints that as `-`, like an empty list, so read `json` to tell them apart |
+| `isx account show <instance>` | one record per namespace: `namespace`, `account`, `description`, `chosen_by` (`default`, `template`, `explicit`, `copied` or `unknown`), `chosen_in` (the template or instance it came from), `template`, `template_account`, `problem`, `identity_pending` (the git identity the instance takes on its next start or shell), `template_problem` (why the template's own choice cannot be used) |
+| `isx proxy status` | `status` (`running`, `waiting_for_dns`, `not_running`, `stale_dns`, `stale_gateway`, or `unknown` when the state could not be checked), `version`, `git_sha`, `runtime`, `dns_overrides`, `drift` (one string), `auth_error`, `health_endpoint`, `mitm_port`, `service_installed`, `managed_by` (`systemd`, `launchd` or `manual`), `restart_helps` (whether restarting clears the drift; `null` without drift), `check_error` (why the state is `unknown`). Printed in every state; the exit code is the table's, so `unknown` exits 1 like `not_running`: read `status` to tell them apart |
+| `isx doctor` | one record per check: `level` (`ok`, `note`, `warn`, `fail`), `label`, `detail`, `remediation`. `detail` and `remediation` are free text for people: key a script on `level` and `label`. Nothing is offered or applied; `--bundle` cannot be combined with it |
+| `isx vm status` | `running`, `pid`, `rest_api`, `log`, `appliance`, `appliance_pending` (the installed appliance a restart would apply), `vsock_connections`, `incus_reachable`, `incus_error`, `vsock_connections_high` (the in-VM forwarder may be leaking streams; `isx vm restart` clears them). Exits 1 when Incus is unreachable |
+| `isx update-base --list` | newest first: `tag`, `date`, `latest`, `current`, `pinned` (the current release is pinned, so builds stay on it) |
+| `isx branch <name>` | `name`. Progress goes to stderr and no shell is opened, so `name=$(isx branch my-box --from tpl-java --format=plain)` captures it |
 
 Exit codes:
 

@@ -459,37 +459,59 @@ public final class VmManager {
     }
 
     public static String status() {
-        if (isRunning()) {
-            long pid = readPid();
+        return state().render();
+    }
+
+    /**
+     * What {@code isx vm status} reports, read once, for its text ({@link #render}) and the fields
+     * of its {@code --format=plain|json}. A fact that is not known is {@code null}, or -1 for a
+     * number; a VM that is not running knows none.
+     */
+    public record State(boolean running, long pid, String restApi, String log, String appliance,
+                        String applianceInstalled, int vsockConnections) {
+
+        static final State NOT_RUNNING = new State(false, -1, null, null, null, null, -1);
+
+        public String render() {
+            if (!running) return "VM not running";
             var sb = new StringBuilder();
             sb.append("VM running (pid=").append(pid).append(")");
-            var restUriFile = Environment.vmRestUriFile();
-            if (Files.exists(restUriFile)) {
-                try {
-                    sb.append("\n  REST API: ").append(Files.readString(restUriFile).strip());
-                } catch (IOException ignored) {}
-            }
-            sb.append("\n  Log: ").append(Environment.vmLogFile());
-            var running = runningApplianceVersion();
-            if (running != null) {
-                sb.append("\n  Appliance: ").append(running);
-                var skew = applianceSkew();
-                if (skew != null) {
-                    sb.append("  (installed: ").append(skew.installed())
+            if (restApi != null) sb.append("\n  REST API: ").append(restApi);
+            sb.append("\n  Log: ").append(log);
+            if (appliance != null) {
+                sb.append("\n  Appliance: ").append(appliance);
+                if (applianceInstalled != null) {
+                    sb.append("  (installed: ").append(applianceInstalled)
                             .append(" — restart to apply)");
                 }
             }
-            int vsockConns = vsockForwarderConnectionCount();
-            if (vsockConns >= 0) {
-                sb.append("\n  vsock forwarder connections: ").append(vsockConns);
-                if (vsockConns > VSOCK_CONN_WARN_THRESHOLD) {
+            if (vsockConnections >= 0) {
+                sb.append("\n  vsock forwarder connections: ").append(vsockConnections);
+                if (vsockConnections > VSOCK_CONN_WARN_THRESHOLD) {
                     sb.append("  ⚠ high — the in-VM forwarder may be leaking streams; 'isx vm restart' clears them");
                 }
             }
             return sb.toString();
         }
-        cleanupStaleFiles();
-        return "VM not running";
+    }
+
+    public static State state() {
+        if (!isRunning()) {
+            cleanupStaleFiles();
+            return State.NOT_RUNNING;
+        }
+        long pid = readPid();
+        String restApi = null;
+        var restUriFile = Environment.vmRestUriFile();
+        if (Files.exists(restUriFile)) {
+            try {
+                restApi = Files.readString(restUriFile).strip();
+            } catch (IOException ignored) {}
+        }
+        var appliance = runningApplianceVersion();
+        var skew = appliance == null ? null : applianceSkew();
+        return new State(true, pid, restApi, Environment.vmLogFile().toString(), appliance,
+                skew == null ? null : skew.installed(), vsockForwarderConnectionCount());
     }
 
     // Above this many held vsock connections, the appliance's socat forwarder is

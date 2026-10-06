@@ -11,6 +11,7 @@ import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -18,6 +19,7 @@ import org.aesh.command.option.Option;
 import org.aesh.command.option.OptionList;
 
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -81,29 +83,83 @@ public class BranchCommand extends BaseCommand {
                     + "(e.g. claude=work). Repeatable; overrides the template's choice.")
     List<String> accounts;
 
+    // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+    @Option(name = "format", description = "Output format: table (default), or plain or json to print"
+            + " only the new instance's name (progress to stderr, no shell opened)")
+    String format;
+
     private IncusClient incus;
+
+    /** A branch {@link #create} made, and what opening its shell needs. */
+    private record Created(String source, BranchFlow.Preflight preflight,
+                           InstanceLifecycle.RuntimeConfig prefetched) {}
 
     @Override
     protected CommandResult doExecute() throws Exception {
+        var outputFormat = OutputFormat.parse(format);
         this.incus = RuntimeServices.incus();
 
+        if (outputFormat != OutputFormat.TABLE) {
+            // A script captures the new name, so stdout holds only that, and no shell is opened.
+            var created = withStdoutOnStderr(this::create);
+            if (created == null) return CommandResult.valueOf(1);
+            outputFormat.printOne(System.out, record(name));
+            return CommandResult.SUCCESS;
+        }
+
+        var created = create();
+        if (created == null) return CommandResult.valueOf(1);
+        if (noStart) return CommandResult.SUCCESS;
+        if (!IncusClient.hasTerminal()) {
+            // The branch is done; only the shell needs a terminal (#1027).
+            System.out.println("No terminal, so no shell opened. From a terminal: isx shell " + name);
+            return CommandResult.SUCCESS;
+        }
+
+        var preflight = created.preflight();
+        var shellPrep = created.prefetched().toShellPrep();
+        if (!shell) {
+            var defaultCmd = resolveDefaultCommand(created.source(), preflight.defs());
+            if (defaultCmd != null) {
+                shellPrep = shellPrep.withActionCommand(defaultCmd);
+            }
+        }
+        var menu = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
+                RuntimeServices.toolSetups(), preflight.defs())
+                .shellMenu(name, created.prefetched().templateName(), created.prefetched().workdir());
+        incus.interactiveShell(name, "agentuser", shellPrep, menu);
+        return CommandResult.SUCCESS;
+    }
+
+    /**
+     * The fields of {@code isx branch --format=plain|json}: the new name alone, so that
+     * {@code name=$(isx branch ... --format=plain)} captures it. Add to the end, never rename.
+     */
+    static Map<String, Object> record(String name) {
+        var record = new LinkedHashMap<String, Object>();
+        record.put("name", name);
+        return record;
+    }
+
+    /** Create (and unless {@code --no-start}, start) the branch; {@code null} once the error is reported. */
+    private Created create() {
         var resolvedSource = resolveSource();
-        if (resolvedSource == null) return CommandResult.valueOf(1);
+        if (resolvedSource == null) return null;
 
         if (airgap && proxyOnly) {
             System.err.println("Error: --airgap and --proxy-only are mutually exclusive.");
-            return CommandResult.valueOf(1);
+            return null;
         }
         if (airgap && mcpClient) {
             System.err.println("Error: an --airgap instance cannot reach " + ProxyConfig.MCP_DOMAIN
                     + "; --mcp-client needs --proxy-only or full network.");
-            return CommandResult.valueOf(1);
+            return null;
         }
         var networkMode = airgap ? NetworkMode.AIRGAP
                 : proxyOnly ? NetworkMode.PROXY_ONLY : NetworkMode.FULL;
         if (gui && noGui) {
             System.err.println("Error: --gui and --no-gui are mutually exclusive.");
-            return CommandResult.valueOf(1);
+            return null;
         }
         Boolean guiChoice = gui ? Boolean.TRUE : noGui ? Boolean.FALSE : null;
         Boolean kvmChoice = kvm ? Boolean.TRUE : noKvm ? Boolean.FALSE : null;
@@ -118,29 +174,11 @@ public class BranchCommand extends BaseCommand {
             prefetched = BranchFlow.create(incus, preflight);
         } catch (BranchFlow.BranchException e) {
             if (!e.reported()) System.err.println("Error: " + e.getMessage());
-            return CommandResult.valueOf(1);
+            return null;
         }
 
         BuildOutput.success(name + " is ready.");
-        if (noStart) return CommandResult.SUCCESS;
-        if (!IncusClient.hasTerminal()) {
-            // The branch is done; only the shell needs a terminal (#1027).
-            System.out.println("No terminal, so no shell opened. From a terminal: isx shell " + name);
-            return CommandResult.SUCCESS;
-        }
-
-        var shellPrep = prefetched.toShellPrep();
-        if (!shell) {
-            var defaultCmd = resolveDefaultCommand(resolvedSource, preflight.defs());
-            if (defaultCmd != null) {
-                shellPrep = shellPrep.withActionCommand(defaultCmd);
-            }
-        }
-        var menu = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
-                RuntimeServices.toolSetups(), preflight.defs())
-                .shellMenu(name, prefetched.templateName(), prefetched.workdir());
-        incus.interactiveShell(name, "agentuser", shellPrep, menu);
-        return CommandResult.SUCCESS;
+        return new Created(resolvedSource, preflight, prefetched);
     }
 
     private String resolveSource() {

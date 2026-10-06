@@ -26,6 +26,7 @@ import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.vm.VmAgentClient;
 import dev.incusspawn.vm.VmManager;
 import dev.incusspawn.Platform;
@@ -75,6 +76,10 @@ public class DoctorCommand extends BaseCommand {
             description = "Run per-instance checks (DNS, TLS, resolv.conf)")
     boolean deep;
 
+    // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+    @Option(name = "format", description = "Output format: table (default), plain or json")
+    String format;
+
     /**
      * {@code NOTE} states a fact that is neither healthy nor broken -- something the user may
      * want to know about their setup, but which nothing is waiting on. It is deliberately not a
@@ -102,6 +107,14 @@ public class DoctorCommand extends BaseCommand {
 
     @Override
     protected CommandResult doExecute() throws Exception {
+        var outputFormat = OutputFormat.parse(format);
+        if (outputFormat != OutputFormat.TABLE) {
+            if (bundle) throw new IllegalArgumentException("--bundle writes an archive; it cannot be combined with --format");
+            // Only the findings: no remediation is offered or applied, and the exit code is the same.
+            var findings = withStdoutOnStderr(() -> Platform.isLinux() ? runLinuxChecks() : runMacChecks());
+            outputFormat.print(System.out, findingRecords(findings));
+            return exitFor(findings);
+        }
         System.out.println("Running incus-spawn doctor...\n");
 
         var findings = Platform.isLinux() ? runLinuxChecks() : runMacChecks();
@@ -1590,6 +1603,39 @@ public class DoctorCommand extends BaseCommand {
             sb.append(f.status().symbol).append(" ").append(f.label()).append(detail).append("\n");
         }
         return sb.toString();
+    }
+
+    /**
+     * The fields of {@code isx doctor --format=plain|json}, in order: add to the end, never
+     * rename. {@code level} is {@code ok}, {@code note}, {@code warn} or {@code fail}, and
+     * {@code remediation} what would fix it, when something can.
+     */
+    static List<Map<String, Object>> findingRecords(List<Finding> findings) {
+        var records = new ArrayList<Map<String, Object>>();
+        for (var f : findings) {
+            var record = new LinkedHashMap<String, Object>();
+            record.put("level", f.status().name().toLowerCase(java.util.Locale.ROOT));
+            record.put("label", f.label());
+            record.put("detail", recordDetail(f.detail()));
+            record.put("remediation", f.remediation() == null ? null : f.remediation().description());
+            records.add(record);
+        }
+        return records;
+    }
+
+    /**
+     * A finding's detail for {@code --format}: free text for people, so a script keys on
+     * {@code level} and {@code label}. The parentheses the table wraps a whole detail in are
+     * dropped; anything else is kept as written.
+     */
+    static String recordDetail(String detail) {
+        if (detail == null || detail.isBlank()) return null;
+        var d = detail.strip();
+        if (d.length() >= 2 && d.charAt(0) == '(' && d.charAt(d.length() - 1) == ')'
+                && d.indexOf(')') == d.length() - 1) {
+            d = d.substring(1, d.length() - 1).strip();
+        }
+        return d.isEmpty() ? null : d;
     }
 
     static String findingsToJson(List<Finding> findings) {

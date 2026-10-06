@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.TemplateValidator;
+import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -12,7 +13,9 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @CommandDefinition(
         name = "templates",
@@ -26,9 +29,15 @@ import java.util.List;
 )
 public class TemplatesCommand extends BaseCommand {
 
+    // Bare, the command is its list, so it takes list's --format.
+    @Option(name = "format", description = "Output format: table (default), plain or json")
+    String format;
+
     @Override
     protected CommandResult doExecute() throws Exception {
-        return new ListSub().doExecute();
+        var list = new ListSub();
+        list.format = format;
+        return list.doExecute();
     }
 
     // ── list ────────────────────────────────────────────────────────────────────
@@ -41,9 +50,18 @@ public class TemplatesCommand extends BaseCommand {
                 hasValue = false)
         boolean verbose;
 
+        // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+        @Option(name = "format", description = "Output format: table (default), plain or json")
+        String format;
+
         @Override
         protected CommandResult doExecute() throws Exception {
+            var outputFormat = OutputFormat.parse(format);
             var defs = ImageDef.loadAll();
+            if (outputFormat != OutputFormat.TABLE) {
+                outputFormat.print(System.out, records(defs));
+                return CommandResult.SUCCESS;
+            }
             if (!verbose) {
                 defs.keySet().forEach(System.out::println);
                 return CommandResult.SUCCESS;
@@ -57,6 +75,20 @@ public class TemplatesCommand extends BaseCommand {
                 System.out.printf(fmt, entry.getKey(), def.getSource(), def.getDescription());
             }
             return CommandResult.SUCCESS;
+        }
+
+        /** The fields of {@code isx templates --format=plain|json}, in order: add to the end, never rename. */
+        static List<Map<String, Object>> records(Map<String, ImageDef> defs) {
+            var records = new ArrayList<Map<String, Object>>();
+            defs.forEach((name, def) -> {
+                var record = new LinkedHashMap<String, Object>();
+                record.put("name", name);
+                record.put("parent", def.getParent());
+                record.put("source", def.getSource());
+                record.put("description", def.getDescription());
+                records.add(record);
+            });
+            return records;
         }
     }
 

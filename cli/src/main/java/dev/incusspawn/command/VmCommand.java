@@ -6,6 +6,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.vm.VmManager;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -16,7 +17,9 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 // Registered only on macOS (see IncusSpawn): the appliance VM hosts the Incus daemon there,
 // whereas on Linux Incus runs natively and there is no VM to manage — so `isx vm` does not
@@ -106,8 +109,20 @@ public class VmCommand extends BaseCommand {
             generateHelp = true
     )
     public static class Status extends BaseCommand {
+
+        // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+        @Option(name = "format", description = "Output format: table (default), plain or json")
+        String format;
+
         @Override
         protected CommandResult doExecute() throws Exception {
+            var outputFormat = OutputFormat.parse(format);
+            if (outputFormat != OutputFormat.TABLE) {
+                var state = VmManager.state();
+                var connError = RuntimeServices.incus().checkConnectivity();
+                outputFormat.printOne(System.out, record(state, connError));
+                return CommandResult.valueOf(exitCode(connError));
+            }
             return CommandResult.valueOf(report(VmManager.status(), RuntimeServices.incus(), System.out, System.err));
         }
 
@@ -117,13 +132,42 @@ public class VmCommand extends BaseCommand {
             var connError = incus.checkConnectivity();
             if (connError != null) {
                 err.println("\nIncus not reachable: " + connError);
-                return 1;
+                return exitCode(connError);
             }
             var pool = incus.findCowPool();
             out.println();
             out.println(incus.getSystemDiagnostics(pool));
             out.println("  (full VM log at " + Environment.vmLogFile() + ")");
-            return 0;
+            return exitCode(connError);
+        }
+
+        /** The exit code of every format: 1 when Incus did not answer ({@code incusError} says why), else 0. */
+        static int exitCode(String incusError) {
+            return incusError == null ? 0 : 1;
+        }
+
+        /**
+         * The fields of {@code isx vm status --format=plain|json}, in order: add to the end, never
+         * rename. What the VM does not report is {@code null}; {@code appliance_pending} is the
+         * installed appliance a restart would apply, {@code null} when it is the one running;
+         * {@code incus_error} says why Incus did not answer, which also makes the command exit 1;
+         * {@code vsock_connections_high} is the table's warning that the in-VM forwarder may be
+         * leaking streams ({@code isx vm restart} clears them).
+         */
+        static Map<String, Object> record(VmManager.State state, String incusError) {
+            var record = new LinkedHashMap<String, Object>();
+            record.put("running", state.running());
+            record.put("pid", state.pid() < 0 ? null : state.pid());
+            record.put("rest_api", state.restApi());
+            record.put("log", state.log());
+            record.put("appliance", state.appliance());
+            record.put("appliance_pending", state.applianceInstalled());
+            record.put("vsock_connections", state.vsockConnections() < 0 ? null : state.vsockConnections());
+            record.put("incus_reachable", incusError == null);
+            record.put("incus_error", incusError);
+            record.put("vsock_connections_high", state.vsockConnections() < 0 ? null
+                    : state.vsockConnections() > VmManager.VSOCK_CONN_WARN_THRESHOLD);
+            return record;
         }
     }
 

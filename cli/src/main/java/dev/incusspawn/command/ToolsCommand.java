@@ -3,11 +3,16 @@ package dev.incusspawn.command;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolSetup;
+import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.TreeMap;
 
 @CommandDefinition(
@@ -21,9 +26,15 @@ import java.util.TreeMap;
 )
 public class ToolsCommand extends BaseCommand {
 
+    // Bare, the command is its list, so it takes list's --format.
+    @Option(name = "format", description = "Output format: table (default), plain or json")
+    String format;
+
     @Override
     protected CommandResult doExecute() throws Exception {
-        return new ListSub().doExecute();
+        var list = new ListSub();
+        list.format = format;
+        return list.doExecute();
     }
 
     // ── list ────────────────────────────────────────────────────────────────────
@@ -36,10 +47,19 @@ public class ToolsCommand extends BaseCommand {
                 hasValue = false)
         boolean verbose;
 
+        // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+        @Option(name = "format", description = "Output format: table (default), plain or json")
+        String format;
+
         @Override
         protected CommandResult doExecute() throws Exception {
+            var outputFormat = OutputFormat.parse(format);
             var loader = RuntimeServices.toolDefLoader();
             var tools = new TreeMap<>(loader.allToolSetups());
+            if (outputFormat != OutputFormat.TABLE) {
+                outputFormat.print(System.out, records(tools, loader::getSource));
+                return CommandResult.SUCCESS;
+            }
             if (!verbose) {
                 tools.keySet().forEach(System.out::println);
                 return CommandResult.SUCCESS;
@@ -56,6 +76,20 @@ public class ToolsCommand extends BaseCommand {
             }
             return CommandResult.SUCCESS;
         }
+
+        /** The fields of {@code isx tools list --format=plain|json}, in order: add to the end, never rename. */
+        static List<Map<String, Object>> records(Map<String, ToolSetup> tools,
+                                                 java.util.function.UnaryOperator<String> sourceOf) {
+            var records = new ArrayList<Map<String, Object>>();
+            tools.forEach((name, tool) -> {
+                var record = new LinkedHashMap<String, Object>();
+                record.put("name", name);
+                record.put("source", sourceOf.apply(name));
+                record.put("description", tool.description());
+                records.add(record);
+            });
+            return records;
+        }
     }
 
     // ── show ────────────────────────────────────────────────────────────────────
@@ -67,8 +101,13 @@ public class ToolsCommand extends BaseCommand {
         @Argument(required = true, description = "Tool name")
         String name;
 
+        // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+        @Option(name = "format", description = "Output format: table (default), plain or json")
+        String format;
+
         @Override
         protected CommandResult doExecute() throws Exception {
+            var outputFormat = OutputFormat.parse(format);
             var loader = RuntimeServices.toolDefLoader();
             var tools = loader.allToolSetups();
             var tool = tools.get(name);
@@ -77,6 +116,10 @@ public class ToolsCommand extends BaseCommand {
                 System.err.println("Available tools: " + String.join(", ",
                         new TreeMap<>(tools).keySet()));
                 return CommandResult.valueOf(1);
+            }
+            if (outputFormat != OutputFormat.TABLE) {
+                outputFormat.printOne(System.out, record(tool, loader.getSource(name)));
+                return CommandResult.SUCCESS;
             }
 
             System.out.println(tool.name());
@@ -94,6 +137,34 @@ public class ToolsCommand extends BaseCommand {
             printProxy(tool);
 
             return CommandResult.SUCCESS;
+        }
+
+        /**
+         * The fields of {@code isx tools show --format=plain|json}, in order: add to the end,
+         * never rename. Lists name what the table details; {@code proxy_domains} are the
+         * domains whose credentials the proxy injects for the tool.
+         */
+        static Map<String, Object> record(ToolSetup tool, String source) {
+            var record = new LinkedHashMap<String, Object>();
+            record.put("name", tool.name());
+            record.put("description", tool.description());
+            record.put("source", source);
+            record.put("feature", tool.feature());
+            record.put("requires", List.copyOf(tool.requires()));
+            record.put("packages", List.copyOf(tool.packages()));
+            record.put("parameters", List.copyOf(tool.parameters().keySet()));
+            record.put("actions", tool.actions().stream().map(a -> a.getLabel()).toList());
+            record.put("downloads", tool instanceof YamlToolSetup yaml
+                    ? yaml.toolDef().getDownloads().stream().map(d -> d.getUrl()).toList() : List.of());
+            var domains = new ArrayList<String>();
+            var proxy = tool.proxy();
+            if (proxy != null && proxy.getAuth() != null) {
+                for (var auth : proxy.getAuth()) {
+                    if (auth.getDomains() != null) domains.addAll(auth.getDomains());
+                }
+            }
+            record.put("proxy_domains", domains);
+            return record;
         }
 
         private static void printRequires(ToolSetup tool) {

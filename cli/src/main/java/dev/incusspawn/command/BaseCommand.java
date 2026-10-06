@@ -7,6 +7,7 @@ import org.aesh.command.invocation.CommandInvocation;
 
 import java.io.Console;
 import java.io.PrintStream;
+import java.util.concurrent.Callable;
 
 public abstract class BaseCommand implements Command<CommandInvocation> {
 
@@ -33,6 +34,21 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
 
     protected CommandResult doExecute() throws Exception {
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * Run {@code work} with {@code System.out} pointed at stderr, for a command printing in a
+     * machine format (#1036): stdout holds only its results, so the progress and notes printed
+     * on the way there go to stderr.
+     */
+    protected static <T> T withStdoutOnStderr(Callable<T> work) throws Exception {
+        var out = System.out;
+        System.setOut(System.err);
+        try {
+            return work.call();
+        } finally {
+            System.setOut(out);
+        }
     }
 
     /**

@@ -422,8 +422,7 @@ public class ListCommand extends BaseCommand {
             return;
         }
         switch (outputFormat) {
-            case PLAIN -> OutputFormat.printPlain(out, listingRecords(instances, zone));
-            case JSON -> OutputFormat.printJson(out, listingRecords(instances, zone));
+            case PLAIN, JSON -> outputFormat.print(out, listingRecords(instances, zone));
             case TABLE -> {
                 if (all.isEmpty()) {
                     out.println("No incus-spawn environments found.");

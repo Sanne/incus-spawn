@@ -52,7 +52,22 @@ class ExitCodeTest {
                 {"unknown format 'yaml'", "list", "--format=yaml"},
                 {"unknown status 'frozen'", "list", "--status=frozen"},
                 {"--quiet prints names only", "list", "-q", "--format=json"},
-                {"--plain is --format=plain", "list", "--plain", "--format=json"}};
+                {"--plain is --format=plain", "list", "--plain", "--format=json"},
+                // Every command that takes --format rejects a value it does not know alike.
+                {"unknown format 'yaml'", "templates", "--format=yaml"},
+                {"unknown format 'yaml'", "templates", "list", "--format=yaml"},
+                {"unknown format 'yaml'", "tools", "--format=yaml"},
+                {"unknown format 'yaml'", "tools", "list", "--format=yaml"},
+                {"unknown format 'yaml'", "tools", "show", "git", "--format=yaml"},
+                {"unknown format 'yaml'", "account", "--format=yaml"},
+                {"unknown format 'yaml'", "account", "list", "--format=yaml"},
+                {"unknown format 'yaml'", "account", "show", "dev-1", "--format=yaml"},
+                {"unknown format 'yaml'", "proxy", "status", "--format=yaml"},
+                {"unknown format 'yaml'", "doctor", "--format=yaml"},
+                {"unknown format 'yaml'", "update-base", "--list", "--format=yaml"},
+                {"unknown format 'yaml'", "branch", "dev-2", "--format=yaml"},
+                {"--bundle writes an archive", "doctor", "--bundle", "--format=json"},
+                {"--format applies to --list only", "update-base", "--format=json"}};
         for (var c : cases) {
             var args = Arrays.copyOfRange(c, 1, c.length);
             var run = isx(args);

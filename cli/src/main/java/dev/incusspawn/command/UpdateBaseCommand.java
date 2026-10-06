@@ -5,6 +5,7 @@ import dev.incusspawn.baseimage.BaseImageReleases.Checksums;
 import dev.incusspawn.baseimage.BaseImageReleases.Release;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -13,6 +14,7 @@ import org.aesh.command.option.Option;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -34,8 +36,16 @@ public class UpdateBaseCommand extends BaseCommand {
     @Option(name = "latest", hasValue = false, description = "Track the latest version (remove any pin)")
     boolean useLatest;
 
+    // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+    @Option(name = "format", description = "Output format of --list: table (default), plain or json")
+    String format;
+
     @Override
     protected CommandResult doExecute() throws Exception {
+        var outputFormat = OutputFormat.parse(format);
+        if (outputFormat != OutputFormat.TABLE && !listOnly) {
+            throw new IllegalArgumentException("--format applies to --list only");
+        }
         var defs = ImageDef.loadAll();
         var minimal = defs.get("tpl-minimal");
         if (minimal == null) {
@@ -47,6 +57,18 @@ public class UpdateBaseCommand extends BaseCommand {
         if (releases == null) {
             System.err.println("Template tpl-minimal has no trackable GitHub base image URL.");
             return CommandResult.valueOf(1);
+        }
+
+        if (outputFormat != OutputFormat.TABLE) {
+            List<Release> available;
+            try {
+                available = releases.fetchReleases();
+            } catch (IOException e) {
+                System.err.println("Failed to fetch releases: " + e.getMessage());
+                return CommandResult.valueOf(1);
+            }
+            outputFormat.print(System.out, releaseRecords(available, minimal.getImageTag(), minimal.isPinned()));
+            return CommandResult.SUCCESS;
         }
 
         BuildOutput.header("Checking for base image updates");
@@ -209,5 +231,25 @@ public class UpdateBaseCommand extends BaseCommand {
             var suffix = markers.isEmpty() ? "" : "  [" + String.join(", ", markers) + "]";
             System.out.println("  " + r.tag() + "  " + r.date() + suffix);
         }
+    }
+
+    /**
+     * The fields of {@code isx update-base --list --format=plain|json}, newest first, in order:
+     * add to the end, never rename. {@code date} is the release's ISO-8601 publication date;
+     * {@code pinned} marks the current release when it is pinned, so builds never move past it.
+     */
+    static List<Map<String, Object>> releaseRecords(List<Release> available, String currentTag, boolean pinned) {
+        var records = new ArrayList<Map<String, Object>>();
+        for (int i = 0; i < available.size(); i++) {
+            var r = available.get(i);
+            var record = new LinkedHashMap<String, Object>();
+            record.put("tag", r.tag());
+            record.put("date", r.date().isEmpty() ? null : r.date());
+            record.put("latest", i == 0);
+            record.put("current", r.tag().equals(currentTag));
+            record.put("pinned", pinned && r.tag().equals(currentTag));
+            records.add(record);
+        }
+        return records;
     }
 }

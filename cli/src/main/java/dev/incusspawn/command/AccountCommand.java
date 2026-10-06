@@ -11,10 +11,12 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.InstanceRegistry;
 import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.util.OutputFormat;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
 import org.aesh.command.option.Arguments;
+import org.aesh.command.option.Option;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -42,9 +44,15 @@ import java.util.Map;
 )
 public class AccountCommand extends BaseCommand {
 
+    // Bare, the command is its list, so it takes list's --format.
+    @Option(name = "format", description = "Output format: table (default), plain or json")
+    String format;
+
     @Override
     protected CommandResult doExecute() throws Exception {
-        return new ListSub().doExecute();
+        var list = new ListSub();
+        list.format = format;
+        return list.doExecute();
     }
 
     // ── list ────────────────────────────────────────────────────────────────────
@@ -54,25 +62,41 @@ public class AccountCommand extends BaseCommand {
             generateHelp = true)
     public static class ListSub extends BaseCommand {
 
+        // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+        @Option(name = "format", description = "Output format: table (default), plain or json")
+        String format;
+
         @Override
         protected CommandResult doExecute() throws Exception {
+            var outputFormat = OutputFormat.parse(format);
             var config = SpawnConfig.load();
             var setups = AccountSelection.namespaceSetups(config);
 
             // Which instances pin what. Listing accounts must not need Incus -- on a fresh host,
             // or with the daemon down, the configured accounts are still worth seeing.
             Map<String, InstanceRegistry.AccountState> states;
+            boolean pinsKnown = true;
             String pinsUnavailable = "";
             try {
                 states = InstanceRegistry.accountStates(RuntimeServices.incus());
             } catch (Exception e) {
                 states = Map.of();
-                pinsUnavailable = e.getMessage();
+                pinsKnown = false;
+                pinsUnavailable = e.getMessage() == null || e.getMessage().isBlank()
+                        ? e.getClass().getSimpleName() : e.getMessage();
             }
 
             var namespaces = new ArrayList<NamespaceListing>();
             for (var entry : setups.entrySet()) {
                 namespaces.add(listNamespace(config, entry.getKey(), entry.getValue(), states));
+            }
+            if (outputFormat != OutputFormat.TABLE) {
+                // Unknown pins print as null, never as "pinned by nobody"; the reason goes to stderr.
+                if (!pinsKnown) {
+                    System.err.println("Could not read which instances use each account: " + pinsUnavailable);
+                }
+                outputFormat.print(System.out, listRecords(namespaces, pinsKnown));
+                return CommandResult.SUCCESS;
             }
             renderList(namespaces, pinsUnavailable).forEach(System.out::println);
             return CommandResult.SUCCESS;
@@ -130,6 +154,39 @@ public class AccountCommand extends BaseCommand {
         return new NamespaceListing(namespace, lines, dangling);
     }
 
+    /**
+     * The fields of {@code isx account list --format=plain|json}, in order: add to the end, never
+     * rename. One record per account, and one per account a pin names but the config lacks
+     * ({@code problem} {@code not-configured}); {@code pinned_by} and {@code following} are
+     * {@code null} when the instances could not be read.
+     */
+    static List<Map<String, Object>> listRecords(List<NamespaceListing> namespaces, boolean pinsKnown) {
+        var records = new ArrayList<Map<String, Object>>();
+        for (var ns : namespaces) {
+            for (var a : ns.accounts()) {
+                records.add(accountRecord(ns.namespace(), a.name(), a.description(), a.isDefault(),
+                        a.problem(), pinsKnown ? a.pinnedBy() : null, pinsKnown ? a.following() : null));
+            }
+            ns.danglingPins().forEach((account, instances) -> records.add(accountRecord(
+                    ns.namespace(), account, "", false, "not-configured", instances, List.of())));
+        }
+        return records;
+    }
+
+    private static Map<String, Object> accountRecord(String namespace, String account, String description,
+                                                     boolean isDefault, String problem,
+                                                     List<String> pinnedBy, List<String> following) {
+        var record = new LinkedHashMap<String, Object>();
+        record.put("namespace", namespace);
+        record.put("account", account);
+        record.put("description", description.isEmpty() ? null : description);
+        record.put("default", isDefault);
+        record.put("problem", problem.isEmpty() ? null : problem);
+        record.put("pinned_by", pinnedBy);
+        record.put("following", following);
+        return record;
+    }
+
     static List<String> renderList(List<NamespaceListing> namespaces, String pinsUnavailable) {
         var out = new ArrayList<String>();
         for (var ns : namespaces) {
@@ -178,8 +235,13 @@ public class AccountCommand extends BaseCommand {
         @Argument(description = "Instance name", required = true)
         String instance;
 
+        // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+        @Option(name = "format", description = "Output format: table (default), plain or json")
+        String format;
+
         @Override
         protected CommandResult doExecute() throws Exception {
+            var outputFormat = OutputFormat.parse(format);
             var incus = RuntimeServices.incus();
             if (!incus.exists(instance)) {
                 System.err.println("Error: no instance named '" + instance + "' found.");
@@ -194,7 +256,12 @@ public class AccountCommand extends BaseCommand {
             var uses = AccountUsage.of(config, setups, pins,
                     AccountSelection.originsFromMetadata(metadata), templateAccounts(template), instance,
                     subMap(metadata, Metadata.ACCOUNT_IDENTITY_PREFIX));
-            renderShow(instance, template, uses, pendingIdentityRefresh(config, incus, instance, uses))
+            var staleIdentities = pendingIdentityRefresh(config, incus, instance, uses);
+            if (outputFormat != OutputFormat.TABLE) {
+                outputFormat.print(System.out, showRecords(template, uses, staleIdentities));
+                return CommandResult.SUCCESS;
+            }
+            renderShow(instance, template, uses, staleIdentities)
                     .forEach(System.out::println);
             return CommandResult.SUCCESS;
         }
@@ -245,6 +312,42 @@ public class AccountCommand extends BaseCommand {
         } catch (Exception e) {
             return Map.of();
         }
+    }
+
+    /**
+     * The fields of {@code isx account show --format=plain|json}, in order: add to the end, never
+     * rename. One record per namespace. {@code chosen_by} is who pinned the account
+     * ({@code template}, {@code explicit}, {@code copied}, {@code unknown}), or {@code default}
+     * when it follows the global default; {@code chosen_in} names the template or instance it
+     * came from. {@code problem} is why requests using it fail, or are refused.
+     * {@code identity_pending} is the git identity the instance takes on its next start or shell,
+     * when it differs from the one inside. {@code template_problem} is why the template's own
+     * choice cannot be used (it names an account that is not configured), which fails a branch
+     * from it.
+     */
+    static List<Map<String, Object>> showRecords(String template, List<AccountUsage.Use> uses,
+                                                 Map<String, String> staleIdentities) {
+        var records = new ArrayList<Map<String, Object>>();
+        for (var use : uses) {
+            var record = new LinkedHashMap<String, Object>();
+            record.put("namespace", use.namespace());
+            record.put("account", emptyToNull(use.account()));
+            record.put("description", emptyToNull(use.description()));
+            record.put("chosen_by", use.pinned()
+                    ? use.origin().kind().name().toLowerCase(java.util.Locale.ROOT) : "default");
+            record.put("chosen_in", use.pinned() ? emptyToNull(use.origin().source()) : null);
+            record.put("template", template);
+            record.put("template_account", emptyToNull(use.templateAccount()));
+            record.put("problem", emptyToNull(use.problem().isEmpty() ? use.refusal() : use.problem()));
+            record.put("identity_pending", staleIdentities.get(use.namespace()));
+            record.put("template_problem", emptyToNull(use.templateProblem()));
+            records.add(record);
+        }
+        return records;
+    }
+
+    private static String emptyToNull(String s) {
+        return s == null || s.isEmpty() ? null : s;
     }
 
     static List<String> renderShow(String instance, String template, List<AccountUsage.Use> uses,
