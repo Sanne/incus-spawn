@@ -156,13 +156,13 @@ public final class GuiPassthrough {
         var waylandDisplay = System.getenv("WAYLAND_DISPLAY");
         var xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
         if (waylandDisplay == null || xdgRuntimeDir == null) {
-            System.err.println("\033[33mWarning: GUI passthrough is enabled but no Wayland session detected.\033[0m");
+            System.err.println(BuildOutput.styled(BuildOutput.YELLOW, "Warning: GUI passthrough is enabled but no Wayland session detected."));
             System.err.println("GUI applications will not work in this session.");
             return;
         }
         var socket = xdgRuntimeDir + "/" + waylandDisplay;
         if (!java.nio.file.Files.exists(java.nio.file.Path.of(socket))) {
-            System.err.println("\033[33mWarning: GUI passthrough is enabled but Wayland socket not found.\033[0m");
+            System.err.println(BuildOutput.styled(BuildOutput.YELLOW, "Warning: GUI passthrough is enabled but Wayland socket not found."));
             System.err.println("GUI applications may not work. Try re-branching with --gui.");
         }
     }

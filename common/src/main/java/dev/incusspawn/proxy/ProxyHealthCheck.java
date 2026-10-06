@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.BuildOutput;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.BuildInfo;
@@ -355,47 +356,51 @@ public final class ProxyHealthCheck {
     }
 
     public static String formatError(ProxyStatus status) {
-        var separator = "\033[33m" + "─".repeat(60) + "\033[0m";
+        var separator = BuildOutput.styled(BuildOutput.YELLOW, "─".repeat(60));
         return switch (status) {
             case STALE_DNS -> separator + "\n"
-                    + "\033[1mThe MITM proxy is not running, but DNS overrides are\n"
-                    + "still active from a previous session.\033[0m\n\n"
+                    + bold("The MITM proxy is not running, but DNS overrides are\n"
+                    + "still active from a previous session.") + "\n\n"
                     + "Intercepted domains (Maven repos, GitHub, Docker registries)\n"
                     + "are resolving to the gateway where nothing is listening.\n\n"
                     + "Start the proxy to restore connectivity:\n"
-                    + "  \033[1misx proxy start\033[0m\n\n"
+                    + "  " + bold("isx proxy start") + "\n\n"
                     + "Then re-run this command.\n"
                     + separator;
             case STALE_GATEWAY -> separator + "\n"
-                    + "\033[1mThe MITM proxy is running, but on an old address of\n"
-                    + "the Incus bridge.\033[0m\n\n"
+                    + bold("The MITM proxy is running, but on an old address of\n"
+                    + "the Incus bridge.") + "\n\n"
                     + "The address of incusbr0 changed after the proxy started, so\n"
                     + "intercepted domains resolve to an address nothing answers on.\n\n"
                     + "Restart the proxy so it binds the bridge's current address:\n"
-                    + "  \033[1misx proxy stop && isx proxy start\033[0m\n\n"
+                    + "  " + bold("isx proxy stop && isx proxy start") + "\n\n"
                     + "Then re-run this command.\n"
                     + separator;
             case NOT_RUNNING -> separator + "\n"
-                    + "\033[1mThe MITM proxy is not running.\033[0m\n\n"
+                    + bold("The MITM proxy is not running.") + "\n\n"
                     + "The proxy provides authentication for Claude, GitHub,\n"
                     + "and caches Maven/Docker artifacts during builds.\n\n"
                     + "Start it in a separate terminal:\n"
-                    + "  \033[1misx proxy start\033[0m\n\n"
+                    + "  " + bold("isx proxy start") + "\n\n"
                     + "Or install it as a service (auto-starts on boot):\n"
-                    + "  \033[1misx init\033[0m\n\n"
+                    + "  " + bold("isx init") + "\n\n"
                     + "Then re-run this command.\n"
                     + separator;
             case WAITING_FOR_DNS -> separator + "\n"
-                    + "\033[1mThe MITM proxy is running but DNS overrides are not\n"
-                    + "yet configured.\033[0m\n\n"
+                    + bold("The MITM proxy is running but DNS overrides are not\n"
+                    + "yet configured.") + "\n\n"
                     + "The proxy is waiting for the VM to become reachable so it\n"
                     + "can configure bridge DNS. Containers cannot reach intercepted\n"
                     + "domains until this completes.\n\n"
-                    + "Check VM status:  \033[1misx vm status\033[0m\n"
-                    + "Proxy status:     \033[1misx proxy status\033[0m\n"
+                    + "Check VM status:  " + bold("isx vm status") + "\n"
+                    + "Proxy status:     " + bold("isx proxy status") + "\n"
                     + separator;
             case RUNNING -> "";
         };
+    }
+
+    private static String bold(String text) {
+        return BuildOutput.styled(BuildOutput.BOLD, text);
     }
 
     public static void requireProxy(IncusClient incus) {
@@ -511,9 +516,10 @@ public final class ProxyHealthCheck {
             var info = fetchProxyInfo(healthAddress(incus));
             var report = assessDrift(info);
             if (report.isEmpty()) return;
-            var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
+            var sep = BuildOutput.styled(BuildOutput.YELLOW, "─".repeat(60));
             System.err.println(sep);
-            System.err.println("\033[1;33mProxy drift detected:\033[0m " + String.join(" ", report.drifts()));
+            System.err.println(BuildOutput.styled(BuildOutput.BOLD + BuildOutput.YELLOW, "Proxy drift detected:")
+                    + " " + String.join(" ", report.drifts()));
             if (ProxyService.isActive()) {
                 if (report.futileReason() != null) {
                     System.err.println(report.futileReason());
@@ -524,7 +530,7 @@ public final class ProxyHealthCheck {
                 }
             } else {
                 System.err.println("Restart the proxy to pick up changes:");
-                System.err.println("  \033[1misx proxy stop && isx proxy start\033[0m");
+                System.err.println("  " + bold("isx proxy stop && isx proxy start"));
                 if (!info.configDrifted()) {
                     // A foreground proxy leaves no record of what it runs, so this cannot tell
                     // whether a restart would help; say what to do if it does not.

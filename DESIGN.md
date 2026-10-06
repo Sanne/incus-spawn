@@ -529,6 +529,11 @@ result, such as `clean --dry-run`'s "Would delete ...", is a step, not a note. A
 report is its result whatever it says: `isx proxy status` prints it on stdout in every state and
 tells them apart by exit code (1 not running, 2 stale DNS overrides, 3 stale bridge address), and
 `isx vm status` exits 1, the reason on stderr, when Incus is unreachable.
+Every other styled line (`isx init`, the proxy banners, build failure reports) goes through the
+same `BuildOutput.styled()` (#1082); only what is drawn on a terminal alone (live steps,
+`TerminalProgress` formatters, the shell status bar) writes escapes directly, and
+`AnsiEscapeGateTest` fails on a raw colour literal anywhere else. A styled string is never a
+`static final`: it would be decided when the native image is built.
 `BuildOutputTest` and `StatusCommandOutputTest` pin these.
 
 **Not yet covered**: the other query commands (`templates`, `tools`, `account`, `proxy status`,

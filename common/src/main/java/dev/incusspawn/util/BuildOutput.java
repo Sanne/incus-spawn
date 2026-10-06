@@ -35,7 +35,7 @@ public final class BuildOutput {
     public static final String GREEN = "\033[32m";
     public static final String YELLOW = "\033[33m";
     public static final String CYAN = "\033[36m";
-    private static final String RESET = "\033[0m";
+    public static final String RESET = "\033[0m";
 
     /** Green check that marks a finished step. */
     public static final String CHECK = GREEN + "✓" + RESET;

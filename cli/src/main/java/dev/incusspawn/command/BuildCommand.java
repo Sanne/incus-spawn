@@ -78,6 +78,11 @@ import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import static dev.incusspawn.util.BuildOutput.BOLD;
+import static dev.incusspawn.util.BuildOutput.RED;
+import static dev.incusspawn.util.BuildOutput.YELLOW;
+import static dev.incusspawn.util.BuildOutput.styled;
+
 
 @CommandDefinition(
         name = "build",
@@ -436,8 +441,8 @@ public class BuildCommand extends BaseCommand {
         }
 
         if (!failedBuilds.isEmpty()) {
-            System.err.println("\n\033[1;31mSome templates failed to build: " +
-                    String.join(", ", failedBuilds) + "\033[0m");
+            System.err.println("\n" + styled(BOLD + RED, "Some templates failed to build: "
+                    + String.join(", ", failedBuilds)));
             throw new BuildFailedException();
         }
     }
@@ -907,9 +912,9 @@ public class BuildCommand extends BaseCommand {
                         var hint = Platform.isMacOS()
                                 ? " or 'isx vm resize' to grow the appliance disk"
                                 : "";
-                        appendDiag(diag, "  \033[1mLikely cause: storage pool is "
+                        appendDiag(diag, "  " + styled(BOLD, "Likely cause: storage pool is "
                                 + poolUsage.percent() + "% full"
-                                + " — run 'isx clean pool' to reclaim space" + hint + "\033[0m");
+                                + " — run 'isx clean pool' to reclaim space" + hint));
                     }
                 }
             }
@@ -998,8 +1003,8 @@ public class BuildCommand extends BaseCommand {
             var hint = savedHostReport
                     ? " — see " + Environment.buildFailureLogFile(canonicalName)
                     : (savedFailureSummary ? " — see ~/inbox/BUILD_FAILURE.txt inside the instance" : "");
-            System.err.println("\033[1mContainer promoted to instance '" + promotedName
-                    + "' for inspection" + hint + ".\033[0m");
+            System.err.println(styled(BOLD, "Container promoted to instance '" + promotedName
+                    + "' for inspection" + hint + "."));
         } catch (Exception promoteError) {
             System.err.println("Failed to promote container: " + promoteError.getMessage());
             System.err.println("Container '" + buildName + "' may still exist for manual cleanup.");
@@ -1007,8 +1012,8 @@ public class BuildCommand extends BaseCommand {
     }
 
     void reportBuildFailure(String buildName, String canonicalName, String errorLine) {
-        System.err.println("\n\033[33m" + "─".repeat(60) + "\033[0m");
-        System.err.println("\033[1m" + errorLine + "\033[0m");
+        System.err.println("\n" + styled(YELLOW, "─".repeat(60)));
+        System.err.println(styled(BOLD, errorLine));
 
         // Resolve the host log path first; the path-traversal guard in buildFailureLogFile can
         // throw for a malformed template name, and that must not abort failure handling.
@@ -2535,9 +2540,9 @@ public class BuildCommand extends BaseCommand {
         if (progress != null && progress.state() == StepState.DONE) return;
 
         if (progress != null && progress.log() != null && !progress.log().isBlank()) {
-            System.err.println("\033[1m─── output: " + label + " ───\033[0m");
+            System.err.println(styled(BOLD, "─── output: " + label + " ───"));
             System.err.println(progress.log().strip());
-            System.err.println("\033[1m─── end output: " + label + " ───\033[0m");
+            System.err.println(styled(BOLD, "─── end output: " + label + " ───"));
         }
         var detail = progress != null && progress.detail() != null && !progress.detail().isEmpty()
                 ? ": " + progress.detail() : "";
@@ -3719,9 +3724,9 @@ public class BuildCommand extends BaseCommand {
             // concise inline line. Done here, after the animated batch, to avoid
             // interleaving multi-line logs with the live progress display.
             if (progress != null && progress.log() != null && !progress.log().isBlank()) {
-                System.err.println("\033[1m─── " + verb + " output: " + name + " ───\033[0m");
+                System.err.println(styled(BOLD, "─── " + verb + " output: " + name + " ───"));
                 System.err.println(progress.log().strip());
-                System.err.println("\033[1m─── end " + verb + " output: " + name + " ───\033[0m");
+                System.err.println(styled(BOLD, "─── end " + verb + " output: " + name + " ───"));
             }
         }
         if (!errors.isEmpty()) {

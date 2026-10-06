@@ -21,8 +21,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 )
 public class AskCommand extends BaseCommand {
 
-    private static final String DIM = "\033[2m";
-    private static final String RESET = "\033[0m";
 
     @Arguments(description = "Your question about incus-spawn")
     List<String> questionWords;
@@ -64,8 +62,8 @@ public class AskCommand extends BaseCommand {
                 var frames = TerminalProgress.SPINNER;
                 int i = 0;
                 while (spinning.get()) {
-                    System.err.print("\r" + BuildOutput.STEP_INDENT + DIM
-                            + frames[i % frames.length] + " " + label + RESET + "  ");
+                    System.err.print("\r" + BuildOutput.STEP_INDENT + BuildOutput.DIM
+                            + frames[i % frames.length] + " " + label + BuildOutput.RESET + "  ");
                     System.err.flush();
                     i++;
                     try { Thread.sleep(80); } catch (InterruptedException e) { break; }
@@ -80,7 +78,7 @@ public class AskCommand extends BaseCommand {
                 spinning.set(false);
                 if (ansi) {
                     System.err.print("\r\033[2K" + BuildOutput.STEP_INDENT
-                            + DIM + "✓ " + label + RESET + "\n");
+                            + BuildOutput.DIM + "✓ " + label + BuildOutput.RESET + "\n");
                 }
                 System.err.println();
             }

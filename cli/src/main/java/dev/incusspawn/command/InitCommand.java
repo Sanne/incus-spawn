@@ -54,6 +54,15 @@ import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import static dev.incusspawn.util.BuildOutput.BOLD;
+import static dev.incusspawn.util.BuildOutput.CYAN;
+import static dev.incusspawn.util.BuildOutput.DIM;
+import static dev.incusspawn.util.BuildOutput.GREEN;
+import static dev.incusspawn.util.BuildOutput.RED;
+import static dev.incusspawn.util.BuildOutput.YELLOW;
+import static dev.incusspawn.util.BuildOutput.stripAnsi;
+import static dev.incusspawn.util.BuildOutput.styled;
+
 @CommandDefinition(
         name = "init",
         description = "One-time host setup: install Incus, configure auth, test connectivity",
@@ -66,16 +75,13 @@ public class InitCommand extends BaseCommand {
     private IncusClient incus;
     private boolean useUfw;
 
-    private static final String CYAN = "\u001B[36m";
-    private static final String BOLD = "\u001B[1m";
-    private static final String DIM = "\u001B[2m";
-    private static final String GREEN_BOLD = "\u001B[1;32m";
-    private static final String RESET = "\u001B[0m";
     private static final int BOX_WIDTH = 62;
-    private static final Pattern ANSI_PATTERN = Pattern.compile("\u001B\\[[0-9;]*m");
     private static final String BORDER_H = "─".repeat(BOX_WIDTH);
-    private static final String TOP_BORDER = CYAN + "╭" + BORDER_H + "╮" + RESET;
-    private static final String BOT_BORDER = CYAN + "╰" + BORDER_H + "╯" + RESET;
+
+    // Methods, not constants: whether to style is known only at run time, and a static final
+    // would be decided when the native image is built.
+    private static String topBorder() { return styled(CYAN, "╭" + BORDER_H + "╮"); }
+    private static String bottomBorder() { return styled(CYAN, "╰" + BORDER_H + "╯"); }
 
     private static final String[] DNS_HINT = {
             "Configures the Incus bridge network so that containers",
@@ -107,25 +113,25 @@ public class InitCommand extends BaseCommand {
     }
 
     private static String pad(String s, int width) {
-        int vlen = ANSI_PATTERN.matcher(s).replaceAll("").length();
+        int vlen = stripAnsi(s).length();
         if (vlen >= width) return s;
         return s + " ".repeat(width - vlen);
     }
 
     private static String boxLine(String content) {
-        return CYAN + "│" + RESET + pad(content, BOX_WIDTH) + CYAN + "│" + RESET;
+        return styled(CYAN, "│") + pad(content, BOX_WIDTH) + styled(CYAN, "│");
     }
 
     private static void printBanner(String title, String subtitle, String info) {
         System.out.println();
-        System.out.println(TOP_BORDER);
+        System.out.println(topBorder());
         System.out.println(boxLine(""));
-        System.out.println(boxLine("   " + BOLD + title + RESET));
+        System.out.println(boxLine("   " + styled(BOLD, title)));
         System.out.println(boxLine("   " + subtitle));
         System.out.println(boxLine(""));
-        System.out.println(boxLine("   " + DIM + info + RESET));
+        System.out.println(boxLine("   " + styled(DIM, info)));
         System.out.println(boxLine(""));
-        System.out.println(BOT_BORDER);
+        System.out.println(bottomBorder());
         System.out.println();
     }
 
@@ -136,14 +142,14 @@ public class InitCommand extends BaseCommand {
         int gap = BOX_WIDTH - left.length() - right.length();
 
         System.out.println();
-        System.out.println(TOP_BORDER);
-        System.out.println(CYAN + "│" + RESET + BOLD + left + RESET
-                + " ".repeat(Math.max(1, gap)) + DIM + right + RESET + CYAN + "│" + RESET);
-        System.out.println(BOT_BORDER);
+        System.out.println(topBorder());
+        System.out.println(styled(CYAN, "│") + styled(BOLD, left)
+                + " ".repeat(Math.max(1, gap)) + styled(DIM, right) + styled(CYAN, "│"));
+        System.out.println(bottomBorder());
 
         if (hintLines.length > 0) {
             for (var line : hintLines) {
-                System.out.println(CYAN + "  ┃ " + RESET + DIM + line + RESET);
+                System.out.println(styled(CYAN, "  ┃ ") + styled(DIM, line));
             }
             System.out.println();
         }
@@ -151,13 +157,13 @@ public class InitCommand extends BaseCommand {
 
     private static void printCompletionBox(String... lines) {
         System.out.println();
-        System.out.println(TOP_BORDER);
+        System.out.println(topBorder());
         System.out.println(boxLine(""));
         for (var line : lines) {
             System.out.println(boxLine(line));
         }
         System.out.println(boxLine(""));
-        System.out.println(BOT_BORDER);
+        System.out.println(bottomBorder());
         System.out.println();
     }
 
@@ -172,7 +178,7 @@ public class InitCommand extends BaseCommand {
         if (hasBeenInitialized()) return true;
 
         System.out.println();
-        System.out.println("\u001B[1;33m  First-time setup required.\u001B[0m");
+        System.out.println(styled(BOLD + YELLOW, "  First-time setup required."));
         System.out.println("  Running 'isx init'...");
         System.out.println();
 
@@ -206,7 +212,7 @@ public class InitCommand extends BaseCommand {
         var os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
         if (!os.contains("linux")) {
             System.err.println();
-            System.err.println("\u001B[1;31m  incus-spawn requires Linux.\u001B[0m");
+            System.err.println(styled(BOLD + RED, "  incus-spawn requires Linux."));
             System.err.println();
             System.err.println("  Incus system containers require a Linux kernel.");
             System.err.println("  macOS and Windows support is planned but not yet available.");
@@ -232,7 +238,7 @@ public class InitCommand extends BaseCommand {
             return VmManager.ensureRunning();
         }
         System.err.println();
-        System.err.println("\u001B[1;31m  incus-spawn requires Linux or macOS.\u001B[0m");
+        System.err.println(styled(BOLD + RED, "  incus-spawn requires Linux or macOS."));
         System.err.println("  Detected OS: " + System.getProperty("os.name"));
         System.err.println();
         return false;
@@ -253,7 +259,7 @@ public class InitCommand extends BaseCommand {
                 "~3 minutes · some steps require sudo");
 
         System.out.println();
-        System.out.println("  Several steps need " + BOLD + "sudo" + RESET + " to install packages, configure");
+        System.out.println("  Several steps need " + styled(BOLD, "sudo") + " to install packages, configure");
         System.out.println("  the firewall, and set up user namespace mappings.");
         System.out.println();
         if (runHost("sudo", "-v") != 0) {
@@ -285,9 +291,9 @@ public class InitCommand extends BaseCommand {
                 ? "   2. Proxy is running as a systemd service"
                 : "   2. Start the auth proxy:  isx proxy start";
         printCompletionBox(
-                "   " + GREEN_BOLD + "✓" + RESET + BOLD + " Setup complete!" + RESET,
+                "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!"),
                 "",
-                "   " + BOLD + "Next steps:" + RESET,
+                "   " + styled(BOLD, "Next steps:"),
                 "   1. Build a template:      isx build tpl-java",
                 proxyStep,
                 "   3. Launch the TUI:        isx");
@@ -311,9 +317,9 @@ public class InitCommand extends BaseCommand {
                 }));
 
         printCompletionBox(
-                "   " + GREEN_BOLD + "✓" + RESET + BOLD + " Setup complete!" + RESET,
+                "   " + styled(BOLD + GREEN, "✓") + styled(BOLD, " Setup complete!"),
                 "",
-                "   " + BOLD + "Next steps:" + RESET,
+                "   " + styled(BOLD, "Next steps:"),
                 "   1. Build a template:  isx build tpl-java",
                 "   2. Launch the TUI:    isx");
         return CommandResult.SUCCESS;
@@ -1072,7 +1078,7 @@ public class InitCommand extends BaseCommand {
                 System.err.println("  incus-spawn expects: " + entry);
                 var console = System.console();
                 if (console != null) {
-                    if (askConfirmation(console, System.err, "  \u001B[1;33mReplace it?\u001B[0m", false)) {
+                    if (askConfirmation(console, System.err, "  " + styled(BOLD + YELLOW, "Replace it?"), false)) {
                         yield writeSubidFile(path,
                                 replaceSubidLine(content, result.conflictingEntry(), entry));
                     }
@@ -1340,26 +1346,27 @@ public class InitCommand extends BaseCommand {
                 System.out.println("  All new instances will use it automatically.");
             } else {
                 System.out.println();
-                System.err.println("\u001B[1;33m  ╔══════════════════════════════════════════════════════════════╗");
-                System.err.println("  ║  WARNING: Failed to create btrfs storage pool!             ║");
-                System.err.println("  ╚══════════════════════════════════════════════════════════════╝\u001B[0m");
+                var warning = BOLD + YELLOW;
+                System.err.println(styled(warning, "  ╔══════════════════════════════════════════════════════════════╗"));
+                System.err.println(styled(warning, "  ║  WARNING: Failed to create btrfs storage pool!             ║"));
+                System.err.println(styled(warning, "  ╚══════════════════════════════════════════════════════════════╝"));
                 System.err.println();
                 for (var line : cowPoolFailureExplanation(create.stderr())) {
-                    System.err.println("  \u001B[33m" + line + "\u001B[0m");
+                    System.err.println("  " + styled(YELLOW, line));
                 }
                 System.err.println();
-                System.err.println("  \u001B[33mWithout a CoW pool, clones and branches will be FULL COPIES,");
-                System.err.println("  using significantly more disk space and taking longer to create.\u001B[0m");
+                System.err.println("  " + styled(YELLOW, "Without a CoW pool, clones and branches will be FULL COPIES,"));
+                System.err.println("  " + styled(YELLOW, "using significantly more disk space and taking longer to create."));
                 System.err.println();
                 System.err.println("  You can create one manually later:");
-                System.err.println("    \u001B[1msudo incus storage create cow btrfs size=100GiB\u001B[0m");
+                System.err.println("    " + styled(BOLD, "sudo incus storage create cow btrfs size=100GiB"));
                 System.err.println("  incus-spawn will automatically use it for all new instances.");
                 System.err.println();
 
                 var console = System.console();
                 if (console != null) {
                     if (!askConfirmation(console, System.err,
-                            "  \u001B[1;33mContinue without CoW storage?\u001B[0m", false)) {
+                            "  " + styled(BOLD + YELLOW, "Continue without CoW storage?"), false)) {
                         System.out.println("  Aborted. Re-run 'isx init' after creating a CoW storage pool.");
                         System.exit(0);
                     }
@@ -1542,7 +1549,7 @@ public class InitCommand extends BaseCommand {
                 System.out.println("  Verifying Vertex AI configuration...");
                 var result = verifyVertexConfig(region, projectId);
                 if (result.verified()) {
-                    System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
+                    System.out.println("  " + styled(BOLD + GREEN, "\u2713 " + result.message()));
                     if (askConfirmation(prompts, envAccountPrompt(config, target, "  Use this configuration?"), true)) {
                         saveVertexConfig(config, target, region, projectId);
                         System.out.println("  Claude auth configuration saved.");
@@ -1563,7 +1570,7 @@ public class InitCommand extends BaseCommand {
             System.out.println("  Verifying OAuth token...");
             var oauthResult = verifyOauthToken(envOauthToken);
             if (oauthResult.verified()) {
-                System.out.println("  \u001B[1;32m\u2713 " + oauthResult.message() + "\u001B[0m");
+                System.out.println("  " + styled(BOLD + GREEN, "\u2713 " + oauthResult.message()));
                 if (askConfirmation(prompts, envAccountPrompt(config, target, "  Use this token?"), true)) {
                     saveOauthConfig(config, target, envOauthToken);
                     System.out.println("  Claude auth configuration saved.");
@@ -1579,7 +1586,7 @@ public class InitCommand extends BaseCommand {
             System.out.println("  Verifying API key...");
             var result = verifyAnthropicApiKey(envApiKey);
             if (result.verified()) {
-                System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
+                System.out.println("  " + styled(BOLD + GREEN, "\u2713 " + result.message()));
                 if (askConfirmation(prompts, envAccountPrompt(config, target, "  Use this key?"), true)) {
                     saveDirectConfig(config, target, envApiKey);
                     System.out.println("  Claude auth configuration saved.");
@@ -1627,7 +1634,7 @@ public class InitCommand extends BaseCommand {
                 System.out.println("  Verifying Vertex AI configuration...");
                 var result = verifyVertexConfig(region, projectId);
                 if (result.verified()) {
-                    System.out.println("  \u001B[1;32m✓ " + result.message() + "\u001B[0m");
+                    System.out.println("  " + styled(BOLD + GREEN, "✓ " + result.message()));
                     saveVertexConfig(config, target, region, projectId);
                     System.out.println("  Claude auth configuration saved.");
                     break;
@@ -1664,7 +1671,7 @@ public class InitCommand extends BaseCommand {
                 System.out.println("  Verifying API key...");
                 var result = verifyAnthropicApiKey(key);
                 if (result.verified()) {
-                    System.out.println("  \u001B[1;32m✓ " + result.message() + "\u001B[0m");
+                    System.out.println("  " + styled(BOLD + GREEN, "✓ " + result.message()));
                     saveDirectConfig(config, target, key);
                     System.out.println("  Claude auth configuration saved.");
                     break;
@@ -1879,7 +1886,7 @@ public class InitCommand extends BaseCommand {
     static String askSecret(Prompts prompts) {
         var secret = readSecret(prompts.readPassword());
         if (!secret.isEmpty()) {
-            System.out.println("  " + DIM + describeReceivedSecret(secret) + RESET);
+            System.out.println("  " + styled(DIM, describeReceivedSecret(secret)));
         }
         return secret;
     }
@@ -2080,9 +2087,9 @@ public class InitCommand extends BaseCommand {
         System.out.println("  produce is a long-lived OAuth token (valid about a year):");
         System.out.println();
         System.out.println("    1. Install Claude Code: " + TerminalLink.link("https://claude.com/claude-code"));
-        System.out.println("    2. Sign in with the subscription account: run " + BOLD + "claude" + RESET
-                + ", then " + BOLD + "/login" + RESET);
-        System.out.println("    3. Run " + BOLD + "claude setup-token" + RESET);
+        System.out.println("    2. Sign in with the subscription account: run " + styled(BOLD, "claude")
+                + ", then " + styled(BOLD, "/login"));
+        System.out.println("    3. Run " + styled(BOLD, "claude setup-token"));
         System.out.println("    4. Copy the token it prints (it starts with '"
                 + SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX + "')");
         System.out.println();
@@ -2110,7 +2117,7 @@ public class InitCommand extends BaseCommand {
             System.out.println("  Verifying OAuth token...");
             var result = verifyOauthToken(token);
             if (result.verified()) {
-                System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
+                System.out.println("  " + styled(BOLD + GREEN, "\u2713 " + result.message()));
                 saveOauthConfig(config, target, token);
                 System.out.println("  Claude auth configuration saved.");
                 break;
@@ -2249,9 +2256,9 @@ public class InitCommand extends BaseCommand {
         }
 
         System.out.println("  An authenticated 'gh' CLI is available on this host.");
-        System.out.println("  " + DIM + "Not recommended: that login is almost certainly your personal identity,"
+        System.out.println("  " + styled(DIM, "Not recommended: that login is almost certainly your personal identity,"
                 + " so the agent would act as you with whatever scopes 'gh' holds. Prefer a dedicated"
-                + " agent account and a fine-grained PAT (above)." + RESET);
+                + " agent account and a fine-grained PAT (above)."));
         if (!askConfirmation(prompts, "  Reuse your personal 'gh' token anyway?", false)) {
             return GhTokenOutcome.NOT_OFFERED;
         }
@@ -2267,7 +2274,7 @@ public class InitCommand extends BaseCommand {
             return GhTokenOutcome.FAILED;
         }
         if (result.email == null) {
-            System.out.println("  \u001B[1;33m⚠ No email accessible — git commits will have no author email.\u001B[0m");
+            System.out.println("  " + styled(BOLD + YELLOW, "⚠ No email accessible — git commits will have no author email."));
         }
         saveGitHubToken(config, account, token, result.email);
         return GhTokenOutcome.SAVED;
@@ -2368,17 +2375,17 @@ public class InitCommand extends BaseCommand {
         System.out.println("  not your personal one):");
         System.out.println();
         System.out.println("    1. Open the pre-filled token page:");
-        System.out.println("       " + BOLD + TerminalLink.link(GH_PAT_NEW_URL) + RESET);
+        System.out.println("       " + styled(BOLD, TerminalLink.link(GH_PAT_NEW_URL)));
         System.out.println("       It already grants what isx needs:");
-        System.out.println("         Contents, Issues, Pull requests  " + DIM + "read and write" + RESET);
-        System.out.println("         Email addresses                  " + DIM + "read (stamps your git commit identity)" + RESET);
-        System.out.println("    2. Check " + BOLD + "Resource owner" + RESET + " is the agent's account, set an expiration, and");
-        System.out.println("       under " + BOLD + "Repository access" + RESET + " choose the repos to grant.");
-        System.out.println("    3. Click " + BOLD + "Generate token" + RESET
+        System.out.println("         Contents, Issues, Pull requests  " + styled(DIM, "read and write"));
+        System.out.println("         Email addresses                  " + styled(DIM, "read (stamps your git commit identity)"));
+        System.out.println("    2. Check " + styled(BOLD, "Resource owner") + " is the agent's account, set an expiration, and");
+        System.out.println("       under " + styled(BOLD, "Repository access") + " choose the repos to grant.");
+        System.out.println("    3. Click " + styled(BOLD, "Generate token")
                 + " and copy the value (starts with 'github_pat_').");
         System.out.println();
-        System.out.println("  " + DIM + "Adding a permission by hand: under Permissions, click 'Add permissions' and" + RESET);
-        System.out.println("  " + DIM + "search for it. Avoid admin, org, and delete permissions unless you need them." + RESET);
+        System.out.println("  " + styled(DIM, "Adding a permission by hand: under Permissions, click 'Add permissions' and"));
+        System.out.println("  " + styled(DIM, "search for it. Avoid admin, org, and delete permissions unless you need them."));
         System.out.println();
 
         System.out.println("  Already have a token? Answer 'n' and paste it at the next prompt.");
@@ -2828,7 +2835,7 @@ public class InitCommand extends BaseCommand {
      * @return the replacement, or null to keep the original token without an email
      */
     private VerifiedToken offerTokenWithEmail(String token, Prompts prompts) {
-        System.out.println("  \u001B[1;33m⚠ No email accessible — git commits will have no author email.\u001B[0m");
+        System.out.println("  " + styled(BOLD + YELLOW, "⚠ No email accessible — git commits will have no author email."));
         System.out.println("  To fix this, either:");
         System.out.println("    • Edit your PAT at " + TerminalLink.link(patSettingsUrl(token)) + ":");
         System.out.println("      under Permissions, click 'Add permissions', search for 'Email addresses'");
@@ -2918,9 +2925,9 @@ public class InitCommand extends BaseCommand {
 
             if (login != null) {
                 if (email != null) {
-                    System.out.println("  \u001B[1;32m\u2713 Token verified. Authenticated as: " + login + " <" + email + ">\u001B[0m");
+                    System.out.println("  " + styled(BOLD + GREEN, "\u2713 Token verified. Authenticated as: " + login + " <" + email + ">"));
                 } else {
-                    System.out.println("  \u001B[1;32m\u2713 Token verified. Authenticated as: " + login + "\u001B[0m");
+                    System.out.println("  " + styled(BOLD + GREEN, "\u2713 Token verified. Authenticated as: " + login));
                 }
             } else {
                 System.out.println("  Token verified (could not determine username).");
@@ -3296,7 +3303,7 @@ public class InitCommand extends BaseCommand {
                 System.out.println("  Could not find the installed isx binary; register it yourself:");
                 System.out.println("    claude mcp add --scope user " + MCP_SERVER_NAME + " -- <path to isx> mcp");
             } else if (registerClaudeMcp(isx)) {
-                System.out.println("  " + GREEN_BOLD + "✓" + RESET + " Registered with Claude Code as '"
+                System.out.println("  " + styled(BOLD + GREEN, "✓") + " Registered with Claude Code as '"
                         + MCP_SERVER_NAME + "' (all projects).");
             } else {
                 System.out.println("  Registering failed; register it yourself:");
@@ -3319,7 +3326,7 @@ public class InitCommand extends BaseCommand {
         System.out.println("  Approve the templates agents may create instances from:");
         var chosen = new java.util.ArrayList<String>();
         for (var name : candidates) {
-            var note = templateBuilt(name) ? "" : DIM + " (not built yet: isx build " + name + ")" + RESET;
+            var note = templateBuilt(name) ? "" : styled(DIM, " (not built yet: isx build " + name + ")");
             if (askConfirmation(prompts, "    " + name + note + "?", approved.contains(name))) chosen.add(name);
         }
         // Keep hand-approved templates this step does not ask about, in their order.
@@ -3335,8 +3342,8 @@ public class InitCommand extends BaseCommand {
             config.save();
             System.out.println("  Approved templates saved: " + (updated.isEmpty() ? "none" : String.join(", ", updated)) + ".");
         }
-        System.out.println("  " + DIM + "Keep agents to the MCP tools with Claude Code permissions: see the" + RESET);
-        System.out.println("  " + DIM + "README section 'Delegating from an agent on your host (MCP)'." + RESET);
+        System.out.println("  " + styled(DIM, "Keep agents to the MCP tools with Claude Code permissions: see the"));
+        System.out.println("  " + styled(DIM, "README section 'Delegating from an agent on your host (MCP)'."));
     }
 
     /** The installed isx, for Claude Code to start; null if none is found. */
@@ -3455,7 +3462,7 @@ public class InitCommand extends BaseCommand {
     }
 
     private void offerCloneTemplates(Prompts prompts, String login) {
-        System.out.println("  Found " + BOLD + login + "/" + TEMPLATES_REPO + RESET + " on GitHub.");
+        System.out.println("  Found " + styled(BOLD, login + "/" + TEMPLATES_REPO) + " on GitHub.");
         var defaultPath = defaultClonePath();
         var clonePath = askClonePath(prompts, defaultPath);
         if (clonePath == null) return;
@@ -3463,7 +3470,7 @@ public class InitCommand extends BaseCommand {
     }
 
     private void offerForkAndCloneTemplates(Prompts prompts, String login) {
-        System.out.println("  You don't have a " + BOLD + TEMPLATES_REPO + RESET + " repo yet.");
+        System.out.println("  You don't have a " + styled(BOLD, TEMPLATES_REPO) + " repo yet.");
         if (!askConfirmation(prompts, "  Fork " + TEMPLATES_UPSTREAM + " to your account?", true)) {
             System.out.println("  Skipped. You can fork it manually at:");
             System.out.println("  " + TerminalLink.link("https://github.com/" + TEMPLATES_UPSTREAM));
@@ -3479,7 +3486,7 @@ public class InitCommand extends BaseCommand {
             System.out.println();
             return;
         }
-        System.out.println("  " + GREEN_BOLD + "✓" + RESET + " Forked to " + login + "/" + TEMPLATES_REPO);
+        System.out.println("  " + styled(BOLD + GREEN, "✓") + " Forked to " + login + "/" + TEMPLATES_REPO);
 
         var defaultPath = defaultClonePath();
         var clonePath = askClonePath(prompts, defaultPath);
@@ -3536,7 +3543,7 @@ public class InitCommand extends BaseCommand {
             System.out.println("  Clone failed. You can clone it manually and add the path below.");
             return;
         }
-        System.out.println("  " + GREEN_BOLD + "✓" + RESET + " Cloned to " + target);
+        System.out.println("  " + styled(BOLD + GREEN, "✓") + " Cloned to " + target);
         addToSearchPaths(target.toString());
     }
 

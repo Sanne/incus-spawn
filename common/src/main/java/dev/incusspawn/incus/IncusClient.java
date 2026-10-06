@@ -675,7 +675,9 @@ public class IncusClient {
                     if (!hasIOExceptionCause(e) || reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) throw e;
                 }
                 long delay = Math.min(1000L * (1 << reconnectAttempt), 10_000L);
-                System.err.println("\n\033[1;33mConnection lost — reconnecting...\033[0m");
+                System.err.println("\n" + dev.incusspawn.util.BuildOutput.styled(
+                        dev.incusspawn.util.BuildOutput.BOLD + dev.incusspawn.util.BuildOutput.YELLOW,
+                        "Connection lost — reconnecting..."));
                 try { Thread.sleep(delay); } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return;

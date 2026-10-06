@@ -530,7 +530,7 @@ public final class BranchFlow {
             BuildOutput.warnBanner("CA certificate mismatch",
                     "Template '" + source + "' was built with a different CA certificate.",
                     "TLS connections through the proxy will fail in branches.",
-                    "Rebuild the template to fix: \033[1misx build " + profile + "\033[0m");
+                    "Rebuild the template to fix: " + BuildOutput.styled(BuildOutput.BOLD, "isx build " + profile));
         } else {
             BuildOutput.warnBanner("CA certificate mismatch",
                     "Template '" + source + "' was built with a different CA certificate.",

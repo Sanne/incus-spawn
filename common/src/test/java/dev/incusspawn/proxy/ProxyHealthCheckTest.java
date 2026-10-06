@@ -173,6 +173,15 @@ class ProxyHealthCheckTest {
     }
 
     @Test
+    void formatErrorIsPlainOffATerminal() {
+        // Tests run without a console, as a piped isx does.
+        for (var status : ProxyHealthCheck.ProxyStatus.values()) {
+            var text = ProxyHealthCheck.formatError(status);
+            assertEquals(dev.incusspawn.util.BuildOutput.stripAnsi(text), text, status.name());
+        }
+    }
+
+    @Test
     void formatErrorReturnsEmptyForRunning() {
         assertEquals("", ProxyHealthCheck.formatError(ProxyHealthCheck.ProxyStatus.RUNNING));
     }

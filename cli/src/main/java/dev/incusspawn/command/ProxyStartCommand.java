@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Environment;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -202,11 +203,11 @@ public class ProxyStartCommand extends BaseCommand {
      * itself the clue, so we surface it inline.
      */
     private void explainAbnormalExit(int code) {
-        var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
+        var sep = BuildOutput.styled(BuildOutput.YELLOW, "─".repeat(60));
         var logFile = Environment.proxyLogFile();
         System.err.println();
         System.err.println(sep);
-        System.err.println("\033[1m" + ProxyService.describeExit(code) + "\033[0m");
+        System.err.println(BuildOutput.styled(BuildOutput.BOLD, ProxyService.describeExit(code)));
         System.err.println();
         System.err.println("Last lines of the proxy log (" + logFile + "):");
         printLogTail(logFile);
@@ -214,7 +215,7 @@ public class ProxyStartCommand extends BaseCommand {
             System.err.println();
             System.err.println("Foreground proxies don't auto-recover. To survive crashes, suspend/resume,");
             System.err.println("and terminal close, install it as a managed service that restarts automatically:");
-            System.err.println("  \033[1misx proxy install\033[0m");
+            System.err.println("  " + BuildOutput.styled(BuildOutput.BOLD, "isx proxy install"));
         }
         System.err.println(sep);
     }
