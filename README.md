@@ -272,7 +272,7 @@ EOF
 
 Claude Code runs a `headersHelper` only in a workspace you have trusted, so start it once interactively in the directory the coordinator works in. It gets exactly the tools, approved templates and limits a host agent gets, and the same `mcp:` configuration applies. What differs:
 
-- **The session is the instance.** What it creates stays held by it across restarts of its Claude Code and of the instance itself, and is picked up again on the next connection: nothing to adopt. Its instances become orphans only once it is destroyed, or no longer allowed to call.
+- **The session is the instance.** What it creates stays held by it across restarts of its Claude Code and of the instance itself, and is picked up again on the next connection: nothing to adopt. Its instances become orphans only once it is destroyed, or no longer allowed to call; a new coordinator under the same name is another session and gets none of them. One whose template you no longer approve is released when the coordinator next connects, as a host session's would be when it ends.
 - **One connection at a time.** A new connection from the instance ends its previous one.
 - **No coordinator makes another.** Only `isx branch --mcp-client` grants it, never to a copy: not to `isx branch --from coord`, and not to anything created through MCP.
 - **Only the host proxy is reached.** `mcp.isx.internal` resolves to the bridge gateway, so this works with `--proxy-only`; an `--airgap` instance cannot use it.

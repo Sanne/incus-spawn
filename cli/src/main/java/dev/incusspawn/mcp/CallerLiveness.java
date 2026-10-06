@@ -42,17 +42,18 @@ final class CallerLiveness implements Predicate<SessionId> {
     public boolean test(SessionId session) {
         if (!session.isInstance()) return session.isAlive();
         var now = nanoTime.getAsLong();
-        var known = answers.get(session.instance());
+        var known = answers.get(session.toString());
         if (known != null && now - known.at() < REMEMBER.toNanos()) return known.alive();
-        var alive = mayCall(session.instance());
-        answers.put(session.instance(), new Answer(alive, now));
+        var alive = mayCall(session);
+        answers.put(session.toString(), new Answer(alive, now));
         return alive;
     }
 
-    private boolean mayCall(String instance) {
+    /** Whether the instance still exists with this session's grant: not a successor by its name. */
+    private boolean mayCall(SessionId session) {
         try {
-            var metadata = backend.metadata(instance);
-            return Metadata.isMcpCaller(metadata);
+            var metadata = backend.metadata(session.instance());
+            return metadata != null && session.grant().equals(metadata.get(Metadata.MCP_CALLER));
         } catch (RuntimeException e) {
             return true;
         }

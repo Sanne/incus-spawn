@@ -112,7 +112,10 @@ public final class Metadata {
     /**
      * Set by {@code isx branch --mcp-client}, and only there: this instance may call
      * {@code isx mcp} over the network, through the proxy at {@link
-     * dev.incusspawn.proxy.ProxyConfig#MCP_DOMAIN} (#915). The value is when it was granted. An
+     * dev.incusspawn.proxy.ProxyConfig#MCP_DOMAIN} (#915). The value is a random grant id
+     * ({@link #newMcpCallerGrant}), part of the coordinator's session id: a coordinator destroyed
+     * and recreated under the same name is another grant, so never the holder of the old one's
+     * workers. Not a secret -- the guest can read it; who calls is checked by address and secret. An
      * {@code mcp-} key, so no copy ever carries it ({@code configureBranch}), and the MCP
      * create path refuses it: an agent cannot make another coordinator.
      */
@@ -133,6 +136,17 @@ public final class Metadata {
     public static boolean isMcpCaller(Map<String, String> config) {
         var value = config == null ? null : config.get(MCP_CALLER);
         return value != null && !value.isBlank();
+    }
+
+    /** What a {@link #MCP_CALLER} grant id looks like. */
+    public static final java.util.regex.Pattern MCP_CALLER_GRANT = java.util.regex.Pattern.compile("[0-9a-f]{32}");
+
+    /** A new {@link #MCP_CALLER} grant id: 128 random bits, hex. */
+    public static String newMcpCallerGrant() {
+        // A SecureRandom per call: a static one would be seeded at native-image build time.
+        var bytes = new byte[16];
+        new java.security.SecureRandom().nextBytes(bytes);
+        return java.util.HexFormat.of().formatHex(bytes);
     }
 
     public static boolean isMcpKey(String key) {

@@ -55,17 +55,18 @@ public final class McpMain {
         long clientPid;
         String cwd;
         if (callerInstance != null) {
-            try {
-                self = SessionId.ofInstance(callerInstance);
-            } catch (IllegalArgumentException e) {
-                System.err.println("isx mcp: " + e.getMessage());
-                return 64;
-            }
-            // The proxy checked the stamp; a session is never served on that word alone.
+            // The proxy checked the stamp; a session is never served on that word alone. The
+            // grant it carries is part of the session: a successor under the name is another.
             var metadata = backend.metadata(callerInstance);
             if (!Metadata.isMcpCaller(metadata)) {
                 System.err.println("isx mcp: instance '" + callerInstance + "' may not call isx mcp "
                         + "(it was not branched with --mcp-client)");
+                return 78;
+            }
+            try {
+                self = SessionId.ofInstance(callerInstance, metadata.get(Metadata.MCP_CALLER));
+            } catch (IllegalArgumentException e) {
+                System.err.println("isx mcp: " + e.getMessage());
                 return 78;
             }
             // Its client is in the instance: no host process, no host directory to stamp.

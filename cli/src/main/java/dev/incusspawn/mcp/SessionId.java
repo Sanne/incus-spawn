@@ -27,7 +27,7 @@ import java.util.Optional;
  * mcp-caller} stamp) and runs {@code isx mcp --caller-instance <name>} for it, which checks the
  * stamp again before serving.
  */
-record SessionId(long pid, long start, String instance) {
+record SessionId(long pid, long start, String instance, String grant) {
 
     /** How an instance session's stamp starts; never a digit, so never read as a process. */
     static final String INSTANCE_PREFIX = "instance:";
@@ -35,7 +35,7 @@ record SessionId(long pid, long start, String instance) {
             java.util.regex.Pattern.compile("[a-zA-Z0-9][a-zA-Z0-9-]{0,62}");
 
     SessionId(long pid, long start) {
-        this(pid, start, null);
+        this(pid, start, null, null);
     }
 
     static SessionId current() {
@@ -44,15 +44,21 @@ record SessionId(long pid, long start, String instance) {
     }
 
     /**
-     * The session of the isx instance {@code name}, calling through the proxy. It is the same
-     * session across every connection and every restart of the instance: what it holds stays
-     * held for as long as the instance exists and may call ({@link #isInstance}).
+     * The session of the isx instance {@code name}, calling through the proxy under the grant
+     * {@code grant} (its {@code mcp-caller} stamp). It is the same session across every
+     * connection and every restart of the instance: what it holds stays held for as long as the
+     * instance exists with that grant ({@link CallerLiveness}). Another instance given the name
+     * later has another grant, so another session.
      */
-    static SessionId ofInstance(String name) {
+    static SessionId ofInstance(String name, String grant) {
         if (name == null || !INSTANCE_NAME.matcher(name).matches()) {
             throw new IllegalArgumentException("not an instance name: " + name);
         }
-        return new SessionId(0, 0, name);
+        if (grant == null || !dev.incusspawn.incus.Metadata.MCP_CALLER_GRANT.matcher(grant).matches()) {
+            throw new IllegalArgumentException("instance '" + name + "' carries no valid mcp-caller grant; "
+                    + "branch a new coordinator with isx branch --mcp-client");
+        }
+        return new SessionId(0, 0, name, grant);
     }
 
     boolean isInstance() {
@@ -62,7 +68,7 @@ record SessionId(long pid, long start, String instance) {
     /** The value stamped as {@code user.incus-spawn.mcp-session}. */
     @Override
     public String toString() {
-        return isInstance() ? INSTANCE_PREFIX + instance : pid + "-" + start;
+        return isInstance() ? INSTANCE_PREFIX + instance + ":" + grant : pid + "-" + start;
     }
 
     /** The holder as a person reads it: {@code isx mcp pid 123}, {@code isx instance coord}. */
@@ -73,8 +79,14 @@ record SessionId(long pid, long start, String instance) {
     static Optional<SessionId> parse(String value) {
         if (value == null) return Optional.empty();
         if (value.startsWith(INSTANCE_PREFIX)) {
-            var name = value.substring(INSTANCE_PREFIX.length());
-            return INSTANCE_NAME.matcher(name).matches() ? Optional.of(new SessionId(0, 0, name)) : Optional.empty();
+            var rest = value.substring(INSTANCE_PREFIX.length());
+            var colon = rest.lastIndexOf(':');
+            if (colon < 0) return Optional.empty();
+            try {
+                return Optional.of(ofInstance(rest.substring(0, colon), rest.substring(colon + 1)));
+            } catch (IllegalArgumentException e) {
+                return Optional.empty();
+            }
         }
         var dash = value.indexOf('-');
         if (dash <= 0) return Optional.empty();

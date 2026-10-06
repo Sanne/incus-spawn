@@ -43,8 +43,12 @@ final class Orphans {
         mcpInstances.forEach((name, config) -> {
             if (!owner.equals(config.get(Metadata.MCP_OWNER)) || config.containsKey(Metadata.MCP_KEPT)) return;
             var session = SessionId.parse(config.get(Metadata.MCP_SESSION));
-            if (session.isPresent() && session.get().equals(self)) return;
-            result.put(name, new Other(name, config, session.isPresent() && !alive.test(session.get())));
+            // What this session released is an orphan to it as well: counted, listed and swept.
+            if (session.isPresent() && session.get().equals(self) && !releasedByHolder(config)) return;
+            // Released by its holder (Orphans.orphanedStamp naming it), or the holder is gone. An
+            // instance session outlives its holding of what it released.
+            var orphaned = session.isPresent() && (releasedByHolder(config) || !alive.test(session.get()));
+            result.put(name, new Other(name, config, orphaned));
         });
         return result;
     }
@@ -57,6 +61,18 @@ final class Orphans {
      */
     static String orphanedStamp(Instant at, String session) {
         return at + " " + session;
+    }
+
+    /**
+     * Whether the session holding the instance released it: an {@link #orphanedStamp} naming
+     * that holder. Only an instance session lives on after releasing something (#915); for it,
+     * this is what makes a release an orphan though its holder is alive. A stamp without a
+     * session, from before stamps named one, says nothing about a live holder.
+     */
+    static boolean releasedByHolder(Map<String, String> config) {
+        var value = config.get(Metadata.MCP_ORPHANED);
+        var holder = config.get(Metadata.MCP_SESSION);
+        return value != null && holder != null && value.endsWith(" " + holder) && orphanedSince(config) != null;
     }
 
     /**

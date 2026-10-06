@@ -101,7 +101,7 @@ final class McpSession {
         backend.mcpInstances().forEach((name, config) -> {
             if (!owner.equals(config.get(Metadata.MCP_OWNER)) || !InstanceBackend.running(config)) return;
             var holder = SessionId.parse(config.get(Metadata.MCP_SESSION));
-            if (holder.isPresent() && holder.get().equals(id)) return;
+            if (holder.isPresent() && holder.get().equals(id) && !Orphans.releasedByHolder(config)) return;
             if (config.containsKey(Metadata.MCP_KEPT) && (holder.isEmpty() || !alive.test(holder.get()))) return;
             result.add(name);
         });
@@ -310,7 +310,8 @@ final class McpSession {
         var busy = Metadata.pendingOp(metadata);
         if (!busy.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is busy (" + busy + "); try again shortly.");
         var holder = SessionId.parse(session);
-        if (!force && holder.isPresent() && !holder.get().equals(id) && alive.test(holder.get())) {
+        if (!force && holder.isPresent() && !holder.get().equals(id) && alive.test(holder.get())
+                && !Orphans.releasedByHolder(metadata)) {
             throw new ToolError(ToolError.Code.NOT_HELD, "'" + name + "' is held by a session that is still running ("
                     + holder.get().describe() + describeClient(metadata) + "). Adopting it would take it away "
                     + "mid-work; set force: true only if that session is stuck.");
@@ -457,9 +458,14 @@ final class McpSession {
 
     /**
      * Take back what an instance session held before this connection: the instances stamped
-     * with its id, not kept, as {@link #release} would have let go of them. From one listing,
-     * and before the first tool call, so the cap counts them from the start. Returns their
-     * names and what the listing said of each, for the caller to adopt their tasks.
+     * with its id, not kept and not released. From one listing, and before the first tool call,
+     * so the cap counts them from the start. Returns their names and what the listing said of
+     * each, for the caller to adopt their tasks.
+     *
+     * <p>Only what {@link #adopt} would take: one whose template is no longer approved is
+     * released instead, as a process session's would be when it ends, so withdrawing approval
+     * reaches a coordinator too -- its orphan clock starts, and no session can adopt it while
+     * the template stays unapproved.
      *
      * <p>Only for an instance session: a process session's id is new with every process, so
      * nothing can carry it yet.
@@ -467,16 +473,18 @@ final class McpSession {
     Map<String, Map<String, String>> resume() {
         if (!id.isInstance()) return Map.of();
         var resumed = new LinkedHashMap<String, Map<String, String>>();
+        var approved = config.get().templates();
         // Workers mostly share a template; each lookup loads definitions and asks Incus.
         var delegates = new HashMap<String, Boolean>();
         backend.mcpInstances().forEach((name, config) -> {
             if (!owner.equals(config.get(Metadata.MCP_OWNER)) || !ours(config)
-                    || config.containsKey(Metadata.MCP_KEPT)) return;
+                    || config.containsKey(Metadata.MCP_KEPT) || Orphans.releasedByHolder(config)) return;
             var template = templateOf(config);
-            // Stamped while this instance briefly could not call: held again, so that clock stops,
-            // or a later end of the instance would find its grace period long over.
-            if (config.containsKey(Metadata.MCP_ORPHANED)) {
-                backend.stamp(name, java.util.Collections.singletonMap(Metadata.MCP_ORPHANED, null));
+            if (!approved.contains(template)) {
+                backend.stamp(name, Map.of(Metadata.MCP_ORPHANED, Orphans.orphanedStamp(Instant.now(), id.toString())));
+                System.err.println("isx mcp: released " + name + ": template '" + template
+                        + "' is no longer approved for agents");
+                return;
             }
             register(name, template, delegates.computeIfAbsent(template, this::supportsDelegate), config);
             resumed.put(name, config);

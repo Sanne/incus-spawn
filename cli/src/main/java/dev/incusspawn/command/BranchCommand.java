@@ -109,7 +109,7 @@ public class BranchCommand extends BaseCommand {
         Boolean kvmChoice = kvm ? Boolean.TRUE : noKvm ? Boolean.FALSE : null;
         var request = new BranchFlow.Request(resolvedSource, name, guiChoice, kvmChoice, networkMode,
                 inbox, cpuLimit, memoryLimit, diskLimit, accounts, !noStart,
-                mcpClient ? Map.of(Metadata.MCP_CALLER, Metadata.now()) : Map.of());
+                mcpClient ? Map.of(Metadata.MCP_CALLER, Metadata.newMcpCallerGrant()) : Map.of());
 
         BranchFlow.Preflight preflight;
         InstanceLifecycle.RuntimeConfig prefetched;

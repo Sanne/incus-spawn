@@ -254,7 +254,7 @@ class InstanceRegistryTest {
         var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
                 .instance("coord", "container", "Stopped", java.util.Map.of(ADDRESS_KEY, "10.0.0.5",
                         SECRET_KEY, InstanceSecret.sha256(caller),
-                        dev.incusspawn.incus.Metadata.MCP_CALLER, "2026-10-05T10:00:00"))
+                        dev.incusspawn.incus.Metadata.MCP_CALLER, dev.incusspawn.incus.Metadata.newMcpCallerGrant()))
                 .instance("worker", "container", "Running", java.util.Map.of(ADDRESS_KEY, "10.0.0.6",
                         SECRET_KEY, InstanceSecret.sha256(plain)));
         var registry = new InstanceRegistry(daemon.client());
