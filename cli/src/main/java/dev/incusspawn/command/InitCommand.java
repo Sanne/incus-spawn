@@ -74,6 +74,8 @@ public class InitCommand extends BaseCommand {
 
     private IncusClient incus;
     private boolean useUfw;
+    /** The firewall step found the proxy needing a restart it could not make before the init marker. */
+    boolean proxyRestartPending;
 
     private static final int BOX_WIDTH = 62;
     private static final String BORDER_H = "─".repeat(BOX_WIDTH);
@@ -454,8 +456,12 @@ public class InitCommand extends BaseCommand {
     }
 
     /** Brings a running service's files up to date, restarting it when they changed. */
-    void upgradeProxyService() {
-        ProxyService.upgradeIfNeeded();
+    boolean upgradeProxyService() {
+        return ProxyService.upgradeIfNeeded();
+    }
+
+    void restartProxyService() {
+        ProxyService.restart();
     }
 
     /** Installs and starts the proxy service; on macOS, the VM launch agent with it. */
@@ -596,8 +602,14 @@ public class InitCommand extends BaseCommand {
                     }
                     System.out.println("  firewalld started and enabled.");
                     if (ProxyService.isActive()) {
-                        System.out.println("  Restarting proxy service so it picks up the restored firewall rules...");
-                        ProxyService.restart();
+                        if (Environment.hasBeenInitialized()) {
+                            System.out.println("  Restarting proxy service so it picks up the restored firewall rules...");
+                            restartProxyService();
+                        } else {
+                            // Restarted before the marker, it would refuse to start (#1048).
+                            System.out.println("  The proxy service will be restarted once init completes, to pick up the restored firewall rules.");
+                            proxyRestartPending = true;
+                        }
                     }
                 }
                 configureFirewalld();
@@ -3661,13 +3673,14 @@ public class InitCommand extends BaseCommand {
      * The last step of the Linux flow, in the order {@link #completeWithMacOsServices} explains.
      * A service that is already running is covered too: on a re-run after an
      * {@code INIT_VERSION} bump, a restart by the upgrade would otherwise meet an outdated marker.
+     * That is also why the firewall step leaves its restart to this one ({@link #proxyRestartPending}).
      */
     boolean completeWithProxyService(Prompts prompts) throws IOException {
         var active = proxyServiceActive();
         var install = !active && wantsProxyService(prompts);
         markInitComplete();
         if (active) {
-            upgradeProxyService();
+            if (!upgradeProxyService() && proxyRestartPending) restartProxyService();
             System.out.println();
             System.out.println("  Proxy service is already running.");
             return true;

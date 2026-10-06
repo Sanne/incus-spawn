@@ -24,6 +24,7 @@ class InitServiceStepTest {
     static final class FakeInit extends InitCommand {
         boolean serviceActive;
         boolean macOsServicesInstalled;
+        boolean upgradeRestarts;
         final List<String> serviceActions = new ArrayList<>();
 
         private void record(String action) {
@@ -41,8 +42,14 @@ class InitServiceStepTest {
         }
 
         @Override
-        void upgradeProxyService() {
+        boolean upgradeProxyService() {
             record("upgrade");
+            return upgradeRestarts;
+        }
+
+        @Override
+        void restartProxyService() {
+            record("restart");
         }
 
         @Override
@@ -89,6 +96,28 @@ class InitServiceStepTest {
         var prompts = ScriptedPrompts.lines();
         assertTrue(init.completeWithProxyService(prompts));
         prompts.assertFullyConsumed();
+        assertEquals(List.of("upgrade"), init.serviceActions);
+    }
+
+    /**
+     * The firewall step of a re-run after an {@code INIT_VERSION} bump restarted firewalld, and
+     * left the proxy's restart until the marker is written (#1048).
+     */
+    @Test
+    void aProxyRestartTheFirewallStepDeferredIsMadeOnceInitIsMarkedComplete() throws IOException {
+        init.serviceActive = true;
+        init.proxyRestartPending = true;
+        assertTrue(init.completeWithProxyService(ScriptedPrompts.lines()));
+        assertEquals(List.of("upgrade", "restart"), init.serviceActions);
+    }
+
+    /** One restart is enough: a second would cut every instance's connection again. */
+    @Test
+    void aDeferredProxyRestartIsNotRepeatedWhenTheUpgradeRestarted() throws IOException {
+        init.serviceActive = true;
+        init.proxyRestartPending = true;
+        init.upgradeRestarts = true;
+        assertTrue(init.completeWithProxyService(ScriptedPrompts.lines()));
         assertEquals(List.of("upgrade"), init.serviceActions);
     }
 

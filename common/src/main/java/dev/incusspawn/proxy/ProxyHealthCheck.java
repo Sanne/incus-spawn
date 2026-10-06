@@ -462,7 +462,8 @@ public final class ProxyHealthCheck {
         if (!ProxyService.isInstalled()) return false;
         var addr = healthAddress(incus);
         log.accept("Proxy is not reachable, restarting service...");
-        ProxyService.restartIfUnhealthy(addr, log);
+        // A restart refused until init runs has said so through log, and has nothing to wait for.
+        if (!ProxyService.restartIfUnhealthy(addr, log) && !Environment.hasBeenInitialized()) return false;
         for (int i = 0; i < 30; i++) {
             try { Thread.sleep(500); } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

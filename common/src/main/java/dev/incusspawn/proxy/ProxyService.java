@@ -196,11 +196,18 @@ public final class ProxyService {
     /**
      * {@code isx-proxy} exits {@link #EXIT_CONFIG} until init has completed for this build, so a
      * service installed or restarted before then only ever reports a proxy that is not responding
-     * (#968). Says so instead, and names the command that fixes it.
+     * (#968). Says so instead, and names the command that fixes it. Every path that starts or
+     * restarts the service asks this first: after an upgrade that raised {@code INIT_VERSION}, a
+     * restart would stop a working proxy for one that refuses to start (#1048).
      */
     public static boolean initComplete() {
+        return initComplete(System.err::println);
+    }
+
+    /** {@link #initComplete()}, reporting the refusal to {@code log}: the TUI's paths reach this. */
+    public static boolean initComplete(java.util.function.Consumer<String> log) {
         if (Environment.hasBeenInitialized()) return true;
-        System.err.println("Error: incus-spawn is not initialized for this version of isx. Run 'isx init' first.");
+        log.accept("Error: incus-spawn is not initialized for this version of isx. Run 'isx init' first.");
         return false;
     }
 
@@ -351,6 +358,8 @@ public final class ProxyService {
      *                     login (review on #916).
      */
     private static boolean restartLocked(java.util.function.Consumer<String> log, boolean forceReload) {
+        // Under the lock, after restartIfUnhealthy's recheck: a healthy proxy is never refused.
+        if (!initComplete(log)) return false;
         ProxyLog.info("Service restarting");
         log.accept("Restarting proxy service...");
         boolean restarted;
@@ -393,6 +402,7 @@ public final class ProxyService {
     public static boolean startService() {
         if (!isInstalled()) return false;
         if (isActive()) return true;
+        if (!initComplete()) return false;
         try (var ignored = acquireProxyLock()) {
             if (isActive()) return true;
             if (Platform.isMacOS()) return proxyJob().start(System.err::println).up();
@@ -458,17 +468,15 @@ public final class ProxyService {
     public static boolean reinstallIfChanged(IncusClient incus, ProxyHealthCheck.ProxyInfo info) {
         try (var ignored = acquireProxyLock()) {
             var proxyBin = resolveProxyBinaryPath();
-            boolean needsReinstall;
-            if (Platform.isMacOS()) {
-                // A plist whose binary has gone cannot be brought into line, and restarting it
-                // below would just hand it back to KeepAlive. Take it out of service instead.
-                if (proxyBin == null && haltUnusableMacOsServiceLocked()) {
-                    return false;
-                }
-                needsReinstall = needsMacOsPlistUpdate();
-            } else {
-                needsReinstall = regenerateServiceFiles(proxyBin);
+            // A plist whose binary has gone cannot be brought into line, and restarting it
+            // below would just hand it back to KeepAlive. Take it out of service instead.
+            if (Platform.isMacOS() && proxyBin == null && haltUnusableMacOsServiceLocked()) {
+                return false;
             }
+            // Before the service files too: rewritten now and not restarted onto, they would
+            // compare equal on the run of `isx init` that could restart onto them.
+            if (!initComplete()) return false;
+            var needsReinstall = Platform.isMacOS() ? needsMacOsPlistUpdate() : regenerateServiceFiles(proxyBin);
 
             // Assessed again under the lock: another isx process may have made this very restart
             // while we waited for it, and a second one would only cut every instance's
@@ -569,27 +577,28 @@ public final class ProxyService {
         return false;
     }
 
-    public static void upgradeIfNeeded() {
+    /** Returns true if it restarted the service. */
+    public static boolean upgradeIfNeeded() {
         try (var ignored = acquireProxyLock()) {
+            var proxyBin = resolveProxyBinaryPath();
+            if (Platform.isMacOS() && proxyBin == null && haltUnusableMacOsServiceLocked()) {
+                return false;
+            }
+            // As in reinstallIfChanged: refused before the service files are rewritten.
+            if (!initComplete()) return false;
             if (Platform.isMacOS()) {
-                if (resolveProxyBinaryPath() == null && haltUnusableMacOsServiceLocked()) {
-                    return;
-                }
                 // Forcing the reload here is also what lets restartLocked skip asking
                 // needsMacOsPlistUpdate() a second time: it already answered yes, right above.
-                if (needsMacOsPlistUpdate()) {
-                    if (restartLocked(System.err::println, true)) {
-                        DriftRestartRecord.write(resolveProxyBinaryPath());
-                    }
-                }
-                return;
+                if (!needsMacOsPlistUpdate()) return false;
+                var restarted = restartLocked(System.err::println, true);
+                if (restarted) DriftRestartRecord.write(proxyBin);
+                return restarted;
             }
-            var proxyBin = resolveProxyBinaryPath();
-            if (regenerateServiceFiles(proxyBin)) {
-                System.out.println("Updated proxy service configuration.");
-                runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
-                if (isActive()) DriftRestartRecord.write(proxyBin);
-            }
+            if (!regenerateServiceFiles(proxyBin)) return false;
+            System.out.println("Updated proxy service configuration.");
+            runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
+            if (isActive()) DriftRestartRecord.write(proxyBin);
+            return true;
         }
     }
 
@@ -1387,6 +1396,24 @@ public final class ProxyService {
     }
 
     static boolean runQuiet(String... command) {
+        return commandRunner.test(command);
+    }
+
+    /**
+     * What {@link #runQuiet} does. Replaceable so a test of a path that must not touch the service
+     * fails by recording a {@code systemctl} call rather than making it against whatever service
+     * is installed on the machine running the test.
+     */
+    private static volatile java.util.function.Predicate<String[]> commandRunner = ProxyService::runProcess;
+
+    /** Swaps in a test double for {@link #runQuiet}, returning the one it replaced. */
+    static java.util.function.Predicate<String[]> replaceCommandRunner(java.util.function.Predicate<String[]> runner) {
+        var previous = commandRunner;
+        commandRunner = runner;
+        return previous;
+    }
+
+    private static boolean runProcess(String... command) {
         // sudo may ask for a password on the tty, which a live step line would be drawn over.
         if (command.length > 0 && command[0].equals("sudo")) BuildOutput.releaseTerminal();
         try {

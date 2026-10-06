@@ -115,6 +115,16 @@ only report a proxy that is not responding (#968). The command checks before its
 path too, because `install.sh` runs it after every upgrade: a restart there would replace a working
 proxy with one that refuses to start, while refusing leaves the old one serving until init runs.
 
+Every other path that starts or restarts the service refuses the same way (#1048): `restartLocked()`
+(so `isx proxy restart`, `isx doctor`'s remediations and the auto-restart), `startService()`, and
+`reinstallIfChanged()`/`upgradeIfNeeded()`, which fire on exactly the version drift an upgrade
+causes. Those two refuse before rewriting the service files, which would otherwise compare equal on
+the run of `isx init` that could restart onto them, but after the macOS halt of a service whose
+binary has gone. `restartLocked()` checks under the lock, after `restartIfUnhealthy()` has found
+the proxy unhealthy, so a healthy proxy is never refused. `isx init` restarts the proxy in its
+firewall step, before the marker exists; on a re-run after an `INIT_VERSION` bump that restart
+waits for the last step, once the marker is written.
+
 On macOS a restart of the service is `launchctl kickstart -k`, not `bootout` followed by
 `bootstrap`. `bootout` returns before launchd has removed the job: a proxy that does not exit on
 SIGTERM is killed about five seconds later, and until then `bootstrap` fails with

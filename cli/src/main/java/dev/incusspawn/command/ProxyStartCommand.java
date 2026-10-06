@@ -76,6 +76,9 @@ public class ProxyStartCommand extends BaseCommand {
         }
 
         if (serviceManaged) {
+            // Refused here, not only by the service, so neither the wait for health nor "failed
+            // to start" below follows the refusal. Already-healthy is answered above (#1048).
+            if (!ProxyService.initComplete()) return CommandResult.FAILURE;
             if (serviceActive) {
                 System.err.println("Proxy service is registered but not responding. Restarting...");
                 ProxyService.restart(System.err::println);
