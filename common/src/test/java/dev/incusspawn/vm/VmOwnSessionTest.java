@@ -1,6 +1,7 @@
 package dev.incusspawn.vm;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -93,5 +94,27 @@ class VmOwnSessionTest {
 
         assertEquals(0, process.waitFor(), printed);
         assertEquals(String.join("\n", args) + "\n", printed);
+    }
+
+    /** qemu is exposed to the same hangup, Ctrl+C and job-exit as vfkit was, and starts the same way (#993). */
+    @Test
+    void qemuIsStartedInASessionOfItsOwn(@TempDir Path dir) throws Exception {
+        assumePerl();
+        var pidFile = dir.resolve("vm.pid");
+        // By its real path, which is what the process reports: sleep may be a multicall binary's link.
+        // /bin, not /usr/bin: macOS has it only there.
+        var sleep = Path.of("/bin/sleep").toRealPath();
+        var program = sleep.getFileName().toString();
+
+        var process = VmManager.launchInOwnSession(List.of(sleep.toString(), "30"), program, dir.resolve("vm.log"), pidFile);
+        try {
+            var seen = look(process.pid());
+            assertTrue(seen.command().endsWith(program), "the recorded pid must be qemu's own: " + seen);
+            assertEquals(String.valueOf(process.pid()), seen.processGroup(),
+                    "still in the process group of whoever started it, which takes it down with them");
+            assertEquals(String.valueOf(process.pid()), Files.readString(pidFile));
+        } finally {
+            process.destroyForcibly();
+        }
     }
 }

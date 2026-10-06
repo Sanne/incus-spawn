@@ -860,34 +860,17 @@ public final class VmManager {
                 "--restful-uri", "tcp://localhost:" + restPort
         ));
 
-        var launch = inOwnSession(cmd);
-        var pb = new ProcessBuilder(launch);
-        // The user's perl settings are for their scripts, and can stop the one-liner from loading.
-        pb.environment().remove("PERL5OPT");
-        pb.environment().remove("PERL5LIB");
-        pb.redirectErrorStream(true);
-        // perl's own stderr (a broken POSIX module, a missing target) would otherwise vanish and
-        // leave only "vfkit could not be started". Kept in vfkitLogFile(), never vmLogFile(): vfkit
-        // opens that one itself, non-append, for the VM's own virtio-serial console, and a second,
-        // append-mode writer on the same file corrupts both (#971 review) — vfkit's own periodic
-        // lines ("machine awake" on host wake, timesync setup) land at EOF over console bytes
-        // `isx vm console` has already read past, and the console's next write lands over those.
-        // A separate file also keeps `vm.log` absent, and the first-launch TCC note it gates on,
-        // through a perl failure: vfkit's own output never touches it.
-        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(Environment.vfkitLogFile().toFile()));
-        var process = pb.start();
-        long pid = process.pid();
-        try {
-            awaitExec(process, "vfkit");
-            Files.writeString(Environment.vmPidFile(), String.valueOf(pid));
-            Files.writeString(Environment.vmRestUriFile(), "http://localhost:" + restPort);
-        } catch (IOException e) {
-            // Nothing was recorded, so nothing else will ever find this process to stop it.
-            process.destroyForcibly();
-            throw new IOException(e.getMessage() + " (see " + Environment.vfkitLogFile() + ")", e);
-        }
-        BuildOutput.stepDone("pid=" + pid + ", rest=localhost:" + restPort
-                + (launch == cmd ? "; no " + PERL + ", so it stops when the command that started it exits" : ""));
+        // vfkit's own stdout/stderr, perl's included (a broken POSIX module, a missing target), go
+        // to vfkitLogFile(), never vmLogFile(): vfkit opens that one itself, non-append, for the
+        // VM's own virtio-serial console, and a second, append-mode writer on the same file
+        // corrupts both (#971 review) — vfkit's own periodic lines ("machine awake" on host wake,
+        // timesync setup) land at EOF over console bytes `isx vm console` has already read past,
+        // and the console's next write lands over those. A separate file also keeps `vm.log`
+        // absent, and the first-launch TCC note it gates on, through a perl failure: vfkit's own
+        // output never touches it.
+        long pid = launchInOwnSession(cmd, "vfkit", Environment.vfkitLogFile(), Environment.vmPidFile()).pid();
+        Files.writeString(Environment.vmRestUriFile(), "http://localhost:" + restPort);
+        BuildOutput.stepDone("pid=" + pid + ", rest=localhost:" + restPort + noSessionNote());
     }
 
     private static final Path PERL = Path.of("/usr/bin/perl");
@@ -912,6 +895,34 @@ public final class VmManager {
                 "setsid(); exec { $ARGV[0] } @ARGV or die qq(exec $ARGV[0]: $!\\n)", "--"));
         wrapped.addAll(cmd);
         return wrapped;
+    }
+
+    /**
+     * Starts the VM's hypervisor through {@link #inOwnSession}, output and errors appended to
+     * {@code log}, and records its pid in {@code pidFile} once it has become {@code program}, the
+     * word {@link #isRunning()} recognises it by (#971, #993).
+     */
+    static Process launchInOwnSession(List<String> cmd, String program, Path log, Path pidFile) throws IOException {
+        var pb = new ProcessBuilder(inOwnSession(cmd));
+        // The user's perl settings are for their scripts, and can stop the one-liner from loading.
+        pb.environment().remove("PERL5OPT");
+        pb.environment().remove("PERL5LIB");
+        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()));
+        pb.redirectErrorStream(true);
+        var process = pb.start();
+        try {
+            awaitExec(process, program);
+            Files.writeString(pidFile, String.valueOf(process.pid()));
+        } catch (IOException e) {
+            // Nothing was recorded, so nothing else will ever find this process to stop it.
+            process.destroyForcibly();
+            throw new IOException(e.getMessage() + " (see " + log + ")", e);
+        }
+        return process;
+    }
+
+    private static String noSessionNote() {
+        return Files.isExecutable(PERL) ? "" : "; no " + PERL + ", so it stops when the command that started it exits";
     }
 
     /**
@@ -990,14 +1001,9 @@ public final class VmManager {
                 "-append", kernelCmdline(console)
         ));
 
-        var pb = new ProcessBuilder(cmd);
-        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(Environment.vmLogFile().toFile()));
-        pb.redirectErrorStream(true);
-        var process = pb.start();
-        long pid = process.pid();
-
-        Files.writeString(Environment.vmPidFile(), String.valueOf(pid));
-        BuildOutput.stepDone("pid=" + pid);
+        // qemu's console is its own stdout, so perl's errors can share its append-mode vm.log.
+        long pid = launchInOwnSession(cmd, "qemu", Environment.vmLogFile(), Environment.vmPidFile()).pid();
+        BuildOutput.stepDone("pid=" + pid + noSessionNote());
     }
 
     // --- Internal: disk management ---

@@ -1616,6 +1616,10 @@ three cases; `AbandonProcessGroup` in the agent's plist covers another one only.
 app bundle through LaunchServices (`open`) would detach it too, but returns no pid. If perl is
 ever gone from macOS the command is run as before, and this has to be solved again.
 
+QEMU, the Linux path, is started the same way (#993): its exposure to a hangup or Ctrl+C is the
+same. Its console is qemu's own stdout, appended to `vm.log`, so perl's diagnostics share that
+file without the double-writer problem below.
+
 vfkit's own stdout/stderr (perl's diagnostics if the exec above fails; otherwise whatever vfkit
 itself prints) go to `Environment.vfkitLogFile()`, never to `vm.log`: vfkit opens `vm.log` itself,
 non-append, for the VM's virtio-serial console, and a second writer appending to the same file
