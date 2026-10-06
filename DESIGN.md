@@ -1234,8 +1234,14 @@ build faster than v3 to the same wrong number and hides the differences between 
 
 ### The minimum macOS is set by the build
 
-isx supports **macOS 15 (Sequoia) or later**, on Apple Silicon and Intel; macOS 14 and older
-were dropped by decision (#1086). The value lives once, as `macos.deployment.target` in the root
+isx supports **macOS 15 (Sequoia) or later**; macOS 14 and older were dropped by decision
+(#1086). Apple Silicon is supported, and the bot's Apple Silicon Mac (the `mac-runner` agent, not a
+CI runner) verified this change on it. Intel stays among the release artifacts as **best effort**:
+it is built on GitHub's `macos-15-intel`, linked for the same minimum, smoke-tested there and
+checked like the rest, but not verified on an Intel Mac (`isx vm`, the proxy service), as no Intel
+Mac is available to the project.
+
+The value lives once, as `macos.deployment.target` in the root
 pom, and a profile activated on any macOS host adds
 `-H:NativeLinkerOption=-mmacosx-version-min=<it>` to both modules' argument lists
 (`macos.min.args`), so release builds and local `./install.sh --native` alike link for it.

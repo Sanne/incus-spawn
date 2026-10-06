@@ -19,7 +19,7 @@ Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/), p
 
 ## Quick Start
 
-Requires **Linux, or macOS 15 (Sequoia) or later** on Apple Silicon or Intel; older macOS releases are not supported. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|restart|status|resize|reset`. Windows is not supported.
+Requires **Linux, or macOS 15 (Sequoia) or later**; older macOS releases are not supported. On macOS, Apple Silicon is supported; Intel Macs get a binary built for the same macOS 15 minimum on a best-effort basis: it is released, but not verified on an Intel Mac. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|restart|status|resize|reset`. Windows is not supported.
 
 **macOS limitations**: GUI/audio passthrough (Wayland + PipeWire) and `overlay` mode for host-resources are Linux-only features. On macOS, use `readonly` or `copy` modes for host-resources instead.
 
