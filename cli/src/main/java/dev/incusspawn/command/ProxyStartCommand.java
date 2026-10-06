@@ -78,24 +78,26 @@ public class ProxyStartCommand extends BaseCommand {
             if (serviceActive) {
                 System.err.println("Proxy service is registered but not responding. Restarting...");
                 ProxyService.restart(System.err::println);
-                if (ProxyHealthCheck.awaitHealthy(10)) {
+                if (ProxyService.awaitStarted(10)) {
                     return CommandResult.SUCCESS;
                 }
                 if (ProxyService.failedWithConfigError()) {
                     System.err.println("Proxy failed due to a configuration problem (exit " + ProxyService.EXIT_CONFIG + ").");
                 } else {
                     System.err.println("Proxy is still not responding after restart.");
+                    ProxyService.reportMacOsJob("");
                 }
                 System.err.println("Check logs with: isx proxy logs");
                 return CommandResult.FAILURE;
             }
             System.out.println("Starting proxy via service manager...");
             if (ProxyService.startService()) {
-                if (ProxyHealthCheck.awaitHealthy(5)) {
+                if (ProxyService.awaitStarted(5)) {
                     System.out.println("Proxy service started.");
                     return CommandResult.SUCCESS;
                 }
                 System.err.println("Proxy service started but is not responding.");
+                ProxyService.reportMacOsJob("");
                 System.err.println("Check logs with: isx proxy logs");
                 return CommandResult.FAILURE;
             }

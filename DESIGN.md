@@ -96,6 +96,15 @@ proxy started on a half-configured host into a clear message. The price is that 
 which fails after the marker leaves init recorded as complete, and nothing offers the service
 again; it is optional, its failure is printed, and `isx proxy install` remains.
 
+That fixed one reason for a failed first start, not the waiting: any other (the VM-facing bridge
+not discoverable yet, say) still reached a five-second wait for health that ended before launchd's
+second start. On macOS the waits after the proxy job is started or restarted therefore outlast
+`ThrottleInterval` (`ProxyService.awaitStarted`, whose `startWaitSeconds` shares `LAUNCHD_THROTTLE_SECONDS` with
+the plist), and a wait that still times out prints what `launchctl print` says of the job
+(`state`, `runs`, `last exit code`), so "not responding" tells a job launchd is about to retry
+from one that keeps exiting (#969). Unlike making init wait out the throttle, this costs a healthy
+start nothing: the wait ends at the first answer from `/health`.
+
 Outside init, the same marker gates `isx proxy install` itself (`ProxyService.initComplete()`, in
 `install()` for every caller and at the top of the command): before init, or after an upgrade that
 raised `INIT_VERSION`, it refuses with "run `isx init` first" instead of writing a service that can

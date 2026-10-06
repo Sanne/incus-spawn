@@ -191,6 +191,26 @@ class LaunchdJobTest {
         assertEquals(List.of("launchctl kickstart failed (exit 1)."), log);
     }
 
+    /** #969: a timed-out wait for health says whether launchd is still retrying or the job exited. */
+    @Test
+    void lastRunReportsTheJobsStateRunsAndLastExitCode() {
+        var waiting = new LaunchdJob((String... args) -> new LaunchdJob.Result(0, TARGET + """
+                 = {
+                \tactive count = 0
+                \tpath = /Users/someone/Library/LaunchAgents/dev.incusspawn.proxy.plist
+                \tstate = spawn scheduled
+                \truns = 1
+                \tlast exit code = 1
+                \tendpoints = {
+                \t\tstate = active
+                \t}
+                }
+                """), () -> {}, DOMAIN, "dev.incusspawn.proxy", PLIST);
+
+        assertEquals("launchd: state = spawn scheduled, runs = 1, last exit code = 1", waiting.lastRun());
+        assertNull(job.lastRun(), "a job launchd does not know has nothing to report");
+    }
+
     /** Pinned separately from FAILED (review on #916): installMacOs reports this one differently. */
     @Test
     void restartGivesUpOnAJobThatNeverFinishesUnloading() {

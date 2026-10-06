@@ -178,8 +178,9 @@ public class ProxyCommand extends BaseCommand {
                     var futile = ProxyHealthCheck.assessDrift(info).futileReason();
                     if (futile != null) BuildOutput.note(futile);
                 }
-                if (!ProxyHealthCheck.awaitHealthy(5)) {
+                if (!ProxyService.awaitStarted(5)) {
                     System.err.println("Warning: proxy service is registered but not responding.");
+                    ProxyService.reportMacOsJob("");
                     System.err.println("Check logs with: isx proxy logs");
                     return CommandResult.FAILURE;
                 }

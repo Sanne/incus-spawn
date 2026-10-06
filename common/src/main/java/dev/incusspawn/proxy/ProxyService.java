@@ -101,6 +101,31 @@ public final class ProxyService {
         return Files.exists(Environment.proxyServiceFile());
     }
 
+    /** launchd's pause between two starts of the proxy job: the plist's {@code ThrottleInterval}. */
+    static final int LAUNCHD_THROTTLE_SECONDS = 10;
+
+    /**
+     * How long to wait for a service that was just started or restarted to answer. On macOS a
+     * first start that fails (the VM-facing bridge not discoverable yet, say) is retried by
+     * launchd only after {@code ThrottleInterval}, so a shorter wait reports "not responding"
+     * for a proxy that comes up a moment later (#969). A healthy proxy ends the wait at once.
+     */
+    static int startWaitSeconds(int seconds) {
+        return startWaitSeconds(Platform.isMacOS(), seconds);
+    }
+
+    static int startWaitSeconds(boolean macOs, int seconds) {
+        return macOs ? Math.max(seconds, LAUNCHD_THROTTLE_SECONDS + 5) : seconds;
+    }
+
+    /**
+     * Waits for a service that was just started or restarted to answer: {@code seconds}, or on
+     * macOS long enough for launchd's retry ({@link #startWaitSeconds}).
+     */
+    public static boolean awaitStarted(int seconds) {
+        return ProxyHealthCheck.awaitHealthy(startWaitSeconds(seconds));
+    }
+
     /**
      * True when the service gave up because of a misconfiguration rather than a transient
      * failure — it exited {@link #EXIT_CONFIG} and systemd declined to restart it. Callers use
@@ -1064,6 +1089,18 @@ public final class ProxyService {
         return Files.exists(proxyPlistFile());
     }
 
+    /** On macOS, prints to stderr what launchd says of the proxy job's last runs, if anything. */
+    public static void reportMacOsJob(String indent) {
+        if (!Platform.isMacOS()) return;
+        String described;
+        try {
+            described = proxyJob().lastRun();
+        } catch (RuntimeException e) {
+            return;
+        }
+        if (described != null) System.err.println(indent + described);
+    }
+
     public static boolean isMacOsServiceActive() {
         try {
             return proxyJob().isLoaded();
@@ -1090,7 +1127,7 @@ public final class ProxyService {
                     </array>
                     <key>RunAtLoad</key><true/>
                     <key>KeepAlive</key><true/>
-                    <key>ThrottleInterval</key><integer>10</integer>
+                    <key>ThrottleInterval</key><integer>%d</integer>
                     <key>EnvironmentVariables</key>
                     <dict>
                         <key>PATH</key><string>%s</string>
@@ -1099,7 +1136,7 @@ public final class ProxyService {
                     <key>StandardErrorPath</key><string>%s</string>
                 </dict>
                 </plist>
-                """.formatted(PROXY_LABEL, proxyBin, path, serviceLog, serviceLog);
+                """.formatted(PROXY_LABEL, proxyBin, LAUNCHD_THROTTLE_SECONDS, path, serviceLog, serviceLog);
     }
 
     private static boolean needsMacOsPlistUpdate() {
@@ -1277,13 +1314,14 @@ public final class ProxyService {
             return false;
         }
         if (isActive()) {
-            if (ProxyHealthCheck.awaitHealthy(5)) {
+            if (awaitStarted(5)) {
                 ProxyLog.info("Service installed and running");
                 System.out.println("  Services installed and running.");
                 return true;
             }
             ProxyLog.info("Service installed but not healthy");
             System.err.println("  Services installed but proxy is not responding.");
+            reportMacOsJob("  ");
             System.err.println("  Check logs with: isx proxy logs");
             return false;
         } else {

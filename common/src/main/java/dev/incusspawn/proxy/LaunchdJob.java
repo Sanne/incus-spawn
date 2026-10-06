@@ -154,13 +154,32 @@ final class LaunchdJob {
         return !Thread.currentThread().isInterrupted() && condition.getAsBoolean();
     }
 
+    /**
+     * What launchd says of the job's runs, such as {@code launchd: state = spawn scheduled, runs =
+     * 1, last exit code = 1} for a job waiting out {@code ThrottleInterval} after a failed start,
+     * or null when launchd does not know the job.
+     */
+    String lastRun() {
+        var lines = printedLines();
+        if (lines == null) return null;
+        // The first "state" is the job's own; nested blocks such as endpoints have one too.
+        var fields = java.util.stream.Stream.of("state = ", "runs = ", "last exit code = ")
+                .flatMap(key -> lines.stream().filter(l -> l.startsWith(key)).limit(1))
+                .toList();
+        return fields.isEmpty() ? null : "launchd: " + String.join(", ", fields);
+    }
+
     /** The pid of the job's process when launchd reports the job as running, else null. */
     private String runningPid() {
-        var printed = launchctl.run("print", target);
-        if (!printed.ok()) return null;
-        var lines = printed.output().lines().map(String::strip).toList();
-        if (!lines.contains("state = running")) return null;
+        var lines = printedLines();
+        if (lines == null || !lines.contains("state = running")) return null;
         return lines.stream().filter(l -> l.startsWith("pid = ")).findFirst().orElse(null);
+    }
+
+    /** What {@code launchctl print} says of the job, line by line and stripped, or null. */
+    private java.util.List<String> printedLines() {
+        var printed = launchctl.run("print", target);
+        return printed.ok() ? printed.output().lines().map(String::strip).toList() : null;
     }
 
     /** Runs one launchctl verb and, when it fails, says so with launchd's own message. */

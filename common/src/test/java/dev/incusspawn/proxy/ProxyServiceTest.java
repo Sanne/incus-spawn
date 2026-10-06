@@ -238,6 +238,20 @@ class ProxyServiceTest {
     }
 
     /**
+     * #969: launchd starts the job again only after ThrottleInterval, so a wait for health that
+     * ends sooner reports "not responding" for a proxy whose first start failed and whose second
+     * one comes up.
+     */
+    @Test
+    void macOsStartWaitOutlastsTheLaunchdThrottle() {
+        var throttle = java.util.regex.Pattern.compile("<key>ThrottleInterval</key><integer>(\\d+)</integer>")
+                .matcher(ProxyService.generateProxyPlist(PROXY_BIN));
+        assertTrue(throttle.find());
+        assertTrue(ProxyService.startWaitSeconds(true, 5) > Integer.parseInt(throttle.group(1)));
+        assertEquals(5, ProxyService.startWaitSeconds(false, 5));
+    }
+
+    /**
      * Review on #916: several `isx` commands finding the proxy down at once must not each
      * restart it — the second one through the lock would {@code kickstart -k} (or, on macOS,
      * bootout+bootstrap) a proxy the first one just brought up.
