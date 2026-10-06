@@ -54,7 +54,18 @@ public record ProxyCredentials(
     public static ProxyCredentials forAccounts(SpawnConfig config,
                                                java.util.Map<String, String> accountsByNamespace,
                                                java.util.Map<String, dev.incusspawn.tool.ToolSetup> toolSetups) {
-        var resolved = ToolProxyResolver.resolve(config, toolSetups, accountsByNamespace);
+        return forAccounts(config, config.tree(), accountsByNamespace, toolSetups);
+    }
+
+    /**
+     * As above, against {@code configTree}, the caller's serialization of {@code config}: the
+     * proxy serializes it once per config read rather than once per selection it resolves.
+     */
+    public static ProxyCredentials forAccounts(SpawnConfig config,
+                                               com.fasterxml.jackson.databind.JsonNode configTree,
+                                               java.util.Map<String, String> accountsByNamespace,
+                                               java.util.Map<String, dev.incusspawn.tool.ToolSetup> toolSetups) {
+        var resolved = ToolProxyResolver.resolve(configTree, toolSetups, accountsByNamespace);
         // Each ClaudeConfig accessor re-resolves the account; resolve once and read the fields
         // off it. Also makes it explicit that all five values describe a single account rather
         // than being independently sourced.

@@ -9,7 +9,11 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import dev.incusspawn.config.AccountResolver;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * A pinned instance's credentials come from the config the proxy loaded, and only a reload
@@ -54,6 +58,10 @@ class PinnedAccountStateTest {
     }
 
     private static MitmProxy proxyWithWorkPinnedInstance() {
+        return proxyWithPinnedInstance("work");
+    }
+
+    private static MitmProxy proxyWithPinnedInstance(String account) {
         var proxy = new MitmProxy(null, "127.0.0.1", 0, 0, "127.0.0.1", ConfigFingerprint.load());
         var registry = new InstanceRegistry(new IncusClient() {
             @Override
@@ -61,8 +69,8 @@ class PinnedAccountStateTest {
                 return """
                         [{"name":"work-box","config":{
                            "user.incus-spawn.static-ip":"%s",
-                           "user.incus-spawn.account.claude":"work"}}]
-                        """.formatted(PINNED_IP);
+                           "user.incus-spawn.account.claude":"%s"}}]
+                        """.formatted(PINNED_IP, account);
             }
         });
         registry.refresh();
@@ -97,5 +105,32 @@ class PinnedAccountStateTest {
         proxy.reload();
 
         assertEquals("sk-ant-api03-work-v2", servedKey(proxy));
+    }
+
+    @Test
+    void aDanglingPinIsResolvedOncePerConfigLoad() throws Exception {
+        writeConfig("sk-ant-api03-work-v1");
+        var proxy = proxyWithPinnedInstance("missing");
+
+        // The same outcome, not a fresh resolution: this runs on the event loop for every
+        // request the instance sends, and resolving serializes the whole config (#891).
+        var first = assertThrows(AccountResolver.UnknownAccountException.class, () -> servedKey(proxy));
+        var second = assertThrows(AccountResolver.UnknownAccountException.class, () -> servedKey(proxy));
+        assertSame(first, second);
+
+        // A reload drops the cached refusal: the account now exists and is served.
+        Files.writeString(configYaml, """
+                claude:
+                  accounts:
+                    personal:
+                      type: api-key
+                      apiKey: "sk-ant-api03-personal"
+                    missing:
+                      type: api-key
+                      apiKey: "sk-ant-api03-found"
+                  default: personal
+                """);
+        proxy.reload();
+        assertEquals("sk-ant-api03-found", servedKey(proxy));
     }
 }

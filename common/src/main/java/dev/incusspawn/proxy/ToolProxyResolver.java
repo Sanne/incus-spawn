@@ -1,7 +1,6 @@
 package dev.incusspawn.proxy;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
@@ -24,7 +23,6 @@ import java.util.regex.Pattern;
 
 public final class ToolProxyResolver {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
     private static final Pattern REF_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
     private ToolProxyResolver() {}
 
@@ -68,7 +66,7 @@ public final class ToolProxyResolver {
     public static List<ResolvedToolProxy> resolve(SpawnConfig config,
                                                   Map<String, ToolSetup> toolSetups,
                                                   Map<String, String> accountsByNamespace) {
-        return resolve(JSON.valueToTree(config), toolSetups, accountsByNamespace);
+        return resolve(config.tree(), toolSetups, accountsByNamespace);
     }
 
     /**
@@ -146,10 +144,21 @@ public final class ToolProxyResolver {
      */
     public static List<ResolvedToolProxy> resolveAcrossAccounts(
             SpawnConfig config, Map<String, ToolSetup> toolSetups) {
-        var configTree = JSON.valueToTree(config);
+        var configTree = config.tree();
+        return resolveAcrossAccounts(configTree, toolSetups, resolve(configTree, toolSetups, Map.of()));
+    }
+
+    /**
+     * As above, against a config tree the caller already serialized and the default
+     * selection's entries the caller already resolved from it, so neither is done twice.
+     */
+    public static List<ResolvedToolProxy> resolveAcrossAccounts(
+            JsonNode configTree, Map<String, ToolSetup> toolSetups, List<ResolvedToolProxy> defaults) {
         var seen = new LinkedHashMap<String, ResolvedToolProxy>();
+        for (var resolved : defaults) {
+            seen.putIfAbsent(resolved.toolName() + "\t" + resolved.domain(), resolved);
+        }
         var selections = new ArrayList<Map<String, String>>();
-        selections.add(Map.of());
         for (var tool : toolSetups.values()) {
             var proxyDef = tool.proxy();
             if (proxyDef == null) continue;
@@ -182,12 +191,12 @@ public final class ToolProxyResolver {
      * Excludes {@code type: anthropic} entries (those use relaxed resolution).
      */
     public static List<UnresolvedToolProxy> findUnresolved(SpawnConfig config) {
-        return findUnresolved(config, proxyToolSetups(config));
+        return findUnresolved(config.tree(), proxyToolSetups(config));
     }
 
-    public static List<UnresolvedToolProxy> findUnresolved(SpawnConfig config, Map<String, ToolSetup> toolSetups) {
+    /** As above, against a config tree the caller already serialized. */
+    public static List<UnresolvedToolProxy> findUnresolved(JsonNode configTree, Map<String, ToolSetup> toolSetups) {
         var result = new ArrayList<UnresolvedToolProxy>();
-        var configTree = JSON.valueToTree(config);
 
         for (var toolEntry : toolSetups.entrySet()) {
             var toolName = toolEntry.getKey();

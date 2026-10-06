@@ -117,7 +117,7 @@ public class ProxyMain implements QuarkusApplication {
         if (!toolProxyNames.isEmpty()) {
             System.out.println("  Tool proxies:  " + String.join(", ", toolProxyNames));
         }
-        var unresolved = ToolProxyResolver.findUnresolved(config, proxy.toolSetups());
+        var unresolved = ToolProxyResolver.findUnresolved(proxy.configTree(), proxy.toolSetups());
         if (!unresolved.isEmpty()) {
             var unresolvedNames = unresolved.stream()
                     .map(ToolProxyResolver.UnresolvedToolProxy::toolName)

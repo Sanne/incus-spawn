@@ -229,8 +229,12 @@ public class MitmProxy {
      *                               still have its domains intercepted -- otherwise a pinned
      *                               instance's request is relayed with nothing injected. A pinned
      *                               caller gets its own routing from {@link #contextFor}
+     * @param configTree             {@code config} serialized, once per config read: every
+     *                               selection resolves against it
      * @param credentialsBySelection keyed by the selection itself, so two instances pinned the
-     *                               same way share one entry
+     *                               same way share one entry, and holding a selection's refusal
+     *                               as well as its credentials, so a dangling pin is not
+     *                               resolved again on every request it sends
      * @param mismatchesByInstance   per instance, the credentials it cannot be served because
      *                               its build does not match the account it would get (a Claude
      *                               auth mode) -- see {@code AccountSelection.servingMismatches}.
@@ -239,6 +243,7 @@ public class MitmProxy {
      */
     private record ConfigState(
             dev.incusspawn.config.SpawnConfig config,
+            com.fasterxml.jackson.databind.JsonNode configTree,
             Map<String, dev.incusspawn.tool.ToolSetup> toolSetups,
             ProxyCredentials credentials,
             ToolProxyRouting routing,
@@ -248,10 +253,11 @@ public class MitmProxy {
             Map<InstanceRegistry.InstanceAccounts, Map<String, String>> mismatchesByInstance) {
 
         ConfigState(dev.incusspawn.config.SpawnConfig config,
+                    com.fasterxml.jackson.databind.JsonNode configTree,
                     Map<String, dev.incusspawn.tool.ToolSetup> toolSetups,
                     ProxyCredentials credentials,
                     List<ResolvedToolProxy> proxiesAcrossAccounts) {
-            this(config, toolSetups, credentials,
+            this(config, configTree, toolSetups, credentials,
                     buildRouting(credentials.toolProxies(), proxiesAcrossAccounts, true),
                     dev.incusspawn.config.AccountSelection.byNamespace(toolSetups),
                     dev.incusspawn.config.AccountSelection.namespacesByDomain(toolSetups),
@@ -269,8 +275,20 @@ public class MitmProxy {
                           ProxyCredentials creds, ToolProxyRouting routing,
                           boolean usesDefaultCredentials) {}
 
-    /** Credentials plus the routing that indexes them, cached together per selection. */
-    private record AccountBundle(ProxyCredentials creds, ToolProxyRouting routing) {}
+    /**
+     * Credentials plus the routing that indexes them, cached together per selection; or, for
+     * a selection naming an account that is not configured, the refusal to raise instead.
+     */
+    private record AccountBundle(ProxyCredentials creds, ToolProxyRouting routing,
+                                 dev.incusspawn.config.AccountResolver.UnknownAccountException unknown) {
+        static AccountBundle of(ProxyCredentials creds) {
+            return new AccountBundle(creds, buildRouting(creds.toolProxies(), creds.toolProxies(), false), null);
+        }
+
+        static AccountBundle refused(dev.incusspawn.config.AccountResolver.UnknownAccountException unknown) {
+            return new AccountBundle(null, null, unknown);
+        }
+    }
 
     // Overridable for tests: upstream WebSocket connections default to port 443 + TLS
     int upstreamWsPort = 443;
@@ -337,7 +355,8 @@ public class MitmProxy {
     public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
                      String healthBindAddress, ProxyCredentials credentials) {
         this(vertx, bindAddress, mitmPort, healthPort, healthBindAddress, ConfigFingerprint.capture());
-        this.configState = new ConfigState(NO_CONFIG, Map.of(), credentials, credentials.toolProxies());
+        this.configState = new ConfigState(NO_CONFIG, NO_CONFIG.tree(), Map.of(), credentials,
+                credentials.toolProxies());
     }
 
     /** The config of a proxy built from credentials alone: empty, and never compared on reload. */
@@ -419,10 +438,15 @@ public class MitmProxy {
         // immutable copy, so it is a sound key -- content-based and order-independent.
         var bundle = state.credentialsBySelection().get(selection);
         if (bundle == null) {
-            var creds = ProxyCredentials.forAccounts(state.config(), selection, state.toolSetups());
-            bundle = new AccountBundle(creds, buildRouting(creds.toolProxies(), creds.toolProxies(), false));
+            try {
+                bundle = AccountBundle.of(ProxyCredentials.forAccounts(state.config(), state.configTree(),
+                        selection, state.toolSetups()));
+            } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
+                bundle = AccountBundle.refused(e);
+            }
             state.credentialsBySelection().putIfAbsent(selection, bundle);
         }
+        if (bundle.unknown() != null) throw bundle.unknown();
         return new RequestContext(domain, instance.instanceName(),
                 bundle.creds(), bundle.routing(), false);
     }
@@ -457,9 +481,12 @@ public class MitmProxy {
      */
     private ConfigState useConfig(dev.incusspawn.config.SpawnConfig config) {
         var setups = ToolProxyResolver.proxyToolSetups(config);
+        var tree = config.tree();
         var previous = configState;
-        configState = new ConfigState(config, setups, ProxyCredentials.forAccounts(config, Map.of(), setups),
-                ToolProxyResolver.resolveAcrossAccounts(config, setups));
+        // The default selection is resolved once, and seeds the across-accounts set.
+        var credentials = ProxyCredentials.forAccounts(config, tree, Map.of(), setups);
+        configState = new ConfigState(config, tree, setups, credentials,
+                ToolProxyResolver.resolveAcrossAccounts(tree, setups, credentials.toolProxies()));
         artifactCacheTiers = ArtifactCacheTiers.from(config);
         return previous;
     }
@@ -472,6 +499,11 @@ public class MitmProxy {
     /** The tool setups resolved from the last config read. */
     Map<String, dev.incusspawn.tool.ToolSetup> toolSetups() {
         return configState.toolSetups();
+    }
+
+    /** The last config read, serialized: read it rather than serializing the config again. */
+    com.fasterxml.jackson.databind.JsonNode configTree() {
+        return configState.configTree();
     }
 
     private void scheduleRegistryRefresh(InstanceRegistry registry) {
