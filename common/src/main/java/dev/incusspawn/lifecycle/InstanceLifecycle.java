@@ -19,6 +19,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.InstanceUpdate;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.StaticIpAllocator;
+import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.ssh.SshKeyManager;
@@ -628,14 +629,17 @@ public final class InstanceLifecycle {
      * ({@link #prepareHostDevicesForStart}), and gives it a new secret ({@link
      * #rotateInstanceSecret}), which the readiness probe itself puts in place: it costs no
      * request of its own.
+     *
+     * @return the instance as read once it answered ({@link #recordSecretBoot}), for the caller
+     *         to reuse rather than read again; null when there is none
      */
-    public static void startForUse(IncusClient incus, String name, MachineType machineType,
-                                   Consumer<String> warn) {
+    public static JsonNode startForUse(IncusClient incus, String name, MachineType machineType,
+                                       Consumer<String> warn) {
         prepareHostDevicesForStart(incus, name, warn);
         var secret = rotateInstanceSecret(incus, name);
         startInstance(incus, name, warn);
         incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT, InstanceSecret.guestEnv(secret));
-        recordSecretBoot(incus, name, machineType);
+        return recordSecretBoot(incus, name, machineType);
     }
 
     /**
@@ -682,17 +686,28 @@ public final class InstanceLifecycle {
     /**
      * Record which boot of container {@code name} its new secret went to, once the guest
      * answers, so that {@link #ensureReady} can tell a later reboot from it at no cost
-     * ({@link Metadata#INSTANCE_SECRET_BOOT}). Its boot is only known after the start, so this is
-     * a read and a write of its own. Best-effort: without it, the next shell gives the box
-     * another secret, which is the safe way for it to go wrong. A VM is never stamped.
+     * ({@link Metadata#INSTANCE_SECRET_BOOT}). Its boot is only known after the start, so this
+     * reads the instance, and returns that read for the caller's next step to reuse rather than
+     * make again (the CA check, {@link CertificateAuthority#fixContainerCaIfNeeded(IncusClient,
+     * String, JsonNode)}): the write is the only request it adds. Best-effort: without it, the
+     * next shell gives the box another secret, which is the safe way for it to go wrong. A VM is
+     * never stamped.
+     *
+     * @return the instance as read once the guest answered, or null for a VM or a failed read
      */
-    static void recordSecretBoot(IncusClient incus, String name, MachineType machineType) {
-        if (machineType == MachineType.VM) return;
+    static JsonNode recordSecretBoot(IncusClient incus, String name, MachineType machineType) {
+        if (machineType == MachineType.VM) return null;
         try {
-            var bootedAt = bootOf(incus.instanceMetadata(name));
+            // A failed read must not reach the CA check as an empty instance, which it would
+            // take for one with no CA to check: null makes it read again
+            var instance = incus.instanceMetadataOrThrow(name);
+            if (instance == null) return null;
+            var bootedAt = bootOf(instance);
             if (!bootedAt.isEmpty()) incus.configSet(name, Metadata.INSTANCE_SECRET_BOOT, bootedAt);
+            return instance;
         } catch (RuntimeException e) {
             // The next ensureReady sees an unrecorded boot
+            return null;
         }
     }
 
@@ -708,9 +723,12 @@ public final class InstanceLifecycle {
         try {
             var secret = rotateInstanceSecret(incus, name,
                     bootedAt == null ? Map.of() : Map.of(Metadata.INSTANCE_SECRET_BOOT, bootedAt));
-            var delivery = incus.shellExec(name, InstanceSecret.guestEnv(secret), "sh", "-c", InstanceSecret.GUEST_SCRIPT);
-            if (delivery.success()) return;
-            failure = "exit code " + delivery.exitCode();
+            // GUEST_SCRIPT never fails, so the same exec asks whether the secret is now there:
+            // a write it skipped would otherwise give a VM a new secret on every shell, silently
+            var delivery = incus.shellExec(name, InstanceSecret.guestEnv(secret), "sh", "-c",
+                    InstanceSecret.GUEST_SCRIPT + "\n" + InstanceSecret.GUEST_CHECK);
+            if (delivery.success() && !InstanceSecret.missingIn(delivery.stdout())) return;
+            failure = delivery.success() ? "the guest did not keep it" : "exit code " + delivery.exitCode();
         } catch (RuntimeException e) {
             failure = e.getMessage();
         }

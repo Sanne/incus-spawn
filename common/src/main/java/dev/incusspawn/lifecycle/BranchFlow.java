@@ -339,10 +339,10 @@ public final class BranchFlow {
 
         InstanceLifecycle.setupRuntime(incus, name, networkMode, prefetched, secret);
         // Or the first shell would take this boot for one isx did not start, and replace its secret
-        InstanceLifecycle.recordSecretBoot(incus, name, machineType);
+        var booted = InstanceLifecycle.recordSecretBoot(incus, name, machineType);
 
         if (networkMode != NetworkMode.AIRGAP) {
-            CertificateAuthority.fixContainerCaIfNeeded(incus, name);
+            CertificateAuthority.fixContainerCaIfNeeded(incus, name, booted);
             ProxyConfig.fixResolvConfIfNeeded(incus, name);
             // The template baked its own account's identity; a branch pinned to a different one
             // must not commit under it. Re-derived here rather than only on the next

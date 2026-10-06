@@ -164,6 +164,14 @@ class InstanceSecretRebootTest {
     }
 
     @Test
+    void aFailedReadIsNotHandedOnAsTheInstance() {
+        // The CA check takes what the start read: an error must not look like an instance
+        // without a CA fingerprint, which it would skip
+        var daemon = runningContainer(STARTED, STARTED).failInstanceReads(500);
+        assertNull(InstanceLifecycle.recordSecretBoot(daemon.client(), NAME, MachineType.CONTAINER));
+    }
+
+    @Test
     void aRestartFromTheTuiRecordsItsBootToo() {
         var daemon = runningContainer(STARTED, STARTED);
         var incus = spy(daemon.client());
@@ -208,6 +216,25 @@ class InstanceSecretRebootTest {
 
         assertEquals(List.of(), daemon.requests());
         assertEquals(previous, config(daemon, Metadata.INSTANCE_SECRET_SHA256));
+    }
+
+    /**
+     * GUEST_SCRIPT never fails, so a write it skips (no room in /run, say) would go unnoticed,
+     * and a VM would get a new secret on every shell. The delivery asks the guest afterwards.
+     */
+    @Test
+    void aDeliveryTheGuestDidNotKeepIsReported() {
+        var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Running",
+                Map.of(Metadata.INSTANCE_SECRET_SHA256, InstanceSecret.sha256(InstanceSecret.generate())));
+        var incus = vmWhoseGuestAnswers(daemon, InstanceSecret.MISSING + "\n");
+        doReturn(new IncusClient.ExecResult(0, InstanceSecret.MISSING + "\n", ""))
+                .when(incus).shellExec(eq(NAME), anyMap(), any(String[].class));
+        var said = new ArrayList<String>();
+
+        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.VM, said::add);
+
+        assertEquals(1, said.size(), said::toString);
+        assertTrue(said.getFirst().contains("could not give " + NAME + " a new instance secret"), said.getFirst());
     }
 
     /** A running VM whose agent answers the probe with {@code stdout}, which FakeIncusDaemon cannot serve. */

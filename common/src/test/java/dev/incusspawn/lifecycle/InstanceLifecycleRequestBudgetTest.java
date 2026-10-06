@@ -6,6 +6,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.proxy.CertificateAuthority;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -17,9 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
 
 /**
@@ -70,17 +73,47 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
-    void aContainerStartRecordsItsBootOnceTheGuestAnswers() {
-        // After the wait: a read for the boot Incus recorded, and its stamp (#1024). Unknowable
-        // before the start, and what lets every later shell tell a reboot at no cost.
+    void aContainerStartAndItsCaCheckAddOneWriteForTheBoot() {
+        // isx shell's and the TUI's start, then their CA check. The start reads the instance once
+        // the guest answers, for the boot Incus recorded, and stamps it (#1024); the CA check
+        // reuses that read. So the boot costs one PATCH: 6, where it was 5 before #1024.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
         var incus = spy(daemon.client());
         doNothing().when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
-        InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, msg -> {});
+        var started = InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, msg -> {});
+        CertificateAuthority.fixContainerCaIfNeeded(incus, NAME, started);
         var requests = daemon.requests();
         assertEquals(List.of("GET /1.0/instances/" + NAME, "PATCH /1.0/instances/" + NAME),
-                requests.subList(requests.size() - 2, requests.size()), String.join("\n", requests));
-        assertBudget(6, daemon, "startForUse (container, guest answering)");
+                requests.subList(requests.size() - 2, requests.size()),
+                () -> "the CA check must not read the instance again:\n" + String.join("\n", requests));
+        assertBudget(6, daemon, "startForUse + fixContainerCaIfNeeded (container, guest answering)");
+    }
+
+    @Test
+    void aBranchsCaCheckReusesTheReadThatRecordsItsBoot() {
+        // After the branch's start: the read that finds its boot and the stamp (#1024), then the
+        // CA check with nothing of its own, then resolv.conf's bridge lookup and exec (which this
+        // daemon cannot serve, so the flow ends there).
+        var daemon = new FakeIncusDaemon().container("dev-0", Map.of(Metadata.PROFILE, "tpl-dev"));
+        var incus = spy(daemon.client());
+        doReturn(true).when(incus).pollUntilReady(eq(NAME), anyInt(), anyMap(), any(String[].class));
+        var request = new BranchFlow.Request("dev-0", NAME, false, false, NetworkMode.FULL,
+                null, null, null, null, List.of(), true, Map.of());
+        // A non-airgapped branch checks the host's proxy first; this host may not run one.
+        var original = BranchFlow.proxyHealthCheck;
+        BranchFlow.proxyHealthCheck = i -> true;
+        try {
+            var preflight = BranchFlow.preflight(incus, request, Map.of());
+            assertThrows(IncusException.class, () -> BranchFlow.create(incus, preflight));
+        } finally {
+            BranchFlow.proxyHealthCheck = original;
+        }
+
+        var requests = daemon.requests();
+        var afterStart = requests.subList(requests.indexOf("PUT /1.0/instances/" + NAME + "/state") + 2, requests.size());
+        assertEquals(List.of("GET /1.0/instances/" + NAME, "PATCH /1.0/instances/" + NAME,
+                "GET /1.0/networks/incusbr0", "POST /1.0/instances/" + NAME + "/exec"), afterStart,
+                () -> "the CA check must not read the instance again:\n" + String.join("\n", requests));
     }
 
     @Test

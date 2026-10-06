@@ -5588,6 +5588,7 @@ public class ListCommand extends BaseCommand {
     }
 
     private void fixCaMismatchIfNeeded(String containerName, MachineType machineType) {
+        JsonNode started = null;
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(containerName))) {
             // Runs on the TUI's own screen, where stderr would be drawn over: a mount dropped
             // because its host directory is gone must not go unannounced (#852), so it goes to
@@ -5595,9 +5596,10 @@ public class ListCommand extends BaseCommand {
             // Through InstanceLifecycle, as isx shell's start is: the prep re-arms IP spoofing
             // protection (#905), the start falls back where the host cannot enforce it, and the
             // instance gets its new secret (#934).
-            InstanceLifecycle.startForUse(incus, containerName, machineType, warningLog::add);
+            started = InstanceLifecycle.startForUse(incus, containerName, machineType, warningLog::add);
         }
-        CertificateAuthority.fixContainerCaIfNeeded(incus, containerName);
+        // The start's own read of the instance, when there was one: no need to read it again
+        CertificateAuthority.fixContainerCaIfNeeded(incus, containerName, started);
     }
 
     private void shellInto(ActionContext target) {

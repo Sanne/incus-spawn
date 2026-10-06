@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.incus.BridgeSubnetCheck;
@@ -128,11 +129,13 @@ public class InstancePrep {
 
     private static void fixCaMismatch(IncusClient incus, String container, MachineType machineType) {
         // Ensure the container is running so we can push the cert
+        JsonNode started = null;
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(container))) {
-            InstanceLifecycle.startForUse(incus, container, machineType, System.err::println);
+            started = InstanceLifecycle.startForUse(incus, container, machineType, System.err::println);
         }
 
-        if (CertificateAuthority.fixContainerCaIfNeeded(incus, container)) {
+        // The start's own read of the instance, when there was one: no need to read it again
+        if (CertificateAuthority.fixContainerCaIfNeeded(incus, container, started)) {
             BuildOutput.warnBanner("CA certificate mismatch",
                     "Updated automatically.");
         }

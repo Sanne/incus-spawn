@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.ClientLog;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
@@ -222,7 +223,18 @@ public class CertificateAuthority {
      * Containers without a stored fingerprint (pre-versioning) are skipped.
      */
     public static boolean fixContainerCaIfNeeded(IncusClient incus, String container) {
-        var imageCaFp = incus.configGet(container, Metadata.CA_FINGERPRINT);
+        return fixContainerCaIfNeeded(incus, container, null);
+    }
+
+    /**
+     * As above, reading the stored fingerprint from {@code instance} when the caller has just
+     * read it -- as a start does ({@code InstanceLifecycle.startForUse}) -- rather than reading
+     * the instance again; null reads it.
+     */
+    public static boolean fixContainerCaIfNeeded(IncusClient incus, String container, JsonNode instance) {
+        var imageCaFp = instance != null
+                ? instance.path("config").path(Metadata.CA_FINGERPRINT).asText("")
+                : incus.configGet(container, Metadata.CA_FINGERPRINT);
         if (imageCaFp.isEmpty()) return false;
         var ca = loadOrCreate();
         if (imageCaFp.equals(ca.caFingerprint())) return false;
