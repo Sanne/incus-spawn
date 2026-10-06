@@ -763,14 +763,14 @@ class TaskScriptsTest {
     }
 
     /**
-     * A {@code [} that, having found the task file {@code $SWAP} to be a regular file, puts a FIFO
+     * A {@code [} that, having found the task file {@code $SWAP} to be a regular (or non-empty) file, puts a FIFO
      * in its place: the race of #1080 (something in the instance swapping the two between check
      * and open), made to happen every time.
      */
     private static final String SWAP_AFTER_CHECK = """
             [() {
               builtin [ "$@"; local r=$?
-              if builtin [ $r = 0 ] && builtin [ "$1" = -f ] && builtin [ "$2" = "$SWAP" ]; then
+              if builtin [ $r = 0 ] && { builtin [ "$1" = -f ] || builtin [ "$1" = -s ]; } && builtin [ "$2" = "$SWAP" ]; then
                 rm -f -- "$2"; mkfifo -- "$2"
               fi
               return $r
@@ -794,6 +794,47 @@ class TaskScriptsTest {
         // The kill sweep waits between TERM and KILL: cancel reads one file, its current run.
         swappableTaskFiles();
         sh("SWAP=" + home.resolve(".isx-mcp/tasks/t33-abc/current") + "\n" + SWAP_AFTER_CHECK + TaskScripts.cancel("t33-abc"), "", 10);
+    }
+
+    @Test
+    @Timeout(60)
+    void aFifoInTheTaskDirOrTheRepositoryHoldsNoDiff() throws Exception {
+        sh(TaskScripts.launch("t51-abc", 1, Tasks.AGENT,
+                TaskScripts.agentRun("t51-abc", 1, work.toString(), Tasks.Profile.NONE, null, "plan")), "go");
+        awaitFinished("t51-abc");
+        var base = home.resolve(".isx-mcp/tasks/t51-abc/base.txt");
+        var recorded = Files.readString(base);
+        for (var script : List.of(TaskScripts.diff("t51-abc", null, 100_000), TaskScripts.diff("t51-abc", null, 100_000, true),
+                TaskScripts.diffForReading("t51-abc", null))) {
+            // Exported: the diff runs in a bash of its own, under timeout.
+            sh("export SWAP=" + base + "\n" + SWAP_AFTER_CHECK + "export -f [\n" + script, "", 5);
+            Files.delete(base);
+            Files.writeString(base, recorded);
+        }
+
+        // The diff starts from a copy of the repository's index.
+        var index = work.resolve(".git/index");
+        Files.move(index, work.resolve(".git/index.kept"));
+        sh("mkfifo " + index, "");
+        assertTrue(sh(TaskScripts.diff("t51-abc", null, 100_000), "", 5).contains("NEW_FILE"), "a diff all the same");
+        Files.delete(index);
+        Files.move(work.resolve(".git/index.kept"), index);
+
+        // Whatever git itself opens is the repository's: no script can check it, so the diff is bounded.
+        var head = work.resolve(".git/HEAD");
+        Files.delete(head);
+        sh("mkfifo " + head, "");
+        var pb = new ProcessBuilder("bash", "-c", TaskScripts.diff("t51-abc", null, 100_000, false, 2)).directory(home.toFile());
+        pb.environment().put("HOME", home.toString());
+        var p = pb.start();
+        try {
+            assertTrue(p.waitFor(20, TimeUnit.SECONDS), "the diff waited on a FIFO");
+            assertTrue(p.exitValue() != 0, "a diff that did not finish is no diff");
+            assertTrue(new String(p.getErrorStream().readAllBytes(), StandardCharsets.UTF_8).contains("did not finish within 2 s"));
+        } finally {
+            p.descendants().forEach(ProcessHandle::destroyForcibly);
+            p.destroyForcibly();
+        }
     }
 
     /** A finished agent, a finished command and an agent being cancelled, from scratch; every file of theirs. */

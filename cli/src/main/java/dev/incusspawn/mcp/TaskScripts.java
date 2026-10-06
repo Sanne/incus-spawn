@@ -466,30 +466,46 @@ final class TaskScripts {
      * {@code ---} and no patch. Deterministic and small, whatever the size of the patch.
      */
     static String diff(String taskId, String path, int maxBytes, boolean statOnly) {
-        return diff(taskId, path, maxBytes, statOnly, NUMSTAT);
+        return diff(taskId, path, maxBytes, statOnly, DIFF_LIMIT_SECONDS);
     }
 
+    /** {@link #diff}, given up on after {@code limitSeconds}. */
+    static String diff(String taskId, String path, int maxBytes, boolean statOnly, int limitSeconds) {
+        return diff(taskId, path, maxBytes, statOnly, NUMSTAT, limitSeconds);
+    }
+
+    /**
+     * How long a diff may take. Its files are read without waiting on a FIFO, but git opens the
+     * repository's own, which anyone in the instance can replace with one: past this, the diff
+     * fails rather than hold the tool call (#1105). A copy of the index makes even a large
+     * repository's diff take seconds.
+     */
+    private static final int DIFF_LIMIT_SECONDS = 300;
+
     /** {@link #diff}, with the stat records {@code numstat} asks git for. */
-    private static String diff(String taskId, String path, int maxBytes, boolean statOnly, String numstat) {
+    private static String diff(String taskId, String path, int maxBytes, boolean statOnly, String numstat, int limitSeconds) {
         var d = dir(taskId);
         var pathspec = path == null ? "" : " -- " + ExecScript.quote(path);
+        var repos = "D=" + d + "; [ -s \"$D/base.txt\" ] || { echo 'no git repository was found where the task started'; exit 0; }; ";
+        var each = readFile("$D/base.txt") + " | while read -r base repo; do ( cd \"$repo\" || exit 0; " + DIFF_INDEX;
+        String script;
         if (statOnly) {
-            return "D=" + d + "; [ -s \"$D/base.txt\" ] || { echo 'no git repository was found where the task started'; exit 0; }; "
-                    + "while read -r base repo; do ( cd \"$repo\" || exit 0; "
-                    + DIFF_INDEX
+            script = repos + each
                     + "echo \"## $repo\"; git " + numstat + " \"$base\"" + pathspec + "; echo; "
-                    + "rm -f \"$idx\" ); done < \"$D/base.txt\"; echo ---";
+                    + "rm -f \"$idx\" ); done; echo ---";
+        } else {
+            script = repos + "out=$(mktemp); stat=$(mktemp); " + each
+                    + "{ echo \"## $repo\"; git " + numstat + " \"$base\"" + pathspec + "; echo; } >> \"$stat\"; "
+                    + "git diff --cached --src-prefix=a/ --dst-prefix=b/ \"$base\"" + pathspec + " >> \"$out\"; "
+                    + "rm -f \"$idx\" ); done; "
+                    + "cat \"$stat\"; echo ---; "
+                    + "if [ $(stat -c %s \"$out\") -gt " + maxBytes + " ]; then echo \"(too large: $(stat -c %s \"$out\") bytes)\"; "
+                    + "else cat \"$out\"; fi; rm -f \"$out\" \"$stat\"";
         }
-        return "D=" + d + "; [ -s \"$D/base.txt\" ] || { echo 'no git repository was found where the task started'; exit 0; }; "
-                + "out=$(mktemp); stat=$(mktemp); "
-                + "while read -r base repo; do ( cd \"$repo\" || exit 0; "
-                + DIFF_INDEX
-                + "{ echo \"## $repo\"; git " + numstat + " \"$base\"" + pathspec + "; echo; } >> \"$stat\"; "
-                + "git diff --cached --src-prefix=a/ --dst-prefix=b/ \"$base\"" + pathspec + " >> \"$out\"; "
-                + "rm -f \"$idx\" ); done < \"$D/base.txt\"; "
-                + "cat \"$stat\"; echo ---; "
-                + "if [ $(stat -c %s \"$out\") -gt " + maxBytes + " ]; then echo \"(too large: $(stat -c %s \"$out\") bytes)\"; "
-                + "else cat \"$out\"; fi; rm -f \"$out\" \"$stat\"";
+        // timeout signals its whole process group, git included.
+        return "timeout -k 5 " + limitSeconds + " bash -c " + ExecScript.quote(script) + "; r=$?; "
+                + "case $r in 124|137) echo \"the diff did not finish within " + limitSeconds
+                + " s: something in the instance may be holding it\" >&2;; esac; exit $r";
     }
 
     /**
@@ -498,7 +514,7 @@ final class TaskScripts {
      * does), so no file name can forge a line; other names stay as they are.
      */
     static String diffForReading(String taskId, String path) {
-        return diff(taskId, path, Integer.MAX_VALUE, false, READABLE_NUMSTAT);
+        return diff(taskId, path, Integer.MAX_VALUE, false, READABLE_NUMSTAT, DIFF_LIMIT_SECONDS);
     }
 
     /**
@@ -516,8 +532,10 @@ final class TaskScripts {
      * untracked files without touching the repository's own index: a copy of that index (found
      * by --git-path, as a worktree or submodule has a .git file, not a directory) as a starting
      * point, failing that none -- an empty file would be a corrupt index, a missing one is empty.
+     * Read as every task file is ({@link #readFile}): a FIFO there must not hold the copy.
      */
-    private static final String DIFF_INDEX = "idx=$(mktemp); cp \"$(git rev-parse --git-path index)\" \"$idx\" 2>/dev/null || rm -f \"$idx\"; "
+    private static final String DIFF_INDEX = "idx=$(mktemp); ix=$(git rev-parse --git-path index) && " + readFile("$ix")
+            + " > \"$idx\" || rm -f \"$idx\"; "
             + "export GIT_INDEX_FILE=\"$idx\"; git add -A >/dev/null 2>&1; ";
 
     static String b64(String text) {
