@@ -31,9 +31,16 @@ public final class TerminalLink {
         return link(url, url);
     }
 
-    /** Wrap a URL as an OSC 8 clickable hyperlink with custom display text. */
+    /**
+     * Wrap a URL as an OSC 8 clickable hyperlink with custom display text. Off an ANSI terminal
+     * (the same gate as colour, {@link BuildOutput#styled}) the URL is printed as text instead:
+     * alone, or after a label that differs from it.
+     */
     public static String link(String url, String label) {
-        return OSC8_OPEN + sanitize(url) + ST + sanitize(label) + OSC8_CLOSE;
+        url = sanitize(url);
+        label = sanitize(label);
+        if (!BuildOutput.ansi()) return label.equals(url) ? url : label + " (" + url + ")";
+        return OSC8_OPEN + url + ST + label + OSC8_CLOSE;
     }
 
     /**

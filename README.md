@@ -1211,7 +1211,7 @@ Commands that list things take `--format=table|plain|json`. So far that is `isx 
 - When isx cannot read what Incus answered, the command fails (exit 1, the reason on stderr). It never prints an empty result.
 - Both `plain` and `json` are stable. Fields may be added at the end, but are never renamed, removed or reordered.
 - Results go to stdout. Errors and diagnostics go to stderr, so stdout holds only results. Commands that act (`build`, `branch`, `destroy`, ...) report their steps on stdout and their warnings and notes on stderr. A status command's report is its result in every state: `isx proxy status` prints it on stdout whether or not the proxy is healthy, and the exit code says which.
-- isx writes colour and animated progress only to a terminal. Off one, and when `NO_COLOR` is set to a non-empty value, output holds no escape sequences.
+- isx writes colour, clickable links and animated progress only when stdout is a terminal. When stdout is redirected or piped, or `NO_COLOR` is set to a non-empty value, neither stdout nor stderr holds escape sequences. isx cannot tell whether stderr alone is a terminal, so `isx build tpl-dev 2>build.log` run from a terminal still colours the warnings in `build.log`. For a clean log, redirect both streams or set `NO_COLOR=1`.
 
 `isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`) and `created`, in that order. For names alone, use `isx list -q`:
 

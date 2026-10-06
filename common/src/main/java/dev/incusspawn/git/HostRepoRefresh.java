@@ -173,15 +173,15 @@ public final class HostRepoRefresh {
         var sb = new StringBuilder(BuildOutput.STEP_INDENT);
         switch (progress.state()) {
             case FETCHING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
-                    .append(" \033[2mFetching\033[0m ");
-            case DONE     -> sb.append("\033[32m✓\033[0m Fetched  ");
-            case FAILED   -> sb.append("\033[31m✗\033[0m \033[31mFailed\033[0m   ");
+                    .append(" \033[2mFetching\033[0m "); // raw ANSI: animated line
+            case DONE     -> sb.append("\033[32m✓\033[0m Fetched  "); // raw ANSI: animated line
+            case FAILED   -> sb.append("\033[31m✗\033[0m \033[31mFailed\033[0m   "); // raw ANSI: animated line
         }
         sb.append(' ');
         sb.append(task.repoName());
-        sb.append(" \033[2m(").append(task.hostPath()).append(")\033[0m");
+        sb.append(" \033[2m(").append(task.hostPath()).append(")\033[0m"); // raw ANSI: animated line
         if (progress.state() == FetchState.FAILED && progress.detail() != null && !progress.detail().isEmpty()) {
-            sb.append("  \033[31m").append(progress.detail()).append("\033[0m");
+            sb.append("  \033[31m").append(progress.detail()).append("\033[0m"); // raw ANSI: animated line
         }
         return sb.toString();
     }

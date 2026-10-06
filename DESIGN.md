@@ -521,18 +521,26 @@ name, so it stays, hidden, as an alias for `isx list -q` until a later release r
 scripts this release generates call `isx list -q`.
 
 **Commands that act need clean stdout, not a format** (#1037). `BuildOutput` writes colour only
-when `TerminalProgress.isAnsiTerminal()` says so, and that check is false without a console, for
-`TERM=dumb`, and when `NO_COLOR` is set to anything non-empty (no-color.org), so the live spinner
-also falls back to `label... done.` lines. Its `warn`, `stepWarn` and `note` go to stderr: a step
-line is what the command did, a warning or note is a diagnostic about it. So a line that is the command's
+when `BuildOutput.ansi()` says so, which is `TerminalProgress.isAnsiTerminal()`: false without a
+console, for `TERM=dumb`, and when `NO_COLOR` is set to anything non-empty (no-color.org), so the
+live spinner also falls back to `label... done.` lines. `TerminalLink.link()` asks the same gate
+and prints the bare URL off a terminal, since an OSC 8 hyperlink is an escape too. The console is
+decided by stdin and stdout, never stderr, and Java cannot ask whether stderr alone is a terminal
+without native code. So the contract is that escapes follow stdout: redirecting stdout or setting
+`NO_COLOR` clears both streams, while `2>log` alone from a terminal keeps colour in the log. The
+README says so rather than promising more. `warn`, `stepWarn` and `note` go to stderr: a step line
+is what the command did, a warning or note is a diagnostic about it. The blank line that closes a
+warning goes to stdout, because it separates the warning from stdout's own flow. A following header
+then neither repeats it on a terminal nor loses it in `>out.log`. So a line that is the command's
 result, such as `clean --dry-run`'s "Would delete ...", is a step, not a note. A status command's
 report is its result whatever it says: `isx proxy status` prints it on stdout in every state and
 tells them apart by exit code (1 not running, 2 stale DNS overrides, 3 stale bridge address), and
 `isx vm status` exits 1, the reason on stderr, when Incus is unreachable.
 Every other styled line (`isx init`, the proxy banners, build failure reports) goes through the
 same `BuildOutput.styled()` (#1082); only what is drawn on a terminal alone (live steps,
-`TerminalProgress` formatters, the shell status bar) writes escapes directly, and
-`AnsiEscapeGateTest` fails on a raw colour literal anywhere else. A styled string is never a
+`TerminalProgress` formatters, window titles behind `hasTerminal()`) writes escapes directly. `AnsiEscapeGateTest` fails on any raw CSI or OSC literal unless its line
+carries a `// raw ANSI: <why>` comment (on that line, so a marker never covers another). Only the two gates, `TerminalProgress` and the shell status
+bar are exempt as whole files, so a new escape on an ordinary path in `BuildCommand` still fails. A styled string is never a
 `static final`: it would be decided when the native image is built.
 `BuildOutputTest` and `StatusCommandOutputTest` pin these.
 

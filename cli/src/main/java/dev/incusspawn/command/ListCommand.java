@@ -995,7 +995,7 @@ public class ListCommand extends BaseCommand {
     }
 
     private static void setTerminalTitle(String title) {
-        System.out.print("\033]0;" + title + "\007");
+        System.out.print("\033]0;" + title + "\007"); // raw ANSI: window title, set while the TUI owns the terminal
         System.out.flush();
     }
 

@@ -45,8 +45,11 @@ public final class BuildOutput {
     private static final java.util.regex.Pattern ANSI_PATTERN =
             java.util.regex.Pattern.compile("\u001B\\[[0-9;?]*[A-Za-z]");
 
-    /** Whether to style output: on an ANSI terminal without {@code NO_COLOR}, or as a test forces. */
-    private static boolean ansi() {
+    /**
+     * Whether to write escapes (colour, {@link TerminalLink} hyperlinks): on an ANSI terminal
+     * without {@code NO_COLOR}, or as a test forces. The one gate for both.
+     */
+    public static boolean ansi() {
         return forceAnsi != null ? forceAnsi : TerminalProgress.isAnsiTerminal();
     }
 
@@ -507,9 +510,14 @@ public final class BuildOutput {
         endWithBlankLine();
     }
 
-    /** Close a warning with a blank line, which a following group or section does not repeat. */
+    /**
+     * Close a warning with a blank line, which a following group or section does not repeat.
+     * The blank line goes to stdout: it separates the warning from the regular flow there, and
+     * keeps that flow's layout whether or not stderr is redirected (on a terminal, one stream
+     * each would print two).
+     */
     private static void endWithBlankLine() {
-        System.err.println();
+        System.out.println();
         blankLineEnded = true;
     }
 

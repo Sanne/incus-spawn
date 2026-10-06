@@ -1,5 +1,7 @@
 package dev.incusspawn.util;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -11,6 +13,26 @@ class TerminalLinkTest {
     private static final String OSC8_OPEN = "\033]8;;";
     private static final String ST = "\033\\";
     private static final String OSC8_CLOSE = "\033]8;;" + ST;
+
+    // Most of these check the OSC 8 form, which only an ANSI terminal gets.
+    @BeforeEach
+    void onATerminal() {
+        BuildOutput.forceAnsi = true;
+    }
+
+    @AfterEach
+    void detect() {
+        BuildOutput.forceAnsi = null;
+    }
+
+    @Test
+    void linkIsPlainOffATerminal() {
+        BuildOutput.forceAnsi = false;
+        assertEquals("https://example.com", TerminalLink.link("https://example.com"));
+        assertEquals("Example (https://example.com)", TerminalLink.link("https://example.com", "Example"));
+        assertEquals("see docs (https://example.com/docs) here",
+                TerminalLink.linkify("see [docs](https://example.com/docs) here"));
+    }
 
     @Test
     void linkUsesUrlAsDisplayText() {

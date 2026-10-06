@@ -598,7 +598,7 @@ public class IncusClient {
 
     public void interactiveShell(String container, String user, ShellPrep prep, ShellMenu menu) {
         if (!hasTerminal()) throw new NoTerminalForShellException(container);
-        System.out.print("\033]0;isx:" + container + "\007");
+        System.out.print("\033]0;isx:" + container + "\007"); // raw ANSI: window title, behind hasTerminal()
         System.out.flush();
 
         String savedWindowName = null;
@@ -694,7 +694,7 @@ public class IncusClient {
                     hostExecQuiet("tmux", "set-option", "status-right", savedStatusRight);
                 }
             }
-            System.out.print("\033]0;\007");
+            System.out.print("\033]0;\007"); // raw ANSI: window title, behind hasTerminal()
             System.out.flush();
         }
     }

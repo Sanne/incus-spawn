@@ -216,15 +216,26 @@ class BuildOutputTest {
         BuildOutput.warn("careful", "what to do");
         BuildOutput.note("a note");
         BuildOutput.stepWarn("broken");
-        assertEquals("    result\n", out.toString(), "stdout holds only the step");
+        assertEquals("    result\n\n\n", out.toString(), "stdout holds the step, and the blank line ending each warning");
         assertEquals("""
                     ⚠ careful
                       what to do
-
                     a note
                       ⚠ broken
-
                 """, err.toString());
+    }
+
+    @Test
+    void aHeaderAfterAWarningKeepsOneBlankLineOnStdout() {
+        var out = new ByteArrayOutputStream();
+        var err = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(out, true));
+        System.setErr(new PrintStream(err, true));
+        BuildOutput.forceAnsi = false;
+        BuildOutput.step("before");
+        BuildOutput.warn("careful");
+        BuildOutput.header("Next");
+        assertEquals("    before\n\n  ● Next\n", out.toString(), "stdout alone, as in isx build >out.log");
     }
 
     @Test

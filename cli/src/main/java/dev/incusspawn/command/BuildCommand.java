@@ -1678,7 +1678,7 @@ public class BuildCommand extends BaseCommand {
                 var line = BuildOutput.indent()
                         + TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length] + " " + label;
                 var d = detail.get();
-                yield d == null || d.isEmpty() ? line : line + "  \033[2m" + d + "\033[0m";
+                yield d == null || d.isEmpty() ? line : line + "  \033[2m" + d + "\033[0m"; // raw ANSI: animated line
             }
             case DONE -> BuildOutput.indent() + BuildOutput.CHECK + " " + p.note();
             case FAILED -> formatDnfLine(label, p, frame);
@@ -2465,16 +2465,16 @@ public class BuildCommand extends BaseCommand {
             case FAILED  -> sb.append(BuildOutput.CROSS).append(' ').append(label);
         }
         if (p.state() == StepState.RUNNING && p.detail() != null && !p.detail().isEmpty()) {
-            sb.append("  \033[2m").append(p.detail()).append("\033[0m");
+            sb.append("  \033[2m").append(p.detail()).append("\033[0m"); // raw ANSI: animated line
         }
         if (p.state() == StepState.DONE && p.note() != null && !p.note().isEmpty()) {
-            sb.append(" \033[2m(").append(p.note()).append(")\033[0m");
+            sb.append(" \033[2m(").append(p.note()).append(")\033[0m"); // raw ANSI: animated line
         }
         if (p.state() == StepState.DONE && elapsedMs >= 2000) {
-            sb.append("  \033[2m").append(BuildOutput.formatElapsed(elapsedMs)).append("\033[0m");
+            sb.append("  \033[2m").append(BuildOutput.formatElapsed(elapsedMs)).append("\033[0m"); // raw ANSI: animated line
         }
         if (p.state() == StepState.FAILED && p.detail() != null && !p.detail().isEmpty()) {
-            sb.append("  \033[31m").append(p.detail()).append("\033[0m");
+            sb.append("  \033[31m").append(p.detail()).append("\033[0m"); // raw ANSI: animated line
         }
         return sb.toString();
     }
@@ -3749,23 +3749,23 @@ public class BuildCommand extends BaseCommand {
         var sb = new StringBuilder(BuildOutput.indent());
         switch (progress.state()) {
             case RUNNING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
-                    .append(" \033[2m").append(padStatus(runningWord)).append("\033[0m ");
-            case DONE    -> sb.append("\033[32m✓\033[0m \033[2m").append(padStatus(doneWord)).append("\033[0m ");
-            case FAILED  -> sb.append("\033[31m✗ ").append(padStatus("Failed")).append("\033[0m ");
+                    .append(" \033[2m").append(padStatus(runningWord)).append("\033[0m "); // raw ANSI: animated line
+            case DONE    -> sb.append("\033[32m✓\033[0m \033[2m").append(padStatus(doneWord)).append("\033[0m "); // raw ANSI: animated line
+            case FAILED  -> sb.append("\033[31m✗ ").append(padStatus("Failed")).append("\033[0m "); // raw ANSI: animated line
         }
         sb.append(label);
         if (dimContext != null && !dimContext.isEmpty()) {
-            sb.append(" \033[2m(").append(dimContext).append(")\033[0m");
+            sb.append(" \033[2m(").append(dimContext).append(")\033[0m"); // raw ANSI: animated line
         }
         if (progress.state() == StepState.DONE && progress.note() != null && !progress.note().isEmpty()) {
             if (progress.noteHighlight()) {
-                sb.append(" \033[1m").append(progress.note()).append("\033[0m");
+                sb.append(" \033[1m").append(progress.note()).append("\033[0m"); // raw ANSI: animated line
             } else {
-                sb.append(" \033[2m").append(progress.note()).append("\033[0m");
+                sb.append(" \033[2m").append(progress.note()).append("\033[0m"); // raw ANSI: animated line
             }
         }
         if (progress.state() == StepState.FAILED && progress.detail() != null && !progress.detail().isEmpty()) {
-            sb.append("  \033[31m").append(progress.detail()).append("\033[0m");
+            sb.append("  \033[31m").append(progress.detail()).append("\033[0m"); // raw ANSI: animated line
         }
         return sb.toString();
     }

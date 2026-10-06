@@ -77,7 +77,7 @@ public class AskCommand extends BaseCommand {
             if (firstChunk.getAndSet(false)) {
                 spinning.set(false);
                 if (ansi) {
-                    System.err.print("\r\033[2K" + BuildOutput.STEP_INDENT
+                    System.err.print("\r\033[2K" + BuildOutput.STEP_INDENT // raw ANSI: spinner line, only when ansi
                             + BuildOutput.DIM + "✓ " + label + BuildOutput.RESET + "\n");
                 }
                 System.err.println();
@@ -101,7 +101,7 @@ public class AskCommand extends BaseCommand {
         spinning.set(false);
         if (spinner != null) spinner.join(200);
         if (firstChunk.get() && ansi) {
-            System.err.print("\r\033[2K");
+            System.err.print("\r\033[2K"); // raw ANSI: spinner line, only when ansi
         }
         System.out.println();
         return CommandResult.SUCCESS;
