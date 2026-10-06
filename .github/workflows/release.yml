@@ -281,6 +281,19 @@ jobs:
             ' "$FORMULA" > "${FORMULA}.tmp" && mv "${FORMULA}.tmp" "$FORMULA"
           fi
 
+          # Release binaries need the macOS they were built on, see .claude/rules/ci.md;
+          # WorkflowRunnerLabelsTest keeps this in step with the runner labels. Rewritten
+          # every release, ahead of the first depends_on as `brew style` orders it.
+          MACOS_MIN=sequoia
+          awk -v min="$MACOS_MIN" '
+            /^  depends_on macos:/ {next}
+            /^  depends_on / && !done {print "  depends_on macos: :" min; done=1}
+            {print}
+            END {exit !done}
+          ' "$FORMULA" > "${FORMULA}.tmp" \
+            || { echo "::error::no depends_on line in $FORMULA to place the macOS minimum before"; exit 1; }
+          mv "${FORMULA}.tmp" "$FORMULA"
+
           sed -i \
             -e "s/version \"[^\"]*\"/version \"${VERSION}\"/" \
             -e "/incus-spawn-macos-aarch64/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${SHA_ARM64}\"/;}" \
