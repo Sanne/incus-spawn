@@ -365,7 +365,7 @@ final class Tasks {
         var ids = list.stream().map(Task::id).toList();
         var watching = watcher.enabled();
         var out = run(instance, TaskScripts.cancelAll(ids, watching ? TaskScripts.watchBody(ids) : ""), null);
-        markStates(list.stream().collect(Collectors.toMap(Task::id, t -> "unknown")));
+        markStates(list.stream().collect(Collectors.toMap(Task::id, t -> t.running() ? "unknown" : t.state())));
         if (watching) observeWatch(instance, ids, out);
     }
 
@@ -737,10 +737,17 @@ final class Tasks {
         for (var line : run(instance, TaskScripts.states(ids), null).split("\n")) {
             var parts = line.strip().split(" ");
             if (parts.length != 2) continue;
-            result.put(parts[0], parts[1].equals("finished") || parts[1].equals(TaskWatcher.LOST) ? "done" : parts[1]);
-            if (!parts[1].equals("unknown")) known.put(parts[0], parts[1]);
+            // As parse() does: anything else the guest wrote says nothing about the task.
+            var state = List.of("running", "finished", "lost").contains(parts[1]) ? parts[1] : "unknown";
+            result.put(parts[0], state.equals("finished") || state.equals(TaskWatcher.LOST) ? "done" : state);
+            if (!state.equals("unknown")) known.put(parts[0], state);
         }
-        markStates(known);
+        synchronized (this) {
+            // The probe does not look for a person, so it did not see one leave: finished keeps an attached.
+            known.entrySet().removeIf(e -> e.getValue().equals("finished") && tasks.containsKey(e.getKey())
+                    && tasks.get(e.getKey()).state().equals("attached"));
+            markStates(known);
+        }
         return result;
     }
 
