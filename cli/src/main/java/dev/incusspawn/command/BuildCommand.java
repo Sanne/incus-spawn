@@ -429,8 +429,10 @@ public class BuildCommand extends BaseCommand {
                 }
             }
         } finally {
-            // The answer covered this batch only.
+            // The answer and the counter covered this batch only.
             batchConfirmed = false;
+            buildTotal = 1;
+            buildIndex = 1;
         }
 
         if (!failedBuilds.isEmpty()) {
@@ -595,36 +597,46 @@ public class BuildCommand extends BaseCommand {
         buildChain(imageDef, defs);
     }
 
-    private void buildChain(ImageDef imageDef, Map<String, ImageDef> defs) {
-        if (!imageDef.isRoot()) {
-            var parentName = imageDef.getParent();
-            var parentDef = defs.get(parentName);
-            if (parentDef == null) {
-                System.err.println("Parent image '" + parentName + "' not found in definitions.");
-                System.exit(1);
-            }
+    void buildChain(ImageDef imageDef, Map<String, ImageDef> defs) {
+        var chain = new ArrayList<String>();
+        collectParentsToBuild(imageDef, defs, chain);
+        if (chain.isEmpty()) {
+            buildSingleImage(imageDef, defs);
+            return;
+        }
+        chain.add(imageDef.getName());
+        // One question for the chain, not one per existing image (#1069). Like a single build,
+        // a chain that replaces nothing does not ask.
+        if (chain.stream().anyMatch(incus::exists)
+                && !confirmBatch("This will rebuild: ", chain, defs, "Rebuild?")) return;
+        rebuildAll(chain, defs);
+    }
 
-            // When the target type differs from the parent's resolved type
-            // (e.g. building a VM from container parents), buildFromScratch
-            // applies the entire ancestor chain from definitions alone —
-            // parent Incus instances are not needed.
-            boolean typeChange = effectiveMachineType(imageDef) != effectiveMachineType(parentDef);
-            if (!typeChange) {
-                boolean parentMissing = !incus.exists(parentName);
-                boolean needsRebuild = parentMissing || isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs);
-
-                if (needsRebuild) {
-                    if (parentMissing) {
-                        BuildOutput.note("Parent '" + parentName + "' not found, building first.");
-                    } else {
-                        BuildOutput.note("Parent '" + parentName + "' is outdated, rebuilding first.");
-                    }
-                    buildChain(parentDef, defs);
-                }
-            }
+    /** The missing or outdated ancestors {@code buildChain} builds first, parents before children. */
+    private void collectParentsToBuild(ImageDef imageDef, Map<String, ImageDef> defs, List<String> chain) {
+        if (imageDef.isRoot()) return;
+        var parentName = imageDef.getParent();
+        var parentDef = defs.get(parentName);
+        if (parentDef == null) {
+            System.err.println("Parent image '" + parentName + "' not found in definitions.");
+            System.exit(1);
         }
 
-        buildSingleImage(imageDef, defs);
+        // When the target type differs from the parent's resolved type
+        // (e.g. building a VM from container parents), buildFromScratch
+        // applies the entire ancestor chain from definitions alone —
+        // parent Incus instances are not needed.
+        if (effectiveMachineType(imageDef) != effectiveMachineType(parentDef)) return;
+
+        if (!incus.exists(parentName)) {
+            BuildOutput.note("Parent '" + parentName + "' not found, building first.");
+        } else if (isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs)) {
+            BuildOutput.note("Parent '" + parentName + "' is outdated, rebuilding first.");
+        } else {
+            return;
+        }
+        collectParentsToBuild(parentDef, defs, chain);
+        chain.add(parentName);
     }
 
     /**

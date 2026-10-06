@@ -461,6 +461,136 @@ class BuildCommandTest {
         });
     }
 
+    /**
+     * {@code isx build X} that has to rebuild an outdated parent first asks once for the whole
+     * chain, not "Rebuild?" for the parent and again for X (#1069).
+     */
+    @Test
+    void buildWithAnOutdatedParentAsksOnceForTheChain(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var parent = new ImageDef();
+            parent.setName("tpl-minimal");
+            var child = new ImageDef();
+            child.setName("tpl-dev");
+            child.setParent("tpl-minimal");
+            var defs = Map.of("tpl-minimal", parent, "tpl-dev", child);
+
+            // Both exist; no build version stamped, so the parent is outdated.
+            var incus = mock(IncusClient.class);
+            when(incus.exists(anyString())).thenReturn(true);
+            var prompts = ScriptedPrompts.lines("y");
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            doReturn(prompts).when(cmd).prompts();
+            doNothing().when(cmd).buildInto(any(), any(), anyString());
+
+            cmd.buildChain(child, defs);
+
+            prompts.assertFullyConsumed();
+            verify(incus).rename("tpl-minimal-rebuilding", "tpl-minimal");
+            verify(incus).rename("tpl-dev-rebuilding", "tpl-dev");
+        });
+    }
+
+    /** Declining the chain's one question builds nothing, not even the parent (#1069). */
+    @Test
+    void decliningTheChainBuildsNothing(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var parent = new ImageDef();
+            parent.setName("tpl-minimal");
+            var child = new ImageDef();
+            child.setName("tpl-dev");
+            child.setParent("tpl-minimal");
+            var defs = Map.of("tpl-minimal", parent, "tpl-dev", child);
+
+            var incus = mock(IncusClient.class);
+            when(incus.exists(anyString())).thenReturn(true);
+            var prompts = ScriptedPrompts.lines("n");
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            doReturn(prompts).when(cmd).prompts();
+
+            cmd.buildChain(child, defs);
+
+            prompts.assertFullyConsumed();
+            verify(cmd, never()).buildInto(any(), any(), anyString());
+            verify(incus, never()).rename(anyString(), anyString());
+        });
+    }
+
+    /** A chain that replaces nothing asks nothing, as a single build of a missing image does (#1069). */
+    @Test
+    void aChainOfMissingImagesBuildsWithoutAsking(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var defs = sharedParentDefs();
+            var prompts = ScriptedPrompts.lines();
+            var cmd = chainCommand(incusBuildingInto(new java.util.HashSet<>()), prompts);
+
+            cmd.buildChain(defs.get("tpl-a"), defs);
+
+            prompts.assertFullyConsumed();
+            verify(cmd.incus).rename("tpl-minimal-rebuilding", "tpl-minimal");
+            verify(cmd.incus).rename("tpl-a-rebuilding", "tpl-a");
+        });
+    }
+
+    /**
+     * The chain's build counter ends with its chain: {@code isx build --missing} builds one leaf's
+     * chain, then a sibling whose parent that chain just built, which is a single build (#1069).
+     */
+    @Test
+    void aSingleBuildAfterAChainShowsNoCounter(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var defs = sharedParentDefs();
+            var cmd = chainCommand(incusBuildingInto(new java.util.HashSet<>()), ScriptedPrompts.lines());
+            cmd.buildChain(defs.get("tpl-a"), defs);
+
+            var originalOut = System.out;
+            var out = new java.io.ByteArrayOutputStream();
+            System.setOut(new java.io.PrintStream(out, true, java.nio.charset.StandardCharsets.UTF_8));
+            try {
+                cmd.buildChain(defs.get("tpl-b"), defs);
+            } finally {
+                System.setOut(originalOut);
+            }
+
+            var text = out.toString(java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(text.contains("Building tpl-b"), text);
+            assertFalse(text.contains("/2]"), text);
+        });
+    }
+
+    /** {@code tpl-a} and {@code tpl-b}, both children of {@code tpl-minimal}. */
+    private static Map<String, ImageDef> sharedParentDefs() {
+        var parent = new ImageDef();
+        parent.setName("tpl-minimal");
+        var a = new ImageDef();
+        a.setName("tpl-a");
+        a.setParent("tpl-minimal");
+        var b = new ImageDef();
+        b.setName("tpl-b");
+        b.setParent("tpl-minimal");
+        return Map.of("tpl-minimal", parent, "tpl-a", a, "tpl-b", b);
+    }
+
+    /** An Incus where only {@code existing} exists, and a build's swap adds its image, up to date. */
+    private static IncusClient incusBuildingInto(Set<String> existing) {
+        var incus = mock(IncusClient.class);
+        when(incus.exists(anyString())).thenAnswer(i -> existing.contains(i.<String>getArgument(0)));
+        doAnswer(i -> existing.add(i.getArgument(1))).when(incus).rename(anyString(), anyString());
+        when(incus.configGet(anyString(), eq(Metadata.BUILD_VERSION)))
+                .thenReturn(dev.incusspawn.BuildInfo.instance().version());
+        return incus;
+    }
+
+    private static BuildCommand chainCommand(IncusClient incus, ScriptedPrompts prompts) {
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        doReturn(prompts).when(cmd).prompts();
+        doNothing().when(cmd).buildInto(any(), any(), anyString());
+        return cmd;
+    }
+
     @Test
     void buildThatFailedBeforeItsInstanceExistedDoesNotTryToRemoveDevices(@TempDir Path tmp) {
         // Otherwise each host resource prints a "failed to remove build device" warning.
