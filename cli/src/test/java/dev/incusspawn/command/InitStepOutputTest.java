@@ -20,9 +20,9 @@ class InitStepOutputTest {
     private static final Pattern COUNTER = Pattern.compile("\\[(\\d+)/(\\d+)]");
 
     /** What a test step would print to stdout and stderr. */
-    private record Output(String out, String err) {}
+    record Output(String out, String err) {}
 
-    private static Output capture(InitCommand.Step body) throws Exception {
+    static Output capture(InitCommand.Step body) throws Exception {
         var out = System.out;
         var err = System.err;
         var outBuffer = new ByteArrayOutputStream();

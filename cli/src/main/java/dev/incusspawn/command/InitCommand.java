@@ -660,13 +660,14 @@ public class InitCommand extends BaseCommand {
                 return;
             }
         }
+        boolean ok = true;
         if (!hasMasquerade) {
             System.out.println("  Enabling masquerading (NAT) for container internet access...");
-            runHostQuiet("sudo", "firewall-cmd", "--zone=trusted", "--add-masquerade", "--permanent");
+            ok &= ran("sudo", "firewall-cmd", "--zone=trusted", "--add-masquerade", "--permanent");
         }
         if (!hasForwardIn) {
             System.out.println("  Adding FORWARD rules for Incus bridge (Docker coexistence)...");
-            runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+            ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
                     "--add-rule", "ipv4", "filter", "FORWARD", "0",
                     "-i", "incusbr0", "-j", "ACCEPT");
         }
@@ -674,7 +675,7 @@ public class InitCommand extends BaseCommand {
             if (hasForwardIn) {
                 System.out.println("  Adding FORWARD rules for Incus bridge (Docker coexistence)...");
             }
-            runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+            ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
                     "--add-rule", "ipv4", "filter", "FORWARD", "0",
                     "-o", "incusbr0", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT");
         }
@@ -682,6 +683,11 @@ public class InitCommand extends BaseCommand {
         var reloadResult = runHostQuiet("sudo", "firewall-cmd", "--reload");
         if (reloadResult != 0) {
             System.err.println("  Warning: firewall reload failed. Run: sudo firewall-cmd --reload");
+            if (!ok) warnFirewallIncomplete();
+            return;
+        }
+        if (!ok) {
+            warnFirewallIncomplete();
             return;
         }
         System.out.println("  Firewall configured: incusbr0 in trusted zone with masquerading (firewalld).");
@@ -704,7 +710,7 @@ public class InitCommand extends BaseCommand {
         }
 
         System.out.println("  Allowing traffic on incusbr0...");
-        runHostQuiet("sudo", "ufw", "allow", "in", "on", "incusbr0");
+        boolean ok = ran("sudo", "ufw", "allow", "in", "on", "incusbr0");
 
         var content = beforeRules;
         if (!hasMasquerade) {
@@ -719,24 +725,41 @@ public class InitCommand extends BaseCommand {
         }
 
         if (!content.equals(beforeRules)) {
-            writeBeforeRules(content);
+            ok &= writeBeforeRules(content);
             var reloadResult = runHostQuiet("sudo", "ufw", "reload");
             if (reloadResult != 0) {
                 System.err.println("  Warning: UFW reload failed. Run: sudo ufw reload");
+                if (!ok) warnFirewallIncomplete();
                 return;
             }
+        }
+        if (!ok) {
+            warnFirewallIncomplete();
+            return;
         }
         System.out.println("  Firewall configured: incusbr0 trusted with masquerading (UFW).");
     }
 
-    private void writeBeforeRules(String content) {
+    private static void warnFirewallIncomplete() {
+        warnIncomplete("firewall only partly configured; containers may lack network/DNS access.");
+    }
+
+    private static void warnIncomplete(String consequence) {
+        System.err.println("  Warning: " + consequence);
+        System.err.println("  Fix the problem reported above, then re-run: isx init");
+    }
+
+    /** Whether the new rules reached {@code before.rules}. */
+    private boolean writeBeforeRules(String content) {
         try {
             var tempFile = java.nio.file.Files.createTempFile("isx-before-rules-", ".tmp");
             java.nio.file.Files.writeString(tempFile, content);
-            runHostQuiet("sudo", "cp", tempFile.toString(), UfwCheck.BEFORE_RULES.toString());
+            var copied = ran("sudo", "cp", tempFile.toString(), UfwCheck.BEFORE_RULES.toString());
             java.nio.file.Files.deleteIfExists(tempFile);
+            return copied;
         } catch (java.io.IOException e) {
             System.err.println("  Error writing before.rules: " + e.getMessage());
+            return false;
         }
     }
 
@@ -895,11 +918,9 @@ public class InitCommand extends BaseCommand {
             config.save();
         }
 
-        if (useUfw) {
-            configureMitmProxyUfw(gatewayIp, UfwCheck.readBeforeRules());
-        } else {
-            configureMitmProxyFirewalld(gatewayIp);
-        }
+        var redirected = useUfw
+                ? configureMitmProxyUfw(gatewayIp, UfwCheck.readBeforeRules())
+                : configureMitmProxyFirewalld(gatewayIp);
 
         configureHostSysctls();
         configureKsm();
@@ -910,13 +931,19 @@ public class InitCommand extends BaseCommand {
         } else {
             CertificateAuthority.loadOrCreate();
         }
+        if (!redirected) {
+            warnIncomplete("the PREROUTING redirect was not fully configured; containers' HTTPS may not reach the proxy.");
+            return;
+        }
         System.out.println("  MITM proxy configured.");
     }
 
-    void configureMitmProxyFirewalld(String gatewayIp) {
+    /** Whether every command updating the PREROUTING redirect, stale-rule removals included, succeeded. */
+    boolean configureMitmProxyFirewalld(String gatewayIp) {
         var rulesOutput = captureOutput("firewall-cmd", "--direct", "--get-all-rules");
         boolean hasRedirect = FirewalldCheck.isPreRoutingRulePresent(rulesOutput, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp);
 
+        boolean ok = true;
         if (hasRedirect) {
             System.out.println("  PREROUTING redirect already configured (" + gatewayIp + ":443 -> "
                     + ProxyConfig.DEFAULT_MITM_PORT + ").");
@@ -925,7 +952,7 @@ public class InitCommand extends BaseCommand {
             var staleIp = FirewalldCheck.extractRedirectGatewayIp(rulesOutput, ProxyConfig.DEFAULT_MITM_PORT);
             if (staleIp != null) {
                 System.out.println("  Removing stale PREROUTING redirect (old gateway " + staleIp + ")...");
-                runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+                ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
                         "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
                         "-i", "incusbr0", "-d", staleIp, "-p", "tcp", "--dport",
                         String.valueOf(ProxyConfig.CONTAINER_FACING_PORT),
@@ -934,26 +961,28 @@ public class InitCommand extends BaseCommand {
             }
             System.out.println("  Adding iptables PREROUTING redirect (" + gatewayIp + ":443 -> "
                     + ProxyConfig.DEFAULT_MITM_PORT + " on incusbr0)...");
-            runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+            ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
                     "--add-rule", "ipv4", "nat", "PREROUTING", "0",
                     "-i", "incusbr0", "-d", gatewayIp, "-p", "tcp", "--dport",
                     String.valueOf(ProxyConfig.CONTAINER_FACING_PORT),
                     "-j", "REDIRECT", "--to-port",
                     String.valueOf(ProxyConfig.DEFAULT_MITM_PORT));
-            runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+            ok &= ran("sudo", "firewall-cmd", "--permanent", "--direct",
                     "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
                     "-i", "incusbr0", "-p", "tcp", "--dport",
                     String.valueOf(ProxyConfig.CONTAINER_FACING_PORT),
                     "-j", "REDIRECT", "--to-port",
                     String.valueOf(ProxyConfig.DEFAULT_MITM_PORT));
-            runHostQuiet("sudo", "firewall-cmd", "--reload");
+            ok &= ran("sudo", "firewall-cmd", "--reload");
         }
+        return ok;
     }
 
-    void configureMitmProxyUfw(String gatewayIp, String beforeRules) {
+    /** Whether the PREROUTING redirect was written and applied. */
+    boolean configureMitmProxyUfw(String gatewayIp, String beforeRules) {
         if (beforeRules.isEmpty()) {
             System.err.println("  Warning: could not read /etc/ufw/before.rules. Skipping PREROUTING redirect.");
-            return;
+            return false;
         }
         boolean hasRedirect = UfwCheck.hasPreRoutingRedirect(beforeRules, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp);
 
@@ -971,9 +1000,10 @@ public class InitCommand extends BaseCommand {
             var natBlock = UfwCheck.generateNatBlock(gatewayIp, subnet,
                     ProxyConfig.CONTAINER_FACING_PORT, ProxyConfig.DEFAULT_MITM_PORT);
             var content = UfwCheck.insertNatBlock(beforeRules, natBlock);
-            writeBeforeRules(content);
-            runHostQuiet("sudo", "ufw", "reload");
+            var written = writeBeforeRules(content);
+            return ran("sudo", "ufw", "reload") && written;
         }
+        return true;
     }
 
     private void setupSshKeyPair() {
@@ -3720,6 +3750,16 @@ public class InitCommand extends BaseCommand {
         } catch (IOException | InterruptedException e) {
             return "";
         }
+    }
+
+    /**
+     * Run one host command of a step and say which one failed, so the step can withhold its
+     * success line: a step reports what it did, not what it attempted (#1102).
+     */
+    boolean ran(String... command) {
+        if (runHostQuiet(command) == 0) return true;
+        System.err.println("  Failed: " + String.join(" ", command));
+        return false;
     }
 
     /**
