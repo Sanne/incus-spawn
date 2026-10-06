@@ -102,10 +102,7 @@ class InstanceSubvolumesTest {
     // ---- IncusClient, against FakeIncusDaemon ----
 
     private static String listing(String... names) {
-        var sb = new StringBuilder();
-        int id = 300;
-        for (var n : names) sb.append("ID ").append(id++).append(" gen 1 top level 5 path containers/").append(n).append('\n');
-        return sb.toString();
+        return FakeIncusDaemon.listing(names);
     }
 
     @Test
@@ -186,6 +183,42 @@ class InstanceSubvolumesTest {
         client.rename("tpl-x-rebuilding", "tpl-x");
 
         assertTrue(client.exists("tpl-x"));
+    }
+
+    private static FakeIncusDaemon offCowPool() {
+        return new FakeIncusDaemon().pool("default", "dir").pool("cow", "btrfs").container("dev-1", Map.of());
+    }
+
+    @Test
+    void moveToPoolPutsTheRootDiskOnTheNewPool() {
+        var daemon = offCowPool().containerSubvolumes("dev-1");
+        var client = daemon.client();
+
+        client.moveToPool("dev-1", "cow");
+
+        assertTrue(daemon.requests().contains("POST /1.0/instances/dev-1"), daemon.requests().toString());
+        assertEquals("cow", client.listInstanceRoots().getFirst().pool());
+    }
+
+    @Test
+    void moveToPoolChecksTheSubvolumeArrived() {
+        // The record moved; the new pool has no subvolume under its name.
+        var client = offCowPool().containerSubvolumes("dev-1-moving").client();
+
+        var e = assertThrows(IncusException.class, () -> client.moveToPool("dev-1", "cow"));
+        assertTrue(e.getMessage().contains("left its storage behind"), e.getMessage());
+    }
+
+    @Test
+    void moveToPoolWaitsOutACopyLongerThanOnePoll() {
+        // Incus answers a /wait that times out with the copy still running (#1089)
+        var daemon = offCowPool().operationsAnswer("Running", "Running").containerSubvolumes("dev-1");
+        var client = daemon.client();
+
+        client.moveToPool("dev-1", "cow");
+
+        assertEquals(3, daemon.requests().stream().filter(r -> r.contains("/wait")).count(),
+                daemon.requests().toString());
     }
 
     @Test

@@ -177,4 +177,16 @@ class IncusClientTest {
         assertEquals(java.util.List.of(), daemon.execs());
         assertEquals(java.util.List.of(), daemon.requests());
     }
+
+    @Test
+    void deleteImageOrThrowWaitsForTheDeleteAndReportsAFailure() {
+        var daemon = new FakeIncusDaemon().image("fp");
+        var client = daemon.client();
+
+        client.deleteImageOrThrow("fp");
+
+        assertFalse(daemon.hasImage("fp"));
+        assertTrue(daemon.requests().stream().anyMatch(r -> r.contains("/wait")), daemon.requests().toString());
+        assertThrows(IncusException.class, () -> client.deleteImageOrThrow("fp"));
+    }
 }

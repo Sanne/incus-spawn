@@ -903,16 +903,23 @@ public class IncusClient {
         return resp.isSuccess();
     }
 
-    public Map<String, String> instanceRootPools() {
+    /** Default-project instances with a root disk; empty if they cannot be listed. */
+    public List<InstanceRoot> listInstanceRoots() {
         var roots = instanceRoots();
-        if (roots == null) return Map.of();
+        return roots == null ? List.of() : roots;
+    }
+
+    public Map<String, String> instanceRootPools() {
         var result = new LinkedHashMap<String, String>();
-        roots.forEach(r -> result.put(r.name(), r.pool()));
+        listInstanceRoots().forEach(r -> result.put(r.name(), r.pool()));
         return result;
     }
 
-    /** An instance with its Incus type and the pool its root disk is on. */
-    private record InstanceRoot(String name, String type, String pool) {}
+    /** An instance with its Incus type, its status and the pool its root disk is on. */
+    public record InstanceRoot(String name, String type, String pool, String status) {
+        /** Running or frozen: Incus moves neither between pools without a stop. */
+        public boolean running() { return "Running".equalsIgnoreCase(status) || "Frozen".equalsIgnoreCase(status); }
+    }
 
     /** Default-project instances with a root disk, or null if they cannot be listed. */
     private List<InstanceRoot> instanceRoots() {
@@ -923,7 +930,8 @@ public class IncusClient {
             var name = inst.path("name").asText("");
             var pool = rootDiskPoolFromDevices(inst.path("expanded_devices"));
             if (!name.isEmpty() && pool != null) {
-                result.add(new InstanceRoot(name, inst.path("type").asText(""), pool));
+                result.add(new InstanceRoot(name, inst.path("type").asText(""), pool,
+                        inst.path("status").asText("")));
             }
         }
         return result;
@@ -1874,12 +1882,39 @@ public class IncusClient {
             throw new IncusException("Incus reported renaming " + oldName + " to " + newName
                     + ", but it does not list the instance under the new name");
         }
-        var where = storageLocation(newName);
+        requireStorageArrived("Renaming " + oldName + " to " + newName, newName, instanceMetadata(newName));
+    }
+
+    /** After a rename or move Incus reported done: the record moved, so its subvolume must have too (#717). */
+    private void requireStorageArrived(String what, String name, JsonNode meta) {
+        var where = storageLocation(name, meta);
         if (where != null && !where.onDisk()) {
-            throw new IncusException("Renaming " + oldName + " to " + newName + " left its storage behind:"
+            throw new IncusException(what + " left its storage behind:"
                     + " the record moved, but pool '" + where.pool() + "' has no subvolume at "
-                    + where.ref().path() + ". Do not delete " + newName + "; run 'isx doctor' to inspect the pool");
+                    + where.ref().path() + ". Do not delete " + name + "; run 'isx doctor' to inspect the pool");
         }
+    }
+
+    /**
+     * Move a stopped instance's root disk to {@code pool} ({@code instance_pool_move}), then
+     * confirm the record and its storage both arrived. Incus copies the instance to a temporary
+     * name on the new pool, deletes the original and renames the copy back, and that rename is
+     * where a subvolume can be left behind (#717), so this checks what {@link #rename} checks.
+     */
+    public void moveToPool(String name, String pool) {
+        var resp = http().requestAndWait("POST", "/1.0/instances/" + name,
+                Map.of("pool", pool, "migration", true));
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to move " + name + " to pool '" + pool + "': "
+                    + resp.body().path("error").asText(""));
+        }
+        var meta = instanceMetadata(name);
+        var now = rootDiskPoolFromDevices(meta.path("expanded_devices"));
+        if (!pool.equals(now)) {
+            throw new IncusException("Incus reported moving " + name + " to pool '" + pool
+                    + "', but its root disk is on '" + now + "'");
+        }
+        requireStorageArrived("Moving " + name + " to pool '" + pool + "'", name, meta);
     }
 
     /** Where the btrfs subvolume listing comes from; tests substitute canned output. */
@@ -1922,7 +1957,10 @@ public class IncusClient {
 
     /** Null unless {@code name} is on a btrfs pool whose listing can conclusively place it. */
     private StorageLocation storageLocation(String name) {
-        var meta = instanceMetadata(name);
+        return storageLocation(name, instanceMetadata(name));
+    }
+
+    private StorageLocation storageLocation(String name, JsonNode meta) {
         var kind = InstanceSubvolumes.Kind.fromApiType(meta.path("type").asText(""));
         var pool = rootDiskPoolFromDevices(meta.path("expanded_devices"));
         if (kind == null || pool == null || !"btrfs".equals(listPools().get(pool))) return null;
@@ -2406,6 +2444,14 @@ public class IncusClient {
 
     public void deleteImage(String fingerprint) {
         http().delete("/1.0/images/" + fingerprint);
+    }
+
+    /** {@link #deleteImage}, for a caller that goes on to rely on it: waits, and throws if it failed. */
+    public void deleteImageOrThrow(String fingerprint) {
+        var resp = http().requestAndWait("DELETE", "/1.0/images/" + fingerprint, null);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to delete image " + fingerprint + ": " + resp.body().path("error").asText(""));
+        }
     }
 
     public String importImage(Path tarball) {

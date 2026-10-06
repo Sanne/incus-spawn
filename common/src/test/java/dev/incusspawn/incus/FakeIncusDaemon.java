@@ -60,6 +60,10 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final Map<String, String> guestInterfaces = new LinkedHashMap<>();
     /** What an instance listing answers in place of the instances, when set. */
     private JsonNode listingOverride;
+    /** Storage pools by name, with their driver; empty means one btrfs pool, {@code default}. */
+    private final Map<String, String> pools = new LinkedHashMap<>();
+    private String subvolumeListing;
+    private final java.util.Set<String> images = new java.util.LinkedHashSet<>();
     private boolean refuseNextWrite;
     private int failReadsWith;
     /** What the next operation reads answer, in order; {@code Success} once it is empty. */
@@ -117,6 +121,22 @@ public final class FakeIncusDaemon implements IncusTransport {
         instances.put(name, node);
         if (holdsLiveState(status)) pids.put(name, nextPid++);
         expand(name);
+        return this;
+    }
+
+    /** A cached image, by fingerprint. */
+    public FakeIncusDaemon image(String fingerprint) {
+        images.add(fingerprint);
+        return this;
+    }
+
+    public boolean hasImage(String fingerprint) {
+        return images.contains(fingerprint);
+    }
+
+    /** A storage pool; once one is declared, only declared pools are listed. */
+    public FakeIncusDaemon pool(String name, String driver) {
+        pools.put(name, driver);
         return this;
     }
 
@@ -260,7 +280,31 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     public IncusClient client() {
-        return new IncusClient(new IncusApi(this));
+        var client = new IncusClient(new IncusApi(this));
+        if (subvolumeListing != null) client.subvolumeLister = pool -> subvolumeListing;
+        return client;
+    }
+
+    /**
+     * What {@code btrfs subvolume list} prints for a pool, for clients made from here on; without
+     * it a client runs the real command, which a test host cannot answer.
+     */
+    public FakeIncusDaemon subvolumeListing(String listing) {
+        subvolumeListing = listing;
+        return this;
+    }
+
+    /** {@link #subvolumeListing} with a container subvolume for each name. */
+    public FakeIncusDaemon containerSubvolumes(String... names) {
+        return subvolumeListing(listing(names));
+    }
+
+    /** {@code btrfs subvolume list} output with a container subvolume for each name. */
+    public static String listing(String... names) {
+        var sb = new StringBuilder();
+        int id = 300;
+        for (var n : names) sb.append("ID ").append(id++).append(" gen 1 top level 5 path containers/").append(n).append('\n');
+        return sb.toString();
     }
 
     /** The mode a file was last pushed into an instance with, or null if it never was. */
@@ -370,17 +414,27 @@ public final class FakeIncusDaemon implements IncusTransport {
             return sync(list);
         }
         if (path.startsWith("/1.0/storage-pools?") && method.equals("GET")) {
-            var pool = JSON.createObjectNode();
-            pool.put("name", "default");
-            pool.put("driver", "btrfs");
-            return sync(JSON.createArrayNode().add(pool));
+            var list = JSON.createArrayNode();
+            (pools.isEmpty() ? Map.of("default", "btrfs") : pools).forEach((name, driver) ->
+                    list.addObject().put("name", name).put("driver", driver));
+            return sync(list);
         }
         if (path.equals("/1.0/instances") && method.equals("POST")) {
             return copy(JSON.readTree(body));
         }
+        if (path.startsWith("/1.0/images/") && !path.startsWith("/1.0/images/aliases") && method.equals("DELETE")) {
+            return images.remove(path.substring("/1.0/images/".length())) ? async() : notFound();
+        }
         if (path.startsWith("/1.0/profiles/") && method.equals("GET")) {
             var profile = profiles.get(path.substring("/1.0/profiles/".length()));
             return profile == null ? notFound() : sync(profile.deepCopy());
+        }
+        if (path.startsWith("/1.0/profiles/") && method.equals("PATCH")) {
+            var profile = profiles.get(path.substring("/1.0/profiles/".length()));
+            if (profile == null) return notFound();
+            patchDevices(profile, JSON.readTree(body));
+            instances.keySet().forEach(this::expand);
+            return sync(JSON.createObjectNode());
         }
         if (path.startsWith("/1.0/storage-pools/default/volumes?") && method.equals("GET")) {
             // Incus keeps a volume per instance, named after it, on the instance's pool.
@@ -413,6 +467,17 @@ public final class FakeIncusDaemon implements IncusTransport {
 
         var rest = path.substring(("/1.0/instances/" + name).length());
         if (rest.isEmpty() && method.equals("GET")) return sync(instance);
+        if (rest.isEmpty() && method.equals("POST") && JSON.readTree(body).has("pool")) {
+            // A pool move: the name stays, and the root disk becomes a local device on the new pool.
+            var pool = JSON.readTree(body).path("pool").asText();
+            if (!pools.isEmpty() && !pools.containsKey(pool)) return notFound();
+            var root = JSON.createObjectNode();
+            root.setAll((ObjectNode) instance.path("expanded_devices").path("root"));
+            root.put("pool", pool);
+            ((ObjectNode) instance.get("devices")).set("root", root);
+            expand(name);
+            return async();
+        }
         if (rest.isEmpty() && method.equals("POST")) {
             var newName = JSON.readTree(body).path("name").asText();
             instances.remove(name);
@@ -516,8 +581,12 @@ public final class FakeIncusDaemon implements IncusTransport {
             if (e.getValue().isNull()) config.remove(e.getKey());
             else config.set(e.getKey(), e.getValue());
         });
-        // Each device in a PATCH replaces the instance's device of that name whole
-        var devices = (ObjectNode) instance.get("devices");
+        patchDevices(instance, patch);
+    }
+
+    /** Each device in a PATCH replaces the instance's or profile's device of that name whole. */
+    private static void patchDevices(ObjectNode target, JsonNode patch) {
+        var devices = (ObjectNode) target.get("devices");
         patch.path("devices").properties().forEach(e -> devices.set(e.getKey(), e.getValue()));
     }
 
