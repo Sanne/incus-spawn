@@ -40,7 +40,19 @@ public final class InstanceDestroyer {
      * the instance busy for good. Returns whether the instance was deleted.
      */
     public static boolean deleteHeldIf(IncusClient incus, String name, Predicate<JsonNode> stillWanted) {
-        incus.configSet(name, Metadata.PENDING_OP, Metadata.OP_DELETING);
+        if (!markIf(incus, name, Metadata.OP_DELETING, stillWanted)) return false;
+        deleteMarked(incus, name);
+        return true;
+    }
+
+    /**
+     * Mark the instance with {@code operation}, strictly, then read it and test {@code stillWanted}:
+     * true leaves the mark for the caller to act under and clear; false (or an instance gone)
+     * takes it back strictly and returns false. A failed read takes the mark back and throws.
+     * The guard {@link #deleteHeldIf} and the {@code isx mcp} orphan sweep's stop share.
+     */
+    public static boolean markIf(IncusClient incus, String name, String operation, Predicate<JsonNode> stillWanted) {
+        incus.configSet(name, Metadata.PENDING_OP, operation);
         boolean wanted;
         try {
             var instance = incus.instanceMetadataOrThrow(name);
@@ -50,12 +62,8 @@ public final class InstanceDestroyer {
             incus.clearPendingOperation(name);
             throw e;
         }
-        if (!wanted) {
-            incus.configUnset(name, Metadata.PENDING_OP);
-            return false;
-        }
-        deleteMarked(incus, name);
-        return true;
+        if (!wanted) incus.configUnset(name, Metadata.PENDING_OP);
+        return wanted;
     }
 
     private static void deleteMarked(IncusClient incus, String name) {

@@ -7,7 +7,6 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Metadata;
 
 import java.nio.file.Path;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -142,13 +141,16 @@ public final class McpMain {
     private static void sweepOrphans(InstanceBackend backend, SessionId self, String owner,
                                      Supplier<McpConfig> config, Predicate<SessionId> alive) {
         try {
-            var grace = Duration.ofHours(config.get().orphanGraceHours());
-            var names = Orphans.sweep(backend, self, owner, alive, grace, Instant.now(),
-                    name -> Orphans.inUse(backend, name));
+            var swept = Orphans.sweep(backend, self, owner, alive, Orphans.Windows.of(config.get()), Instant.now(),
+                    name -> Orphans.probe(backend, name));
+            var names = swept.destroyed();
             if (!names.isEmpty()) {
                 System.err.println("isx mcp: destroyed orphaned instances past their grace period: "
                         + String.join(", ", names));
                 McpAuditLog.record(self, "reap-orphans", null, String.join(",", names), 0, "destroyed");
+            }
+            if (!swept.stopped().isEmpty()) {
+                McpAuditLog.record(self, "reap-orphans", null, String.join(",", swept.stopped()), 0, "stopped(dormant)");
             }
         } catch (RuntimeException e) {
             System.err.println("isx mcp: could not check for orphaned instances: " + e.getMessage());

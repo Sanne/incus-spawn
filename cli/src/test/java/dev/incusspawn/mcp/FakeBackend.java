@@ -180,12 +180,39 @@ class FakeBackend implements InstanceBackend {
     }
 
     @Override
+    public boolean stopIfHeldBy(String name, String session, Map<String, String> stamps) {
+        var instance = instances.get(name);
+        if (instance == null) return false;
+        instance.put(Metadata.PENDING_OP, Metadata.OP_STOPPING);
+        if (onMarked != null) onMarked.run();
+        var held = session.equals(instance.get(Metadata.MCP_SESSION)) && !stopped.contains(name);
+        if (held) {
+            stamp(name, stamps);
+            stop(name);
+        }
+        instance.remove(Metadata.PENDING_OP);
+        return held;
+    }
+
+    /** The CPU time each instance has used, as its Incus state reports it; -1 (unknown) when absent. */
+    final Map<String, Long> cpu = new ConcurrentHashMap<>();
+
+    @Override
+    public long cpuUsage(String name) {
+        return cpu.getOrDefault(name, -1L);
+    }
+
+    @Override
     public void stop(String name) {
         stopped.add(name);
     }
 
+    /** When set, every {@link #start} throws it. */
+    volatile RuntimeException startFailure;
+
     @Override
     public void start(String name) {
+        if (startFailure != null) throw startFailure;
         stopped.remove(name);
         statuses.remove(name);
     }

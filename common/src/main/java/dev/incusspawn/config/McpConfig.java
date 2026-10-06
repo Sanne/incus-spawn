@@ -24,6 +24,9 @@ import java.util.regex.Pattern;
  *   delegate-permission-modes:       # per-template overrides of it
  *     tpl-review: plan
  *   orphan-grace-hours: 24           # how long an instance outlives the session that held it
+ *   dormant-after-hours: 24          # past that, an orphan kept only for a task that shows no
+ *                                    # activity this long is stopped, not destroyed
+ *   dormant-grace-hours: 168         # and destroyed this long after it was stopped
  *   summary-model: haiku             # the model that answers a tool's `ask`, inside the instance
  * </pre>
  *
@@ -39,6 +42,8 @@ public class McpConfig {
     /** What every isx template's managed settings already default to; passed explicitly. */
     public static final String DEFAULT_PERMISSION_MODE = "bypassPermissions";
     public static final int DEFAULT_ORPHAN_GRACE_HOURS = 24;
+    public static final int DEFAULT_DORMANT_AFTER_HOURS = 24;
+    public static final int DEFAULT_DORMANT_GRACE_HOURS = 168;
     /**
      * A Claude Code model alias, so a template that maps its models elsewhere (Vertex, Bedrock)
      * through {@code ANTHROPIC_DEFAULT_HAIKU_MODEL} is followed.
@@ -65,6 +70,10 @@ public class McpConfig {
     private Map<String, String> delegatePermissionModes;
     @JsonProperty("orphan-grace-hours")
     private Integer orphanGraceHours;
+    @JsonProperty("dormant-after-hours")
+    private Integer dormantAfterHours;
+    @JsonProperty("dormant-grace-hours")
+    private Integer dormantGraceHours;
     @JsonProperty("summary-model")
     private String summaryModel;
 
@@ -114,6 +123,19 @@ public class McpConfig {
         return orphanGraceHours == null ? DEFAULT_ORPHAN_GRACE_HOURS : Math.max(0, orphanGraceHours);
     }
 
+    /**
+     * How long an orphan past its grace period, kept only because a delegated agent has not
+     * finished, must show no activity before the sweep stops it (#1028).
+     */
+    public int dormantAfterHours() {
+        return dormantAfterHours == null ? DEFAULT_DORMANT_AFTER_HOURS : Math.max(0, dormantAfterHours);
+    }
+
+    /** How long an instance the sweep stopped as dormant waits, stopped, before it is destroyed. */
+    public int dormantGraceHours() {
+        return dormantGraceHours == null ? DEFAULT_DORMANT_GRACE_HOURS : Math.max(0, dormantGraceHours);
+    }
+
     public String summaryModel() {
         if (summaryModel == null) return DEFAULT_SUMMARY_MODEL;
         if (!isModelName(summaryModel)) {
@@ -137,5 +159,7 @@ public class McpConfig {
     public void setDelegatePermissionMode(String mode) { this.delegatePermissionMode = mode; }
     public void setDelegatePermissionModes(Map<String, String> modes) { this.delegatePermissionModes = modes; }
     public void setOrphanGraceHours(Integer hours) { this.orphanGraceHours = hours; }
+    public void setDormantAfterHours(Integer hours) { this.dormantAfterHours = hours; }
+    public void setDormantGraceHours(Integer hours) { this.dormantGraceHours = hours; }
     public void setSummaryModel(String model) { this.summaryModel = model; }
 }

@@ -679,6 +679,58 @@ class DelegationToolsTest {
     }
 
     @Test
+    void aDormantOrphanIsStartedWhenAdoptedAndItsDelegateResumes() throws Exception {
+        // The sweep stopped it: its delegate's run was cut off, its conversation is on the disk (#1028).
+        var name = "mcp-agent-hung-abcde";
+        backend.instance(name, Map.of(
+                dev.incusspawn.incus.Metadata.PROFILE, "tpl-agent",
+                dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
+                dev.incusspawn.incus.Metadata.MCP_OWNER, "alice",
+                dev.incusspawn.incus.Metadata.MCP_ORPHANED, "2026-09-28T10:00:00Z 9-9",
+                dev.incusspawn.incus.Metadata.MCP_DORMANT, "2026-09-30T10:00:00Z 9-9"));
+        backend.stopped.add(name);
+        var listed = structured(call("list_instances", "{}")).path("instances").get(0);
+        assertEquals("orphaned", listed.path("state").asText(), "still an orphan: a dormant one is one too");
+        assertEquals("2026-09-30T10:00:00Z", listed.path("dormant_since").asText());
+        assertEquals("2026-10-07T10:00:00Z", listed.path("dormant_until").asText());
+
+        taskListing = "t3-old agent 1 running - - - /home/agentuser/repo\n";
+        taskState = "lost";
+        var adopted = structured(call("adopt_instance", "{\"instance\":\"" + name + "\"}"));
+        assertFalse(backend.stopped.contains(name), "started again");
+        assertFalse(adopted.has("warning"), "its tasks were read: " + adopted);
+        assertEquals("t3-old", adopted.path("tasks").get(0).asText());
+        assertFalse(backend.instances.get(name).containsKey(dev.incusspawn.incus.Metadata.MCP_DORMANT));
+
+        var sent = call("send_message", "{\"task_id\":\"t3-old\",\"message\":\"carry on\"}");
+        assertFalse(sent.path("isError").asBoolean(), text(sent));
+        var run = runScript(2);
+        assertTrue(run.contains("--resume") && run.contains("cd -- '/home/agentuser/repo'"), run);
+    }
+
+    @Test
+    void anInstanceStartedOrStoppedByItsHolderIsNoLongerDormant() throws Exception {
+        // The dormant start failed, the agent started it with start_instance, then stopped it to fork it.
+        var name = "mcp-agent-hung-abcde";
+        backend.instance(name, Map.of(
+                dev.incusspawn.incus.Metadata.PROFILE, "tpl-agent",
+                dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
+                dev.incusspawn.incus.Metadata.MCP_OWNER, "alice",
+                dev.incusspawn.incus.Metadata.MCP_ORPHANED, "2026-09-28T10:00:00Z 9-9",
+                dev.incusspawn.incus.Metadata.MCP_DORMANT, "2026-09-30T10:00:00Z 9-9"));
+        backend.stopped.add(name);
+        backend.startFailure = new IllegalStateException("proxy down");
+        var refused = call("adopt_instance", "{\"instance\":\"" + name + "\"}");
+        assertEquals("unavailable", refused.path("_meta").path(ToolResult.ERROR_META).path("code").asText());
+        backend.startFailure = null;
+        structured(call("start_instance", "{\"instance\":\"" + name + "\"}"));
+        assertFalse(backend.instances.get(name).containsKey(dev.incusspawn.incus.Metadata.MCP_DORMANT));
+        structured(call("stop_instance", "{\"instance\":\"" + name + "\"}"));
+        structured(call("adopt_instance", "{\"instance\":\"" + name + "\"}"));
+        assertTrue(backend.stopped.contains(name), "stopped on purpose: a repeated adoption leaves it stopped");
+    }
+
+    @Test
     void aRefusedEnvironmentNameGivesItsTaskSlotBack() throws Exception {
         config.setMaxConcurrentTasks(1);
         var instance = call("create_instance", "{\"template\":\"tpl-plain\"}").path("structuredContent")

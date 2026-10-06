@@ -134,13 +134,15 @@ final class McpSession {
 
     /** What says this session holds an instance: written at creation, and again by adoption. */
     private Map<String, String> holderStamps() {
-        // A HashMap: a null value removes the key, which adoption needs for MCP_ORPHANED.
+        // A HashMap: a null value removes the key, which adoption needs for the orphan sweep's stamps.
         var stamps = new HashMap<String, String>();
         stamps.put(Metadata.MCP_SESSION, id.toString());
         stamps.put(Metadata.MCP_CLIENT, client.isEmpty() ? null : client);
         stamps.put(Metadata.MCP_CLIENT_PID, clientPid > 0 ? String.valueOf(clientPid) : null);
         if (cwd != null) stamps.put(Metadata.MCP_CWD, cwd);
         stamps.put(Metadata.MCP_ORPHANED, null);
+        // Not MCP_DORMANT: it says the instance still needs starting, until wakeIfDormant has done it.
+        stamps.put(Metadata.MCP_CPU_SAMPLE, null);
         return stamps;
     }
 
@@ -399,7 +401,10 @@ final class McpSession {
      * Take over one of this host user's instances from the session that held it. Refused for an
      * instance kept for the user, for one another user's session made, and -- unless
      * {@code force} -- for one whose session is still running, which would lose it mid-work.
-     * Returns what was adopted, with the config read for the check.
+     * Returns what was adopted, with the config read for the check. One the orphan sweep
+     * stopped as dormant still needs starting: {@link #wakeIfDormant} (#1028). One the sweep is
+     * still stopping when the wait for its mark runs out is held, but refused {@code busy}:
+     * reported adopted, it would be stopped under its new holder.
      */
     Owned adopt(String name, boolean force) {
         Owned held;
@@ -442,7 +447,42 @@ final class McpSession {
         var after = backend.metadata(name);
         if (after == null || !ours(after)) throw new ToolError(ToolError.Code.NOT_HELD, "another session adopted '" + name + "' first.");
         after = settled(name, after);
-        return register(name, template, supportsDelegate(template), after);
+        var adopted = register(name, template, supportsDelegate(template), after);
+        if (Metadata.OP_STOPPING.equals(Metadata.pendingOp(after))) throw stillStopping(name);
+        return adopted;
+    }
+
+    private static ToolError stillStopping(String name) {
+        return new ToolError(ToolError.Code.BUSY, "'" + name + "' is yours now, but it is still being stopped (the "
+                + "orphan sweep stops one in which nothing moved); call adopt_instance again shortly, which starts it.");
+    }
+
+    /**
+     * Start {@code name}, which this session holds, if the orphan sweep stopped it as dormant --
+     * any {@link Metadata#MCP_DORMANT} stamp, including one a sweep wrote for the previous holder
+     * just after this session's adoption -- and clear the stamp. Adoption leaves the stamp for
+     * this, so a retry after a start that failed still starts it. Returns whether it started it.
+     */
+    boolean wakeIfDormant(String name, java.util.function.Consumer<String> progress) {
+        var metadata = backend.metadata(name);
+        if (metadata == null || !metadata.containsKey(Metadata.MCP_DORMANT)) return false;
+        if (Metadata.OP_STOPPING.equals(Metadata.pendingOp(metadata))) throw stillStopping(name);
+        var stopped = InstanceBackend.stopped(metadata);
+        if (stopped) {
+            progress.accept("Starting " + name + ", stopped while nothing in it moved");
+            try {
+                backend.start(name);
+            } catch (RuntimeException e) {
+                throw new ToolError(ToolError.Code.UNAVAILABLE, "'" + name + "' is yours now, but it was stopped "
+                        + "because nothing in it moved, and could not be started again: " + e.getMessage()
+                        + ". Call adopt_instance again, or start_instance.");
+            }
+        }
+        // A HashMap: a null value removes the key.
+        var unset = new HashMap<String, String>();
+        unset.put(Metadata.MCP_DORMANT, null);
+        backend.stamp(name, unset);
+        return stopped;
     }
 
     private boolean supportsDelegate(String template) {
@@ -464,6 +504,8 @@ final class McpSession {
     static final Duration ADOPT_SETTLE = Duration.ofSeconds(30);
     /** How often it looks meanwhile; shorter in tests. */
     volatile Duration settleStep = Duration.ofMillis(500);
+    /** {@link #ADOPT_SETTLE}; shorter in tests. */
+    volatile Duration settleLimit = ADOPT_SETTLE;
 
     /**
      * {@code after}, the config read back after this session stamped an adoption, once no
@@ -474,7 +516,7 @@ final class McpSession {
      * leave the instance stamped as held by this session without it holding it.
      */
     private Map<String, String> settled(String name, Map<String, String> after) {
-        var deadline = System.nanoTime() + ADOPT_SETTLE.toNanos();
+        var deadline = System.nanoTime() + settleLimit.toNanos();
         while (!Metadata.pendingOp(after).isEmpty() && System.nanoTime() < deadline) {
             try {
                 Thread.sleep(settleStep);

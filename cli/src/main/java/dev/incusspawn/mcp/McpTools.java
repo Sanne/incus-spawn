@@ -102,7 +102,10 @@ final class McpTools {
                 (args, ctx) -> createInstance(args, ctx)));
         tools.add(new McpTool("list_instances",
                 "List your instances: the ones this session holds (with their tasks), and the ones "
-                        + "other sessions of yours hold or left orphaned, which adopt_instance takes over.",
+                        + "other sessions of yours hold or left orphaned, which adopt_instance takes over. "
+                        + "An orphan whose delegate showed no activity for mcp.dormant-after-hours past its "
+                        + "grace period is stopped rather than destroyed: dormant_since says when, and it is "
+                        + "destroyed at dormant_until unless adopted.",
                 Schema.object().build(),
                 OutputSchemas.listInstances(),
                 McpTool.annotations(true, false, true),
@@ -110,7 +113,11 @@ final class McpTools {
         tools.add(new McpTool("adopt_instance",
                 "Take over one of your instances from the session that held it -- after a restart, "
                         + "pick your workers up where you left them. Its tasks become yours too, with "
-                        + "the same task ids.",
+                        + "the same task ids. A dormant one (list_instances: dormant_since) is started "
+                        + "again; its delegates' runs were cut off by the stop, and send_message continues "
+                        + "their conversations. Refused busy while it is still being stopped, and unavailable "
+                        + "if it cannot be started: it is yours either way, and calling adopt_instance again "
+                        + "starts it.",
                 Schema.object()
                         .string("instance", "Instance name, from list_instances", true)
                         .bool("force", "Take it even though the session holding it is still running "
@@ -578,7 +585,7 @@ final class McpTools {
                 tn.put("state", t.state());
             });
         }
-        var grace = Duration.ofHours(session.config().orphanGraceHours());
+        var windows = Orphans.Windows.of(session.config());
         for (var other : session.others().values()) {
             var config = other.config();
             var node = list.addObject();
@@ -593,7 +600,12 @@ final class McpTools {
                 var since = Orphans.orphanedSince(config);
                 if (since != null) {
                     node.put("orphaned_since", since.toString());
-                    node.put("orphan_until", since.plus(grace).toString());
+                    node.put("orphan_until", since.plus(windows.grace()).toString());
+                }
+                var dormant = InstanceBackend.stopped(config) ? Orphans.dormantSince(config) : null;
+                if (dormant != null) {
+                    node.put("dormant_since", dormant.toString());
+                    node.put("dormant_until", dormant.plus(windows.dormantGrace()).toString());
                 }
             } else {
                 node.put("state", "held");
@@ -611,6 +623,16 @@ final class McpTools {
         var name = args.requireString("instance");
         var start = System.nanoTime();
         var adopted = session.adopt(name, args.bool("force"));
+        // Also on a repeat: a session that already holds it may not have started it yet.
+        var waking = System.nanoTime();
+        try {
+            if (session.wakeIfDormant(name, ctx::progress)) {
+                McpAuditLog.record(session.id, "adopt_instance", name, null, millisSince(waking), "started(dormant)");
+            }
+        } catch (ToolError e) {
+            McpAuditLog.record(session.id, "adopt_instance", name, null, millisSince(waking), "failed: " + e.getMessage());
+            throw e;
+        }
         var node = JsonRpc.JSON.createObjectNode();
         node.put("instance", adopted.name());
         node.put("template", adopted.template());
@@ -1260,9 +1282,21 @@ final class McpTools {
         return ToolResult.text(destroyed ? "Destroyed " + name + "." : name + " was already gone.", node);
     }
 
+    /**
+     * Drop a dormant stamp the holder's own start or stop makes stale ({@link McpSession#wakeIfDormant}
+     * left it after a start that failed): left, a later adoption would start an instance an agent
+     * stopped on purpose (#1028). Costs a write only when the stamp is there.
+     */
+    private void notDormant(String name, java.util.Map<String, String> metadata) {
+        if (!metadata.containsKey(Metadata.MCP_DORMANT)) return;
+        backend.stamp(name, java.util.Collections.singletonMap(Metadata.MCP_DORMANT, null));
+    }
+
     private ToolResult stopInstance(McpTool.Args args, ToolContext ctx) {
         var name = args.requireString("instance");
-        if (InstanceBackend.stopped(session.requireOwned(name))) {
+        var metadata = session.requireOwned(name);
+        if (InstanceBackend.stopped(metadata)) {
+            notDormant(name, metadata);
             return ToolResult.text(name + " is already stopped.", stopped(name, true, List.of()));
         }
         var busy = tasks.busyIn(name);
@@ -1276,6 +1310,7 @@ final class McpTools {
         tasks.cancel(name, busy);
         ctx.progress("Stopping " + name);
         backend.stop(name);
+        notDormant(name, metadata);
         McpAuditLog.record(session.id, "stop_instance", name, null, millisSince(start),
                 busy.isEmpty() ? "stopped" : "stopped, cancelled " + busy.size() + " task(s)");
         return ToolResult.text("Stopped " + name + (busy.isEmpty() ? "" : ", after cancelling " + ids) + ".",
@@ -1317,6 +1352,7 @@ final class McpTools {
             throw e;
         }
         McpAuditLog.record(session.id, "start_instance", name, null, millisSince(start), "started");
+        notDormant(name, metadata);
         // Adopted while stopped, its tasks could not be read then; known ones are kept as they are.
         var note = "";
         try {

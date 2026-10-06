@@ -23,6 +23,7 @@ class OrphansTest {
     private static final String ALIVE = "3-300";
     private static final Instant NOW = Instant.parse("2026-09-28T12:00:00Z");
     private static final Duration GRACE = Duration.ofHours(24);
+    private static final Orphans.Windows WINDOWS = new Orphans.Windows(GRACE, Duration.ofHours(24), Duration.ofHours(168));
     private static final String LONG_AGO = NOW.minus(Duration.ofHours(25)).toString();
     private static final String RECENTLY = NOW.minus(Duration.ofHours(1)).toString();
 
@@ -65,7 +66,8 @@ class OrphansTest {
                         Metadata.MCP_ORPHANED, LONG_AGO))
                 .instance("plain", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE));
 
-        var destroyed = Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW, "attended"::equals);
+        var destroyed = Orphans.sweep(backend, SELF, "alice", alive::contains, WINDOWS, NOW,
+                name -> name.equals("attended") ? Orphans.Use.UNKNOWN : Orphans.Use.NOBODY).destroyed();
 
         assertEquals(List.of("expired"), destroyed);
         assertEquals(List.of("expired"), backend.destroyed);
@@ -90,10 +92,10 @@ class OrphansTest {
                 default -> "";
             };
         };
-        var destroyed = Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW, name -> {
+        var destroyed = Orphans.sweep(backend, SELF, "alice", alive::contains, WINDOWS, NOW, name -> {
             current[0] = name;
-            return Orphans.inUse(backend, name);
-        });
+            return Orphans.probe(backend, name);
+        }).destroyed();
         assertEquals(List.of("idle"), destroyed);
         assertEquals(List.of(Orphans.PROBE_LIMIT, Orphans.PROBE_LIMIT, Orphans.PROBE_LIMIT), backend.limits,
                 "each asked through the bounded probe: an orphan whose profile hangs cannot hold the sweep");
@@ -105,7 +107,7 @@ class OrphansTest {
         backend.responder = script -> {
             throw new dev.incusspawn.incus.IncusException("exec did not finish within its time limit; given up on");
         };
-        assertTrue(Orphans.inUse(backend, "hung"), "unanswered is never taken for idle");
+        assertEquals(Orphans.Use.UNKNOWN, Orphans.probe(backend, "hung"), "unanswered is never taken for idle");
     }
 
     @Test
@@ -116,9 +118,85 @@ class OrphansTest {
                 .instance("unreachable", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
         backend.stopped.add("stopped");
         backend.execFailure = new IllegalStateException("Instance is not running");
-        var destroyed = Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW,
-                name -> Orphans.inUse(backend, name));
+        var destroyed = Orphans.sweep(backend, SELF, "alice", alive::contains, WINDOWS, NOW,
+                name -> Orphans.probe(backend, name)).destroyed();
         assertEquals(List.of("stopped"), destroyed, "a running instance that cannot be looked into is spared");
+    }
+
+    /** A sample taken {@code hours} before {@link #NOW}, with the CPU quiet since then. */
+    private static String sampled(int hours, long cpu) {
+        var at = NOW.minus(Duration.ofHours(hours));
+        return new Orphans.CpuSample(at, cpu, at).toString();
+    }
+
+    private static final long CPU = 50_000_000_000L;
+    private static final long DAY = Duration.ofHours(25).toSeconds();
+
+    @Test
+    void anOrphanWhoseDelegateShowsNoActivityIsStoppedNotDestroyed() {
+        // A delegate hung on a dead call: kept forever before #1028, with its memory held.
+        var backend = new FakeBackend();
+        for (var name : List.of("hung", "writing", "computing", "attended", "first-look", "no-cpu")) {
+            backend.instance(name, stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO,
+                    Metadata.MCP_CPU_SAMPLE, sampled(25, CPU)));
+            backend.cpu.put(name, CPU + 1_000_000_000L); // a second of CPU in a day
+        }
+        backend.instances.get("first-look").remove(Metadata.MCP_CPU_SAMPLE);
+        backend.cpu.put("computing", CPU + Duration.ofHours(1).toNanos());
+        backend.cpu.remove("no-cpu");
+        var uses = Map.of(
+                "hung", new Orphans.Use(false, true, DAY),
+                "writing", new Orphans.Use(false, true, 60L),
+                "computing", new Orphans.Use(false, true, DAY),
+                "attended", new Orphans.Use(true, true, DAY),
+                "first-look", new Orphans.Use(false, true, DAY),
+                "no-cpu", new Orphans.Use(false, true, DAY));
+
+        var swept = Orphans.sweep(backend, SELF, "alice", alive::contains, WINDOWS, NOW, uses::get);
+
+        assertEquals(List.of(), swept.destroyed(), "unpushed work is never destroyed while its delegate has not finished");
+        assertEquals(List.of("hung"), swept.stopped());
+        assertEquals(Set.of("hung"), backend.stopped);
+        assertEquals(Orphans.orphanedStamp(NOW, DEAD), backend.instances.get("hung").get(Metadata.MCP_DORMANT));
+        assertEquals(NOW, Orphans.dormantSince(backend.instances.get("hung")));
+        assertFalse(backend.instances.get("hung").containsKey(Metadata.PENDING_OP), "the mark is taken back");
+        var computing = Orphans.CpuSample.parse(backend.instances.get("computing").get(Metadata.MCP_CPU_SAMPLE));
+        assertEquals(NOW, computing.quietSince(), "busy CPU starts the quiet window again");
+        assertEquals(NOW, Orphans.CpuSample.parse(backend.instances.get("first-look").get(Metadata.MCP_CPU_SAMPLE)).at(),
+                "the first look takes the sample the next sweep compares with");
+    }
+
+    @Test
+    void sweepsMomentsApartDoNotHoldTheProbesOwnCpuAgainstTheDelegate() {
+        // A coordinator restarting often sweeps every few seconds; each probe costs the guest CPU.
+        var sample = new Orphans.CpuSample(NOW.minusSeconds(5), CPU, NOW.minus(Duration.ofHours(23)));
+        var backend = new FakeBackend().instance("hung", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO,
+                Metadata.MCP_CPU_SAMPLE, sample.toString()));
+        backend.cpu.put("hung", CPU + 200_000_000L); // one probe's fifth of a second
+        var swept = Orphans.sweep(backend, SELF, "alice", alive::contains, WINDOWS, NOW,
+                name -> new Orphans.Use(false, true, DAY));
+        assertEquals(List.of(), swept.stopped());
+        assertEquals(sample.toString(), backend.instances.get("hung").get(Metadata.MCP_CPU_SAMPLE),
+                "neither compared nor recorded: the quiet window goes on");
+    }
+
+    @Test
+    void aDormantOrphanIsDestroyedAfterItsOwnGracePeriodWithoutBeingLookedInto() {
+        var backend = new FakeBackend()
+                .instance("dormant-a-day", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO,
+                        Metadata.MCP_DORMANT, Orphans.orphanedStamp(NOW.minus(Duration.ofDays(1)), DEAD)))
+                .instance("dormant-a-week", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO,
+                        Metadata.MCP_DORMANT, Orphans.orphanedStamp(NOW.minus(Duration.ofDays(8)), DEAD)))
+                .instance("dormant-for-another", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO,
+                        Metadata.MCP_DORMANT, Orphans.orphanedStamp(NOW.minus(Duration.ofDays(1)), "5-500")))
+                .instance("stopped-by-someone", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
+        backend.stopped.addAll(backend.instances.keySet());
+        var swept = Orphans.sweep(backend, SELF, "alice", alive::contains, WINDOWS, NOW, name -> {
+            throw new AssertionError("a stopped instance is never looked into: " + name);
+        });
+        assertEquals(Set.of("dormant-a-week", "dormant-for-another", "stopped-by-someone"), Set.copyOf(swept.destroyed()),
+                "a stamp for an earlier holder, or none, is a stopped orphan's treatment as before");
+        assertTrue(backend.scripts.isEmpty());
     }
 
     @Test
@@ -127,17 +205,17 @@ class OrphansTest {
         var backend = new FakeBackend().instance("stopped", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
         backend.stopped.add("stopped");
         backend.onMarked = () -> backend.stopped.remove("stopped");
-        assertEquals(List.of(), Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW, name -> false));
+        assertEquals(List.of(), Orphans.sweep(backend, SELF, "alice", alive::contains, WINDOWS, NOW, name -> Orphans.Use.NOBODY).destroyed());
         assertFalse(backend.instances.get("stopped").containsKey(Metadata.PENDING_OP), "the mark is taken back");
     }
 
     @Test
     void anOrphanAdoptedDuringTheSweepIsSpared() {
         var backend = new FakeBackend().instance("expired", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
-        var destroyed = Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW, name -> {
+        var destroyed = Orphans.sweep(backend, SELF, "alice", alive::contains, WINDOWS, NOW, name -> {
             backend.stamp(name, Metadata.MCP_SESSION, ALIVE); // adopted while we looked inside
-            return false;
-        });
+            return Orphans.Use.NOBODY;
+        }).destroyed();
         assertEquals(List.of(), destroyed);
     }
 
@@ -146,7 +224,7 @@ class OrphansTest {
         var backend = new FakeBackend().instance("expired", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
         // Adopted between the sweep's mark and its re-read: the adopter's stamp is what it reads.
         backend.onMarked = () -> backend.stamp("expired", Metadata.MCP_SESSION, ALIVE);
-        assertEquals(List.of(), Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW, name -> false));
+        assertEquals(List.of(), Orphans.sweep(backend, SELF, "alice", alive::contains, WINDOWS, NOW, name -> Orphans.Use.NOBODY).destroyed());
         assertFalse(backend.instances.get("expired").containsKey(Metadata.PENDING_OP), "the mark is taken back");
     }
 
@@ -157,7 +235,7 @@ class OrphansTest {
         var backend = new FakeBackend().instance("worker", stamped("4-400", "alice",
                 Metadata.MCP_ORPHANED, Orphans.orphanedStamp(Instant.parse(LONG_AGO), DEAD)));
         assertEquals(null, Orphans.orphanedSince(backend.instances.get("worker")));
-        assertEquals(List.of(), Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW, name -> false));
+        assertEquals(List.of(), Orphans.sweep(backend, SELF, "alice", alive::contains, WINDOWS, NOW, name -> Orphans.Use.NOBODY).destroyed());
         assertEquals(NOW, Orphans.orphanedSince(backend.instances.get("worker")));
     }
 

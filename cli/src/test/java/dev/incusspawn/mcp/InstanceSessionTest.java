@@ -135,7 +135,8 @@ class InstanceSessionTest {
         next.reserve(TEMPLATE, null, null, null, null);
         assertThrows(ToolError.class, () -> next.reserve(TEMPLATE, null, null, null, null));
         var later = Instant.now().plus(Duration.ofHours(2));
-        assertEquals(List.of(worker), Orphans.sweep(backend, SELF, "alice", alive, Duration.ofHours(1), later, n -> false));
+        assertEquals(List.of(worker), Orphans.sweep(backend, SELF, "alice", alive, windows(Duration.ofHours(1)), later,
+                n -> Orphans.Use.NOBODY).destroyed());
         backend.create(TEMPLATE, worker, connect().stamps(null, null));
         backend.stamp(worker, Metadata.MCP_ORPHANED, Orphans.orphanedStamp(Instant.now(), SELF.toString()));
         // And it stays released: approving the template again does not hand it back silently.
@@ -174,11 +175,11 @@ class InstanceSessionTest {
         var mine = new SessionId(1, 1);
         var grace = Duration.ofHours(1);
         var now = Instant.parse("2026-10-05T12:00:00Z");
-        Orphans.sweep(backend, mine, "alice", alive, grace, now, n -> false);
+        Orphans.sweep(backend, mine, "alice", alive, windows(grace), now, n -> Orphans.Use.NOBODY);
         assertFalse(backend.instances.get(worker).containsKey(Metadata.MCP_ORPHANED), "held while it may call");
 
         recreateCoordinator();
-        Orphans.sweep(backend, mine, "alice", alive, grace, now, n -> false);
+        Orphans.sweep(backend, mine, "alice", alive, windows(grace), now, n -> Orphans.Use.NOBODY);
         assertTrue(backend.instances.get(worker).containsKey(Metadata.MCP_ORPHANED));
     }
 
@@ -204,5 +205,9 @@ class InstanceSessionTest {
         var reads = backend.metadataReads.get();
         for (int i = 0; i < 5; i++) alive.test(SELF);
         assertEquals(reads + 1, backend.metadataReads.get());
+    }
+
+    private static Orphans.Windows windows(Duration grace) {
+        return new Orphans.Windows(grace, Duration.ofHours(24), Duration.ofHours(168));
     }
 }

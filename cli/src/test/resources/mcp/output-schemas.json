@@ -144,6 +144,14 @@
               "description" : "ISO-8601: destroyed after this unless adopted",
               "type" : "string"
             },
+            "dormant_since" : {
+              "description" : "ISO-8601: when the orphan sweep stopped it, its delegate showing no activity; adopt_instance starts it again",
+              "type" : "string"
+            },
+            "dormant_until" : {
+              "description" : "ISO-8601: destroyed after this unless adopted",
+              "type" : "string"
+            },
             "tasks" : {
               "description" : "This session's tasks in it",
               "type" : "array",

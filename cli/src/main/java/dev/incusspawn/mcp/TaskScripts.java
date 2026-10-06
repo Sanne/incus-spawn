@@ -315,8 +315,41 @@ final class TaskScripts {
      * background commands: a dev server never finishes, and would keep its orphan forever.
      */
     static String unfinished() {
-        return unfinished("[ -f \"$D/kind\" ] && read -r k < \"$D/kind\" 2>/dev/null && [ \"$k\" = "
-                + Tasks.AGENT + " ] || continue; ");
+        return unfinished(AGENTS_ONLY);
+    }
+
+    /**
+     * Opens a loop over task directories, {@code $D} each, with its id in {@code $id}. Any
+     * directory there could be made by anyone in the instance: only one named like a task id.
+     */
+    private static final String EACH_TASK = "for d in " + TASKS_DIR + "/*/; do D=${d%/}; id=${D##*/}; "
+            + "case $id in ''|*[!a-z0-9-]*) continue;; esac; ";
+
+    /** In a loop over task directories {@code $D}: skips all but delegated agents'. */
+    private static final String AGENTS_ONLY = "[ -f \"$D/kind\" ] && read -r k < \"$D/kind\" 2>/dev/null && [ \"$k\" = "
+            + Tasks.AGENT + " ] || continue; ";
+
+    /**
+     * {@code idle <seconds>}: how long ago, by the guest's own clock, anything in a delegated
+     * agent's task directory was last written (its events, its stderr); nothing before a task
+     * wrote a file. The orphan sweep's sign of a delegate that still makes progress (#1028).
+     * A statement that always succeeds, to go before a script whose exit status counts.
+     */
+    static String agentIdle() {
+        return "a=; " + EACH_TASK + AGENTS_ONLY
+                + "for t in $(stat -c %Y \"$D\"/* 2>/dev/null); do [ \"$t\" -gt \"${a:-0}\" ] && a=$t; done; done; "
+                + "[ -n \"$a\" ] && echo \"idle $(( $(date +%s) - a ))\"; true";
+    }
+
+    /** The seconds {@link #agentIdle} printed, or null if it printed none. */
+    static Long agentIdle(java.util.List<String> lines) {
+        for (var l : lines) {
+            var parts = l.strip().split(" ");
+            if (parts.length == 2 && parts[0].equals("idle") && parts[1].matches("-?[0-9]{1,12}")) {
+                return Math.max(0, Long.parseLong(parts[1]));
+            }
+        }
+        return null;
     }
 
     /**
@@ -341,10 +374,7 @@ final class TaskScripts {
     }
 
     private static String unfinished(String filter) {
-        return "for d in " + TASKS_DIR + "/*/; do D=${d%/}; id=${D##*/}; "
-                // Any directory there could be made by anyone in the instance: only a task id.
-                + "case $id in ''|*[!a-z0-9-]*) continue;; esac; "
-                + filter + STATE + "[ $s = done ] || echo \"task $id $s\"; done; exit 0";
+        return EACH_TASK + filter + STATE + "[ $s = done ] || echo \"task $id $s\"; done; exit 0";
     }
 
     /**
@@ -353,8 +383,7 @@ final class TaskScripts {
      * Fails if one could not be removed (a file a delegate wrote as root, say).
      */
     static String clear() {
-        return "for d in " + TASKS_DIR + "/*/; do D=${d%/}; id=${D##*/}; "
-                + "case $id in ''|*[!a-z0-9-]*) continue;; esac; rm -rf -- \"$D\" || r=1; done; exit ${r:-0}";
+        return EACH_TASK + "rm -rf -- \"$D\" || r=1; done; exit ${r:-0}";
     }
 
     /** All of a command task's output, stdout then stderr, each under a heading. */

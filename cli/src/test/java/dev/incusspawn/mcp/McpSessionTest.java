@@ -304,6 +304,69 @@ class McpSessionTest {
     }
 
     @Test
+    void aDormantOrphanIsStartedWhenAdoptedAndNoLongerDormant() {
+        other("hung", DEAD, "alice", Metadata.MCP_ORPHANED, "2026-09-28T10:00:00Z",
+                Metadata.MCP_DORMANT, Orphans.orphanedStamp(java.time.Instant.parse("2026-09-30T10:00:00Z"), DEAD),
+                Metadata.MCP_CPU_SAMPLE, "2026-09-30T10:00:00Z 5 2026-09-29T10:00:00Z");
+        other("stopped", DEAD, "alice", Metadata.MCP_ORPHANED, "2026-09-28T10:00:00Z");
+        backend.stopped.addAll(List.of("hung", "stopped"));
+        var s = session(3);
+        var said = new java.util.ArrayList<String>();
+        s.adopt("hung", false);
+        assertTrue(s.wakeIfDormant("hung", said::add));
+        assertFalse(backend.stopped.contains("hung"), "the sweep stopped it; adopting starts it again");
+        assertEquals(1, said.size(), "a start takes seconds: the client is told");
+        assertNull(backend.instances.get("hung").get(Metadata.MCP_DORMANT));
+        assertNull(backend.instances.get("hung").get(Metadata.MCP_CPU_SAMPLE), "a later orphaning samples afresh");
+        s.adopt("stopped", false);
+        assertFalse(s.wakeIfDormant("stopped", said::add));
+        assertTrue(backend.stopped.contains("stopped"), "one its session stopped stays stopped, as before");
+    }
+
+    @Test
+    void anAdoptionTheSweepIsStillStoppingIsHeldButBusyAndARepeatStartsIt() {
+        // The sweep marked it and read the old holder before this adoption stamped; its stop
+        // outlasts the wait for the mark. Reported adopted, it would be stopped under us.
+        other("hung", DEAD, "alice", Metadata.MCP_ORPHANED, "2026-09-28T10:00:00Z");
+        var s = session(3);
+        s.settleStep = java.time.Duration.ofMillis(1);
+        s.settleLimit = java.time.Duration.ofMillis(20);
+        backend.onStamp = () -> {
+            backend.onStamp = null;
+            backend.instances.get("hung").put(Metadata.PENDING_OP, Metadata.OP_STOPPING);
+            backend.instances.get("hung").put(Metadata.MCP_DORMANT,
+                    Orphans.orphanedStamp(java.time.Instant.parse("2026-10-06T10:00:00Z"), DEAD));
+        };
+        var e = assertThrows(ToolError.class, () -> s.adopt("hung", false));
+        assertEquals(ToolError.Code.BUSY, e.code);
+        assertEquals(McpSession.Hold.HELD, s.whyNotHeld("hung"), "held: stamped ours, it must not vanish from view");
+        assertEquals(ToolError.Code.BUSY, assertThrows(ToolError.class, () -> s.adopt("hung", false)).code,
+                "a repeat while it is still being stopped is busy again");
+
+        backend.instances.get("hung").remove(Metadata.PENDING_OP); // the sweep's stop ends
+        backend.stopped.add("hung");
+        s.adopt("hung", false);
+        assertTrue(s.wakeIfDormant("hung", m -> { }), "the repeat starts it");
+        assertFalse(backend.stopped.contains("hung"));
+    }
+
+    @Test
+    void aDormantStartThatFailsIsUnavailableAndARepeatStartsIt() {
+        other("hung", DEAD, "alice", Metadata.MCP_ORPHANED, "2026-09-28T10:00:00Z",
+                Metadata.MCP_DORMANT, Orphans.orphanedStamp(java.time.Instant.parse("2026-09-30T10:00:00Z"), DEAD));
+        backend.stopped.add("hung");
+        backend.startFailure = new IllegalStateException("proxy down");
+        var s = session(3);
+        s.adopt("hung", false);
+        var e = assertThrows(ToolError.class, () -> s.wakeIfDormant("hung", m -> { }));
+        assertEquals(ToolError.Code.UNAVAILABLE, e.code);
+        backend.startFailure = null;
+        s.adopt("hung", false);
+        assertTrue(s.wakeIfDormant("hung", m -> { }), "the retry unavailable promises does the start");
+        assertFalse(backend.stopped.contains("hung"));
+    }
+
+    @Test
     void aForkIsAdoptedByTheTemplateItDescendsFrom() {
         // A fork's PARENT is the instance it was branched from; its lineage is PROFILE (#1013).
         other("mcp-dev-fork-abcde", DEAD, "alice", Metadata.PARENT, "mcp-dev-src-fghij",

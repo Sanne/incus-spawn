@@ -1,5 +1,6 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.incus.Metadata;
 
 import java.io.ByteArrayOutputStream;
@@ -11,13 +12,16 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
  * Instances whose session is gone. An orphan is quarantined, never destroyed on sight: a
  * coordinating agent that restarts finds its workers where it left them and adopts them. Once
  * {@code mcp.orphan-grace-hours} have passed since it was orphaned, the next session to start
- * destroys it -- unless a person or one of its tasks is still working in it.
+ * destroys it -- unless a person or one of its tasks is still working in it. One kept only for a
+ * delegate that shows no activity is stopped instead, and destroyed once
+ * {@code mcp.dormant-grace-hours} more have passed (#1028).
  *
  * <p>Only this host user's instances are considered, and only ones that were never kept and are
  * not in the middle of another operation. A session is dead when its process no longer exists,
@@ -80,10 +84,19 @@ final class Orphans {
      * that holds it now ({@link #orphanedStamp}).
      */
     static Instant orphanedSince(Map<String, String> config) {
-        var value = config.get(Metadata.MCP_ORPHANED);
+        return stampedSince(config, Metadata.MCP_ORPHANED, true);
+    }
+
+    /**
+     * The time in a {@code <time> <session>} stamp under {@code key}, or null if there is none or
+     * it names another session than the holder; a bare {@code <time>}, from before stamps named
+     * one, only if {@code bareCounts}.
+     */
+    private static Instant stampedSince(Map<String, String> config, String key, boolean bareCounts) {
+        var value = config.get(key);
         if (value == null) return null;
         var space = value.indexOf(' ');
-        if (space >= 0 && !value.substring(space + 1).equals(config.get(Metadata.MCP_SESSION))) return null;
+        if (space < 0 ? !bareCounts : !value.substring(space + 1).equals(config.get(Metadata.MCP_SESSION))) return null;
         try {
             return Instant.parse(space >= 0 ? value.substring(0, space) : value);
         } catch (DateTimeParseException e) {
@@ -92,63 +105,172 @@ final class Orphans {
     }
 
     /**
-     * Start the grace period of orphans nobody has stamped yet (their session was killed), and
-     * destroy those whose grace period is over and which {@code inUse} finds idle. Returns what
-     * was destroyed.
-     *
-     * @param inUse whether a person or a task is working in the instance ({@link #inUse}); it
-     *              must answer true when it cannot tell, so what cannot be inspected is left for
-     *              the user. Not asked about a stopped instance.
+     * When the sweep stopped the instance as dormant, or null if it did not -- or did so for an
+     * earlier holder: the stamp names the session, as {@link #orphanedStamp} does.
      */
-    static List<String> sweep(InstanceBackend backend, SessionId self, String owner, Predicate<SessionId> alive,
-                              Duration grace, Instant now, Predicate<String> inUse) {
+    static Instant dormantSince(Map<String, String> config) {
+        return stampedSince(config, Metadata.MCP_DORMANT, false);
+    }
+
+    /** The sweep's periods: before an orphan is destroyed, found dormant, and destroyed once dormant. */
+    record Windows(Duration grace, Duration dormantAfter, Duration dormantGrace) {
+        static Windows of(McpConfig config) {
+            return new Windows(Duration.ofHours(config.orphanGraceHours()), Duration.ofHours(config.dormantAfterHours()),
+                    Duration.ofHours(config.dormantGraceHours()));
+        }
+    }
+
+    /** What a sweep did: the orphans it destroyed, and those it stopped as dormant. */
+    record Swept(List<String> destroyed, List<String> stopped) {}
+
+    /**
+     * What the probe found in a running orphan: a person in it, a delegated agent that has not
+     * finished, and how many seconds ago a delegate last wrote to its task directory (null if
+     * none has).
+     */
+    record Use(boolean attended, boolean unfinished, Long idleSeconds) {
+        static final Use NOBODY = new Use(false, false, null);
+        /** It could not be looked into: as good as a person in it, so nothing is done to it. */
+        static final Use UNKNOWN = new Use(true, false, null);
+    }
+
+    /**
+     * The CPU time an instance may gain between two sweeps, as a share of the time between them,
+     * and still count as idle: one percent of one CPU. An idle system and a Claude Code waiting
+     * on a dead connection stay well below it; a delegate that runs anything does not.
+     */
+    static final double QUIET_CPU_SHARE = 0.01;
+
+    /** The least time between two CPU samples {@link #quiet} compares (or the window, if shorter). */
+    static final Duration MIN_SAMPLE_GAP = Duration.ofHours(1);
+
+    /**
+     * Start the grace period of orphans nobody has stamped yet (their session was killed), and
+     * deal with those whose grace period is over: destroy them if {@code probe} finds nobody and
+     * no unfinished delegate in them; stop them, stamped {@link Metadata#MCP_DORMANT}, if all it
+     * finds is a delegate that has shown no activity for {@code dormantAfter} ({@link #quiet});
+     * else keep them. A stopped orphan is destroyed without being looked into -- one stamped
+     * dormant only once {@code dormantGrace} has passed since it was stopped (#1028).
+     *
+     * @param probe what is working in the instance ({@link #probe}); it must answer
+     *              {@link Use#UNKNOWN} when it cannot tell, so what cannot be inspected is left
+     *              for the user. Not asked about a stopped instance.
+     */
+    static Swept sweep(InstanceBackend backend, SessionId self, String owner, Predicate<SessionId> alive,
+                       Windows windows, Instant now, Function<String, Use> probe) {
         var destroyed = new ArrayList<String>();
+        var stopped = new ArrayList<String>();
         othersOf(backend.mcpInstances(), owner, self, alive).values().forEach(other -> {
             if (!other.orphaned()) return;
             if (!Metadata.pendingOp(other.config()).isEmpty()) return;
             var name = other.name();
+            var holder = other.config().get(Metadata.MCP_SESSION);
             try {
                 var since = orphanedSince(other.config());
                 if (since == null) {
-                    backend.stamp(name, Map.of(Metadata.MCP_ORPHANED,
-                            orphanedStamp(now, other.config().get(Metadata.MCP_SESSION))));
+                    backend.stamp(name, Map.of(Metadata.MCP_ORPHANED, orphanedStamp(now, holder)));
                     return;
                 }
-                if (now.isBefore(since.plus(grace))) return;
-                // Stopped, nobody can be in it, and inUse could not look inside to tell.
-                var stopped = InstanceBackend.stopped(other.config());
-                if (!stopped && inUse.test(name)) {
+                if (now.isBefore(since.plus(windows.grace()))) return;
+                if (InstanceBackend.stopped(other.config())) {
+                    var dormant = dormantSince(other.config());
+                    if (dormant != null && now.isBefore(dormant.plus(windows.dormantGrace()))) return;
+                    // Stopped, nobody can be in it, and the probe could not look inside to tell.
+                    if (backend.destroyIfHeldBy(name, holder, true)) destroyed.add(name);
+                    return;
+                }
+                var use = probe.apply(name);
+                if (!use.attended() && use.unfinished()
+                        && quiet(backend, name, other.config(), use.idleSeconds(), windows.dormantAfter(), now)) {
+                    // As the destroy below: not if it was adopted meanwhile.
+                    if (backend.stopIfHeldBy(name, holder, Map.of(Metadata.MCP_DORMANT, orphanedStamp(now, holder)))) {
+                        System.err.println("isx mcp: stopped orphaned instance " + name + ": a task it was given "
+                                + "has not finished, but nothing in it has moved for " + windows.dormantAfter().toHours() + " hours");
+                        stopped.add(name);
+                    }
+                    return;
+                }
+                if (use.attended() || use.unfinished()) {
                     System.err.println("isx mcp: keeping orphaned instance " + name
                             + ": someone, or a task it was given, is still working in it");
                     return;
                 }
                 // Not if it was adopted while we looked, or is being adopted now.
-                if (backend.destroyIfHeldBy(name, other.config().get(Metadata.MCP_SESSION), stopped)) destroyed.add(name);
+                if (backend.destroyIfHeldBy(name, holder, false)) destroyed.add(name);
             } catch (RuntimeException e) {
                 System.err.println("isx mcp: could not handle orphaned instance " + name + ": " + e.getMessage());
             }
         });
         if (!destroyed.isEmpty()) backend.refreshProxy();
-        return destroyed;
+        return new Swept(destroyed, stopped);
+    }
+
+    /**
+     * Whether a running orphan has shown no activity for {@code after}: no delegate wrote to its
+     * task directory ({@code idleSeconds}), and its CPU time grew by less than
+     * {@link #QUIET_CPU_SHARE} between every two samples since, taken at least
+     * {@link #MIN_SAMPLE_GAP} apart. Takes this sweep's CPU sample (one
+     * state read) and records it on the instance ({@link Metadata#MCP_CPU_SAMPLE}) for the next;
+     * so never true at the first look, nor when Incus cannot say.
+     */
+    static boolean quiet(InstanceBackend backend, String name, Map<String, String> config, Long idleSeconds,
+                         Duration after, Instant now) {
+        var cpu = backend.cpuUsage(name);
+        if (cpu < 0) return false;
+        var previous = CpuSample.parse(config.get(Metadata.MCP_CPU_SAMPLE));
+        // Sweeps seconds apart would hold the probes' own CPU against a tiny allowance: such a
+        // sweep neither compares nor records, and the next one compares across the whole gap.
+        var gap = after.compareTo(MIN_SAMPLE_GAP) < 0 ? after : MIN_SAMPLE_GAP;
+        if (previous != null && cpu >= previous.cpu() && now.isBefore(previous.at().plus(gap))) return false;
+        // A counter that went back is a restart: what it did before is unknown.
+        var compared = previous != null && cpu >= previous.cpu() && now.isAfter(previous.at());
+        var busy = !compared || cpu - previous.cpu() > Duration.between(previous.at(), now).toNanos() * QUIET_CPU_SHARE;
+        var quietSince = busy ? now : previous.quietSince();
+        backend.stamp(name, Map.of(Metadata.MCP_CPU_SAMPLE, new CpuSample(now, cpu, quietSince).toString()));
+        return !busy && !now.isBefore(quietSince.plus(after))
+                && idleSeconds != null && idleSeconds >= after.toSeconds();
+    }
+
+    /** {@link Metadata#MCP_CPU_SAMPLE}: when it was taken, the CPU time then, and since when the CPU was quiet. */
+    record CpuSample(Instant at, long cpu, Instant quietSince) {
+        static CpuSample parse(String value) {
+            if (value == null) return null;
+            var parts = value.split(" ");
+            if (parts.length != 3) return null;
+            try {
+                return new CpuSample(Instant.parse(parts[0]), Long.parseLong(parts[1]), Instant.parse(parts[2]));
+            } catch (DateTimeParseException | NumberFormatException e) {
+                return null;
+            }
+        }
+
+        @Override
+        public String toString() {
+            return at + " " + cpu + " " + quietSince;
+        }
     }
 
     /**
      * Whether a person works in the instance ({@link Presence}) or one of its tasks has not
      * finished: a delegate outliving its coordinator by the grace period still has unpushed
-     * work. True when the instance cannot be looked into or systemd cannot say; the sweep does
-     * not ask about a stopped instance, which has nobody in it.
+     * work, as is one systemd cannot say about; and how long ago a delegate last wrote anything
+     * ({@link TaskScripts#agentIdle}). {@link Use#UNKNOWN} when the instance cannot be looked into; the
+     * sweep does not ask about a stopped instance, which has nobody in it.
      */
-    static boolean inUse(InstanceBackend backend, String name) {
+    static Use probe(InstanceBackend backend, String name) {
         try {
             var out = new ByteArrayOutputStream();
             // Bounded, and without the login shell a hung profile would hold forever: unanswered is in use.
-            if (backend.probe(name, Presence.script("") + "; " + TaskScripts.unfinished(), out, PROBE_LIMIT) != 0) {
-                return true;
+            if (backend.probe(name, Presence.script("") + "; " + TaskScripts.agentIdle() + "; " + TaskScripts.unfinished(),
+                    out, PROBE_LIMIT) != 0) {
+                return Use.UNKNOWN;
             }
             var lines = out.toString(StandardCharsets.UTF_8).lines().toList();
-            return Presence.parse(lines).attended() || !TaskScripts.taskIds(lines.stream()).isEmpty();
+            // A delegate systemd could not be asked about counts as unfinished.
+            return new Use(Presence.parse(lines).attended(), !TaskScripts.taskIds(lines.stream()).isEmpty(),
+                    TaskScripts.agentIdle(lines));
         } catch (RuntimeException e) {
-            return true;
+            return Use.UNKNOWN;
         }
     }
 }

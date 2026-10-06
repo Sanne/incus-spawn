@@ -86,6 +86,8 @@ class McpConfigTest {
         var defaults = parse("mcp:\n  templates: [tpl-java]\n").mcp();
         assertEquals("bypassPermissions", defaults.delegatePermissionMode("tpl-java"));
         assertEquals(24, defaults.orphanGraceHours());
+        assertEquals(24, defaults.dormantAfterHours());
+        assertEquals(168, defaults.dormantGraceHours());
         assertEquals("haiku", defaults.summaryModel());
 
         var mcp = parse("""
@@ -94,14 +96,18 @@ class McpConfigTest {
                   delegate-permission-modes:
                     tpl-review: plan
                   orphan-grace-hours: 72
+                  dormant-after-hours: 6
+                  dormant-grace-hours: 48
                   summary-model: claude-haiku-4-5
                 """).mcp();
         assertEquals("acceptEdits", mcp.delegatePermissionMode("tpl-java"));
         assertEquals("plan", mcp.delegatePermissionMode("tpl-review"));
         assertEquals(72, mcp.orphanGraceHours());
+        assertEquals(6, mcp.dormantAfterHours());
+        assertEquals(48, mcp.dormantGraceHours());
         assertEquals("claude-haiku-4-5", mcp.summaryModel());
         var out = YAML.writeValueAsString(parse("mcp:\n  templates: [tpl-java]\n"));
-        assertFalse(out.contains("grace") || out.contains("permission") || out.contains("summary"),
+        assertFalse(out.contains("grace") || out.contains("dormant") || out.contains("permission") || out.contains("summary"),
                 "unset settings are not written back:\n" + out);
     }
 

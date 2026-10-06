@@ -83,6 +83,55 @@ class IncusInstanceBackendTest {
     }
 
     @Test
+    void aDormantOrphanIsStampedBeforeItIsStoppedAndOnlyWhileStillHeld() {
+        var locks = mock(InstanceLockManager.class);
+        when(locks.tryAcquire(anyString(), org.mockito.ArgumentMatchers.eq(Metadata.OP_STOPPING)))
+                .thenReturn(Optional.of(() -> { }));
+        var sweeper = new IncusInstanceBackend(incus, locks);
+        var held = JsonRpc.JSON.createObjectNode();
+        held.put("status", "Running");
+        held.putObject("config").put(Metadata.MCP_SESSION, "2-200");
+        when(incus.instanceMetadataOrThrow("hung")).thenReturn(held);
+        var adopted = held.deepCopy();
+        adopted.putObject("config").put(Metadata.MCP_SESSION, "3-300");
+        when(incus.instanceMetadataOrThrow("adopted")).thenReturn(adopted);
+        var stamps = java.util.Map.of(Metadata.MCP_DORMANT, "2026-10-06T00:00:00Z 2-200");
+
+        assertTrue(sweeper.stopIfHeldBy("hung", "2-200", stamps));
+        assertFalse(sweeper.stopIfHeldBy("adopted", "2-200", stamps));
+
+        // Stopped without its stamp, the next sweep would destroy it as any stopped orphan.
+        var order = inOrder(incus);
+        order.verify(incus).configSet("hung", Metadata.PENDING_OP, Metadata.OP_STOPPING);
+        order.verify(incus).instanceMetadataOrThrow("hung");
+        order.verify(incus).configUpdate("hung", new java.util.HashMap<String, Object>(stamps));
+        order.verify(incus).stop("hung");
+        order.verify(incus).configUnset("hung", Metadata.PENDING_OP);
+        verify(incus, never()).stop("adopted");
+        verify(incus).configUnset("adopted", Metadata.PENDING_OP);
+    }
+
+    @Test
+    void aStopThatFailsTakesItsDormantStampBackFromARunningInstance() {
+        var locks = mock(InstanceLockManager.class);
+        when(locks.tryAcquire("hung", Metadata.OP_STOPPING)).thenReturn(Optional.of(() -> { }));
+        var sweeper = new IncusInstanceBackend(incus, locks);
+        var held = JsonRpc.JSON.createObjectNode();
+        held.put("status", "Running");
+        held.putObject("config").put(Metadata.MCP_SESSION, "2-200");
+        when(incus.instanceMetadataOrThrow("hung")).thenReturn(held);
+        org.mockito.Mockito.doThrow(new IncusException("Failed to stop hung")).when(incus).stop("hung");
+
+        assertThrows(ToolError.class, () -> sweeper.stopIfHeldBy("hung", "2-200",
+                java.util.Map.of(Metadata.MCP_DORMANT, "2026-10-06T00:00:00Z 2-200")));
+        // Left behind, a later stop by anything else would get the sweep's longer grace period.
+        var unset = new java.util.HashMap<String, Object>();
+        unset.put(Metadata.MCP_DORMANT, null);
+        verify(incus).configUpdate("hung", unset);
+        verify(incus).clearPendingOperation("hung");
+    }
+
+    @Test
     void aTemplatesDelegateModelIsTheNearestOneItsChainSets() throws Exception {
         var base = dev.incusspawn.config.ImageDef.parseYaml("name: tpl-base\ntools:\n  - claude: {model: claude-sonnet-5-5}\n");
         var child = dev.incusspawn.config.ImageDef.parseYaml("name: tpl-child\nparent: tpl-base\ntools:\n  - claude: {model: claude-opus-5-5}\n");

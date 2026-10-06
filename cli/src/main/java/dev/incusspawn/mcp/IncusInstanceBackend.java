@@ -178,6 +178,56 @@ final class IncusInstanceBackend implements InstanceBackend {
     }
 
     @Override
+    public boolean stopIfHeldBy(String name, String session, Map<String, String> stamps) {
+        var lock = locks.tryAcquire(name, Metadata.OP_STOPPING);
+        if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process.");
+        try (var held = lock.get()) {
+            // Under the mark, so an adoption stamping meanwhile is seen here or sees the mark.
+            if (!InstanceDestroyer.markIf(incus, name, Metadata.OP_STOPPING,
+                    instance -> session.equals(instance.path("config").path(Metadata.MCP_SESSION).asText(null))
+                            && "Running".equals(instance.path("status").asText()))) {
+                return false;
+            }
+            try {
+                // Stamped first: stopped without it, the next sweep would destroy it as any stopped orphan.
+                incus.configUpdate(name, new java.util.HashMap<String, Object>(stamps));
+                incus.stop(name);
+            } catch (RuntimeException e) {
+                unstampIfRunning(name, stamps);
+                incus.clearPendingOperation(name);
+                throw e;
+            }
+            incus.configUnset(name, Metadata.PENDING_OP);
+            return true;
+        } catch (IncusException e) {
+            throw new ToolError(ToolError.Code.UNAVAILABLE, "could not stop '" + name + "': " + e.getMessage());
+        }
+    }
+
+    /**
+     * After a stop that failed: take {@code stamps} back if the instance still runs, so a later stop
+     * by anything else is not taken for the sweep's. Left on one that stopped after all, which
+     * without them would be destroyed as any stopped orphan; best effort, a failure is the
+     * stop's to report.
+     */
+    private void unstampIfRunning(String name, Map<String, String> stamps) {
+        try {
+            var instance = incus.instanceMetadataOrThrow(name);
+            if (instance == null || "Stopped".equals(instance.path("status").asText())) return;
+            var unset = new java.util.HashMap<String, Object>();
+            stamps.keySet().forEach(k -> unset.put(k, null));
+            incus.configUpdate(name, unset);
+        } catch (RuntimeException ignored) {
+            // The stamp only lengthens a later grace period: never worth hiding the stop's failure.
+        }
+    }
+
+    @Override
+    public long cpuUsage(String name) {
+        return incus.cpuUsage(name);
+    }
+
+    @Override
     public void stop(String name) {
         var lock = locks.tryAcquire(name, Metadata.OP_STOPPING);
         if (lock.isEmpty()) throw new ToolError(ToolError.Code.BUSY, "'" + name + "' is locked by another isx process; try again.");

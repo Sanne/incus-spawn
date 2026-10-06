@@ -202,6 +202,9 @@ mcp:
   delegate-permission-modes:       # per-template overrides, e.g. a reviewer that only plans
     tpl-review: plan
   orphan-grace-hours: 24           # how long an instance outlives its session (default 24)
+  dormant-after-hours: 24          # past that, one kept only for a delegate showing no activity
+                                   # this long is stopped instead (default 24)
+  dormant-grace-hours: 168         # and destroyed this long after (default 168)
   summary-model: haiku             # answers the tools' `ask` inside the instance (default haiku)
 ```
 

@@ -681,6 +681,26 @@ class TaskScriptsTest {
     }
 
     @Test
+    void theSweepSeesHowLongAgoADelegateLastWroteAnything() throws Exception {
+        assertEquals("", sh("HOME=" + home.resolve("empty") + "; " + TaskScripts.agentIdle(), ""),
+                "nothing to report before a run has written anything, and no failure");
+        recordedTask("t21-abc", Tasks.AGENT, false);
+        recordedTask("t22-abc", Tasks.COMMAND, false); // a command's output is not a delegate's progress
+        var twoHoursAgo = java.nio.file.attribute.FileTime.from(java.time.Instant.now().minus(java.time.Duration.ofHours(2)));
+        try (var files = Files.list(home.resolve(".isx-mcp/tasks/t21-abc"))) {
+            for (var f : files.toList()) Files.setLastModifiedTime(f, twoHoursAgo);
+        }
+        Files.writeString(home.resolve(".isx-mcp/tasks/t22-abc/stdout"), "fresh\n");
+        var idle = TaskScripts.agentIdle(sh(TaskScripts.agentIdle(), "").lines().toList());
+        assertTrue(idle != null && idle >= 7200 && idle < 7300, "idle " + idle);
+
+        Files.writeString(home.resolve(".isx-mcp/tasks/t21-abc/events-1.jsonl"), "{}\n");
+        idle = TaskScripts.agentIdle(sh(TaskScripts.agentIdle() + "; " + TaskScripts.unfinished(), "").lines().toList());
+        assertTrue(idle != null && idle < 60, "the newest file counts: " + idle);
+        assertEquals(null, TaskScripts.agentIdle(List.of("task t1-abc running", "idle soon")), "only a number is read");
+    }
+
+    @Test
     @org.junit.jupiter.api.Timeout(20)
     void aFifoInPlaceOfATaskFileHoldsNoProbe() throws Exception {
         // Anyone in the instance can put a FIFO there; a read of it would wait for a writer.

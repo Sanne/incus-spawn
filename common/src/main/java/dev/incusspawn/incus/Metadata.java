@@ -104,6 +104,18 @@ public final class Metadata {
      * {@code mcp.orphan-grace-hours} have passed since; adoption clears it.
      */
     public static final String MCP_ORPHANED = MCP_PREFIX + "orphaned";
+    /**
+     * When the orphan sweep stopped the instance because nothing in it moved
+     * ({@code <time> <session>}, as {@link #MCP_ORPHANED}): only an instance stamped so gets the
+     * longer {@code mcp.dormant-grace-hours} before it is destroyed. Adoption clears it (#1028).
+     */
+    public static final String MCP_DORMANT = MCP_PREFIX + "dormant";
+    /**
+     * The orphan sweep's last sample of the instance's CPU time: {@code <time> <cpu-nanos>
+     * <quiet-since>}, where {@code quiet-since} is when it last saw the CPU busy. How a later
+     * sweep tells a delegate that still works from one that hung (#1028).
+     */
+    public static final String MCP_CPU_SAMPLE = MCP_PREFIX + "cpu-sample";
     public static final String MCP_CLIENT = MCP_PREFIX + "client";
     public static final String MCP_CLIENT_PID = MCP_PREFIX + "client-pid";
     public static final String MCP_CWD = MCP_PREFIX + "cwd";

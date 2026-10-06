@@ -83,6 +83,9 @@ final class OutputSchemas {
                 .string("held_by_client", "The MCP client of that session", false)
                 .string("orphaned_since", "ISO-8601", false)
                 .string("orphan_until", "ISO-8601: destroyed after this unless adopted", false)
+                .string("dormant_since", "ISO-8601: when the orphan sweep stopped it, its delegate "
+                        + "showing no activity; adopt_instance starts it again", false)
+                .string("dormant_until", "ISO-8601: destroyed after this unless adopted", false)
                 .list("tasks", "This session's tasks in it", true, task);
         return Schema.object().list("instances", null, true, instance).build();
     }

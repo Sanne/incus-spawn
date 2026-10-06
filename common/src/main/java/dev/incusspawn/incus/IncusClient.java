@@ -1229,6 +1229,16 @@ public class IncusClient {
         return state == null ? 0 : Math.max(0, state.path("pid").asLong(0));
     }
 
+    /**
+     * The CPU time a running instance has used since it started, in nanoseconds, or -1 when the
+     * daemon cannot say. One state read, nothing run in the guest.
+     */
+    public long cpuUsage(String name) {
+        var state = runtimeState(name);
+        var usage = state == null ? null : state.path("cpu").get("usage");
+        return usage == null || !usage.canConvertToLong() ? -1 : usage.asLong();
+    }
+
     /** Every global IPv4 address a running instance's interfaces hold, as its state reports them. */
     public List<String> ipv4Addresses(String name) {
         var resp = http().get("/1.0/instances/" + name + "/state");

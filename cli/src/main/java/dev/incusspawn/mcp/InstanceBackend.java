@@ -98,6 +98,15 @@ interface InstanceBackend {
     boolean destroyIfHeldBy(String name, String session, boolean onlyIfStopped);
 
     /**
+     * Stop a running instance only if {@code session} still holds it, for a caller that does
+     * not: the orphan sweep stopping a dormant one. Like {@link #destroyIfHeldBy}, marks it
+     * {@link dev.incusspawn.incus.Metadata#OP_STOPPING} first and re-reads the holder under the
+     * mark; then writes {@code stamps} and stops it. Returns whether it was stopped; throws
+     * {@link ToolError} when another isx process holds its lock or Incus fails.
+     */
+    boolean stopIfHeldBy(String name, String session, Map<String, String> stamps);
+
+    /**
      * Stop a running instance, as the TUI does: under its lock, marked
      * {@link dev.incusspawn.incus.Metadata#OP_STOPPING} meanwhile. Throws {@link ToolError} when another isx process holds the lock or the stop fails.
      */
@@ -109,6 +118,12 @@ interface InstanceBackend {
      * {@link ToolError} on refusal.
      */
     void start(String name);
+
+    /**
+     * The CPU time a running instance has used since it started, in nanoseconds, from its Incus
+     * state (no exec); -1 when Incus cannot say.
+     */
+    long cpuUsage(String name);
 
     /** Tell the proxy instances went away, so a reused address never maps to one of them. */
     void refreshProxy();
