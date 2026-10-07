@@ -4317,7 +4317,8 @@ public class ListCommand extends BaseCommand {
         return actionsCache.getOrDefault(instance.name, java.util.List.of());
     }
 
-    private java.util.List<ToolAction> resolveActionsForInstance(InstanceInfo instance) {
+    /** The actions F9 offers for an instance, and Enter's default action is chosen from. */
+    java.util.List<ToolAction> resolveActionsForInstance(InstanceInfo instance) {
         var actions = new ArrayList<ToolAction>();
         var tools = collectInstalledTools(instance);
         java.util.List<ActionContext.RepoInfo> repos = null;
@@ -4454,6 +4455,14 @@ public class ListCommand extends BaseCommand {
         return dispatchAction(result.get(), buildActionContext(selected));
     }
 
+    /** The definitions and tools {@link #doExecute} would load, for tests that drive action resolution. */
+    void useDefinitions(Map<String, dev.incusspawn.config.ImageDef> imageDefs, ToolDefLoader toolDefLoader,
+                        java.util.List<ToolSetup> cdiTools) {
+        this.imageDefs = imageDefs;
+        this.toolDefLoader = toolDefLoader;
+        this.cdiTools = cdiTools;
+    }
+
     boolean dispatchAction(ToolAction action, ActionContext context) {
         var cmd = action.shellCommand(context);
         if (cmd.isPresent()) {
@@ -4478,7 +4487,10 @@ public class ListCommand extends BaseCommand {
         // For instances (clones), prefer the build-time tools list from BUILD_SOURCE
         // metadata. The current YAML chain may reference tools that were added after
         // the instance was branched and aren't actually installed in the container.
-        if (!Metadata.TYPE_BASE.equals(instance.type)
+        // A template uses its YAML, unless that is gone (ActionResolver.collectInstalledTools' rule).
+        var templateName = resolveTemplateName(instance);
+        var chain = templateName == null ? List.<dev.incusspawn.config.ImageDef>of() : getInheritanceChain(templateName);
+        if ((!Metadata.TYPE_BASE.equals(instance.type) || chain.isEmpty())
                 && instance.buildSourceJson != null && !instance.buildSourceJson.isEmpty()) {
             var bs = dev.incusspawn.config.BuildSource.fromJson(instance.buildSourceJson);
             if (bs != null) {
@@ -4486,9 +4498,6 @@ public class ListCommand extends BaseCommand {
             }
         }
         var tools = new java.util.LinkedHashSet<String>();
-        var templateName = resolveTemplateName(instance);
-        if (templateName == null) return tools;
-        var chain = getInheritanceChain(templateName);
         for (var def : chain) {
             for (var toolRef : def.getTools()) {
                 tools.add(toolRef.getName());
