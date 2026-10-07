@@ -4474,100 +4474,6 @@ public class ListCommand extends BaseCommand {
         return false;
     }
 
-    private String resolveDefaultCommandFromTemplate(String source) {
-        // When the source is a clone (not a template), resolve via its PROFILE metadata
-        var templateName = source;
-        boolean isClone = !imageDefs.containsKey(templateName);
-        if (isClone) {
-            var profile = incus.configGet(source, Metadata.PROFILE);
-            if (profile != null && !profile.isEmpty()) {
-                templateName = profile;
-            }
-        }
-
-        String ref = null;
-        var chain = getInheritanceChain(templateName);
-        if (!chain.isEmpty()) {
-            for (int i = chain.size() - 1; i >= 0; i--) {
-                var def = chain.get(i);
-                if (def.getDefaultAction() != null) {
-                    ref = def.getDefaultAction();
-                    break;
-                }
-            }
-        } else {
-            var refValue = incus.configGet(source, Metadata.DEFAULT_ACTION);
-            ref = (refValue == null || refValue.isBlank()) ? null : refValue;
-        }
-        if (ref == null) return null;
-
-        var parsed = parseActionRef(ref);
-        // For clones, use build-time tools to avoid resolving actions for
-        // tools that aren't actually installed in the source.
-        java.util.List<ToolAction> actions;
-        if (isClone) {
-            var bsJson = incus.configGet(source, Metadata.BUILD_SOURCE);
-            var bs = (bsJson != null && !bsJson.isBlank())
-                    ? dev.incusspawn.config.BuildSource.fromJson(bsJson) : null;
-            var tools = bs != null ? extractBuildTimeTools(bs) : collectInstalledToolsForTemplate(templateName);
-            actions = collectActionsForTools(tools);
-        } else {
-            actions = collectActionsForTemplate(templateName);
-        }
-        var matching = actions.stream()
-                .filter(a -> parsed.toolName().equals(a.toolName()))
-                .toList();
-        if (matching.isEmpty()) return null;
-
-        var resolved = resolveActionByRef(parsed, matching);
-        if (resolved.isEmpty()) return null;
-
-        var cmd = resolved.get().shellCommand(null);
-        return cmd.orElse(null);
-    }
-
-    private java.util.List<ToolAction> collectActionsForTemplate(String templateName) {
-        return collectActionsForTools(collectInstalledToolsForTemplate(templateName));
-    }
-
-    private java.util.Set<String> collectInstalledToolsForTemplate(String templateName) {
-        var tools = new java.util.LinkedHashSet<String>();
-        var chain = getInheritanceChain(templateName);
-        for (var def : chain) {
-            for (var toolRef : def.getTools()) {
-                tools.add(toolRef.getName());
-            }
-        }
-        return tools;
-    }
-
-    private java.util.List<ToolAction> collectActionsForTools(java.util.Set<String> tools) {
-        var actions = new ArrayList<ToolAction>();
-        var handledTools = new java.util.HashSet<String>();
-        for (var toolName : tools) {
-            var setup = toolDefLoader.find(toolName);
-            if (setup instanceof YamlToolSetup yts) {
-                var toolDef = yts.toolDef();
-                if (!toolDef.getActions().isEmpty()) {
-                    handledTools.add(toolName);
-                }
-                for (var entry : toolDef.getActions()) {
-                    actions.add(new YamlToolAction(toolName, entry));
-                }
-            }
-        }
-        if (cdiTools != null) {
-            for (var cdiTool : cdiTools) {
-                if (tools.contains(cdiTool.name()) && !handledTools.contains(cdiTool.name())) {
-                    for (var entry : cdiTool.actions()) {
-                        actions.add(new YamlToolAction(cdiTool.name(), entry));
-                    }
-                }
-            }
-        }
-        return actions;
-    }
-
     private java.util.Set<String> collectInstalledTools(InstanceInfo instance) {
         // For instances (clones), prefer the build-time tools list from BUILD_SOURCE
         // metadata. The current YAML chain may reference tools that were added after
@@ -5441,11 +5347,13 @@ public class ListCommand extends BaseCommand {
                 inboxText == null ? null : java.nio.file.Path.of(inboxText),
                 cpu, memory, disk, branchAccounts.overrides(), true, java.util.Map.of());
 
-        var prefetched = BranchFlow.create(incus, BranchFlow.preflight(incus, request, imageDefs));
+        var preflight = BranchFlow.preflight(incus, request, imageDefs);
+        var prefetched = BranchFlow.create(incus, preflight);
 
         BuildOutput.success(name + " is ready.");
         var shellPrep = prefetched.toShellPrep();
-        var defaultCmd = resolveDefaultCommandFromTemplate(source);
+        var defaultCmd = new ActionResolver(incus, toolDefLoader, cdiTools, preflight.defs())
+                .defaultCommandForBranch(preflight.template(), preflight.sourceInstance());
         if (defaultCmd != null) {
             shellPrep = shellPrep.withActionCommand(defaultCmd);
         }

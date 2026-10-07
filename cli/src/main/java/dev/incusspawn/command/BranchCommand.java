@@ -1,7 +1,6 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
-import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
@@ -118,15 +117,15 @@ public class BranchCommand extends BaseCommand {
 
         var preflight = created.preflight();
         var shellPrep = created.prefetched().toShellPrep();
+        var resolver = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
+                RuntimeServices.toolSetups(), preflight.defs());
         if (!shell) {
-            var defaultCmd = resolveDefaultCommand(created.source(), preflight.defs());
+            var defaultCmd = resolver.defaultCommandForBranch(preflight.template(), preflight.sourceInstance());
             if (defaultCmd != null) {
                 shellPrep = shellPrep.withActionCommand(defaultCmd);
             }
         }
-        var menu = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
-                RuntimeServices.toolSetups(), preflight.defs())
-                .shellMenu(name, created.prefetched().templateName(), created.prefetched().workdir());
+        var menu = resolver.shellMenu(name, created.prefetched().templateName(), created.prefetched().workdir());
         incus.interactiveShell(name, "agentuser", shellPrep, menu);
         return CommandResult.SUCCESS;
     }
@@ -205,24 +204,5 @@ public class BranchCommand extends BaseCommand {
         System.err.println("Error: no --from specified and no incus-spawn.yaml found in current directory.");
         System.err.println("Usage: isx branch <name> --from <source-instance>");
         return null;
-    }
-
-    private String resolveDefaultCommand(String source, Map<String, ImageDef> defs) {
-        var templateName = source;
-        if (!defs.containsKey(templateName)) {
-            var profile = incus.configGet(source, Metadata.PROFILE);
-            if (profile != null && !profile.isEmpty()) {
-                templateName = profile;
-            }
-        }
-
-        var resolver = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
-                RuntimeServices.toolSetups(), defs);
-        var installedTools = resolver.collectInstalledTools(source, templateName);
-        var repos = resolver.collectRepos(templateName);
-        var action = resolver.findDefaultAction(name, templateName, installedTools, repos);
-        if (action.isEmpty()) return null;
-
-        return action.get().shellCommand(null).orElse(null);
     }
 }
