@@ -594,7 +594,10 @@ jobs:
           name: tpl-test-podman
           parent: tpl-minimal
           tools:
-            - podman
+            - podman:
+                mode: rootless
+                short-names: permissive
+                compose: true
           EOF
           cat > ~/.config/incus-spawn/images/test-accounts.yaml << 'EOF'
           name: tpl-test-accounts

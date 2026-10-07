@@ -1,6 +1,26 @@
 name: podman
 description: Podman container runtime configured for Testcontainers
 
+parameters:
+  mode:
+    type: enum
+    default: rootful
+    options:
+      - rootful
+      - rootless
+    description: "Socket mode: rootful (system socket, shared by all users) or rootless (per-user socket, consistent CLI behavior)"
+  short-names:
+    type: enum
+    default: enforcing
+    options:
+      - enforcing
+      - permissive
+    description: "Short image name resolution: enforcing (prompt for registry) or permissive (default to docker.io)"
+  compose:
+    type: boolean
+    default: "false"
+    description: "Install podman-compose"
+
 packages:
   - podman
   - podman-docker
@@ -11,20 +31,49 @@ packages:
 run:
   - mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/agentuser
   - |
-    systemctl enable --no-reload podman.socket &&
-    mkdir -p /run/podman &&
-    ln -sf /run/podman/podman.sock /run/docker.sock &&
-    ln -sf /run/podman/podman.sock /var/run/docker.sock &&
-    printf 'd /run/podman 0755 root root -\nL /run/docker.sock - - - - /run/podman/podman.sock\nL /var/run/docker.sock - - - - /run/podman/podman.sock\n' \
-      > /etc/tmpfiles.d/podman-socket.conf &&
-    mkdir -p /etc/systemd/system/podman.socket.d &&
-    printf '[Socket]\nSocketMode=0666\n' \
-      > /etc/systemd/system/podman.socket.d/override.conf
+    if [ "${param_mode}" = "rootful" ]; then
+      systemctl enable --no-reload podman.socket &&
+      mkdir -p /run/podman &&
+      ln -sf /run/podman/podman.sock /run/docker.sock &&
+      ln -sf /run/podman/podman.sock /var/run/docker.sock &&
+      printf 'd /run/podman 0755 root root -\nL /run/docker.sock - - - - /run/podman/podman.sock\nL /var/run/docker.sock - - - - /run/podman/podman.sock\n' \
+        > /etc/tmpfiles.d/podman-socket.conf &&
+      mkdir -p /etc/systemd/system/podman.socket.d &&
+      printf '[Socket]\nSocketMode=0666\n' \
+        > /etc/systemd/system/podman.socket.d/override.conf
+    else
+      # Rootless: enable user socket via lingering session
+      mkdir -p /home/agentuser/.config/systemd/user/sockets.target.wants &&
+      ln -sf /usr/lib/systemd/user/podman.socket \
+        /home/agentuser/.config/systemd/user/sockets.target.wants/podman.socket &&
+      chown -R agentuser:agentuser /home/agentuser/.config &&
+      # Symlink /var/run/docker.sock to the rootless socket so that
+      # DOCKER_HOST can be the same static value for both modes
+      # (env: entries don't support conditionals).
+      ln -sf /run/user/1000/podman/podman.sock /run/docker.sock &&
+      ln -sf /run/user/1000/podman/podman.sock /var/run/docker.sock &&
+      printf 'L /run/docker.sock - - - - /run/user/1000/podman/podman.sock\nL /var/run/docker.sock - - - - /run/user/1000/podman/podman.sock\n' \
+        > /etc/tmpfiles.d/podman-socket.conf
+    fi
+  # Short names: run: instead of files: because files: doesn't support conditionals.
+  - |
+    if [ "${param_short_names}" = "permissive" ]; then
+      mkdir -p /etc/containers/registries.conf.d
+      cat > /etc/containers/registries.conf.d/10-short-names.conf << 'SHORTNAMES'
+    short-name-mode = "permissive"
+    unqualified-search-registries = ["docker.io"]
+    SHORTNAMES
+    fi
+  # Compose: run: instead of packages: because packages: doesn't support conditionals.
+  - |
+    if [ "${param_compose}" = "true" ]; then
+      dnf install -y podman-compose
+    fi
 
 env:
   - name: DOCKER_HOST
     value: unix:///var/run/docker.sock
   - name: TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED
-    value: "false"
+    value: "true"
 
-verify: podman --version
+verify: podman --version && if [ "${param_compose}" = "true" ]; then podman-compose --version; fi
