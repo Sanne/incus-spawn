@@ -27,10 +27,10 @@ import java.util.stream.Collectors;
  *
  * <p>Both may be read on a terminal, so neither lets a value write a control character
  * ({@link #isControl}, bidi controls included) to it raw (#1118): a value can be a stamp someone
- * set by hand, escape sequence and all. {@code json}
- * keeps every value exact, writing each control character as a JSON unicode escape. {@code plain}
- * is one line per record and lossy: each control character becomes a space ({@link #oneLine}),
- * as the table shows it. A script that needs a value exactly reads {@code json}.
+ * set by hand, escape sequence and all. {@code json} keeps every value exact, writing each
+ * control character as a JSON escape. {@code plain} is one line per record and lossy: each
+ * control character becomes a space ({@link #oneLine}), as the table shows it. A script that
+ * needs a value exactly reads {@code json}.
  */
 public enum OutputFormat {
     TABLE, PLAIN, JSON;

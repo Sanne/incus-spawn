@@ -524,8 +524,10 @@ is empty. So query commands take `--format` (#1036), through one shared helper,
   every bidi embedding, override and isolate (U+202A-U+202E, U+2066-U+2069), which would make
   a terminal draw the rest of the line, the following fields included, out of order. The marks
   (U+200E, U+200F, U+061C) stay: they reorder nothing beyond their neighbours. `json` is exact:
-  Jackson escapes C0 as JSON requires, and `OutputFormat` also escapes DEL, C1, U+2028/U+2029
-  and the bidi controls as `\uXXXX`, which JSON allows and every parser reverses. Both formats
+  Jackson escapes C0 as JSON requires (tab, line feed, carriage return, backspace and form
+  feed as `\t` `\n` `\r` `\b` `\f`, the rest as `\uXXXX`), and `OutputFormat` also escapes
+  DEL, C1, U+2028/U+2029 and the bidi controls as `\uXXXX`, which JSON allows and every parser
+  reverses. Both formats
   test one predicate, `OutputFormat.isControl`, so they cannot disagree on the set. A script
   that needs a value exactly reads `json`. Escaping in `plain` instead (`\e`, `\\`) was
   rejected: it would make every reader decode, and change the many values with a backslash for
