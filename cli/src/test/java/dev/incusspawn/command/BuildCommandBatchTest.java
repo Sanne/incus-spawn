@@ -282,4 +282,55 @@ class BuildCommandBatchTest {
 
         assertEquals(List.of("tpl-layer", "tpl-isx", "tpl-quarkus"), built);
     }
+
+    /**
+     * A parent pulled into the batch as the ancestor of an outdated child re-derives its other
+     * children too, though the walk reaches that child before the parent (#1150).
+     */
+    @Test
+    void outOfSyncRebuildsTheOtherChildrenOfAnAncestorItPullsIn() {
+        extra(List.of("tpl-a", "tpl-p"), List.of("tpl-p", ""), List.of("tpl-b", "tpl-p"));
+        builtAt(Map.of(
+                "tpl-base", "2026-10-01T09:00:00", "tpl-layer", "2026-10-01T09:01:00",
+                "tpl-isx", "2026-10-01T09:02:00", "tpl-quarkus", "2026-10-01T09:02:00",
+                "tpl-other", "2026-10-01T09:00:00", "tpl-other-child", "2026-10-01T09:01:00",
+                "tpl-b", "2026-10-01T09:01:00"));
+        daemon.container("tpl-p", Map.of(Metadata.TYPE, Metadata.TYPE_BASE,
+                Metadata.BUILD_VERSION, "0.0.1", Metadata.CREATED, "2026-10-01T09:00:00"));
+
+        assertEquals(0, build("--out-of-sync"));
+
+        assertEquals(List.of("tpl-p", "tpl-a", "tpl-b"), built);
+    }
+
+    /**
+     * An outdated grandparent the walk reaches after its outdated grandchild is still built first,
+     * and the current parent between them with it (#1150).
+     */
+    @Test
+    void outOfSyncBuildsAnOutdatedGrandparentBeforeTheGrandchildItReachedFirst() {
+        extra(List.of("tpl-a", "tpl-q"), List.of("tpl-g", ""), List.of("tpl-q", "tpl-g"));
+        builtAt(Map.of(
+                "tpl-base", "2026-10-01T09:00:00", "tpl-layer", "2026-10-01T09:01:00",
+                "tpl-isx", "2026-10-01T09:02:00", "tpl-quarkus", "2026-10-01T09:02:00",
+                "tpl-other", "2026-10-01T09:00:00", "tpl-other-child", "2026-10-01T09:01:00",
+                "tpl-q", "2026-10-01T09:01:00"));
+        daemon.container("tpl-g", Map.of(Metadata.TYPE, Metadata.TYPE_BASE,
+                Metadata.BUILD_VERSION, "0.0.1", Metadata.CREATED, "2026-10-01T09:00:00"));
+
+        assertEquals(0, build("--out-of-sync"));
+
+        assertEquals(List.of("tpl-g", "tpl-q", "tpl-a"), built);
+    }
+
+    /** Adds definitions as (name, parent) pairs, in this order; an empty parent is a root. */
+    @SafeVarargs
+    private void extra(List<String>... pairs) {
+        for (var pair : pairs) {
+            var def = new ImageDef();
+            def.setName(pair.get(0));
+            if (!pair.get(1).isEmpty()) def.setParent(pair.get(1));
+            extraDefs.put(def.getName(), def);
+        }
+    }
 }

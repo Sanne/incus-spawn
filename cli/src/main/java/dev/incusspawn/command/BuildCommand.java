@@ -480,15 +480,20 @@ public class BuildCommand extends BaseCommand {
                                                    ToolDefLoader toolDefLoader,
                                                    boolean outdatedOnly) {
         if (outdatedOnly) {
+            // Every outdated template and everything copied from it, collected before any is ordered:
+            // ordering while collecting built a child before a parent the walk reached later (#1150)
+            var batch = new HashSet<String>();
             for (var template : defs.values()) {
-                if (seen.contains(template.getName())) continue;
+                if (batch.contains(template.getName())) continue;
                 if (isImageOutdated(template.getName(), template, incus, toolDefLoader, defs)) {
-                    collectAncestors(template, defs, result, seen, incus, toolDefLoader);
-                    if (seen.add(template.getName())) {
-                        result.add(template.getName());
-                    }
-                    collectDescendants(template.getName(), defs, result, seen);
+                    batch.add(template.getName());
+                    collectDescendants(template.getName(), defs, new ArrayList<>(), batch);
                 }
+            }
+            var inBatch = new LinkedHashMap<String, ImageDef>();
+            defs.forEach((name, def) -> { if (batch.contains(name)) inBatch.put(name, def); });
+            for (var def : inBatch.values()) {
+                collectAllRecursive(def, inBatch, result, seen);
             }
         } else {
             for (var leaf : leaves) {
@@ -509,21 +514,6 @@ public class BuildCommand extends BaseCommand {
         }
         seen.add(name);
         result.add(name);
-    }
-
-    private static void collectAncestors(ImageDef imageDef, Map<String, ImageDef> defs,
-                                          List<String> result, Set<String> seen,
-                                          IncusClient incus, ToolDefLoader toolDefLoader) {
-        if (imageDef.isRoot()) return;
-        var parentName = imageDef.getParent();
-        if (seen.contains(parentName)) return;
-        var parentDef = defs.get(parentName);
-        if (parentDef == null) return;
-        if (isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs)) {
-            collectAncestors(parentDef, defs, result, seen, incus, toolDefLoader);
-            seen.add(parentName);
-            result.add(parentName);
-        }
     }
 
     static void collectDescendants(String parentName, Map<String, ImageDef> defs,
