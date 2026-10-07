@@ -255,6 +255,44 @@ else
     fail "forwarder-restart confirmed (got '$rec')"
 fi
 
+# A caller that hangs up mid-restart (a client timeout, a cancelled isx doctor) must not leave
+# the guest without a forwarder. Hang up once the API is down (two failed probes in a row, so
+# one stray failure does not count), i.e. after the agent's pkill and before its relaunch a
+# second later. The guest's socat then terminates the agent about 0.5s (its -t) after the
+# hang-up, so the check only tells a fixed agent from an unfixed one if the hang-up comes
+# within about half a second of the pkill (measured under KVM: an unfixed agent fails with
+# the hang-up 0.45s after the API went down, and passes at 0.55s). A slower hang-up is
+# reported, since the check then passes either way. The pipeline is spelled out rather than
+# run as `agent ... &`, so that $! is nc (or the timeout wrapping it) and the kill hangs up.
+printf 'forwarder-restart\n' | "${AGENT_NC[@]}" -U "$AGENT_SOCK" >/dev/null 2>&1 &
+caller=$!
+sent=${EPOCHREALTIME:-}
+down=no
+misses=0
+for _ in $(seq 1 80); do
+    case "$(api /1.0)" in
+        *'"metadata"'*) misses=0 ;;
+        *) misses=$((misses + 1)); [ "$misses" -ge 2 ] && { down=yes; break; }; continue ;;
+    esac
+    sleep 0.05
+done
+kill "$caller" 2>/dev/null
+if [ -n "$sent" ]; then
+    late=$(( (${EPOCHREALTIME/[.,]/} - ${sent/[.,]/}) / 1000 ))
+    [ "$late" -gt 400 ] && echo "  NOTE: hung up ${late}ms after the request; the next checks pass with or without the fix"
+fi
+wait "$caller" 2>/dev/null
+if [ "$down" = yes ]; then
+    pass "forwarder-restart took the forwarder down before its caller hung up"
+    expect 'wait_for_api 20'              "Incus API reachable again after a caller hung up on forwarder-restart"
+    expect '[ "$(agent ping)" = "ok" ]'   "control agent still up after a caller hung up on forwarder-restart"
+    after=$(settle_count 1)
+    expect '[ "$after" -ge 1 ] && [ "$after" -le "$baseline" ]' \
+        "one forwarder relaunched after a caller hung up (count $after)"
+else
+    fail "forwarder-restart took the forwarder down before its caller hung up"
+fi
+
 echo
 if [ "$FAIL" -eq 0 ]; then
     echo "All $PASS tunnel checks passed."

@@ -79,6 +79,12 @@ case "$verb" in
         # /dev/console (the virtio-serial that feeds vm.log) so socat startup failures are
         # visible — the boot-time launch inherits the console naturally, but earlier versions
         # of this restart redirected to /dev/null, hiding any bind/socket errors.
+        #
+        # Once the pkill has run, a caller hanging up must not stop us before the relaunch:
+        # socat then terminates this agent, and the guest is left with no forwarder at all.
+        # Catch the signals rather than ignore them: an ignored signal stays ignored across
+        # exec, so the new forwarder would outlive the next restart's pkill.
+        trap : HUP TERM PIPE
         pkill -f "$FORWARDER_MATCH" 2>/dev/null || true
         sleep 1
         setsid /usr/local/sbin/isx-start-vsock-forwarder "$INCUS_VSOCK_PORT" </dev/null >/dev/console 2>&1 &
