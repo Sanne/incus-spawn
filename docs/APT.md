@@ -137,3 +137,5 @@ After generating, add the armored private key as the `APT_GPG_PRIVATE_KEY` secre
 ## Supported Platforms
 
 The APT repository supports `amd64` (x86_64) and `arm64` (aarch64) on any Debian-based distribution. Suites are `stable` and `dev` (not per-Ubuntu-release) because the GraalVM native binary has no distribution-specific dependencies.
+
+The native binaries do have CPU requirements: on `amd64` a Haswell-class or newer CPU (AVX2 and AES-NI), on `arm64` an ARMv8.1-A or newer CPU (LSE atomics) with the crypto extension (AES and PMULL), which every Apple Silicon Mac, Graviton, Ampere and the Raspberry Pi 5 have. The Raspberry Pi 3 and 4 are ARMv8.0, so the native binaries exit at startup there; the JVM install (`install.sh`) still works. See DESIGN.md "Native image CPU baseline".

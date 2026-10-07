@@ -23,7 +23,7 @@
         <proxy.native.max.ram>256m</proxy.native.max.ram>
 <!-- Bake os.name at build time to avoid a uname() syscall; macOS doesn't need this (already a build-time constant in GraalVM) -->
         <svm.target.name.args/>
-<!-- Empty by default: -march values are architecture-specific, and passing an x86 one to an aarch64 build fails. Set only by the x86_64 profiles below. -->
+<!-- Empty by default: -march values are architecture-specific, and passing an x86 one to an aarch64 build fails (or vice versa). Set by the arch-gated profiles below. -->
         <native.march.args/>
     </properties>
 
@@ -182,6 +182,27 @@
             </activation>
             <properties>
                 <native.march.args>,-march=haswell</native.march.args>
+            </properties>
+        </profile>
+        <profile>
+            <!--
+              aarch64 (Apple Silicon, Linux arm64): GraalVM's default armv8.1-a has no
+              AES or PMULL either, so TLS ran as software AES here too: 74 MB/s vs
+              627 MB/s for the proxy on an Apple Silicon Mac (#1144). The "+aes" modifier
+              enables AES *and* PMULL, i.e. the GHASH intrinsic as well. GraalVM has no
+              runtime CPU dispatch on aarch64 at all, so this can only be chosen at build
+              time. Every Apple Silicon Mac has both; on Linux it drops ARMv8.1+ cores built
+              without the optional crypto extension, which exit at startup with GraalVM's
+              CPU-feature error and can use a JVM install instead. (The Raspberry Pi 3/4
+              were already excluded: ARMv8.0, so no LSE for the default armv8.1-a.)
+              Keep armv8.1-a (the default) as the base, not compatibility, so LSE stays on.
+            -->
+            <id>aarch64-march</id>
+            <activation>
+                <os><arch>aarch64</arch></os>
+            </activation>
+            <properties>
+                <native.march.args>,-march=armv8.1-a+aes</native.march.args>
             </properties>
         </profile>
         <profile>

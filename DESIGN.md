@@ -40,7 +40,7 @@ Three Maven modules under a parent POM:
 
 - **`common`** (`incus-spawn-common`): shared code — Incus client, proxy config, image/tool definitions, configuration loading. Not a Quarkus app; uses the Jandex Maven plugin to produce a bean index so Quarkus discovers its CDI beans from dependent modules. Its test classes are published as a test-jar, which `cli` depends on in test scope, so a command's wiring is tested against the same `FakeIncusDaemon` as `common`'s flows (see "Request budgets"). The test-jar is built even under `-Dmaven.test.skip=true`, since `cli` could not resolve it otherwise.
 - **`cli`** (`incus-spawn`): the main CLI/TUI binary (`isx`). Depends on common. Native image: serial GC, `-Os` (size-optimized).
-- **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC on Linux and serial GC on macOS, `-O3` (throughput-optimized), and on x86_64 `-march=haswell` — see "Native image CPU baseline" and "Proxy garbage collector per platform" below. Splitting this out removed Vert.x from the CLI, which means the CLI can no longer serve the proxy itself — see "Every install channel ships both binaries" below.
+- **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC on Linux and serial GC on macOS, `-O3` (throughput-optimized), on x86_64 `-march=haswell` and on aarch64 `-march=armv8.1-a+aes` — see "Native image CPU baseline" and "Proxy garbage collector per platform" below. Splitting this out removed Vert.x from the CLI, which means the CLI can no longer serve the proxy itself — see "Every install channel ships both binaries" below.
 
 ### Every install channel ships both binaries
 
@@ -1255,9 +1255,10 @@ The tool contract is the stdio one, unchanged: the same tools, approved template
 
 ### Native image CPU baseline
 
-Both binaries are built with `-march=haswell` on x86_64, set by arch-gated Maven profiles in
-`proxy/pom.xml` and `cli/pom.xml` so aarch64 builds (Linux arm64, Apple Silicon) pass no
-`-march` at all — an x86 value there is a hard build failure.
+Both binaries are built with `-march=haswell` on x86_64 and `-march=armv8.1-a+aes` on aarch64
+(Linux arm64, Apple Silicon), set by arch-gated Maven profiles in `proxy/pom.xml` and
+`cli/pom.xml` — a `-march` value for the other architecture is a hard build failure. The
+aarch64 choice is covered in "aarch64: `+aes`" below.
 
 GraalVM's default is `-march=x86-64-v3`, and the numbered psABI levels **do not include AES
 or CLMUL**. Without those the image cannot emit AES-NI/GHASH intrinsics, so TLS bulk
@@ -1292,6 +1293,43 @@ Two things that look like they should help and do not, both measured:
   operations, and its AMD64 default is already `AVX,AVX2`. Note the option *replaces* that
   default rather than extending it, so anything added must re-state `AVX,AVX2`.
 - **Raising to `x86-64-v4`** buys nothing and costs all non-AVX-512 hardware.
+
+### aarch64: `+aes`
+
+GraalVM's aarch64 default, `armv8.1-a`, has the same gap: it includes neither AES nor PMULL,
+so until #1144 the aarch64 proxy also encrypted TLS in software. On an Apple Silicon Mac
+(Oracle GraalVM 25.4, `bench/run.sh --load=maven`, three interleaved rounds):
+
+| `-march` | Throughput | p50 / p99 at 32 concurrent |
+|---|---|---|
+| `armv8.1-a` (GraalVM default) | 118 req/s, 74 MB/s | 261 / 521 ms |
+| **`armv8.1-a+aes`** | **~1,000 req/s, 627 MB/s** | **31 / 60 ms** |
+
+The binary grows by 16 KB. Three things from GraalVM's own source decide the shape of this:
+
+- **`+aes` means AES *and* PMULL** (`CPUTypeAArch64`: `case "aes" -> List.of(AES, PMULL)`),
+  so it enables the GHASH intrinsic too; there is no separate modifier to add.
+- **There is no runtime CPU dispatch on aarch64.** `RuntimeCPUFeatureCheck.getSupportedFeatures()`
+  is empty for every architecture but AMD64, so `-H:RuntimeCheckedCPUFeatures` cannot offer
+  AES there even in principle; it is `-march` or nothing.
+- **A CPU without the features exits at startup** with GraalVM's CPU-feature error
+  (`verifyHostSupportsArchitectureEarlyOrExit`), rather than faulting later.
+
+The crypto extension is optional in ARMv8-A, which is why GraalVM leaves it out of its default.
+Every Apple Silicon Mac has it, as do Graviton, Ampere, the Raspberry Pi 5 and Linux VMs on
+Apple Silicon. The Raspberry Pi 3 and 4 do not, but they were already excluded before #1144:
+their Cortex-A53/A72 are ARMv8.0 cores without LSE, so they fail the default `armv8.1-a`'s
+startup check (`CPUTypeAArch64.getDefaultName()` picks `armv8.1-a` whenever the build host has
+it, and every release builder does). What `+aes` drops is only an ARMv8.1+ core built without
+the optional crypto extension, which none of the platforms above is; an 8.5x cost to everyone
+else for such a core would be the wrong trade. The JVM install channels (`install.sh`, JBang)
+run anywhere, as HotSpot detects AES at run time.
+
+The base stays `armv8.1-a` rather than `compatibility`, which would drop LSE atomics. `native`
+would add the SHA1/SHA2/SHA3/SHA512 intrinsics but is tied to the build host's CPU, and there
+is no portable modifier for them; nothing beyond `+aes` is reachable without giving up
+portability. The CLI takes the same flag for the reason below; its effect on aarch64 downloads
+was not measured separately.
 
 ### Why the CLI takes the same flag
 
