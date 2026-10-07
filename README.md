@@ -1229,6 +1229,18 @@ Exit codes:
 | 3 | `isx proxy status` only: the proxy runs on an old bridge address |
 | 78 | `isx proxy start` cannot run the proxy at all, e.g. `isx-proxy` is not installed |
 
+## Compared with other sandboxes
+
+Other projects also run coding agents away from the host. This section says where each one draws its boundary, and when to pick it over isx. See [Why full system containers?](#why-full-system-containers) for what isx's boundary gives an agent.
+
+### NVIDIA OpenShell
+
+[OpenShell](https://github.com/NVIDIA/OpenShell) agrees with isx on credentials: the sandbox never holds a real key, a trusted process outside it terminates TLS, injects the credential on approved requests, and identifies the caller in a way the sandbox cannot forge. The two differ in *what* is sandboxed.
+
+OpenShell confines a workload: an application container with no network device, one non-root user, no Linux capabilities, and a Landlock filesystem policy fixed at startup that leaves `/usr` and `/etc` read-only. Seccomp hands every TCP connect and DNS lookup to a supervisor that checks it against a policy naming hosts, HTTP methods and the calling program. That is a finer-grained egress policy than isx's network modes.
+
+isx confines a machine, because what we hand an agent is an investigation, and nobody knows at the start what tools it will need. A test that only fails under load: install `bpftrace` and write a probe. A slow native build: install async-profiler and compare flame graphs. A Testcontainers suite: run podman inside. A flaky remote integration: write a mock server, point `/etc/hosts` at it, capture the exchange with `tcpdump`. None of these is possible in OpenShell: there is no root to install anything, `bpf` and `perf_event_open` need capabilities the workload does not have, `/etc` is read-only, nested containers need namespaces and a NIC, and nothing about the sandbox can change once it runs, so each step means a person rebuilds the image and the agent's context is lost. In isx the agent has root on a system with systemd, nested containers, debuggers and a real NIC, and if it wrecks the box, the branch is destroyed and the next one costs a second. Pick OpenShell to run an agent as a governed workload in a fleet; pick isx to let one work the way a good engineer does.
+
 ## FAQ
 
 ### Why can't I mount a host directory read-write to follow agent work in my IDE?
