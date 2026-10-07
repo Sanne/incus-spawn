@@ -280,8 +280,13 @@ public class MitmProxy {
     private final java.util.concurrent.atomic.AtomicBoolean registryRefreshInFlight =
             new java.util.concurrent.atomic.AtomicBoolean();
 
-    /** What a single request needs to know about who asked and which credentials answer. */
-    record RequestContext(String domain, String instanceName,
+    /**
+     * What a single request needs to know about who asked and which credentials answer.
+     *
+     * @param caller the instance that asked, with its incarnation as the same listing has it
+     *               (for {@link ApiActivity}); null for any other caller
+     */
+    record RequestContext(String domain, InstanceRegistry.Caller caller,
                           ProxyCredentials creds, ToolProxyRouting routing,
                           boolean usesDefaultCredentials) {}
 
@@ -427,7 +432,8 @@ public class MitmProxy {
         var registry = instanceRegistry;
         if (registry == null) return new RequestContext(domain, null, state.credentials(), state.routing(), true);
 
-        var instance = registry.lookup(sourceAddress);
+        var caller = registry.resolve(sourceAddress);
+        var instance = caller == null ? null : caller.accounts();
         // A miss is the case worth refreshing for: a branch that happened since the last
         // snapshot. isx signals the proxy on branch, so this is only the backstop -- and it is
         // rate-limited, because host-side traffic has no static IP and so misses every time.
@@ -439,8 +445,7 @@ public class MitmProxy {
             refuseIfUnservable(state, instance, domain);
         }
         if (instance == null || instance.usesDefaults()) {
-            return new RequestContext(domain,
-                    instance == null ? null : instance.instanceName(), state.credentials(), state.routing(), true);
+            return new RequestContext(domain, caller, state.credentials(), state.routing(), true);
         }
         var selection = instance.accountsByNamespace();
         // Plain get() first: this runs on the event loop for every intercepted request, and
@@ -457,8 +462,7 @@ public class MitmProxy {
             state.credentialsBySelection().putIfAbsent(selection, bundle);
         }
         if (bundle.unknown() != null) throw bundle.unknown();
-        return new RequestContext(domain, instance.instanceName(),
-                bundle.creds(), bundle.routing(), false);
+        return new RequestContext(domain, caller, bundle.creds(), bundle.routing(), false);
     }
 
     /**
@@ -1385,11 +1389,12 @@ public class MitmProxy {
      * client's response finishes; null for any other request.
      */
     private ApiActivity.Exchange beginModelCall(HttpServerRequest clientReq, RequestContext ctx) {
-        if (ctx.instanceName() == null || !ANTHROPIC_DOMAINS.contains(ctx.domain())
+        var caller = ctx.caller();
+        if (caller == null || !ANTHROPIC_DOMAINS.contains(ctx.domain())
                 || !ApiActivity.isModelCall(clientReq.path())) {
             return null;
         }
-        var exchange = apiActivity.begin(ctx.instanceName());
+        var exchange = apiActivity.begin(caller.accounts().instanceName(), caller.incarnation(), caller.view());
         clientReq.response().endHandler(v -> exchange.end());
         clientReq.response().closeHandler(v -> exchange.end());
         return exchange;
@@ -3675,13 +3680,10 @@ public class MitmProxy {
             return;
         }
         var registry = instanceRegistry;
-        var known = new java.util.HashSet<String>();
-        if (registry != null) {
-            for (var instance : registry.instances()) known.add(instance.instanceName());
-        }
+        var known = registry == null ? new InstanceRegistry.Incarnations(Map.of(), 0) : registry.incarnations();
         req.response()
                 .putHeader("Content-Type", "application/json")
-                .end(apiActivity.snapshot(known).toJson());
+                .end(apiActivity.snapshot(known.byName(), known.view()).toJson());
     }
 
     private static boolean isHostCaller(HttpServerRequest req) {

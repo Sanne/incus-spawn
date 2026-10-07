@@ -6,7 +6,7 @@ import io.vertx.core.buffer.Buffer;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
@@ -14,7 +14,8 @@ import java.util.function.LongSupplier;
 /**
  * What each instance has asked of the Claude Messages API (#898): requests made and in flight,
  * when the last one started and ended, and the tokens their responses report, each instance's
- * counted from when its counters were created, which the snapshot says. Served to the host only, on {@code /activity}, so {@code isx mcp} can tell
+ * counted from when its counters were created, which the snapshot says. Counters belong to one
+ * incarnation of a name: an instance destroyed and branched again under it starts afresh (#1063). Served to the host only, on {@code /activity}, so {@code isx mcp} can tell
  * a working agent from a stuck or silently finished one without touching its instance.
  *
  * <p>Only model calls count -- Claude Code's other traffic to the same domain (settings,
@@ -46,38 +47,47 @@ final class ApiActivity {
                 && (path.endsWith(":rawPredict") || path.endsWith(":streamRawPredict"));
     }
 
-    /** Counts a model call from {@code instance} as started; {@link Exchange#end()} counts it done. */
-    Exchange begin(String instance) {
+    /**
+     * Counts a model call from {@code instance} as started; {@link Exchange#end()} counts it done.
+     * {@code incarnation} tells which instance of that name made it ({@code created_at}, empty
+     * when the listing lacks it), read in the same lookup as the name, from the registry's
+     * listing {@code view} ({@code InstanceRegistry.resolve}).
+     */
+    Exchange begin(String instance, String incarnation, long view) {
+        var charged = new Counters[1];
         // Atomic per key with the prune in snapshot(): a call never lands on dropped counters
-        var counters = byInstance.compute(instance, (k, existing) -> {
-            var c = existing != null ? existing : new Counters(clock.getAsLong());
+        byInstance.compute(instance, (k, existing) -> {
+            var kept = kept(existing, incarnation, view);
+            // Kept counters of another incarnation are a later view's: the call is a stale one's
+            var c = kept.incarnation.equals(incarnation) ? kept : new Counters(clock.getAsLong(), incarnation, view);
             synchronized (c) {
                 c.requests++;
                 c.inFlight++;
                 c.lastRequestAt = clock.getAsLong();
             }
-            return c;
+            charged[0] = c;
+            return kept;
         });
-        return new Exchange(counters);
+        return new Exchange(charged[0]);
     }
 
     /**
-     * The counters of every instance {@code known} names, made now for one that has none, so a
-     * known instance always reports when its counting started. Counters of an instance
+     * The counters of every instance {@code known} names (to its incarnation), made now for one
+     * that has none or has another incarnation's, so a known instance always reports when its
+     * counting started. Counters of an instance
      * {@code known} no longer names are dropped once nothing of it is in flight, so those of
      * destroyed instances do not pile up. Dropping is never silent: counters made again carry a
      * later {@code since}, so a client subtracting two reads can tell they do not count from the
      * same start.
      */
-    ProxyActivity snapshot(Set<String> known) {
-        for (var name : known) {
-            byInstance.computeIfAbsent(name, k -> new Counters(clock.getAsLong()));
-        }
+    ProxyActivity snapshot(Map<String, String> known, long view) {
+        known.forEach((name, incarnation) -> byInstance.compute(name, (k, c) -> kept(c, incarnation, view)));
         for (var name : byInstance.keySet()) {
-            if (known.contains(name)) continue;
+            if (known.containsKey(name)) continue;
             byInstance.computeIfPresent(name, (k, c) -> {
                 synchronized (c) {
-                    return c.inFlight == 0 ? null : c;
+                    // Not a read from a listing older than the one that made them
+                    return c.inFlight == 0 && view >= c.view ? null : c;
                 }
             });
         }
@@ -92,20 +102,47 @@ final class ApiActivity {
         return new ProxyActivity(instances);
     }
 
+    /**
+     * The counters a name keeps after a call or read from listing {@code view} says it is
+     * {@code incarnation}.
+     *
+     * <p>Another incarnation from a later view than the counters were last confirmed by gets
+     * fresh counters, so a destroyed instance's are never carried on by the next of its name
+     * (calls it still has in flight end on counters nothing reports any more). One from an
+     * earlier view -- a call identified, or a read listed, before the name changed hands -- keeps
+     * them, and {@link #begin} charges its call to counters nothing reports, or two views would
+     * reset them in turn. Views are ordered by when the registry listed, never by {@code created_at}: a rename
+     * hands a name to an instance created before the one that had it. Call only inside
+     * {@code byInstance.compute} for the name.
+     */
+    private Counters kept(Counters existing, String incarnation, long view) {
+        if (existing == null) return new Counters(clock.getAsLong(), incarnation, view);
+        if (existing.incarnation.equals(incarnation)) {
+            existing.view = Math.max(existing.view, view);
+            return existing;
+        }
+        return view <= existing.view ? existing : new Counters(clock.getAsLong(), incarnation, view);
+    }
+
     private static Instant instant(long millis) {
         return millis > 0 ? Instant.ofEpochMilli(millis) : null;
     }
 
     private static final class Counters {
         final long since;
+        final String incarnation;
+        /** The latest listing view that confirmed {@link #incarnation}; only under the map's lock. */
+        long view;
         long requests;
         long inFlight;
         long lastRequestAt;
         long lastResponseAt;
         final Usage usage = new Usage();
 
-        Counters(long since) {
+        Counters(long since, String incarnation, long view) {
             this.since = since;
+            this.incarnation = incarnation;
+            this.view = view;
         }
     }
 

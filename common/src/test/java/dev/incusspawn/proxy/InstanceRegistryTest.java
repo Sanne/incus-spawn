@@ -34,6 +34,52 @@ class InstanceRegistryTest {
         assertEquals("personal", parsed.get("10.0.0.6").accountsByNamespace().get("claude"));
     }
 
+    @Test
+    void recordsWhenEachAddressOwnerWasCreated() {
+        // Tells a box destroyed and branched again under its name from the old one (#1063)
+        var parsed = InstanceRegistry.parse("""
+                [
+                  {"name":"box","created_at":"2026-10-07T10:00:00.123456789Z",
+                   "config":{"user.incus-spawn.static-ip":"10.0.0.5"}},
+                  {"name":"old","config":{"user.incus-spawn.static-ip":"10.0.0.6"}},
+                  {"name":"tpl","created_at":"2026-10-01T09:00:00Z","config":{}}
+                ]
+                """).incarnationByName();
+        assertEquals(java.util.Map.of("box", "2026-10-07T10:00:00.123456789Z", "old", ""), parsed,
+                "owners of an address only, an empty value where the listing has none");
+    }
+
+    @Test
+    void resolvesACallerToItsInstanceAndIncarnationTogether() {
+        var fail = new java.util.concurrent.atomic.AtomicBoolean();
+        var registry = new InstanceRegistry(new dev.incusspawn.incus.IncusClient() {
+            @Override
+            public String listJsonConfig() {
+                if (fail.get()) throw new dev.incusspawn.incus.IncusException("socket gone");
+                return """
+                        [{"name":"box","created_at":"2026-10-07T10:00:00Z",
+                          "config":{"user.incus-spawn.static-ip":"10.0.0.5"}}]
+                        """;
+            }
+        });
+        registry.refresh();
+
+        var caller = registry.resolve("::ffff:10.0.0.5");
+        assertEquals("box", caller.accounts().instanceName());
+        assertEquals("2026-10-07T10:00:00Z", caller.incarnation());
+        var first = caller.view();
+        assertNull(registry.resolve("10.0.0.6"));
+
+        // Views order listings, which a rename's created_at cannot
+        registry.refresh();
+        var second = registry.incarnations().view();
+        assertTrue(second > first);
+        fail.set(true);
+        registry.refresh();
+        assertEquals(new InstanceRegistry.Incarnations(java.util.Map.of("box", "2026-10-07T10:00:00Z"), second),
+                registry.incarnations(), "a failed refresh lists nothing new");
+    }
+
     /** An instance that pins nothing is still known -- it just gets the configured defaults. */
     @Test
     void instanceWithNoPinningUsesDefaults() {

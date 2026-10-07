@@ -51,6 +51,9 @@ class ApiActivityProxyTest {
     static HttpClient client;
     static int mitmPort;
     static int healthPort;
+    static InstanceRegistry registry;
+    /** What the registry lists: one instance, at the test client's address. */
+    static volatile String listing;
     /** The Accept-Encoding each upstream path was asked with. */
     static final Map<String, String> acceptEncodings = new ConcurrentHashMap<>();
 
@@ -85,12 +88,11 @@ class ApiActivityProxyTest {
         proxy.overrideUpstream(ANTHROPIC, "127.0.0.1", upstreamPort);
 
         // The test client connects from 127.0.0.1, which the registry says is the worker
-        var registry = new InstanceRegistry(new IncusClient() {
+        listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
+        registry = new InstanceRegistry(new IncusClient() {
             @Override
             public String listJsonConfig() {
-                return """
-                        [{"name":"%s","config":{"user.incus-spawn.static-ip":"127.0.0.1"}}]
-                        """.formatted(WORKER);
+                return listing;
             }
         });
         registry.refresh();
@@ -138,6 +140,12 @@ class ApiActivityProxyTest {
                     .end("{\"input_tokens\":500}");
             default -> resp.putHeader("Content-Type", "application/json").end("{}");
         }
+    }
+
+    static String listed(String name, String createdAt) {
+        return """
+                [{"name":"%s","created_at":"%s","config":{"user.incus-spawn.static-ip":"127.0.0.1"}}]
+                """.formatted(name, createdAt);
     }
 
     static int post(String uri) throws Exception {
@@ -190,4 +198,51 @@ class ApiActivityProxyTest {
         assertEquals("gzip, br", acceptEncodings.get("/api/oauth/profile"));
     }
 
+    @Test
+    void aNewInstanceWithAReusedNameStartsItsOwnCounts() throws Exception {
+        // Hand-named: destroyed and branched again under the same name, with no /activity read
+        // in between to drop the first one's counters (#1063)
+        try {
+            listing = listed("box", "2026-10-07T10:00:00.000000000Z");
+            registry.refresh();
+            assertEquals(200, post("/v1/messages"));
+            var first = activity().path("instances").path("box");
+
+            listing = listed("box", "2026-10-07T11:00:00.000000000Z");
+            registry.refresh();
+            var reborn = System.currentTimeMillis();
+            assertEquals(200, post("/v1/messages"));
+            var second = activity().path("instances").path("box");
+
+            assertEquals(1, second.path("requests").asLong(), "the old instance's call is not its: " + second);
+            assertEquals(3, second.path("output_tokens").asLong(), second.toString());
+            assertTrue(second.path("counting_since").asLong() >= reborn,
+                    "a later start, so a client subtracting across the two does not: " + first + " / " + second);
+        } finally {
+            listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
+            registry.refresh();
+        }
+    }
+
+    @Test
+    void anOlderInstanceRenamedOntoTheNameStartsItsOwnCounts() throws Exception {
+        // A rename keeps the instance's own created_at, here older than the destroyed one's
+        try {
+            listing = listed("w", "2026-10-07T12:00:00.000000000Z");
+            registry.refresh();
+            assertEquals(200, post("/v1/messages"));
+
+            listing = listed("w", "2026-10-01T09:00:00.000000000Z");
+            registry.refresh();
+            var renamed = System.currentTimeMillis();
+            assertEquals(200, post("/v1/messages"));
+            var w = activity().path("instances").path("w");
+
+            assertEquals(1, w.path("requests").asLong(), "its own call, not the destroyed one's: " + w);
+            assertTrue(w.path("counting_since").asLong() >= renamed, w.toString());
+        } finally {
+            listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
+            registry.refresh();
+        }
+    }
 }
