@@ -6,7 +6,7 @@ You're about to hand an AI agent a terminal. On your laptop, that terminal can r
 
 isx onboards agents the way you'd onboard a new teammate:
 
-- **A real machine of their own.** Each agent gets a full Linux workstation — its own filesystem, init system, networking, and process tree. It can `dnf install`, run Docker Compose, use `strace` and nested containers — everything works, because it *is* a real system, not an app container. Hardware-isolated KVM virtual machines are one flag away for untrusted code.
+- **A real machine of their own.** Each agent gets a full Linux workstation — its own filesystem, init system, networking, and process tree. It can `dnf install`, run Docker Compose, use `strace` and nested containers — everything works, because it *is* a real system, not an app container. Hardware-isolated KVM virtual machines are one flag away when you want the strongest isolation.
 - **Zero credential exposure.** API keys and tokens never enter the environment in any form. A host-side TLS proxy injects real credentials upstream, so `claude`, `pi`, `gh`, `git`, and `curl` work unmodified inside — yet no credential is ever stored there. See [Credential Isolation](#credential-isolation).
 - **Disposable in seconds.** Branch a prepared template like you'd branch a repo — instant copy-on-write clones. Use them, throw them away, branch again from a clean state.
 - **Full autonomy, no babysitting.** Agents commit under their own identity and run without permission prompts — safe to let run, because the blast radius is the branch.
@@ -288,7 +288,7 @@ Claude Code runs a `headersHelper` only in a workspace you have trusted, so star
 
 This matters for agents in particular: an agent boxed into an app container hits walls constantly (no systemd services, no nested containers for Testcontainers, no debugging tools). An agent on an isx branch works exactly as it would on a developer workstation — because that's what it has.
 
-For untrusted code, KVM virtual machines (`--vm`) provide hardware-level isolation with a separate kernel.
+For the strongest isolation, KVM virtual machines (`--vm`) add a separate kernel and hardware-level separation.
 
 ## Template Images
 
