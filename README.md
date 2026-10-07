@@ -1335,7 +1335,7 @@ Build or rebuild a template image.
 
     isx build [<template>...] [options]
 
-Several templates build in one invocation: plainly, each in turn, a named parent before its child (each with any parent that is missing or out of sync, so a parent they share is built once); with `--with-parents` or `--with-descendants`, as one batch with one confirmation, parents before children and every template once. An unknown name anywhere in the list builds nothing.
+Several templates build in one invocation: plainly, each in turn, a named parent before its child (each with any parent that is missing or out of sync, so a parent they share is built once); with `--with-parents` or `--with-descendants`, as one batch with one confirmation, parents before children and every template once. An unknown name anywhere in the list builds nothing. A target that fails does not stop the others: one that inherits from it is skipped, the rest are built, and the build then exits 1 with one `Some templates failed to build:` line on stderr naming every template it left unbuilt (a parent a target's chain failed on included).
 
 | Option | Description |
 |--------|-------------|
@@ -1343,7 +1343,7 @@ Several templates build in one invocation: plainly, each in turn, a named parent
 | `--out-of-sync` | Rebuild templates whose definition or isx version changed, or whose parent was rebuilt after them, with everything inheriting from them |
 | `--with-parents` | Rebuild the templates and all their parents unconditionally |
 | `--with-descendants` | Rebuild the templates and all templates inheriting from them |
-| `--missing` | Build only templates that don't exist yet |
+| `--missing` | Build only templates that don't exist yet; like several named templates, a failure skips what inherits from it and the rest are still built, then exits 1 naming what was not |
 | `--type <type>` | Instance type: `container`, `vm`, or `kvm` (overrides image definition) |
 | `--yes` | Skip interactive confirmations |
 | `--skip-git-refresh` | Skip refreshing host-side git repositories before building |

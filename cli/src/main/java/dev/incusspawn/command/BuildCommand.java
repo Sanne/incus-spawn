@@ -163,6 +163,11 @@ public class BuildCommand extends BaseCommand {
 
     private HostRepoRefresh.AsyncRefresh hostRepoRefresh;
 
+    /** Templates whose build failed in this invocation, so a later target built on them is skipped. */
+    private final Set<String> failedInRun = new LinkedHashSet<>();
+    /** Building several targets, whose run names every failure once, at its end. */
+    private boolean severalTargets;
+
     /** The user accepted a batch rebuild up front, which covers replacing each existing image. */
     private boolean batchConfirmed;
 
@@ -451,11 +456,16 @@ public class BuildCommand extends BaseCommand {
             buildIndex = 1;
         }
 
-        if (!failedBuilds.isEmpty()) {
-            System.err.println("\n" + styled(BOLD + RED, "Some templates failed to build: "
-                    + String.join(", ", failedBuilds)));
-            throw new BuildFailedException();
-        }
+        failedInRun.addAll(failedBuilds);
+        if (severalTargets && !failedBuilds.isEmpty()) throw new BuildFailedException();
+        failIfAny(failedBuilds);
+    }
+
+    /** End a run that left templates unbuilt by naming them, as a failed build. */
+    private static void failIfAny(Collection<String> failed) {
+        if (failed.isEmpty()) return;
+        System.err.println("\n" + styled(BOLD + RED, "Some templates failed to build: " + String.join(", ", failed)));
+        throw new BuildFailedException();
     }
 
     /**
@@ -608,14 +618,42 @@ public class BuildCommand extends BaseCommand {
      * outdated; a parent an earlier one rebuilt is current by then, so it is built once.
      */
     private void build(List<ImageDef> targets, Map<String, ImageDef> defs) {
+        if (targets.isEmpty()) return;
         var dnsOverrides = ProxyConfig.getDnsOverrides(incus);
         if (!dnsOverrides.isEmpty() && dnsOverrides.contains("address=/")) {
             ProxyHealthCheck.requireProxy(incus);
         }
 
+        if (targets.size() == 1) {
+            buildChain(targets.getFirst(), defs);
+            return;
+        }
+        // Like a batch, a failed target does not stop the others; one that inherits from a
+        // template that failed in this run is skipped, since its build would use the old one.
+        // The run ends naming every template it left unbuilt, a parent a chain failed on included.
+        failedInRun.clear();
+        severalTargets = true;
+        try {
+            buildEach(targets, defs);
+        } finally {
+            severalTargets = false;
+        }
+        failIfAny(failedInRun);
+    }
+
+    private void buildEach(List<ImageDef> targets, Map<String, ImageDef> defs) {
         for (var target : targets) {
-            buildChain(target, defs);
-            if (targets.size() > 1) System.out.println();
+            if (shouldSkipDueToFailedParent(target, defs, failedInRun)) {
+                BuildOutput.step("Skipped " + target.getName() + " — a parent failed to build.");
+                failedInRun.add(target.getName());
+            } else {
+                try {
+                    buildChain(target, defs);
+                } catch (BuildFailedException e) {
+                    failedInRun.add(target.getName());
+                }
+            }
+            System.out.println();
         }
     }
 

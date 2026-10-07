@@ -14,7 +14,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -61,6 +63,8 @@ class BuildCommandBatchTest {
 
     /** Each recorded build leaves its image behind, current, as a real build's swap does. */
     private boolean buildsLeaveImages;
+    /** Recorded builds of these fail, as a real failed build does. */
+    private final Set<String> failing = new HashSet<>();
     /** Definitions besides {@link #tree()}. */
     private final Map<String, ImageDef> extraDefs = new LinkedHashMap<>();
 
@@ -76,6 +80,7 @@ class BuildCommandBatchTest {
                 case "--with-parents" -> cmd.withParents = true;
                 case "--with-descendants" -> cmd.withDescendants = true;
                 case "--out-of-sync" -> cmd.outOfSync = true;
+                case "--missing" -> cmd.missing = true;
                 default -> names.add(arg);
             }
         }
@@ -83,6 +88,7 @@ class BuildCommandBatchTest {
         doAnswer(i -> {
             var name = i.<ImageDef>getArgument(0).getName();
             built.add(name);
+            if (failing.contains(name)) throw new BuildCommand.BuildFailedException();
             if (buildsLeaveImages) {
                 daemon.container(name, Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.BUILD_VERSION, NOW,
                         Metadata.CREATED, "2026-10-07T10:0" + built.size() + ":00"));
@@ -158,6 +164,61 @@ class BuildCommandBatchTest {
         assertEquals(0, build("tpl-isx", "tpl-layer"));
 
         assertEquals(List.of("tpl-layer", "tpl-isx"), built);
+    }
+
+    /**
+     * A failed target does not stop the others: an unrelated one is still built, one inheriting
+     * from it is skipped (its build would use the old image), and the build fails at the end.
+     */
+    @Test
+    void severalPlainTargetsCarryOnPastAFailure() {
+        buildsLeaveImages = true;
+        daemon.container("tpl-base", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.BUILD_VERSION, NOW,
+                Metadata.CREATED, "2026-10-01T09:00:00"));
+        daemon.container("tpl-other", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.BUILD_VERSION, NOW,
+                Metadata.CREATED, "2026-10-01T09:00:00"));
+        failing.add("tpl-layer");
+
+        assertThrows(BuildCommand.BuildFailedException.class,
+                () -> build("tpl-layer", "tpl-isx", "tpl-other-child"));
+
+        assertEquals(List.of("tpl-layer", "tpl-other-child"), built);
+        assertTrue(stderr.contains("Some templates failed to build: tpl-layer, tpl-isx"), stderr);
+    }
+
+    /** The run's last word names the parent a target's chain failed on, not only the target. */
+    @Test
+    void severalPlainTargetsNameAParentTheirChainFailedOn() {
+        buildsLeaveImages = true;
+        daemon.container("tpl-base", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.BUILD_VERSION, NOW,
+                Metadata.CREATED, "2026-10-01T09:00:00"));
+        daemon.container("tpl-other", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.BUILD_VERSION, NOW,
+                Metadata.CREATED, "2026-10-01T09:00:00"));
+        failing.add("tpl-layer");
+
+        assertThrows(BuildCommand.BuildFailedException.class,
+                () -> build("tpl-isx", "tpl-quarkus", "tpl-other-child"));
+
+        // tpl-quarkus is not retried on the layer that just failed under tpl-isx.
+        assertEquals(List.of("tpl-layer", "tpl-other-child"), built);
+        // Said once, at the end, naming the parent the chain failed on.
+        assertEquals(1, stderr.split("Some templates failed to build", -1).length - 1, stderr);
+        assertTrue(stderr.contains("Some templates failed to build: tpl-layer, tpl-isx, tpl-quarkus"), stderr);
+    }
+
+    /** Nothing missing is nothing to do: no proxy check, which could fail a run with no work. */
+    @Test
+    void missingWithNothingMissingDoesNothing() {
+        builtAt(Map.of(
+                "tpl-base", "2026-10-01T09:00:00", "tpl-layer", "2026-10-01T09:01:00",
+                "tpl-isx", "2026-10-01T09:02:00", "tpl-quarkus", "2026-10-01T09:02:00",
+                "tpl-other", "2026-10-01T09:00:00", "tpl-other-child", "2026-10-01T09:01:00"));
+        daemon.clearRequests();
+
+        assertEquals(0, build("--missing"));
+
+        assertEquals(List.of(), built);
+        assertFalse(daemon.requests().stream().anyMatch(r -> r.contains("/networks")), daemon.requests().toString());
     }
 
     /**
