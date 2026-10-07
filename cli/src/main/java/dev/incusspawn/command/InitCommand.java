@@ -74,8 +74,6 @@ public class InitCommand extends BaseCommand {
 
     private IncusClient incus;
     private boolean useUfw;
-    /** The firewall step found the proxy needing a restart it could not make before the init marker. */
-    boolean proxyRestartPending;
 
     private static final int BOX_WIDTH = 62;
     private static final String BORDER_H = "─".repeat(BOX_WIDTH);
@@ -606,9 +604,9 @@ public class InitCommand extends BaseCommand {
                             System.out.println("  Restarting proxy service so it picks up the restored firewall rules...");
                             restartProxyService();
                         } else {
-                            // Restarted before the marker, it would refuse to start (#1048).
+                            // Restarted before the marker, it would refuse to start (#1048);
+                            // completeWithProxyService restarts it once the marker is written.
                             System.out.println("  The proxy service will be restarted once init completes, to pick up the restored firewall rules.");
-                            proxyRestartPending = true;
                         }
                     }
                 }
@@ -3673,14 +3671,19 @@ public class InitCommand extends BaseCommand {
      * The last step of the Linux flow, in the order {@link #completeWithMacOsServices} explains.
      * A service that is already running is covered too: on a re-run after an
      * {@code INIT_VERSION} bump, a restart by the upgrade would otherwise meet an outdated marker.
-     * That is also why the firewall step leaves its restart to this one ({@link #proxyRestartPending}).
+     * <p>
+     * A running service found with an outdated marker is restarted once the marker is written,
+     * unless the upgrade did it: the firewall step leaves its restart here, and nothing else could
+     * make one while the marker was stale (#1048). Read from the marker rather than remembered, so
+     * a restart owed by an earlier run that stopped before this step is still made.
      */
     boolean completeWithProxyService(Prompts prompts) throws IOException {
         var active = proxyServiceActive();
         var install = !active && wantsProxyService(prompts);
+        var restartOwed = active && !Environment.hasBeenInitialized();
         markInitComplete();
         if (active) {
-            if (!upgradeProxyService() && proxyRestartPending) restartProxyService();
+            if (!upgradeProxyService() && restartOwed) restartProxyService();
             System.out.println();
             System.out.println("  Proxy service is already running.");
             return true;

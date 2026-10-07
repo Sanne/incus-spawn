@@ -89,34 +89,37 @@ class InitServiceStepTest {
         assertEquals(List.of("install"), init.serviceActions);
     }
 
-    /** A re-run after an {@code INIT_VERSION} bump: the upgrade may restart the proxy. */
+    /**
+     * A re-run after an {@code INIT_VERSION} bump. The proxy running is the old build, and nothing
+     * could restart it while the marker was stale, so it is restarted once the marker is written:
+     * the restart the firewall step deferred (#1048). Read from the marker, so this holds as well
+     * when the run that deferred it stopped before reaching this step.
+     */
     @Test
-    void aRunningLinuxProxyServiceIsUpgradedOnlyOnceInitIsMarkedComplete() throws IOException {
+    void aRunningLinuxProxyServiceFoundWithAStaleMarkerIsRestartedOnceInitIsMarkedComplete() throws IOException {
+        Files.writeString(Environment.initCompleteMarker(), String.valueOf(Environment.INIT_VERSION - 1));
         init.serviceActive = true;
         var prompts = ScriptedPrompts.lines();
         assertTrue(init.completeWithProxyService(prompts));
         prompts.assertFullyConsumed();
-        assertEquals(List.of("upgrade"), init.serviceActions);
-    }
-
-    /**
-     * The firewall step of a re-run after an {@code INIT_VERSION} bump restarted firewalld, and
-     * left the proxy's restart until the marker is written (#1048).
-     */
-    @Test
-    void aProxyRestartTheFirewallStepDeferredIsMadeOnceInitIsMarkedComplete() throws IOException {
-        init.serviceActive = true;
-        init.proxyRestartPending = true;
-        assertTrue(init.completeWithProxyService(ScriptedPrompts.lines()));
         assertEquals(List.of("upgrade", "restart"), init.serviceActions);
     }
 
     /** One restart is enough: a second would cut every instance's connection again. */
     @Test
-    void aDeferredProxyRestartIsNotRepeatedWhenTheUpgradeRestarted() throws IOException {
+    void theRestartOwedIsNotRepeatedWhenTheUpgradeRestarted() throws IOException {
+        Files.writeString(Environment.initCompleteMarker(), String.valueOf(Environment.INIT_VERSION - 1));
         init.serviceActive = true;
-        init.proxyRestartPending = true;
         init.upgradeRestarts = true;
+        assertTrue(init.completeWithProxyService(ScriptedPrompts.lines()));
+        assertEquals(List.of("upgrade"), init.serviceActions);
+    }
+
+    /** A re-run with nothing new: the firewall step restarted the proxy itself, if it had to. */
+    @Test
+    void aRunningLinuxProxyServiceWithACurrentMarkerIsOnlyUpgraded() throws IOException {
+        Environment.markInitComplete();
+        init.serviceActive = true;
         assertTrue(init.completeWithProxyService(ScriptedPrompts.lines()));
         assertEquals(List.of("upgrade"), init.serviceActions);
     }

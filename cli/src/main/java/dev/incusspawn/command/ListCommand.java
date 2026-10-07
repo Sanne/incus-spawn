@@ -5541,6 +5541,9 @@ public class ListCommand extends BaseCommand {
                 try {
                     if (ProxyHealthCheck.tryAutoRestart(incus, msg -> {})) {
                         setStatusMessage("Proxy restarted, waiting for DNS...");
+                    } else if (!Environment.hasBeenInitialized()) {
+                        // The restart was refused, not failed: it would only start a proxy that refuses to (#1048).
+                        setStatusMessage("Proxy not restarted: run 'isx init' first.");
                     } else {
                         setStatusMessage("Proxy restart failed. Check: isx proxy status");
                     }

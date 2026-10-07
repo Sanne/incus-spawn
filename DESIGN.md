@@ -123,7 +123,9 @@ the run of `isx init` that could restart onto them, but after the macOS halt of 
 binary has gone. `restartLocked()` checks under the lock, after `restartIfUnhealthy()` has found
 the proxy unhealthy, so a healthy proxy is never refused. `isx init` restarts the proxy in its
 firewall step, before the marker exists; on a re-run after an `INIT_VERSION` bump that restart
-waits for the last step, once the marker is written.
+waits for the last step, which restarts a running service it found with a stale marker once the
+marker is written (unless the upgrade there did). It reads the marker rather than a flag the
+firewall step set, so a run that stopped between the two still has the restart made by the next.
 
 On macOS a restart of the service is `launchctl kickstart -k`, not `bootout` followed by
 `bootstrap`. `bootout` returns before launchd has removed the job: a proxy that does not exit on
