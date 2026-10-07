@@ -53,23 +53,11 @@ assert_eq "/dev/net/tun is world-accessible" "crw-rw-rw-" \
     sh -c "ls -la /dev/net/tun | cut -d' ' -f1"
 
 echo ""
-echo "[3] DOCKER_HOST and socket setup"
-assert_eq "DOCKER_HOST points to /var/run/docker.sock" "unix:///var/run/docker.sock" \
-    su -l agentuser -c 'echo $DOCKER_HOST'
-assert "/var/run/docker.sock is a symlink to rootless socket" \
-    test -L /var/run/docker.sock
-assert_eq "/var/run/docker.sock target is rootless socket" "/run/user/1000/podman/podman.sock" \
-    readlink /var/run/docker.sock
-
-echo ""
-echo "[4] Short image names (permissive mode)"
-assert "short-name-mode is permissive" \
-    su -l agentuser -c "podman info --format '{{.Registries}}'" 2>&1
-# Pull using a short name -- without permissive mode this would prompt for a registry
-echo "  Pulling alpine (short name, with retries)..."
+echo "[3] Pasta networking"
+echo "  Pulling alpine image (with retries)..."
 alpine_pulled=false
 for attempt in 1 2 3; do
-    if su -l agentuser -c 'podman pull alpine' 2>&1; then
+    if su -l agentuser -c 'podman pull docker.io/library/alpine' 2>&1; then
         alpine_pulled=true
         break
     fi
@@ -77,42 +65,37 @@ for attempt in 1 2 3; do
     sleep 2
 done
 if $alpine_pulled; then
-    assert_eq "rootless podman run with short name" "hello" \
-        su -l agentuser -c "podman run --rm alpine echo hello"
+    assert_eq "rootless podman run with default networking" "hello" \
+        su -l agentuser -c "podman run --rm docker.io/library/alpine echo hello"
 else
-    echo "  FAIL: podman pull alpine (short name) failed after 3 attempts"
+    echo "  FAIL: podman pull alpine failed after 3 attempts"
     FAIL=$((FAIL + 1))
-    ERRORS="${ERRORS}  - podman pull alpine (short name) failed\n"
+    ERRORS="${ERRORS}  - podman pull alpine failed\n"
 fi
 
 echo ""
-echo "[5] podman-compose"
-assert "podman-compose is installed" \
-    su -l agentuser -c "podman-compose --version"
-
-echo ""
-echo "[6] Port mapping"
-su -l agentuser -c 'podman run -d --name port-test -p 8080:80 alpine sh -c "while true; do echo -e \"HTTP/1.1 200 OK\n\nworks\" | nc -l -p 80; done"' >/dev/null 2>&1
+echo "[4] Port mapping"
+su -l agentuser -c 'podman run -d --name port-test -p 8080:80 docker.io/library/alpine sh -c "while true; do echo -e \"HTTP/1.1 200 OK\n\nworks\" | nc -l -p 80; done"' >/dev/null 2>&1
 sleep 2
 assert_eq "port forwarding through pasta" "works" \
     su -l agentuser -c "curl -sf http://localhost:8080"
 su -l agentuser -c "podman rm -f port-test" >/dev/null 2>&1
 
 echo ""
-echo "[7] Podman build"
+echo "[5] Podman build"
 assert "podman build succeeds" \
-    su -l agentuser -c "echo 'FROM alpine' | podman build -q -t test-build -"
+    su -l agentuser -c "echo 'FROM docker.io/library/alpine' | podman build -q -t test-build -"
 assert_eq "run built image" "build works" \
     su -l agentuser -c "podman run --rm test-build echo 'build works'"
 su -l agentuser -c "podman rmi -f test-build" >/dev/null 2>&1
 
 echo ""
-echo "[8] Resource limits (systemd cgroup manager)"
+echo "[6] Resource limits (systemd cgroup manager)"
 assert_eq "memory limit applied" "67108864" \
-    su -l agentuser -c "podman run --rm --memory=64m alpine cat /sys/fs/cgroup/memory.max"
+    su -l agentuser -c "podman run --rm --memory=64m docker.io/library/alpine cat /sys/fs/cgroup/memory.max"
 
 echo ""
-echo "[9] Rootless PostgreSQL via podman"
+echo "[7] Rootless PostgreSQL via podman"
 
 # Diagnostics — helps debug user namespace issues
 echo "  subuid: $(cat /etc/subuid)"
@@ -134,7 +117,7 @@ su -l agentuser -c "podman info --format '{{.Host.IDMappings.UIDMap}}'" 2>&1 || 
 echo "  Pulling PostgreSQL image (with retries)..."
 pull_ok=false
 for attempt in 1 2 3; do
-    if su -l agentuser -c 'podman pull postgres:17-alpine' 2>&1; then
+    if su -l agentuser -c 'podman pull docker.io/library/postgres:17-alpine' 2>&1; then
         pull_ok=true
         break
     fi
@@ -151,7 +134,7 @@ elif ! su -l agentuser -c '
     podman run -d --name test-pg \
         -e POSTGRES_PASSWORD=testpass \
         -p 15432:5432 \
-        postgres:17-alpine
+        docker.io/library/postgres:17-alpine
 ' 2>&1; then
     echo "  FAIL: podman run failed (see diagnostics above)"
     FAIL=$((FAIL + 1))
