@@ -226,7 +226,7 @@ Each image definition specifies:
 - `tools` — tool names to run (resolved from YAML or Java)
 - `agent_note` — always-true fact an agent must know before acting, rendered into the generated agent context file (see below)
 
-Building an image automatically builds missing parents recursively. `isx build --all` rebuilds every defined image from scratch.
+Building an image automatically builds missing parents recursively. `isx build --all` rebuilds every defined image from scratch. `isx build` takes several templates (#1130); `--with-parents` and `--with-descendants` turn them into one batch, the union of their chains (or subtrees) with every template once and parents before children, so leaves that share a customization layer rebuild it once and are both derived from that one build. Running `--with-parents` once per leaf instead rebuilt the shared parents each time and left the first leaf copied from a build that no longer existed.
 
 **Base image**: The root image (`tpl-minimal`) uses a custom Fedora base image
 from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images)

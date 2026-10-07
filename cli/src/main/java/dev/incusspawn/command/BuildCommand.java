@@ -48,7 +48,7 @@ import dev.incusspawn.util.TerminalProgress;
 import dev.incusspawn.RuntimeServices;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
-import org.aesh.command.option.Argument;
+import org.aesh.command.option.Arguments;
 import org.aesh.command.option.Option;
 
 import java.io.IOException;
@@ -92,9 +92,8 @@ import static dev.incusspawn.util.BuildOutput.styled;
 )
 public class BuildCommand extends BaseCommand {
 
-    @Argument(description = "Name of the template (e.g. tpl-minimal, tpl-java)",
-            required = false)
-    String name;
+    @Arguments(description = "Names of the templates (e.g. tpl-minimal tpl-java)")
+    List<String> names;
 
     @Option(name = "all", hasValue = false, description = "Rebuild all defined templates")
     boolean all;
@@ -102,10 +101,10 @@ public class BuildCommand extends BaseCommand {
     @Option(name = "out-of-sync", hasValue = false, description = "Rebuild templates that are out of sync (definition or isx version changed)")
     boolean outOfSync;
 
-    @Option(name = "with-parents", hasValue = false, description = "Rebuild the template and all its parents unconditionally")
+    @Option(name = "with-parents", hasValue = false, description = "Rebuild the templates and all their parents unconditionally, shared parents once")
     boolean withParents;
 
-    @Option(name = "with-descendants", hasValue = false, description = "Rebuild the template and all templates inheriting from it")
+    @Option(name = "with-descendants", hasValue = false, description = "Rebuild the templates and all templates inheriting from them")
     boolean withDescendants;
 
     @Option(name = "missing", hasValue = false, description = "Build only templates that don't exist yet")
@@ -245,35 +244,19 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    private CommandResult dispatch(Map<String, ImageDef> defs, ExecutorService executor) {
-        if (withParents) {
-            if (name == null) {
-                System.err.println("Usage: isx build <template-name> --with-parents");
+    CommandResult dispatch(Map<String, ImageDef> defs, ExecutorService executor) {
+        var names = this.names == null ? List.<String>of() : this.names.stream().distinct().toList();
+        if (withParents || withDescendants) {
+            var flag = withParents ? "--with-parents" : "--with-descendants";
+            if (names.isEmpty()) {
+                System.err.println("Usage: isx build <template-name>... " + flag);
                 return CommandResult.valueOf(1);
             }
-            var imageDef = defs.get(name);
-            if (imageDef == null) {
-                System.err.println("Unknown image: " + name);
-                System.err.println("Available images: " + String.join(", ", defs.keySet()));
-                return CommandResult.valueOf(1);
-            }
-            startHostRepoRefresh(List.of(imageDef), defs, executor);
-            buildWithParents(imageDef, defs);
-            return CommandResult.SUCCESS;
-        }
-        if (withDescendants) {
-            if (name == null) {
-                System.err.println("Usage: isx build <template-name> --with-descendants");
-                return CommandResult.valueOf(1);
-            }
-            var imageDef = defs.get(name);
-            if (imageDef == null) {
-                System.err.println("Unknown image: " + name);
-                System.err.println("Available images: " + String.join(", ", defs.keySet()));
-                return CommandResult.valueOf(1);
-            }
-            startHostRepoRefresh(List.of(imageDef), defs, executor);
-            buildWithDescendants(imageDef, defs);
+            var targets = definitionsOf(names, defs);
+            if (targets == null) return CommandResult.valueOf(1);
+            startHostRepoRefresh(targets, defs, executor);
+            if (withParents) buildWithParents(targets, defs);
+            else buildWithDescendants(targets, defs);
             return CommandResult.SUCCESS;
         }
         if (missing) {
@@ -292,14 +275,14 @@ public class BuildCommand extends BaseCommand {
             return CommandResult.SUCCESS;
         }
 
-        if (name == null) {
-            System.err.println("Usage: isx build <image-name>  or  isx build --all");
+        if (names.isEmpty()) {
+            System.err.println("Usage: isx build <image-name>...  or  isx build --all");
             System.err.println("Available images: " + String.join(", ", defs.keySet()));
             return CommandResult.valueOf(1);
         }
 
-        var imageDef = defs.get(name);
-        if (imageDef == null && incus.exists(name)) {
+        for (var name : names) {
+            if (defs.containsKey(name) || !incus.exists(name)) continue;
             var buildSource = BuildSource.fromJson(
                     incus.configGet(name, Metadata.BUILD_SOURCE));
             if (buildSource != null) {
@@ -307,19 +290,46 @@ public class BuildCommand extends BaseCommand {
                     defs.putIfAbsent(entry.getKey(), entry.getValue());
                 }
                 toolDefLoader.addFallbacks(buildSource.getTools());
-                imageDef = defs.get(name);
             }
         }
-        if (imageDef == null) {
-            System.err.println("Unknown image: " + name);
-            System.err.println("Available images: " + String.join(", ", defs.keySet()));
-            return CommandResult.valueOf(1);
-        }
+        var targets = definitionsOf(names, defs);
+        if (targets == null) return CommandResult.valueOf(1);
         // buildChain may rebuild any ancestor that turns out to be missing or outdated
-        requireValidAccounts(ImageDef.chain(imageDef, defs).stream().map(ImageDef::getName).toList(), defs);
-        startHostRepoRefresh(List.of(imageDef), defs, executor);
-        build(imageDef, defs);
+        var chains = new ArrayList<String>();
+        var seen = new HashSet<String>();
+        for (var target : targets) collectAllRecursive(target, defs, chains, seen);
+        requireValidAccounts(chains, defs);
+        startHostRepoRefresh(targets, defs, executor);
+        build(parentsFirst(targets, defs), defs);
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * {@code targets} with each one's ancestors among them moved before it: built in the order
+     * named, a child would be copied from its parent's build before the one that follows.
+     */
+    static List<ImageDef> parentsFirst(List<ImageDef> targets, Map<String, ImageDef> defs) {
+        var named = targets.stream().map(ImageDef::getName).collect(Collectors.toSet());
+        var ordered = new LinkedHashSet<ImageDef>();
+        for (var target : targets) {
+            for (var def : ImageDef.chain(target, defs)) {
+                if (named.contains(def.getName())) ordered.add(def);
+            }
+        }
+        return List.copyOf(ordered);
+    }
+
+    /**
+     * The definitions of {@code names}, in order, or {@code null} after naming every unknown
+     * one: a list with an unknown name builds nothing, not the names before it.
+     */
+    private static List<ImageDef> definitionsOf(List<String> names, Map<String, ImageDef> defs) {
+        var unknown = names.stream().filter(n -> !defs.containsKey(n)).toList();
+        if (unknown.isEmpty()) return names.stream().map(defs::get).toList();
+        System.err.println((unknown.size() == 1 ? "Unknown image: " : "Unknown images: ")
+                + String.join(", ", unknown));
+        System.err.println("Available images: " + String.join(", ", defs.keySet()));
+        return null;
     }
 
     /** The refusal for definition files that failed to parse, or null when there are none. */
@@ -554,19 +564,19 @@ public class BuildCommand extends BaseCommand {
             collectAllRecursive(leaf, defs, toCheck, seen);
         }
         requireValidAccounts(toCheck, defs);
-        for (var leaf : missingLeaves) {
-            build(leaf, defs);
-            System.out.println();
+        build(missingLeaves, defs);
+    }
+
+    /**
+     * Unconditionally rebuild templates and all their ancestors, as one batch: the union of
+     * their chains, parents before children, so an ancestor they share is built once (#1130).
+     */
+    void buildWithParents(List<ImageDef> targets, Map<String, ImageDef> defs) {
+        var chain = new ArrayList<String>();
+        var seen = new LinkedHashSet<String>();
+        for (var target : targets) {
+            collectAllRecursive(target, defs, chain, seen);
         }
-    }
-
-    /**
-     * Unconditionally rebuild a template and all its ancestors.
-     */
-    void buildWithParents(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var chain = new ArrayList<String>();
-        var seen = new LinkedHashSet<String>();
-        collectAllRecursive(imageDef, defs, chain, seen);
         requireValidAccounts(chain, defs);
 
         if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
@@ -575,14 +585,19 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * Unconditionally rebuild a template and all templates that inherit from it.
+     * Unconditionally rebuild templates and all templates that inherit from them, as one batch.
+     * A target that descends from another is reached through that one, so parents still come
+     * before children whatever order the targets were named in.
      */
-    private void buildWithDescendants(ImageDef imageDef, Map<String, ImageDef> defs) {
+    void buildWithDescendants(List<ImageDef> targets, Map<String, ImageDef> defs) {
+        var targetNames = targets.stream().map(ImageDef::getName).collect(Collectors.toSet());
         var chain = new ArrayList<String>();
         var seen = new LinkedHashSet<String>();
-        chain.add(imageDef.getName());
-        seen.add(imageDef.getName());
-        collectDescendants(imageDef.getName(), defs, chain, seen);
+        for (var target : targets) {
+            if (ImageDef.ancestors(target, defs).stream().anyMatch(a -> targetNames.contains(a.getName()))) continue;
+            if (seen.add(target.getName())) chain.add(target.getName());
+            collectDescendants(target.getName(), defs, chain, seen);
+        }
         requireValidAccounts(chain, defs);
 
         if (!confirmBatch("This will rebuild: ", chain, defs, "Continue?")) return;
@@ -591,16 +606,19 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * Build an image. If the image has a parent, ensure the parent
-     * is built first (recursively).
+     * Build images one after the other, each after any of its parents that is missing or
+     * outdated; a parent an earlier one rebuilt is current by then, so it is built once.
      */
-    private void build(ImageDef imageDef, Map<String, ImageDef> defs) {
+    private void build(List<ImageDef> targets, Map<String, ImageDef> defs) {
         var dnsOverrides = ProxyConfig.getDnsOverrides(incus);
         if (!dnsOverrides.isEmpty() && dnsOverrides.contains("address=/")) {
             ProxyHealthCheck.requireProxy(incus);
         }
 
-        buildChain(imageDef, defs);
+        for (var target : targets) {
+            buildChain(target, defs);
+            if (targets.size() > 1) System.out.println();
+        }
     }
 
     void buildChain(ImageDef imageDef, Map<String, ImageDef> defs) {

@@ -3861,8 +3861,10 @@ public class ListCommand extends BaseCommand {
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
 
-    private static String buildStatusMessage(String[] args, boolean success, java.time.Instant buildStart) {
+    static String buildStatusMessage(String[] args, boolean success, java.time.Instant buildStart) {
         var firstArg = args[0];
+        // isx build takes several templates (#1130): name them all.
+        var targets = String.join(", ", java.util.Arrays.stream(args).filter(a -> !a.startsWith("--")).toList());
         boolean hasWithParents = java.util.Arrays.asList(args).contains("--with-parents");
         boolean hasWithDescendants = java.util.Arrays.asList(args).contains("--with-descendants");
         if (firstArg.equals("--all")) {
@@ -3871,16 +3873,14 @@ public class ListCommand extends BaseCommand {
             return success ? "Rebuilt out of sync templates successfully" : "Some templates failed to build";
         } else if (firstArg.equals("--missing")) {
             return success ? "Built missing templates successfully" : "Some templates failed to build";
-        } else if (hasWithParents) {
-            return success ? "Rebuilt " + firstArg + " with parents successfully"
-                    : "Failed to build " + firstArg + " with parents";
-        } else if (hasWithDescendants) {
-            return success ? "Rebuilt " + firstArg + " with descendants successfully"
-                    : "Failed to build " + firstArg + " with descendants";
+        } else if (hasWithParents || hasWithDescendants) {
+            var with = hasWithParents ? " with parents" : " with descendants";
+            return success ? "Rebuilt " + targets + with + " successfully" : "Failed to build " + targets + with;
         } else {
-            if (success) return "Built " + firstArg + " successfully";
-            var report = freshFailureReport(firstArg, buildStart);
-            return "Failed to build " + firstArg + (report != null ? ". Details: " + report : ".");
+            if (success) return "Built " + targets + " successfully";
+            // A report is per template: with several, which one failed is in the build output.
+            var report = targets.equals(firstArg) ? freshFailureReport(firstArg, buildStart) : null;
+            return "Failed to build " + targets + (report != null ? ". Details: " + report : ".");
         }
     }
 

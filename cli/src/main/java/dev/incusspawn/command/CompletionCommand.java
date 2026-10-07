@@ -179,7 +179,7 @@ public class CompletionCommand extends BaseCommand {
                 '--missing[Build only templates that don'"'"'t exist yet]' \\
                 '--type=[Instance type (overrides image definition)]:type:(container vm kvm)' \\
                 '--yes[Skip interactive confirmations]' \\
-                '1::template name:_isx_template_names'
+                '*:template name:_isx_template_names'
             }
 
             _isx_destroy() {
@@ -530,7 +530,7 @@ public class CompletionCommand extends BaseCommand {
                       COMPREPLY=( $(compgen -W "container vm kvm" -- "$cur") )
                       return ;;
                   esac
-                  COMPREPLY=( $(compgen -W "--help --all --out-of-sync --with-parents --with-descendants --missing --type --yes" -- "$cur") )
+                  COMPREPLY=( $(compgen -W "$(_isx_list_templates) --help --all --out-of-sync --with-parents --with-descendants --missing --type --yes" -- "$cur") )
                   ;;
                 clean)
                   local clean_subcmds="cache state config pool all"

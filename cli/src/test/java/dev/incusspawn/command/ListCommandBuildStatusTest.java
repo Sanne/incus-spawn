@@ -85,4 +85,17 @@ class ListCommandBuildStatusTest {
     private static void setModified(Path file, Instant when) {
         assertDoesNotThrow(() -> Files.setLastModifiedTime(file, FileTime.from(when)));
     }
+
+    /** A build of several templates names them all, not only the first (#1130). */
+    @Test
+    void severalTargetsAreAllNamed() {
+        assertEquals("Rebuilt tpl-isx, tpl-quarkus with parents successfully", ListCommand.buildStatusMessage(
+                new String[]{"tpl-isx", "tpl-quarkus", "--with-parents"}, true, null));
+        assertEquals("Failed to build tpl-a, tpl-b with descendants", ListCommand.buildStatusMessage(
+                new String[]{"tpl-a", "tpl-b", "--with-descendants"}, false, null));
+        assertEquals("Failed to build tpl-a, tpl-b.", ListCommand.buildStatusMessage(
+                new String[]{"tpl-a", "tpl-b"}, false, Instant.now()));
+        assertEquals("Built tpl-a successfully", ListCommand.buildStatusMessage(
+                new String[]{"tpl-a"}, true, null));
+    }
 }

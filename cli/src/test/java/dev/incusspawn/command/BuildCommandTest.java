@@ -420,7 +420,7 @@ class BuildCommandTest {
             System.setOut(sink);
             System.setErr(sink);
             try {
-                cmd.buildWithParents(child, defs);
+                cmd.buildWithParents(List.of(child), defs);
             } finally {
                 System.setOut(originalOut);
                 System.setErr(originalErr);

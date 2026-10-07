@@ -375,6 +375,9 @@ isx build tpl-java --type vm
 # Rebuild a template and all its parents from scratch
 isx build tpl-java --with-parents
 
+# Rebuild two templates and all their parents, the parents they share once
+isx build tpl-isx tpl-quarkus --with-parents
+
 # Rebuild out-of-sync templates (changed definitions or older isx version)
 isx build --out-of-sync
 
@@ -1330,14 +1333,16 @@ One-time host setup: install Incus, configure credentials and their [accounts](#
 
 Build or rebuild a template image.
 
-    isx build [<template>] [options]
+    isx build [<template>...] [options]
+
+Several templates build in one invocation: plainly, each in turn, a named parent before its child (each with any parent that is missing or out of sync, so a parent they share is built once); with `--with-parents` or `--with-descendants`, as one batch with one confirmation, parents before children and every template once. An unknown name anywhere in the list builds nothing.
 
 | Option | Description |
 |--------|-------------|
 | `--all` | Rebuild all defined templates |
 | `--out-of-sync` | Rebuild templates whose definition or isx version changed |
-| `--with-parents` | Rebuild the template and all its parents unconditionally |
-| `--with-descendants` | Rebuild the template and all templates inheriting from it |
+| `--with-parents` | Rebuild the templates and all their parents unconditionally |
+| `--with-descendants` | Rebuild the templates and all templates inheriting from them |
 | `--missing` | Build only templates that don't exist yet |
 | `--type <type>` | Instance type: `container`, `vm`, or `kvm` (overrides image definition) |
 | `--yes` | Skip interactive confirmations |
