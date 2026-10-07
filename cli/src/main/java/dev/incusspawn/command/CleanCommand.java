@@ -16,6 +16,7 @@ import dev.incusspawn.util.BuildOutput;
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -48,46 +49,6 @@ public class CleanCommand extends BaseCommand {
 
     // -- shared helpers --
 
-    static long dirSize(Path dir) {
-        if (!Files.isDirectory(dir)) return 0;
-        long[] size = {0};
-        try {
-            Files.walkFileTree(dir, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    size[0] += attrs.size();
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (IOException ignored) {}
-        return size[0];
-    }
-
-    static int fileCount(Path dir) {
-        if (!Files.isDirectory(dir)) return 0;
-        int[] count = {0};
-        try {
-            Files.walkFileTree(dir, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    count[0]++;
-                    return FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (IOException ignored) {}
-        return count[0];
-    }
-
     static String formatSize(long bytes) {
         if (bytes < 1024) return bytes + " B";
         if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
@@ -98,13 +59,43 @@ public class CleanCommand extends BaseCommand {
     record DirInfo(Path path, long size, int files) {}
 
     static List<DirInfo> collectInfo(List<Path> dirs) {
+        return collectInfo(dirs, null);
+    }
+
+    /** What deleting {@code dirs} frees, leaving {@code keep} (if not null) out of the count. */
+    static List<DirInfo> collectInfo(List<Path> dirs, Path keep) {
         var result = new ArrayList<DirInfo>();
         for (var dir : dirs) {
-            if (Files.isDirectory(dir)) {
-                result.add(new DirInfo(dir, dirSize(dir), fileCount(dir)));
-            }
+            if (!Files.isDirectory(dir)) continue;
+            var info = measure(dir, keep);
+            // Nothing but the kept file left: there is nothing here to delete
+            if (info.files == 0 && keep != null && dir.equals(keep.getParent())) continue;
+            result.add(info);
         }
         return result;
+    }
+
+    private static DirInfo measure(Path dir, Path keep) {
+        long[] size = {0};
+        int[] files = {0};
+        try {
+            Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    if (!file.equals(keep)) {
+                        size[0] += attrs.size();
+                        files[0]++;
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException ignored) {}
+        return new DirInfo(dir, size[0], files[0]);
     }
 
     static void printSummary(List<DirInfo> infos) {
@@ -119,34 +110,82 @@ public class CleanCommand extends BaseCommand {
         System.out.printf("  %-50s %8s  (%d files)%n", "Total:", formatSize(total), totalFiles);
     }
 
-    static CommandResult cleanDirs(List<Path> dirs, boolean dryRun, boolean skipConfirmation,
-                                    String category) throws IOException {
-        var infos = collectInfo(dirs);
+    /** Delete {@code dir}, or everything in it but {@code keep} when that is one of its entries. */
+    private static void delete(Path dir, Path keep) throws IOException {
+        if (keep == null || !dir.equals(keep.getParent())) {
+            FileTrees.delete(dir);
+            return;
+        }
+        try (var children = Files.list(dir)) {
+            for (var child : children.toList()) {
+                if (child.equals(keep)) continue;
+                if (Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS)) FileTrees.delete(child);
+                else Files.deleteIfExists(child);
+            }
+        }
+    }
+
+    static void cleanDirs(List<Path> dirs, boolean dryRun, boolean skipConfirmation,
+                          String category) throws IOException {
+        cleanDirs(dirs, false, dryRun, skipConfirmation, category);
+    }
+
+    static void cleanDirs(List<Path> dirs, boolean deleteInstances, boolean dryRun, boolean skipConfirmation,
+                          String category) throws IOException {
+        cleanDirs(dirs, deleteInstances, dryRun, skipConfirmation, category, "Will delete:", List.of(), "Proceed?");
+    }
+
+    /**
+     * Show what deleting {@code dirs} frees, then {@code warning}, and delete them once confirmed.
+     *
+     * <p>When one of them holds the macOS VM's data disk, it is kept unless {@code deleteInstances}:
+     * it is mounted at {@code /var/lib/incus}, so it is the Incus database and the {@code cow} pool,
+     * every instance, template and image (#1155). Either way the summary says which.
+     *
+     * @return whether anything was deleted
+     */
+    static boolean cleanDirs(List<Path> dirs, boolean deleteInstances, boolean dryRun, boolean skipConfirmation,
+                             String category, String header, List<String> warning, String question)
+            throws IOException {
+        var disk = Environment.vmDataImage();
+        // Only a directory holding the disk itself: delete() spares it there and nowhere deeper
+        boolean holdsDisk = Files.exists(disk) && dirs.contains(disk.getParent());
+        if (deleteInstances && !holdsDisk) {
+            System.out.println("Note: --delete-instances only deletes the macOS VM's data disk, and there is none.");
+            System.out.println("To remove instances, use 'isx destroy', or 'isx reset' for everything.");
+        }
+        var keep = holdsDisk && !deleteInstances ? disk : null;
+        var infos = collectInfo(dirs, keep);
         if (infos.isEmpty()) {
             System.out.println("Nothing to clean — no " + category + " data found.");
-            return CommandResult.SUCCESS;
+            return false;
         }
 
-        long total = infos.stream().mapToLong(i -> i.size).sum();
-        int totalFiles = infos.stream().mapToInt(i -> i.files).sum();
-
-        if (dryRun) {
-            System.out.println("Would delete:");
-            printSummary(infos);
-            return CommandResult.SUCCESS;
-        }
-
-        System.out.println("Will delete:");
+        System.out.println(dryRun ? "Would delete:" : header);
         printSummary(infos);
+        if (holdsDisk) {
+            System.out.println();
+            if (deleteInstances) {
+                System.out.println("WARNING: This includes the VM's data disk (" + disk + "):");
+                System.out.println("every instance, template and image. They cannot be recovered.");
+            } else {
+                System.out.println("Kept " + disk + ": the VM's data disk, with every instance,");
+                System.out.println("template and image. Pass --delete-instances to delete it too.");
+            }
+        }
+        if (dryRun) return false;
         System.out.println();
+        warning.forEach(System.out::println);
 
-        if (!confirmDestructive("Proceed?", skipConfirmation, "--skip-confirmation")) return CommandResult.SUCCESS;
+        if (!confirmDestructive(question, skipConfirmation, "--skip-confirmation")) return false;
 
         for (var info : infos) {
-            FileTrees.delete(info.path);
+            delete(info.path, keep);
         }
+        long total = infos.stream().mapToLong(i -> i.size).sum();
+        int totalFiles = infos.stream().mapToInt(i -> i.files).sum();
         System.out.println("Freed " + formatSize(total) + " from " + totalFiles + " files.");
-        return CommandResult.SUCCESS;
+        return true;
     }
 
     static void cleanDnfCacheVolume(boolean dryRun) {
@@ -189,18 +228,22 @@ public class CleanCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            var result = cleanDirs(List.of(Environment.cacheDir()), dryRun, skipConfirmation, "cache");
+            cleanDirs(List.of(Environment.cacheDir()), dryRun, skipConfirmation, "cache");
             cleanDnfCacheVolume(dryRun);
-            return result;
+            return CommandResult.SUCCESS;
         }
     }
 
     @CommandDefinition(
             name = "state",
-            description = "Remove VM state, logs, and appliance artifacts (~/.local/state/ and ~/.local/share/incus-spawn/)",
+            description = "Remove VM state, logs, and appliance artifacts (~/.local/state/ and ~/.local/share/incus-spawn/); keeps the macOS VM's data disk",
             generateHelp = true
     )
     public static class State extends BaseCommand {
+
+        @Option(name = "delete-instances", hasValue = false,
+                description = "Also delete the macOS VM's data disk: every instance, template and image")
+        boolean deleteInstances;
 
         @Option(name = "dry-run", hasValue = false, description = "Show what would be deleted without deleting")
         boolean dryRun;
@@ -214,9 +257,9 @@ public class CleanCommand extends BaseCommand {
                 System.err.println("Error: VM is currently running. Stop it first with 'isx vm stop'.");
                 return CommandResult.valueOf(1);
             }
-            return cleanDirs(
-                    List.of(Environment.vmStateDir(), Environment.dataDir()),
+            cleanDirs(List.of(Environment.vmStateDir(), Environment.dataDir()), deleteInstances,
                     dryRun, skipConfirmation, "state");
+            return CommandResult.SUCCESS;
         }
     }
 
@@ -235,45 +278,26 @@ public class CleanCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            var dirs = List.of(Environment.configDir());
-            var infos = collectInfo(dirs);
-            if (infos.isEmpty()) {
-                System.out.println("Nothing to clean — no configuration data found.");
-                return CommandResult.SUCCESS;
-            }
-
-            long total = infos.stream().mapToLong(i -> i.size).sum();
-            int totalFiles = infos.stream().mapToInt(i -> i.files).sum();
-
-            if (dryRun) {
-                System.out.println("Would delete:");
-                printSummary(infos);
-                return CommandResult.SUCCESS;
-            }
-
-            System.out.println("Will delete:");
-            printSummary(infos);
-            System.out.println();
-            System.out.println("WARNING: This will permanently delete your SSH keys, CA certificate,");
-            System.out.println("and configuration. You will need to run 'isx init' again and rebuild");
-            System.out.println("all templates.");
-
-            if (!confirmDestructive("Delete configuration?", skipConfirmation, "--skip-confirmation")) return CommandResult.SUCCESS;
-
-            for (var info : infos) {
-                FileTrees.delete(info.path);
-            }
-            System.out.println("Freed " + formatSize(total) + " from " + totalFiles + " files.");
+            cleanDirs(List.of(Environment.configDir()), false, dryRun, skipConfirmation, "configuration",
+                    "Will delete:", List.of(
+                            "WARNING: This will permanently delete your SSH keys, CA certificate,",
+                            "and configuration. You will need to run 'isx init' again and rebuild",
+                            "all templates."),
+                    "Delete configuration?");
             return CommandResult.SUCCESS;
         }
     }
 
     @CommandDefinition(
             name = "all",
-            description = "Remove cache, state, and configuration (does not touch Incus templates or instances)",
+            description = "Remove cache, state, and configuration (does not touch Incus templates or instances unless --delete-instances)",
             generateHelp = true
     )
     public static class All extends BaseCommand {
+
+        @Option(name = "delete-instances", hasValue = false,
+                description = "Also delete the macOS VM's data disk: every instance, template and image")
+        boolean deleteInstances;
 
         @Option(name = "dry-run", hasValue = false, description = "Show what would be deleted without deleting")
         boolean dryRun;
@@ -293,36 +317,19 @@ public class CleanCommand extends BaseCommand {
                     Environment.vmStateDir(),
                     Environment.dataDir(),
                     Environment.configDir());
-            var infos = collectInfo(dirs);
-            if (infos.isEmpty()) {
-                System.out.println("Nothing to clean — no incus-spawn data found.");
-                return CommandResult.SUCCESS;
+            boolean poolDeleted = deleteInstances && Files.exists(Environment.vmDataImage());
+            var warning = new ArrayList<>(List.of(
+                    "WARNING: This includes your SSH keys, CA certificate, and configuration.",
+                    "You will need to run 'isx init' again and rebuild all templates."));
+            if (!poolDeleted) {
+                warning.add("Note: Built templates and instances in the Incus storage pool are not affected.");
+                warning.add("Use 'isx clean pool' to reclaim pool space.");
             }
-
-            long total = infos.stream().mapToLong(i -> i.size).sum();
-            int totalFiles = infos.stream().mapToInt(i -> i.files).sum();
-
-            if (dryRun) {
-                System.out.println("Would delete:");
-                printSummary(infos);
-                return CommandResult.SUCCESS;
-            }
-
-            System.out.println("Will delete incus-spawn cache, state, and configuration:");
-            printSummary(infos);
-            System.out.println();
-            System.out.println("WARNING: This includes your SSH keys, CA certificate, and configuration.");
-            System.out.println("You will need to run 'isx init' again and rebuild all templates.");
-            System.out.println("Note: Built templates and instances in the Incus storage pool are not affected.");
-            System.out.println("Use 'isx clean pool' to reclaim pool space.");
-
-            if (!confirmDestructive("Delete all listed directories?", skipConfirmation, "--skip-confirmation")) return CommandResult.SUCCESS;
-
-            for (var info : infos) {
-                FileTrees.delete(info.path);
-            }
-            System.out.println("Freed " + formatSize(total) + " from " + totalFiles + " files.");
-            cleanDnfCacheVolume(dryRun);
+            boolean deleted = cleanDirs(dirs, deleteInstances, dryRun, skipConfirmation, "incus-spawn",
+                    "Will delete incus-spawn cache, state, and configuration:", warning,
+                    "Delete all listed directories?");
+            // With the data disk gone there is no pool left to hold the DNF cache volume
+            if (deleted && !poolDeleted) cleanDnfCacheVolume(false);
             return CommandResult.SUCCESS;
         }
     }

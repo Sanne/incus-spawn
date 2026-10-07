@@ -1,15 +1,22 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.Environment;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -116,5 +123,112 @@ class CleanCommandTest {
 
         assertEquals(List.of("vm"), fingerprints(scan.unused()));
         assertEquals(List.of(), scan.base());
+    }
+
+    // -- the macOS data disk: every instance, template and image (#1155) --
+
+    /** A stopped macOS install: VM state beside the data disk, and the appliance artifacts. */
+    private static void seedVmState() throws Exception {
+        Files.createDirectories(Environment.vmStateDir());
+        Files.writeString(Environment.vmDataImage(), "the cow pool");
+        Files.writeString(Environment.vmLogFile(), "boot log");
+        Files.writeString(Environment.vmDiskImage(), "root disk");
+        Files.createDirectories(Environment.applianceDir());
+        Files.writeString(Environment.applianceKernel(), "kernel");
+    }
+
+    private static String run(BaseCommand command) throws Exception {
+        var out = new ByteArrayOutputStream();
+        var oldOut = System.out;
+        System.setOut(new PrintStream(out, true, StandardCharsets.UTF_8));
+        try {
+            command.doExecute();
+        } finally {
+            System.setOut(oldOut);
+        }
+        return out.toString(StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void cleanStateKeepsTheDataDisk() throws Exception {
+        seedVmState();
+        var state = new CleanCommand.State();
+        state.skipConfirmation = true;
+
+        var out = run(state);
+
+        assertTrue(Files.exists(Environment.vmDataImage()), "the data disk holds every instance:\n" + out);
+        assertFalse(Files.exists(Environment.vmLogFile()));
+        assertFalse(Files.exists(Environment.vmDiskImage()));
+        assertFalse(Files.exists(Environment.dataDir()));
+        assertTrue(out.contains("Kept " + Environment.vmDataImage()), out);
+        assertTrue(out.contains("--delete-instances"), out);
+    }
+
+    @Test
+    void cleanAllKeepsTheDataDiskAndSaysSo() throws Exception {
+        seedVmState();
+        var all = new CleanCommand.All();
+        all.skipConfirmation = true;
+
+        var out = run(all);
+
+        assertTrue(Files.exists(Environment.vmDataImage()), out);
+        assertFalse(Files.exists(Environment.vmLogFile()));
+        assertTrue(out.contains("Kept " + Environment.vmDataImage()), out);
+    }
+
+    @Test
+    void deleteInstancesTakesTheDataDiskAndSaysWhatItHolds() throws Exception {
+        seedVmState();
+        var all = new CleanCommand.All();
+        all.skipConfirmation = true;
+        all.deleteInstances = true;
+
+        var out = run(all);
+
+        assertFalse(Files.exists(Environment.vmStateDir()), out);
+        assertTrue(out.contains("every instance, template and image"), out);
+        // The note that the pool is untouched was false here: the pool is this disk
+        assertFalse(out.contains("are not affected"), out);
+    }
+
+    @Test
+    void aDryRunNamesTheKeptDataDisk() throws Exception {
+        seedVmState();
+        var state = new CleanCommand.State();
+        state.dryRun = true;
+
+        var out = run(state);
+
+        assertTrue(Files.exists(Environment.vmLogFile()));
+        assertTrue(out.contains("Kept " + Environment.vmDataImage()), out);
+    }
+
+    @Test
+    void aStateDirectoryHoldingOnlyTheDataDiskIsNothingToClean() throws Exception {
+        Files.createDirectories(Environment.vmStateDir());
+        Files.writeString(Environment.vmDataImage(), "the cow pool");
+        var state = new CleanCommand.State();
+        state.skipConfirmation = true;
+
+        var out = run(state);
+
+        assertTrue(out.contains("Nothing to clean"), out);
+        assertTrue(Files.exists(Environment.vmDataImage()), out);
+    }
+
+    @Test
+    void deleteInstancesWithNoDataDiskSaysItDidNothing() throws Exception {
+        // Linux: the instances are not in any file this command deletes
+        Files.createDirectories(Environment.vmStateDir());
+        Files.writeString(Environment.vmLogFile(), "log");
+        var state = new CleanCommand.State();
+        state.skipConfirmation = true;
+        state.deleteInstances = true;
+
+        var out = run(state);
+
+        assertTrue(out.contains("--delete-instances only deletes the macOS VM's data disk"), out);
     }
 }
