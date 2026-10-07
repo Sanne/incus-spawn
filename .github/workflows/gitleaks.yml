@@ -2,9 +2,9 @@ name: Gitleaks
 
 on:
   push:
-    branches: [main]
+    branches-ignore:
+      - 'dependabot/**'
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read

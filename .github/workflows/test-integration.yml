@@ -2,7 +2,8 @@ name: Integration Tests
 
 on:
   push:
-    branches: [main]
+    branches-ignore:
+      - 'dependabot/**'
     paths-ignore:
       - '*.md'
       - 'docs/**'
@@ -11,7 +12,6 @@ on:
       - '.claude/**'
       - '.github/workflows/pages.yml'
   pull_request:
-    branches: [main]
     paths-ignore:
       - '*.md'
       - 'docs/**'
