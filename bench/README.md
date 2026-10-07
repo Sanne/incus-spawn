@@ -4,7 +4,7 @@ Performance benchmarks for the native image build of the MITM proxy. Use these t
 
 ## Prerequisites
 
-- **Linux x86_64** (benchmarks read `/proc/<pid>/status` for RSS)
+- **Linux**, or **macOS on Apple Silicon** with the differences under "On macOS" below
 - **Oracle GraalVM** with `native-image` on `PATH` — release builds use Oracle GraalVM (not Community Edition), so benchmarks should too for comparable results. Download from https://www.oracle.com/java/technologies/downloads/ or use sdkman: `sdk install java 25.0.4-oracle`. On Linux you can instead pass `--builder-image=<tag>`, which builds inside the same container image `install.sh` uses and so reproduces the release toolchain exactly.
 - **No proxy already running** — stop the service first (`systemctl --user stop incus-spawn-proxy`), otherwise the freshly built proxy cannot bind the port. The script refuses to run in that state rather than measure the wrong process.
 - **Running Incus daemon** with the default `incusbr0` bridge
@@ -13,6 +13,31 @@ Performance benchmarks for the native image build of the MITM proxy. Use these t
 - **curl** and **python3** (used for Hyperfoil REST API interaction and stats parsing)
 
 The script auto-pulls the Hyperfoil container image (`quay.io/hyperfoil/hyperfoil`) on first run.
+
+## On macOS
+
+`run.sh` runs on macOS too, with three differences:
+
+- **Hyperfoil runs on the host, not in Podman.** Pass `--hyperfoil=DIR`, an unpacked
+  [Hyperfoil release](https://github.com/Hyperfoil/Hyperfoil/releases); it runs with the
+  `java` on `PATH`. A container there lives in Podman's VM, so the load would cross Podman's
+  user-mode network and the run would measure that instead of the proxy. The script refuses
+  to start without the flag.
+- **The VM must be running and the proxy service stopped**: `isx vm start`, `isx proxy stop`.
+  The proxy under test listens on the host's address on the VM-facing bridge, and its
+  `/health` on loopback, as the installed one does.
+- **RSS comes from `ps`** (there is no `/proc`), and `--graalvm=DIR` is the only way to pick a
+  toolchain. Oracle GraalVM is what the release uses; Homebrew's `graalvm` formula is the
+  Community Edition.
+
+```shell
+isx vm start && isx proxy stop
+bench/run.sh --load=maven --graalvm=<oracle-graalvm>/Contents/Home --hyperfoil=<hyperfoil-dir>
+isx proxy start
+```
+
+Figures from the two platforms are not comparable with each other: different hardware, and a
+load generator inside a container on one and on the host on the other.
 
 ## Quick Start
 
@@ -125,20 +150,20 @@ Regressions of 1% or more are flagged with `!!!`; improvements with `(better)`.
 | CLI binary size | `stat` on `cli/target/…-runner` | The `-Os` vs `-O3` trade-off is a size question |
 | CLI startup | Median of 20 `isx --help` runs | The CLI is short-lived, so launch cost is its cost |
 | Startup time | Wall-clock to first healthy `/health` response | Native startup regression |
-| Idle RSS | `/proc/<pid>/status` VmRSS after 2s settle | Memory footprint at rest |
-| Peak RSS | VmRSS after the load test | Memory under pressure |
+| Idle RSS | `/proc/<pid>/status` VmRSS after 2s settle (`ps -o rss` on macOS) | Memory footprint at rest |
+| Peak RSS | The same reading after the load test | Memory under pressure |
 | Throughput | Hyperfoil, per `--load` profile | Best rung is the headline; all rungs in `ladder` |
 | MB/s | Throughput × artifact size (`maven` only) | The figure that describes cache serving |
 | Latency p50/p99/max | Hyperfoil phase stats | Per-request overhead |
 
 ## How It Works
 
-1. Validates the environment (GraalVM, Podman, isx config, Incus bridge, health port free)
+1. Validates the environment (GraalVM, Podman or `--hyperfoil`, isx config, Incus bridge, health port free)
 2. Builds the native images (`mvnw package -Dnative -DskipTests`), skippable with `--skip-build`
 3. Starts `proxy/target/…-runner` directly against the Incus bridge gateway IP
 4. Measures startup time (polling `/health` at 250ms intervals)
 5. Records idle RSS after a 2-second settle period
-6. Starts a Hyperfoil controller in a Podman container (`--network=host`)
+6. Starts a Hyperfoil controller in a Podman container (`--network=host`), or from `--hyperfoil=DIR` on the host
 7. Uploads the selected profile's YAML via the Hyperfoil REST API (and, for `maven`, warms
    the artifact cache first so every measured request is a cache hit)
 8. Runs a warmup phase (results discarded)

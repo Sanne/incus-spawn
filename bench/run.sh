@@ -3,6 +3,8 @@
 #
 # Requires: Oracle GraalVM with native-image, working isx setup (isx init),
 #           running Incus daemon, Podman (for Hyperfoil container)
+#           On macOS: the VM running (isx vm start), the proxy service stopped,
+#           and --hyperfoil=DIR, an unpacked Hyperfoil distribution (no Podman)
 #
 # Usage:
 #   bench/run.sh                    # full build + benchmark
@@ -24,6 +26,10 @@ SKIP_BUILD=false
 LABEL=""
 GRAALVM_DIR=""
 BUILDER_IMAGE=""
+HYPERFOIL_DIR=""
+
+IS_MACOS=false
+[ "$(uname -s)" = Darwin ] && IS_MACOS=true
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -36,8 +42,10 @@ while [ $# -gt 0 ]; do
         --builder-image) shift; BUILDER_IMAGE="${1:-}" ;;
         --load=*) LOAD_MODE="${1#--load=}" ;;
         --load) shift; LOAD_MODE="${1:-}" ;;
+        --hyperfoil=*) HYPERFOIL_DIR="${1#--hyperfoil=}" ;;
+        --hyperfoil) shift; HYPERFOIL_DIR="${1:-}" ;;
         --help|-h)
-            echo "Usage: bench/run.sh [--skip-build] [--label=NAME] [--load=MODE] [--graalvm=DIR|--builder-image=TAG]"
+            echo "Usage: bench/run.sh [--skip-build] [--label=NAME] [--load=MODE] [--graalvm=DIR|--builder-image=TAG] [--hyperfoil=DIR]"
             echo ""
             echo "Benchmarks the native image build of the MITM proxy."
             echo "Measures: binary size, startup time, memory (RSS), throughput, latency."
@@ -62,11 +70,17 @@ while [ $# -gt 0 ]; do
             echo "                    bench/run.sh --builder-image=incus-spawn-graalvm-builder:25.2 --label=25.2"
             echo "                    bench/run.sh --builder-image=incus-spawn-graalvm-builder:25.3 --label=25.3"
             echo ""
+            echo "  --hyperfoil=DIR Run Hyperfoil from this unpacked distribution, with the java on"
+            echo "                  PATH, instead of in a Podman container. Required on macOS,"
+            echo "                  where a container runs in Podman's VM and the load would"
+            echo "                  cross its user-mode network before reaching the proxy."
+            echo ""
             echo "Requirements:"
             echo "  - Oracle GraalVM with native-image on PATH (or via --graalvm/--builder-image)"
             echo "  - Working isx setup (run 'isx init' first)"
             echo "  - Running Incus daemon"
-            echo "  - Podman (for running Hyperfoil in a container)"
+            echo "  - Podman (for running Hyperfoil in a container), or --hyperfoil=DIR"
+            echo "  - On macOS: the VM running and the proxy service stopped (isx proxy stop)"
             exit 0
             ;;
     esac
@@ -85,18 +99,66 @@ cleanup() {
     [ -n "${STUB_DIR:-}" ] && rm -rf "$STUB_DIR" || true
     # The stub's payload was cached under a coordinate that exists nowhere else; drop it
     [ -n "${BENCH_CACHE_DIR:-}" ] && rm -rf "$BENCH_CACHE_DIR" || true
-    podman stop "$HYPERFOIL_CONTAINER" 2>/dev/null && podman rm "$HYPERFOIL_CONTAINER" 2>/dev/null || true
+    stop_hyperfoil
     [ -n "${TRUSTSTORE_DIR:-}" ] && rm -rf "$TRUSTSTORE_DIR" || true
+    [ -n "${HF_WORK_DIR:-}" ] && rm -rf "$HF_WORK_DIR" || true
+}
+
+stop_hyperfoil() {
+    if [ -n "$HYPERFOIL_DIR" ]; then
+        if [ -n "${HF_PID:-}" ]; then
+            # standalone.sh does not exec java, so the JVM is the launcher's child. Wait for
+            # it to go: a run started straight after would find its port still taken.
+            local jvm
+            jvm=$(pgrep -P "$HF_PID" 2>/dev/null | head -1) || true
+            pkill -P "$HF_PID" 2>/dev/null || true
+            kill "$HF_PID" 2>/dev/null && wait "$HF_PID" 2>/dev/null || true
+            for _ in $(seq 1 40); do
+                [ -n "$jvm" ] && kill -0 "$jvm" 2>/dev/null || break
+                sleep 0.25
+            done
+        fi
+        HF_PID=""
+    else
+        podman stop "$HYPERFOIL_CONTAINER" 2>/dev/null && podman rm "$HYPERFOIL_CONTAINER" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
 
 get_rss_kb() {
     local pid=$1
-    awk '/^VmRSS:/ { print $2 }' "/proc/$pid/status" 2>/dev/null || echo "0"
+    if $IS_MACOS; then
+        # No /proc; ps reports the resident set in KiB
+        ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ' || echo "0"
+    else
+        awk '/^VmRSS:/ { print $2 }' "/proc/$pid/status" 2>/dev/null || echo "0"
+    fi
 }
 
 epoch_ms() {
-    date +%s%3N
+    if $IS_MACOS; then
+        # BSD date has no %N
+        perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'
+    else
+        date +%s%3N
+    fi
+}
+
+file_size() {
+    # stat's flags differ between GNU and BSD; wc does not
+    wc -c < "$1" | tr -d ' '
+}
+
+# The host's address on the VM-facing bridge, found as VmNetwork.discoverHostBridgeIp
+# finds it: the interface on the /24 that holds the VM's DHCP lease.
+macos_bridge_ip() {
+    local vm_ip
+    vm_ip=$(awk -F= '
+        /^[[:space:]]*ip_address=/ { ip = $2 }
+        /^[[:space:]]*hw_address=/ { if (tolower($2) ~ /,4a:53:58:0?0:0?0:0?1$/) { print ip; exit } }
+    ' /var/db/dhcpd_leases 2>/dev/null)
+    [ -n "$vm_ip" ] || return 0
+    ifconfig | awk -v prefix="${vm_ip%.*}." '$1 == "inet" && index($2, prefix) == 1 { print $2; exit }'
 }
 
 # ── 1. Validate environment ─────────────────────────────────────────────────
@@ -155,8 +217,14 @@ else
     die "native-image not found on PATH. Install Oracle GraalVM and ensure native-image is available."
 fi
 
-# Check Podman
-if ! command -v podman &>/dev/null; then
+# Check the load generator
+if [ -n "$HYPERFOIL_DIR" ]; then
+    HYPERFOIL_DIR="${HYPERFOIL_DIR/#\~/$HOME}"
+    [ -x "$HYPERFOIL_DIR/bin/standalone.sh" ] || die "No Hyperfoil distribution at $HYPERFOIL_DIR (bin/standalone.sh missing). Unpack a release zip from https://github.com/Hyperfoil/Hyperfoil/releases."
+    java -version &>/dev/null || die "java not found on PATH; --hyperfoil runs Hyperfoil with it. Pass --graalvm=DIR or put a JDK on PATH."
+elif $IS_MACOS; then
+    die "On macOS pass --hyperfoil=DIR (an unpacked Hyperfoil distribution). A Podman container there runs in a VM, so the load would cross Podman's user-mode network and the run would measure that instead of the proxy."
+elif ! command -v podman &>/dev/null; then
     die "podman not found on PATH. Hyperfoil runs inside a Podman container to work around non-contiguous CPU numbering in /proc/stat."
 fi
 
@@ -204,18 +272,33 @@ if [ "$LOAD_MODE" = maven ]; then
     command -v keytool &>/dev/null || die "keytool not found; needed for --load=maven"
 fi
 
-# Resolve gateway IP from Incus bridge
-GATEWAY_IP=$(incus network get incusbr0 ipv4.address 2>/dev/null | cut -d/ -f1) || true
-if [ -z "$GATEWAY_IP" ]; then
-    die "Could not determine Incus bridge gateway IP. Is Incus running?"
+# Resolve the address the proxy listens on: the Incus bridge gateway, or on macOS
+# (where Incus runs in the VM) the host's address on the VM-facing bridge
+if $IS_MACOS; then
+    GATEWAY_IP=$(macos_bridge_ip) || true
+    [ -n "$GATEWAY_IP" ] || die "Could not determine the VM bridge address. Is the VM running? (isx vm start)"
+    # There the health endpoint is on loopback (ProxyHealthCheck.healthAddress); only
+    # the MITM port is on the bridge
+    HEALTH_ADDR=127.0.0.1
+else
+    GATEWAY_IP=$(incus network get incusbr0 ipv4.address 2>/dev/null | cut -d/ -f1) || true
+    if [ -z "$GATEWAY_IP" ]; then
+        die "Could not determine Incus bridge gateway IP. Is Incus running?"
+    fi
+    HEALTH_ADDR="$GATEWAY_IP"
 fi
 echo "Gateway:  $GATEWAY_IP"
 
 # A proxy already bound to the health port is the worst failure mode here: the
 # freshly built one loses the bind and exits, but /health still answers — from
 # the *old* process — so the run would report its startup, RSS and throughput.
-if curl -sf --max-time 2 "http://$GATEWAY_IP:18080/health" &>/dev/null; then
-    die "Something is already serving $GATEWAY_IP:18080 — results would come from that process, not the build under test.
+if curl -sf --max-time 2 "http://$HEALTH_ADDR:18080/health" &>/dev/null; then
+    if $IS_MACOS; then
+        die "Something is already serving $HEALTH_ADDR:18080 — results would come from that process, not the build under test.
+  Stop it first:  isx proxy stop
+  Restart after:  isx proxy start"
+    fi
+    die "Something is already serving $HEALTH_ADDR:18080 — results would come from that process, not the build under test.
   Stop it first:  systemctl --user stop incus-spawn-proxy
   Restart after:  systemctl --user start incus-spawn-proxy"
 fi
@@ -263,21 +346,37 @@ echo ""
 
 # ── 3. Binary size and CLI startup ──────────────────────────────────────────
 
-BINARY_SIZE=$(stat -c %s "$PROXY_RUNNER")
+BINARY_SIZE=$(file_size "$PROXY_RUNNER")
 BINARY_SIZE_MB=$(awk "BEGIN { printf \"%.1f\", $BINARY_SIZE / 1048576 }")
-CLI_BINARY_SIZE=$(stat -c %s "$CLI_RUNNER")
+CLI_BINARY_SIZE=$(file_size "$CLI_RUNNER")
 CLI_BINARY_SIZE_MB=$(awk "BEGIN { printf \"%.1f\", $CLI_BINARY_SIZE / 1048576 }")
 echo "Proxy binary: $BINARY_SIZE_MB MB ($BINARY_SIZE bytes)"
 echo "CLI binary:   $CLI_BINARY_SIZE_MB MB ($CLI_BINARY_SIZE bytes)"
 
 # The CLI is short-lived and startup-bound, so its cost is process launch, not
 # throughput. Take the median of 20 `--help` runs (--help touches no daemon).
-CLI_SAMPLES=$(for _ in $(seq 1 20); do
-    s=$(date +%s%N)
-    "$CLI_RUNNER" --help >/dev/null 2>&1 || true
-    e=$(date +%s%N)
-    echo $(( (e - s) / 1000 ))
-done | sort -n | tr '\n' ' ')
+cli_startup_samples() {
+    if $IS_MACOS; then
+        # BSD date has no %N, and a clock process per sample would cost as much as the
+        # launch being timed, so one perl takes all 20 samples around fork+exec+wait.
+        perl -MTime::HiRes=time -e '
+            for (1..20) {
+                my $s = time;
+                my $pid = fork;
+                if (!$pid) { open STDOUT, ">", "/dev/null"; open STDERR, ">", "/dev/null"; exec $ARGV[0], "--help"; exit 127 }
+                waitpid $pid, 0;
+                printf "%d\n", (time - $s) * 1e6;
+            }' "$CLI_RUNNER"
+    else
+        for _ in $(seq 1 20); do
+            s=$(date +%s%N)
+            "$CLI_RUNNER" --help >/dev/null 2>&1 || true
+            e=$(date +%s%N)
+            echo $(( (e - s) / 1000 ))
+        done
+    fi
+}
+CLI_SAMPLES=$(cli_startup_samples | sort -n | tr '\n' ' ')
 CLI_STARTUP_US=$(echo "$CLI_SAMPLES" | awk '{ print $10 }')
 echo "CLI startup:  ${CLI_STARTUP_US} us (median of 20)"
 
@@ -323,7 +422,7 @@ PROXY_START=$(epoch_ms)
 env ${PROXY_ENV[@]+"${PROXY_ENV[@]}"} "$PROXY_RUNNER" --gateway-ip "$GATEWAY_IP" &>/dev/null &
 PROXY_PID=$!
 
-HEALTH_URL="http://$GATEWAY_IP:18080/health"
+HEALTH_URL="http://$HEALTH_ADDR:18080/health"
 STARTUP_OK=false
 for i in $(seq 1 60); do
     if curl -sf "$HEALTH_URL" &>/dev/null; then
@@ -367,16 +466,20 @@ fi
 
 echo ""
 
-# Ensure image is available
-if ! podman image exists "$HYPERFOIL_IMAGE" 2>/dev/null; then
-    echo "Pulling Hyperfoil image..."
-    podman pull "$HYPERFOIL_IMAGE" >/dev/null 2>&1
+if [ -z "$HYPERFOIL_DIR" ]; then
+    # Ensure image is available
+    if ! podman image exists "$HYPERFOIL_IMAGE" 2>/dev/null; then
+        echo "Pulling Hyperfoil image..."
+        podman pull "$HYPERFOIL_IMAGE" >/dev/null 2>&1
+    fi
+
+    # Remove any leftover container from a previous run
+    podman rm -f "$HYPERFOIL_CONTAINER" 2>/dev/null || true
 fi
 
-# Remove any leftover container from a previous run
-podman rm -f "$HYPERFOIL_CONTAINER" 2>/dev/null || true
-
 HF_RUN_ARGS=(-d --name "$HYPERFOIL_CONTAINER" --network=host)
+HF_JAVA_OPTS=""
+BENCHMARK_UPLOAD="$BENCHMARK_YAML"
 
 # The maven profile talks HTTPS to the proxy's MITM port as a real client would,
 # so the generator needs (a) repo1.maven.org pointed at the gateway instead of
@@ -394,10 +497,28 @@ if [ "$LOAD_MODE" = maven ]; then
         -v "$TRUSTSTORE:/ca/truststore.p12:ro,Z"
         -e JAVA_OPTS="-Djavax.net.ssl.trustStore=/ca/truststore.p12 -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12"
     )
+    HF_JAVA_OPTS="-Djavax.net.ssl.trustStore=$TRUSTSTORE -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12"
 fi
 
 echo "Starting Hyperfoil controller..."
-podman run "${HF_RUN_ARGS[@]}" "$HYPERFOIL_IMAGE" standalone >/dev/null 2>&1
+if [ -n "$HYPERFOIL_DIR" ]; then
+    HF_WORK_DIR="$(mktemp -d)"
+    if [ "$LOAD_MODE" = maven ]; then
+        # No container, so no --add-host: the definition itself names the address to
+        # connect to, and the host stays repo1.maven.org for SNI and the Host header.
+        BENCHMARK_UPLOAD="$HF_WORK_DIR/$(basename "$BENCHMARK_YAML")"
+        awk -v addr="$GATEWAY_IP:$MAVEN_PORT" '
+            { print }
+            /^  host:/ { print "  addresses:"; print "  - " addr }
+        ' "$BENCHMARK_YAML" > "$BENCHMARK_UPLOAD"
+    fi
+    curl -sf --max-time 2 "http://localhost:$HYPERFOIL_PORT/benchmark" &>/dev/null \
+        && die "Something is already serving localhost:$HYPERFOIL_PORT; a Hyperfoil controller left running would take this run's load definition."
+    JAVA_OPTS="$HF_JAVA_OPTS" "$HYPERFOIL_DIR/bin/standalone.sh" > "$HF_WORK_DIR/hyperfoil.log" 2>&1 &
+    HF_PID=$!
+else
+    podman run "${HF_RUN_ARGS[@]}" "$HYPERFOIL_IMAGE" standalone >/dev/null 2>&1
+fi
 
 # Wait for controller to be ready
 HF_READY=false
@@ -409,23 +530,38 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
+hyperfoil_logs() {
+    if [ -n "$HYPERFOIL_DIR" ]; then
+        cat "$HF_WORK_DIR/hyperfoil.log" 2>/dev/null
+    else
+        podman logs "$HYPERFOIL_CONTAINER" 2>&1
+    fi
+}
+
 if ! $HF_READY; then
     echo "Hyperfoil logs:"
-    podman logs "$HYPERFOIL_CONTAINER" 2>&1 | tail -20
+    hyperfoil_logs | tail -20
     die "Hyperfoil controller failed to start after 30s"
 fi
 
-HYPERFOIL_VERSION=$(podman logs "$HYPERFOIL_CONTAINER" 2>&1 | grep -oP 'Hyperfoil: \K[0-9.]+' | head -1)
-echo "Hyperfoil:   $HYPERFOIL_VERSION (container)"
+# sed, not grep -oP: BSD grep has no PCRE
+HYPERFOIL_VERSION=$(hyperfoil_logs | sed -nE 's/.*Hyperfoil: ([0-9.]+).*/\1/p' | head -1)
+if [ -n "$HYPERFOIL_DIR" ]; then
+    HYPERFOIL_SOURCE="$(basename "$HYPERFOIL_DIR")"
+    echo "Hyperfoil:   $HYPERFOIL_VERSION ($HYPERFOIL_SOURCE, no container)"
+else
+    HYPERFOIL_SOURCE="$HYPERFOIL_IMAGE"
+    echo "Hyperfoil:   $HYPERFOIL_VERSION (container)"
+fi
 
 # ── 7. Run load test ────────────────────────────────────────────────────────
 
 # Upload benchmark definition
 curl -sf -X POST "http://localhost:$HYPERFOIL_PORT/benchmark" \
     -H "Content-Type: text/vnd.yaml" \
-    --data-binary "@$BENCHMARK_YAML" >/dev/null
+    --data-binary "@$BENCHMARK_UPLOAD" >/dev/null
 
-TARGET_URL="http://$GATEWAY_IP:18080"
+TARGET_URL="http://$HEALTH_ADDR:18080"
 
 # Start the benchmark run
 if grep -q '!param TARGET' "$BENCHMARK_YAML"; then
@@ -491,7 +627,7 @@ echo "Peak RSS:    ${PEAK_RSS} KB"
 
 kill "$PROXY_PID" 2>/dev/null; wait "$PROXY_PID" 2>/dev/null || true
 PROXY_PID=""
-podman stop "$HYPERFOIL_CONTAINER" 2>/dev/null && podman rm "$HYPERFOIL_CONTAINER" 2>/dev/null || true
+stop_hyperfoil
 
 # ── 10. Parse Hyperfoil stats ──────────────────────────────────────────────
 
@@ -542,6 +678,7 @@ result = {
     'gitSha': '$GIT_SHA',
     'gitSubject': '''$GIT_SUBJECT''',
     'graalvm': '''$GRAALVM_VERSION''',
+    'platform': '$(uname -sm)',
     'proxyBuiltWith': '''$PROXY_BUILT_WITH''',
     'cliBuiltWith': '''$CLI_BUILT_WITH''',
     'binarySizeBytes': $BINARY_SIZE,
@@ -557,7 +694,7 @@ result = {
     # Read the shape of the load off the definition that actually ran; the old
     # hardcoded block described proxy-health and silently mislabelled any other profile.
     'hyperfoilConfig': {
-        'image': '$HYPERFOIL_IMAGE',
+        'image': '$HYPERFOIL_SOURCE',
         'definition': '''$(basename "$BENCHMARK_YAML")''',
         'connections': $(awk '/sharedConnections:/ { print $2; exit }' "$BENCHMARK_YAML"),
     },
