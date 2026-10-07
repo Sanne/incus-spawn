@@ -12,7 +12,6 @@ import java.io.PrintStream;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -26,8 +25,9 @@ import java.util.stream.Collectors;
  * numbers, booleans or lists of strings; times are ISO-8601 and sizes are bytes, never "3h ago"
  * or "2.1G". A list is a JSON array, and in {@code plain} its elements joined by {@code ,}.
  *
- * <p>Both may be read on a terminal, so neither lets a value write a control character to it
- * raw (#1118): a value can be a stamp someone set by hand, escape sequence and all. {@code json}
+ * <p>Both may be read on a terminal, so neither lets a value write a control character
+ * ({@link #isControl}, bidi controls included) to it raw (#1118): a value can be a stamp someone
+ * set by hand, escape sequence and all. {@code json}
  * keeps every value exact, writing each control character as a JSON unicode escape. {@code plain}
  * is one line per record and lossy: each control character becomes a space ({@link #oneLine}),
  * as the table shows it. A script that needs a value exactly reads {@code json}.
@@ -35,13 +35,6 @@ import java.util.stream.Collectors;
 public enum OutputFormat {
     TABLE, PLAIN, JSON;
 
-    /**
-     * What a terminal may act on or break a line at: C0 (tab, line breaks and ESC included), DEL,
-     * C1 (U+009B is an 8-bit CSI), and the Unicode line and paragraph separators; and the bidi
-     * embeddings, overrides and isolates (U+202A-U+202E, U+2066-U+2069), which make a terminal
-     * draw the rest of the line out of order.
-     */
-    private static final Pattern CONTROL = Pattern.compile("[\\p{Cc}\\u2028\\u2029\\u202A-\\u202E\\u2066-\\u2069]");
     private static final ObjectMapper JSON_WRITER = new ObjectMapper(
             new JsonFactory().setCharacterEscapes(new ControlEscapes()))
             .enable(SerializationFeature.INDENT_OUTPUT);
@@ -112,12 +105,26 @@ public enum OutputFormat {
     }
 
     /**
-     * {@code value} as one line that cannot drive a terminal: every control character becomes a
-     * space. The {@code plain} format's rule, and the one for any table or TUI cell showing a
-     * value isx did not write itself.
+     * {@code value} as one line that cannot drive a terminal: every {@link #isControl} character
+     * becomes a space. The {@code plain} format's rule, and the one the {@code isx list} table and
+     * TUI show an instance stamp by.
      */
     public static String oneLine(String value) {
-        return CONTROL.matcher(value).replaceAll(" ");
+        if (value.codePoints().noneMatch(OutputFormat::isControl)) return value;
+        var line = new StringBuilder(value.length());
+        value.codePoints().forEach(c -> line.appendCodePoint(isControl(c) ? ' ' : c));
+        return line.toString();
+    }
+
+    /**
+     * What neither machine format writes raw: what a terminal may act on or break a line at -- C0
+     * (tab, line breaks and ESC included), DEL, C1 (U+009B is an 8-bit CSI), the Unicode line and
+     * paragraph separators -- and the bidi embeddings, overrides and isolates (U+202A-U+202E,
+     * U+2066-U+2069), which make a terminal draw the rest of the line out of order.
+     */
+    static boolean isControl(int c) {
+        return Character.isISOControl(c)
+                || c >= 0x2028 && c <= 0x202E || c >= 0x2066 && c <= 0x2069;
     }
 
     /** {@code value} -- a list of records, or one record -- as JSON, then a line break. */
@@ -130,14 +137,17 @@ public enum OutputFormat {
     }
 
     /**
-     * Jackson escapes C0 itself (JSON requires it) but writes DEL, C1 and U+2028/U+2029 raw;
-     * these escape them as well, so json keeps every value exact without a terminal acting on it.
+     * Jackson escapes C0 itself (JSON requires it) but writes the rest of {@link #isControl} raw;
+     * these escape it all, so json keeps every value exact and never writes one of them raw.
      */
     private static final class ControlEscapes extends CharacterEscapes {
         private final int[] ascii = standardAsciiEscapesForJSON();
 
         ControlEscapes() {
-            ascii[0x7F] = ESCAPE_STANDARD;
+            // Jackson reads the ASCII table and asks getEscapeSequence only above it.
+            for (int c = 0; c < ascii.length; c++) {
+                if (ascii[c] == 0 && isControl(c)) ascii[c] = ESCAPE_STANDARD;
+            }
         }
 
         @Override
@@ -147,8 +157,7 @@ public enum OutputFormat {
 
         @Override
         public SerializableString getEscapeSequence(int ch) {
-            return (ch >= 0x80 && ch <= 0x9F) || ch == 0x2028 || ch == 0x2029
-                    ? new SerializedString(String.format("\\u%04X", ch)) : null;
+            return isControl(ch) ? new SerializedString(String.format("\\u%04X", ch)) : null;
         }
     }
 }

@@ -91,15 +91,16 @@ class OutputFormatTest {
 
     @Test
     void jsonKeepsAControlCharacterExactButNeverRaw() throws Exception {
-        // #1118: json is where a value is exact. Jackson escapes C0 itself; DEL, C1 and the
-        // Unicode line separators would otherwise go out as raw bytes a terminal may act on.
-        // A bidi control drives no terminal and stays as it is.
-        var value = "a\u001b[2J\u007f\u009b\u0085\u2028\u2029\u00e9\u202E\u2066b";
+        // #1118: json escapes every isControl character, exactly; Jackson alone escapes only C0.
+        var value = "a\u001b[2J\u007f\u009b\u0085\u2028\u2029\u00e9\u202A\u202E\u2066\u2069\u200Fb";
         var bytes = new ByteArrayOutputStream();
         OutputFormat.JSON.printOne(new PrintStream(bytes, true, StandardCharsets.UTF_8), Map.of("v", value));
         var text = bytes.toString(StandardCharsets.UTF_8);
-        assertEquals("{\n  \"v\" : \"a\\u001B[2J\\u007F\\u009B\\u0085\\u2028\\u2029\u00e9\u202E\u2066b\"\n}\n",
+        assertEquals("{\n  \"v\" : \"a\\u001B[2J\\u007F\\u009B\\u0085\\u2028\\u2029\u00e9"
+                        + "\\u202A\\u202E\\u2066\\u2069\u200Fb\"\n}\n",
                 text.replace("\r\n", "\n"));
+        assertTrue(text.codePoints().noneMatch(c -> c >= 0x202A && c <= 0x202E || c >= 0x2066 && c <= 0x2069),
+                "no raw bidi control: " + text);
         assertEquals(value, new com.fasterxml.jackson.databind.ObjectMapper().readTree(text).get("v").asText());
     }
 }
