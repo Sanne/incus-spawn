@@ -9,6 +9,7 @@ import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.CpuInfo;
 import dev.incusspawn.util.HostLock;
 import dev.incusspawn.Platform;
+import dev.incusspawn.Warnings;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -746,19 +747,25 @@ public final class VmManager {
         try {
             var skew = applianceSkew();
             if (skew == null) return;
-
-            var marker = Environment.vmStateDir().resolve(".appliance-skew-warned");
-            if (Files.exists(marker)) {
-                long age = System.currentTimeMillis() - Files.getLastModifiedTime(marker).toMillis();
-                if (age < SKEW_WARN_INTERVAL_MS) return;
-            }
-
-            System.err.println(skew.message());
-            Files.createDirectories(marker.getParent());
-            Files.writeString(marker, "");
+            warnOfSkew(skew, Environment.vmStateDir().resolve(".appliance-skew-warned"));
         } catch (Exception ignored) {
             // Best-effort; never block a command for a stale-version warning.
         }
+    }
+
+    /**
+     * Report a skew at most once per {@link #SKEW_WARN_INTERVAL_MS}, tracked by {@code marker}.
+     * Through {@link Warnings}: bare {@code isx} runs this before its TUI opens, and the TUI would
+     * draw over a line printed straight to stderr (#1154).
+     */
+    static void warnOfSkew(ApplianceSkew skew, Path marker) throws IOException {
+        if (Files.exists(marker)) {
+            long age = System.currentTimeMillis() - Files.getLastModifiedTime(marker).toMillis();
+            if (age < SKEW_WARN_INTERVAL_MS) return;
+        }
+        Warnings.warn(skew.message());
+        Files.createDirectories(marker.getParent());
+        Files.writeString(marker, "");
     }
 
     // --- Internal: vfkit ---

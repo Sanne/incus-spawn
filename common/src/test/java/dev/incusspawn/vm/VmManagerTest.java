@@ -2,6 +2,7 @@ package dev.incusspawn.vm;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
+import dev.incusspawn.Warnings;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,6 +13,7 @@ import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
@@ -373,5 +375,20 @@ class VmManagerTest {
         // A locally built appliance embeds 0.0.0-SNAPSHOT, but a dev CLI stamps the disk with
         // the latest release: restarting keeps that disk, so "restart for 0.3.8" never clears.
         assertNull(VmManager.applianceSkew("0.0.0-SNAPSHOT", "0.3.8", "0.3.8"));
+    }
+
+    @Test
+    void applianceSkewIsAWarningWhoeverOwnsTheTerminalCanRoute() throws IOException {
+        // Bare `isx` checks the VM before its TUI opens; printed straight to stderr, the notice
+        // was drawn over and read only after quitting (#1154).
+        var seen = new ArrayList<String>();
+        var marker = tempHome.resolve("vm/.appliance-skew-warned");
+        var skew = new VmManager.ApplianceSkew("0.3.9", "0.3.10");
+        try (var ignored = Warnings.redirect(new Warnings.Channel(seen::add))) {
+            VmManager.warnOfSkew(skew, marker);
+            VmManager.warnOfSkew(skew, marker);
+        }
+        assertEquals(java.util.List.of(skew.message()), seen, "once, then quiet for the interval");
+        assertTrue(Files.exists(marker));
     }
 }
