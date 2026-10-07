@@ -38,7 +38,7 @@ Three Maven modules under a parent POM:
 
 - **`common`** (`incus-spawn-common`): shared code — Incus client, proxy config, image/tool definitions, configuration loading. Not a Quarkus app; uses the Jandex Maven plugin to produce a bean index so Quarkus discovers its CDI beans from dependent modules. Its test classes are published as a test-jar, which `cli` depends on in test scope, so a command's wiring is tested against the same `FakeIncusDaemon` as `common`'s flows (see "Request budgets"). The test-jar is built even under `-Dmaven.test.skip=true`, since `cli` could not resolve it otherwise.
 - **`cli`** (`incus-spawn`): the main CLI/TUI binary (`isx`). Depends on common. Native image: serial GC, `-Os` (size-optimized).
-- **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC, `-O3` (throughput-optimized), and on x86_64 `-march=haswell` — see "Native image CPU baseline" below. Splitting this out removed Vert.x from the CLI, which means the CLI can no longer serve the proxy itself — see "Every install channel ships both binaries" below.
+- **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC on Linux and serial GC on macOS, `-O3` (throughput-optimized), and on x86_64 `-march=haswell` — see "Native image CPU baseline" and "Proxy garbage collector per platform" below. Splitting this out removed Vert.x from the CLI, which means the CLI can no longer serve the proxy itself — see "Every install channel ships both binaries" below.
 
 ### Every install channel ships both binaries
 
@@ -1291,6 +1291,26 @@ interleaved rounds of 40 runs). The startup gain is unexplained; `haswell` adds 
 Reproduce with `bench/run.sh --load=maven`. Use that harness rather than a shell loop of
 `curl`: process-spawn overhead caps such a loop around 550 req/s, which silently pins every
 build faster than v3 to the same wrong number and hides the differences between them.
+
+### Proxy garbage collector per platform
+
+**Chosen:** G1 on Linux, serial on macOS (both architectures). `proxy.native.gc` in
+`proxy/pom.xml` is `serial`, and the `linux-g1` profile sets `G1`.
+
+**Alternative:** G1 on macOS aarch64 too. Native Image has supported it there since Oracle GraalVM
+25.1, and the Apple Silicon release job builds with Oracle GraalVM 25.4, so nothing prevents it.
+
+**Why not:** it was measured on Apple Silicon (#1140) and buys nothing. Three interleaved rounds
+of `bench/run.sh`, same commit, Oracle GraalVM 25.4.4.1.1: 118 req/s for both collectors on
+`--load=maven`, and 53,900 (serial) against 53,700 (G1) on `--load=saturate`, a difference
+inside the noise. G1 costs 9.0 MB of binary (+12%), 5.4 MB of idle RSS (+13%) and 6 to 12 MB
+more after load. A larger G1 heap (`MaxRAM=512m`, 128 MB) changes nothing either, so `MaxRAM`
+stays 256m on every platform. G1 on macOS is also an Oracle GraalVM feature: `native-image` from
+GraalVM Community Edition, which is what Homebrew's `graalvm` formula installs, stops with
+"'G1' is not an accepted value", so `install.sh --native` would fail on such a Mac. macOS x86_64
+has no choice in any case: GraalVM dropped it after 25.0, before G1 reached macOS.
+
+The figures and their conditions are in `docs/PERFORMANCE-NOTES.md`, "G1 on Apple Silicon".
 
 ### The minimum macOS is set by the build
 

@@ -13,7 +13,14 @@
 
     <properties>
         <native.optimization>-O3</native.optimization>
+<!-- serial everywhere but Linux (the linux-g1 profile). On macOS aarch64 that is measured, not a
+     leftover: G1 builds there since Oracle GraalVM 25.1, and gave the same throughput as serial for a
+     binary 9 MB larger and more memory (docs/PERFORMANCE-NOTES.md, "G1 on Apple Silicon", #1140).
+     It is also Oracle-only there, so it would fail a native build with GraalVM CE. -->
         <proxy.native.gc>serial</proxy.native.gc>
+<!-- What the proxy takes as physical memory; the collector's maximum heap is a share of it (G1 25%,
+     serial 80%). One value for every platform; a property so that a benchmark can build another. -->
+        <proxy.native.max.ram>256m</proxy.native.max.ram>
 <!-- Bake os.name at build time to avoid a uname() syscall; macOS doesn't need this (already a build-time constant in GraalVM) -->
         <svm.target.name.args/>
 <!-- Empty by default: -march values are architecture-specific, and passing an x86 one to an aarch64 build fails. Set only by the x86_64 profiles below. -->

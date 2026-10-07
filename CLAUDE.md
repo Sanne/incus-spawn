@@ -56,7 +56,7 @@ Three Maven modules under a parent POM:
 - **`cli`** (`incus-spawn`): the main CLI/TUI binary (`isx`). Depends on common. Native image: serial GC, `-Os` (size-optimized), `-H:-AllowVMInternalThreads`,
   and on x86_64 `-march=haswell` (arch-gated in `cli/pom.xml`, same as the proxy). It downloads tool tarballs and VM images over HTTPS, and the default
   `x86-64-v3` omits AES/CLMUL: 79 MB/s vs ~3100 MB/s for AES-256-GCM. Binary size is byte-identical and startup ~11% faster, so it costs nothing here.
-- **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC, `-O3` (throughput-optimized, enables ML-inferred PGO), and on x86_64 `-march=haswell`.
+- **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC on Linux and serial GC on macOS (measured: G1 buys nothing on Apple Silicon, see `docs/PERFORMANCE-NOTES.md`), `-O3` (throughput-optimized, enables ML-inferred PGO), and on x86_64 `-march=haswell`.
   The `-march` value is set by arch-gated Maven profiles in `proxy/pom.xml` (empty on aarch64, where an x86 `-march` would fail the build).
   GraalVM's default `-march=x86-64-v3` omits AES and CLMUL, so the image cannot use AES-NI/GHASH intrinsics and TLS falls back to software AES --
   measured 73 MB/s vs 960 MB/s serving a cached Maven artifact (~13x). `haswell` costs no hardware support: AES-NI predates the v3 baseline by three

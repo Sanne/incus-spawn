@@ -88,6 +88,67 @@ path, but it does not transfer to the workload above. Treat as a curiosity.
 **RSS: no signal.** −5.2% in one round, +21% in the next. G1's adaptive sizing under a
 10-second burst is not a stable measurement. Do not quote RSS deltas between toolchains.
 
+## G1 on Apple Silicon (issue #1140)
+
+Measured 2026-10-07 on an Apple Silicon Mac (Apple M6, 12 cores, 16 GB, macOS 27.0), quiet
+host. Oracle GraalVM 25.4.4.1.1, native image, `-O3`, same commit for every build. Three
+rounds per comparison, the builds interleaved and the order rotated each round. Load from
+Hyperfoil 0.29.3 running on the host (`bench/run.sh --hyperfoil=DIR`), 100% 2xx throughout.
+
+**Verdict: keep serial GC on macOS.** G1 gives no throughput on either path and costs binary
+size and memory.
+
+| | serial, `MaxRAM=256m` (shipped) | G1, `MaxRAM=256m` | G1, `MaxRAM=512m` |
+|---|---|---|---|
+| Proxy binary | 75,665,944 B | 84,657,624 B (**+11.9%**) | 85,780,552 B |
+| Maximum heap | 80% = 205 MB | 25% = 64 MB | 25% = 128 MB |
+| Startup | 297 to 315 ms | 300 to 311 ms | 303 to 304 ms |
+| Idle RSS | 42.6 MB | 48.0 MB (**+13%**) | 47.9 MB |
+| `--load=maven`, best rung, 3 rounds | 118 / 118 / 118 req/s | 118 / 118 / 117 req/s | not run |
+| `--load=maven`, p50 / p99 at 8 concurrent | 59 / 120 ms | 60 / 119 ms | not run |
+| RSS after `--load=maven` | 71.2 MB | 83.2 MB | not run |
+| `--load=saturate`, best rung, 3 rounds | 53,765 / 53,684 / 54,286 | 53,644 / 53,436 / 53,934 | 53,864 / 53,803 / 53,666 |
+| `--load=saturate`, mean | 53,911 req/s | 53,672 req/s (−0.4%) | 53,778 req/s (−0.2%) |
+| `--load=saturate`, p50 / p99 / p99.9 | 275 / 560 / 661 µs | 275 / 564 / 676 µs | 274 / 562 / 668 µs |
+| RSS after `--load=saturate` | 61.7 MB | 68.0 MB | 69.6 MB |
+
+Reading it:
+
+- **Throughput is the same.** The largest gap between collectors is 0.4%, well under the
+  spread between rounds of one build (1.1% for serial on `saturate`).
+- **A 64 MB G1 heap is not short of room here.** Doubling `MaxRAM` to 512m moved neither
+  throughput nor tail latency, so there is no case for raising it on any platform.
+- **Startup is flat**, to the resolution this harness has for it (it polls `/health` every
+  250 ms).
+- **G1 on macOS needs Oracle GraalVM.** GraalVM CE 25.4 rejects `--gc=G1` there ("Accepted
+  values are 'epsilon', 'serial'"), and Oracle GraalVM 25.0, the LTS line, rejects it as
+  "only supported on Linux". Only the 25.1+ Oracle builds accept it.
+
+Both `saturate` and `maven` are flat across the whole concurrency ladder on this machine
+(`saturate`: 53,900 at 16 users and 53,700 at 256), so each sits at a ceiling that more
+clients do not move. For `maven` that ceiling is known, and it is not the collector:
+
+### The `maven` path on aarch64 is bound by software AES
+
+118 req/s is 74 MB/s, the figure the x86_64 build had before `-march=haswell` (see "Resolved:
+the ~70 MB/s ceiling was software AES"). The cause is the same. On aarch64 the proxy passes
+no `-march`, GraalVM's default there is `armv8-a` or `armv8.1-a`, and `native-image
+-march=list` shows neither includes AES or PMULL. The same commit built with
+`-march=armv8.1-a+aes`, three interleaved rounds again:
+
+| | default `-march` | `-march=armv8.1-a+aes` |
+|---|---|---|
+| serial, `--load=maven` | 118 req/s, 74 MB/s | 998 / 1,000 / 1,002 req/s, **627 MB/s** |
+| G1, `--load=maven` | 118 req/s, 74 MB/s | 1,000 / 1,000 / 1,004 req/s, 628 MB/s |
+| p50 / p99 at 32 concurrent | 261 / 521 ms | 31 / 60 ms |
+| Binary (serial) | 75,665,944 B | 75,682,472 B |
+
+That is **8.5x**, and it applies to every aarch64 build, Linux arm64 included (not measured
+there). It is not changed here: which aarch64 CPUs a `+aes` build would stop running on is a
+decision of its own. With AES the two collectors are still level (1,000 against 1,001 req/s),
+so the verdict above does not depend on it; RSS after load is 95 MB for serial and 106 to
+124 MB for G1.
+
 ## CLI `-Os` vs `-O3` (GraalVM 25.3)
 
 Interleaved A/B/A/B, 60 pairs, so drift hits both variants equally:
