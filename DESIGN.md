@@ -1155,6 +1155,27 @@ rather than a boolean because the cleanup hinges on it: `NOT_RESET` (lock held, 
 could not be deleted) leaves every instance in place and must not touch their host state, while `VM_DOWN` means the
 disk is gone even though the VM did not come back.
 
+**Tidying "state" keeps the data disk (#1155).** The data disk lives in `~/.local/state/incus-spawn/` beside pid
+files, sockets, logs and the root disk, so anything that tidies that directory took every instance with it:
+`isx clean state` and `isx clean all` deleted it as "state" (and `clean all` claimed the pool was untouched), and
+`uninstall.sh` listed it as "remove disk image". `uninstall.sh` is also the natural step when moving from a source
+build to Homebrew, which is how a whole pool was lost to a confirmed prompt. All three now delete everything in the
+directory *except* `data.img` unless given `--delete-instances`, and say what they keep and what it holds (the
+script counts instances and built templates with the isx being uninstalled when the VM is up; with it down nothing
+can tell, and it says so). Keeping only that file is enough: it is mounted at `/var/lib/incus`, so it carries the
+Incus database as well as the pool, and the appliance boots on it as it does after a root-disk upgrade. That makes
+how the VM stops matter: before, a disk about to be deleted could be killed mid-write, but one that is kept is stopped
+through the isx being uninstalled (`isx vm stop`) first. That asks the guest to stop, though `VmManager.stopLocked`
+waits only about 5 s before it signals vfkit itself, so a busy guest can still be cut off. When the VM outlives it
+the script signals it, and says, then and in its closing lines, that the kept disk may need recovery on the next boot.
+`isx` is asked for the counts through a temporary file rather than a pipe, so the 20 s bound holds even if isx left a
+child process holding its output.
+`uninstall.sh --binaries-only` removes just the binaries and install.sh's Homebrew override, for switching install
+channel; the proxy service needs no change there, since the next isx command rewrites a start script or plist that
+names another `isx-proxy` (`ProxyService.reinstallIfChanged`). The script refuses an unknown option rather than
+ignoring it, so a mistyped `--binaries-only` cannot run a full uninstall. The root fix, moving the data disk out of
+the state directory, needs a migration and is a separate change.
+
 ### Repo Cloning and Reference Optimization
 
 Repos declared in an image definition are cloned into the container during build as `agentuser`. Clones use `--single-branch` to fetch only the target branch (or the default branch when none is specified), avoiding the download of hundreds of release/PR branches and thousands of tags that are present on large upstream repos but rarely needed in a dev container. After cloning, `git remote set-branches origin '*'` immediately widens the fetch refspec — this is a pure metadata write with no network traffic — so the clone is indistinguishable from a regular one. Other branches populate lazily on first `git fetch` or `git checkout`.
