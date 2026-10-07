@@ -29,8 +29,20 @@ pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 expect() { if eval "$1"; then pass "$2"; else fail "$2${3:+ ($3)}"; fi; }
 
-# One agent verb per connection, as VmAgentClient speaks it.
-agent() { printf '%s\n' "$1" | nc -U -w 8 "$AGENT_SOCK" 2>/dev/null | tr -d '\r'; }
+# One agent verb per connection, as VmAgentClient speaks it: send the verb, then keep the
+# write side open until the agent hangs up. Shutting it down early hands every socat on the
+# way an EOF, after which each waits only its -t (0.5s) for the reply: forwarder-restart
+# answers after more than a second, so it would arrive at a closed connection. OpenBSD nc
+# (Ubuntu, macOS) leaves the write side open; nmap's ncat (Fedora's nc) shuts it down on
+# stdin EOF unless given --no-shutdown. ncat's -w bounds only the connect, and its -i waits
+# out its full timeout even after the agent hangs up, so timeout bounds the call instead: the
+# whole call rather than an idle gap, hence the longer limit.
+AGENT_NC=(nc -w 8)
+if [[ "$(nc --version 2>&1)" == *Ncat* ]]; then
+    command -v timeout >/dev/null || { echo "nc is ncat, which needs timeout (coreutils) to bound agent calls" >&2; exit 2; }
+    AGENT_NC=(timeout 30 nc --no-shutdown)
+fi
+agent() { printf '%s\n' "$1" | "${AGENT_NC[@]}" -U "$AGENT_SOCK" 2>/dev/null | tr -d '\r'; }
 api() { curl -s --max-time 10 --unix-socket "$INCUS_SOCK" "http://localhost$1" 2>/dev/null; }
 socat_count() { agent socat-count | tr -d '\n'; }
 
