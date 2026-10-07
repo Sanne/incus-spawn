@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * Resolves tool actions for instances, including default actions and named action references.
@@ -29,7 +30,7 @@ public class ActionResolver {
                           List<ToolSetup> cdiTools, Map<String, ImageDef> imageDefs) {
         this.incus = incus;
         this.toolDefLoader = toolDefLoader;
-        this.cdiTools = cdiTools;
+        this.cdiTools = cdiTools == null ? List.of() : cdiTools;
         this.imageDefs = imageDefs;
     }
 
@@ -63,17 +64,15 @@ public class ActionResolver {
         }
 
         // CDI tool actions (for tools not already handled by YAML)
-        if (cdiTools != null) {
-            for (var cdiTool : cdiTools) {
-                if (installedTools.contains(cdiTool.name()) && !handledTools.contains(cdiTool.name())) {
-                    for (var entry : cdiTool.actions()) {
-                        if (YamlToolAction.EXPAND_REPOS.equals(entry.getExpand())) {
-                            for (var repo : repos) {
-                                actions.add(new YamlToolAction(cdiTool.name(), entry, repo));
-                            }
-                        } else {
-                            actions.add(new YamlToolAction(cdiTool.name(), entry));
+        for (var cdiTool : cdiTools) {
+            if (installedTools.contains(cdiTool.name()) && !handledTools.contains(cdiTool.name())) {
+                for (var entry : cdiTool.actions()) {
+                    if (YamlToolAction.EXPAND_REPOS.equals(entry.getExpand())) {
+                        for (var repo : repos) {
+                            actions.add(new YamlToolAction(cdiTool.name(), entry, repo));
                         }
+                    } else {
+                        actions.add(new YamlToolAction(cdiTool.name(), entry));
                     }
                 }
             }
@@ -88,13 +87,39 @@ public class ActionResolver {
     public Optional<ToolAction> findDefaultAction(String instanceName, String parentTemplate,
                                                    Set<String> installedTools,
                                                    List<ActionContext.RepoInfo> repos) {
-        var ref = resolveDefaultActionRef(instanceName, parentTemplate);
-        if (ref == null || ref.isBlank()) {
-            return Optional.empty();
-        }
+        return findDefaultAction(parentTemplate, () -> incus.configGet(instanceName, Metadata.DEFAULT_ACTION),
+                () -> installedTools, repos);
+    }
 
-        var actions = resolveActionsForInstance(instanceName, parentTemplate, installedTools, repos);
-        return findActionByRef(ref, actions);
+    /**
+     * The shell command a new branch opens with: its template's default action, or null for a
+     * plain shell. The one rule for {@code isx branch} and the TUI's branch dialog (#868), from
+     * the source as {@code BranchFlow.preflight} read it, so it costs no request.
+     *
+     * <p>The reference comes from the current YAML (no rebuild needed to change it), but the tools
+     * it is matched against are those the source was built with ({@link #collectInstalledTools}):
+     * a tool added to the YAML without a rebuild yields a plain shell, not a binary that is not
+     * installed.
+     *
+     * @param template the leaf template the source was built from ({@code Preflight.template()})
+     */
+    public String defaultCommandForBranch(String template, JsonNode sourceInstance) {
+        var config = sourceInstance.path("config");
+        return findDefaultAction(template, () -> config.path(Metadata.DEFAULT_ACTION).asText(""),
+                        () -> collectInstalledTools(config, template), collectRepos(template))
+                .flatMap(a -> a.shellCommand(null)).orElse(null);
+    }
+
+    /**
+     * @param snapshot the {@link Metadata#DEFAULT_ACTION} stamp, read only when the YAML is gone
+     * @param installedTools collected only when there is a reference to match
+     */
+    private Optional<ToolAction> findDefaultAction(String parentTemplate, Supplier<String> snapshot,
+                                                   Supplier<Set<String>> installedTools,
+                                                   List<ActionContext.RepoInfo> repos) {
+        var ref = resolveDefaultActionRef(parentTemplate, snapshot);
+        if (ref == null) return Optional.empty();
+        return findActionByRef(ref, resolveActionsForInstance(null, parentTemplate, installedTools.get(), repos));
     }
 
     /**
@@ -117,7 +142,8 @@ public class ActionResolver {
      * Collect installed tools for an instance. For instances with BUILD_SOURCE metadata
      * (branched from a built template), uses the build-time tools list so that action
      * resolution reflects what was actually installed — not what the current YAML says.
-     * Falls back to the YAML chain for templates or when BUILD_SOURCE is unavailable.
+     * Falls back to the YAML chain for templates or when BUILD_SOURCE is unavailable; a
+     * template whose YAML is gone still has its snapshot, so it uses that.
      */
     public Set<String> collectInstalledTools(String instanceName, String parentTemplate) {
         return collectInstalledTools(readInstance(instanceName).path("config"), parentTemplate);
@@ -127,7 +153,7 @@ public class ActionResolver {
         var buildSourceJson = config.path(Metadata.BUILD_SOURCE).asText("");
         if (!buildSourceJson.isBlank()) {
             var type = config.path(Metadata.TYPE).asText("");
-            if (!Metadata.TYPE_BASE.equals(type)) {
+            if (!Metadata.TYPE_BASE.equals(type) || getInheritanceChain(parentTemplate).isEmpty()) {
                 var bs = dev.incusspawn.config.BuildSource.fromJson(buildSourceJson);
                 if (bs != null) {
                     return extractBuildTimeTools(bs);
@@ -278,22 +304,18 @@ public class ActionResolver {
         return instance;
     }
 
-    private String resolveDefaultActionRef(String instanceName, String parentTemplate) {
+    /** The default-action reference, or null for none: the YAML chain's, else the snapshot's when the YAML is gone. */
+    private String resolveDefaultActionRef(String parentTemplate, Supplier<String> snapshot) {
         // Walk the template YAML chain (child wins over parent).
+        String ref = null;
         var chain = getInheritanceChain(parentTemplate);
-        if (!chain.isEmpty()) {
-            for (int i = chain.size() - 1; i >= 0; i--) {
-                var def = chain.get(i);
-                if (def.getDefaultAction() != null) {
-                    return def.getDefaultAction();
-                }
-            }
-            return null;
+        for (int i = chain.size() - 1; i >= 0 && ref == null; i--) {
+            ref = chain.get(i).getDefaultAction();
         }
         // YAML definitions not on disk (e.g. user deleted them after building the template):
         // fall back to the snapshot stored in Incus metadata at build time.
-        var refValue = incus.configGet(instanceName, Metadata.DEFAULT_ACTION);
-        return (refValue == null || refValue.isBlank()) ? null : refValue;
+        if (chain.isEmpty()) ref = snapshot.get();
+        return (ref == null || ref.isBlank()) ? null : ref;
     }
 
     private record ActionRef(String toolName, String actionId) {}

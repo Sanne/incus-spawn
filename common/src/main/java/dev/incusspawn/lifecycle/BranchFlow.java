@@ -166,10 +166,12 @@ public final class BranchFlow {
      * A request that passed {@link #preflight}: nothing has been created yet.
      *
      * @param sourceInstance the source as preflight read it, so {@link #create} need not read it again
+     * @param template the leaf template the source was built from ({@link Inherited#template}), which
+     *                 the new branch's default action is resolved against
      */
     public record Preflight(Request request, Map<String, ImageDef> defs,
                             Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins,
-                            JsonNode sourceInstance) {}
+                            JsonNode sourceInstance, String template) {}
 
     /** An account selection and who chose each pin in it. */
     /** @param template the leaf template the source was built from ({@link Inherited#template}) */
@@ -249,7 +251,8 @@ public final class BranchFlow {
         } catch (HostResourceSetup.ForbiddenMountTargetException e) {
             throw new BranchException(e.getMessage());
         }
-        return new Preflight(req, defs, accounts.accounts(), accounts.origins(), sourceInstance);
+        return new Preflight(req, defs, accounts.accounts(), accounts.origins(), sourceInstance,
+                accounts.inherited().template());
     }
 
     /**

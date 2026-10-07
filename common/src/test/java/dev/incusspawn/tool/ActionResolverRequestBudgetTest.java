@@ -102,9 +102,22 @@ class ActionResolverRequestBudgetTest {
         var daemon = new FakeIncusDaemon().container(TEMPLATE, Map.of(
                 Metadata.TYPE, Metadata.TYPE_BASE,
                 Metadata.BUILD_SOURCE, buildSource("some-tool")));
-        var context = resolver(daemon).buildActionContext(TEMPLATE, TEMPLATE);
+        var def = new ImageDef();
+        def.setTools(List.of(new ToolDef.ToolRef("other-tool")));
+        var context = new ActionResolver(daemon.client(), new ToolDefLoader(), List.of(), Map.of(TEMPLATE, def))
+                .buildActionContext(TEMPLATE, TEMPLATE);
         assertBudget(1, daemon, "buildActionContext (base template)");
-        assertEquals(Set.of(), context.installedTools(), "no definition on disk names any tool");
+        assertEquals(Set.of("other-tool"), context.installedTools(), "the definition on disk is authoritative");
+    }
+
+    @Test
+    void aBaseTemplateWhoseDefinitionIsGoneFallsBackToItsBuildSource() {
+        var daemon = new FakeIncusDaemon().container(TEMPLATE, Map.of(
+                Metadata.TYPE, Metadata.TYPE_BASE,
+                Metadata.BUILD_SOURCE, buildSource("some-tool")));
+        var context = resolver(daemon).buildActionContext(TEMPLATE, TEMPLATE);
+        assertBudget(1, daemon, "buildActionContext (base template, YAML deleted)");
+        assertEquals(Set.of("some-tool"), context.installedTools(), "what it was built with (#868)");
     }
 
     @Test
