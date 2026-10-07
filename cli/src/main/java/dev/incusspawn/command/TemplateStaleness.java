@@ -5,7 +5,6 @@ import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.YamlToolSetup;
 
-import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -18,8 +17,9 @@ import java.util.function.Supplier;
 /**
  * Why a built template no longer matches what a build would make now (#1115): the TUI's
  * {@code ! △ ↑} marks, {@code isx templates --format=plain|json} and {@code isx build
- * --out-of-sync} ({@link #versionOutdated} and {@link #definitionChanged}, read lazily from
- * the instance's config) all apply these rules, so a rule cannot change for one of them only.
+ * --out-of-sync} ({@link #versionOutdated}, {@link #definitionChanged} and
+ * {@link #parentRebuilt}, read from the instance's config) all apply these rules, so a rule
+ * cannot change for one of them only. All three make a template out of sync (#1130).
  * The tool fingerprints a definition is compared with are each caller's input: the build
  * computes them per chain ({@code BuildCommand.computeToolFingerprints}), the others with
  * {@link #toolFingerprints}. It reads only what it is handed -- the built templates' stamps from one
@@ -41,7 +41,12 @@ final class TemplateStaleness {
      * @param definitionChanged its definition (or a tool it uses) differs from the one it was built from
      * @param parentRebuilt     its parent was built after it
      */
-    record Staleness(boolean versionOutdated, boolean definitionChanged, boolean parentRebuilt) {}
+    record Staleness(boolean versionOutdated, boolean definitionChanged, boolean parentRebuilt) {
+        /** What {@code isx build --out-of-sync} rebuilds, and the TUI counts for it: any of the three. */
+        boolean outOfSync() {
+            return versionOutdated || definitionChanged || parentRebuilt;
+        }
+    }
 
     /**
      * The staleness of every template in {@code built}.
@@ -56,10 +61,9 @@ final class TemplateStaleness {
                                          Set<String> storedSource,
                                          Supplier<Map<String, String>> toolFingerprints,
                                          String currentVersion) {
-        var timestamps = new HashMap<String, LocalDateTime>();
+        var created = new HashMap<String, String>();
         for (var t : built) {
-            var ts = ListCommand.parseTimestamp(t.created());
-            if (ts != null) timestamps.put(t.name(), ts);
+            created.put(t.name(), t.created());
         }
         Map<String, String> fingerprints = null;
         var result = new HashMap<String, Staleness>();
@@ -71,12 +75,8 @@ final class TemplateStaleness {
                 if (fingerprints == null) fingerprints = toolFingerprints.get();
                 definitionChanged = definitionChanged(t.definitionSha(), def, fingerprints);
             }
-            var parentRebuilt = false;
-            if (def != null && !def.isRoot()) {
-                var parentTs = timestamps.get(def.getParent());
-                var childTs = timestamps.get(t.name());
-                parentRebuilt = parentTs != null && childTs != null && parentTs.isAfter(childTs);
-            }
+            var parentRebuilt = def != null && !def.isRoot()
+                    && parentRebuilt(created.get(def.getParent()), t.created());
             result.put(t.name(), new Staleness(versionOutdated, definitionChanged, parentRebuilt));
         }
         return result;
@@ -94,6 +94,18 @@ final class TemplateStaleness {
     static boolean definitionChanged(String definitionSha, ImageDef def, Map<String, String> toolFingerprints) {
         return definitionSha != null && !definitionSha.isEmpty()
                 && !definitionSha.equals(def.contentFingerprint(toolFingerprints));
+    }
+
+    /**
+     * The parent was built after the template, so the template was copied from an earlier build
+     * of it. A stamp that is missing ({@code null}, a parent not built) or does not parse says
+     * nothing, so it has not been.
+     */
+    static boolean parentRebuilt(String parentCreated, String created) {
+        if (parentCreated == null || created == null) return false;
+        var parentTs = ListCommand.parseTimestamp(parentCreated);
+        var ts = ListCommand.parseTimestamp(created);
+        return parentTs != null && ts != null && parentTs.isAfter(ts);
     }
 
     /** The composite fingerprints of every tool {@code defs} use, their {@code requires} folded in. */

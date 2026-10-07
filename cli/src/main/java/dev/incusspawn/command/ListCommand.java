@@ -1702,7 +1702,8 @@ public class ListCommand extends BaseCommand {
             options.add(new BuildMenuOption(
                     "Rebuild out of sync templates",
                     "Rebuilds all templates whose definition changed\n"
-                            + "since last build, or built with an older version",
+                            + "since last build, built with an older version,\n"
+                            + "or whose parent was rebuilt after them",
                     templatesOutOfSync.size() + (templatesOutOfSync.size() == 1 ? " template" : " templates"),
                     new String[]{"--out-of-sync"}, true));
         }
@@ -5290,9 +5291,9 @@ public class ListCommand extends BaseCommand {
         anyTemplateOutdated = false;
         anyDefinitionChanged = false;
         anyParentRebuilt = false;
-        var versionOutdated = new java.util.HashSet<String>();
         var defChanged = new java.util.HashSet<String>();
         var parentRebuilt = new java.util.HashSet<String>();
+        var outOfSync = new java.util.LinkedHashSet<String>();
 
         var built = templateEntries.stream().filter(TemplateInfo::isBuilt)
                 .map(t -> new TemplateStaleness.Built(t.name, t.buildStatus, t.buildVersion, t.definitionSha))
@@ -5312,7 +5313,6 @@ public class ListCommand extends BaseCommand {
                 if (stale.versionOutdated()) {
                     symbols.append('!');
                     anyTemplateOutdated = true;
-                    versionOutdated.add(t.name);
                 }
                 if (stale.definitionChanged()) {
                     symbols.append('△');
@@ -5324,6 +5324,7 @@ public class ListCommand extends BaseCommand {
                     anyParentRebuilt = true;
                     parentRebuilt.add(t.name);
                 }
+                if (stale.outOfSync()) outOfSync.add(t.name);
                 if (!symbols.isEmpty()) {
                     statusDisplay += " " + symbols;
                     statusStyle = Style.EMPTY.fg(theme.statusWarning());
@@ -5345,9 +5346,6 @@ public class ListCommand extends BaseCommand {
         }
         templatesDefChanged = defChanged;
         templatesParentRebuilt = parentRebuilt;
-        var outOfSync = new java.util.LinkedHashSet<String>();
-        outOfSync.addAll(versionOutdated);
-        outOfSync.addAll(defChanged);
         templatesOutOfSync = outOfSync;
     }
 

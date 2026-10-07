@@ -584,8 +584,8 @@ class BuildCommandTest {
         var incus = mock(IncusClient.class);
         when(incus.exists(anyString())).thenAnswer(i -> existing.contains(i.<String>getArgument(0)));
         doAnswer(i -> existing.add(i.getArgument(1))).when(incus).rename(anyString(), anyString());
-        when(incus.configGet(anyString(), eq(Metadata.BUILD_VERSION)))
-                .thenReturn(dev.incusspawn.BuildInfo.instance().version());
+        when(incus.configByPrefix(anyString(), eq("")))
+                .thenReturn(Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version()));
         return incus;
     }
 
@@ -2089,108 +2089,114 @@ class BuildCommandTest {
                 "Root image should never be skipped due to parent");
     }
 
+    /** An Incus whose {@code name} has these stamps. */
+    private static IncusClient stamped(String name, Map<String, String> stamps) {
+        var incus = mock(IncusClient.class);
+        when(incus.configByPrefix(name, "")).thenReturn(stamps);
+        return incus;
+    }
+
+    private static boolean outdated(IncusClient incus, ImageDef imageDef, Map<String, ImageDef> defs) {
+        return BuildCommand.isImageOutdated(imageDef.getName(), imageDef, incus,
+                mock(dev.incusspawn.tool.ToolDefLoader.class), defs);
+    }
+
+    private static ImageDef def(String name, String parent) {
+        var imageDef = new ImageDef();
+        imageDef.setName(name);
+        imageDef.setParent(parent);
+        return imageDef;
+    }
+
     @Test
     void isImageOutdatedDifferentVersion() {
-        var incus = mock(IncusClient.class);
-
-        when(incus.configGet("tpl-test", "user.incus-spawn.build-version")).thenReturn("0.0.1");
-
-        var imageDef = new ImageDef();
-        imageDef.setName("tpl-test");
-
-        var toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
-        var defs = java.util.Map.of("tpl-test", imageDef);
-
-        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs),
-                "Image with different version should be outdated");
+        var imageDef = def("tpl-test", null);
+        assertTrue(outdated(stamped("tpl-test", Map.of(Metadata.BUILD_VERSION, "0.0.1")),
+                imageDef, Map.of("tpl-test", imageDef)), "Image with different version should be outdated");
     }
 
     @Test
     void isImageOutdatedMissingVersion() {
-        var incus = mock(IncusClient.class);
-
-        when(incus.configGet("tpl-test", "user.incus-spawn.build-version")).thenReturn("");
-
-        var imageDef = new ImageDef();
-        imageDef.setName("tpl-test");
-
-        var toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
-        var defs = java.util.Map.of("tpl-test", imageDef);
-
-        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs),
-                "Image with missing version should be outdated");
+        var imageDef = def("tpl-test", null);
+        assertTrue(outdated(stamped("tpl-test", Map.of(Metadata.BUILD_VERSION, "")),
+                imageDef, Map.of("tpl-test", imageDef)), "Image with missing version should be outdated");
+        // Never stamped at all: a build with no recorded version.
+        assertTrue(outdated(stamped("tpl-test", Map.of()), imageDef, Map.of("tpl-test", imageDef)));
     }
 
     @Test
     void isImageOutdatedSameVersionNoDefinitionChange() {
-        var incus = mock(IncusClient.class);
-
-        when(incus.configGet("tpl-test", "user.incus-spawn.build-version"))
-                .thenReturn(dev.incusspawn.BuildInfo.instance().version());
-        when(incus.configGet("tpl-test", "user.incus-spawn.definition-sha")).thenReturn("");
-
-        var imageDef = new ImageDef();
-        imageDef.setName("tpl-test");
-
-        var toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
-        var defs = java.util.Map.of("tpl-test", imageDef);
-
-        assertFalse(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs),
+        var imageDef = def("tpl-test", null);
+        assertFalse(outdated(stamped("tpl-test", Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
+                        Metadata.DEFINITION_SHA, "")), imageDef, Map.of("tpl-test", imageDef)),
                 "Image with same version and no definition SHA should not be outdated");
     }
 
     @Test
     void isImageOutdatedDefinitionChanged() {
-        var incus = mock(IncusClient.class);
-
-        when(incus.configGet("tpl-test", "user.incus-spawn.build-version"))
-                .thenReturn(dev.incusspawn.BuildInfo.instance().version());
-        when(incus.configGet("tpl-test", "user.incus-spawn.definition-sha"))
-                .thenReturn("old-sha-123");
-
-        var imageDef = new ImageDef();
-        imageDef.setName("tpl-test");
-
-        var toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
-        var defs = java.util.Map.of("tpl-test", imageDef);
-
-        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs),
+        var imageDef = def("tpl-test", null);
+        assertTrue(outdated(stamped("tpl-test", Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
+                        Metadata.DEFINITION_SHA, "old-sha-123")), imageDef, Map.of("tpl-test", imageDef)),
                 "Image with changed definition should be outdated");
     }
 
-    /**
-     * {@code --out-of-sync} judges a template by {@link TemplateStaleness}'s rules, read lazily:
-     * the definition stamp is read only once the version matches, so an outdated build costs
-     * one config read, as before the rules were shared (#1115).
-     */
     @Test
-    void isImageOutdatedReadsTheDefinitionStampOnlyWhenTheVersionMatches() {
-        var incus = mock(IncusClient.class);
-        when(incus.configGet("tpl-test", "user.incus-spawn.build-version")).thenReturn("0.0.1");
-        var imageDef = new ImageDef();
-        imageDef.setName("tpl-test");
-        var defs = java.util.Map.of("tpl-test", imageDef);
-
-        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus,
-                mock(dev.incusspawn.tool.ToolDefLoader.class), defs));
-        verify(incus, never()).configGet("tpl-test", "user.incus-spawn.definition-sha");
+    void isImageOutdatedWithAMatchingDefinitionIsCurrent() {
+        var imageDef = def("tpl-test", null);
+        assertFalse(outdated(stamped("tpl-test", Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
+                        Metadata.DEFINITION_SHA, imageDef.contentFingerprint(Map.of()))),
+                imageDef, Map.of("tpl-test", imageDef)));
     }
 
+    /**
+     * {@code --out-of-sync} judges a template by {@link TemplateStaleness}'s rules: all its own
+     * stamps in one read, and its parent's build time in a second, made only when the template
+     * is otherwise current (#1115, #1130).
+     */
     @Test
-    void isImageOutdatedWithAMatchingDefinitionIsCurrentAndNeverRecordedIsOutdated() {
-        var incus = mock(IncusClient.class);
-        var imageDef = new ImageDef();
-        imageDef.setName("tpl-test");
-        var defs = java.util.Map.of("tpl-test", imageDef);
-        var loader = mock(dev.incusspawn.tool.ToolDefLoader.class);
-        // configGet answers null for a key never stamped: a build with no recorded version.
-        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, loader, defs));
+    void isImageOutdatedReadsItsStampsOnceAndItsParentOnlyWhenOtherwiseCurrent() {
+        var parent = def("tpl-parent", null);
+        var child = def("tpl-child", "tpl-parent");
+        var defs = Map.of("tpl-parent", parent, "tpl-child", child);
 
-        when(incus.configGet("tpl-test", "user.incus-spawn.build-version"))
-                .thenReturn(dev.incusspawn.BuildInfo.instance().version());
-        when(incus.configGet("tpl-test", "user.incus-spawn.definition-sha"))
-                .thenReturn(imageDef.contentFingerprint(java.util.Map.of()));
-        assertFalse(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, loader, defs));
+        var old = stamped("tpl-child", Map.of(Metadata.BUILD_VERSION, "0.0.1", Metadata.CREATED, "2026-10-01T10:00:00"));
+        assertTrue(outdated(old, child, defs));
+        verify(old).configByPrefix("tpl-child", "");
+        verifyNoMoreInteractions(old);
+
+        var current = stamped("tpl-child", Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
+                Metadata.CREATED, "2026-10-01T10:00:00"));
+        when(current.configGet("tpl-parent", Metadata.CREATED)).thenReturn("2026-09-30T10:00:00");
+        assertFalse(outdated(current, child, defs));
+        verify(current).configByPrefix("tpl-child", "");
+        verify(current).configGet("tpl-parent", Metadata.CREATED);
+        verifyNoMoreInteractions(current);
+    }
+
+    /**
+     * A template whose parent was built after it is out of sync, as the TUI's {@code ↑} says:
+     * it was copied from the parent's earlier build (#1130). Equal or unknown times are not.
+     */
+    @Test
+    void isImageOutdatedWhenItsParentWasBuiltAfterIt() {
+        var parent = def("tpl-parent", null);
+        var child = def("tpl-child", "tpl-parent");
+        var defs = Map.of("tpl-parent", parent, "tpl-child", child);
+        var stamps = Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
+                Metadata.CREATED, "2026-10-01T10:00:00");
+
+        var incus = stamped("tpl-child", stamps);
+        when(incus.configGet("tpl-parent", Metadata.CREATED)).thenReturn("2026-10-01T11:00:00");
+        assertTrue(outdated(incus, child, defs));
+
+        when(incus.configGet("tpl-parent", Metadata.CREATED)).thenReturn("2026-10-01T10:00:00");
+        assertFalse(outdated(incus, child, defs));
+
+        when(incus.configGet("tpl-parent", Metadata.CREATED)).thenReturn("");
+        assertFalse(outdated(incus, child, defs));
+
+        when(incus.configGet("tpl-parent", Metadata.CREATED)).thenThrow(new dev.incusspawn.incus.IncusException("not found"));
+        assertFalse(outdated(incus, child, defs), "a parent that is not built was not rebuilt");
     }
 
     // --- default-action sync after every build (#284) ---

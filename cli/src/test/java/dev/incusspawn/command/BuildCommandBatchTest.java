@@ -24,7 +24,8 @@ import static org.mockito.Mockito.*;
 /**
  * Which templates one {@code isx build} invocation rebuilds, and in what order, driven through
  * {@link BuildCommand#dispatch} against {@link FakeIncusDaemon} with each build recorded instead
- * of run (#1130): several targets for {@code --with-parents} and {@code --with-descendants}.
+ * of run (#1130): several targets for {@code --with-parents} and {@code --with-descendants}, and
+ * {@code --out-of-sync} repairing a template whose parent was rebuilt after it.
  */
 @ExtendWith(IsolatedHome.class)
 class BuildCommandBatchTest {
@@ -153,5 +154,41 @@ class BuildCommandBatchTest {
         assertEquals(0, build("tpl-isx", "tpl-layer"));
 
         assertEquals(List.of("tpl-layer", "tpl-isx"), built);
+    }
+
+    /**
+     * The two-step workflow of #1130 self-heals: after {@code --with-parents tpl-quarkus},
+     * {@code tpl-isx} was copied from the layer's earlier build, and {@code --out-of-sync}
+     * rebuilds it, and only it.
+     */
+    @Test
+    void outOfSyncRebuildsAChildWhoseParentWasRebuiltAfterIt() {
+        builtAt(Map.of(
+                "tpl-base", "2026-10-01T09:00:00",
+                "tpl-layer", "2026-10-07T09:01:00",
+                "tpl-quarkus", "2026-10-07T09:02:00",
+                "tpl-isx", "2026-10-01T09:02:00",
+                "tpl-other", "2026-10-01T09:00:00",
+                "tpl-other-child", "2026-10-01T09:01:00"));
+
+        assertEquals(0, build("--out-of-sync"));
+
+        assertEquals(List.of("tpl-isx"), built);
+    }
+
+    /** A rebuilt mid-level parent re-derives everything under it in the same batch. */
+    @Test
+    void outOfSyncRebuildsTheDescendantsOfWhatItRebuilds() {
+        builtAt(Map.of(
+                "tpl-base", "2026-10-07T09:00:00",
+                "tpl-layer", "2026-10-01T09:01:00",
+                "tpl-quarkus", "2026-10-01T09:02:00",
+                "tpl-isx", "2026-10-01T09:02:00",
+                "tpl-other", "2026-10-01T09:00:00",
+                "tpl-other-child", "2026-10-01T09:01:00"));
+
+        assertEquals(0, build("--out-of-sync"));
+
+        assertEquals(List.of("tpl-layer", "tpl-isx", "tpl-quarkus"), built);
     }
 }

@@ -155,4 +155,26 @@ class TemplatesStalenessTest {
         assertEquals(new TemplateStaleness.Staleness(false, false, false), stale.get("tpl-dev"));
         assertEquals(0, calls.get(), "no definition was compared, so no tool was fingerprinted");
     }
+
+    /**
+     * Each reason alone makes a template out of sync, a rebuilt parent's included: the TUI's
+     * "Rebuild out of sync templates" count is what {@code isx build --out-of-sync} rebuilds (#1130).
+     */
+    @Test
+    void anyReasonMakesATemplateOutOfSync() {
+        assertFalse(new TemplateStaleness.Staleness(false, false, false).outOfSync());
+        assertTrue(new TemplateStaleness.Staleness(true, false, false).outOfSync());
+        assertTrue(new TemplateStaleness.Staleness(false, true, false).outOfSync());
+        assertTrue(new TemplateStaleness.Staleness(false, false, true).outOfSync());
+    }
+
+    @Test
+    void aParentIsRebuiltOnlyWhenBothTimesAreKnownAndItsIsLater() {
+        assertTrue(TemplateStaleness.parentRebuilt("2026-10-05T10:00:01", "2026-10-05T10:00:00"));
+        assertFalse(TemplateStaleness.parentRebuilt("2026-10-05T10:00:00", "2026-10-05T10:00:00"));
+        assertFalse(TemplateStaleness.parentRebuilt("2026-10-04T10:00:00", "2026-10-05T10:00:00"));
+        assertFalse(TemplateStaleness.parentRebuilt(null, "2026-10-05T10:00:00"));
+        assertFalse(TemplateStaleness.parentRebuilt("2026-10-05T10:00:00", ""));
+        assertFalse(TemplateStaleness.parentRebuilt("built", "2026-10-05T10:00:00"));
+    }
 }
