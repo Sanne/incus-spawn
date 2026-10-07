@@ -2,7 +2,7 @@
 
 ## Mission
 
-incus-spawn solves a specific, underserved problem: **safe, fast, full-fidelity dev environments for running untrusted code** — particularly AI coding agents. Docker/Podman optimize for shipping apps (minimal filesystem, single process). incus-spawn optimizes for *working inside* a container as if it were a real machine: systemd, real networking, strace, nested containers, GUI/audio. The target user is a developer who wants to hand an AI agent a complete Linux workstation and not worry about credential theft or host damage.
+incus-spawn solves a specific, underserved problem: **safe, fast, full-fidelity dev environments for running untrusted code** — particularly AI coding agents. Application containers optimize for shipping apps (minimal filesystem, single process). incus-spawn optimizes for *working inside* a machine: systemd, real networking, strace, nested containers, GUI/audio, as a system container by default or a VM. Other projects sandbox agents too, and the README compares them; when writing about one, state its design choice and what follows from it, and stay measured about the people behind it. The target user is a developer who wants to hand an AI agent a complete Linux workstation and not worry about credential theft or host damage.
 
 ## Core Strengths
 

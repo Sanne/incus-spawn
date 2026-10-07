@@ -2,19 +2,21 @@
 
 A CLI tool for managing isolated Incus-based development environments. System containers that behave like bare-metal Linux machines, designed for safely running untrusted AI agents and external reproducers in OSS projects.
 
-## Why not Docker?
+## Why not application containers?
 
-Docker and Podman are **application containers**: they isolate a single process with a minimal filesystem, no init system, and restricted networking. This is ideal for deploying microservices but poor for development environments where you need:
+**Application containers**, the kind Docker and Podman run by default, isolate a single process with a minimal filesystem, no init system, and restricted networking. This is ideal for deploying microservices but poor for development environments where you need:
 
 - A real init system (systemd) for services like podman socket, sshd, or dbus
 - Full networking: `ping`, `traceroute`, `tcpdump`, DNS resolution that works like a real machine
 - Nested containers: running Podman/Docker inside the environment (Testcontainers, CI pipelines)
-- Debugging tools: `strace`, `perf`, `gdb` — all require capabilities or sysctls that Docker strips
+- Debugging tools: `strace`, `perf`, `gdb` — all require capabilities or sysctls that application containers strip
 - GUI applications via Wayland passthrough with GPU acceleration, and audio via PipeWire
 
-Incus **system containers** run a full Linux userspace with their own init, networking stack, and process tree. They share the host kernel (like Docker) but present as a complete machine rather than a process jail. For stronger isolation, Incus also supports KVM virtual machines with a separate kernel, at the cost of a modest performance overhead.
+Incus **system containers** run a full Linux userspace with their own init, networking stack, and process tree. They share the host kernel (like application containers) but present as a complete machine rather than a single process. For stronger isolation, Incus also supports KVM virtual machines with a separate kernel, at the cost of a modest performance overhead.
 
 The tradeoff: system containers are heavier than application containers (~200MB base vs ~5MB Alpine). This is acceptable for development environments that persist for hours or days, and copy-on-write storage means clones are cheap regardless of base image size.
+
+The choice is what a sandbox *is*: in isx, a branch of a template, as a container by default or a VM. Other sandboxes for coding agents make it differently, and the README's "Compared with other sandboxes" section says how.
 
 ## Goals
 
