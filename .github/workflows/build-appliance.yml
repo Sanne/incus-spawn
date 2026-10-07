@@ -2,9 +2,10 @@ name: Build Appliance Image
 
 on:
   push:
+    branches-ignore:
+      - 'dependabot/**'
     paths:
       - 'appliance/**'
-    branches: [main]
   pull_request:
     paths:
       - 'appliance/**'
