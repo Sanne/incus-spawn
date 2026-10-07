@@ -1305,7 +1305,7 @@ so until #1144 the aarch64 proxy also encrypted TLS in software. On an Apple Sil
 | `armv8.1-a` (GraalVM default) | 118 req/s, 74 MB/s | 261 / 521 ms |
 | **`armv8.1-a+aes`** | **~1,000 req/s, 627 MB/s** | **31 / 60 ms** |
 
-The binary grows by 16 KB. Three things from GraalVM's own source decide the shape of this:
+The proxy binary grows by 16 KB (75,665,944 to 75,682,472 B, serial GC). Three things from GraalVM's own source decide the shape of this:
 
 - **`+aes` means AES *and* PMULL** (`CPUTypeAArch64`: `case "aes" -> List.of(AES, PMULL)`),
   so it enables the GHASH intrinsic too; there is no separate modifier to add.
@@ -1323,7 +1323,9 @@ startup check (`CPUTypeAArch64.getDefaultName()` picks `armv8.1-a` whenever the 
 it, and every release builder does). What `+aes` drops is only an ARMv8.1+ core built without
 the optional crypto extension, which none of the platforms above is; an 8.5x cost to everyone
 else for such a core would be the wrong trade. The JVM install channels (`install.sh`, JBang)
-run anywhere, as HotSpot detects AES at run time.
+run anywhere, as HotSpot detects AES at run time. One side effect: a native build *on* a
+Raspberry Pi 4 used to fall back to `compatibility` and run there, and now yields binaries that
+exit at startup on that same Pi; build with `-Dnative.march.args=` to get GraalVM's default back.
 
 The base stays `armv8.1-a` rather than `compatibility`, which would drop LSE atomics. `native`
 would add the SHA1/SHA2/SHA3/SHA512 intrinsics but is tied to the build host's CPU, and there

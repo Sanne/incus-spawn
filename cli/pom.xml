@@ -189,6 +189,7 @@
     </build>
 
     <profiles>
+<!-- The -march profiles (x86-march-amd64, x86-march-x86_64, aarch64-march) are duplicated in proxy/pom.xml: change both together, same ids, activation and values. -->
         <!--
           GraalVM's default -march=x86-64-v3 omits AES and CLMUL, so the image cannot
           use AES-NI/GHASH intrinsics: measured 79 MB/s vs ~3100 MB/s for AES-256-GCM

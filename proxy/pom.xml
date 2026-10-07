@@ -145,6 +145,7 @@
         </plugins>
     </build>
     <profiles>
+<!-- The -march profiles (x86-march-amd64, x86-march-x86_64, aarch64-march) are duplicated in cli/pom.xml: change both together, same ids, activation and values. -->
         <!--
           GraalVM's default -march=x86-64-v3 does NOT include AES or CLMUL, so the
           native image cannot use AES-NI/GHASH intrinsics and TLS bulk encryption
