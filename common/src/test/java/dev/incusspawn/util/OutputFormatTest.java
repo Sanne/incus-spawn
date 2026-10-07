@@ -78,14 +78,27 @@ class OutputFormatTest {
     }
 
     @Test
+    void noBidiControlInAValueReordersWhatPlainShows() {
+        // #1118 review: an embedding, override or isolate (U+202A-U+202E, U+2066-U+2069) makes a
+        // terminal draw the rest of the line out of order, so plain spaces it like a control.
+        var record = new LinkedHashMap<String, Object>();
+        record.put("bidi", "a\u202Ab\u202Bc\u202Cd\u202De\u202Ef\u2066g\u2067h\u2068i\u2069j");
+        record.put("kept", "\u200E\u200F\u05D0\u0627");
+        var bytes = new ByteArrayOutputStream();
+        OutputFormat.PLAIN.printOne(new PrintStream(bytes, true, StandardCharsets.UTF_8), record);
+        assertEquals("a b c d e f g h i j\t\u200E\u200F\u05D0\u0627\n", bytes.toString(StandardCharsets.UTF_8));
+    }
+
+    @Test
     void jsonKeepsAControlCharacterExactButNeverRaw() throws Exception {
         // #1118: json is where a value is exact. Jackson escapes C0 itself; DEL, C1 and the
         // Unicode line separators would otherwise go out as raw bytes a terminal may act on.
-        var value = "a\u001b[2J\u007f\u009b\u0085\u2028\u2029\u00e9b";
+        // A bidi control drives no terminal and stays as it is.
+        var value = "a\u001b[2J\u007f\u009b\u0085\u2028\u2029\u00e9\u202E\u2066b";
         var bytes = new ByteArrayOutputStream();
         OutputFormat.JSON.printOne(new PrintStream(bytes, true, StandardCharsets.UTF_8), Map.of("v", value));
         var text = bytes.toString(StandardCharsets.UTF_8);
-        assertEquals("{\n  \"v\" : \"a\\u001B[2J\\u007F\\u009B\\u0085\\u2028\\u2029\u00e9b\"\n}\n",
+        assertEquals("{\n  \"v\" : \"a\\u001B[2J\\u007F\\u009B\\u0085\\u2028\\u2029\u00e9\u202E\u2066b\"\n}\n",
                 text.replace("\r\n", "\n"));
         assertEquals(value, new com.fasterxml.jackson.databind.ObjectMapper().readTree(text).get("v").asText());
     }

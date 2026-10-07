@@ -520,9 +520,13 @@ is empty. So query commands take `--format` (#1036), through one shared helper,
 - **Control characters** (#1118): both formats are read on terminals too, and a value can be a
   stamp someone set by hand, so neither writes a control character in a value raw. `plain` is
   lossy: every C0 control (tab and line breaks included), DEL, C1 control and U+2028/U+2029
-  becomes a space (`OutputFormat.oneLine`), which keeps a record one safe line. `json` is exact:
+  becomes a space (`OutputFormat.oneLine`), which keeps a record one safe line, and so does
+  every bidi embedding, override and isolate (U+202A-U+202E, U+2066-U+2069), which would make
+  a terminal draw the rest of the line, the following fields included, out of order. The marks
+  (U+200E, U+200F, U+061C) stay: they reorder nothing beyond their neighbours. `json` is exact:
   Jackson escapes C0 as JSON requires, and `OutputFormat` also escapes DEL, C1 and U+2028/U+2029
-  as `\uXXXX`, which JSON allows and every parser reverses. A script that needs a value exactly
+  as `\uXXXX`, which JSON allows and every parser reverses. A bidi control stays as it
+  is: it drives no terminal. A script that needs a value exactly
   reads `json`. Escaping in `plain` instead (`\e`, `\\`) was rejected: it would make every reader
   decode, and change the many values with a backslash for the rare one with a control character.
   The `isx list` table and the TUI show an instance stamp (parent, created, the MCP fields)

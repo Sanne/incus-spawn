@@ -37,9 +37,11 @@ public enum OutputFormat {
 
     /**
      * What a terminal may act on or break a line at: C0 (tab, line breaks and ESC included), DEL,
-     * C1 (U+009B is an 8-bit CSI), and the Unicode line and paragraph separators.
+     * C1 (U+009B is an 8-bit CSI), and the Unicode line and paragraph separators; and the bidi
+     * embeddings, overrides and isolates (U+202A-U+202E, U+2066-U+2069), which make a terminal
+     * draw the rest of the line out of order.
      */
-    private static final Pattern CONTROL = Pattern.compile("[\\p{Cc}\\u2028\\u2029]");
+    private static final Pattern CONTROL = Pattern.compile("[\\p{Cc}\\u2028\\u2029\\u202A-\\u202E\\u2066-\\u2069]");
     private static final ObjectMapper JSON_WRITER = new ObjectMapper(
             new JsonFactory().setCharacterEscapes(new ControlEscapes()))
             .enable(SerializationFeature.INDENT_OUTPUT);
