@@ -36,8 +36,8 @@ run:
       mkdir -p /run/podman &&
       ln -sf /run/podman/podman.sock /run/docker.sock &&
       ln -sf /run/podman/podman.sock /var/run/docker.sock &&
-      printf 'd /run/podman 0755 root root -\nL /run/docker.sock - - - - /run/podman/podman.sock\nL /var/run/docker.sock - - - - /run/podman/podman.sock\n' \
-        > /etc/tmpfiles.d/podman-socket.conf &&
+      printf 'd /run/podman 0755 root root -\nL+ /run/docker.sock - - - - /run/podman/podman.sock\nL /var/run/docker.sock - - - - /run/podman/podman.sock\n' \
+        > /etc/tmpfiles.d/podman-docker.conf &&
       mkdir -p /etc/systemd/system/podman.socket.d &&
       printf '[Socket]\nSocketMode=0666\n' \
         > /etc/systemd/system/podman.socket.d/override.conf
@@ -52,12 +52,12 @@ run:
       # (env: entries don't support conditionals).
       ln -sf /run/user/1000/podman/podman.sock /run/docker.sock &&
       ln -sf /run/user/1000/podman/podman.sock /var/run/docker.sock &&
-      printf 'L /run/docker.sock - - - - /run/user/1000/podman/podman.sock\nL /var/run/docker.sock - - - - /run/user/1000/podman/podman.sock\n' \
-        > /etc/tmpfiles.d/podman-socket.conf
+      printf 'L+ /run/docker.sock - - - - /run/user/1000/podman/podman.sock\nL /var/run/docker.sock - - - - /run/user/1000/podman/podman.sock\n' \
+        > /etc/tmpfiles.d/podman-docker.conf
     fi
   # Short names: run: instead of files: because files: doesn't support conditionals.
   - |
-    if [ "${param_short_names}" = "permissive" ]; then
+    if [ "${param_short-names}" = "permissive" ]; then
       mkdir -p /etc/containers/registries.conf.d
       cat > /etc/containers/registries.conf.d/10-short-names.conf << 'SHORTNAMES'
     short-name-mode = "permissive"
