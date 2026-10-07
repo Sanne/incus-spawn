@@ -385,7 +385,7 @@ isx build --out-of-sync
 isx build --all
 ```
 
-The TUI marks templates with `!` when they were built with a different isx version, `△` when the image or tool definition has changed since the last build, and `↑` when their parent was rebuilt after them (so they were copied from its earlier build) — `isx build --out-of-sync` rebuilds all three, and everything that inherits from what it rebuilds. If a build fails, the container is promoted to an inspectable instance so you can shell in and debug.
+The TUI marks templates with `!` when they were built with a different isx version, `△` when the image or tool definition has changed since the last build, and `↑` when their parent was rebuilt after them (so they were copied from its earlier build; a VM over a container parent is built from the definitions, never copied, so it is never `↑`) — `isx build --out-of-sync` rebuilds all three, and everything that inherits from what it rebuilds. If a build fails, the container is promoted to an inspectable instance so you can shell in and debug.
 
 ### Declarative Repos
 
@@ -1231,7 +1231,7 @@ The fields of the other commands, in order:
 
 | Command | Fields |
 |---------|--------|
-| `isx templates` | `name`, `parent`, `source` (`built-in` or the file), `description`, `built`, `built_at`, `version_outdated` (built by another isx version), `definition_changed` (its definition or a tool it uses changed since), `parent_rebuilt` (its parent was built after it). The staleness flags are `null` for a template that is not built, and everything from `built` on is `null` when Incus could not be asked, with the reason on stderr. `isx build --out-of-sync` builds the templates that are not built, rebuilds those with `version_outdated`, `definition_changed` or `parent_rebuilt`, and rebuilds the descendants of every template it builds |
+| `isx templates` | `name`, `parent`, `source` (`built-in` or the file), `description`, `built`, `built_at`, `version_outdated` (built by another isx version), `definition_changed` (its definition or a tool it uses changed since), `parent_rebuilt` (its parent was built after it, and it was copied from the parent: never for a VM over a container parent, or the reverse, which is built from the definitions). The staleness flags are `null` for a template that is not built, and everything from `built` on is `null` when Incus could not be asked, with the reason on stderr. `isx build --out-of-sync` builds the templates that are not built, rebuilds those with `version_outdated`, `definition_changed` or `parent_rebuilt`, and rebuilds the descendants of every template it builds |
 | `isx tools list` | `name`, `source`, `description` |
 | `isx tools show <tool>` | `name`, `description`, `source`, `feature`, `requires`, `packages`, `parameters`, `actions` (labels), `downloads` (URLs), `proxy_domains` |
 | `isx account list` | one record per account: `namespace`, `account`, `description`, `default`, `problem` (`incomplete`, or `not-configured` for an account only a pin names), `pinned_by`, `following` (the instances that follow the default). The last two are `null` when Incus could not be asked, with the reason on stderr; `plain` prints that as `-`, like an empty list, so read `json` to tell them apart |

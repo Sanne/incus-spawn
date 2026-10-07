@@ -61,6 +61,8 @@ class BuildCommandBatchTest {
 
     /** Each recorded build leaves its image behind, current, as a real build's swap does. */
     private boolean buildsLeaveImages;
+    /** Definitions besides {@link #tree()}. */
+    private final Map<String, ImageDef> extraDefs = new LinkedHashMap<>();
 
     private int build(String... args) {
         var cmd = spy(new BuildCommand());
@@ -93,7 +95,9 @@ class BuildCommandBatchTest {
         var err = new ByteArrayOutputStream();
         System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
         try {
-            return cmd.dispatch(tree(), executor).getResultValue();
+            var defs = tree();
+            defs.putAll(extraDefs);
+            return cmd.dispatch(defs, executor).getResultValue();
         } finally {
             System.setErr(originalErr);
             executor.shutdownNow();
@@ -154,6 +158,32 @@ class BuildCommandBatchTest {
         assertEquals(0, build("tpl-isx", "tpl-layer"));
 
         assertEquals(List.of("tpl-layer", "tpl-isx"), built);
+    }
+
+    /**
+     * {@code tpl-isx-vm} over its container parent was built from the definitions, not copied:
+     * the parent's rebuild leaves it current, so {@code --out-of-sync} does not rebuild it.
+     */
+    @Test
+    void outOfSyncLeavesAVmOverARebuiltContainerParentAlone() {
+        var vm = new ImageDef();
+        vm.setName("tpl-isx-vm");
+        vm.setParent("tpl-isx");
+        vm.setType("vm");
+        extraDefs.put("tpl-isx-vm", vm);
+        builtAt(Map.of(
+                "tpl-base", "2026-10-01T09:00:00",
+                "tpl-layer", "2026-10-01T09:01:00",
+                "tpl-isx", "2026-10-07T09:02:00",
+                "tpl-quarkus", "2026-10-01T09:02:00",
+                "tpl-other", "2026-10-01T09:00:00",
+                "tpl-other-child", "2026-10-01T09:01:00"));
+        daemon.instance("tpl-isx-vm", "virtual-machine", "Stopped", Map.of(Metadata.TYPE, Metadata.TYPE_BASE,
+                Metadata.BUILD_VERSION, NOW, Metadata.CREATED, "2026-10-01T09:03:00"));
+
+        assertEquals(0, build("--out-of-sync"));
+
+        assertEquals(List.of(), built);
     }
 
     /**

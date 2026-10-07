@@ -1,6 +1,9 @@
 package dev.incusspawn.command;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.incus.MachineType;
+import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.YamlToolSetup;
@@ -32,9 +35,20 @@ final class TemplateStaleness {
 
     /**
      * A built template's build stamps: {@code created} as recorded ({@code ""} or a placeholder
-     * when unknown), the isx version that built it, and its definition's fingerprint then.
+     * when unknown), the isx version that built it, and its definition's fingerprint then; and
+     * what Incus says it is, a container or a VM.
      */
-    record Built(String name, String created, String buildVersion, String definitionSha) {}
+    record Built(String name, String created, String buildVersion, String definitionSha,
+                 MachineType machineType) {
+
+        /** {@code name} as Incus describes it, from one instance's metadata or a listing's entry. */
+        static Built of(String name, JsonNode instance) {
+            var config = instance.path("config");
+            return new Built(name, config.path(Metadata.CREATED).asText(""),
+                    config.path(Metadata.BUILD_VERSION).asText(""),
+                    config.path(Metadata.DEFINITION_SHA).asText(""), MachineType.fromIncus(instance));
+        }
+    }
 
     /**
      * @param versionOutdated   built by another isx version, or by one that did not record it
@@ -61,9 +75,9 @@ final class TemplateStaleness {
                                          Set<String> storedSource,
                                          Supplier<Map<String, String>> toolFingerprints,
                                          String currentVersion) {
-        var created = new HashMap<String, String>();
+        var byName = new HashMap<String, Built>();
         for (var t : built) {
-            created.put(t.name(), t.created());
+            byName.put(t.name(), t);
         }
         Map<String, String> fingerprints = null;
         var result = new HashMap<String, Staleness>();
@@ -76,7 +90,7 @@ final class TemplateStaleness {
                 definitionChanged = definitionChanged(t.definitionSha(), def, fingerprints);
             }
             var parentRebuilt = def != null && !def.isRoot()
-                    && parentRebuilt(created.get(def.getParent()), t.created());
+                    && parentRebuilt(byName.get(def.getParent()), t);
             result.put(t.name(), new Staleness(versionOutdated, definitionChanged, parentRebuilt));
         }
         return result;
@@ -97,14 +111,16 @@ final class TemplateStaleness {
     }
 
     /**
-     * The parent was built after the template, so the template was copied from an earlier build
-     * of it. A stamp that is missing ({@code null}, a parent not built) or does not parse says
-     * nothing, so it has not been.
+     * The parent was built after the template, which was copied from an earlier build of it. A
+     * template of another machine type than its parent (a VM over a container) was built from
+     * the definitions alone, not copied, so the parent's builds are nothing to it; the descendant
+     * cascade already covers a parent whose definition changed. A parent not built ({@code null})
+     * or a build time that does not parse says nothing, so it has not been rebuilt.
      */
-    static boolean parentRebuilt(String parentCreated, String created) {
-        if (parentCreated == null || created == null) return false;
-        var parentTs = ListCommand.parseTimestamp(parentCreated);
-        var ts = ListCommand.parseTimestamp(created);
+    static boolean parentRebuilt(Built parent, Built template) {
+        if (parent == null || parent.machineType() != template.machineType()) return false;
+        var parentTs = ListCommand.parseTimestamp(parent.created());
+        var ts = ListCommand.parseTimestamp(template.created());
         return parentTs != null && ts != null && parentTs.isAfter(ts);
     }
 

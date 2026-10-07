@@ -584,8 +584,8 @@ class BuildCommandTest {
         var incus = mock(IncusClient.class);
         when(incus.exists(anyString())).thenAnswer(i -> existing.contains(i.<String>getArgument(0)));
         doAnswer(i -> existing.add(i.getArgument(1))).when(incus).rename(anyString(), anyString());
-        when(incus.configByPrefix(anyString(), eq("")))
-                .thenReturn(Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version()));
+        when(incus.instanceMetadataOrThrow(anyString()))
+                .thenReturn(instance("container", Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version())));
         return incus;
     }
 
@@ -2089,10 +2089,17 @@ class BuildCommandTest {
                 "Root image should never be skipped due to parent");
     }
 
-    /** An Incus whose {@code name} has these stamps. */
+    /** An instance's metadata as Incus reports it: its type ({@code container} or {@code virtual-machine}) and config. */
+    private static ObjectNode instance(String type, Map<String, String> config) {
+        var node = new ObjectMapper().createObjectNode().put("type", type);
+        node.set("config", new ObjectMapper().valueToTree(config));
+        return node;
+    }
+
+    /** An Incus whose container {@code name} has these stamps. */
     private static IncusClient stamped(String name, Map<String, String> stamps) {
         var incus = mock(IncusClient.class);
-        when(incus.configByPrefix(name, "")).thenReturn(stamps);
+        when(incus.instanceMetadataOrThrow(name)).thenReturn(instance("container", stamps));
         return incus;
     }
 
@@ -2150,8 +2157,8 @@ class BuildCommandTest {
 
     /**
      * {@code --out-of-sync} judges a template by {@link TemplateStaleness}'s rules: all its own
-     * stamps in one read, and its parent's build time in a second, made only when the template
-     * is otherwise current (#1115, #1130).
+     * stamps in one read, and its parent's in a second, made only when the template is otherwise
+     * current (#1115, #1130).
      */
     @Test
     void isImageOutdatedReadsItsStampsOnceAndItsParentOnlyWhenOtherwiseCurrent() {
@@ -2161,42 +2168,73 @@ class BuildCommandTest {
 
         var old = stamped("tpl-child", Map.of(Metadata.BUILD_VERSION, "0.0.1", Metadata.CREATED, "2026-10-01T10:00:00"));
         assertTrue(outdated(old, child, defs));
-        verify(old).configByPrefix("tpl-child", "");
+        verify(old).instanceMetadataOrThrow("tpl-child");
         verifyNoMoreInteractions(old);
 
         var current = stamped("tpl-child", Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
                 Metadata.CREATED, "2026-10-01T10:00:00"));
-        when(current.configGet("tpl-parent", Metadata.CREATED)).thenReturn("2026-09-30T10:00:00");
+        when(current.instanceMetadataOrThrow("tpl-parent"))
+                .thenReturn(instance("container", Map.of(Metadata.CREATED, "2026-09-30T10:00:00")));
         assertFalse(outdated(current, child, defs));
-        verify(current).configByPrefix("tpl-child", "");
-        verify(current).configGet("tpl-parent", Metadata.CREATED);
+        verify(current).instanceMetadataOrThrow("tpl-child");
+        verify(current).instanceMetadataOrThrow("tpl-parent");
         verifyNoMoreInteractions(current);
     }
 
     /**
      * A template whose parent was built after it is out of sync, as the TUI's {@code ↑} says:
-     * it was copied from the parent's earlier build (#1130). Equal or unknown times are not.
+     * it was copied from the parent's earlier build (#1130). Equal or unknown times are not, nor
+     * is a parent that is not built.
      */
     @Test
     void isImageOutdatedWhenItsParentWasBuiltAfterIt() {
         var parent = def("tpl-parent", null);
         var child = def("tpl-child", "tpl-parent");
         var defs = Map.of("tpl-parent", parent, "tpl-child", child);
-        var stamps = Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
-                Metadata.CREATED, "2026-10-01T10:00:00");
+        var incus = stamped("tpl-child", Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
+                Metadata.CREATED, "2026-10-01T10:00:00"));
 
-        var incus = stamped("tpl-child", stamps);
-        when(incus.configGet("tpl-parent", Metadata.CREATED)).thenReturn("2026-10-01T11:00:00");
-        assertTrue(outdated(incus, child, defs));
+        for (var parentBuilt : List.of("2026-10-01T11:00:00", "2026-10-01T10:00:00", "")) {
+            when(incus.instanceMetadataOrThrow("tpl-parent"))
+                    .thenReturn(instance("container", Map.of(Metadata.CREATED, parentBuilt)));
+            assertEquals(parentBuilt.startsWith("2026-10-01T11"), outdated(incus, child, defs), parentBuilt);
+        }
 
-        when(incus.configGet("tpl-parent", Metadata.CREATED)).thenReturn("2026-10-01T10:00:00");
-        assertFalse(outdated(incus, child, defs));
-
-        when(incus.configGet("tpl-parent", Metadata.CREATED)).thenReturn("");
-        assertFalse(outdated(incus, child, defs));
-
-        when(incus.configGet("tpl-parent", Metadata.CREATED)).thenThrow(new dev.incusspawn.incus.IncusException("not found"));
+        when(incus.instanceMetadataOrThrow("tpl-parent")).thenReturn(null);
         assertFalse(outdated(incus, child, defs), "a parent that is not built was not rebuilt");
+    }
+
+    /**
+     * A VM over a container parent ({@code tpl-isx-vm} over {@code tpl-isx}) is built from the
+     * definitions, not copied, so rebuilding the parent leaves it current: {@code --out-of-sync}
+     * must not rebuild it, for minutes, after every rebuild of the parent (#1130 review).
+     */
+    @Test
+    void aTemplateOfAnotherMachineTypeThanItsParentIsNotOutdatedByItsRebuild() {
+        var parent = def("tpl-isx", null);
+        var child = def("tpl-isx-vm", "tpl-isx");
+        child.setType("vm");
+        var defs = Map.of("tpl-isx", parent, "tpl-isx-vm", child);
+        var incus = mock(IncusClient.class);
+        when(incus.instanceMetadataOrThrow("tpl-isx-vm")).thenReturn(instance("virtual-machine", Map.of(
+                Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
+                Metadata.CREATED, "2026-10-01T10:00:00")));
+        when(incus.instanceMetadataOrThrow("tpl-isx"))
+                .thenReturn(instance("container", Map.of(Metadata.CREATED, "2026-10-07T10:00:00")));
+
+        assertFalse(outdated(incus, child, defs));
+    }
+
+    /** Asking Incus failing is not "the parent is not built": it is thrown, never read as current. */
+    @Test
+    void aParentThatCannotBeReadFailsTheCheck() {
+        var parent = def("tpl-parent", null);
+        var child = def("tpl-child", "tpl-parent");
+        var incus = stamped("tpl-child", Map.of(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version(),
+                Metadata.CREATED, "2026-10-01T10:00:00"));
+        when(incus.instanceMetadataOrThrow("tpl-parent")).thenThrow(new IncusException("HTTP 500"));
+
+        assertThrows(IncusException.class, () -> outdated(incus, child, Map.of("tpl-parent", parent, "tpl-child", child)));
     }
 
     // --- default-action sync after every build (#284) ---

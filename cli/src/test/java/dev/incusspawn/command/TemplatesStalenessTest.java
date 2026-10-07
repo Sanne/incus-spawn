@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.OutputFormat;
 import org.junit.jupiter.api.Test;
@@ -57,8 +58,8 @@ class TemplatesStalenessTest {
         // tpl-minimal is current. tpl-dev was built by another isx, from another definition,
         // before its parent was rebuilt. tpl-java is not built.
         var built = List.of(
-                new TemplateStaleness.Built("tpl-minimal", "2026-10-05T10:00:00", CURRENT, minimalSha),
-                new TemplateStaleness.Built("tpl-dev", "2026-10-01T09:30:00", "1.3.0", "an-older-definition"));
+                new TemplateStaleness.Built("tpl-minimal", "2026-10-05T10:00:00", CURRENT, minimalSha, MachineType.CONTAINER),
+                new TemplateStaleness.Built("tpl-dev", "2026-10-01T09:30:00", "1.3.0", "an-older-definition", MachineType.CONTAINER));
         var records = TemplatesCommand.ListSub.records(defs, built, () -> fps, CURRENT, ZONE);
         assertEquals("""
                 [ {
@@ -102,9 +103,9 @@ class TemplatesStalenessTest {
         var sha = (java.util.function.Function<String, String>) n -> defs.get(n).contentFingerprint(fps);
         // Every one current; tpl-java built before tpl-dev, so only its parent_rebuilt is set.
         var stale = TemplateStaleness.assess(List.of(
-                        new TemplateStaleness.Built("tpl-minimal", "2026-10-01T08:00:00", CURRENT, sha.apply("tpl-minimal")),
-                        new TemplateStaleness.Built("tpl-dev", "2026-10-03T08:00:00", CURRENT, sha.apply("tpl-dev")),
-                        new TemplateStaleness.Built("tpl-java", "2026-10-02T08:00:00", CURRENT, sha.apply("tpl-java"))),
+                        new TemplateStaleness.Built("tpl-minimal", "2026-10-01T08:00:00", CURRENT, sha.apply("tpl-minimal"), MachineType.CONTAINER),
+                        new TemplateStaleness.Built("tpl-dev", "2026-10-03T08:00:00", CURRENT, sha.apply("tpl-dev"), MachineType.CONTAINER),
+                        new TemplateStaleness.Built("tpl-java", "2026-10-02T08:00:00", CURRENT, sha.apply("tpl-java"), MachineType.CONTAINER)),
                 defs, Set.of(), () -> fps, CURRENT);
         assertEquals(new TemplateStaleness.Staleness(false, false, false), stale.get("tpl-minimal"));
         assertEquals(new TemplateStaleness.Staleness(false, false, false), stale.get("tpl-dev"));
@@ -112,7 +113,7 @@ class TemplatesStalenessTest {
 
         // Only the definition: same version, same times, another fingerprint.
         var changed = TemplateStaleness.assess(List.of(
-                        new TemplateStaleness.Built("tpl-minimal", "2026-10-01T08:00:00", CURRENT, "another")),
+                        new TemplateStaleness.Built("tpl-minimal", "2026-10-01T08:00:00", CURRENT, "another", MachineType.CONTAINER)),
                 defs, Set.of(), () -> fps, CURRENT);
         assertEquals(new TemplateStaleness.Staleness(false, true, false), changed.get("tpl-minimal"));
     }
@@ -139,7 +140,7 @@ class TemplatesStalenessTest {
         daemon.clearRequests();
         var built = ListCommand.builtTemplates(daemon.client().listJsonConfig());
         assertEquals(List.of("GET /1.0/instances?recursion=1"), daemon.requests());
-        assertEquals(List.of(new TemplateStaleness.Built("tpl-minimal", "2026-10-05T10:00:00", CURRENT, "")), built);
+        assertEquals(List.of(new TemplateStaleness.Built("tpl-minimal", "2026-10-05T10:00:00", CURRENT, "", MachineType.CONTAINER)), built);
     }
 
     @Test
@@ -147,8 +148,8 @@ class TemplatesStalenessTest {
         var defs = chain();
         var calls = new AtomicInteger();
         var stale = TemplateStaleness.assess(List.of(
-                        new TemplateStaleness.Built("tpl-minimal", "built", "", "x"),
-                        new TemplateStaleness.Built("tpl-dev", "2026-10-01", CURRENT, "")),
+                        new TemplateStaleness.Built("tpl-minimal", "built", "", "x", MachineType.CONTAINER),
+                        new TemplateStaleness.Built("tpl-dev", "2026-10-01", CURRENT, "", MachineType.CONTAINER)),
                 defs, Set.of("tpl-minimal"), () -> { calls.incrementAndGet(); return Map.of(); }, CURRENT);
         assertEquals(new TemplateStaleness.Staleness(true, false, false), stale.get("tpl-minimal"));
         // A parent with no readable build time cannot be said to be newer.
@@ -168,13 +169,35 @@ class TemplatesStalenessTest {
         assertTrue(new TemplateStaleness.Staleness(false, false, true).outOfSync());
     }
 
+    private static TemplateStaleness.Built built(String created, MachineType type) {
+        return new TemplateStaleness.Built("t", created, CURRENT, "", type);
+    }
+
     @Test
     void aParentIsRebuiltOnlyWhenBothTimesAreKnownAndItsIsLater() {
-        assertTrue(TemplateStaleness.parentRebuilt("2026-10-05T10:00:01", "2026-10-05T10:00:00"));
-        assertFalse(TemplateStaleness.parentRebuilt("2026-10-05T10:00:00", "2026-10-05T10:00:00"));
-        assertFalse(TemplateStaleness.parentRebuilt("2026-10-04T10:00:00", "2026-10-05T10:00:00"));
-        assertFalse(TemplateStaleness.parentRebuilt(null, "2026-10-05T10:00:00"));
-        assertFalse(TemplateStaleness.parentRebuilt("2026-10-05T10:00:00", ""));
-        assertFalse(TemplateStaleness.parentRebuilt("built", "2026-10-05T10:00:00"));
+        var child = built("2026-10-05T10:00:00", MachineType.CONTAINER);
+        assertTrue(TemplateStaleness.parentRebuilt(built("2026-10-05T10:00:01", MachineType.CONTAINER), child));
+        assertFalse(TemplateStaleness.parentRebuilt(built("2026-10-05T10:00:00", MachineType.CONTAINER), child));
+        assertFalse(TemplateStaleness.parentRebuilt(built("2026-10-04T10:00:00", MachineType.CONTAINER), child));
+        assertFalse(TemplateStaleness.parentRebuilt(null, child));
+        assertFalse(TemplateStaleness.parentRebuilt(built("2026-10-05T10:00:01", MachineType.CONTAINER),
+                built("", MachineType.CONTAINER)));
+        assertFalse(TemplateStaleness.parentRebuilt(built("built", MachineType.CONTAINER), child));
+    }
+
+    /**
+     * A VM over a container parent was built from the definitions, not copied, so the parent's
+     * later build is no {@code ↑} for the TUI or {@code isx templates} either (#1130 review).
+     */
+    @Test
+    void aTemplateOfAnotherMachineTypeIsNotMarkedForItsParentsRebuild() {
+        var defs = chain();
+        var stale = TemplateStaleness.assess(List.of(
+                        new TemplateStaleness.Built("tpl-minimal", "2026-10-07T08:00:00", CURRENT, "", MachineType.CONTAINER),
+                        new TemplateStaleness.Built("tpl-dev", "2026-10-01T08:00:00", CURRENT, "", MachineType.VM)),
+                defs, Set.of(), Map::of, CURRENT);
+        assertFalse(stale.get("tpl-dev").parentRebuilt());
+        assertFalse(TemplateStaleness.parentRebuilt(built("2026-10-05T10:00:01", MachineType.VM),
+                built("2026-10-05T10:00:00", MachineType.CONTAINER)));
     }
 }

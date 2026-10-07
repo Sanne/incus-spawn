@@ -5296,7 +5296,8 @@ public class ListCommand extends BaseCommand {
         var outOfSync = new java.util.LinkedHashSet<String>();
 
         var built = templateEntries.stream().filter(TemplateInfo::isBuilt)
-                .map(t -> new TemplateStaleness.Built(t.name, t.buildStatus, t.buildVersion, t.definitionSha))
+                .map(t -> new TemplateStaleness.Built(t.name, t.buildStatus, t.buildVersion, t.definitionSha,
+                        MachineType.fromIncus(t.runtime)))
                 .toList();
         var staleness = TemplateStaleness.assess(built, imageDefs, storedSourceTemplates,
                 () -> TemplateStaleness.toolFingerprints(imageDefs.values(), toolDefLoader),
@@ -5358,7 +5359,7 @@ public class ListCommand extends BaseCommand {
         return collectEntries(listingJson).stream()
                 .filter(i -> Metadata.TYPE_BASE.equals(i.type))
                 .filter(i -> !i.name.endsWith(BuildCommand.REBUILDING_SUFFIX))
-                .map(i -> new TemplateStaleness.Built(i.name, i.created, i.buildVersion, i.definitionSha))
+                .map(i -> new TemplateStaleness.Built(i.name, i.created, i.buildVersion, i.definitionSha, i.machineType()))
                 .toList();
     }
 

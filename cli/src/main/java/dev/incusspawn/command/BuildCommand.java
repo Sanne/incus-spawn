@@ -472,8 +472,7 @@ public class BuildCommand extends BaseCommand {
         if (outdatedOnly) {
             for (var template : defs.values()) {
                 if (seen.contains(template.getName())) continue;
-                if (!incus.exists(template.getName())
-                        || isImageOutdated(template.getName(), template, incus, toolDefLoader, defs)) {
+                if (isImageOutdated(template.getName(), template, incus, toolDefLoader, defs)) {
                     collectAncestors(template, defs, result, seen, incus, toolDefLoader);
                     if (seen.add(template.getName())) {
                         result.add(template.getName());
@@ -510,8 +509,7 @@ public class BuildCommand extends BaseCommand {
         if (seen.contains(parentName)) return;
         var parentDef = defs.get(parentName);
         if (parentDef == null) return;
-        if (!incus.exists(parentName)
-                || isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs)) {
+        if (isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs)) {
             collectAncestors(parentDef, defs, result, seen, incus, toolDefLoader);
             seen.add(parentName);
             result.add(parentName);
@@ -872,31 +870,24 @@ public class BuildCommand extends BaseCommand {
 
     /**
      * Check if an image is outdated (built with an older version of isx or with a different
-     * definition, or its parent built after it), by {@link TemplateStaleness}'s rules. Its
-     * stamps are one read, and its parent's another, made only when the rest are current.
+     * definition, or copied from an earlier build of its parent), by {@link TemplateStaleness}'s
+     * rules. Its stamps are one read, and its parent's another, made only when the rest are
+     * current. A template that is not built is outdated; a failure to ask Incus is thrown.
      */
     static boolean isImageOutdated(String imageName, ImageDef imageDef,
                                     IncusClient incus, ToolDefLoader toolDefLoader,
                                     Map<String, ImageDef> defs) {
-        // Every key in one request: configGet would make one per key.
-        var config = incus.configByPrefix(imageName, "");
-        if (TemplateStaleness.versionOutdated(config.get(Metadata.BUILD_VERSION),
-                BuildInfo.instance().version())) return true;
-        var storedSha = config.get(Metadata.DEFINITION_SHA);
+        var instance = incus.instanceMetadataOrThrow(imageName);
+        if (instance == null) return true;
+        var built = TemplateStaleness.Built.of(imageName, instance);
+        if (TemplateStaleness.versionOutdated(built.buildVersion(), BuildInfo.instance().version())) return true;
         // Checked here too so the tools are fingerprinted only when there is a stamp to compare.
-        if (storedSha != null && !storedSha.isEmpty() && TemplateStaleness.definitionChanged(storedSha,
+        if (!built.definitionSha().isEmpty() && TemplateStaleness.definitionChanged(built.definitionSha(),
                 imageDef, computeToolFingerprints(imageDef, toolDefLoader, defs))) return true;
-        var created = config.get(Metadata.CREATED);
-        if (imageDef.isRoot() || created == null) return false;
-        String parentCreated;
-        try {
-            parentCreated = incus.configGet(imageDef.getParent(), Metadata.CREATED);
-        } catch (IncusException e) {
-            // A parent that is not built cannot have been rebuilt after it; building it is the
-            // caller's decision, by whether it exists.
-            return false;
-        }
-        return TemplateStaleness.parentRebuilt(parentCreated, created);
+        if (imageDef.isRoot()) return false;
+        var parent = incus.instanceMetadataOrThrow(imageDef.getParent());
+        return parent != null && TemplateStaleness.parentRebuilt(
+                TemplateStaleness.Built.of(imageDef.getParent(), parent), built);
     }
 
     private String printBuildDiagnostics(String buildName) {
