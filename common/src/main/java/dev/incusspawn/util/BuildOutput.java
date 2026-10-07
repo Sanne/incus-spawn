@@ -435,14 +435,19 @@ public final class BuildOutput {
 
     /** A stream that freezes the live step line before letting anything else reach the terminal. */
     private static PrintStream guard(PrintStream target) {
+        return onWrite(target, BuildOutput::releaseTerminal);
+    }
+
+    /** A stream that passes everything on to {@code target}, running {@code beforeWrite} first. */
+    public static PrintStream onWrite(PrintStream target, Runnable beforeWrite) {
         var guarded = new OutputStream() {
             @Override public void write(int b) {
-                releaseTerminal();
+                beforeWrite.run();
                 target.write(b);
             }
             @Override public void write(byte[] b, int off, int len) {
                 if (len == 0) return;
-                releaseTerminal();
+                beforeWrite.run();
                 target.write(b, off, len);
             }
             @Override public void flush() {

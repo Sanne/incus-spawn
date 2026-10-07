@@ -1,6 +1,7 @@
 package dev.incusspawn;
 
 import dev.incusspawn.command.*;
+import dev.incusspawn.tui.PreTuiOutput;
 import io.quarkus.runtime.QuarkusApplication;
 import io.quarkus.runtime.annotations.QuarkusMain;
 import org.aesh.AeshRuntimeRunner;
@@ -78,9 +79,13 @@ public class IncusSpawn implements QuarkusApplication {
     }
 
     static boolean launchTui() {
-        if (!InitCommand.requireInit()) return false;
-        new ListCommand().executeDirect();
-        return true;
+        // What isx prints while getting ready (the macOS VM starting, init) would be drawn over
+        // by the TUI: hold the warnings for its log, and let it wait for anything else (#1154).
+        try (var preTui = PreTuiOutput.begin()) {
+            if (!InitCommand.requireInit()) return false;
+            new ListCommand().executeDirect(preTui);
+            return true;
+        }
     }
 
     static CommandResult runTop(boolean versionRequested) {

@@ -30,7 +30,8 @@ public final class Warnings {
             this.out = out;
         }
 
-        void report(String message) {
+        /** Pass {@code message} on, unless this channel already did. */
+        public void report(String message) {
             if (reported.add(message)) {
                 out.accept(message);
             }

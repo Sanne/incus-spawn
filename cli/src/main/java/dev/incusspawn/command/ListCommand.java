@@ -41,6 +41,7 @@ import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolAction;
 import dev.incusspawn.tool.YamlToolSetup;
+import dev.incusspawn.tui.PreTuiOutput;
 import dev.incusspawn.tui.ShiftTabBindings;
 import dev.incusspawn.tui.TerminalThemeDetector;
 import dev.incusspawn.tui.TuiTheme;
@@ -116,6 +117,8 @@ public class ListCommand extends BaseCommand {
     // True only on the bare `isx` no-subcommand path (via executeDirect), which opens the TUI.
     // When 'list' is invoked explicitly, it prints the listing and never opens the TUI.
     private boolean launchedAsDefault;
+    // What bare `isx` said before the TUI takes the terminal; handed over just before it does.
+    private PreTuiOutput preTui;
 
     private IncusClient incus;
 
@@ -371,8 +374,9 @@ public class ListCommand extends BaseCommand {
     private long proxyAuthCheckMs = System.currentTimeMillis()
             - PROXY_AUTH_CHECK_INTERVAL_MS + PROXY_AUTH_INITIAL_DEFER_MS;
 
-    public void executeDirect() {
+    public void executeDirect(PreTuiOutput preTui) {
         launchedAsDefault = true;
+        this.preTui = preTui;
         try { doExecute(); } catch (Exception e) { System.err.println("Error: " + e.getMessage()); }
     }
 
@@ -394,6 +398,11 @@ public class ListCommand extends BaseCommand {
         this.cdiTools = RuntimeServices.toolSetups();
         this.backgroundTasks = RuntimeServices.backgroundTasks();
         this.lockManager = RuntimeServices.lockManager();
+        // Before the first reload, so a pause for the user does not leave the listing stale.
+        if (preTui != null) {
+            preTui.handOver(warningChannel::report, PreTuiOutput::waitForEnter);
+            preTui = null;
+        }
         runTuiLoop();
         return CommandResult.SUCCESS;
     }
