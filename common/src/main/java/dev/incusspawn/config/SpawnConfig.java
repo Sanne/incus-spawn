@@ -75,11 +75,11 @@ public class SpawnConfig {
     @JsonProperty("ready-timeouts")
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private Object readyTimeouts;
-    // What `isx mcp` lets a local agent do. Null (absent) means nothing is approved, and is
-    // never written back.
     @JsonProperty("host-ca")
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private Object hostCa;
+    // What `isx mcp` lets a local agent do. Null (absent) means nothing is approved, and is
+    // never written back.
     @JsonProperty("mcp")
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private McpConfig mcp;

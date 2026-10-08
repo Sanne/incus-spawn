@@ -217,6 +217,34 @@ class CertificateAuthorityTest {
     }
 
     @Test
+    void hostAnchorsMultipleDirsWithSameBasenamePrefixesWithIndex() throws Exception {
+        var parent1 = tempHome.resolve("a/anchors");
+        var parent2 = tempHome.resolve("b/anchors");
+        Files.createDirectories(parent1);
+        Files.createDirectories(parent2);
+
+        Files.writeString(parent1.resolve("ca.crt"), "-----BEGIN CERTIFICATE-----\nONE\n-----END CERTIFICATE-----");
+        Files.writeString(parent2.resolve("ca.crt"), "-----BEGIN CERTIFICATE-----\nTWO\n-----END CERTIFICATE-----");
+
+        var anchors = CertificateAuthority.hostAnchors(List.of(parent1, parent2));
+        assertEquals(2, anchors.size());
+        assertTrue(anchors.containsKey("0-anchors-ca.crt"));
+        assertTrue(anchors.containsKey("1-anchors-ca.crt"));
+    }
+
+    @Test
+    void hostAnchorFingerprintFromMapMatchesDirScan() throws Exception {
+        var anchorsDir = tempHome.resolve("anchors");
+        Files.createDirectories(anchorsDir);
+        var dirs = List.of(anchorsDir);
+
+        Files.writeString(anchorsDir.resolve("ca1.crt"), "-----BEGIN CERTIFICATE-----\nONE\n-----END CERTIFICATE-----");
+        var anchors = CertificateAuthority.hostAnchors(dirs);
+        assertEquals(CertificateAuthority.hostAnchorFingerprint(dirs),
+                CertificateAuthority.hostAnchorFingerprint(anchors));
+    }
+
+    @Test
     void hostAnchorFingerprintChangesWithContent() throws Exception {
         var anchorsDir = tempHome.resolve("anchors");
         Files.createDirectories(anchorsDir);

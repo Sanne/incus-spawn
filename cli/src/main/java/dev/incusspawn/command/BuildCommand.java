@@ -1281,9 +1281,9 @@ public class BuildCommand extends BaseCommand {
                 "CERTEOF")
                 .assertSuccess("Failed to install MITM CA certificate");
         var hostCa = SpawnConfig.load().hostCa();
-        boolean hostCasInstalled = false;
+        java.util.SortedMap<String, String> hostAnchors = null;
         if (hostCa.propagate()) {
-            var hostAnchors = CertificateAuthority.hostAnchors(hostCa.paths());
+            hostAnchors = CertificateAuthority.hostAnchors(hostCa.paths());
             if (!hostAnchors.isEmpty()) {
                 for (var entry : hostAnchors.entrySet()) {
                     container.sh(
@@ -1292,13 +1292,12 @@ public class BuildCommand extends BaseCommand {
                             "CERTEOF")
                             .assertSuccess("Failed to install host CA certificate");
                 }
-                hostCasInstalled = true;
             }
         }
         container.exec("update-ca-trust")
                 .assertSuccess("Failed to update CA trust");
-        if (hostCasInstalled) {
-            var hostCaFp = CertificateAuthority.hostAnchorFingerprint(hostCa.paths());
+        if (hostAnchors != null && !hostAnchors.isEmpty()) {
+            var hostCaFp = CertificateAuthority.hostAnchorFingerprint(hostAnchors);
             if (!hostCaFp.isEmpty()) {
                 incus.configSet(buildName, Metadata.HOST_CA_FINGERPRINT, hostCaFp);
             }

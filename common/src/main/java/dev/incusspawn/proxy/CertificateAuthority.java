@@ -174,10 +174,11 @@ public class CertificateAuthority {
         if (exists()) {
             try { localPem = loadOrCreate().caCertPem().strip(); } catch (Exception ignored) {}
         }
-        for (var dir : dirs) {
+        var prefixes = dirPrefixes(dirs);
+        for (int i = 0; i < dirs.size(); i++) {
+            var dir = dirs.get(i);
             if (!Files.isDirectory(dir)) continue;
             try (var stream = Files.list(dir)) {
-                var prefix = dirs.size() > 1 ? dir.getFileName().toString() + "-" : "";
                 for (var path : stream.toList()) {
                     var name = path.getFileName().toString();
                     if (!name.endsWith(".crt") && !name.endsWith(".pem")) continue;
@@ -186,12 +187,34 @@ public class CertificateAuthority {
                         var pem = Files.readString(path).strip();
                         if (pem.isEmpty()) continue;
                         if (localPem != null && pem.equals(localPem)) continue;
-                        result.put(prefix + name, pem);
+                        result.put(prefixes[i] + name, pem);
                     } catch (IOException ignored) {}
                 }
-            } catch (IOException ignored) {}
+            } catch (IOException e) {
+                dev.incusspawn.Warnings.warn("host-ca: cannot list " + dir + ": " + e.getMessage());
+            }
         }
         return result;
+    }
+
+    private static String[] dirPrefixes(java.util.List<Path> dirs) {
+        var prefixes = new String[dirs.size()];
+        if (dirs.size() <= 1) {
+            java.util.Arrays.fill(prefixes, "");
+            return prefixes;
+        }
+        var names = new String[dirs.size()];
+        var seen = new java.util.HashSet<String>();
+        boolean collision = false;
+        for (int i = 0; i < dirs.size(); i++) {
+            var fn = dirs.get(i).getFileName();
+            names[i] = fn != null ? fn.toString() : String.valueOf(i);
+            if (!seen.add(names[i])) collision = true;
+        }
+        for (int i = 0; i < dirs.size(); i++) {
+            prefixes[i] = collision ? (i + "-" + names[i] + "-") : (names[i] + "-");
+        }
+        return prefixes;
     }
 
     /**
@@ -200,7 +223,14 @@ public class CertificateAuthority {
      * Returns {@code ""} when there are no anchors to propagate.
      */
     public static String hostAnchorFingerprint(java.util.List<Path> dirs) {
-        var anchors = hostAnchors(dirs);
+        return hostAnchorFingerprint(hostAnchors(dirs));
+    }
+
+    /**
+     * Fingerprint from an already-read anchor map, so callers that install
+     * and stamp can derive both from the same snapshot.
+     */
+    public static String hostAnchorFingerprint(java.util.SortedMap<String, String> anchors) {
         if (anchors.isEmpty()) return "";
         try {
             var digest = MessageDigest.getInstance("SHA-256");
@@ -222,8 +252,10 @@ public class CertificateAuthority {
      */
     public static boolean installHostAnchors(IncusClient incus, String container,
                                              java.util.SortedMap<String, String> anchors) {
-        incus.shellExec(container, "sh", "-c",
-                "rm -f /etc/pki/ca-trust/source/anchors/isx-host-*");
+        if (incus.shellExec(container, "sh", "-c",
+                "rm -f /etc/pki/ca-trust/source/anchors/isx-host-*").exitCode() != 0) {
+            return false;
+        }
         for (var entry : anchors.entrySet()) {
             var name = "isx-host-" + entry.getKey();
             var result = incus.shellExec(container, "sh", "-c",
@@ -338,7 +370,8 @@ public class CertificateAuthority {
     public static boolean propagateHostCas(IncusClient incus, String container, JsonNode instance) {
         var hostCa = SpawnConfig.load().hostCa();
         if (!hostCa.propagate()) return false;
-        var fingerprint = hostAnchorFingerprint(hostCa.paths());
+        var anchors = hostAnchors(hostCa.paths());
+        var fingerprint = hostAnchorFingerprint(anchors);
         var stored = instance != null
                 ? instance.path("config").path(Metadata.HOST_CA_FINGERPRINT).asText("")
                 : incus.configGet(container, Metadata.HOST_CA_FINGERPRINT);
@@ -354,7 +387,7 @@ public class CertificateAuthority {
 
         if (fingerprint.equals(stored)) return false;
 
-        if (!installHostAnchors(incus, container, hostAnchors(hostCa.paths()))) return false;
+        if (!installHostAnchors(incus, container, anchors)) return false;
         incus.configSet(container, Metadata.HOST_CA_FINGERPRINT, fingerprint);
         return true;
     }
