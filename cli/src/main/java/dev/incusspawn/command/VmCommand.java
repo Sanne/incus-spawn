@@ -66,11 +66,23 @@ public class VmCommand extends BaseCommand {
             generateHelp = true
     )
     public static class Stop extends BaseCommand {
+        /** {@code --require-clean}'s exit status: stopped, but with signals, not shut down. */
+        static final int EXIT_SIGNALLED = 4;
+
+        @Option(name = "require-clean", hasValue = false,
+                description = "Exit " + EXIT_SIGNALLED + " if the guest did not shut down and the VM was stopped with signals, 1 if it could not be stopped")
+        boolean requireClean;
+
         @Override
         protected CommandResult doExecute() throws Exception {
             BuildOutput.header("Stopping VM");
-            VmManager.stop();
-            return CommandResult.SUCCESS;
+            var result = VmManager.stop();
+            if (!requireClean) return CommandResult.SUCCESS; // as plain 'isx vm stop' always has
+            return switch (result) {
+                case SIGNALLED -> CommandResult.valueOf(EXIT_SIGNALLED);
+                case FAILED -> CommandResult.valueOf(1);
+                case NOT_RUNNING, SHUT_DOWN -> CommandResult.SUCCESS;
+            };
         }
     }
 

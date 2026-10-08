@@ -1250,6 +1250,7 @@ Exit codes:
 | 1 | The command failed, with the reason on stderr: a value it rejects (`--format=yaml`, `--status=frozen`), Incus unreachable, ... `isx doctor` also exits 1 when a check fails, `isx vm status` when Incus is unreachable, and `isx proxy status` when the proxy is not running (that report is on stdout) |
 | 2 | The command line could not be parsed (an unknown option, an option missing its value, a stray argument), with the usage on stderr. For `isx proxy status` only, 2 also means the proxy is down but its DNS overrides are still active |
 | 3 | `isx proxy status` only: the proxy runs on an old bridge address |
+| 4 | `isx vm stop --require-clean` only: the VM is stopped, but with signals rather than a guest shutdown |
 | 78 | `isx proxy start` cannot run the proxy at all, e.g. `isx-proxy` is not installed |
 
 ## Compared with other sandboxes
@@ -1680,7 +1681,7 @@ Manage the incus-spawn VM appliance. macOS only.
 | Subcommand | Description |
 |------------|-------------|
 | `start` | Start the VM (creates disk image on first run) |
-| `stop` | Stop the VM (graceful shutdown) |
+| `stop` | Stop the VM (graceful shutdown). It warns when the guest did not shut down and had to be stopped with signals, which on macOS is currently every stop ([#881](https://github.com/Sanne/incus-spawn/issues/881)); `--require-clean` also exits 4 then |
 | `restart` | Stop and restart the VM (applies pending appliance updates) |
 | `status` | Show VM status and system diagnostics |
 | `resize` | Grow the VM data disk that backs the storage pool |

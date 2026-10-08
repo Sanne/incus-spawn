@@ -191,7 +191,7 @@ public class ResetCommand extends BaseCommand {
         boolean vmStillRunning = false;
         if (vmRunning) {
             BuildOutput.header("Stopping VM appliance");
-            VmManager.stop();
+            VmManager.stopToDelete();
             if (VmManager.isRunning()) {
                 System.err.println("Warning: VM is still running after stop attempt.");
                 vmStillRunning = true;

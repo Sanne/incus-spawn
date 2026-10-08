@@ -377,26 +377,48 @@ public final class VmManager {
         }
     }
 
-    public static void stop() {
+    /**
+     * How a stop ended. {@code SIGNALLED} means the guest did not shut down when asked and the
+     * hypervisor was killed: its disks were cut off mid-flight and may need recovery on the next
+     * boot. On macOS that is every stop until #881 is fixed.
+     */
+    public enum StopResult { NOT_RUNNING, SHUT_DOWN, SIGNALLED, FAILED }
+
+    public static StopResult stop() {
+        return stop(true);
+    }
+
+    /** {@link #stop()} for a caller about to delete the VM's disks, which has no use for the warning. */
+    public static StopResult stopToDelete() {
+        return stop(false);
+    }
+
+    private static StopResult stop(boolean disksKept) {
         try (var ignored = acquireVmLock()) {
-            stopLocked();
+            return stopLocked(disksKept);
         } catch (VmException e) {
             System.err.println("Error: " + e.getMessage());
+            return StopResult.FAILED;
         }
     }
 
-    private static void stopLocked() {
+    private static StopResult stopLocked() {
+        return stopLocked(true);
+    }
+
+    /** @param disksKept warn, on {@code SIGNALLED}, that the disks cut off may need recovery */
+    private static StopResult stopLocked(boolean disksKept) {
         if (!isRunning()) {
             BuildOutput.note("VM not running.");
             cleanupStaleFiles();
-            return;
+            return StopResult.NOT_RUNNING;
         }
         long pid = readPid();
         var handle = ProcessHandle.of(pid);
         if (handle.isEmpty()) {
             BuildOutput.note("VM not running.");
             cleanupStaleFiles();
-            return;
+            return StopResult.NOT_RUNNING;
         }
 
         BuildOutput.stepStart("Shutting down VM...");
@@ -424,7 +446,8 @@ public final class VmManager {
         }
 
         // SIGTERM
-        if (handle.get().isAlive()) {
+        boolean signalled = handle.get().isAlive();
+        if (signalled) {
             handle.get().destroy();
             try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
         }
@@ -456,6 +479,12 @@ public final class VmManager {
         cleanupStaleFiles();
         VmAgentClient.clearVersionCache();
         BuildOutput.stepDone();
+        if (!signalled) return StopResult.SHUT_DOWN;
+        if (disksKept) {
+            BuildOutput.warn("The guest did not shut down within the ~5 s it was given, so the VM was stopped"
+                    + " with signals; its disks may need recovery on the next boot (#881).");
+        }
+        return StopResult.SIGNALLED;
     }
 
     public static String status() {
@@ -1154,7 +1183,7 @@ public final class VmManager {
                 // stopLocked() itself throws if the hypervisor doesn't exit, which is exactly
                 // what must hold here: a lingering process means the disk it still writes to
                 // must not be replaced.
-                stopLocked();
+                stopLocked(false);
             }
             BuildOutput.stepStart("Deleting data disk...");
             try {
