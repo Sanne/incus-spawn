@@ -133,7 +133,7 @@ if $BINARIES_ONLY; then
     echo "  - Homebrew override: (if install.sh made one; the Homebrew version is relinked)"
     echo ""
     echo "Kept: instances, templates, configuration, cache, state and services."
-    echo "The next isx command points the proxy service at the isx-proxy it finds."
+    echo "Services that start these binaries are pointed at the isx that remains on PATH."
 else
     echo "This will remove:"
     echo "  - Binary:            $INSTALL_DIR/$BINARY_NAME"
@@ -322,11 +322,30 @@ fi
 if $BINARIES_ONLY; then
     echo ""
     echo "isx binaries removed; instances, templates, configuration and state are untouched."
+    # The macOS launch agents name the binaries by path. isx itself repairs only the
+    # proxy's, and only once it sees a proxy of another version running; the VM agent
+    # is left naming a file that is gone, and fails at the next login. 'isx proxy
+    # install' writes both, but only for a service that is not loaded: on a loaded
+    # one it rewrites the proxy's alone. Hence the stop first.
+    services_stale() {
+        grep -qsF "$INSTALL_DIR/" "$LAUNCHD_PROXY_PLIST" || grep -qsF "$INSTALL_DIR/" "$LAUNCHD_VM_PLIST"
+    }
+    REPAIR="isx proxy stop && isx proxy install"
     if command -v "$BINARY_NAME" >/dev/null 2>&1; then
         echo "isx now resolves to $(command -v "$BINARY_NAME")"
-        echo "Run any isx command (e.g. isx doctor) to point the proxy service at its isx-proxy."
+        if services_stale; then
+            echo "Pointing the proxy and VM services at it ($REPAIR)..."
+            bounded 60 "$BINARY_NAME" proxy stop </dev/null || true
+            bounded 120 "$BINARY_NAME" proxy install </dev/null || true
+            if services_stale; then
+                echo "Warning: the services still start the removed binaries. Run: $REPAIR"
+            fi
+        fi
     else
         echo "No other isx is on PATH: install one, e.g. brew install Sanne/tap/incus-spawn"
+        if services_stale; then
+            echo "The proxy and VM services still start the removed binaries. Then run: $REPAIR"
+        fi
     fi
     exit 0
 fi

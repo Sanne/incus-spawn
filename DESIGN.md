@@ -1168,11 +1168,24 @@ how the VM stops matter: before, a disk about to be deleted could be killed mid-
 through the isx being uninstalled (`isx vm stop`) first. That asks the guest to stop, though `VmManager.stopLocked`
 waits only about 5 s before it signals vfkit itself, so a busy guest can still be cut off. When the VM outlives it
 the script signals it, and says, then and in its closing lines, that the kept disk may need recovery on the next boot.
+On a Mac, as of this change, the guest does not act on that request at all: `isx vm stop` returns after its 5 s wait
+and its own signal, and the next boot replays the data disk's btrfs tree log, idle guest or busy (#881). Instances,
+templates and files synced before the stop were intact in every run; the script's warning cannot see this, since
+by then the VM is gone. Until #881 is fixed "shut down through isx" means "as cleanly as `isx vm stop` does".
 `isx` is asked for the counts through a temporary file rather than a pipe, so the 20 s bound holds even if isx left a
 child process holding its output.
 `uninstall.sh --binaries-only` removes just the binaries and install.sh's Homebrew override, for switching install
-channel; the proxy service needs no change there, since the next isx command rewrites a start script or plist that
-names another `isx-proxy` (`ProxyService.reinstallIfChanged`). The script refuses an unknown option rather than
+channel. On Linux the proxy service needs no change there, since the next isx command rewrites a start script that
+names another `isx-proxy` (`ProxyService.reinstallIfChanged`). On macOS that is not enough, as a Mac showed: the
+launch agents name the binaries by path, `reinstallIfChanged` rewrites only the proxy's, and only once it sees a
+proxy of another version answering, so with the same version in both channels nothing was repaired and the proxy
+lived on only as the old process; the VM agent was left naming a removed `isx` in every case, to fail at the next
+login. So when a plist names the directory the binaries were removed from, the script runs `isx proxy stop` and then
+`isx proxy install` with the isx that remains on `PATH`. The stop is needed: `isx proxy install` writes both agents
+only for a service that is not loaded (`installMacOs`), and on a loaded one rewrites the proxy's alone. The VM keeps
+running throughout; the proxy is down for the second or two between the two commands. The script then looks at the
+plists again and warns, naming the two commands, when they still name a removed binary, or when no isx remains to
+run them. Agents written by another install are left alone. The script refuses an unknown option rather than
 ignoring it, so a mistyped `--binaries-only` cannot run a full uninstall. The root fix, moving the data disk out of
 the state directory, needs a migration and is a separate change.
 

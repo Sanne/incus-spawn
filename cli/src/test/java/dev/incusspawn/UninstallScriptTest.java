@@ -92,7 +92,13 @@ class UninstallScriptTest {
     /** A process whose name says qemu stands in for the running VM. */
     private Process startVm() throws IOException {
         var qemu = stubs.resolve("qemu-system-aarch64");
-        if (!Files.exists(qemu)) Files.copy(Path.of("/bin/sleep"), qemu);
+        if (!Files.exists(qemu)) {
+            // A link on macOS: newer releases kill a copy of a system binary on exec, and ps
+            // names the process after the link all the same. A copy elsewhere, where sleep may
+            // be one multi-call binary that goes by the name it is run under.
+            if (System.getProperty("os.name").startsWith("Mac")) Files.createSymbolicLink(qemu, Path.of("/bin/sleep"));
+            else Files.copy(Path.of("/bin/sleep"), qemu);
+        }
         var vm = new ProcessBuilder(qemu.toString(), "60").start();
         Files.writeString(state.resolve("vm.pid"), Long.toString(vm.pid()));
         return vm;
@@ -174,6 +180,92 @@ class UninstallScriptTest {
         assertTrue(Files.exists(state.resolve("vm.log")), result.output());
         assertTrue(Files.exists(home.resolve(".local/share/incus-spawn/appliance")), result.output());
         assertTrue(Files.exists(home.resolve(".config/incus-spawn")), result.output());
+    }
+
+    /** Launch agents as {@code isx proxy install} writes them, for the isx in {@code bin}. */
+    private Path launchAgents(Path isxDir) throws IOException {
+        var agents = Files.createDirectories(home.resolve("Library/LaunchAgents"));
+        Files.writeString(agents.resolve("dev.incusspawn.proxy.plist"),
+                "<array><string>" + isxDir.resolve("isx-proxy") + "</string></array>\n");
+        Files.writeString(agents.resolve("dev.incusspawn.vm.plist"),
+                "<array><string>" + isxDir.resolve("isx") + "</string><string>vm</string></array>\n");
+        return agents;
+    }
+
+    /**
+     * Another isx on PATH, as Homebrew's is. It records what it is asked and, as the real one,
+     * writes both launch agents only when the service was stopped first; {@code install} runs
+     * in place of that.
+     */
+    private Path anotherIsx(String install) throws IOException {
+        stub("isx", """
+                echo "$*" >> "$HOME/isx-asked"
+                [ "$*" = "proxy install" ] || exit 0
+                grep -qx "proxy stop" "$HOME/isx-asked" || exit 1
+                %s
+                """.formatted(install));
+        return home.resolve("isx-asked");
+    }
+
+    private static final String WRITE_BOTH_AGENTS = """
+            for agent in proxy vm; do
+              echo "<string>$(dirname "$0")/isx</string>" > "$HOME/Library/LaunchAgents/dev.incusspawn.$agent.plist"
+            done""";
+
+    /**
+     * Seen on a Mac: with the binaries gone both launch agents still named them. The proxy went
+     * on running only as the old process, and nothing repaired the VM agent, so neither came
+     * back after the next login. The isx that remains is asked to write them again.
+     */
+    @Test
+    void binariesOnlyPointsTheServicesAtTheIsxThatRemains() throws Exception {
+        var agents = launchAgents(bin);
+        var asked = anotherIsx(WRITE_BOTH_AGENTS);
+
+        var result = run("--yes", "--binaries-only");
+
+        assertEquals(0, result.exit(), result.output());
+        assertTrue(result.output().contains("isx now resolves to " + stubs.resolve("isx")), result.output());
+        assertEquals(List.of("proxy stop", "proxy install"), Files.readAllLines(asked), result.output());
+        for (var agent : List.of("proxy", "vm")) {
+            var plist = Files.readString(agents.resolve("dev.incusspawn." + agent + ".plist"));
+            assertFalse(plist.contains(bin.toString()), agent + " still names a removed binary:\n" + result.output());
+        }
+        assertFalse(result.output().contains("Warning"), result.output());
+    }
+
+    @Test
+    void binariesOnlyWarnsWhenTheServicesCouldNotBeRepointed() throws Exception {
+        launchAgents(bin);
+        anotherIsx("exit 1");
+
+        var result = run("--yes", "--binaries-only");
+
+        assertEquals(0, result.exit(), result.output());
+        assertTrue(result.output().contains(
+                "Warning: the services still start the removed binaries. Run: isx proxy stop && isx proxy install"),
+                result.output());
+    }
+
+    @Test
+    void binariesOnlyLeavesServicesOfAnotherInstallAlone() throws Exception {
+        launchAgents(Path.of("/opt/homebrew/bin"));
+        var asked = anotherIsx(WRITE_BOTH_AGENTS);
+
+        var result = run("--yes", "--binaries-only");
+
+        assertEquals(0, result.exit(), result.output());
+        assertFalse(Files.exists(asked), result.output());
+    }
+
+    @Test
+    void binariesOnlySaysWhatToRunWhenNoIsxRemains() throws Exception {
+        launchAgents(bin);
+
+        var result = run("--yes", "--binaries-only");
+
+        assertEquals(0, result.exit(), result.output());
+        assertTrue(result.output().contains("Then run: isx proxy stop && isx proxy install"), result.output());
     }
 
     @Test
