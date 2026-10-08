@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
+import java.util.List;
 import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,7 +45,6 @@ class CertificateAuthorityTest {
     @AfterEach
     void restoreHome() {
         if (savedHome != null) System.setProperty("user.home", savedHome);
-        CertificateAuthority.hostAnchorsDir = Path.of("/etc/pki/ca-trust/source/anchors");
     }
 
     @Test
@@ -155,13 +155,12 @@ class CertificateAuthorityTest {
         CertificateAuthority.loadOrCreate();
         var anchorsDir = tempHome.resolve("anchors");
         Files.createDirectories(anchorsDir);
-        CertificateAuthority.hostAnchorsDir = anchorsDir;
 
         var localPem = CertificateAuthority.loadOrCreate().caCertPem();
         Files.writeString(anchorsDir.resolve("incus-spawn-mitm.crt"), localPem);
         Files.writeString(anchorsDir.resolve("corporate.crt"), "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----");
 
-        var anchors = CertificateAuthority.hostAnchors();
+        var anchors = CertificateAuthority.hostAnchors(List.of(anchorsDir));
         assertEquals(1, anchors.size());
         assertTrue(anchors.containsKey("corporate.crt"));
         assertFalse(anchors.containsKey("incus-spawn-mitm.crt"));
@@ -171,13 +170,12 @@ class CertificateAuthorityTest {
     void hostAnchorsIgnoresNonCertFiles() throws Exception {
         var anchorsDir = tempHome.resolve("anchors");
         Files.createDirectories(anchorsDir);
-        CertificateAuthority.hostAnchorsDir = anchorsDir;
 
         Files.writeString(anchorsDir.resolve("readme.txt"), "not a cert");
         Files.writeString(anchorsDir.resolve("valid.crt"), "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----");
         Files.writeString(anchorsDir.resolve("also-valid.pem"), "-----BEGIN CERTIFICATE-----\nFAKE2\n-----END CERTIFICATE-----");
 
-        var anchors = CertificateAuthority.hostAnchors();
+        var anchors = CertificateAuthority.hostAnchors(List.of(anchorsDir));
         assertEquals(2, anchors.size());
         assertTrue(anchors.containsKey("valid.crt"));
         assertTrue(anchors.containsKey("also-valid.pem"));
@@ -185,23 +183,23 @@ class CertificateAuthorityTest {
 
     @Test
     void hostAnchorsReturnsEmptyWhenDirectoryMissing() {
-        CertificateAuthority.hostAnchorsDir = tempHome.resolve("nonexistent");
-        assertTrue(CertificateAuthority.hostAnchors().isEmpty());
-        assertEquals("", CertificateAuthority.hostAnchorFingerprint());
+        var dirs = List.of(tempHome.resolve("nonexistent"));
+        assertTrue(CertificateAuthority.hostAnchors(dirs).isEmpty());
+        assertEquals("", CertificateAuthority.hostAnchorFingerprint(dirs));
     }
 
     @Test
     void hostAnchorFingerprintChangesWithContent() throws Exception {
         var anchorsDir = tempHome.resolve("anchors");
         Files.createDirectories(anchorsDir);
-        CertificateAuthority.hostAnchorsDir = anchorsDir;
+        var dirs = List.of(anchorsDir);
 
         Files.writeString(anchorsDir.resolve("ca1.crt"), "-----BEGIN CERTIFICATE-----\nONE\n-----END CERTIFICATE-----");
-        var fp1 = CertificateAuthority.hostAnchorFingerprint();
+        var fp1 = CertificateAuthority.hostAnchorFingerprint(dirs);
         assertFalse(fp1.isEmpty());
 
         Files.writeString(anchorsDir.resolve("ca2.crt"), "-----BEGIN CERTIFICATE-----\nTWO\n-----END CERTIFICATE-----");
-        var fp2 = CertificateAuthority.hostAnchorFingerprint();
+        var fp2 = CertificateAuthority.hostAnchorFingerprint(dirs);
         assertNotEquals(fp1, fp2);
     }
 

@@ -1280,13 +1280,17 @@ public class BuildCommand extends BaseCommand {
                 ca.caCertPem() +
                 "CERTEOF")
                 .assertSuccess("Failed to install MITM CA certificate");
-        if (SpawnConfig.load().propagateHostCas()) {
-            for (var entry : CertificateAuthority.hostAnchors().entrySet()) {
-                container.sh(
-                        "cat > /etc/pki/ca-trust/source/anchors/isx-host-" + entry.getKey() + " << 'CERTEOF'\n" +
-                        entry.getValue() + "\n" +
-                        "CERTEOF")
-                        .assertSuccess("Failed to install host CA certificate");
+        var hostCa = SpawnConfig.load().hostCa();
+        if (hostCa.propagate()) {
+            var hostAnchors = CertificateAuthority.hostAnchors(hostCa.paths());
+            if (!hostAnchors.isEmpty()) {
+                for (var entry : hostAnchors.entrySet()) {
+                    container.sh(
+                            "cat > /etc/pki/ca-trust/source/anchors/isx-host-" + entry.getKey() + " << 'CERTEOF'\n" +
+                            entry.getValue() + "\n" +
+                            "CERTEOF")
+                            .assertSuccess("Failed to install host CA certificate");
+                }
             }
         }
         container.exec("update-ca-trust")
@@ -2635,9 +2639,12 @@ public class BuildCommand extends BaseCommand {
         incus.configSet(container, Metadata.BUILD_VERSION, info.version());
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
         incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.currentCaFingerprint());
-        var hostCaFp = CertificateAuthority.hostAnchorFingerprint();
-        if (!hostCaFp.isEmpty() && SpawnConfig.load().propagateHostCas()) {
-            incus.configSet(container, Metadata.HOST_CA_FINGERPRINT, hostCaFp);
+        var buildHostCa = SpawnConfig.load().hostCa();
+        if (buildHostCa.propagate()) {
+            var hostCaFp = CertificateAuthority.hostAnchorFingerprint(buildHostCa.paths());
+            if (!hostCaFp.isEmpty()) {
+                incus.configSet(container, Metadata.HOST_CA_FINGERPRINT, hostCaFp);
+            }
         }
         incus.configSet(container, Metadata.DEFINITION_SHA,
                 imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader, defs)));
