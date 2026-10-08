@@ -1122,6 +1122,9 @@ public class BuildCommand extends BaseCommand {
         if (CertificateAuthority.fixContainerCaIfNeeded(incus, buildName)) {
             BuildOutput.step("Refreshed MITM proxy CA certificate.");
         }
+        if (CertificateAuthority.propagateHostCas(incus, buildName)) {
+            BuildOutput.step("Installed host CA certificates (propagate-host-cas).");
+        }
 
         requireBuildAddress(buildName, started);
         waitForNetwork(buildName);
@@ -1277,6 +1280,15 @@ public class BuildCommand extends BaseCommand {
                 ca.caCertPem() +
                 "CERTEOF")
                 .assertSuccess("Failed to install MITM CA certificate");
+        if (SpawnConfig.load().propagateHostCas()) {
+            for (var entry : CertificateAuthority.hostAnchors().entrySet()) {
+                container.sh(
+                        "cat > /etc/pki/ca-trust/source/anchors/isx-host-" + entry.getKey() + " << 'CERTEOF'\n" +
+                        entry.getValue() + "\n" +
+                        "CERTEOF")
+                        .assertSuccess("Failed to install host CA certificate");
+            }
+        }
         container.exec("update-ca-trust")
                 .assertSuccess("Failed to update CA trust");
         BuildOutput.stepDone();
@@ -2623,6 +2635,10 @@ public class BuildCommand extends BaseCommand {
         incus.configSet(container, Metadata.BUILD_VERSION, info.version());
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
         incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.currentCaFingerprint());
+        var hostCaFp = CertificateAuthority.hostAnchorFingerprint();
+        if (!hostCaFp.isEmpty() && SpawnConfig.load().propagateHostCas()) {
+            incus.configSet(container, Metadata.HOST_CA_FINGERPRINT, hostCaFp);
+        }
         incus.configSet(container, Metadata.DEFINITION_SHA,
                 imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader, defs)));
         stampAccountIdentities(container, imageDef, defs, inheritedIdentities);

@@ -32,6 +32,7 @@ public final class Metadata {
     public static final String BUILD_VERSION = PREFIX + "build-version";
     public static final String BUILD_SHA = PREFIX + "build-sha";
     public static final String CA_FINGERPRINT = PREFIX + "ca-fingerprint";
+    public static final String HOST_CA_FINGERPRINT = PREFIX + "host-ca-fingerprint";
     public static final String HOST_RESOURCES = PREFIX + "host-resources";
     public static final String DEFINITION_SHA = PREFIX + "definition-sha";
     public static final String BUILD_SOURCE = PREFIX + "build-source";

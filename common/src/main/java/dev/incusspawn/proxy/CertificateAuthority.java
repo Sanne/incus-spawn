@@ -161,6 +161,57 @@ public class CertificateAuthority {
         return loadOrCreate().caFingerprint();
     }
 
+    static Path hostAnchorsDir = Path.of("/etc/pki/ca-trust/source/anchors");
+
+    /**
+     * Returns the custom CA anchors installed on this host that should be
+     * propagated into containers, as a sorted map of filename to PEM content.
+     * Excludes the local proxy's own CA ({@code incus-spawn-mitm.crt}).
+     * Returns an empty map when no custom anchors exist.
+     */
+    public static java.util.SortedMap<String, String> hostAnchors() {
+        var result = new java.util.TreeMap<String, String>();
+        if (!Files.isDirectory(hostAnchorsDir)) return result;
+        String localPem = null;
+        if (exists()) {
+            try { localPem = loadOrCreate().caCertPem().strip(); } catch (Exception ignored) {}
+        }
+        try (var stream = Files.list(hostAnchorsDir)) {
+            for (var path : stream.toList()) {
+                var name = path.getFileName().toString();
+                if (!name.endsWith(".crt") && !name.endsWith(".pem")) continue;
+                if (!Files.isRegularFile(path)) continue;
+                try {
+                    var pem = Files.readString(path).strip();
+                    if (pem.isEmpty()) continue;
+                    if (localPem != null && pem.equals(localPem)) continue;
+                    result.put(name, pem);
+                } catch (IOException ignored) {}
+            }
+        } catch (IOException ignored) {}
+        return result;
+    }
+
+    /**
+     * A fingerprint of all host anchors that would be propagated.
+     * Changes when anchors are added, removed, or modified.
+     * Returns {@code ""} when there are no anchors to propagate.
+     */
+    public static String hostAnchorFingerprint() {
+        var anchors = hostAnchors();
+        if (anchors.isEmpty()) return "";
+        try {
+            var digest = MessageDigest.getInstance("SHA-256");
+            for (var entry : anchors.entrySet()) {
+                digest.update(entry.getKey().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                digest.update(entry.getValue().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            return java.util.HexFormat.of().formatHex(digest.digest());
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     /** How an image's stored CA fingerprint relates to the CA on this host. */
     public enum CaStatus {
         /** Built against the current CA cert. */
@@ -245,6 +296,31 @@ public class CertificateAuthority {
                 "CERTEOF");
         incus.shellExec(container, "update-ca-trust");
         incus.configSet(container, Metadata.CA_FINGERPRINT, ca.caFingerprint());
+        return true;
+    }
+
+    /**
+     * Propagate host CA anchors into a container when {@code propagate-host-cas}
+     * is enabled. Stamps a fingerprint on the instance and skips when it matches.
+     * Returns true if anchors were installed, false if skipped or disabled.
+     */
+    public static boolean propagateHostCas(IncusClient incus, String container) {
+        if (!SpawnConfig.load().propagateHostCas()) return false;
+        var fingerprint = hostAnchorFingerprint();
+        if (fingerprint.isEmpty()) return false;
+        var stored = incus.configGet(container, Metadata.HOST_CA_FINGERPRINT);
+        if (fingerprint.equals(stored)) return false;
+
+        var anchors = hostAnchors();
+        for (var entry : anchors.entrySet()) {
+            var name = "isx-host-" + entry.getKey();
+            incus.shellExec(container, "sh", "-c",
+                    "cat > /etc/pki/ca-trust/source/anchors/" + name + " << 'CERTEOF'\n" +
+                    entry.getValue() + "\n" +
+                    "CERTEOF");
+        }
+        incus.shellExec(container, "update-ca-trust");
+        incus.configSet(container, Metadata.HOST_CA_FINGERPRINT, fingerprint);
         return true;
     }
 

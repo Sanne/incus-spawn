@@ -77,6 +77,9 @@ public class SpawnConfig {
     private Object readyTimeouts;
     // What `isx mcp` lets a local agent do. Null (absent) means nothing is approved, and is
     // never written back.
+    @JsonProperty("propagate-host-cas")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Boolean propagateHostCas;
     @JsonProperty("mcp")
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private McpConfig mcp;
@@ -632,6 +635,8 @@ public class SpawnConfig {
     /** The {@code ready-timeouts:} section, or null when there is none. */
     public ReadyTimeoutsConfig readyTimeouts() { return ReadyTimeoutsConfig.of(readyTimeouts); }
 
+    public boolean propagateHostCas() { return propagateHostCas != null && propagateHostCas; }
+
     /** The {@code mcp:} section, or its defaults (no templates approved) when absent. */
     public McpConfig mcp() { return mcp != null ? mcp : new McpConfig(); }
     public void setMcp(McpConfig mcp) { this.mcp = mcp; }
@@ -725,6 +730,7 @@ public class SpawnConfig {
         this.tuiLiveRefresh = other.tuiLiveRefresh;
         this.artifactCache = other.artifactCache;
         this.readyTimeouts = other.readyTimeouts;
+        this.propagateHostCas = other.propagateHostCas;
         this.mcp = other.mcp;
         this.extras = other.extras;
     }

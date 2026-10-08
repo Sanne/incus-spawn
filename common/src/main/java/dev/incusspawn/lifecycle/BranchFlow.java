@@ -349,6 +349,7 @@ public final class BranchFlow {
 
         if (networkMode != NetworkMode.AIRGAP) {
             CertificateAuthority.fixContainerCaIfNeeded(incus, name, booted);
+            CertificateAuthority.propagateHostCas(incus, name);
             ProxyConfig.fixResolvConfIfNeeded(incus, name);
             // The template baked its own account's identity; a branch pinned to a different one
             // must not commit under it. Re-derived here rather than only on the next

@@ -44,6 +44,7 @@ class CertificateAuthorityTest {
     @AfterEach
     void restoreHome() {
         if (savedHome != null) System.setProperty("user.home", savedHome);
+        CertificateAuthority.hostAnchorsDir = Path.of("/etc/pki/ca-trust/source/anchors");
     }
 
     @Test
@@ -145,6 +146,63 @@ class CertificateAuthorityTest {
                 "a corrupt CA must surface as an error, not be silently regenerated");
         assertEquals("", CertificateAuthority.supersededCaFingerprint(),
                 "nothing was superseded, so no backup must be left behind");
+    }
+
+    // --- Host anchor propagation ---
+
+    @Test
+    void hostAnchorsExcludesLocalProxyCa() throws Exception {
+        CertificateAuthority.loadOrCreate();
+        var anchorsDir = tempHome.resolve("anchors");
+        Files.createDirectories(anchorsDir);
+        CertificateAuthority.hostAnchorsDir = anchorsDir;
+
+        var localPem = CertificateAuthority.loadOrCreate().caCertPem();
+        Files.writeString(anchorsDir.resolve("incus-spawn-mitm.crt"), localPem);
+        Files.writeString(anchorsDir.resolve("corporate.crt"), "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----");
+
+        var anchors = CertificateAuthority.hostAnchors();
+        assertEquals(1, anchors.size());
+        assertTrue(anchors.containsKey("corporate.crt"));
+        assertFalse(anchors.containsKey("incus-spawn-mitm.crt"));
+    }
+
+    @Test
+    void hostAnchorsIgnoresNonCertFiles() throws Exception {
+        var anchorsDir = tempHome.resolve("anchors");
+        Files.createDirectories(anchorsDir);
+        CertificateAuthority.hostAnchorsDir = anchorsDir;
+
+        Files.writeString(anchorsDir.resolve("readme.txt"), "not a cert");
+        Files.writeString(anchorsDir.resolve("valid.crt"), "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----");
+        Files.writeString(anchorsDir.resolve("also-valid.pem"), "-----BEGIN CERTIFICATE-----\nFAKE2\n-----END CERTIFICATE-----");
+
+        var anchors = CertificateAuthority.hostAnchors();
+        assertEquals(2, anchors.size());
+        assertTrue(anchors.containsKey("valid.crt"));
+        assertTrue(anchors.containsKey("also-valid.pem"));
+    }
+
+    @Test
+    void hostAnchorsReturnsEmptyWhenDirectoryMissing() {
+        CertificateAuthority.hostAnchorsDir = tempHome.resolve("nonexistent");
+        assertTrue(CertificateAuthority.hostAnchors().isEmpty());
+        assertEquals("", CertificateAuthority.hostAnchorFingerprint());
+    }
+
+    @Test
+    void hostAnchorFingerprintChangesWithContent() throws Exception {
+        var anchorsDir = tempHome.resolve("anchors");
+        Files.createDirectories(anchorsDir);
+        CertificateAuthority.hostAnchorsDir = anchorsDir;
+
+        Files.writeString(anchorsDir.resolve("ca1.crt"), "-----BEGIN CERTIFICATE-----\nONE\n-----END CERTIFICATE-----");
+        var fp1 = CertificateAuthority.hostAnchorFingerprint();
+        assertFalse(fp1.isEmpty());
+
+        Files.writeString(anchorsDir.resolve("ca2.crt"), "-----BEGIN CERTIFICATE-----\nTWO\n-----END CERTIFICATE-----");
+        var fp2 = CertificateAuthority.hostAnchorFingerprint();
+        assertNotEquals(fp1, fp2);
     }
 
     // --- Helpers ---
