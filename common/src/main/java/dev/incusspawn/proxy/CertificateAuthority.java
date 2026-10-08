@@ -369,12 +369,24 @@ public class CertificateAuthority {
      */
     public static boolean propagateHostCas(IncusClient incus, String container, JsonNode instance) {
         var hostCa = SpawnConfig.load().hostCa();
-        if (!hostCa.propagate()) return false;
-        var anchors = hostAnchors(hostCa.paths());
-        var fingerprint = hostAnchorFingerprint(anchors);
-        var stored = instance != null
+        // Read stored fingerprint lazily: free from instance JSON, costly from Incus
+        java.util.function.Supplier<String> storedFp = () -> instance != null
                 ? instance.path("config").path(Metadata.HOST_CA_FINGERPRINT).asText("")
                 : incus.configGet(container, Metadata.HOST_CA_FINGERPRINT);
+
+        if (!hostCa.propagate()) {
+            var stored = storedFp.get();
+            if (stored.isEmpty()) return false;
+            incus.shellExec(container, "sh", "-c",
+                    "rm -f /etc/pki/ca-trust/source/anchors/isx-host-*");
+            incus.shellExec(container, "update-ca-trust");
+            incus.configSet(container, Metadata.HOST_CA_FINGERPRINT, "");
+            return true;
+        }
+
+        var anchors = hostAnchors(hostCa.paths());
+        var fingerprint = hostAnchorFingerprint(anchors);
+        var stored = storedFp.get();
 
         if (fingerprint.isEmpty()) {
             if (stored.isEmpty()) return false;

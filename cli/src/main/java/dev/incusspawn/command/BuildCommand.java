@@ -1286,11 +1286,9 @@ public class BuildCommand extends BaseCommand {
             hostAnchors = CertificateAuthority.hostAnchors(hostCa.paths());
             if (!hostAnchors.isEmpty()) {
                 for (var entry : hostAnchors.entrySet()) {
-                    container.sh(
-                            "cat > /etc/pki/ca-trust/source/anchors/isx-host-" + entry.getKey() + " << 'CERTEOF'\n" +
-                            entry.getValue() + "\n" +
-                            "CERTEOF")
-                            .assertSuccess("Failed to install host CA certificate");
+                    container.writeFile(
+                            "/etc/pki/ca-trust/source/anchors/isx-host-" + entry.getKey(),
+                            entry.getValue());
                 }
             }
         }
