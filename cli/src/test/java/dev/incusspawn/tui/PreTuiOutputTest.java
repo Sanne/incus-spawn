@@ -9,6 +9,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -70,6 +71,27 @@ class PreTuiOutputTest {
         assertEquals(1, waits.get(), "printed text is not covered by the TUI before it is read, once");
         assertTrue(terminal().contains("First-time setup required."), "stdout still reaches the terminal");
         assertTrue(terminal().contains("attempting recovery"), "stderr still reaches the terminal");
+    }
+
+    @Test
+    void aPauseShowsTheHeldWarningsBeforeWaitingAndStillHandsThemOver() {
+        var events = new ArrayList<String>();
+        try (var preTui = PreTuiOutput.begin()) {
+            System.err.println("Starting incus-spawn VM...");
+            Warnings.warn("held (#1154 test)");
+            preTui.handOver(w -> events.add("log: " + w), () -> {
+                events.add("wait, shown: " + terminal().contains("Warning: held (#1154 test)"));
+            });
+        }
+        assertEquals(List.of("wait, shown: true", "log: held (#1154 test)"), events,
+                "a Ctrl-C at the pause must not lose the warning");
+    }
+
+    @Test
+    void anEnterTypedWhileGettingReadyDoesNotEndThePause() throws Exception {
+        var stdin = new java.io.ByteArrayInputStream("\n\n".getBytes(StandardCharsets.UTF_8));
+        PreTuiOutput.discardTypeahead(stdin);
+        assertEquals(-1, stdin.read(), "the typed-ahead Enters are gone before the prompt reads");
     }
 
     @Test
