@@ -121,7 +121,7 @@ Branches can optionally enable GUI/audio passthrough (Wayland + PipeWire with GP
 
 The TUI shows a storage gauge and per-row disk usage so you can see what's filling the pool. Sizes are approximate (marked `~`): the base template carries the shared base image, while CoW branches show only the data unique to them. Press **C** to reclaim space, or on macOS grow the disk with `isx vm resize <size>`.
 
-Templates pre-install your baseline tools and repos, and integrations plug in through the same tool system: VS Code Remote, JetBrains Gateway, and Claude Code skills.
+Templates pre-install your baseline tools and repos, and integrations plug in through the same tool system: VS Code Remote, JetBrains Gateway, and agent skills.
 
 ### Network Modes
 
@@ -353,7 +353,7 @@ Image schema fields (all optional except `name`):
 - `package_repos` -- additional package repositories to enable (e.g. COPR)
 - `tools` -- tool names to run (resolved from YAML or Java, see [Custom Tools](#custom-tools))
 - `repos` -- git repositories to clone as agentuser (see below)
-- `skills` -- Claude Code skills to bake into the image (see below); accepts a list shorthand or an object with `repo` and `list` sub-fields
+- `skills` -- agent skills to bake into the image (see below); accepts a list shorthand or an object with `repo` and `list` sub-fields
 - `agent_note` -- always-true fact an agent must know before acting (see [Agent Environment Context](#agent-environment-context))
 - `host-resources` -- host files/directories to share with containers (see below)
 - `mask_services` -- systemd units to mask in the image
@@ -561,9 +561,9 @@ shell-command: copilot
 
 Copilot uses the same GitHub PAT as the `gh` tool -- run `isx init` to configure your GitHub token if you haven't already. No separate credential is needed.
 
-### Claude Code Skills
+### Agent Skills
 
-Template images can declare [Claude Code skills](https://skills.sh) to bake in at build time. Skills are installed once into the template and inherited by every instance branched from it.
+Template images can declare [agent skills](https://skills.sh) to bake in at build time. Skills are installed once into the template, at `~/.agents/skills`, the shared location any agent can read (Claude Code finds them through `~/.claude/skills`), and inherited by every instance branched from it.
 
 ```yaml
 name: tpl-agent
@@ -639,7 +639,7 @@ Some content is better placed elsewhere:
 | --- | --- |
 | `agent_note: Maven 3.9 build tool` | `description`, which is what template and tool listings show |
 | `agent_note: maven, podman and jtreg are installed` | Nothing -- the generated file already lists installed tools and cloned repos |
-| `agent_note: Build with 'make images', test with 'make test TEST=tier1'` | A [skill](#claude-code-skills), which loads on demand rather than in every session |
+| `agent_note: Build with 'make images', test with 'make test TEST=tier1'` | A [skill](#agent-skills), which loads on demand rather than in every session |
 | `agent_note: Be careful when editing the parser` | A specific constraint, or nothing at all |
 | `agent_note: Follow the Quarkus code style` | The repository's own `CLAUDE.md`, which applies only to work in that repo |
 
