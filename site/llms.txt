@@ -1,8 +1,8 @@
 # isx
 
-> An AI agent in your terminal can read your API keys, tokens and SSH keys. isx gives each agent a full Linux workstation of its own instead, created instantly from a template you've prepared. There it has full autonomy: it can install software, run services and containers, and work without permission prompts, while your computer stays out of its reach. It works with the accounts you assign it, such as its own GitHub identity, yet its workstation holds no credentials. Free and open source, and light enough to run on a laptop, on Linux and macOS.
+> An AI agent in your terminal can read your API keys, tokens and SSH keys. isx gives each agent a full Linux workstation of its own instead, branched instantly from a template you prepared once. On it the agent has full autonomy, while your computer stays out of its reach; in it there are no credentials, because a transparent proxy on your host adds the accounts you assign it, such as its own GitHub identity, to its requests as they leave. Free and open source, light enough for a laptop, on Linux and macOS.
 
-isx was formerly known as incus-spawn; the command is `isx`. It works with Claude Code, Codex CLI, GitHub Copilot CLI and other coding agents, and with everyday tools like `gh`, `git` and `curl`, unchanged. Install with `curl -fsSL https://isx.run | sh`, Homebrew, DNF, APT or JBang.
+A branch is to a template what a git worktree is to a repository, except that the working copy is the whole machine, toolchain, dependencies and running services included; it is instant and starts ready to work. It is an Incus system container by default, or a KVM virtual machine (`--vm`) for the strongest isolation: a sandboxed workstation, not a sandboxed process on your own machine or an application container with a fixed set of tools. The agent's work comes back as commits through a git remote isx manages, so you review an immutable commit, never a directory the agent can still change. isx works with Claude Code, Codex CLI, Pi, GitHub Copilot CLI and other coding agents, and with everyday tools like `gh`, `git` and `curl`, unchanged. An agent on your host can drive isx over MCP (`isx mcp`): branch machines from templates you approved, run commands in them, and delegate whole tasks to the agents inside. Install with `curl -fsSL https://isx.run | sh`, Homebrew, DNF, APT or JBang.
 
 ## Docs
 
@@ -14,11 +14,12 @@ isx was formerly known as incus-spawn; the command is `isx`. It works with Claud
 - [Template images](https://isx.run/docs#template-images): defining, building and rebuilding templates
 - [Custom tools](https://isx.run/docs#custom-tools): adding tools with YAML definitions
 - [Credential accounts](https://isx.run/docs#credential-accounts): several accounts per service, chosen per instance
+- [Delegating from an agent on your host (MCP)](https://isx.run/docs#delegating-from-an-agent-on-your-host-mcp): `isx mcp`, approved templates, background commands and delegated tasks
+- [Compared with other sandboxes](https://isx.run/docs#compared-with-other-sandboxes): a sandboxed process, workload or workstation, and where isx and the other agent sandboxes sit
 - [FAQ](https://isx.run/docs#faq)
 
 ## Optional
 
 - [Why full system containers?](https://isx.run/docs#why-full-system-containers)
-- [Compared with other sandboxes](https://isx.run/docs#compared-with-other-sandboxes): a sandboxed process, workload or workstation, and where isx and the other agent sandboxes sit
 - [Source code on GitHub](https://github.com/Sanne/incus-spawn)
 - [Issues](https://github.com/Sanne/incus-spawn/issues)
