@@ -24,7 +24,7 @@ import dev.incusspawn.proxy.ProxyService;
  * <p>It also stands in for the proxy's account-refresh signal, which would otherwise reach
  * whatever isx proxy runs on the developer's machine; {@link #proxySignals()} counts the calls.
  */
-final class IsolatedHome implements BeforeEachCallback, AfterEachCallback {
+public final class IsolatedHome implements BeforeEachCallback, AfterEachCallback {
 
     /** The config.yaml the code under test reads and writes. */
     static Path configFile() {

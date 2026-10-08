@@ -382,6 +382,12 @@ public class ListCommand extends BaseCommand {
 
     @Override
     protected CommandResult doExecute() {
+        // Bare `isx`: before anything else, so no failure here can skip the pause, and before the
+        // first reload, so a pause for the user does not leave the listing stale.
+        if (preTui != null) {
+            preTui.handOver(warningChannel::report, this::waitForUser);
+            preTui = null;
+        }
         this.incus = RuntimeServices.incus();
         // Bare `isx` opens the TUI; the explicit `list` command prints the listing, and nothing
         // else: a script may poll it, so it reads Incus once and leaves the definitions alone.
@@ -398,11 +404,6 @@ public class ListCommand extends BaseCommand {
         this.cdiTools = RuntimeServices.toolSetups();
         this.backgroundTasks = RuntimeServices.backgroundTasks();
         this.lockManager = RuntimeServices.lockManager();
-        // Before the first reload, so a pause for the user does not leave the listing stale.
-        if (preTui != null) {
-            preTui.handOver(warningChannel::report, PreTuiOutput::waitForEnter);
-            preTui = null;
-        }
         runTuiLoop();
         return CommandResult.SUCCESS;
     }
@@ -473,7 +474,18 @@ public class ListCommand extends BaseCommand {
 
     // --- TUI lifecycle ---
 
-    private void runTuiLoop() {
+    /** Let the user read what was printed before the TUI opens; a seam for tests. */
+    void waitForUser() {
+        PreTuiOutput.waitForEnter();
+    }
+
+    /** The TUI's warnings, oldest first, read-only; for tests. */
+    List<String> warningMessages() {
+        return warningLog.entries().stream().map(WarningLog.Entry::message).toList();
+    }
+
+    /** Draws the TUI until the user quits; overridable so a test can stand in for the terminal. */
+    void runTuiLoop() {
         try {
             runTuiLoopUntilQuit();
         } finally {
