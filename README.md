@@ -121,7 +121,7 @@ Branches can optionally enable GUI/audio passthrough (Wayland + PipeWire with GP
 
 The TUI shows a storage gauge and per-row disk usage so you can see what's filling the pool. Sizes are approximate (marked `~`): the base template carries the shared base image, while CoW branches show only the data unique to them. Press **C** to reclaim space, or on macOS grow the disk with `isx vm resize <size>`.
 
-Templates pre-install your baseline tools and repos, and integrations plug in through the same tool system: VS Code Remote, JetBrains Gateway, shell completions, and Claude Code skills.
+Templates pre-install your baseline tools and repos, and integrations plug in through the same tool system: VS Code Remote, JetBrains Gateway, and Claude Code skills.
 
 ### Network Modes
 
@@ -284,7 +284,7 @@ Claude Code runs a `headersHelper` only in a workspace you have trusted, so star
 
 ## Why full system containers?
 
-**Application containers**, the kind Docker and Podman run by default, are built for shipping applications: a minimal filesystem, one process, fast startup. isx is built for a different job, and the choice that follows from it is what a sandbox *is*. An isx sandbox is a workstation, a complete machine: a full [Incus](https://linuxcontainers.org/incus/) **system container**, or a KVM virtual machine (`--vm`) where the code is not trusted, with its own init system, real networking (`ping`, `strace`, nested Podman/Docker), and GUI and audio passthrough (Linux only). Templates pre-install your baseline tools and repos, but what the agent gets is a real Linux system, where it can `dnf install`, `pip install`, build from source, or run Docker Compose just like on a workstation.
+**Application containers**, the kind Docker and Podman run by default, are built for shipping applications: a minimal filesystem, one process, fast startup. isx is built for a different job, and the choice that follows from it is what a sandbox *is*. An isx sandbox is a workstation, a complete machine: a full [Incus](https://linuxcontainers.org/incus/) **system container**, or a KVM virtual machine (`--vm`), with its own init system, real networking (`ping`, `strace`, nested Podman/Docker), and GUI and audio passthrough (Linux only). Templates pre-install your baseline tools and repos, but what the agent gets is a real Linux system, where it can `dnf install`, `pip install`, build from source, or run Docker Compose just like on a workstation.
 
 This matters for agents in particular, because what you hand an agent is an investigation, and nobody knows at the start what tools it will need. An agent on an isx branch installs a tracer, starts a service, or writes a tool of its own as it goes, and if it wrecks the machine, the branch is destroyed and the next one costs a second. It works exactly as it would on a developer workstation, because that is what it has. [Compared with other sandboxes](#compared-with-other-sandboxes) shows how this choice plays out against other sandboxes for agents.
 

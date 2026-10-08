@@ -154,86 +154,49 @@ sudo apt update &amp;&amp; sudo apt install incus-spawn</code></pre>
 </header>
 
 <section class="pillars" aria-label="Highlights">
-  <a class="pillar" href="#credentials">
-    <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
-    <h3>Zero credential exposure</h3>
-    <p>Tools work with the accounts you assign, such as the agent's own GitHub identity. The workstation holds no credentials.</p>
+  <a class="pillar" href="#branching">
+    <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 3L5 14h6l-1 7 8-11h-6l1-7z"/></svg></span>
+    <h3>Branch an entire build environment</h3>
+    <p>Prepare a template once. <code>isx branch</code> makes an instant working copy of the whole machine, ready to work.</p>
   </a>
   <a class="pillar" href="#real-machines">
     <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span>
     <h3>A real machine, full autonomy</h3>
     <p>Root, packages, services, nested containers &mdash; and no permission prompts, because your computer stays out of reach.</p>
   </a>
-  <a class="pillar" href="#branching">
-    <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 3L5 14h6l-1 7 8-11h-6l1-7z"/></svg></span>
-    <h3>New machines, instantly</h3>
-    <p>Prepare a template once with your tools and repositories. Every new workstation starts from it, ready to work.</p>
+  <a class="pillar" href="#credentials">
+    <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
+    <h3>Zero credential exposure</h3>
+    <p>Tools work with the accounts you assign, such as the agent's own GitHub identity. The workstation holds no credentials.</p>
   </a>
   <a class="pillar" href="#workflows">
     <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><circle cx="6" cy="18" r="2"/><path d="M6 8v8M18 16c0-6-5-8-10-9.5"/></svg></span>
     <h3>Git-native workflow</h3>
-    <p><code>git fetch &lt;machine&gt;</code> pulls commits straight out of it. Remotes are added and removed for you.</p>
+    <p>The work comes back as commits: <code>git fetch &lt;machine&gt;</code>, diff, cherry-pick. Remotes are added and removed for you.</p>
   </a>
 </section>
 
 <main class="features">
 
-  <section class="feature" id="credentials">
-    <div class="feature-head">
-      <p class="eyebrow"><span>01</span> Credential isolation</p>
-      <h2>Signed in, with no credentials inside</h2>
-    </div>
-    <div class="feature-body">
-      <p>
-        A host-side MITM TLS proxy intercepts HTTPS and injects credentials transparently &mdash;
-        <code>claude</code>, <code>pi</code>, <code>gh</code>, <code>git</code>, <code>curl</code>,
-        and any other tool work unmodified, with no configuration or wrappers needed inside the environment.
-        Branches run with full internet, proxy-only egress, or completely airgapped.
-      </p>
-      <p>
-        The proxy also caches container image layers and build artifacts on the host &mdash;
-        the same dependency is never downloaded twice.
-      </p>
-    </div>
-    <div class="cast-frame"><div class="cast-title">isx:experiment — try to steal the credentials</div><div class="castbox" data-cast="creds"></div></div>
-  </section>
-
-  <section class="feature" id="real-machines">
-    <div class="feature-head">
-      <p class="eyebrow"><span>02</span> System containers</p>
-      <h2>Real machines, not process jails</h2>
-    </div>
-    <div class="feature-body">
-      <p>
-        <strong>Docker and Podman are built for shipping applications</strong> &mdash;
-        minimal filesystems, single-process isolation, fast startup.
-        isx solves a different problem: full <strong>system containers</strong> powered by
-        <a href="https://linuxcontainers.org/incus/">Incus</a> that behave like real machines.
-        Each environment runs its own init system, has real networking
-        (<code>ping</code>, <code>strace</code>, nested Podman/Docker),
-        and supports GUI and audio passthrough.
-      </p>
-      <p>
-        Templates pre-install your baseline tools and repos, but the environment is a real Linux system &mdash;
-        agents and users can freely <code>dnf install</code>, <code>pip install</code>,
-        build from source, or run Docker Compose just like on a workstation.
-        For the strongest isolation, KVM virtual machines add a separate kernel and hardware-level separation.
-      </p>
-    </div>
-    <div class="cast-frame"><div class="cast-title">isx:experiment — root, packages, nested containers</div><div class="castbox" data-cast="realmachine"></div></div>
-  </section>
-
   <section class="feature" id="branching">
     <div class="feature-head">
-      <p class="eyebrow"><span>03</span> Copy-on-write</p>
-      <h2>Instant branching</h2>
+      <p class="eyebrow"><span>01</span> Branching</p>
+      <h2>Like a git worktree, but branching an entire build environment</h2>
     </div>
     <div class="feature-body">
       <p>
-        Like <code>git branch</code>, each clone is a copy-on-write snapshot that shares storage
-        with its parent. Build a template once with your preferred tools and repos, then spin up
-        complete environments instantly &mdash; each with its own filesystem,
-        networking, and process tree.
+        A template is a working environment declared once &mdash; packages, tools, repositories &mdash; and
+        built once. <code>isx branch</code> creates and starts a new machine from it, with your code and all
+        your tools already there. Where a git worktree gives you a second working copy in a new directory,
+        an isx branch gives you one that is a whole machine, toolchain, dependencies and running services
+        included. It shares everything unchanged with its template and costs only what it changes, so it is
+        instant. And it starts ready to work: tools installed, repositories cloned, dependency caches warm.
+      </p>
+      <p>
+        Every branch is a machine of its own, with its own filesystem, network and processes: no port
+        conflicts, no shared database, no interference between them. Take one per task: try five approaches
+        in five branches and keep the one that works, and when an agent wrecks its machine, give it a new
+        one with one command.
       </p>
     </div>
     <div class="cast-frame"><div class="cast-title">isx — copy-on-write branches</div><div class="term-static"><pre><code><span class="t-hi">tpl-java</span>  <span class="t-dim">(stopped template, ~2GB)</span>
@@ -243,34 +206,99 @@ sudo apt update &amp;&amp; sudo apt install incus-spawn</code></pre>
     <div class="cast-frame"><div class="cast-title">isx — fork a machine, database included</div><div class="castbox" data-cast="branching"></div></div>
   </section>
 
-  <section class="feature" id="workflows">
+  <section class="feature" id="real-machines">
     <div class="feature-head">
-      <p class="eyebrow"><span>04</span> Workflow</p>
-      <h2>Built for developer workflows</h2>
+      <p class="eyebrow"><span>02</span> System containers</p>
+      <h2>Real machines, not application containers</h2>
     </div>
     <div class="feature-body">
       <p>
-        Templates are YAML: packages, tools, repos. Branch and it's all there.
-        Git remotes are managed automatically &mdash;
-        <code>git fetch fix-auth</code> from your host pulls commits straight out of the container.
-        JetBrains Gateway, shell completions, and Claude Code skills plug in via the same tool system.
+        The whole machine means a real one. <strong>Application containers</strong>, the kind Docker and
+        Podman run by default, are built for shipping applications &mdash; a minimal filesystem, one process,
+        fast startup. isx is built for a different job, so an isx sandbox is a workstation: a full
+        <strong>system container</strong> powered by <a href="https://linuxcontainers.org/incus/">Incus</a>,
+        or a KVM virtual machine, that behaves like a real machine.
+        Each one runs its own init system, has real networking
+        (<code>ping</code>, <code>strace</code>, nested Podman/Docker),
+        and supports GUI and audio passthrough.
+      </p>
+      <p>
+        What you hand an agent is an investigation, and nobody knows at the start what tools it will need.
+        Templates pre-install your baseline tools and repos, but what the agent gets is a real Linux system &mdash;
+        it can <code>dnf install</code>, <code>pip install</code>, build from source, or run Docker Compose
+        just like on a workstation.
+        For the strongest isolation, KVM virtual machines add a separate kernel and hardware-level separation.
+        <a href="docs#compared-with-other-sandboxes">How this compares with other sandboxes &rarr;</a>
       </p>
     </div>
-    <div class="cast-frame"><div class="cast-title">host — git fetch from a running instance</div><div class="term-static"><pre><code><span class="t-dim"># Inside the container, you make some commits...</span>
-<span class="t-dim"># Back on the host:</span>
+    <div class="cast-frame"><div class="cast-title">isx:experiment — root, packages, nested containers</div><div class="castbox" data-cast="realmachine"></div></div>
+  </section>
+
+  <section class="feature" id="credentials">
+    <div class="feature-head">
+      <p class="eyebrow"><span>03</span> Credential isolation</p>
+      <h2>Signed in, with no credentials inside</h2>
+    </div>
+    <div class="feature-body">
+      <p>
+        Inside its machine the agent can do anything, with no approval steps for you to babysit. That is
+        safe only because the machine holds nothing worth stealing. API keys and tokens never enter it in any form. Instead, a
+        transparent proxy on your host adds the real credentials to the agent's requests as they leave the
+        machine. Neither the agent nor its tools know it is there: <code>claude</code>, <code>pi</code>,
+        <code>gh</code>, <code>git</code> and <code>curl</code> work unmodified, with nothing to configure,
+        signed in as the accounts you assign.
+      </p>
+      <p>
+        Branches run with full internet, proxy-only egress, or completely airgapped. The proxy also caches
+        container image layers and build artifacts on the host &mdash; the same dependency is never
+        downloaded twice.
+      </p>
+    </div>
+    <div class="cast-frame"><div class="cast-title">isx:experiment — try to steal the credentials</div><div class="castbox" data-cast="creds"></div></div>
+  </section>
+
+  <section class="feature" id="workflows">
+    <div class="feature-head">
+      <p class="eyebrow"><span>04</span> Workflow</p>
+      <h2>The work comes back as commits</h2>
+    </div>
+    <div class="feature-body">
+      <p>
+        In a git worktree, the commits land in your repository as you make them. A branch is a separate
+        machine, so it gets a git remote instead, managed for you &mdash; and from there on it is the
+        workflow you know: <code>git fetch</code>, then <code>git diff</code>, <code>git cherry-pick</code>
+        or <code>git push</code>. You review a specific, immutable commit, never a directory the agent
+        can still change.
+      </p>
+      <p>
+        Your editor reaches in too: VS Code Remote and JetBrains Gateway attach over SSH from the first
+        start, and Claude Code skills are baked into the template.
+      </p>
+    </div>
+    <div class="cast-frame"><div class="cast-title">host — branch, then fetch the commits back</div><div class="term-static"><pre><code><span class="t-prompt">$</span> isx branch --from tpl-quarkus fix-auth
+<span class="t-dim"># The agent commits inside fix-auth. Back on the host:</span>
 <span class="t-prompt">$</span> git fetch fix-auth
-<span class="t-prompt">$</span> git cherry-pick fix-auth/main</code></pre></div></div>
+<span class="t-prompt">$</span> git diff main..fix-auth/main      <span class="t-dim"># review exactly what it did</span>
+<span class="t-prompt">$</span> git cherry-pick fix-auth/main     <span class="t-dim"># take what you like</span></code></pre></div></div>
   </section>
 
   <section class="feature" id="tui">
     <div class="feature-head">
-      <p class="eyebrow"><span>05</span> Interactive TUI</p>
-      <h2>Enter &rarr; a working agent</h2>
+      <p class="eyebrow"><span>05</span> Interfaces</p>
+      <h2>A TUI for you, a CLI for your scripts, an MCP for your agents</h2>
     </div>
     <div class="feature-body">
       <p>
         The built-in TUI: browse templates and running machines, hit <kbd>F4</kbd> to branch,
         and land in Claude Code on the fresh machine &mdash; before you finish reading this sentence.
+        Everything it does is also a command, for your shell and your scripts.
+      </p>
+      <p>
+        And isx is an MCP server. The agent on your host stays as constrained as you like, and can still
+        take on research that needs software you would rather not install on your computer: a tracer, a
+        database, a service to run against, a whole toolchain. It branches a machine of its own from a
+        template you approved, works there or hands the task to the agent inside, and brings back the
+        result. Your computer keeps the constraints; the disposable machine gets the freedom.
       </p>
     </div>
     <div class="cast-frame"><div class="cast-title">isx — the TUI</div><div class="castbox" data-cast="tui"></div></div>

@@ -19,5 +19,6 @@ isx was formerly known as incus-spawn; the command is `isx`. It works with Claud
 ## Optional
 
 - [Why full system containers?](https://isx.run/docs#why-full-system-containers)
+- [Compared with other sandboxes](https://isx.run/docs#compared-with-other-sandboxes): a sandboxed process, workload or workstation, and where isx and the other agent sandboxes sit
 - [Source code on GitHub](https://github.com/Sanne/incus-spawn)
 - [Issues](https://github.com/Sanne/incus-spawn/issues)
