@@ -77,7 +77,7 @@ class UninstallScriptTest {
         Files.writeString(bin.resolve("isx"), """
                 #!/bin/sh
                 case "$*" in
-                  "vm stop") echo stopped > "$(dirname "$0")/vm-stop"; %s ;;
+                  "vm stop"*) echo "$*" > "$(dirname "$0")/vm-stop"; %s ;;
                   "list -q") %s ;;
                   "templates list --format=plain") printf 'tpl-a\\t-\\tbuiltin\\tA\\ttrue\\ntpl-b\\t-\\tbuiltin\\tB\\tfalse\\n' ;;
                   *) exit 1 ;;
@@ -87,7 +87,9 @@ class UninstallScriptTest {
     }
 
     private static final String THREE_INSTANCES = "printf 'dev-1\\ndev-2\\ndev-3\\n'";
-    private static final String STOP_THE_VM = "kill \"$(cat \"$HOME/.local/state/incus-spawn/vm.pid\")\"";
+    /** Stops the VM and, as {@code isx vm stop} does, waits until it is gone. */
+    private static final String STOP_THE_VM = "pid=\"$(cat \"$HOME/.local/state/incus-spawn/vm.pid\")\"; kill \"$pid\";"
+            + " while kill -0 \"$pid\" 2>/dev/null; do sleep 0.1; done";
 
     /** A process whose name says qemu stands in for the running VM. */
     private Process startVm() throws IOException {
@@ -116,7 +118,7 @@ class UninstallScriptTest {
             assertTrue(result.output().contains("(3 instance(s) and 1 built template(s));"), result.output());
             assertTrue(Files.exists(dataDisk), result.output());
             // A disk that is kept is shut down by isx, never only signalled
-            assertTrue(Files.exists(bin.resolve("vm-stop")), result.output());
+            assertEquals("vm stop --require-clean", Files.readString(bin.resolve("vm-stop")).strip(), result.output());
             assertFalse(result.output().contains("did not shut down cleanly"), result.output());
         } finally {
             vm.destroyForcibly();
@@ -134,8 +136,88 @@ class UninstallScriptTest {
             assertEquals(0, result.exit(), result.output());
             assertFalse(vm.isAlive(), result.output());
             assertTrue(result.output().contains("Warning: the VM did not shut down cleanly"), result.output());
-            assertTrue(result.output().contains("The VM was stopped with signals"), result.output());
+            assertTrue(result.output().contains("The VM did not shut down cleanly: on the next boot"), result.output());
             assertTrue(Files.exists(dataDisk), result.output());
+        } finally {
+            vm.destroyForcibly();
+        }
+    }
+
+    @Test
+    void aVmIsxStoppedWithSignalsIsReportedAsUnclean() throws Exception {
+        // Real isx kills a guest that ignores its stop request itself (#881): the VM is gone by the
+        // time the script looks, so only isx's exit status can tell this from a shutdown
+        isx(THREE_INSTANCES, STOP_THE_VM + "; exit 4");
+        var vm = startVm();
+        try {
+            var result = run("--yes");
+
+            assertEquals(0, result.exit(), result.output());
+            assertEquals(1, result.output().split("Warning: the VM did not shut down cleanly", -1).length - 1,
+                    result.output());
+            assertTrue(result.output().contains("The VM did not shut down cleanly: on the next boot"), result.output());
+            assertFalse(result.output().contains("Stopping VM (pid="), "isx already stopped it:\n" + result.output());
+            assertTrue(Files.exists(dataDisk), result.output());
+        } finally {
+            vm.destroyForcibly();
+        }
+    }
+
+    @Test
+    void anIsxWithoutRequireCleanStillStopsTheVmAndSaysItCannotTell() throws Exception {
+        // An isx from before the flag rejects it as a usage error (2) without stopping anything
+        Files.writeString(bin.resolve("isx"), """
+                #!/bin/sh
+                case "$*" in
+                  "vm stop --require-clean") exit 2 ;;
+                  "vm stop") %s ;;
+                  *) exit 1 ;;
+                esac
+                """.formatted(STOP_THE_VM));
+        Files.setPosixFilePermissions(bin.resolve("isx"), PosixFilePermissions.fromString("rwxr-xr-x"));
+        var vm = startVm();
+        try {
+            var result = run("--yes");
+
+            assertEquals(0, result.exit(), result.output());
+            assertTrue(result.output().contains("this isx cannot say whether the VM shut down cleanly"), result.output());
+            assertFalse(result.output().contains("Stopping VM (pid="), "isx stopped it, not signals:\n" + result.output());
+        } finally {
+            vm.destroyForcibly();
+        }
+    }
+
+    @Test
+    void theListingBoundTakesWhatIsxStarted() throws Exception {
+        // The watchdog kills isx's process group: a JVM launcher's java, or any child, goes too
+        isx("sleep 30 & echo $! > \"$(dirname \"$0\")/child\"; exec sleep 30", STOP_THE_VM);
+        var vm = startVm();
+        try {
+            var result = run(Map.of("ISX_UNINSTALL_LIST_TIMEOUT", "1"), "--yes");
+
+            assertEquals(0, result.exit(), result.output());
+            var child = ProcessHandle.of(Long.parseLong(Files.readString(bin.resolve("child")).strip()));
+            // Killed, it still has to be reaped by whoever inherited it
+            for (int i = 0; i < 50 && child.isPresent() && child.get().isAlive(); i++) Thread.sleep(100);
+            assertFalse(child.isPresent() && child.get().isAlive(), "isx's child outlived the bound:\n" + result.output());
+        } finally {
+            vm.destroyForcibly();
+        }
+    }
+
+    @Test
+    void theListingBoundHoldsForAnIsxThatIgnoresTheAlarm() throws Exception {
+        // An ignored SIGALRM survives exec, so the alarm alone would wait the command out
+        isx("trap '' ALRM; exec sleep 20", STOP_THE_VM);
+        var vm = startVm();
+        try {
+            long start = System.nanoTime();
+            var result = run(Map.of("ISX_UNINSTALL_LIST_TIMEOUT", "1"), "--yes");
+            long seconds = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - start);
+
+            assertEquals(0, result.exit(), result.output());
+            assertTrue(seconds < 10, "took " + seconds + " s under a 1 s bound:\n" + result.output());
+            assertTrue(result.output().contains("isx could not list them"), result.output());
         } finally {
             vm.destroyForcibly();
         }

@@ -76,7 +76,23 @@ find_isx() {
 }
 
 # Run "$@" for at most $1 seconds (macOS ships no timeout(1)).
-bounded() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+# A watchdog SIGKILLs it and everything it started, so a command that ignores
+# SIGALRM cannot outlast the bound either; the exit status is the command's, or
+# 124 when it ran out of time.
+bounded() {
+    perl -e '
+        my $secs = shift;
+        my $pid = fork() // exit 127;
+        # In a process group of its own, so the watchdog also takes whatever it started
+        if (!$pid) { setpgrp(0, 0); exec @ARGV or exit 127 }
+        my $stop = sub { kill "KILL", -$pid; waitpid($pid, 0); exit shift };
+        $SIG{ALRM} = sub { $stop->(124) };
+        $SIG{INT} = $SIG{TERM} = sub { $stop->(130) };
+        alarm $secs;
+        waitpid($pid, 0);
+        exit($? & 127 ? 128 + ($? & 127) : $? >> 8);
+    ' "$@"
+}
 
 # How long to wait for isx to list what the data disk holds.
 LIST_TIMEOUT="${ISX_UNINSTALL_LIST_TIMEOUT:-20}"
@@ -192,17 +208,30 @@ if $IS_MACOS && ! $BINARIES_ONLY; then
     UID_VAL="$(id -u)"
 
     # Stop the VM first. A data disk that is kept should be shut down cleanly, so
-    # 'isx vm stop' asks the guest first (it waits only a few seconds before it
-    # signals vfkit itself); signals here are only the fallback, and say so.
+    # 'isx vm stop' asks the guest first. It waits only a few seconds before it
+    # signals vfkit itself, and --require-clean makes it exit 4 when it did: on a
+    # Mac that is every stop until #881 is fixed. Signals here are only the
+    # fallback. Either way the kept disk was cut off, and the script says so.
+    unclean_stop() {
+        VM_STOPPED_UNCLEANLY=true
+        echo "Warning: ${1:-the VM did not shut down cleanly; it was stopped with signals.}"
+        echo "  The kept data disk may need filesystem recovery when the VM next boots."
+    }
     if vm_running && $KEEP_DATA_DISK && ISX="$(find_isx)"; then
-        bounded 60 "$ISX" vm stop </dev/null || true
+        STOP_STATUS=0
+        bounded 60 "$ISX" vm stop --require-clean </dev/null || STOP_STATUS=$?
+        if [ "$STOP_STATUS" -eq 2 ]; then
+            # An isx from before --require-clean: it can stop the VM but not say how
+            bounded 60 "$ISX" vm stop </dev/null || true
+            if ! vm_running; then
+                unclean_stop "this isx cannot say whether the VM shut down cleanly (on a Mac it does not, #881)."
+            fi
+        elif [ "$STOP_STATUS" -eq 4 ]; then
+            unclean_stop
+        fi
     fi
     if vm_running; then
-        if $KEEP_DATA_DISK; then
-            VM_STOPPED_UNCLEANLY=true
-            echo "Warning: the VM did not shut down cleanly; stopping it with signals."
-            echo "  The kept data disk may need filesystem recovery when the VM next boots."
-        fi
+        if $KEEP_DATA_DISK && ! $VM_STOPPED_UNCLEANLY; then unclean_stop; fi
         echo "Stopping VM (pid=$VM_PID, $VM_NAME)..."
         kill "$VM_PID" 2>/dev/null || true
         sleep 2
@@ -399,8 +428,8 @@ if $KEEP_DATA_DISK; then
     echo "Data disk preserved in $DATA_DISK (every instance, template and image)"
     echo "  to delete it: rm $DATA_DISK"
     if $VM_STOPPED_UNCLEANLY; then
-        echo "  The VM was stopped with signals, not shut down: on the next boot the"
-        echo "  guest may need to recover the disk, and the newest writes may be lost."
+        echo "  The VM did not shut down cleanly: on the next boot the guest may need"
+        echo "  to recover the disk, and the newest writes may be lost."
     fi
 fi
 if $IS_MACOS; then

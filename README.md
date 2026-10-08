@@ -1650,7 +1650,7 @@ Remove cached data, state, or configuration.
 | Subcommand | Description |
 |------------|-------------|
 | `cache` | Remove cached downloads, registry blobs, and build caches |
-| `state` | Remove VM state, logs, and appliance artifacts; on macOS the VM's data disk (every instance, template and image) is kept unless you pass `--delete-instances` |
+| `state` | Remove VM state, logs, and appliance artifacts; on macOS the VM's data disk (every instance, template and image) is kept unless you pass `--delete-instances`. Run `isx init` afterwards: the VM needs the appliance again before it boots on the kept disk |
 | `config` | Remove configuration, SSH keys, and CA certificate |
 | `pool` | Reclaim space from the storage pool (failed builds, unused images, DNF cache); `--base-images` also removes the downloaded base images, which the next build downloads again |
 | `all` | Remove cache, state, and configuration (does not touch Incus templates or instances unless you pass `--delete-instances`, which on macOS also deletes the VM's data disk) |
