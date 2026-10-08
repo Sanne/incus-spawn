@@ -5600,6 +5600,7 @@ public class ListCommand extends BaseCommand {
         }
         // The start's own read of the instance, when there was one: no need to read it again
         CertificateAuthority.fixContainerCaIfNeeded(incus, containerName, started);
+        CertificateAuthority.propagateHostCas(incus, containerName, started);
     }
 
     private void shellInto(ActionContext target) {

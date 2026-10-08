@@ -177,6 +177,7 @@ public class CertificateAuthority {
         for (var dir : dirs) {
             if (!Files.isDirectory(dir)) continue;
             try (var stream = Files.list(dir)) {
+                var prefix = dirs.size() > 1 ? dir.getFileName().toString() + "-" : "";
                 for (var path : stream.toList()) {
                     var name = path.getFileName().toString();
                     if (!name.endsWith(".crt") && !name.endsWith(".pem")) continue;
@@ -185,7 +186,7 @@ public class CertificateAuthority {
                         var pem = Files.readString(path).strip();
                         if (pem.isEmpty()) continue;
                         if (localPem != null && pem.equals(localPem)) continue;
-                        result.put(name, pem);
+                        result.put(prefix + name, pem);
                     } catch (IOException ignored) {}
                 }
             } catch (IOException ignored) {}
@@ -221,6 +222,8 @@ public class CertificateAuthority {
      */
     public static boolean installHostAnchors(IncusClient incus, String container,
                                              java.util.SortedMap<String, String> anchors) {
+        incus.shellExec(container, "sh", "-c",
+                "rm -f /etc/pki/ca-trust/source/anchors/isx-host-*");
         for (var entry : anchors.entrySet()) {
             var name = "isx-host-" + entry.getKey();
             var result = incus.shellExec(container, "sh", "-c",
@@ -322,14 +325,33 @@ public class CertificateAuthority {
     /**
      * Propagate host CA anchors into a container when {@code host-ca.propagate}
      * is enabled. Stamps a fingerprint on the instance and skips when it matches.
-     * Returns true if anchors were installed, false if skipped or disabled.
+     * Returns true if anchors were installed or revoked, false if skipped or disabled.
      */
     public static boolean propagateHostCas(IncusClient incus, String container) {
+        return propagateHostCas(incus, container, null);
+    }
+
+    /**
+     * As above, reading the stored fingerprint from {@code instance} when the caller has just
+     * read it -- as a start does -- rather than reading the instance again; null reads it.
+     */
+    public static boolean propagateHostCas(IncusClient incus, String container, JsonNode instance) {
         var hostCa = SpawnConfig.load().hostCa();
         if (!hostCa.propagate()) return false;
         var fingerprint = hostAnchorFingerprint(hostCa.paths());
-        if (fingerprint.isEmpty()) return false;
-        var stored = incus.configGet(container, Metadata.HOST_CA_FINGERPRINT);
+        var stored = instance != null
+                ? instance.path("config").path(Metadata.HOST_CA_FINGERPRINT).asText("")
+                : incus.configGet(container, Metadata.HOST_CA_FINGERPRINT);
+
+        if (fingerprint.isEmpty()) {
+            if (stored.isEmpty()) return false;
+            incus.shellExec(container, "sh", "-c",
+                    "rm -f /etc/pki/ca-trust/source/anchors/isx-host-*");
+            incus.shellExec(container, "update-ca-trust");
+            incus.configSet(container, Metadata.HOST_CA_FINGERPRINT, "");
+            return true;
+        }
+
         if (fingerprint.equals(stored)) return false;
 
         if (!installHostAnchors(incus, container, hostAnchors(hostCa.paths()))) return false;

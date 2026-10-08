@@ -139,6 +139,6 @@ public class InstancePrep {
             BuildOutput.warnBanner("CA certificate mismatch",
                     "Updated automatically.");
         }
-        CertificateAuthority.propagateHostCas(incus, container);
+        CertificateAuthority.propagateHostCas(incus, container, started);
     }
 }

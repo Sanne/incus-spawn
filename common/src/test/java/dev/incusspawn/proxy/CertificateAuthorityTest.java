@@ -189,6 +189,34 @@ class CertificateAuthorityTest {
     }
 
     @Test
+    void hostAnchorsMultipleDirsPrefixesWithDirName() throws Exception {
+        var dir1 = tempHome.resolve("dir-a");
+        var dir2 = tempHome.resolve("dir-b");
+        Files.createDirectories(dir1);
+        Files.createDirectories(dir2);
+
+        Files.writeString(dir1.resolve("same.crt"), "-----BEGIN CERTIFICATE-----\nONE\n-----END CERTIFICATE-----");
+        Files.writeString(dir2.resolve("same.crt"), "-----BEGIN CERTIFICATE-----\nTWO\n-----END CERTIFICATE-----");
+
+        var anchors = CertificateAuthority.hostAnchors(List.of(dir1, dir2));
+        assertEquals(2, anchors.size());
+        assertTrue(anchors.containsKey("dir-a-same.crt"));
+        assertTrue(anchors.containsKey("dir-b-same.crt"));
+    }
+
+    @Test
+    void hostAnchorsSingleDirUsesBareName() throws Exception {
+        var dir1 = tempHome.resolve("dir-a");
+        Files.createDirectories(dir1);
+
+        Files.writeString(dir1.resolve("cert.crt"), "-----BEGIN CERTIFICATE-----\nONE\n-----END CERTIFICATE-----");
+
+        var anchors = CertificateAuthority.hostAnchors(List.of(dir1));
+        assertEquals(1, anchors.size());
+        assertTrue(anchors.containsKey("cert.crt"));
+    }
+
+    @Test
     void hostAnchorFingerprintChangesWithContent() throws Exception {
         var anchorsDir = tempHome.resolve("anchors");
         Files.createDirectories(anchorsDir);

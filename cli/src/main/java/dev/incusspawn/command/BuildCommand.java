@@ -1123,7 +1123,7 @@ public class BuildCommand extends BaseCommand {
             BuildOutput.step("Refreshed MITM proxy CA certificate.");
         }
         if (CertificateAuthority.propagateHostCas(incus, buildName)) {
-            BuildOutput.step("Installed host CA certificates (propagate-host-cas).");
+            BuildOutput.step("Installed host CA certificates (host-ca).");
         }
 
         requireBuildAddress(buildName, started);
@@ -1281,6 +1281,7 @@ public class BuildCommand extends BaseCommand {
                 "CERTEOF")
                 .assertSuccess("Failed to install MITM CA certificate");
         var hostCa = SpawnConfig.load().hostCa();
+        boolean hostCasInstalled = false;
         if (hostCa.propagate()) {
             var hostAnchors = CertificateAuthority.hostAnchors(hostCa.paths());
             if (!hostAnchors.isEmpty()) {
@@ -1291,10 +1292,17 @@ public class BuildCommand extends BaseCommand {
                             "CERTEOF")
                             .assertSuccess("Failed to install host CA certificate");
                 }
+                hostCasInstalled = true;
             }
         }
         container.exec("update-ca-trust")
                 .assertSuccess("Failed to update CA trust");
+        if (hostCasInstalled) {
+            var hostCaFp = CertificateAuthority.hostAnchorFingerprint(hostCa.paths());
+            if (!hostCaFp.isEmpty()) {
+                incus.configSet(buildName, Metadata.HOST_CA_FINGERPRINT, hostCaFp);
+            }
+        }
         BuildOutput.stepDone();
 
         // Container-only security tweaks: UID mapping, nesting, capability
@@ -2639,13 +2647,6 @@ public class BuildCommand extends BaseCommand {
         incus.configSet(container, Metadata.BUILD_VERSION, info.version());
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
         incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.currentCaFingerprint());
-        var buildHostCa = SpawnConfig.load().hostCa();
-        if (buildHostCa.propagate()) {
-            var hostCaFp = CertificateAuthority.hostAnchorFingerprint(buildHostCa.paths());
-            if (!hostCaFp.isEmpty()) {
-                incus.configSet(container, Metadata.HOST_CA_FINGERPRINT, hostCaFp);
-            }
-        }
         incus.configSet(container, Metadata.DEFINITION_SHA,
                 imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader, defs)));
         stampAccountIdentities(container, imageDef, defs, inheritedIdentities);
