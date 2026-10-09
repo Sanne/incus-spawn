@@ -152,12 +152,12 @@ public class BuildCommand extends BaseCommand {
     private static final int MACOS_TUNNEL_BUDGET = 24;
     static final String REBUILDING_SUFFIX = "-rebuilding";
     private static final String INBOX_FAILURE_PATH = "/home/agentuser/inbox/BUILD_FAILURE.txt";
-    private static final String STEP_OUTPUT_PATH = "/home/agentuser/inbox/STEP_OUTPUT.txt";
 
     private int buildIndex;
     private int buildTotal;
     private volatile boolean savedFailureSummary;
     private volatile boolean savedHostReport;
+    private String lastStepOutput = "";
 
     record ActiveBuild(String tempName, String canonicalName, MachineType machineType) {}
     private volatile ActiveBuild activeBuild;
@@ -1074,7 +1074,8 @@ public class BuildCommand extends BaseCommand {
         }
 
         var diagnostics = printBuildDiagnostics(buildName);
-        var stepOutput = readStepOutput(buildName);
+        var stepOutput = lastStepOutput;
+        lastStepOutput = "";
         var report = errorLine + "\n\n" + diagnostics;
         if (!stepOutput.isEmpty()) {
             report += "\n" + stepOutput;
@@ -3651,7 +3652,7 @@ public class BuildCommand extends BaseCommand {
             try {
                 assertNoStepFailures(repos, states, "prepare");
             } catch (IncusException e) {
-                saveStepOutput(container, repos, states, "prepare");
+                lastStepOutput = collectStepOutput(repos, states, "prepare");
                 throw e;
             }
         }
@@ -3883,12 +3884,8 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    /**
-     * Write the full output of failed steps to a file inside the container, so
-     * {@link #reportBuildFailure} can include it in the persisted failure report.
-     */
-    private static void saveStepOutput(Container container, List<ImageDef.RepoEntry> repos,
-                                       AtomicReferenceArray<StepProgress> states, String verb) {
+    private static String collectStepOutput(List<ImageDef.RepoEntry> repos,
+                                              AtomicReferenceArray<StepProgress> states, String verb) {
         var sb = new StringBuilder();
         for (int i = 0; i < repos.size(); i++) {
             var progress = states.get(i);
@@ -3898,23 +3895,7 @@ public class BuildCommand extends BaseCommand {
             sb.append(progress.log().strip()).append('\n');
             sb.append("─── end ").append(verb).append(" output: ").append(name).append(" ───\n\n");
         }
-        if (sb.isEmpty()) return;
-        try {
-            container.writeFile(STEP_OUTPUT_PATH, sb.toString());
-        } catch (Exception ignored) {}
-    }
-
-    /**
-     * Read step output saved by {@link #saveStepOutput}, if any.  Best-effort: returns
-     * an empty string when the file does not exist or the exec channel is wedged.
-     */
-    private String readStepOutput(String buildName) {
-        try {
-            var result = incus.shellExec(buildName, "cat", STEP_OUTPUT_PATH);
-            return result.success() ? result.stdout() : "";
-        } catch (Exception ignored) {
-            return "";
-        }
+        return sb.toString();
     }
 
     private static String repoDisplayName(ImageDef.RepoEntry repo) {
