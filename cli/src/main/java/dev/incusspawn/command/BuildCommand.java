@@ -2285,21 +2285,29 @@ public class BuildCommand extends BaseCommand {
      * without this a rebuilt child would keep the parent's identity while the stamp written at
      * the end of the build claimed the current one -- hiding it from the reconcile at branch
      * time too. A failure fails the build rather than produce that template.
+     *
+     * <p>A parent that had no account to derive from is stamped
+     * {@link Metadata#ACCOUNT_IDENTITY_NONE}, which differs from any account's identity and is
+     * re-derived here like one. A parent with no stamp at all for a namespace whose tool its
+     * chain installs was built by an isx that did not mark that, and may equally have no
+     * identity: it is re-derived too, since this build is about to stamp the current account's.
+     * Without the tool in the parent's chain there is nothing to derive into, so an image
+     * without gh costs nothing here.
      */
     private void refreshInheritedIdentities(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
                                             Map<String, String> inherited) {
-        if (inherited.isEmpty()) return;
+        var parentDef = imageDef.isRoot() ? null : defs.get(imageDef.getParent());
+        var parentRederivable = AccountSelection.rederivableNamespaces(parentDef, defs,
+                toolDefLoader.allToolSetups());
+        if (inherited.isEmpty() && parentRederivable.isEmpty()) return;
         var config = SpawnConfig.load();
         var setups = AccountSelection.namespaceSetups(config);
         var selection = ImageDef.resolveAccounts(imageDef, defs);
-        AccountSelection.bakedIdentities(config, AccountSelection.effectiveSelection(selection, setups), setups)
-                .forEach((namespace, identity) -> {
-                    var baked = inherited.get(namespace);
+        var wanted = AccountSelection.bakedIdentities(config,
+                AccountSelection.effectiveSelection(selection, setups), setups);
+        BuildAccounts.inheritedToRederive(wanted, inherited, parentRederivable, setups)
+                .forEach(namespace -> {
                     var setup = setups.get(namespace);
-                    if (baked == null || baked.isBlank() || baked.equals(identity)
-                            || setup == null || !setup.canRebakeForAccount()) {
-                        return;
-                    }
                     var account = dev.incusspawn.config.AccountResolver.effectiveAccount(
                             config, namespace, selection.get(namespace));
                     BuildOutput.step("Updating " + namespace + " identity inherited from '"
@@ -2850,7 +2858,12 @@ public class BuildCommand extends BaseCommand {
         for (var namespace : setups.keySet()) {
             effective.put(namespace, selection.get(namespace));
         }
-        var updates = BuildAccounts.identityStamps(AccountSelection.bakedIdentities(config, effective, setups), inherited);
+        // A tool in the chain that baked nothing for want of an account is marked as such, so
+        // that configuring one later is reconciled on the branches rather than never noticed.
+        var rederivable = AccountSelection.rederivableNamespaces(imageDef, defs,
+                toolDefLoader.allToolSetups());
+        var updates = BuildAccounts.identityStamps(AccountSelection.bakedIdentities(config, effective, setups),
+                inherited, rederivable);
         if (!updates.isEmpty()) incus.configSetAll(container, updates);
     }
 

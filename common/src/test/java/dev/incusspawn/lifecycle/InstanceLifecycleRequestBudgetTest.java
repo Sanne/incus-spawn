@@ -151,6 +151,38 @@ class InstanceLifecycleRequestBudgetTest {
         assertTrue(config.hasSshKeys());
     }
 
+    /**
+     * Every branch and shell asks whether a baked identity is stale. The stamps and the pins are
+     * on the same instance, so that is one read -- it used to be two for any instance with a
+     * stamp, which since the no-identity marker includes a template built without a token.
+     */
+    @Test
+    void checkingForAStaleIdentityReadsTheInstanceOnce() {
+        var config = new dev.incusspawn.config.SpawnConfig();
+        var setups = Map.<String, dev.incusspawn.tool.ToolSetup>of("github", new dev.incusspawn.tool.GhSetup());
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.accountIdentityKey("github"), Metadata.ACCOUNT_IDENTITY_NONE,
+                Metadata.accountKey("claude"), "work"));
+        var warnings = new java.util.ArrayList<String>();
+
+        InstanceLifecycle.reconcileAccountIdentities(daemon.client(), NAME, config, setups,
+                msg -> { }, warnings::add);
+
+        assertBudget(1, daemon, "reconcileAccountIdentities, nothing stale");
+        assertEquals(List.of(), warnings);
+        assertTrue(daemon.execs().isEmpty(), "and nothing is asked of the guest");
+    }
+
+    @Test
+    void anInstanceWithNoStampsIsReadOnce() {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of());
+        InstanceLifecycle.reconcileAccountIdentities(daemon.client(), NAME,
+                new dev.incusspawn.config.SpawnConfig(),
+                Map.of("github", new dev.incusspawn.tool.GhSetup()), msg -> { }, msg -> { });
+        assertBudget(1, daemon, "reconcileAccountIdentities, no stamps");
+        assertTrue(daemon.execs().isEmpty());
+    }
+
     @Test
     void preparingAShellReadsTheInstanceOnce() {
         // isx shell, isx run and the TUI's shell: one instance read, plus the bridge lookup.

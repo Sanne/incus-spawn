@@ -80,6 +80,18 @@ public final class Metadata {
     public static final String ACCOUNT_ORIGIN_PREFIX = PREFIX + "account-origin.";
     /** Prefix of what the build derived from each namespace's account; see {@link #accountIdentityKey}. */
     public static final String ACCOUNT_IDENTITY_PREFIX = PREFIX + "account-identity.";
+    /**
+     * The {@link #accountIdentityKey} value of a namespace whose tool is in the image and could
+     * have derived an identity, but had no account to derive it from -- gh installed while no
+     * GitHub token was configured, so its {@code .gitconfig} has no {@code [user]}. Differs from
+     * every identity a configured account bakes, so once one is configured the instance's next
+     * use reconciles it like any other changed account, and a child's build re-derives it. Not
+     * blank, because Incus drops an empty value and an absent stamp cannot tell this apart from
+     * an image without the tool (or one built before stamps existed) without asking the guest.
+     * Written only for tools that {@link dev.incusspawn.tool.ToolSetup#canRebakeForAccount can
+     * re-derive}: for any other, a stamp the account does not match refuses the account.
+     */
+    public static final String ACCOUNT_IDENTITY_NONE = "<none>";
     // Referenced (rfer) bytes of a built template's btrfs subvolume, stamped once at build time.
     // Templates are immutable and rfer is stable, so this cached value stays correct; the TUI uses
     // it to show each template as a delta from its parent (see BtrfsUsage / ListCommand). Not part

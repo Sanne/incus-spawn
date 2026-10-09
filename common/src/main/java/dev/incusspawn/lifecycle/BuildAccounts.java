@@ -100,6 +100,38 @@ public final class BuildAccounts {
     }
 
     /**
+     * The namespaces whose identity a child build has to re-derive in what it copied from its
+     * parent before stamping its own: the parent baked another account's identity (#281), or
+     * none at all ({@link Metadata#ACCOUNT_IDENTITY_NONE}). A parent with no stamp for a
+     * namespace its chain installs a re-deriving tool for ({@code parentRederivable}) was built
+     * by an isx that did not mark a missing identity, and is treated as the marker. Only tools
+     * that can re-derive; a namespace that bakes nothing now ({@code wanted} lacks it) has
+     * nothing to re-derive from.
+     *
+     * @param wanted            what this build's accounts bake, by namespace
+     *                          ({@link AccountSelection#bakedIdentities})
+     * @param inherited         the parent's stamps ({@link #inheritedIdentities})
+     * @param parentRederivable {@link AccountSelection#rederivableNamespaces} of the parent
+     * @param setups            tool setups keyed by namespace
+     */
+    public static java.util.Set<String> inheritedToRederive(Map<String, String> wanted, Map<String, String> inherited,
+                                                            java.util.Set<String> parentRederivable,
+                                                            Map<String, dev.incusspawn.tool.ToolSetup> setups) {
+        var result = new java.util.LinkedHashSet<String>();
+        wanted.forEach((namespace, identity) -> {
+            var baked = inherited.get(namespace);
+            if (baked == null && parentRederivable.contains(namespace)) baked = Metadata.ACCOUNT_IDENTITY_NONE;
+            var setup = setups.get(namespace);
+            if (baked == null || baked.isBlank() || baked.equals(identity)
+                    || setup == null || !setup.canRebakeForAccount()) {
+                return;
+            }
+            result.add(namespace);
+        });
+        return result;
+    }
+
+    /**
      * The {@code account-identity} stamps a finished template gets: what this build baked, and
      * for every other namespace what it inherited. {@link #startConfig} cleared the inherited
      * ones before the start, but a namespace the build derives nothing for -- its credential no
@@ -107,7 +139,26 @@ public final class BuildAccounts {
      * the rootfs, and the stamp is how the reconcile and the proxy know it.
      */
     public static Map<String, String> identityStamps(Map<String, String> baked, Map<String, String> inherited) {
+        return identityStamps(baked, inherited, java.util.Set.of());
+    }
+
+    /**
+     * As {@link #identityStamps(Map, Map)}, also marking what the image could have baked but did
+     * not: each of {@code rederivable} -- a namespace whose tool is in the template's chain and
+     * {@linkplain dev.incusspawn.tool.ToolSetup#canRebakeForAccount can re-derive} -- that
+     * neither this build nor the parent stamped gets {@link Metadata#ACCOUNT_IDENTITY_NONE}, so
+     * configuring an account later is seen as a change of identity and reconciled, rather than
+     * leaving every branch without one. A parent's real identity is kept over the marker: its
+     * {@code .gitconfig} still carries it.
+     */
+    public static Map<String, String> identityStamps(Map<String, String> baked, Map<String, String> inherited,
+                                                     java.util.Collection<String> rederivable) {
         var updates = new LinkedHashMap<String, String>();
+        rederivable.forEach(namespace -> {
+            if (!baked.containsKey(namespace) && !inherited.containsKey(namespace)) {
+                updates.put(Metadata.accountIdentityKey(namespace), Metadata.ACCOUNT_IDENTITY_NONE);
+            }
+        });
         inherited.forEach((namespace, identity) -> updates.put(Metadata.accountIdentityKey(namespace), identity));
         baked.forEach((namespace, identity) -> updates.put(Metadata.accountIdentityKey(namespace), identity));
         return updates;

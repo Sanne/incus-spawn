@@ -254,14 +254,25 @@ public final class AccountSelection {
     /**
      * As {@link #staleIdentities(SpawnConfig, IncusClient, String)}, against known setups;
      * {@code null} discovers them, and only when something is baked at all.
+     *
+     * <p>An identity stamped {@link Metadata#ACCOUNT_IDENTITY_NONE} -- the tool is there but had
+     * no account to derive from when the image was built -- is stale as soon as an account is
+     * configured, like any other change of account. Until then the namespace bakes nothing
+     * ({@link #bakedIdentities} leaves it out) and there is nothing to do.
+     *
+     * <p>One instance read for the stamps and the pins: this runs on every branch and start.
      */
     public static Map<String, String> staleIdentities(SpawnConfig config, IncusClient incus,
                                                       String instance, Map<String, ToolSetup> knownSetups) {
         var stale = new LinkedHashMap<String, String>();
-        var baked = incus.configByPrefix(instance, Metadata.ACCOUNT_IDENTITY_PREFIX);
+        var metadata = incus.instanceMetadataOrThrow(instance);
+        if (metadata == null) {
+            throw new dev.incusspawn.incus.IncusException("Failed to read config from " + instance);
+        }
+        var baked = IncusClient.configByPrefix(metadata, Metadata.ACCOUNT_IDENTITY_PREFIX);
         if (baked.isEmpty()) return stale;
         var setups = knownSetups != null ? knownSetups : namespaceSetups(config);
-        var selection = read(incus, instance);
+        var selection = fromConfig(metadata.path("config"));
         bakedIdentities(config, effectiveSelection(selection, setups), setups)
                 .forEach((namespace, identity) -> {
                     var wasBaked = baked.get(namespace);
@@ -573,6 +584,32 @@ public final class AccountSelection {
                 var setup = tools.apply(ref.getName());
                 if (setup != null) namespaces.addAll(setup.credentialNamespaces());
             }
+        }
+        return namespaces;
+    }
+
+    /**
+     * The namespaces a tool in the template's chain owns and {@linkplain
+     * ToolSetup#canRebakeForAccount can re-derive} what it bakes for -- GitHub where gh itself is
+     * installed, not where a tool merely borrows its credential (Copilot), which derives no git
+     * identity. Where a build that had no account to derive from stamps
+     * {@link Metadata#ACCOUNT_IDENTITY_NONE}, for a later account to be reconciled into
+     * ({@link dev.incusspawn.lifecycle.BuildAccounts#identityStamps}).
+     */
+    public static java.util.Set<String> rederivableNamespaces(ImageDef template, Map<String, ImageDef> defs,
+                                                              Map<String, ToolSetup> allTools) {
+        var namespaces = new java.util.LinkedHashSet<String>();
+        if (template == null) return namespaces;
+        // With what each tool requires: a tool that pulls gh in installs it as surely as a list.
+        var installed = new java.util.LinkedHashSet<String>();
+        for (var layer : ImageDef.chain(template, defs)) {
+            for (var ref : layer.getTools()) ToolSetup.addWithRequires(ref.getName(), allTools, installed);
+        }
+        for (var name : installed) {
+            var setup = allTools.get(name);
+            if (!canRebake(setup) || setup.proxy() == null) continue;
+            var namespace = setup.proxy().getConfigNamespace();
+            if (namespace != null && !namespace.isBlank()) namespaces.add(namespace);
         }
         return namespaces;
     }

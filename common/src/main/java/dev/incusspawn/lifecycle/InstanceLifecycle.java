@@ -419,7 +419,7 @@ public final class InstanceLifecycle {
      *                    passes its own so the tool definitions are not re-read from disk;
      *                    {@code null} discovers them
      */
-    private static void reconcileAccountIdentities(IncusClient incus, String name, SpawnConfig config,
+    static void reconcileAccountIdentities(IncusClient incus, String name, SpawnConfig config,
                                                    Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
                                                    Consumer<String> progress, Consumer<String> warnings) {
         try {

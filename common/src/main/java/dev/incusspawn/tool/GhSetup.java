@@ -103,6 +103,7 @@ public class GhSetup implements ToolSetup {
     /** The fingerprint carries over: the credential it describes is the same one, renamed. */
     @Override
     public String renameBakedIdentity(String baked, String from, String to) {
+        if (baked.equals(dev.incusspawn.incus.Metadata.ACCOUNT_IDENTITY_NONE)) return null;
         if (baked.equals(from)) return to;
         var rest = baked.startsWith(from) ? baked.substring(from.length()) : "";
         return rest.matches(IDENTITY_FINGERPRINT_SEPARATOR + "[0-9a-f]{" + IDENTITY_FINGERPRINT_LENGTH + "}")
@@ -163,18 +164,30 @@ public class GhSetup implements ToolSetup {
         // Loaded once and threaded down: every lookup below used to re-read and re-serialize
         // config.yaml, so a single install parsed it three times over.
         var config = SpawnConfig.load();
-        configureGit(c, config,
+        var hasIdentity = configureGit(c, config,
                 AccountResolver.effectiveAccount(config, NAMESPACE, accountSelection.get(NAMESPACE)));
         BuildOutput.stepDone();
+        if (!hasIdentity) BuildOutput.stepWarn(NO_IDENTITY_WARNING);
     }
 
+    /**
+     * Why a build's gh setup wrote no {@code [user]}: a template built before a GitHub token was
+     * configured used to get none, silently, and every branch committed without an author. The
+     * build stamps {@link dev.incusspawn.incus.Metadata#ACCOUNT_IDENTITY_NONE} for it, which is
+     * what makes the last sentence true.
+     */
+    static final String NO_IDENTITY_WARNING = "No git identity: no GitHub account with a token is"
+            + " configured, so commits made in this template and its branches have no author."
+            + " Add a token with 'isx init'; branches pick the identity up on their next start.";
 
-    private void configureGit(Container c, SpawnConfig config, String accountName) {
+    /** @return whether {@code .gitconfig} ends up with an identity */
+    private boolean configureGit(Container c, SpawnConfig config, String accountName) {
         boolean existingConfig = c.sh("test -f /home/agentuser/.gitconfig").success();
-        configureGitIdentity(c, config, accountName);
+        var hasIdentity = configureGitIdentity(c, config, accountName);
         if (!existingConfig) {
             configureGitDefaults(c);
         }
+        return hasIdentity;
     }
 
     /**
@@ -184,19 +197,22 @@ public class GhSetup implements ToolSetup {
      * <p>The identity is derived by asking the API who the token belongs to, through the proxy
      * -- so it follows the account the caller is pinned to without this code knowing which one
      * that is. Skipped when an identity is already present, which is what makes it cheap to
-     * call again at branch time; {@link #clearGitIdentity} is how a re-point forces a refresh.
+     * call again at branch time; {@link #rebakeForAccount} is how a re-point forces a refresh.
+     *
+     * @return whether an identity is present afterwards -- false when no account could supply one
      */
-    void configureGitIdentity(Container c, SpawnConfig config, String accountName) {
+    boolean configureGitIdentity(Container c, SpawnConfig config, String accountName) {
         boolean hasName = gitConfigGet(c, "user.name");
         boolean hasEmail = gitConfigGet(c, "user.email");
         if (hasName && hasEmail) {
-            return;
+            return true;
         }
 
         var identity = resolveIdentity(c, config, accountName, false);
-        if (identity == null) return;
+        if (identity == null) return false;
         if (!hasName) gitConfig(c, "user.name", identity.name());
         if (!hasEmail) gitConfig(c, "user.email", identity.email());
+        return true;
     }
 
     /** The git identity behind a GitHub account, as the API reports it. */

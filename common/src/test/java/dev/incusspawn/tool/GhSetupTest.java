@@ -107,6 +107,77 @@ class GhSetupTest {
                 contains("init.defaultBranch"));
     }
 
+    /**
+     * The silent path that left a user's template with gh's defaults and no {@code [user]}: no
+     * GitHub token when it was built. It still writes nothing, but says so.
+     */
+    @Test
+    void aBuildThatWritesNoIdentityWarnsAboutIt(@TempDir Path home) {
+        var incus = stubIncus();
+        noExistingConfig(incus);
+        noExistingIdentity(incus);
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user")))
+                .thenReturn(FAIL);
+
+        var prev = System.getProperty("user.home");
+        System.setProperty("user.home", home.toString());   // no config.yaml: no GitHub token
+        String stderr;
+        try {
+            stderr = captureStderr(() ->
+                    new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of()));
+        } finally {
+            System.setProperty("user.home", prev);
+        }
+
+        assertTrue(stderr.contains("No git identity"), stderr);
+        assertTrue(stderr.contains("isx init"), "says how to fix it: " + stderr);
+    }
+
+    @Test
+    void aBuildThatWritesAnIdentityDoesNotWarn() {
+        var incus = stubIncus();
+        noExistingConfig(incus);
+        noExistingIdentity(incus);
+        ghApiUserReturns(incus, "octocat\tThe Octocat\t\n");
+        ghApiEmailsReturns(incus, "octocat@example.com\n");
+
+        var stderr = captureStderr(() ->
+                new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of()));
+
+        assertFalse(stderr.contains("No git identity"), stderr);
+    }
+
+    @Test
+    void anIdentityAlreadyPresentDoesNotWarn() {
+        var incus = stubIncus();
+        existingConfig(incus);
+        existingIdentity(incus);
+
+        var stderr = captureStderr(() ->
+                new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of()));
+
+        assertFalse(stderr.contains("No git identity"), stderr);
+    }
+
+    /** "Nothing was baked" names no account, so no account's rename may claim it. */
+    @Test
+    void theNoIdentityMarkerIsNeverRenamed() {
+        var none = dev.incusspawn.incus.Metadata.ACCOUNT_IDENTITY_NONE;
+        assertNull(new GhSetup().renameBakedIdentity(none, none, "acme"));
+    }
+
+    private static String captureStderr(Runnable action) {
+        var previous = System.err;
+        var buffer = new java.io.ByteArrayOutputStream();
+        System.setErr(new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            action.run();
+        } finally {
+            System.setErr(previous);
+        }
+        return buffer.toString(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     @Test
     void retriesTransientIdentityLookupFailure(@TempDir Path home) throws IOException {
         var incus = stubIncus();
