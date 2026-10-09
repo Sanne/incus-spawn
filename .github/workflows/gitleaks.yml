@@ -5,6 +5,7 @@ on:
     branches-ignore:
       - 'dependabot/**'
   pull_request:
+    branches: [main]
 
 permissions:
   contents: read
@@ -27,6 +28,7 @@ jobs:
   # gitleaks binary to a fixed /tmp path, and a second invocation in the same job fails with
   # "Destination file path /tmp/gitleaks.tmp already exists".
   scan-stock:
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -40,6 +42,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   scan-leaktk:
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -12,6 +12,7 @@ on:
       - '.claude/**'
       - '.github/workflows/pages.yml'
   pull_request:
+    branches: [main]
     paths-ignore:
       - '*.md'
       - 'docs/**'
@@ -30,6 +31,7 @@ concurrency:
 
 jobs:
   unit-tests:
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -71,6 +73,7 @@ jobs:
   # cancel-on-unit-failure's needs: a Mac-only failure leaves the Linux jobs worth finishing, and it
   # starts alongside unit-tests rather than after it, so a Linux failure still cancels it early.
   unit-tests-macos:
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -120,6 +123,7 @@ jobs:
   # JVM channel can only be found broken by a user: the CLI losing its ability to serve the proxy
   # in-process went unnoticed for six weeks because the released jar was built but never run.
   uber-jar-smoke:
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -179,6 +183,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
   build-native-cli:
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -209,6 +214,7 @@ jobs:
           retention-days: 1
 
   build-native-proxy:
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -239,6 +245,7 @@ jobs:
           retention-days: 1
 
   build_appliance:
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
     uses: ./.github/workflows/build-appliance.yml
 
   # One job per appliance arch. aarch64 is what Apple Silicon Macs run, and has its own kernel
