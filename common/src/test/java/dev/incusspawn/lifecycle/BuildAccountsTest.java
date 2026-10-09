@@ -47,7 +47,7 @@ class BuildAccountsTest {
 
     @Test
     void theParentsBakedIdentitiesAreKeptForTheRebakeBeforeTheyAreCleared() {
-        // refreshInheritedIdentities compares these with the build's own accounts after tool
+        // settleIdentities compares these with the build's own accounts after tool
         // setup, when the pre-start write has long removed them from the container
         var config = JSON.createObjectNode()
                 .put(Metadata.accountIdentityKey("github"), "me#0123456789ab")

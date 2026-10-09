@@ -215,10 +215,22 @@ public final class AccountSelection {
 
     /** Whether an instance that baked {@code baked} cannot be moved to an account that bakes {@code wanted}. */
     private static boolean cannotHonour(ToolSetup setup, String baked, String wanted) {
-        if (baked == null || baked.isBlank() || wanted == null || wanted.isBlank() || baked.equals(wanted)) {
-            return false;
-        }
-        return !canRebake(setup);
+        return differs(baked, wanted) && !canRebake(setup);
+    }
+
+    /**
+     * Whether an instance that baked {@code baked} has to be brought in line with an account that
+     * bakes {@code wanted}: they differ -- another account, the same one with another credential,
+     * or {@link Metadata#ACCOUNT_IDENTITY_NONE} -- and the tool can re-derive. The one test every
+     * reconcile uses, at branch time and in a child's build, so the two cannot drift. A namespace
+     * that bakes nothing now ({@code wanted} blank) has nothing to re-derive from.
+     */
+    public static boolean needsRederive(ToolSetup setup, String baked, String wanted) {
+        return differs(baked, wanted) && canRebake(setup);
+    }
+
+    private static boolean differs(String baked, String wanted) {
+        return baked != null && !baked.isBlank() && wanted != null && !wanted.isBlank() && !baked.equals(wanted);
     }
 
     /**
@@ -254,33 +266,65 @@ public final class AccountSelection {
     /**
      * As {@link #staleIdentities(SpawnConfig, IncusClient, String)}, against known setups;
      * {@code null} discovers them, and only when something is baked at all.
-     *
-     * <p>An identity stamped {@link Metadata#ACCOUNT_IDENTITY_NONE} -- the tool is there but had
-     * no account to derive from when the image was built -- is stale as soon as an account is
-     * configured, like any other change of account. Until then the namespace bakes nothing
-     * ({@link #bakedIdentities} leaves it out) and there is nothing to do.
-     *
-     * <p>One instance read for the stamps and the pins: this runs on every branch and start.
      */
     public static Map<String, String> staleIdentities(SpawnConfig config, IncusClient incus,
                                                       String instance, Map<String, ToolSetup> knownSetups) {
+        return identityReconcile(config, incus, instance, knownSetups).stale();
+    }
+
+    /**
+     * What reconciling an instance's baked identities involves.
+     *
+     * @param stale      namespaces whose stamp differs from the account they now resolve to,
+     *                   mapped to that account: re-derive them
+     * @param unverified namespaces the instance cannot be trusted on, mapped to their account:
+     *                   it predates {@link Metadata#ACCOUNT_IDENTITY_VERIFIED}, so ask the guest
+     *                   ({@link ToolSetup#lacksBakedIdentity}) and re-derive what it lacks, then
+     *                   set the marker so this is done once
+     */
+    public record IdentityReconcile(Map<String, String> stale, Map<String, String> unverified) {
+        public boolean isEmpty() { return stale.isEmpty() && unverified.isEmpty(); }
+    }
+
+    /**
+     * What {@link IdentityReconcile reconciling} this instance takes, from one read of it: this
+     * runs on every branch and start.
+     *
+     * <p>An identity stamped {@link Metadata#ACCOUNT_IDENTITY_NONE} -- the tool is there but had
+     * no account to derive from when the image was built -- is stale as soon as an account with
+     * a credential is configured, like any other change of account. Until then the namespace
+     * bakes nothing ({@link #bakedIdentities} leaves it out) and there is nothing to do.
+     *
+     * <p>An instance without {@link Metadata#ACCOUNT_IDENTITY_VERIFIED} comes from a template an
+     * older isx built, whose stamps came from config.yaml rather than the guest: every namespace
+     * an account would bake into and whose tool can re-derive is {@code unverified}, stamped or
+     * not. Only once the instance is checked does it cost a guest exec, and only for such
+     * instances, and only while an account is configured.
+     */
+    public static IdentityReconcile identityReconcile(SpawnConfig config, IncusClient incus,
+                                                      String instance, Map<String, ToolSetup> knownSetups) {
         var stale = new LinkedHashMap<String, String>();
+        var unverified = new LinkedHashMap<String, String>();
         var metadata = incus.instanceMetadataOrThrow(instance);
         if (metadata == null) {
             throw new dev.incusspawn.incus.IncusException("Failed to read config from " + instance);
         }
         var baked = IncusClient.configByPrefix(metadata, Metadata.ACCOUNT_IDENTITY_PREFIX);
-        if (baked.isEmpty()) return stale;
+        var verified = metadata.path("config").has(Metadata.ACCOUNT_IDENTITY_VERIFIED);
+        if (baked.isEmpty() && verified) return new IdentityReconcile(stale, unverified);
         var setups = knownSetups != null ? knownSetups : namespaceSetups(config);
         var selection = fromConfig(metadata.path("config"));
         bakedIdentities(config, effectiveSelection(selection, setups), setups)
                 .forEach((namespace, identity) -> {
-                    var wasBaked = baked.get(namespace);
-                    if (wasBaked == null || wasBaked.isBlank() || wasBaked.equals(identity)) return;
-                    if (!canRebake(setups.get(namespace))) return;
-                    stale.put(namespace, AccountResolver.effectiveAccount(config, namespace, selection.get(namespace)));
+                    var setup = setups.get(namespace);
+                    if (!canRebake(setup)) return;
+                    if (needsRederive(setup, baked.get(namespace), identity)) {
+                        stale.put(namespace, AccountResolver.effectiveAccount(config, namespace, selection.get(namespace)));
+                    } else if (!verified) {
+                        unverified.put(namespace, AccountResolver.effectiveAccount(config, namespace, selection.get(namespace)));
+                    }
                 });
-        return stale;
+        return new IdentityReconcile(stale, unverified);
     }
 
     /**
@@ -595,9 +639,13 @@ public final class AccountSelection {
      * identity. Where a build that had no account to derive from stamps
      * {@link Metadata#ACCOUNT_IDENTITY_NONE}, for a later account to be reconciled into
      * ({@link dev.incusspawn.lifecycle.BuildAccounts#identityStamps}).
+     *
+     * @param allTools every tool by name, to follow {@code requires} and find each one's namespace
+     * @param setups   {@link #namespaceSetups}: a namespace it does not know is left out
      */
     public static java.util.Set<String> rederivableNamespaces(ImageDef template, Map<String, ImageDef> defs,
-                                                              Map<String, ToolSetup> allTools) {
+                                                              Map<String, ToolSetup> allTools,
+                                                              Map<String, ToolSetup> setups) {
         var namespaces = new java.util.LinkedHashSet<String>();
         if (template == null) return namespaces;
         // With what each tool requires: a tool that pulls gh in installs it as surely as a list.
@@ -609,7 +657,11 @@ public final class AccountSelection {
             var setup = allTools.get(name);
             if (!canRebake(setup) || setup.proxy() == null) continue;
             var namespace = setup.proxy().getConfigNamespace();
-            if (namespace != null && !namespace.isBlank()) namespaces.add(namespace);
+            // Only a namespace namespaceSetups() knows: one it gates out is never
+            // reconciled, so marking it would only leave a stamp nothing clears.
+            if (namespace != null && !namespace.isBlank() && canRebake(setups.get(namespace))) {
+                namespaces.add(namespace);
+            }
         }
         return namespaces;
     }

@@ -92,6 +92,16 @@ public final class Metadata {
      * re-derive}: for any other, a stamp the account does not match refuses the account.
      */
     public static final String ACCOUNT_IDENTITY_NONE = "<none>";
+    /**
+     * Set on every template this isx builds: its {@link #accountIdentityKey} stamps for tools that
+     * can re-derive were decided by asking the guest
+     * ({@link dev.incusspawn.tool.ToolSetup#lacksBakedIdentity}), so they can be trusted. A copy
+     * carries it to every branch. Absent, the instance comes from a template an older isx built,
+     * whose stamp was taken from config.yaml and can claim an identity its {@code .gitconfig}
+     * never got -- or that has no stamp at all for a gh it installed without a token. The first
+     * reconcile with an account configured checks such an instance once and then sets this.
+     */
+    public static final String ACCOUNT_IDENTITY_VERIFIED = PREFIX + "account-identity-verified";
     // Referenced (rfer) bytes of a built template's btrfs subvolume, stamped once at build time.
     // Templates are immutable and rfer is stable, so this cached value stays correct; the TUI uses
     // it to show each template as a delta from its parent (see BtrfsUsage / ListCommand). Not part

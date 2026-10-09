@@ -183,6 +183,30 @@ class InstanceLifecycleRequestBudgetTest {
         assertTrue(daemon.execs().isEmpty());
     }
 
+    /**
+     * The common case once a token is configured: an instance from a template this isx built,
+     * whose identity stamp was checked against the guest at build time. Only an instance whose
+     * template an older isx built is asked about its guest, and that once.
+     */
+    @Test
+    void aVerifiedInstanceWithATokenIsReadOnceAndNeverExecs() throws Exception {
+        var config = new com.fasterxml.jackson.databind.ObjectMapper(new com.fasterxml.jackson.dataformat.yaml.YAMLFactory())
+                .readValue("github:\n  accounts:\n    me:\n      token: ghp_x\n  default: me\n",
+                        dev.incusspawn.config.SpawnConfig.class);
+        var gh = new dev.incusspawn.tool.GhSetup();
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.accountIdentityKey("github"), gh.bakedAccountIdentity(config, "me"),
+                Metadata.ACCOUNT_IDENTITY_VERIFIED, "true"));
+        var warnings = new java.util.ArrayList<String>();
+
+        InstanceLifecycle.reconcileAccountIdentities(daemon.client(), NAME, config,
+                Map.of("github", gh), msg -> { }, warnings::add);
+
+        assertBudget(1, daemon, "reconcileAccountIdentities, verified and current");
+        assertEquals(List.of(), warnings);
+        assertTrue(daemon.execs().isEmpty());
+    }
+
     @Test
     void preparingAShellReadsTheInstanceOnce() {
         // isx shell, isx run and the TUI's shell: one instance read, plus the bridge lookup.

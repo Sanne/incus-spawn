@@ -1186,7 +1186,7 @@ public class BuildCommand extends BaseCommand {
         // After tool setup, not before: a parent without gh still carries a GitHub stamp, and
         // writing an identity first would create the .gitconfig whose absence is how gh's setup
         // knows to write its git defaults.
-        refreshInheritedIdentities(container, imageDef, defs, started.inheritedIdentities());
+        var identityStamps = settleIdentities(container, imageDef, defs, started.inheritedIdentities());
         var allTools = new ArrayList<>(toolResolution.ancestors());
         allTools.addAll(toolResolution.effective());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
@@ -1210,7 +1210,7 @@ public class BuildCommand extends BaseCommand {
         cleanCaches(buildName);
 
         tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs,
-                started.inheritedIdentities());
+                identityStamps);
 
         stopBuild(buildName, started);
     }
@@ -1442,6 +1442,7 @@ public class BuildCommand extends BaseCommand {
             updateClaudeJsonTrust(container, layer);
             updateCodexTrust(container, layer);
         }
+        var identityStamps = settleIdentities(container, imageDef, defs, started.inheritedIdentities());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         verifyTools(container, allTools);
         writeAgentContext(container, imageDef, defs, allTools, canonicalName);
@@ -1457,7 +1458,7 @@ public class BuildCommand extends BaseCommand {
 
         var parentCanonical = imageDef.isRoot() ? null : imageDef.getParent();
         tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs,
-                started.inheritedIdentities());
+                identityStamps);
 
         stopBuild(buildName, started);
     }
@@ -2277,43 +2278,57 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * Re-derive what the parent baked from an account that has since changed -- another account
-     * chosen, or its token replaced with another user's (#281).
+     * Bring the identities this image bakes in line with its accounts, once its tools are set up,
+     * and say what to stamp for them: decided by what the guest holds, not by what config.yaml
+     * says it should.
      *
-     * <p>The copy carries the parent's {@code account-identity} stamps along with its
-     * {@code .gitconfig}, and the tools' setup skips an identity that is already present, so
-     * without this a rebuilt child would keep the parent's identity while the stamp written at
-     * the end of the build claimed the current one -- hiding it from the reconcile at branch
-     * time too. A failure fails the build rather than produce that template.
+     * <p>Re-derives what the parent baked from an account that has since changed -- another
+     * account chosen, or its token replaced with another user's (#281). The copy carries the
+     * parent's {@code account-identity} stamps along with its {@code .gitconfig}, and the tools'
+     * setup skips an identity that is already present, so without this a rebuilt child would
+     * keep the parent's identity while its stamp claimed the current one -- hiding it from the
+     * reconcile at branch time too.
      *
-     * <p>A parent that had no account to derive from is stamped
-     * {@link Metadata#ACCOUNT_IDENTITY_NONE}, which differs from any account's identity and is
-     * re-derived here like one. A parent with no stamp at all for a namespace whose tool its
-     * chain installs was built by an isx that did not mark that, and may equally have no
-     * identity: it is re-derived too, since this build is about to stamp the current account's.
-     * Without the tool in the parent's chain there is nothing to derive into, so an image
-     * without gh costs nothing here.
+     * <p>Also re-derives an identity the guest lacks though an account could supply it
+     * ({@link dev.incusspawn.tool.ToolSetup#lacksBakedIdentity}, one exec for gh): a parent
+     * built while no token was configured, whether it is stamped
+     * {@link Metadata#ACCOUNT_IDENTITY_NONE}, unstamped by an older isx, or stamped by an older
+     * isx with an identity it never got. A parent with no stamp but an identity -- built before
+     * stamps existed -- keeps it. Where no account can supply one the stamp says
+     * {@link Metadata#ACCOUNT_IDENTITY_NONE}, so configuring one later is reconciled on the
+     * branches. A failure to re-derive fails the build rather than produce a template whose
+     * stamp lies.
+     *
+     * @return the stamps {@link #stampAccountIdentities} writes once the build is done
      */
-    private void refreshInheritedIdentities(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
-                                            Map<String, String> inherited) {
-        var parentDef = imageDef.isRoot() ? null : defs.get(imageDef.getParent());
-        var parentRederivable = AccountSelection.rederivableNamespaces(parentDef, defs,
-                toolDefLoader.allToolSetups());
-        if (inherited.isEmpty() && parentRederivable.isEmpty()) return;
+    private Map<String, String> settleIdentities(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
+                                                 Map<String, String> inherited) {
         var config = SpawnConfig.load();
         var setups = AccountSelection.namespaceSetups(config);
         var selection = ImageDef.resolveAccounts(imageDef, defs);
+        // Every namespace gets a say, not just the ones this template selected: the build baked
+        // *some* auth mode either way, and a later swap has to be checked against it. A null
+        // account means "this template made no choice", which resolves to the namespace's
+        // configured default -- the account the build actually used.
         var wanted = AccountSelection.bakedIdentities(config,
                 AccountSelection.effectiveSelection(selection, setups), setups);
-        BuildAccounts.inheritedToRederive(wanted, inherited, parentRederivable, setups)
-                .forEach(namespace -> {
-                    var setup = setups.get(namespace);
-                    var account = dev.incusspawn.config.AccountResolver.effectiveAccount(
-                            config, namespace, selection.get(namespace));
-                    BuildOutput.step("Updating " + namespace + " identity inherited from '"
-                            + imageDef.getParent() + "' for account '" + account + "'...");
-                    setup.rebakeForAccount(container, account);
-                });
+        var lacking = new java.util.LinkedHashSet<String>();
+        for (var namespace : AccountSelection.rederivableNamespaces(imageDef, defs,
+                toolDefLoader.allToolSetups(), setups)) {
+            if (setups.get(namespace).lacksBakedIdentity(container)) lacking.add(namespace);
+        }
+        var rederived = BuildAccounts.toRederive(wanted, inherited, lacking, setups);
+        rederived.forEach(namespace -> {
+            var account = dev.incusspawn.config.AccountResolver.effectiveAccount(
+                    config, namespace, selection.get(namespace));
+            BuildOutput.step("Updating " + namespace + " identity for account '" + account + "'...");
+            setups.get(namespace).rebakeForAccount(container, account);
+        });
+        lacking.removeAll(rederived);
+        for (var namespace : lacking) BuildOutput.warn(setups.get(namespace).unbakedIdentityWarning());
+        var stamps = new java.util.LinkedHashMap<>(BuildAccounts.identityStamps(wanted, inherited, lacking));
+        stamps.put(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true");
+        return stamps;
     }
 
     /**
@@ -2744,14 +2759,14 @@ public class BuildCommand extends BaseCommand {
     }
 
     private void stampBuildVersion(String container, dev.incusspawn.config.ImageDef imageDef,
-                                    Map<String, ImageDef> defs, Map<String, String> inheritedIdentities) {
+                                    Map<String, ImageDef> defs, Map<String, String> identityStamps) {
         var info = BuildInfo.instance();
         incus.configSet(container, Metadata.BUILD_VERSION, info.version());
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
         incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.currentCaFingerprint());
         incus.configSet(container, Metadata.DEFINITION_SHA,
                 imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader, defs)));
-        stampAccountIdentities(container, imageDef, defs, inheritedIdentities);
+        stampAccountIdentities(container, identityStamps);
     }
 
     /**
@@ -2835,36 +2850,17 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * Record the env class each account this template was built against implies. The pins
-     * themselves were stamped before the build started ({@link BuildAccounts#start}).
+     * Record what this template baked from each namespace's account
+     * ({@link #settleIdentities}). The pins themselves were stamped before the build started
+     * ({@link BuildAccounts#start}).
      *
-     * <p>They travel to every branch through the CoW copy. The env class is what
+     * <p>They travel to every branch through the CoW copy. The stamps are what
      * {@link dev.incusspawn.config.AccountSelection#incompatibilityReason} compares against to
-     * refuse a swap that the baked environment could not honour.
-     *
-     * @param inherited the stamps the container was copied with, by namespace: see
-     *                  {@link BuildAccounts#identityStamps}
+     * refuse a swap that the baked environment could not honour, and what the reconcile at
+     * branch time re-derives from.
      */
-    private void stampAccountIdentities(String container, ImageDef imageDef,
-                                        Map<String, ImageDef> defs, Map<String, String> inherited) {
-        var selection = ImageDef.resolveAccounts(imageDef, defs);
-        // Every namespace gets an env class, not just the ones this template selected: the
-        // build baked *some* auth mode either way, and a later swap has to be checked against
-        // it. A null account means "this template made no choice", which resolves to the
-        // namespace's configured default -- the account the build actually used.
-        var config = SpawnConfig.load();
-        var setups = AccountSelection.namespaceSetups(config);
-        var effective = new java.util.LinkedHashMap<String, String>();
-        for (var namespace : setups.keySet()) {
-            effective.put(namespace, selection.get(namespace));
-        }
-        // A tool in the chain that baked nothing for want of an account is marked as such, so
-        // that configuring one later is reconciled on the branches rather than never noticed.
-        var rederivable = AccountSelection.rederivableNamespaces(imageDef, defs,
-                toolDefLoader.allToolSetups());
-        var updates = BuildAccounts.identityStamps(AccountSelection.bakedIdentities(config, effective, setups),
-                inherited, rederivable);
-        if (!updates.isEmpty()) incus.configSetAll(container, updates);
+    private void stampAccountIdentities(String container, Map<String, String> identityStamps) {
+        if (!identityStamps.isEmpty()) incus.configSetAll(container, identityStamps);
     }
 
     private static Map<String, String> computeToolFingerprints(
@@ -2951,7 +2947,7 @@ public class BuildCommand extends BaseCommand {
                                     String parentCanonicalName,
                                     List<ImageDef.HostResource> hostResources,
                                     Map<String, ImageDef> defs,
-                                    Map<String, String> inheritedIdentities) {
+                                    Map<String, String> identityStamps) {
         incus.configSet(buildName, Metadata.TYPE, Metadata.TYPE_BASE);
         incus.configSet(buildName, Metadata.PROFILE, canonicalName);
         incus.configSet(buildName, Metadata.INSTANCE_MODE, effectiveType(imageDef));
@@ -2959,7 +2955,7 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, Metadata.PARENT, parentCanonicalName);
         }
         incus.configSet(buildName, Metadata.CREATED, Metadata.today());
-        stampBuildVersion(buildName, imageDef, defs, inheritedIdentities);
+        stampBuildVersion(buildName, imageDef, defs, identityStamps);
         if (!hostResources.isEmpty()) {
             incus.configSet(buildName, Metadata.HOST_RESOURCES,
                     HostResourceSetup.serialize(hostResources));

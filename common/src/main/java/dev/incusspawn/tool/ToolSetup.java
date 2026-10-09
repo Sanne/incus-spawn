@@ -143,6 +143,21 @@ public interface ToolSetup {
     }
 
     /**
+     * Whether this tool is in the instance but what {@link #bakedAccountIdentity} describes is
+     * not -- gh installed with no git identity. Asks the guest, so it is only called where a
+     * guest exec is affordable: once per build, and once on the first use of an instance whose
+     * template predates {@link dev.incusspawn.incus.Metadata#ACCOUNT_IDENTITY_VERIFIED}. Only
+     * meaningful for a tool that {@linkplain #canRebakeForAccount can re-derive}.
+     */
+    default boolean lacksBakedIdentity(Container container) { return false; }
+
+    /**
+     * What a build says when it ends with this tool's identity missing and no account to supply
+     * it ({@link #lacksBakedIdentity}), or {@code null} to say nothing.
+     */
+    default String unbakedIdentityWarning() { return null; }
+
+    /**
      * What an {@link #bakedAccountIdentity} stamp becomes when account {@code from} is renamed
      * to {@code to}, or {@code null} when the stamp does not name the account -- a Claude auth
      * mode, which an account's name could coincide with without being it. Pure string work, so

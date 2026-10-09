@@ -109,54 +109,48 @@ class GhSetupTest {
 
     /**
      * The silent path that left a user's template with gh's defaults and no {@code [user]}: no
-     * GitHub token when it was built. It still writes nothing, but says so.
+     * GitHub token when it was built. The build finds it by asking the guest, and says so.
      */
     @Test
-    void aBuildThatWritesNoIdentityWarnsAboutIt(@TempDir Path home) {
+    void theGuestIsAskedWhetherGhHasNoIdentity() {
+        var incus = stubIncus();
+        when(incus.execInContainer(eq(CONTAINER), eq("agentuser"), contains("command -v gh")))
+                .thenReturn(FAIL);
+        assertTrue(new GhSetup().lacksBakedIdentity(new Container(incus, CONTAINER)));
+
+        when(incus.execInContainer(eq(CONTAINER), eq("agentuser"), contains("command -v gh")))
+                .thenReturn(OK);
+        assertFalse(new GhSetup().lacksBakedIdentity(new Container(incus, CONTAINER)));
+    }
+
+    @Test
+    void theNoIdentityWarningSaysHowToFixIt() {
+        var warning = new GhSetup().unbakedIdentityWarning();
+        assertTrue(warning.contains("No git identity"), warning);
+        assertTrue(warning.contains("isx init"), warning);
+        assertFalse(warning.contains("next start"), "a plain start does not reconcile: " + warning);
+    }
+
+    /** With a token configured, an empty login is a failed lookup: it fails the build. */
+    @Test
+    void aTokenWhoseLoginIsEmptyFailsTheBuild(@TempDir Path home) throws Exception {
         var incus = stubIncus();
         noExistingConfig(incus);
         noExistingIdentity(incus);
-        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user")))
-                .thenReturn(FAIL);
-
+        ghApiUserReturns(incus, "\t\t\n");
+        var config = home.resolve(".config/incus-spawn/config.yaml");
+        java.nio.file.Files.createDirectories(config.getParent());
+        java.nio.file.Files.writeString(config, "github:\n  token: ghp_x\n");
         var prev = System.getProperty("user.home");
-        System.setProperty("user.home", home.toString());   // no config.yaml: no GitHub token
-        String stderr;
+        System.setProperty("user.home", home.toString());
         try {
-            stderr = captureStderr(() ->
-                    new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of()));
+            var gh = new GhSetup();
+            gh.retryDelaysMs = new long[0];
+            assertThrows(dev.incusspawn.incus.IncusException.class,
+                    () -> gh.install(new Container(incus, CONTAINER), java.util.Map.of()));
         } finally {
             System.setProperty("user.home", prev);
         }
-
-        assertTrue(stderr.contains("No git identity"), stderr);
-        assertTrue(stderr.contains("isx init"), "says how to fix it: " + stderr);
-    }
-
-    @Test
-    void aBuildThatWritesAnIdentityDoesNotWarn() {
-        var incus = stubIncus();
-        noExistingConfig(incus);
-        noExistingIdentity(incus);
-        ghApiUserReturns(incus, "octocat\tThe Octocat\t\n");
-        ghApiEmailsReturns(incus, "octocat@example.com\n");
-
-        var stderr = captureStderr(() ->
-                new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of()));
-
-        assertFalse(stderr.contains("No git identity"), stderr);
-    }
-
-    @Test
-    void anIdentityAlreadyPresentDoesNotWarn() {
-        var incus = stubIncus();
-        existingConfig(incus);
-        existingIdentity(incus);
-
-        var stderr = captureStderr(() ->
-                new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of()));
-
-        assertFalse(stderr.contains("No git identity"), stderr);
     }
 
     /** "Nothing was baked" names no account, so no account's rename may claim it. */
@@ -164,18 +158,6 @@ class GhSetupTest {
     void theNoIdentityMarkerIsNeverRenamed() {
         var none = dev.incusspawn.incus.Metadata.ACCOUNT_IDENTITY_NONE;
         assertNull(new GhSetup().renameBakedIdentity(none, none, "acme"));
-    }
-
-    private static String captureStderr(Runnable action) {
-        var previous = System.err;
-        var buffer = new java.io.ByteArrayOutputStream();
-        System.setErr(new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8));
-        try {
-            action.run();
-        } finally {
-            System.setErr(previous);
-        }
-        return buffer.toString(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     @Test

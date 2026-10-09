@@ -30,8 +30,9 @@ import static org.mockito.Mockito.spy;
 /**
  * A template built while no GitHub token was configured has gh's {@code .gitconfig} defaults
  * and no {@code [user]}. It is stamped {@link Metadata#ACCOUNT_IDENTITY_NONE}, so configuring a
- * token later is reconciled into its branches like any other change of account -- and an
- * image without gh, or one built before the marker existed, is left exactly as it was.
+ * token later is reconciled into its branches like any other change of account. What is
+ * stamped and re-derived is decided by asking the guest, so a template an older isx built --
+ * unstamped, or stamped with an identity it never got -- is repaired too, once.
  */
 @ExtendWith(TempHome.class)
 class UnbakedGitIdentityTest {
@@ -54,12 +55,14 @@ class UnbakedGitIdentityTest {
         return new SpawnConfig();
     }
 
-    /** What the build of a template with gh stamps, given the accounts configured then. */
-    private static Map<String, String> builtStamps(SpawnConfig config, Set<String> rederivable) {
+    /** What the build of a template stamps, given the accounts configured then and what the guest lacks. */
+    private static Map<String, String> builtStamps(SpawnConfig config, Set<String> lacking) {
         var setups = Map.<String, ToolSetup>of("github", new GhSetup());
         var baked = AccountSelection.bakedIdentities(config,
                 AccountSelection.effectiveSelection(Map.of(), setups), setups);
-        return BuildAccounts.identityStamps(baked, Map.of(), rederivable);
+        var unbaked = new java.util.LinkedHashSet<>(lacking);
+        unbaked.removeAll(BuildAccounts.toRederive(baked, Map.of(), lacking, setups));
+        return BuildAccounts.identityStamps(baked, Map.of(), unbaked);
     }
 
     private static Map<String, String> stale(FakeIncusDaemon daemon, SpawnConfig config) {
@@ -83,23 +86,32 @@ class UnbakedGitIdentityTest {
 
     @Test
     void aBuildWithATokenStampsItsIdentityNotTheMarker() throws Exception {
-        var stamps = builtStamps(withToken(), Set.of("github"));
+        var stamps = builtStamps(withToken(), Set.of());
         assertEquals(new GhSetup().bakedAccountIdentity(withToken(), "me"),
                 stamps.get(Metadata.accountIdentityKey("github")));
     }
 
+    /** gh's setup wrote nothing though a token was configured: re-derived, never stamped as baked. */
     @Test
-    void aParentsRealIdentityIsKeptOverTheMarker() {
-        // The token is gone from config.yaml now, but the parent's .gitconfig still has its [user]
-        var stamps = BuildAccounts.identityStamps(Map.of(), Map.of("github", "me#0123456789ab"), Set.of("github"));
-        assertEquals(Map.of(Metadata.accountIdentityKey("github"), "me#0123456789ab"), stamps);
+    void aBuildWhoseGuestLacksTheIdentityDespiteATokenReDerivesIt() throws Exception {
+        var setups = Map.<String, ToolSetup>of("github", new GhSetup());
+        var baked = AccountSelection.bakedIdentities(withToken(),
+                AccountSelection.effectiveSelection(Map.of(), setups), setups);
+        assertEquals(Set.of("github"), BuildAccounts.toRederive(baked, Map.of(), Set.of("github"), setups));
     }
 
     @Test
-    void aParentsMarkerIsReplacedByWhatTheChildBakes() {
-        var stamps = BuildAccounts.identityStamps(Map.of("github", "me#0123456789ab"),
-                Map.of("github", Metadata.ACCOUNT_IDENTITY_NONE), Set.of("github"));
+    void aParentsRealIdentityIsKeptWhileTheGuestHasIt() {
+        // The token is gone from config.yaml now, but the parent's .gitconfig still has its [user]
+        var stamps = BuildAccounts.identityStamps(Map.of(), Map.of("github", "me#0123456789ab"), Set.of());
         assertEquals(Map.of(Metadata.accountIdentityKey("github"), "me#0123456789ab"), stamps);
+    }
+
+    /** An older isx stamped from config.yaml: the stamp claims an identity the guest never got. */
+    @Test
+    void aParentsStampIsReplacedByTheMarkerWhenTheGuestLacksTheIdentity() {
+        var stamps = BuildAccounts.identityStamps(Map.of(), Map.of("github", "me#0123456789ab"), Set.of("github"));
+        assertEquals(Map.of(Metadata.accountIdentityKey("github"), Metadata.ACCOUNT_IDENTITY_NONE), stamps);
     }
 
     @Test
@@ -111,52 +123,71 @@ class UnbakedGitIdentityTest {
                 "copilot", new dev.incusspawn.tool.CopilotSetup());
         var defs = Map.of("tpl-dev", base, "tpl-ai", child, "tpl-copilot", copilotOnly);
 
-        assertEquals(Set.of("github"), AccountSelection.rederivableNamespaces(child, defs, tools),
+        var setups = AccountSelection.byNamespace(tools);
+        assertEquals(Set.of("github"), AccountSelection.rederivableNamespaces(child, defs, tools, setups),
                 "gh from the parent; Claude cannot re-derive, so it is never marked");
-        assertEquals(Set.of(), AccountSelection.rederivableNamespaces(copilotOnly, defs, tools),
+        assertEquals(Set.of(), AccountSelection.rederivableNamespaces(copilotOnly, defs, tools, setups),
                 "Copilot spends the GitHub credential but derives no git identity");
-        assertEquals(Set.of(), AccountSelection.rederivableNamespaces(null, defs, tools));
+        assertEquals(Set.of(), AccountSelection.rederivableNamespaces(null, defs, tools, setups));
+        assertEquals(Set.of(), AccountSelection.rederivableNamespaces(child, defs, tools, Map.of()),
+                "a namespace the feature gate hides is never reconciled, so never marked");
     }
 
     // ── what a child's build does with its parent's ──────────────────────────
 
     private static final Map<String, ToolSetup> SETUPS = Map.of("github", new GhSetup(), "claude", new ClaudeSetup());
 
+    private static final String ME = "me#0123456789ab";
+
     @Test
     void aChildBuiltOnceATokenIsConfiguredReDerivesItsParentsMissingIdentity() {
-        assertEquals(Set.of("github"), BuildAccounts.inheritedToRederive(Map.of("github", "me#0123456789ab"),
+        assertEquals(Set.of("github"), BuildAccounts.toRederive(Map.of("github", ME),
                 Map.of("github", Metadata.ACCOUNT_IDENTITY_NONE), Set.of("github"), SETUPS));
     }
 
     @Test
     void aChildBuiltStillWithoutATokenHasNothingToReDerive() {
-        assertEquals(Set.of(), BuildAccounts.inheritedToRederive(Map.of(),
+        assertEquals(Set.of(), BuildAccounts.toRederive(Map.of(),
                 Map.of("github", Metadata.ACCOUNT_IDENTITY_NONE), Set.of("github"), SETUPS));
     }
 
     /** The user's template: built before the marker, with gh, no token and so no stamp. */
     @Test
-    void aParentWithGhButNoStampIsReDerivedToo() {
-        assertEquals(Set.of("github"), BuildAccounts.inheritedToRederive(Map.of("github", "me#0123456789ab"),
+    void aParentWithGhButNoStampAndNoIdentityIsReDerived() {
+        assertEquals(Set.of("github"), BuildAccounts.toRederive(Map.of("github", ME),
                 Map.of(), Set.of("github"), SETUPS));
     }
 
+    /** The gap: an older isx stamped the child of an identity-less parent from config.yaml. */
     @Test
-    void aParentWithoutGhAndWithoutAStampIsLeftAlone() {
-        assertEquals(Set.of(), BuildAccounts.inheritedToRederive(Map.of("github", "me#0123456789ab"),
-                Map.of(), Set.of(), SETUPS), "no gh, no .gitconfig to derive into");
+    void aParentStampedWithTheWantedIdentityButLackingItIsReDerived() {
+        assertEquals(Set.of("github"), BuildAccounts.toRederive(Map.of("github", ME),
+                Map.of("github", ME), Set.of("github"), SETUPS));
+    }
+
+    /** Built before stamps existed, with an identity: kept, as the build would have before. */
+    @Test
+    void aParentWithAnIdentityButNoStampKeepsIt() {
+        assertEquals(Set.of(), BuildAccounts.toRederive(Map.of("github", ME),
+                Map.of(), Set.of(), SETUPS), "a lookup that cannot fail cannot fail the build");
     }
 
     @Test
     void aParentBuiltForTheSameIdentityIsLeftAlone() {
-        assertEquals(Set.of(), BuildAccounts.inheritedToRederive(Map.of("github", "me#0123456789ab"),
-                Map.of("github", "me#0123456789ab"), Set.of("github"), SETUPS));
+        assertEquals(Set.of(), BuildAccounts.toRederive(Map.of("github", ME),
+                Map.of("github", ME), Set.of(), SETUPS));
+    }
+
+    @Test
+    void aParentBuiltForAnotherIdentityIsReDerived() {
+        assertEquals(Set.of("github"), BuildAccounts.toRederive(Map.of("github", ME),
+                Map.of("github", "other#0123456789ab"), Set.of(), SETUPS));
     }
 
     @Test
     void aNamespaceThatCannotReDeriveIsNeverReDerived() {
-        assertEquals(Set.of(), BuildAccounts.inheritedToRederive(Map.of("claude", "api-key"),
-                Map.of("claude", "oauth"), Set.of(), SETUPS));
+        assertEquals(Set.of(), BuildAccounts.toRederive(Map.of("claude", "api-key"),
+                Map.of("claude", "oauth"), Set.of("claude"), SETUPS));
     }
 
     // ── what a branch does with it ───────────────────────────────────────────
@@ -176,12 +207,73 @@ class UnbakedGitIdentityTest {
                 "re-deriving with nothing to derive from would fail on every start");
     }
 
-    /** Built by an isx that stamped nothing for an account it did not have: unchanged behaviour. */
+    /** From a template this isx built: its stamps were checked against the guest, so trusted. */
     @Test
-    void anInstanceWithoutAStampIsNotReDerived() throws Exception {
+    void aVerifiedInstanceWithoutAStampIsLeftAlone() throws Exception {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true"));
+        var plan = AccountSelection.identityReconcile(withToken(), daemon.client(), NAME,
+                Map.of("github", new GhSetup()));
+        assertTrue(plan.isEmpty(), "no gh in it, or an identity: either way nothing to ask the guest");
+    }
+
+    /** From a template an older isx built: unstamped cannot be told from 'no gh' but by the guest. */
+    @Test
+    void anUnverifiedInstanceIsCheckedOnceAnAccountIsConfigured() throws Exception {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
-        assertEquals(Map.of(), stale(daemon, withToken()),
-                "absent cannot be told from 'no gh' without asking the guest on every branch");
+        var plan = AccountSelection.identityReconcile(withToken(), daemon.client(), NAME,
+                Map.of("github", new GhSetup()));
+        assertEquals(Map.of(), plan.stale());
+        assertEquals(Map.of("github", "me"), plan.unverified());
+        assertTrue(AccountSelection.identityReconcile(withoutToken(), daemon.client(), NAME,
+                Map.of("github", new GhSetup())).isEmpty(), "without a token there is nothing to derive");
+    }
+
+    /** The user's template: gh, no token when built, so no [user] and, from an older isx, no stamp. */
+    @Test
+    void anUnverifiedInstanceLackingTheIdentityIsRepairedOnce() throws Exception {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of());
+        var gh = new RecordingGh();
+        gh.lacks = true;
+        reconcile(daemon, gh);
+
+        assertEquals(List.of("me"), gh.rebaked);
+        var config = daemon.instance(NAME).path("config");
+        assertEquals(new GhSetup().bakedAccountIdentity(withToken(), "me"),
+                config.path(Metadata.accountIdentityKey("github")).asText());
+        assertEquals("true", config.path(Metadata.ACCOUNT_IDENTITY_VERIFIED).asText());
+
+        reconcile(daemon, gh);
+        assertEquals(List.of("me"), gh.rebaked);
+        assertEquals(1, gh.checks, "the guest is asked once, ever");
+    }
+
+    /** The gap: an older isx stamped a child of an identity-less parent from config.yaml. */
+    @Test
+    void anUnverifiedStampClaimingAnIdentityTheGuestLacksIsRepaired() throws Exception {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.accountIdentityKey("github"), new GhSetup().bakedAccountIdentity(withToken(), "me")));
+        var gh = new RecordingGh();
+        gh.lacks = true;
+        reconcile(daemon, gh);
+        assertEquals(List.of("me"), gh.rebaked);
+    }
+
+    @Test
+    void anUnverifiedInstanceWithItsIdentityIsOnlyMarked() throws Exception {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of());
+        var gh = new RecordingGh();
+        reconcile(daemon, gh);
+        assertEquals(List.of(), gh.rebaked, "an identity it has, whoever's, is not overwritten");
+        assertEquals("true", daemon.instance(NAME).path("config").path(Metadata.ACCOUNT_IDENTITY_VERIFIED).asText());
+        reconcile(daemon, gh);
+        assertEquals(1, gh.checks);
+    }
+
+    private static void reconcile(FakeIncusDaemon daemon, RecordingGh gh) throws Exception {
+        var warnings = new ArrayList<String>();
+        InstanceLifecycle.reconcileAccountIdentities(readyClient(daemon), NAME, withToken(), Map.of("github", gh),
+                msg -> { }, warnings::add);
+        assertEquals(List.of(), warnings);
     }
 
     @Test
@@ -235,11 +327,20 @@ class UnbakedGitIdentityTest {
     private static final class RecordingGh extends GhSetup {
         final List<String> rebaked = new ArrayList<>();
         boolean fail;
+        boolean lacks;
+        int checks;
 
         @Override
         public void rebakeForAccount(Container container, String accountName) {
             if (fail) throw new dev.incusspawn.incus.IncusException("Could not determine git identity from GitHub");
             rebaked.add(accountName);
+            lacks = false;
+        }
+
+        @Override
+        public boolean lacksBakedIdentity(Container container) {
+            checks++;
+            return lacks;
         }
     }
 }

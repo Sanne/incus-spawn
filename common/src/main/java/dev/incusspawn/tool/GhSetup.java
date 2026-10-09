@@ -92,7 +92,10 @@ public class GhSetup implements ToolSetup {
         var account = AccountResolver.effectiveAccount(config, NAMESPACE, accountName);
         if (account.isEmpty()) return "";
         var token = AccountResolver.value(config, NAMESPACE, account, "token");
-        if (token.isBlank()) return account;
+        // Nothing to derive an identity from, so nothing is baked: an account with no token --
+        // a flat config holding only an email presents as one -- leaves a build without a
+        // [user], and claiming its name here would make every use try, and fail, to re-derive.
+        if (token.isBlank()) return "";
         var email = AccountResolver.value(config, NAMESPACE, account, "email");
         return account + IDENTITY_FINGERPRINT_SEPARATOR + fingerprint(token + "\0" + email);
     }
@@ -164,30 +167,33 @@ public class GhSetup implements ToolSetup {
         // Loaded once and threaded down: every lookup below used to re-read and re-serialize
         // config.yaml, so a single install parsed it three times over.
         var config = SpawnConfig.load();
-        var hasIdentity = configureGit(c, config,
+        configureGit(c, config,
                 AccountResolver.effectiveAccount(config, NAMESPACE, accountSelection.get(NAMESPACE)));
         BuildOutput.stepDone();
-        if (!hasIdentity) BuildOutput.stepWarn(NO_IDENTITY_WARNING);
     }
 
     /**
-     * Why a build's gh setup wrote no {@code [user]}: a template built before a GitHub token was
-     * configured used to get none, silently, and every branch committed without an author. The
-     * build stamps {@link dev.incusspawn.incus.Metadata#ACCOUNT_IDENTITY_NONE} for it, which is
-     * what makes the last sentence true.
+     * A template built before a GitHub token was configured used to get no {@code [user]},
+     * silently, and every branch committed without an author. The build now says so, and stamps
+     * {@link dev.incusspawn.incus.Metadata#ACCOUNT_IDENTITY_NONE}, which is what makes the last
+     * sentence true.
      */
-    static final String NO_IDENTITY_WARNING = "No git identity: no GitHub account with a token is"
-            + " configured, so commits made in this template and its branches have no author."
-            + " Add a token with 'isx init'; branches pick the identity up on their next start.";
+    @Override
+    public String unbakedIdentityWarning() {
+        return NO_IDENTITY_WARNING;
+    }
 
-    /** @return whether {@code .gitconfig} ends up with an identity */
-    private boolean configureGit(Container c, SpawnConfig config, String accountName) {
+    static final String NO_IDENTITY_WARNING = "No git identity: no GitHub token is configured,"
+            + " so commits made in this template and its branches have no author. Add a token with"
+            + " 'isx init'; branches pick the identity up the next time isx branches, opens a shell"
+            + " in or runs a command in them.";
+
+    private void configureGit(Container c, SpawnConfig config, String accountName) {
         boolean existingConfig = c.sh("test -f /home/agentuser/.gitconfig").success();
-        var hasIdentity = configureGitIdentity(c, config, accountName);
+        configureGitIdentity(c, config, accountName);
         if (!existingConfig) {
             configureGitDefaults(c);
         }
-        return hasIdentity;
     }
 
     /**
@@ -198,21 +204,32 @@ public class GhSetup implements ToolSetup {
      * -- so it follows the account the caller is pinned to without this code knowing which one
      * that is. Skipped when an identity is already present, which is what makes it cheap to
      * call again at branch time; {@link #rebakeForAccount} is how a re-point forces a refresh.
-     *
-     * @return whether an identity is present afterwards -- false when no account could supply one
+     * Writing nothing -- no token to derive from -- is what the build's
+     * {@link #lacksBakedIdentity} check then finds, warns about and stamps.
      */
-    boolean configureGitIdentity(Container c, SpawnConfig config, String accountName) {
+    void configureGitIdentity(Container c, SpawnConfig config, String accountName) {
         boolean hasName = gitConfigGet(c, "user.name");
         boolean hasEmail = gitConfigGet(c, "user.email");
         if (hasName && hasEmail) {
-            return true;
+            return;
         }
 
         var identity = resolveIdentity(c, config, accountName, false);
-        if (identity == null) return false;
+        if (identity == null) return;
         if (!hasName) gitConfig(c, "user.name", identity.name());
         if (!hasEmail) gitConfig(c, "user.email", identity.email());
-        return true;
+    }
+
+    /**
+     * Whether gh is in the image and {@code .gitconfig} has no {@code user.name} or no
+     * {@code user.email}: one guest exec, which is what the build's stamp and an older template's
+     * first reconcile are decided by, rather than by what config.yaml held at the time.
+     */
+    @Override
+    public boolean lacksBakedIdentity(Container container) {
+        return !container.shAsUser("agentuser", "! command -v gh >/dev/null"
+                + " || { git config --global --get user.name && git config --global --get user.email; } >/dev/null")
+                .success();
     }
 
     /** The git identity behind a GitHub account, as the API reports it. */
@@ -257,7 +274,9 @@ public class GhSetup implements ToolSetup {
 
         var parts = result.stdout().lines().findFirst().orElse("").split("\t", -1);
         if (parts[0].isEmpty()) {
-            if (required) throw new IncusException("GitHub reported no login for this account");
+            // With a token configured this is a failed lookup like any other, and fails the build:
+            // returning null would leave the template without an author and claiming nothing.
+            if (required || tokenConfigured) throw new IncusException("GitHub reported no login for this account");
             return null;
         }
 

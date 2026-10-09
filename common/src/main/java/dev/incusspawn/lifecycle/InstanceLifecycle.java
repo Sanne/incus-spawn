@@ -398,6 +398,12 @@ public final class InstanceLifecycle {
      *
      * <p>Only namespaces whose tool can re-derive appear here; the ones that cannot were
      * refused at selection time, so there is nothing to reconcile.
+     *
+     * <p>An instance from a template an older isx built carries no
+     * {@link Metadata#ACCOUNT_IDENTITY_VERIFIED}: its stamp came from config.yaml and may claim
+     * an identity its {@code .gitconfig} never got. Its first reconcile with an account
+     * configured asks the guest once, re-derives what is missing and sets the marker -- one
+     * exec and one write for such an instance, none for one whose template this isx built.
      */
     public static void reconcileAccountIdentities(IncusClient incus, String name) {
         reconcileAccountIdentities(incus, name, BuildOutput::step,
@@ -423,8 +429,8 @@ public final class InstanceLifecycle {
                                                    Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
                                                    Consumer<String> progress, Consumer<String> warnings) {
         try {
-            var stale = AccountSelection.staleIdentities(config, incus, name, knownSetups);
-            if (stale.isEmpty()) return;
+            var plan = AccountSelection.identityReconcile(config, incus, name, knownSetups);
+            if (plan.isEmpty()) return;
 
             // Re-deriving goes out through the proxy, and a just-started instance may not have
             // an address yet. Only paid for when something is actually stale, and returns as
@@ -437,7 +443,15 @@ public final class InstanceLifecycle {
 
             var container = new Container(incus, name);
             var setups = knownSetups != null ? knownSetups : AccountSelection.namespaceSetups(config);
+            var stale = new LinkedHashMap<>(plan.stale());
+            // From a template an older isx built: its stamp may claim an identity the guest never
+            // got, so ask the guest once. The marker is set only once everything here succeeded.
+            plan.unverified().forEach((namespace, account) -> {
+                var setup = setups.get(namespace);
+                if (setup != null && setup.lacksBakedIdentity(container)) stale.put(namespace, account);
+            });
             var updates = new LinkedHashMap<String, String>();
+            if (!plan.unverified().isEmpty()) updates.put(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true");
             stale.forEach((namespace, account) -> {
                 var setup = setups.get(namespace);
                 if (setup == null) return;
