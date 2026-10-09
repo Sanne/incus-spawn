@@ -1,6 +1,8 @@
 package dev.incusspawn.incus;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqValues;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -9,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class IncusApiTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
     // --- tryConnect does not blow up on absent socket ---
 
     @Test
@@ -87,7 +88,7 @@ class IncusApiTest {
 
     @Test
     void apiResponseIsSuccess() throws Exception {
-        var node = JSON.readTree("{\"type\":\"sync\",\"metadata\":[]}");
+        var node = JqValues.parse("{\"type\":\"sync\",\"metadata\":[]}");
         var resp = new IncusApi.ApiResponse(200, node);
         assertTrue(resp.isSuccess());
         assertFalse(resp.isAsync());
@@ -95,7 +96,7 @@ class IncusApiTest {
 
     @Test
     void apiResponseIsAsync() throws Exception {
-        var node = JSON.readTree("{\"type\":\"async\",\"operation\":\"/1.0/operations/abc\"}");
+        var node = JqValues.parse("{\"type\":\"async\",\"operation\":\"/1.0/operations/abc\"}");
         var resp = new IncusApi.ApiResponse(202, node);
         assertTrue(resp.isAsync());
         assertEquals("/1.0/operations/abc", resp.operationPath());
@@ -103,7 +104,7 @@ class IncusApiTest {
 
     @Test
     void apiResponseOperationPathEmptyWhenAbsent() throws Exception {
-        var node = JSON.readTree("{\"type\":\"sync\"}");
+        var node = JqValues.parse("{\"type\":\"sync\"}");
         var resp = new IncusApi.ApiResponse(200, node);
         assertEquals("", resp.operationPath());
     }
@@ -112,7 +113,7 @@ class IncusApiTest {
 
     @Test
     void listMetadataExtractsNameStatusType() throws Exception {
-        var json = JSON.readTree("""
+        var json = JqValues.parse("""
                 {
                   "type": "sync",
                   "metadata": [
@@ -121,8 +122,8 @@ class IncusApiTest {
                   ]
                 }
                 """);
-        var instances = List.of(json.path("metadata").elements().next(),
-                json.path("metadata").get(1));
+        var instances = List.of(json.getField("metadata").asList().get(0),
+                json.getField("metadata").getElement(1));
         assertEquals("tpl-dev", instances.get(0).path("name").asText());
         assertEquals("Stopped", instances.get(0).path("status").asText());
         assertEquals("container", instances.get(0).path("type").asText());
@@ -132,8 +133,8 @@ class IncusApiTest {
     // --- listJson() response format compatibility ---
 
     @Test
-    void listJsonMetadataArrayIsValidForCallers() throws Exception {
-        var json = JSON.readTree("""
+    void listJsonReturnsTheMetadataArrayDirectly() throws Exception {
+        var json = JqValues.parse("""
                 {
                   "type": "sync",
                   "metadata": [
@@ -146,11 +147,11 @@ class IncusApiTest {
                   ]
                 }
                 """);
-        // Simulate what listJson() returns: just the metadata array serialized
-        var metadataStr = json.path("metadata").toString();
-        var parsed = JSON.readTree(metadataStr);
-        assertTrue(parsed.isArray());
-        var node = parsed.get(0);
+        // listJson()/listJsonConfig() hand callers the metadata array itself, not text:
+        // no serialize/re-parse round trip between the transport and the readers.
+        var metadata = json.getField("metadata");
+        assertTrue(metadata.isArray());
+        var node = metadata.getElement(0);
         assertEquals("tpl-dev", node.path("name").asText());
         assertEquals("base", node.path("config").path("user.incus-spawn.type").asText());
         assertEquals("20GB", node.path("expanded_devices").path("root").path("size").asText());
@@ -160,7 +161,7 @@ class IncusApiTest {
 
     @Test
     void configGetExtractsKnownKey() throws Exception {
-        var json = JSON.readTree("""
+        var json = JqValues.parse("""
                 {
                   "type": "sync",
                   "metadata": {
@@ -179,7 +180,7 @@ class IncusApiTest {
 
     @Test
     void configGetReturnsEmptyForAbsentKey() throws Exception {
-        var json = JSON.readTree("""
+        var json = JqValues.parse("""
                 {
                   "type": "sync",
                   "metadata": {
@@ -200,7 +201,7 @@ class IncusApiTest {
     @Test
     void configSetPatchBodyHasCorrectStructure() throws Exception {
         var body = java.util.Map.of("config", java.util.Map.of("user.incus-spawn.workdir", "/home/agentuser"));
-        var json = JSON.valueToTree(body);
+        var json = JqValues.fromJavaObject(body);
         assertEquals("/home/agentuser", json.path("config").path("user.incus-spawn.workdir").asText());
     }
 
@@ -209,25 +210,25 @@ class IncusApiTest {
     @Test
     void stateChangeBodyHasRequiredFields() throws Exception {
         var body = java.util.Map.of("action", "start", "timeout", 30, "force", false);
-        var json = JSON.valueToTree(body);
+        var json = JqValues.fromJavaObject(body);
         assertEquals("start", json.path("action").asText());
-        assertEquals(30, json.path("timeout").asInt());
-        assertFalse(json.path("force").asBoolean());
+        assertEquals(30, json.path("timeout").asInt(0));
+        assertFalse(json.path("force").asBoolean(false));
     }
 
     @Test
     void forceStopBodyHasForceTrue() throws Exception {
         var body = java.util.Map.of("action", "stop", "timeout", 30, "force", true);
-        var json = JSON.valueToTree(body);
-        assertTrue(json.path("force").asBoolean());
+        var json = JqValues.fromJavaObject(body);
+        assertTrue(json.path("force").asBoolean(false));
     }
 
     @Test
     void renameBodyHasNameAndMigration() throws Exception {
         var body = java.util.Map.of("name", "new-name", "migration", false);
-        var json = JSON.valueToTree(body);
+        var json = JqValues.fromJavaObject(body);
         assertEquals("new-name", json.path("name").asText());
-        assertFalse(json.path("migration").asBoolean());
+        assertFalse(json.path("migration").asBoolean(false));
     }
 
     // --- exec body format / default environment ---
@@ -272,11 +273,11 @@ class IncusApiTest {
     @Test
     void windowResizeMessageUsesStringValues() throws Exception {
         var msg = IncusApi.windowResizeMessage(120, 40);
-        var json = JSON.readTree(msg);
+        var json = JqValues.parse(msg);
         assertEquals("window-resize", json.path("command").asText());
         var args = json.path("args");
-        assertTrue(args.path("width").isTextual(), "width must be a JSON string, not a number");
-        assertTrue(args.path("height").isTextual(), "height must be a JSON string, not a number");
+        assertTrue(args.path("width").isString(), "width must be a JSON string, not a number");
+        assertTrue(args.path("height").isString(), "height must be a JSON string, not a number");
         assertEquals("120", args.path("width").asText());
         assertEquals("40", args.path("height").asText());
     }
@@ -307,7 +308,7 @@ class IncusApiTest {
 
     @Test
     void asyncResponseDetectedOn202() throws Exception {
-        var node = JSON.readTree("{\"type\":\"async\",\"operation\":\"/1.0/operations/abc\",\"status_code\":202}");
+        var node = JqValues.parse("{\"type\":\"async\",\"operation\":\"/1.0/operations/abc\",\"status_code\":202}");
         var resp = new IncusApi.ApiResponse(202, node);
         assertTrue(resp.isAsync());
         assertEquals("/1.0/operations/abc", resp.operationPath());
@@ -315,7 +316,7 @@ class IncusApiTest {
 
     @Test
     void operationFailureStatusDetected() throws Exception {
-        var metadata = JSON.readTree("{\"status\":\"Failure\",\"err\":\"container is running\"}");
+        var metadata = JqValues.parse("{\"status\":\"Failure\",\"err\":\"container is running\"}");
         assertEquals("Failure", metadata.path("status").asText());
         assertEquals("container is running", metadata.path("err").asText());
     }
@@ -324,7 +325,7 @@ class IncusApiTest {
 
     @Test
     void probeCowPoolFindsBtrfsPool() throws Exception {
-        var json = JSON.readTree("""
+        var json = JqValues.parse("""
                 {
                   "type": "sync",
                   "metadata": [
@@ -334,10 +335,10 @@ class IncusApiTest {
                 }
                 """);
         String found = null;
-        for (var pool : json.path("metadata")) {
-            var driver = pool.path("driver").asText("");
+        for (var pool : json.path("metadata").asList()) {
+            var driver = pool.pathText("driver", "");
             if (java.util.Set.of("btrfs", "zfs", "lvm").contains(driver)) {
-                found = pool.path("name").asText();
+                found = pool.pathText("name", "");
                 break;
             }
         }
@@ -346,7 +347,7 @@ class IncusApiTest {
 
     @Test
     void probeCowPoolReturnsNullWhenNoCowDriver() throws Exception {
-        var json = JSON.readTree("""
+        var json = JqValues.parse("""
                 {
                   "type": "sync",
                   "metadata": [
@@ -355,10 +356,10 @@ class IncusApiTest {
                 }
                 """);
         String found = null;
-        for (var pool : json.path("metadata")) {
-            var driver = pool.path("driver").asText("");
+        for (var pool : json.path("metadata").asList()) {
+            var driver = pool.pathText("driver", "");
             if (java.util.Set.of("btrfs", "zfs", "lvm").contains(driver)) {
-                found = pool.path("name").asText();
+                found = pool.pathText("name", "");
                 break;
             }
         }
@@ -373,7 +374,7 @@ class IncusApiTest {
 
     @Test
     void hasStoragePoolTrueWhenPoolsPresent() throws Exception {
-        var json = JSON.readTree("""
+        var json = JqValues.parse("""
                 {"type": "sync", "metadata": ["/1.0/storage-pools/default"]}
                 """);
         assertTrue(json.path("metadata").size() > 0);
@@ -381,7 +382,7 @@ class IncusApiTest {
 
     @Test
     void hasStoragePoolFalseWhenListEmpty() throws Exception {
-        var json = JSON.readTree("""
+        var json = JqValues.parse("""
                 {"type": "sync", "metadata": []}
                 """);
         assertFalse(json.path("metadata").size() > 0);
@@ -396,7 +397,7 @@ class IncusApiTest {
         device.put("source", "/home/user/.m2");
         device.put("path", "/home/agentuser/.m2");
         var body = java.util.Map.of("devices", java.util.Map.of("m2cache", device));
-        var json = JSON.valueToTree(body);
+        var json = JqValues.fromJavaObject(body);
         var d = json.path("devices").path("m2cache");
         assertEquals("disk", d.path("type").asText());
         assertEquals("/home/user/.m2", d.path("source").asText());
@@ -407,7 +408,7 @@ class IncusApiTest {
     void deviceRemovePutBodyDropsDevice() throws Exception {
         // Device removal uses read-modify-write with PUT, not PATCH with null.
         // Simulate: original has devices {keep, remove}, result should only have {keep}.
-        var json = JSON.readTree("""
+        var json = JqValues.parse("""
                 {
                   "type": "sync",
                   "metadata": {
@@ -426,13 +427,17 @@ class IncusApiTest {
                 """);
         var metadata = json.path("metadata");
         // Simulate what removeDevice does: build PUT body excluding "remove"
-        var devicesNode = JSON.createObjectNode();
-        metadata.path("devices").fields().forEachRemaining(e -> {
-            if (!e.getKey().equals("remove")) devicesNode.set(e.getKey(), e.getValue());
-        });
-        assertTrue(devicesNode.has("keep"), "keep device should remain");
-        assertFalse(devicesNode.has("remove"), "remove device should be excluded");
-        assertEquals("disk", devicesNode.path("keep").path("type").asText());
+        var devicesNode = io.hyperfoil.tools.jjq.value.JqObject.builder(2);
+        var devices = metadata.path("devices");
+        if (devices instanceof io.hyperfoil.tools.jjq.value.JqObject devicesObj) {
+            devicesObj.forEach((name, device) -> {
+                if (!name.equals("remove")) devicesNode.put(name, device);
+            });
+        }
+        var built = devicesNode.build();
+        assertTrue(built.keys().contains("keep"), "keep device should remain");
+        assertFalse(built.keys().contains("remove"), "remove device should be excluded");
+        assertEquals("disk", built.getField("keep").pathText("type", ""));
     }
 
     @Test
@@ -472,13 +477,13 @@ class IncusApiTest {
 
     @Test
     void existsReturnsTrueOn200() throws Exception {
-        var resp = new IncusApi.ApiResponse(200, JSON.readTree("{\"type\":\"sync\"}"));
+        var resp = new IncusApi.ApiResponse(200, JqValues.parse("{\"type\":\"sync\"}"));
         assertTrue(resp.isSuccess());
     }
 
     @Test
     void existsReturnsFalseOn404() throws Exception {
-        var resp = new IncusApi.ApiResponse(404, JSON.readTree("{\"type\":\"error\"}"));
+        var resp = new IncusApi.ApiResponse(404, JqValues.parse("{\"type\":\"error\"}"));
         assertFalse(resp.isSuccess());
     }
 
@@ -490,7 +495,7 @@ class IncusApiTest {
         var body = new java.util.LinkedHashMap<String, Object>();
         var source = java.util.Map.of("type", "image", "alias", "my-image");
         body.put("source", source);
-        var json = JSON.valueToTree(body);
+        var json = JqValues.fromJavaObject(body);
         assertEquals("image", json.path("source").path("type").asText());
         assertEquals("my-image", json.path("source").path("alias").asText());
         assertFalse(json.path("source").has("server"), "local alias should have no server field");
@@ -505,7 +510,7 @@ class IncusApiTest {
         source.put("server", "https://images.linuxcontainers.org");
         source.put("protocol", "simplestreams");
         source.put("alias", "fedora/44");
-        var json = JSON.valueToTree(source);
+        var json = JqValues.fromJavaObject(source);
         assertEquals("pull", json.path("mode").asText());
         assertEquals("https://images.linuxcontainers.org", json.path("server").asText());
         assertEquals("simplestreams", json.path("protocol").asText());
@@ -516,7 +521,7 @@ class IncusApiTest {
 
     @Test
     void networkConfigGetExtractsKnownKey() throws Exception {
-        var json = JSON.readTree("""
+        var json = JqValues.parse("""
                 {
                   "type": "sync",
                   "metadata": {
@@ -535,7 +540,7 @@ class IncusApiTest {
     @Test
     void networkConfigSetBodyContainsKey() throws Exception {
         var body = java.util.Map.of("config", java.util.Map.of("ipv4.address", "172.21.0.1/24"));
-        var json = JSON.valueToTree(body);
+        var json = JqValues.fromJavaObject(body);
         assertEquals("172.21.0.1/24", json.path("config").path("ipv4.address").asText());
     }
 
@@ -547,7 +552,7 @@ class IncusApiTest {
         body.put("name", "my-branch");
         body.put("source", java.util.Map.of("type", "copy", "source", "tpl-dev"));
         body.put("storage", "default");
-        var json = JSON.valueToTree(body);
+        var json = JqValues.fromJavaObject(body);
         assertEquals("my-branch", json.path("name").asText());
         assertEquals("copy", json.path("source").path("type").asText());
         assertEquals("tpl-dev", json.path("source").path("source").asText());
@@ -562,7 +567,7 @@ class IncusApiTest {
         body.put("name", "tpl-minimal");
         body.put("type", "container");
         body.put("source", java.util.Map.of("type", "image", "alias", "images:ubuntu/24.04"));
-        var json = JSON.valueToTree(body);
+        var json = JqValues.fromJavaObject(body);
         assertEquals("tpl-minimal", json.path("name").asText());
         assertEquals("container", json.path("type").asText());
         assertEquals("image", json.path("source").path("type").asText());
@@ -575,7 +580,7 @@ class IncusApiTest {
         body.put("name", "my-vm");
         body.put("type", "virtual-machine");
         body.put("source", java.util.Map.of("type", "image", "alias", "images:ubuntu/24.04"));
-        var json = JSON.valueToTree(body);
+        var json = JqValues.fromJavaObject(body);
         assertEquals("virtual-machine", json.path("type").asText());
     }
 

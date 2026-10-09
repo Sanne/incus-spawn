@@ -168,14 +168,13 @@ class GhSetupTest {
     /** Nothing to derive from, so nothing baked: claiming the name would make every use re-derive, and fail. */
     @Test
     void anAccountWithoutATokenBakesNothing() throws Exception {
-        var config = new com.fasterxml.jackson.databind.ObjectMapper(new com.fasterxml.jackson.dataformat.yaml.YAMLFactory())
-                .readValue("""
+        var config = dev.incusspawn.config.Jjq.spawnConfig("""
                         github:
                           accounts:
                             work:
                               email: "me@example.com"
                           default: work
-                        """, dev.incusspawn.config.SpawnConfig.class);
+                        """);
         assertEquals("", new GhSetup().bakedAccountIdentity(config, "work"));
     }
 

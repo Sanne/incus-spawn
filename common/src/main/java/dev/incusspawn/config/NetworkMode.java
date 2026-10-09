@@ -25,8 +25,8 @@ public enum NetworkMode {
     }
 
     /** Whether an instance, as Incus returns it, was branched {@link #AIRGAP airgapped}. */
-    public static boolean isAirgapped(com.fasterxml.jackson.databind.JsonNode instance) {
-        return AIRGAP.name().equals(
-                instance.path("config").path(dev.incusspawn.incus.Metadata.NETWORK_MODE).asText(""));
+    public static boolean isAirgapped(io.hyperfoil.tools.jjq.value.JqValue instance) {
+        return instance != null && AIRGAP.name().equals(
+                instance.path("config").pathText(dev.incusspawn.incus.Metadata.NETWORK_MODE, ""));
     }
 }

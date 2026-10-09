@@ -1,11 +1,12 @@
 package dev.incusspawn.tool;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
+import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -87,14 +88,14 @@ public class ActionResolver {
      * @param instance the instance as {@link #readInstance} returned it, whose stamp stands in
      *                 for a template YAML that is gone
      */
-    public Optional<ToolAction> findDefaultAction(JsonNode instance, String parentTemplate,
+    public Optional<ToolAction> findDefaultAction(JqValue instance, String parentTemplate,
                                                    Set<String> installedTools,
                                                    List<ActionContext.RepoInfo> repos) {
         return findDefaultAction(parentTemplate, () -> stampedDefaultAction(instance), () -> installedTools, repos);
     }
 
-    private static String stampedDefaultAction(JsonNode instance) {
-        return instance.path("config").path(Metadata.DEFAULT_ACTION).asText("");
+    private static String stampedDefaultAction(JqValue instance) {
+        return instance.getField("config").pathText(Metadata.DEFAULT_ACTION, "");
     }
 
     /**
@@ -109,7 +110,7 @@ public class ActionResolver {
      *
      * @param template the leaf template the source was built from ({@code Preflight.template()})
      */
-    public String defaultCommandForBranch(String template, JsonNode sourceInstance) {
+    public String defaultCommandForBranch(String template, JqValue sourceInstance) {
         return findDefaultAction(template, () -> stampedDefaultAction(sourceInstance),
                         () -> collectInstalledTools(sourceInstance, template), collectRepos(template))
                 .flatMap(a -> a.shellCommand(null)).orElse(null);
@@ -152,11 +153,11 @@ public class ActionResolver {
      *
      * @param instance the instance as {@link #readInstance} returned it
      */
-    public Set<String> collectInstalledTools(JsonNode instance, String parentTemplate) {
-        var config = instance.path("config");
-        var buildSourceJson = config.path(Metadata.BUILD_SOURCE).asText("");
+    public Set<String> collectInstalledTools(JqValue instance, String parentTemplate) {
+        var config = instance.getField("config");
+        var buildSourceJson = config.pathText(Metadata.BUILD_SOURCE, "");
         if (!buildSourceJson.isBlank()) {
-            var type = config.path(Metadata.TYPE).asText("");
+            var type = config.pathText(Metadata.TYPE, "");
             if (!Metadata.TYPE_BASE.equals(type) || getInheritanceChain(parentTemplate).isEmpty()) {
                 var bs = dev.incusspawn.config.BuildSource.fromJson(buildSourceJson);
                 if (bs != null) {
@@ -259,9 +260,9 @@ public class ActionResolver {
     }
 
     /** {@link #buildActionContext(String, String)} from an instance its caller already read. */
-    public ActionContext buildActionContext(String instanceName, JsonNode instance, String parentTemplate) {
-        var config = instance.path("config");
-        var status = instance.path("status").asText("");
+    public ActionContext buildActionContext(String instanceName, JqValue instance, String parentTemplate) {
+        var config = instance.getField("config");
+        var status = instance.pathText("status", "");
         var ipv4 = "";
         // A frozen guest is paused, not stopped, and still holds its address.
         if ("Running".equalsIgnoreCase(status) || "Frozen".equalsIgnoreCase(status)) {
@@ -271,9 +272,9 @@ public class ActionResolver {
             }
         }
         if (ipv4.isEmpty()) {
-            ipv4 = config.path(Metadata.STATIC_IP).asText("");
+            ipv4 = config.pathText(Metadata.STATIC_IP, "");
         }
-        var networkMode = config.path(Metadata.NETWORK_MODE).asText("");
+        var networkMode = config.pathText(Metadata.NETWORK_MODE, "");
         var installedTools = collectInstalledTools(instance, parentTemplate);
         var repos = collectRepos(parentTemplate);
 
@@ -296,11 +297,11 @@ public class ActionResolver {
     }
 
     /** {@link #shellMenu(String, String, String)} from an instance its caller already read. */
-    public ShellMenu shellMenu(String instanceName, JsonNode instance, String templateName, String workdir) {
+    public ShellMenu shellMenu(String instanceName, JqValue instance, String templateName, String workdir) {
         return shellMenu(instanceName, () -> instance, templateName, workdir);
     }
 
-    private ShellMenu shellMenu(String instanceName, Supplier<JsonNode> instance, String templateName,
+    private ShellMenu shellMenu(String instanceName, Supplier<JqValue> instance, String templateName,
                                 String workdir) {
         if (templateName == null || templateName.isBlank() || !ShellMenu.enabled()) {
             return ShellMenu.NONE;
@@ -315,9 +316,9 @@ public class ActionResolver {
      * The instance as one GET returns it, failing like {@code configGet} when Incus refuses it:
      * what a caller resolving several things about one instance reads once and passes on.
      */
-    public JsonNode readInstance(String instanceName) {
+    public JqValue readInstance(String instanceName) {
         var instance = incus.instanceMetadata(instanceName);
-        if (instance.isMissingNode() || instance.isNull()) {
+        if (Jjq.isMissing(instance)) {
             throw new IncusException("Failed to read instance " + instanceName);
         }
         return instance;

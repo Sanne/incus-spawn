@@ -1,6 +1,7 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.ProxyService;
@@ -39,7 +40,7 @@ public final class InstanceDestroyer {
      * fails the delete; so does taking it back, strictly, since a mark left behind would leave
      * the instance busy for good. Returns whether the instance was deleted.
      */
-    public static boolean deleteHeldIf(IncusClient incus, String name, Predicate<JsonNode> stillWanted) {
+    public static boolean deleteHeldIf(IncusClient incus, String name, Predicate<JqValue> stillWanted) {
         if (!markIf(incus, name, Metadata.OP_DELETING, stillWanted)) return false;
         deleteMarked(incus, name);
         return true;
@@ -51,7 +52,7 @@ public final class InstanceDestroyer {
      * takes it back strictly and returns false. A failed read takes the mark back and throws.
      * The guard {@link #deleteHeldIf} and the {@code isx mcp} orphan sweep's stop share.
      */
-    public static boolean markIf(IncusClient incus, String name, String operation, Predicate<JsonNode> stillWanted) {
+    public static boolean markIf(IncusClient incus, String name, String operation, Predicate<JqValue> stillWanted) {
         incus.configSet(name, Metadata.PENDING_OP, operation);
         boolean wanted;
         try {

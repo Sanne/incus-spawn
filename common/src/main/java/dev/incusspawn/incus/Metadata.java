@@ -180,8 +180,8 @@ public final class Metadata {
     }
 
     /** Whether {@code instance}, as Incus returns it, holds the {@link #MCP_CALLER} grant. */
-    public static boolean isMcpCaller(com.fasterxml.jackson.databind.JsonNode instance) {
-        return isMcpCallerGrant(instance.path("config").path(MCP_CALLER).asText(null));
+    public static boolean isMcpCaller(io.hyperfoil.tools.jjq.value.JqValue instance) {
+        return instance != null && isMcpCallerGrant(instance.path("config").pathText(MCP_CALLER, null));
     }
 
     /**

@@ -42,7 +42,7 @@ class InstanceLifecycleNetworkFixTest {
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.21.0.1/24");
 
         // StaticIpAllocator.claim needs these
-        when(incus.listJsonConfig()).thenReturn("[]");
+        when(incus.listJsonConfig()).thenReturn(io.hyperfoil.tools.jjq.value.JqValues.parse("[]"));
         when(incus.findNicDeviceName("test", "incusbr0")).thenReturn("eth0");
         when(incus.configGet("test", Metadata.PROXY_GATEWAY)).thenReturn("");
         when(incus.machineType("test")).thenReturn(MachineType.CONTAINER);
@@ -63,7 +63,7 @@ class InstanceLifecycleNetworkFixTest {
         var incus = mock(IncusClient.class);
         when(incus.configGet("test", Metadata.STATIC_IP)).thenReturn("172.20.0.5");
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.21.0.1/24");
-        when(incus.listJsonConfig()).thenReturn("[]");
+        when(incus.listJsonConfig()).thenReturn(io.hyperfoil.tools.jjq.value.JqValues.parse("[]"));
         when(incus.findNicDeviceName("test", "incusbr0")).thenReturn("eth0");
         when(incus.configGet("test", Metadata.PROXY_GATEWAY)).thenReturn("172.20.0.1");
         when(incus.machineType("test")).thenReturn(MachineType.CONTAINER);
@@ -80,7 +80,7 @@ class InstanceLifecycleNetworkFixTest {
         var incus = mock(IncusClient.class);
         when(incus.configGet("test", Metadata.STATIC_IP)).thenReturn("172.20.0.5");
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.21.0.1/24");
-        when(incus.listJsonConfig()).thenReturn("[]");
+        when(incus.listJsonConfig()).thenReturn(io.hyperfoil.tools.jjq.value.JqValues.parse("[]"));
         when(incus.findNicDeviceName("test", "incusbr0")).thenReturn("eth0");
         when(incus.configGet("test", Metadata.PROXY_GATEWAY)).thenReturn("");
         when(incus.machineType("test")).thenReturn(MachineType.VM);
@@ -97,11 +97,11 @@ class InstanceLifecycleNetworkFixTest {
     void findStaleSubnetInstances_detectsStaleIps() {
         var incus = mock(IncusClient.class);
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.21.0.1/24");
-        when(incus.listJsonConfig()).thenReturn("""
+        when(incus.listJsonConfig()).thenReturn(io.hyperfoil.tools.jjq.value.JqValues.parse("""
                 [{"name": "good", "config": {"%1$s": "172.21.0.5"}},
                  {"name": "stale", "config": {"%1$s": "172.20.0.5"}},
                  {"name": "airgap", "config": {}}]
-                """.formatted(Metadata.STATIC_IP));
+                """.formatted(Metadata.STATIC_IP)));
 
         var stale = InstanceLifecycle.findStaleSubnetInstances(incus);
         assertEquals(List.of("stale"), stale);
@@ -112,11 +112,11 @@ class InstanceLifecycleNetworkFixTest {
         var incus = mock(IncusClient.class);
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.21.0.1/24");
         // One listing names every stale instance: no read per instance
-        when(incus.listJsonConfig()).thenReturn("""
+        when(incus.listJsonConfig()).thenReturn(io.hyperfoil.tools.jjq.value.JqValues.parse("""
                 [{"name":"fail-instance","config":{"%1$s":"172.20.0.2"}},
                  {"name":"ok-instance","config":{"%1$s":"172.21.0.3"}},
                  {"name":"stale-instance","config":{"%1$s":"172.20.0.4"}}]
-                """.formatted(Metadata.STATIC_IP));
+                """.formatted(Metadata.STATIC_IP)));
         when(incus.findNicDeviceName("fail-instance", "incusbr0"))
                 .thenThrow(new RuntimeException("no NIC"));
         when(incus.findNicDeviceName("stale-instance", "incusbr0")).thenReturn("eth0");

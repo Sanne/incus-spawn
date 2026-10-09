@@ -1,6 +1,7 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ToolSetup;
@@ -321,7 +322,7 @@ public final class AccountSelection {
     }
 
     /** As {@link #identityReconcile(SpawnConfig, IncusClient, String, Map)}, from a read the caller already made. */
-    public static IdentityReconcile identityReconcile(SpawnConfig config, JsonNode metadata,
+    public static IdentityReconcile identityReconcile(SpawnConfig config, JqValue metadata,
                                                       Map<String, ToolSetup> knownSetups) {
         if (metadata == null || metadata.isMissingNode()) {
             throw new dev.incusspawn.incus.IncusException("Failed to read the instance's config");
@@ -401,20 +402,19 @@ public final class AccountSelection {
         var pinKey = Metadata.accountKey(namespace);
         var identityKey = Metadata.accountIdentityKey(namespace);
         var repointed = new java.util.ArrayList<String>();
-        JsonNode root;
-        try {
-            root = new com.fasterxml.jackson.databind.ObjectMapper().readTree(incus.listJsonConfig());
-        } catch (Exception e) {
-            throw new dev.incusspawn.incus.IncusException(
-                    "Could not read instance account pinning: " + e.getMessage(), e);
+        JqValue root = incus.listJsonConfig();
+        if (!root.isArray()) {
+            throw new dev.incusspawn.incus.IncusException("Could not read instance account pinning: expected a list");
         }
-        for (var instance : root) {
-            var name = instance.path("name").asText("");
-            var instanceConfig = instance.path("config");
+        for (var instance : root.asList()) {
+            // Jackson parity: path(x).asText("") reads a null as "" and any other
+            // scalar as its text; only a missing node takes the default.
+            var name = textOrEmpty(instance.getField("name"));
+            var instanceConfig = instance.getField("config");
             if (name.isEmpty() || !instanceConfig.isObject()) continue;
             var updates = new LinkedHashMap<String, String>();
-            if (from.equals(instanceConfig.path(pinKey).asText(""))) updates.put(pinKey, to);
-            var baked = instanceConfig.path(identityKey).asText("");
+            if (from.equals(textOrEmpty(instanceConfig.getField(pinKey)))) updates.put(pinKey, to);
+            var baked = textOrEmpty(instanceConfig.getField(identityKey));
             // The no-identity marker names no account, whatever a tool would make of it
             var renamedIdentity = setup == null || baked.equals(Metadata.ACCOUNT_IDENTITY_NONE) ? null
                     : setup.renameBakedIdentity(baked, from, to);
@@ -424,6 +424,11 @@ public final class AccountSelection {
             if (updates.containsKey(pinKey)) repointed.add(name);
         }
         return repointed;
+    }
+
+    /** Jackson's {@code path(x).asText("")}: null reads as "", any other scalar as its text. */
+    private static String textOrEmpty(io.hyperfoil.tools.jjq.value.JqValue value) {
+        return value == null || value.isNull() ? "" : value.asText();
     }
 
     /** Render a selection for humans: {@code claude=work, github=acme-bot}. */
@@ -471,12 +476,13 @@ public final class AccountSelection {
     }
 
     /** Who chose each pin recorded in an instance's {@code config}. */
-    public static Map<String, AccountOrigin> originsFromConfig(JsonNode config) {
+    public static Map<String, AccountOrigin> originsFromConfig(JqValue config) {
         var origins = new LinkedHashMap<String, AccountOrigin>();
-        config.properties().forEach(entry -> {
-            if (!entry.getKey().startsWith(Metadata.ACCOUNT_ORIGIN_PREFIX)) return;
-            origins.put(entry.getKey().substring(Metadata.ACCOUNT_ORIGIN_PREFIX.length()),
-                    AccountOrigin.decode(entry.getValue().isNull() ? "" : entry.getValue().asText("")));
+        if (!(config instanceof io.hyperfoil.tools.jjq.value.JqObject object)) return origins;
+        object.forEach((key, value) -> {
+            if (!key.startsWith(Metadata.ACCOUNT_ORIGIN_PREFIX)) return;
+            origins.put(key.substring(Metadata.ACCOUNT_ORIGIN_PREFIX.length()),
+                    AccountOrigin.decode(value.isNull() ? "" : value.asText()));
         });
         return origins;
     }
@@ -500,13 +506,14 @@ public final class AccountSelection {
     }
 
     /** The selection recorded in an instance's {@code config}, as {@link #read} returns it. */
-    public static Map<String, String> fromConfig(JsonNode config) {
+    public static Map<String, String> fromConfig(JqValue config) {
         var selection = new LinkedHashMap<String, String>();
-        config.properties().forEach(entry -> {
-            if (!entry.getKey().startsWith(Metadata.ACCOUNT_PREFIX)) return;
-            var value = entry.getValue().isNull() ? "" : entry.getValue().asText("");
-            if (!value.isBlank()) {
-                selection.put(entry.getKey().substring(Metadata.ACCOUNT_PREFIX.length()), value.strip());
+        if (!(config instanceof io.hyperfoil.tools.jjq.value.JqObject object)) return selection;
+        object.forEach((key, value) -> {
+            if (!key.startsWith(Metadata.ACCOUNT_PREFIX)) return;
+            var text = value.isNull() ? "" : value.asText();
+            if (!text.isBlank()) {
+                selection.put(key.substring(Metadata.ACCOUNT_PREFIX.length()), text.strip());
             }
         });
         return selection;

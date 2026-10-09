@@ -1,7 +1,5 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.GhSetup;
 import dev.incusspawn.tool.ToolSetup;
@@ -16,7 +14,6 @@ import static org.junit.jupiter.api.Assertions.*;
 /** What {@code isx account show} reports: the account served per namespace, and why. */
 class AccountUsageTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     private static final String CONFIG = """
             claude:
@@ -53,7 +50,7 @@ class AccountUsageTest {
 
     private static List<AccountUsage.Use> uses(Map<String, String> pins, Map<String, AccountOrigin> origins,
                                                Map<String, String> template) throws Exception {
-        return AccountUsage.of(YAML.readValue(CONFIG, SpawnConfig.class), setups(), pins, origins, template,
+        return AccountUsage.of(Jjq.spawnConfig(CONFIG), setups(), pins, origins, template,
                 "review-1", Map.of());
     }
 
@@ -145,7 +142,7 @@ class AccountUsageTest {
     @Test
     void aNamespaceWithNothingConfiguredIsLeftOut() throws Exception {
         var setups = setups();
-        var config = YAML.readValue("claude:\n  apiKey: \"sk-ant-api-x\"\n", SpawnConfig.class);
+        var config = Jjq.spawnConfig("claude:\n  apiKey: \"sk-ant-api-x\"\n");
         var uses = AccountUsage.of(config, setups, Map.of(), Map.of(), Map.of(), "review-1", Map.of());
         assertEquals(List.of("claude"), uses.stream().map(AccountUsage.Use::namespace).toList());
     }
@@ -204,7 +201,7 @@ class AccountUsageTest {
     /** Built for Pro/Max, following a default that is now an API key: refused, with the fix. */
     @Test
     void aDefaultOfAnotherAuthModeIsRefusedWithAFix() throws Exception {
-        var config = YAML.readValue(MODES, SpawnConfig.class);
+        var config = Jjq.spawnConfig(MODES);
         var refused = AccountSelection.servingMismatches(config, setups(), "review-1", Map.of(),
                 Map.of("claude", "oauth", "github", "me"));
         assertEquals(java.util.Set.of("claude"), refused.keySet(),
@@ -217,7 +214,7 @@ class AccountUsageTest {
 
     @Test
     void aMatchingAccountOrAPinThatFitsIsServed() throws Exception {
-        var config = YAML.readValue(MODES, SpawnConfig.class);
+        var config = Jjq.spawnConfig(MODES);
         assertTrue(AccountSelection.servingMismatches(config, setups(), "a", Map.of(),
                 Map.of("claude", "api-key")).isEmpty());
         assertTrue(AccountSelection.servingMismatches(config, setups(), "b", Map.of("claude", "personal"),
@@ -226,7 +223,7 @@ class AccountUsageTest {
 
     @Test
     void theRefusalIsReportedByShowAsItsOwnProblem() throws Exception {
-        var config = YAML.readValue(MODES, SpawnConfig.class);
+        var config = Jjq.spawnConfig(MODES);
         var claude = find(AccountUsage.of(config, setups(), Map.of(), Map.of(), Map.of(), "review-1",
                 Map.of("claude", "oauth")), "claude");
         assertEquals("", claude.problem());

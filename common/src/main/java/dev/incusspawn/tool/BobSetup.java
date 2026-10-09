@@ -5,8 +5,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.util.BuildOutput;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqObject;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -17,8 +16,7 @@ import java.util.regex.Pattern;
 
 public class BobSetup implements ToolSetup {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-    private static final String PLACEHOLDER_API_KEY = "bob-placeholder";
+        private static final String PLACEHOLDER_API_KEY = "bob-placeholder";
     private static final String VERSION_URL =
             "https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell/bobshell2-version.txt";
     private static final String BASE_URL =
@@ -195,30 +193,31 @@ public class BobSetup implements ToolSetup {
     }
 
     static String buildSystemSettings(Map<String, String> params) {
-        var root = JSON.createObjectNode();
-        var general = root.putObject("general");
-        general.put("disableAutoUpdate", true);
-        general.put("disableUpdateNag", true);
+        var general = JqObject.builder(3)
+                .put("disableAutoUpdate", true)
+                .put("disableUpdateNag", true);
         var checkpointing = params.get("checkpointing");
         if (checkpointing != null) {
-            general.putObject("checkpointing").put("enabled", Boolean.parseBoolean(checkpointing));
+            general.put("checkpointing", JqObject.builder(1)
+                    .put("enabled", Boolean.parseBoolean(checkpointing)).build());
         }
-        var model = (ObjectNode) null;
+        var model = JqObject.builder(2);
+        boolean hasModel = false;
         var maxTurns = params.get("max-session-turns");
         if (maxTurns != null) {
-            model = root.putObject("model");
-            model.put("maxSessionTurns", Integer.parseInt(maxTurns));
+            model.put("maxSessionTurns", Long.parseLong(maxTurns));
+            hasModel = true;
         }
         var compression = params.get("compression-threshold");
         if (compression != null) {
-            if (model == null) model = root.putObject("model");
-            model.putObject("chatCompression")
-                    .put("contextPercentageThreshold", Double.parseDouble(compression));
+            model.put("chatCompression", JqObject.builder(1)
+                    .put("contextPercentageThreshold", Double.parseDouble(compression)).build());
+            hasModel = true;
         }
-        try {
-            return JSON.writerWithDefaultPrettyPrinter().writeValueAsString(root) + "\n";
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to serialize Bob system settings", e);
-        }
+        var root = JqObject.builder(hasModel ? 2 : 1).put("general", general.build());
+        if (hasModel) root.put("model", model.build());
+        // Pretty style differs from Jackson's ("k": v vs "k" : v); this file is
+        // machine-read inside the container, so only the parsed shape matters.
+        return io.hyperfoil.tools.jjq.value.JqValues.toPrettyJsonString(root.build()) + "\n";
     }
 }

@@ -1,6 +1,6 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.incus.BridgeSubnetCheck;
@@ -131,7 +131,7 @@ public class InstancePrep {
 
     private static void fixCaMismatch(IncusClient incus, String container, MachineType machineType) {
         // Ensure the container is running so we can push the cert
-        JsonNode started = null;
+        JqValue started = null;
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(container))) {
             started = InstanceLifecycle.startForUse(incus, container, machineType, System.err::println);
         }

@@ -1,7 +1,5 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -14,10 +12,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** The {@code mcp:} section: what {@code isx mcp} lets an agent do, read but never written by it. */
 class McpConfigTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     private static SpawnConfig parse(String yaml) throws Exception {
-        return YAML.readValue(yaml, SpawnConfig.class);
+        return Jjq.spawnConfig(yaml);
     }
 
     @Test
@@ -31,7 +28,7 @@ class McpConfigTest {
 
     @Test
     void aConfigWithoutMcpGainsNoMcpOnSave() throws Exception {
-        var out = YAML.writeValueAsString(parse("github:\n  token: ghp_x\n"));
+        var out = Jjq.toYaml(parse("github:\n  token: ghp_x\n"));
         assertFalse(out.contains("mcp"), "saving must not pin an mcp: section:\n" + out);
     }
 
@@ -50,7 +47,7 @@ class McpConfigTest {
         assertEquals(1, mcp.maxConcurrentTasks());
         assertEquals(40, mcp.delegateMaxTurns());
 
-        var again = parse(YAML.writeValueAsString(parse(yaml))).mcp();
+        var again = parse(Jjq.toYaml(parse(yaml))).mcp();
         assertEquals(List.of("tpl-java", "tpl-dev"), again.templates());
         assertEquals(5, again.maxInstances());
         assertEquals(40, again.delegateMaxTurns());
@@ -58,7 +55,7 @@ class McpConfigTest {
 
     @Test
     void onlyTheLimitsSetAreWrittenBack() throws Exception {
-        var out = YAML.writeValueAsString(parse("mcp:\n  templates: [tpl-dev]\n"));
+        var out = Jjq.toYaml(parse("mcp:\n  templates: [tpl-dev]\n"));
         assertTrue(out.contains("tpl-dev"));
         assertFalse(out.contains("max-instances"), "an unset limit must stay unset:\n" + out);
     }
@@ -106,7 +103,7 @@ class McpConfigTest {
         assertEquals(6, mcp.dormantAfterHours());
         assertEquals(48, mcp.dormantGraceHours());
         assertEquals("claude-haiku-4-5", mcp.summaryModel());
-        var out = YAML.writeValueAsString(parse("mcp:\n  templates: [tpl-java]\n"));
+        var out = Jjq.toYaml(parse("mcp:\n  templates: [tpl-java]\n"));
         assertFalse(out.contains("grace") || out.contains("dormant") || out.contains("permission") || out.contains("summary"),
                 "unset settings are not written back:\n" + out);
     }

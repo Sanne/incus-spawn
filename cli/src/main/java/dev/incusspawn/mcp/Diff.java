@@ -1,6 +1,8 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqArray;
+import io.hyperfoil.tools.jjq.value.JqNull;
+import io.hyperfoil.tools.jjq.value.JqObject;
 
 import java.nio.charset.StandardCharsets;
 
@@ -9,26 +11,26 @@ import java.nio.charset.StandardCharsets;
  * reads, which is rendered from that structure: per repository, each file's lines added and
  * removed and a total, then the patch.
  */
-record Diff(String text, ObjectNode structured) {
+record Diff(String text, JqObject structured) {
 
     private static final String TOO_LARGE = "(too large: ";
 
     static Diff parse(String out, boolean statOnly) {
-        var node = JsonRpc.JSON.createObjectNode();
-        var repos = node.putArray("repos");
+        var repos = JqArray.arrayBuilder();
+        var node = JqObject.builder(2);
         if (!out.startsWith("## ") && !out.startsWith("---\n")) {
             // No repository recorded: the script says so in a sentence.
-            return new Diff(out.strip(), node);
+            return new Diff(out.strip(), node.put("repos", repos.build()).build());
         }
         var text = new StringBuilder(out.length());
         int pos = 0;
         while (out.startsWith("## ", pos)) {
             var eol = out.indexOf('\n', pos);
             if (eol < 0) eol = out.length();
-            var repo = repos.addObject();
+            var repo = JqObject.builder(2);
             var name = out.substring(pos + 3, eol);
             repo.put("repo", name);
-            var files = repo.putArray("files");
+            var files = JqArray.arrayBuilder();
             text.append("## ").append(name).append('\n');
             pos = eol + 1;
             long added = 0, deleted = 0;
@@ -39,19 +41,22 @@ record Diff(String text, ObjectNode structured) {
                 var fields = out.substring(pos, end).split("\t", 3);
                 pos = end + 1;
                 if (fields.length < 3) continue;
-                var file = files.addObject();
+                var file = JqObject.builder(3);
                 file.put("path", fields[2]);
                 var a = count(fields[0]);
                 var d = count(fields[1]);
-                if (a == null) file.putNull("added"); else file.put("added", a);
-                if (d == null) file.putNull("deleted"); else file.put("deleted", d);
+                if (a == null) file.put("added", JqNull.NULL); else file.put("added", (long) a);
+                if (d == null) file.put("deleted", JqNull.NULL); else file.put("deleted", (long) d);
                 added += a == null ? 0 : a;
                 deleted += d == null ? 0 : d;
                 count++;
                 text.append(fields[0]).append('\t').append(fields[1]).append('\t').append(quoted(fields[2])).append('\n');
+                files.add(file.build());
             }
             pos++; // the empty line that ends the repository
             if (count > 0) text.append(shortstat(count, added, deleted)).append('\n');
+            repo.put("files", files.build());
+            repos.add(repo.build());
         }
         text.append("---\n");
         if (out.startsWith("---\n", pos)) pos += 4;
@@ -72,7 +77,8 @@ record Diff(String text, ObjectNode structured) {
             }
             text.append(rest);
         }
-        return new Diff(text.toString(), node);
+        node.put("repos", repos.build());
+        return new Diff(text.toString(), node.build());
     }
 
     /**

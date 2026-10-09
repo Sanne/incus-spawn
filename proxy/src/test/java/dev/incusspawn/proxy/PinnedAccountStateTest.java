@@ -65,12 +65,12 @@ class PinnedAccountStateTest {
         var proxy = new MitmProxy(null, "127.0.0.1", 0, 0, "127.0.0.1", ConfigFingerprint.load());
         var registry = new InstanceRegistry(new IncusClient() {
             @Override
-            public String listJsonConfig() {
-                return """
+            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
+                return io.hyperfoil.tools.jjq.value.JqValues.parse("""
                         [{"name":"work-box","config":{
                            "user.incus-spawn.static-ip":"%s",
                            "user.incus-spawn.account.claude":"%s"}}]
-                        """.formatted(PINNED_IP, account);
+                        """.formatted(PINNED_IP, account));
             }
         });
         registry.refresh();

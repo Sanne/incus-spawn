@@ -7,6 +7,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.Warnings;
 import dev.incusspawn.config.BuildSource;
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.AutoRemoteService;
@@ -86,9 +87,6 @@ import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -1823,7 +1821,7 @@ public class ListCommand extends BaseCommand {
     /** What the open branch dialog's source inherits, or null when it could not be read. */
     private BranchFlow.Inherited branchInherited;
 
-    private BranchAccountChoices branchAccountChoicesFor(String source, JsonNode sourceInstance) {
+    private BranchAccountChoices branchAccountChoicesFor(String source, io.hyperfoil.tools.jjq.value.JqValue sourceInstance) {
         List<BranchAccountChoices.Row> rows;
         branchInherited = null;
         try {
@@ -5324,8 +5322,8 @@ public class ListCommand extends BaseCommand {
      * told apart by the {@code base} type every build stamps, as {@code isx list} does. A
      * template mid-rebuild (its temporary {@code -rebuilding} copy) is not one.
      */
-    static List<TemplateStaleness.Built> builtTemplates(String listingJson) {
-        return collectEntries(listingJson).stream()
+    static List<TemplateStaleness.Built> builtTemplates(io.hyperfoil.tools.jjq.value.JqValue listing) {
+        return collectEntries(listing).stream()
                 .filter(i -> Metadata.TYPE_BASE.equals(i.type))
                 .filter(i -> !i.name.endsWith(BuildCommand.REBUILDING_SUFFIX))
                 .map(i -> new TemplateStaleness.Built(i.name, i.created, i.buildVersion, i.definitionSha, i.machineType()))
@@ -5580,7 +5578,7 @@ public class ListCommand extends BaseCommand {
     }
 
     private void fixCaMismatchIfNeeded(String containerName, MachineType machineType) {
-        JsonNode started = null;
+        io.hyperfoil.tools.jjq.value.JqValue started = null;
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(containerName))) {
             // Runs on the TUI's own screen, where stderr would be drawn over: a mount dropped
             // because its host directory is gone must not go unannounced (#852), so it goes to
@@ -5632,8 +5630,7 @@ public class ListCommand extends BaseCommand {
         GuiPassthrough.checkGuiHealth(incus, name);
     }
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
+    
     private List<InstanceInfo> collectEntries() {
         return collectEntries(incus.listJson());
     }
@@ -5643,16 +5640,25 @@ public class ListCommand extends BaseCommand {
      * be read is an error, never an empty list: a script would take that for "no instances".
      */
     static List<InstanceInfo> collectEntries(String listingJson) {
+        final io.hyperfoil.tools.jjq.value.JqValue nodes;
         try {
-            var nodes = JSON.readTree(listingJson);
-            if (!nodes.isArray()) {
-                throw new IncusException("Cannot read the instance listing from Incus: expected a JSON array");
-            }
-            // Whether a coordinator instance still holds its workers is read from this listing.
-            var callerGrants = McpStanding.callerGrants(nodes);
-            var entryList = new ArrayList<InstanceInfo>();
-            for (var node : nodes) {
-                var config = node.path("config");
+            nodes = io.hyperfoil.tools.jjq.value.JqValues.parse(listingJson);
+        } catch (RuntimeException e) {
+            var detail = e.getMessage() == null ? "" : e.getMessage().lines().findFirst().orElse("");
+            throw new IncusException("Cannot read the instance listing from Incus: " + detail, e);
+        }
+        return collectEntries(nodes);
+    }
+
+    static List<InstanceInfo> collectEntries(io.hyperfoil.tools.jjq.value.JqValue nodes) {
+        if (!nodes.isArray()) {
+            throw new IncusException("Cannot read the instance listing from Incus: expected a JSON array");
+        }
+        // Whether a coordinator instance still holds its workers is read from this listing.
+        var callerGrants = McpStanding.callerGrants(nodes);
+        var entryList = new ArrayList<InstanceInfo>();
+        for (var node : nodes.asList()) {
+            var config = node.getField("config");
                 // Include any instance that has incus-spawn metadata
                 var parent = configVal(config, Metadata.PARENT, "");
                 var created = configVal(config, Metadata.CREATED, "");
@@ -5660,14 +5666,14 @@ public class ListCommand extends BaseCommand {
                 // Only show instances managed by incus-spawn (have any metadata)
                 if (type.isEmpty() && parent.isEmpty() && created.isEmpty()) continue;
 
-                var expandedDevices = node.path("expanded_devices");
-                var rootSize = expandedDevices.path("root").path("size").asText("");
+                var expandedDevices = node.getField("expanded_devices");
+                var rootSize = expandedDevices.getField("root").pathText("size", "");
 
-                var extracted = IncusClient.extractIpv4(node.path("state").path("network"));
+                var extracted = IncusClient.extractIpv4(node.getField("state").getField("network"));
                 var ipv4 = extracted != null ? extracted
                         : configVal(config, Metadata.STATIC_IP, "");
 
-                var diskUsage = sumDiskUsage(node.path("state").path("disk"));
+                var diskUsage = sumDiskUsage(node.getField("state").getField("disk"));
 
                 long referencedBytes = -1;
                 var referencedStr = configVal(config, Metadata.DISK_REFERENCED, "");
@@ -5677,19 +5683,19 @@ public class ListCommand extends BaseCommand {
                 }
 
                 entryList.add(new InstanceInfo(
-                        node.path("name").asText(),
-                        node.path("status").asText(),
+                        node.pathText("name", ""),
+                        node.pathText("status", ""),
                         configVal(config, Metadata.PROJECT, "-"),
                         configVal(config, Metadata.PROFILE, "-"),
                         created,
-                        node.path("type").asText(),
+                        node.pathText("type", ""),
                         parent,
                         configVal(config, "limits.cpu", ""),
                         configVal(config, "limits.memory", ""),
                         rootSize,
                         ipv4,
                         configVal(config, Metadata.NETWORK_MODE, ""),
-                        node.path("architecture").asText(""),
+                        node.pathText("architecture", ""),
                         configVal(config, Metadata.BUILD_VERSION, ""),
                         configVal(config, Metadata.DEFINITION_SHA, ""),
                         type,
@@ -5698,18 +5704,16 @@ public class ListCommand extends BaseCommand {
                         configVal(config, Metadata.DEFAULT_ACTION, ""),
                         diskUsage, referencedBytes,
                         configVal(config, Metadata.INSTANCE_MODE, ""),
-                        config.has(Metadata.KVM_ENABLED),
+                        config instanceof io.hyperfoil.tools.jjq.value.JqObject configObj
+                            && configObj.keys().contains(Metadata.KVM_ENABLED),
                         McpStanding.fromListing(node, callerGrants),
                         Metadata.isMcpCaller(node)));
             }
             return entryList;
-        } catch (JsonProcessingException e) {
-            throw new IncusException("Cannot read the instance listing from Incus: " + e.getOriginalMessage(), e);
-        }
     }
 
-    private static String configVal(JsonNode config, String key, String defaultValue) {
-        var val = config.path(key).asText("");
+    private static String configVal(io.hyperfoil.tools.jjq.value.JqValue config, String key, String defaultValue) {
+        var val = config.pathText(key, "");
         return val.isEmpty() ? defaultValue : val;
     }
 
@@ -5720,12 +5724,12 @@ public class ListCommand extends BaseCommand {
      * {@code dir} pool does not, and stopped instances may report nothing. A -1
      * renders as "-" rather than a misleading zero.
      */
-    static long sumDiskUsage(JsonNode diskNode) {
-        if (diskNode == null || !diskNode.isObject() || diskNode.isEmpty()) return -1;
+    static long sumDiskUsage(io.hyperfoil.tools.jjq.value.JqValue diskNode) {
+        if (!(diskNode instanceof io.hyperfoil.tools.jjq.value.JqObject disks) || disks.size() == 0) return -1;
         long total = 0;
         boolean any = false;
-        for (var devices = diskNode.elements(); devices.hasNext(); ) {
-            var usage = devices.next().path("usage").asLong(-1);
+        for (var entry : disks.entries()) {
+            var usage = Jjq.longOr(entry.getValue().getField("usage"), -1);
             if (usage >= 0) {
                 total += usage;
                 any = true;

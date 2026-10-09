@@ -1,6 +1,8 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -19,7 +21,7 @@ class McpServerProtocolTest {
 
     /** Collects what the server sends; input is fed through {@link McpServer#handle}. */
     static final class Captured implements McpTransport {
-        final List<JsonNode> sent = new CopyOnWriteArrayList<>();
+        final List<JqValue> sent = new CopyOnWriteArrayList<>();
 
         @Override
         public String read() {
@@ -29,10 +31,10 @@ class McpServerProtocolTest {
         @Override
         public void send(String json) throws IOException {
             assertFalse(json.contains("\n"), "a message must be one line");
-            sent.add(JsonRpc.JSON.readTree(json));
+            sent.add(JqValues.parse(json));
         }
 
-        JsonNode byId(int id) {
+        JqValue byId(int id) {
             return sent.stream().filter(m -> m.path("id").asInt(-1) == id).findFirst()
                     .orElseThrow(() -> new AssertionError("no response with id " + id + " in " + sent));
         }
@@ -40,7 +42,7 @@ class McpServerProtocolTest {
 
     private final Captured out = new Captured();
     private final List<McpTool> tools = new ArrayList<>();
-    private final JsonNode[] clientInfo = new JsonNode[1];
+    private final JqValue[] clientInfo = new JqValue[1];
 
     private McpServer server() {
         return new McpServer(out, tools, "1.2.3", "Use isx.", info -> clientInfo[0] = info);
@@ -66,7 +68,7 @@ class McpServerProtocolTest {
         assertEquals("2025-03-26", result.path("protocolVersion").asText());
         assertEquals("isx", result.path("serverInfo").path("name").asText());
         assertEquals("1.2.3", result.path("serverInfo").path("version").asText());
-        assertTrue(result.path("capabilities").has("tools"));
+        assertTrue(result.path("capabilities") instanceof JqObject caps && caps.keys().contains("tools"));
         assertEquals("Use isx.", result.path("instructions").asText());
         assertEquals("claude-code", clientInfo[0].path("name").asText());
     }
@@ -82,9 +84,9 @@ class McpServerProtocolTest {
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"initialize\",\"params\":{"
                 + "\"capabilities\":{\"experimental\":{\"isx/x\":{}}}}}");
         assertEquals(List.of(2), sentBeforeStart, "started once both responses were out");
-        server.notify("notifications/isx/x", JsonRpc.JSON.createObjectNode().put("a", 1));
+        server.notify("notifications/isx/x", JqObject.builder(1).put("a", 1L).build());
         var note = out.sent.getLast();
-        assertFalse(note.has("id"), "a notification");
+        assertFalse(note instanceof JqObject noteObj && noteObj.keys().contains("id"), "a notification");
         assertEquals("notifications/isx/x", note.path("method").asText());
     }
 
@@ -100,17 +102,15 @@ class McpServerProtocolTest {
     void toolsAreListedWithSchemasAndAnnotations() {
         tools.add(tool("a", (args, ctx) -> ToolResult.text("ok", x("ok"))));
         server().handle("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
-        var listed = out.byId(2).path("result").path("tools").get(0);
+        var listed = out.byId(2).path("result").path("tools").getElement(0);
         assertEquals("a", listed.path("name").asText());
         assertEquals("object", listed.path("inputSchema").path("type").asText());
         assertEquals("string", listed.path("outputSchema").path("properties").path("x").path("type").asText());
-        assertTrue(listed.path("annotations").path("readOnlyHint").asBoolean());
+        assertTrue(listed.path("annotations").path("readOnlyHint").asBoolean(false));
     }
 
-    private static com.fasterxml.jackson.databind.node.ObjectNode x(String value) {
-        var node = JsonRpc.JSON.createObjectNode();
-        node.put("x", value);
-        return node;
+    private static io.hyperfoil.tools.jjq.value.JqObject x(String value) {
+        return io.hyperfoil.tools.jjq.value.JqObject.builder(1).put("x", value).build();
     }
 
     @Test
@@ -129,12 +129,12 @@ class McpServerProtocolTest {
 
         var results = new StructuredResults(tools);
         var ok = results.check("ok", out.byId(1).path("result"));
-        assertEquals("x=1", ok.path("content").get(0).path("text").asText(), "the text stays for the model");
+        assertEquals("x=1", ok.path("content").getElement(0).path("text").asText(), "the text stays for the model");
         assertEquals("1", ok.path("structuredContent").path("x").asText());
-        assertFalse(ok.has("_meta"));
+        assertTrue(ok.path("_meta").isMissingNode());
 
         var json = results.check("json", out.byId(2).path("result"));
-        assertEquals("{\n  \"x\" : \"1\"\n}\n\nThen do y.", json.path("content").get(0).path("text").asText(),
+        assertEquals("{\n  \"x\" : \"1\"\n}\n\nThen do y.", json.path("content").getElement(0).path("text").asText(),
                 "the structure, then guidance that is not part of it");
 
         var refused = results.check("refuse", out.byId(3).path("result"));
@@ -147,7 +147,7 @@ class McpServerProtocolTest {
                 .path("_meta").path("dev.incusspawn/error").path("code").asText());
         var mistyped = results.check("ok", out.byId(5).path("result"));
         assertEquals("invalid_argument", mistyped.path("_meta").path("dev.incusspawn/error").path("code").asText());
-        assertTrue(mistyped.path("content").get(0).path("text").asText().contains("must be a string"));
+        assertTrue(mistyped.path("content").getElement(0).path("text").asText().contains("must be a string"));
     }
 
     @Test
@@ -159,12 +159,12 @@ class McpServerProtocolTest {
         server.handle(call(8, "no-such-tool", "{}"));
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"x\",\"arguments\":[1]}}");
 
-        assertEquals(JsonRpc.PARSE_ERROR, out.sent.get(0).path("error").path("code").asInt());
+        assertEquals(JsonRpc.PARSE_ERROR, out.sent.get(0).path("error").path("code").asInt(0));
         assertTrue(out.sent.get(0).path("id").isNull());
-        assertEquals(JsonRpc.INVALID_REQUEST, out.sent.get(1).path("error").path("code").asInt());
-        assertEquals(JsonRpc.METHOD_NOT_FOUND, out.byId(7).path("error").path("code").asInt());
-        assertEquals(JsonRpc.INVALID_PARAMS, out.byId(8).path("error").path("code").asInt());
-        assertEquals(JsonRpc.INVALID_PARAMS, out.byId(9).path("error").path("code").asInt());
+        assertEquals(JsonRpc.INVALID_REQUEST, out.sent.get(1).path("error").path("code").asInt(0));
+        assertEquals(JsonRpc.METHOD_NOT_FOUND, out.byId(7).path("error").path("code").asInt(0));
+        assertEquals(JsonRpc.INVALID_PARAMS, out.byId(8).path("error").path("code").asInt(0));
+        assertEquals(JsonRpc.INVALID_PARAMS, out.byId(9).path("error").path("code").asInt(0));
     }
 
     @Test
@@ -190,7 +190,7 @@ class McpServerProtocolTest {
         assertEquals(1, out.sent.size(), "the slow call has not answered yet");
         release.countDown();
         server.awaitIdle();
-        assertEquals("done", out.byId(1).path("result").path("content").get(0).path("text").asText());
+        assertEquals("done", out.byId(1).path("result").path("content").getElement(0).path("text").asText());
     }
 
     @Test

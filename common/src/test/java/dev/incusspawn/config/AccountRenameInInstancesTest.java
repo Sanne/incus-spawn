@@ -1,7 +1,5 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
@@ -14,7 +12,6 @@ import static org.junit.jupiter.api.Assertions.*;
 /** A renamed account is followed onto the instances that pin it. */
 class AccountRenameInInstancesTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     /** The config as it reads after the rename: 'bot' is now 'acme-bot'. */
     private static final String RENAMED = """
@@ -50,7 +47,7 @@ class AccountRenameInInstancesTest {
                 // Follows the default, but was built while 'bot' was the default.
                 .container("built-as-bot", Map.of(Metadata.accountIdentityKey("github"), "bot"))
                 .container("fingerprinted", Map.of(Metadata.accountIdentityKey("github"), "bot#0123456789ab"));
-        var config = YAML.readValue(RENAMED, SpawnConfig.class);
+        var config = Jjq.spawnConfig(RENAMED);
 
         var repointed = AccountSelection.renameInInstances(daemon.client(), config, "github", "bot", "acme-bot");
 
@@ -74,7 +71,7 @@ class AccountRenameInInstancesTest {
         var none = Metadata.ACCOUNT_IDENTITY_NONE;
         var daemon = new FakeIncusDaemon()
                 .container("unbaked", Map.of(Metadata.accountIdentityKey("github"), none));
-        var config = YAML.readValue(RENAMED, SpawnConfig.class);
+        var config = Jjq.spawnConfig(RENAMED);
 
         AccountSelection.renameInInstances(daemon.client(), config, "github", none, "acme-bot");
 
@@ -89,8 +86,8 @@ class AccountRenameInInstancesTest {
     void claudeModeStampsAreNeverTreatedAsAccountNames() throws Exception {
         var daemon = new FakeIncusDaemon()
                 .container("built-oauth", Map.of(Metadata.accountIdentityKey("claude"), "oauth"));
-        var config = YAML.readValue(RENAMED.replace("    oauth:\n", "    renamed:\n")
-                .replace("default: oauth", "default: renamed"), SpawnConfig.class);
+        var config = Jjq.spawnConfig(RENAMED.replace("    oauth:\n", "    renamed:\n")
+                .replace("default: oauth", "default: renamed"));
 
         AccountSelection.renameInInstances(daemon.client(), config, "claude", "oauth", "vertex");
 
@@ -105,7 +102,7 @@ class AccountRenameInInstancesTest {
     void anIncompleteAccountsPinsFollowTheRename() throws Exception {
         var daemon = new FakeIncusDaemon().container("pinned", Map.of(
                 Metadata.accountKey("github"), "bot", Metadata.accountIdentityKey("github"), "bot"));
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 github:
                   accounts:
                     me:
@@ -113,7 +110,7 @@ class AccountRenameInInstancesTest {
                     acme-bot:
                       email: "bot@acme.example"
                   default: me
-                """, SpawnConfig.class);
+                """);
 
         var repointed = AccountSelection.renameInInstances(daemon.client(), config, "github", "bot", "acme-bot");
 

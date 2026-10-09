@@ -1,6 +1,7 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqArray;
+import io.hyperfoil.tools.jjq.value.JqObject;
 
 import java.util.List;
 
@@ -53,21 +54,19 @@ record McpPrompt(String name, String description, String text) {
     static final List<McpPrompt> ALL = List.of(COORDINATE);
 
     /** Its entry in {@code prompts/list}. */
-    ObjectNode descriptor() {
-        var node = JsonRpc.JSON.createObjectNode();
-        node.put("name", name);
-        node.put("description", description);
-        node.putArray("arguments");
-        return node;
+    JqObject descriptor() {
+        return JqObject.builder(3)
+                .put("name", name)
+                .put("description", description)
+                .put("arguments", JqArray.arrayBuilder().build())
+                .build();
     }
 
     /** The {@code prompts/get} result: the text as one user message. */
-    ObjectNode get() {
-        var result = JsonRpc.JSON.createObjectNode();
-        result.put("description", description);
-        var message = result.putArray("messages").addObject();
-        message.put("role", "user");
-        message.putObject("content").put("type", "text").put("text", text);
-        return result;
+    JqObject get() {
+        var content = JqObject.builder(2).put("type", "text").put("text", text).build();
+        var message = JqObject.builder(2).put("role", "user").put("content", content).build();
+        var messages = JqArray.arrayBuilder().add(message).build();
+        return JqObject.builder(2).put("description", description).put("messages", messages).build();
     }
 }

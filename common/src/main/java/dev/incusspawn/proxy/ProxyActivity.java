@@ -1,7 +1,8 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 
 import java.time.Instant;
 import java.util.HashMap;
@@ -14,7 +15,6 @@ import java.util.Map;
  */
 public record ProxyActivity(Map<String, Instance> instances) {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     /**
      * One instance's counts, all counted from {@code countingSince}: when the proxy created them,
@@ -67,10 +67,9 @@ public record ProxyActivity(Map<String, Instance> instances) {
 
     /** The JSON the proxy serves; {@link #parse} reads it back, so the names live only here. */
     public String toJson() {
-        var root = JSON.createObjectNode();
-        var all = root.putObject("instances");
+        var all = JqObject.builder(instances.size());
         instances.forEach((name, c) -> {
-            var n = all.putObject(name);
+            var n = JqObject.builder(9);
             n.put("counting_since", c.countingSince().toEpochMilli());
             n.put("requests", c.requests());
             n.put("in_flight", c.inFlight());
@@ -80,30 +79,30 @@ public record ProxyActivity(Map<String, Instance> instances) {
             n.put("output_tokens", c.outputTokens());
             n.put("cache_read_input_tokens", c.cacheReadInputTokens());
             n.put("cache_creation_input_tokens", c.cacheCreationInputTokens());
+            all.put(name, n.build());
         });
-        return root.toString();
+        return JqObject.builder(1).put("instances", all.build()).build().toJsonString();
     }
 
     static ProxyActivity parse(String json) {
-        JsonNode root;
+        JqValue root;
         try {
-            root = JSON.readTree(json);
+            root = JqValues.parse(json);
         } catch (Exception e) {
             throw new Unavailable("the isx proxy's activity could not be read (" + e.getMessage() + ")");
         }
         var instances = new HashMap<String, Instance>();
-        root.path("instances").properties().forEach(e -> {
-            var n = e.getValue();
-            instances.put(e.getKey(), new Instance(instant(n.path("counting_since")),
-                    n.path("requests").asLong(), n.path("in_flight").asLong(),
+        if (root.getField("instances") instanceof JqObject objs) {
+            objs.forEach((key, n) -> instances.put(key, new Instance(instant(n.path("counting_since")),
+                    n.path("requests").asLong(0), n.path("in_flight").asLong(0),
                     instant(n.path("last_request_at")), instant(n.path("last_response_at")),
-                    n.path("input_tokens").asLong(), n.path("output_tokens").asLong(),
-                    n.path("cache_read_input_tokens").asLong(), n.path("cache_creation_input_tokens").asLong()));
-        });
+                    n.path("input_tokens").asLong(0), n.path("output_tokens").asLong(0),
+                    n.path("cache_read_input_tokens").asLong(0), n.path("cache_creation_input_tokens").asLong(0))));
+        }
         return new ProxyActivity(Map.copyOf(instances));
     }
 
-    private static Instant instant(JsonNode millis) {
-        return millis.canConvertToLong() && millis.asLong() > 0 ? Instant.ofEpochMilli(millis.asLong()) : null;
+    private static Instant instant(JqValue millis) {
+        return millis.isIntegralNumber() && millis.longValue() > 0 ? Instant.ofEpochMilli(millis.longValue()) : null;
     }
 }

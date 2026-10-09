@@ -1,6 +1,9 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import dev.incusspawn.incus.JacksonTrees;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.config.McpConfig;
 import org.junit.jupiter.api.Test;
 
@@ -48,9 +51,9 @@ class McpOutputSchemaTest {
     @Test
     void aSchemaAClientCouldNotCompileOrWouldReadInAnotherDialectIsCaught() throws Exception {
         assertThrows(AssertionError.class, () -> StructuredResults.compile("x",
-                JsonRpc.JSON.readTree("{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"text\"}}}")));
+                JqValues.parse("{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"text\"}}}")));
         assertThrows(AssertionError.class, () -> StructuredResults.compile("x",
-                JsonRpc.JSON.readTree("{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\"}")));
+                JqValues.parse("{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\"}")));
     }
 
     @Test
@@ -73,33 +76,37 @@ class McpOutputSchemaTest {
     }
 
     /** The enum of every {@code state} beside a {@code task_id}, anywhere in {@code schema}. */
-    private static List<Set<String>> taskStates(JsonNode schema) {
+    private static List<Set<String>> taskStates(JqValue schema) {
         var found = new ArrayList<Set<String>>();
         var properties = schema.path("properties");
-        if (properties.has("task_id") && properties.has("state")) {
+        if (properties instanceof JqObject props && props.keys().contains("task_id") && props.keys().contains("state")) {
             var states = new HashSet<String>();
-            properties.path("state").path("enum").forEach(v -> states.add(v.asText()));
-            assertTrue(!states.isEmpty(), "a task state must be an enum: " + properties.path("state"));
+            props.getField("state").path("enum").asList().forEach(v -> states.add(v.asText()));
+            assertTrue(!states.isEmpty(), "a task state must be an enum: " + props.getField("state"));
             found.add(states);
         }
-        properties.forEach(p -> {
-            found.addAll(taskStates(p));
-            found.addAll(taskStates(p.path("items")));
-        });
+        if (properties instanceof JqObject propsObj) {
+            for (var p : propsObj.asMap().values()) {
+                found.addAll(taskStates(p));
+                found.addAll(taskStates(p.path("items")));
+            }
+        }
         return found;
     }
 
     @Test
     void theSchemasEqualTheGoldenCopy() throws Exception {
-        var actual = JsonRpc.JSON.createObjectNode();
-        tools().forEach(t -> actual.set(t.name(), t.outputSchema()));
-        var text = JsonRpc.JSON.writerWithDefaultPrettyPrinter().writeValueAsString(actual) + "\n";
+        var actual = JqObject.builder();
+        tools().forEach(t -> actual.put(t.name(), t.outputSchema()));
+        var text = JqValues.toPrettyJsonString(actual.build()) + "\n";
         if (Boolean.getBoolean("mcp.output-schemas.update")) {
             Files.createDirectories(GOLDEN.getParent());
             Files.writeString(GOLDEN, text);
         }
-        JsonNode golden = Files.exists(GOLDEN) ? JsonRpc.JSON.readTree(GOLDEN.toFile()) : JsonRpc.JSON.createObjectNode();
-        assertEquals(golden, actual, "an output schema changed: programs driving isx mcp read these. If the change is "
+        var golden = Files.exists(GOLDEN)
+                ? JacksonTrees.toJsonNode(JqValues.parse(Files.readString(GOLDEN)))
+                : JacksonTrees.toJsonNode(JqObject.builder().build());
+        assertEquals(golden, JacksonTrees.toJsonNode(actual.build()), "an output schema changed: programs driving isx mcp read these. If the change is "
                 + "meant, run this test with -Dmcp.output-schemas.update=true and commit " + GOLDEN);
     }
 }

@@ -54,12 +54,12 @@ class InstanceRegistryTest {
         var fail = new java.util.concurrent.atomic.AtomicBoolean();
         var registry = new InstanceRegistry(new dev.incusspawn.incus.IncusClient() {
             @Override
-            public String listJsonConfig() {
+            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
                 if (fail.get()) throw new dev.incusspawn.incus.IncusException("socket gone");
-                return """
+                return io.hyperfoil.tools.jjq.value.JqValues.parse("""
                         [{"name":"box","created_at":"2026-10-07T10:00:00Z",
                           "config":{"user.incus-spawn.static-ip":"10.0.0.5"}}]
-                        """;
+                        """);
             }
         });
         registry.refresh();

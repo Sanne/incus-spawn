@@ -39,7 +39,11 @@ class InstanceSecretRebootTest {
     private static final String REBOOTED = "2026-10-05T07:30:00.987654321Z";
 
     private static String config(FakeIncusDaemon daemon, String key) {
-        return daemon.instance(NAME).path("config").path(key).asText("");
+        return instance(daemon).path("config").pathText(key, "");
+    }
+
+    private static io.hyperfoil.tools.jjq.value.JqValue instance(FakeIncusDaemon daemon) {
+        return dev.incusspawn.incus.JacksonTrees.fromJsonNode(daemon.instance(NAME));
     }
 
     /** The secrets handed to the guest, in order. */
@@ -85,7 +89,7 @@ class InstanceSecretRebootTest {
         var previous = config(daemon, Metadata.INSTANCE_SECRET_SHA256);
 
         var secrets = new ArrayList<String>();
-        InstanceLifecycle.ensureReady(guestTaking(daemon, secrets), NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {});
+        InstanceLifecycle.ensureReady(guestTaking(daemon, secrets), NAME, instance(daemon), MachineType.CONTAINER, msg -> {});
 
         var recorded = config(daemon, Metadata.INSTANCE_SECRET_SHA256);
         assertNotEquals(previous, recorded, "the reboot emptied /run: the box needs a new secret");
@@ -101,11 +105,11 @@ class InstanceSecretRebootTest {
         var incus = daemon.client();
         var said = new ArrayList<String>();
 
-        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.CONTAINER, said::add);
+        InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.CONTAINER, said::add);
         assertEquals("", config(daemon, Metadata.INSTANCE_SECRET_BOOT),
                 "a boot whose guest never got the secret is not recorded as holding it");
         assertEquals(1, said.size(), said::toString);
-        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {});
+        InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.CONTAINER, msg -> {});
 
         assertEquals(2, delivered(daemon).size());
     }
@@ -115,7 +119,7 @@ class InstanceSecretRebootTest {
         var daemon = runningContainer(STARTED, STARTED);
         var previous = config(daemon, Metadata.INSTANCE_SECRET_SHA256);
 
-        InstanceLifecycle.ensureReady(daemon.client(), NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {});
+        InstanceLifecycle.ensureReady(daemon.client(), NAME, instance(daemon), MachineType.CONTAINER, msg -> {});
 
         assertEquals(List.of(), daemon.requests(), "the shell path reads the boot from the instance it holds");
         assertEquals(previous, config(daemon, Metadata.INSTANCE_SECRET_SHA256));
@@ -127,8 +131,8 @@ class InstanceSecretRebootTest {
         var secrets = new ArrayList<String>();
         var incus = guestTaking(daemon, secrets);
 
-        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {});
-        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {});
+        InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.CONTAINER, msg -> {});
+        InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.CONTAINER, msg -> {});
 
         assertEquals(1, secrets.size(), "once per boot, not once per shell");
         assertEquals(InstanceLifecycle.secretBootStamp(STARTED), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
@@ -143,13 +147,13 @@ class InstanceSecretRebootTest {
 
         InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, msg -> {});
 
-        var bootedAt = daemon.instance(NAME).path("last_used_at").asText("");
+        var bootedAt = instance(daemon).pathText("last_used_at", "");
         assertFalse(bootedAt.isEmpty());
         assertEquals(InstanceLifecycle.secretBootStamp(bootedAt), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
 
         // So the shell that follows finds nothing to do
         daemon.clearRequests();
-        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {});
+        InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.CONTAINER, msg -> {});
         assertEquals(List.of(), daemon.requests());
     }
 
@@ -163,7 +167,7 @@ class InstanceSecretRebootTest {
 
         BranchFlow.create(incus, BranchFlow.preflight(incus, request, Map.of()));
 
-        var bootedAt = daemon.instance(NAME).path("last_used_at").asText("");
+        var bootedAt = instance(daemon).pathText("last_used_at", "");
         assertFalse(bootedAt.isEmpty());
         assertEquals(InstanceLifecycle.secretBootStamp(bootedAt), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
     }
@@ -184,7 +188,7 @@ class InstanceSecretRebootTest {
 
         InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, false);
 
-        var bootedAt = daemon.instance(NAME).path("last_used_at").asText("");
+        var bootedAt = instance(daemon).pathText("last_used_at", "");
         assertNotEquals(STARTED, bootedAt);
         assertEquals(InstanceLifecycle.secretBootStamp(bootedAt), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
     }
@@ -200,7 +204,7 @@ class InstanceSecretRebootTest {
         var previous = config(daemon, Metadata.INSTANCE_SECRET_SHA256);
         var incus = vmWhoseGuestAnswers(daemon, InstanceSecret.MISSING + "\n");
 
-        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.VM, msg -> {});
+        InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.VM, msg -> {});
 
         var recorded = config(daemon, Metadata.INSTANCE_SECRET_SHA256);
         assertNotEquals(previous, recorded);
@@ -217,7 +221,7 @@ class InstanceSecretRebootTest {
         var previous = config(daemon, Metadata.INSTANCE_SECRET_SHA256);
         var incus = vmWhoseGuestAnswers(daemon, "");
 
-        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.VM, msg -> {});
+        InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.VM, msg -> {});
 
         assertEquals(List.of(), daemon.requests());
         assertEquals(previous, config(daemon, Metadata.INSTANCE_SECRET_SHA256));
@@ -236,7 +240,7 @@ class InstanceSecretRebootTest {
                 .when(incus).shellExec(eq(NAME), anyMap(), any(String[].class));
         var said = new ArrayList<String>();
 
-        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.VM, said::add);
+        InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.VM, said::add);
 
         assertEquals(1, said.size(), said::toString);
         assertTrue(said.getFirst().contains("could not give " + NAME + " a new instance secret"), said.getFirst());
@@ -265,7 +269,7 @@ class InstanceSecretRebootTest {
             envs.add(call.getArgument(1));
             return new IncusClient.ExecResult(0, "", "");
         }).when(incus).shellExec(eq(NAME), anyMap(), any(String[].class));
-        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {});
+        InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.CONTAINER, msg -> {});
 
         assertEquals(1, envs.size(), daemon.requests()::toString);
         var secret = envs.getFirst().get(InstanceSecret.DELIVERY_ENV);
@@ -274,7 +278,7 @@ class InstanceSecretRebootTest {
         assertEquals(InstanceLifecycle.secretBootStamp(STARTED), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
 
         envs.clear();
-        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {});
+        InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.CONTAINER, msg -> {});
         assertEquals(List.of(), envs, "delivered once: the next shell costs nothing again");
     }
 }

@@ -133,8 +133,8 @@ class SecretRedactorTest {
         assertTrue(result.redactedPaths().contains("claude.accounts.work.oauthToken"),
                 "actual: " + result.redactedPaths());
         assertTrue(result.redactedPaths().contains("claude.accounts.personal.apiKey"));
-        assertTrue(result.yaml().contains("default: \"work\""), "the account names stay readable");
-        assertTrue(result.yaml().contains("type: \"oauth\""), "the account type is diagnostic");
+        assertTrue(result.yaml().contains("default: work"), "the account names stay readable");
+        assertTrue(result.yaml().contains("type: oauth"), "the account type is diagnostic");
     }
 
     @Test

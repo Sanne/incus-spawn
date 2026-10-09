@@ -149,4 +149,72 @@ class YamlErrorsTest {
         var msg = YamlErrors.friendly("isx.yaml", ex);
         assertTrue(msg.contains("'repos[0].url' expects a single value, but got a list"), msg);
     }
+
+    private static Exception parseJjq(String yaml) {
+        try {
+            io.hyperfoil.tools.jjq.yaml.JqYaml.fromYaml(yaml,
+                    io.hyperfoil.tools.jjq.mapper.JqMapper.create(),
+                    ImageDef.class,
+                    io.hyperfoil.tools.jjq.yaml.YamlOptions.STRICT);
+            throw new AssertionError("expected parse failure for:\n" + yaml);
+        } catch (AssertionError e) {
+            throw e;
+        } catch (Exception e) {
+            return e;
+        }
+    }
+
+    @Test
+    void jjqDuplicateKeyProducesFriendlyError() {
+        var ex = parseJjq("name: tpl-test\ntools:\n  - graalvm\ntools:\n  - claude\n");
+        var msg = YamlErrors.friendly("dup.yaml", ex);
+        assertTrue(msg.contains("duplicate key"), "Should mention duplicate key: " + msg);
+        assertTrue(msg.contains("tools"), "Should name the duplicated field: " + msg);
+        assertTrue(msg.startsWith("dup.yaml"), "Should start with filename: " + msg);
+    }
+
+    @Test
+    void jjqScalarWhereListExpectedNamesTheField() {
+        var ex = parseJjq("name: tpl-test\npackages: git\n");
+        var msg = YamlErrors.friendly("isx.yaml", ex);
+        assertTrue(msg.contains("'packages' expects a list, but got a single value"), msg);
+        assertTrue(msg.contains("put each item on its own line"), msg);
+    }
+
+    @Test
+    void jjqMappingWhereListExpectedNamesTheField() {
+        var ex = parseJjq("name: tpl-test\npackages:\n  kvm: yes\n");
+        var msg = YamlErrors.friendly("isx.yaml", ex);
+        assertTrue(msg.contains("'packages' expects a list, but got a mapping"), msg);
+    }
+
+    @Test
+    void jjqToolValidationMessageSurvives() {
+        var ex = parseJjq("name: t\ntools:\n  - idea-backend:\n      memory: \"8g\"\n    extra-key:\n      port: \"9090\"\n");
+        var msg = YamlErrors.friendly("isx.yaml", ex);
+        assertTrue(msg.contains("single-key map"), msg);
+    }
+
+    @Test
+    void jjqEnvShellStringKeepsGuidance() {
+        var ex = parseJjq("name: t\nenv:\n  - export FOO=bar\n");
+        var msg = YamlErrors.friendly("isx.yaml", ex);
+        assertTrue(msg.contains("shell string"), msg);
+        assertTrue(msg.contains("structured entry"), msg);
+    }
+
+    @Test
+    void jjqListWhereScalarExpectedNamesTheField() {
+        var ex = parseJjq("name: tpl-test\ntype:\n  - kvm\n");
+        var msg = YamlErrors.friendly("isx.yaml", ex);
+        assertTrue(msg.contains("'type' expects a single value, but got a list"), msg);
+        assertTrue(msg.contains("type: value"), msg);
+    }
+
+    @Test
+    void jjqNestedMismatchReportsFullPath() {
+        var ex = parseJjq("name: tpl-test\nrepos:\n  - url:\n      - https://example.com/a.git\n");
+        var msg = YamlErrors.friendly("isx.yaml", ex);
+        assertTrue(msg.contains("'repos[0].url' expects a single value, but got a list"), msg);
+    }
 }

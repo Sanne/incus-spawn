@@ -1,8 +1,6 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
@@ -14,20 +12,17 @@ import java.util.List;
  * Per-project configuration stored in incus-spawn.yaml in the project repo.
  */
 @RegisterForReflection
-@JsonIgnoreProperties(ignoreUnknown = true)
+@JqMapped
 public class ProjectConfig {
 
     private static final String CONFIG_FILENAME = "incus-spawn.yaml";
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory())
-            .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
-
     private String name;
     private String parent = "tpl-java";
     private List<String> repos = List.of();
     private String preBuild;
     private GitConfig git = new GitConfig();
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqMapped
     public static class GitConfig {
         private String sshKey;
         private String token;
@@ -66,7 +61,7 @@ public class ProjectConfig {
 
     public static ProjectConfig load(Path file) {
         try {
-            return YAML.readValue(file.toFile(), ProjectConfig.class);
+            return Jjq.projectConfig(file);
         } catch (IOException e) {
             throw new RuntimeException(YamlErrors.friendly(file.getFileName().toString(), e), e);
         }

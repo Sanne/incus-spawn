@@ -42,8 +42,16 @@ class OutputFormatTest {
         record.put("a", null);
         var bytes = new ByteArrayOutputStream();
         OutputFormat.printJson(new PrintStream(bytes, true, StandardCharsets.UTF_8), List.of(record, Map.of()));
-        assertEquals("[ {\n  \"b\" : 1,\n  \"a\" : null\n}, { } ]\n",
-                bytes.toString(StandardCharsets.UTF_8).replace("\r\n", "\n"));
+        // Shape, not whitespace: the pretty style is the formatter's business.
+        var parsed = io.hyperfoil.tools.jjq.value.JqValues
+                .parse(bytes.toString(StandardCharsets.UTF_8));
+        var first = parsed.getElement(0);
+        assertTrue(first instanceof io.hyperfoil.tools.jjq.value.JqObject);
+        assertEquals(java.util.List.of("b", "a"),
+                new java.util.ArrayList<>(((io.hyperfoil.tools.jjq.value.JqObject) first).keys()));
+        assertEquals(1L, first.getField("b").asLong(0));
+        assertTrue(first.getField("a").isNull());
+        assertEquals(0, parsed.getElement(1).asMap().size());
     }
 
     @Test

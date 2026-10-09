@@ -1,6 +1,7 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.incus.IncusException;
 import org.junit.jupiter.api.AfterEach;
@@ -14,6 +15,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -134,7 +136,7 @@ class DelegationToolsTest {
         System.setProperty("user.home", realHome);
     }
 
-    private JsonNode call(String tool, String args) throws Exception {
+    private JqValue call(String tool, String args) throws Exception {
         var id = nextId++;
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"tools/call\",\"params\":{\"name\":\""
                 + tool + "\",\"arguments\":" + args + "}}");
@@ -142,18 +144,18 @@ class DelegationToolsTest {
         return results.check(tool, out.byId(id).path("result"));
     }
 
-    private static String text(JsonNode r) {
-        return r.path("content").get(0).path("text").asText();
+    private static String text(JqValue r) {
+        return r.path("content").getElement(0).path("text").asText();
     }
 
     private String delegateFresh() throws Exception {
         var r = call("delegate", "{\"instruction\":\"fix the flaky test\",\"template\":\"tpl-agent\"}");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
         return r.path("structuredContent").path("task_id").asText();
     }
 
-    private static JsonNode structured(JsonNode result) {
-        assertFalse(result.path("isError").asBoolean(), text(result));
+    private static io.hyperfoil.tools.jjq.value.JqValue structured(io.hyperfoil.tools.jjq.value.JqValue result) {
+        assertFalse(result.path("isError").asBoolean(false), text(result));
         return result.path("structuredContent");
     }
 
@@ -164,12 +166,12 @@ class DelegationToolsTest {
         var name = created.path("instance").asText();
         assertEquals("#1010", created.path("purpose").asText(), "as stored and listed");
         var exec = structured(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"ls\"}"));
-        assertEquals(0, exec.path("exit_code").asInt());
+        assertEquals(0, exec.path("exit_code").asInt(0));
         var command = structured(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"mvn verify\",\"background\":true}"));
         assertEquals("command", command.path("kind").asText());
         var agent = structured(call("delegate", "{\"instruction\":\"fix it\",\"template\":\"tpl-agent\"}"));
         var task = agent.path("task_id").asText();
-        assertEquals(1, agent.path("run").asInt());
+        assertEquals(1, agent.path("run").asInt(0));
         var listed = structured(call("list_instances", "{}")).path("instances");
         assertEquals(Map.of(task, "running", command.path("task_id").asText(), "running"), taskStates(listed));
         assertEquals("running", structured(call("task_status", "{\"task_id\":\"" + task + "\"}")).path("state").asText());
@@ -177,18 +179,18 @@ class DelegationToolsTest {
 
         taskState = "finished";
         var waited = structured(call("wait_any", "{\"task_ids\":[\"" + task + "\"]}"));
-        assertEquals(task, waited.path("finished").get(0).asText());
+        assertEquals(task, waited.path("finished").getElement(0).asText());
         var status = structured(call("task_status", "{\"task_id\":\"" + task + "\"}"));
-        assertEquals(0, status.path("exit_code").asInt());
-        assertEquals(0.42, status.path("cost_usd").asDouble());
+        assertEquals(0, status.path("exit_code").asInt(0));
+        assertEquals(0.42, status.path("cost_usd").asDouble(0.0));
         var result = structured(call("task_result", "{\"task_id\":\"" + task + "\"}"));
         assertEquals("Fixed the race in A.java; tests pass.", result.path("report").asText());
-        assertEquals(7, result.path("turns").asInt());
+        assertEquals(7, result.path("turns").asInt(0));
         var stat = structured(call("get_diff", "{\"task_id\":\"" + task + "\",\"stat\":true}"));
-        var files = stat.path("repos").get(0).path("files");
-        assertEquals("src/A.java", files.get(0).path("path").asText());
-        assertEquals(3, files.get(0).path("added").asInt());
-        assertTrue(files.get(1).path("added").isNull(), "a binary file has no line counts");
+        var files = stat.path("repos").getElement(0).path("files");
+        assertEquals("src/A.java", files.getElement(0).path("path").asText());
+        assertEquals(3, files.getElement(0).path("added").asInt(0));
+        assertTrue(files.getElement(1).path("added").isNull(), "a binary file has no line counts");
         assertTrue(structured(call("get_diff", "{\"task_id\":\"" + task + "\"}")).path("patch").asText().contains("+fixed"));
         // As last seen: the agent's end was read; the cancel did not read how the command ended.
         assertEquals(Map.of(task, "finished", command.path("task_id").asText(), "unknown"),
@@ -205,10 +207,14 @@ class DelegationToolsTest {
                 dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
                 dev.incusspawn.incus.Metadata.MCP_OWNER, "alice",
                 dev.incusspawn.incus.Metadata.MCP_ORPHANED, "2026-09-28T10:00:00Z"));
-        var orphan = structured(call("list_instances", "{}")).path("instances").findParent("orphaned_since");
+        var orphan = (io.hyperfoil.tools.jjq.value.JqValue) null;
+        for (var inst : structured(call("list_instances", "{}")).path("instances").asList()) {
+            if (!inst.path("orphaned_since").isMissingNode()) { orphan = inst; break; }
+        }
+        assertNotNull(orphan);
         assertEquals("orphaned", orphan.path("state").asText());
         structured(call("adopt_instance", "{\"instance\":\"mcp-agent-old-abcde\"}"));
-        assertFalse(structured(call("destroy_instance", "{\"instance\":\"mcp-agent-old-abcde\"}")).path("already").asBoolean());
+        assertFalse(structured(call("destroy_instance", "{\"instance\":\"mcp-agent-old-abcde\"}")).path("already").asBoolean(false));
 
         var refused = call("task_status", "{\"task_id\":\"t9-nope\"}");
         assertEquals("not_found", refused.path("_meta").path(ToolResult.ERROR_META).path("code").asText());
@@ -217,9 +223,9 @@ class DelegationToolsTest {
     }
 
     /** list_instances' task entries, as task id to state. */
-    private static Map<String, String> taskStates(JsonNode instances) {
+    private static Map<String, String> taskStates(io.hyperfoil.tools.jjq.value.JqValue instances) {
         var states = new java.util.HashMap<String, String>();
-        instances.forEach(i -> i.path("tasks").forEach(t -> states.put(t.path("task_id").asText(), t.path("state").asText())));
+        instances.asList().forEach(i -> i.path("tasks").asList().forEach(t -> states.put(t.path("task_id").asText(), t.path("state").asText())));
         return states;
     }
 
@@ -229,10 +235,10 @@ class DelegationToolsTest {
         taskState = "finished";
         failStatus = true;
         var waited = structured(call("wait_any", "{\"task_ids\":[\"" + task + "\"]}"));
-        assertEquals(task, waited.path("finished").get(0).asText(), "it is over");
-        var entry = waited.path("tasks").get(0);
+        assertEquals(task, waited.path("finished").getElement(0).asText(), "it is over");
+        var entry = waited.path("tasks").getElement(0);
         assertEquals("unknown", entry.path("state").asText(), "finished or lost is not known: " + entry);
-        assertFalse(entry.has("exit_code"));
+        assertTrue(entry.path("exit_code").isMissingNode());
     }
 
     @Test
@@ -247,15 +253,15 @@ class DelegationToolsTest {
     @Test
     void aTemplateWithoutClaudeCannotBeDelegatedTo() throws Exception {
         var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-plain\"}");
-        assertTrue(r.path("isError").asBoolean());
+        assertTrue(r.path("isError").asBoolean(false));
         assertTrue(text(r).contains("supports_delegate"), text(r));
     }
 
     @Test
     void exactlyOneOfInstanceAndTemplate() throws Exception {
-        assertTrue(call("delegate", "{\"instruction\":\"x\"}").path("isError").asBoolean());
+        assertTrue(call("delegate", "{\"instruction\":\"x\"}").path("isError").asBoolean(false));
         assertTrue(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"instance\":\"i\"}")
-                .path("isError").asBoolean());
+                .path("isError").asBoolean(false));
     }
 
     @Test
@@ -265,7 +271,7 @@ class DelegationToolsTest {
         assertTrue(status.contains("state: running"), status);
         assertTrue(status.contains("- said: Found the race"), status);
         assertTrue(status.contains("- ran Edit: src/A.java"), status);
-        assertTrue(call("task_result", "{\"task_id\":\"" + task + "\"}").path("isError").asBoolean(),
+        assertTrue(call("task_result", "{\"task_id\":\"" + task + "\"}").path("isError").asBoolean(false),
                 "no result while running");
 
         taskState = "finished";
@@ -279,7 +285,7 @@ class DelegationToolsTest {
         var task = delegateFresh();
         var instance = backend.instances.keySet().stream().filter(n -> n.startsWith("mcp-")).findFirst().orElseThrow();
         var r = call("delegate", "{\"instruction\":\"more\",\"instance\":\"" + instance + "\"}");
-        assertTrue(r.path("isError").asBoolean());
+        assertTrue(r.path("isError").asBoolean(false));
         assertTrue(text(r).contains(task), text(r));
     }
 
@@ -288,7 +294,7 @@ class DelegationToolsTest {
         config.setMaxConcurrentTasks(1);
         delegateFresh();
         var r = call("delegate", "{\"instruction\":\"another\",\"template\":\"tpl-agent\"}");
-        assertTrue(r.path("isError").asBoolean());
+        assertTrue(r.path("isError").asBoolean(false));
         assertTrue(text(r).contains("mcp.max-concurrent-tasks"), text(r));
     }
 
@@ -302,7 +308,7 @@ class DelegationToolsTest {
         backend.onCreate = () -> busyElsewhere = 2; // started while the branch was being made
         var before = backend.instances.size();
         var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\"}");
-        assertTrue(r.path("isError").asBoolean(), text(r));
+        assertTrue(r.path("isError").asBoolean(false), text(r));
         assertTrue(text(r).contains("2 in other sessions"), text(r));
         assertEquals(before, backend.instances.size(), "the instance made for it is removed");
     }
@@ -311,10 +317,10 @@ class DelegationToolsTest {
     void sendMessageWaitsForTheAgentToFinish() throws Exception {
         var task = delegateFresh();
         assertTrue(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"open a PR\"}")
-                .path("isError").asBoolean());
+                .path("isError").asBoolean(false));
         taskState = "finished";
         var r = call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"open a PR\"}");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
         assertTrue(backend.scripts.stream().anyMatch(s -> s.contains("--unit=isx-task-" + task + "-2")));
     }
 
@@ -327,12 +333,12 @@ class DelegationToolsTest {
         var task = delegateFresh();
         var instance = agentInstance();
         var refused = call("stop_instance", "{\"instance\":\"" + instance + "\"}");
-        assertTrue(refused.path("isError").asBoolean());
+        assertTrue(refused.path("isError").asBoolean(false));
         assertTrue(text(refused).contains(task), text(refused));
         assertFalse(backend.stopped.contains(instance));
 
         var forced = call("stop_instance", "{\"instance\":\"" + instance + "\",\"force\":true}");
-        assertFalse(forced.path("isError").asBoolean(), text(forced));
+        assertFalse(forced.path("isError").asBoolean(false), text(forced));
         assertTrue(backend.stopped.contains(instance));
         assertTrue(backend.scripts.stream().anyMatch(sc -> sc.contains("systemctl stop isx-task-" + task)),
                 "the task was cancelled before the stop");
@@ -344,7 +350,7 @@ class DelegationToolsTest {
         delegateFresh();
         taskState = "finished";
         var r = call("stop_instance", "{\"instance\":\"" + agentInstance() + "\"}");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
     }
 
     @Test
@@ -356,14 +362,14 @@ class DelegationToolsTest {
         for (var r : List.of(call("exec", "{\"instance\":\"" + instance + "\",\"command\":\"ls\"}"),
                 call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance + "\"}"),
                 call("task_result", "{\"task_id\":\"" + task + "\"}"))) {
-            assertTrue(r.path("isError").asBoolean());
+            assertTrue(r.path("isError").asBoolean(false));
             assertTrue(text(r).contains("start_instance"), text(r));
         }
         var waited = call("wait_any", "{\"task_ids\":[\"" + task + "\"],\"timeout_seconds\":1}");
-        assertFalse(waited.path("isError").asBoolean(), "waiting copes with a stopped instance: " + text(waited));
-        assertFalse(call("start_instance", "{\"instance\":\"" + instance + "\"}").path("isError").asBoolean());
+        assertFalse(waited.path("isError").asBoolean(false), "waiting copes with a stopped instance: " + text(waited));
+        assertFalse(call("start_instance", "{\"instance\":\"" + instance + "\"}").path("isError").asBoolean(false));
         assertFalse(backend.stopped.contains(instance));
-        assertFalse(call("task_result", "{\"task_id\":\"" + task + "\"}").path("isError").asBoolean());
+        assertFalse(call("task_result", "{\"task_id\":\"" + task + "\"}").path("isError").asBoolean(false));
     }
 
     /** The run script inside a launch, which travels base64-encoded. */
@@ -386,7 +392,7 @@ class DelegationToolsTest {
         var task = r.path("structuredContent").path("task_id").asText();
         taskState = "finished";
         assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"more\"}")
-                .path("isError").asBoolean());
+                .path("isError").asBoolean(false));
         assertTrue(runScript(2).contains("cd -- '/home/agentuser/other-repo'"), runScript(2));
         assertTrue(runScript(2).contains("--resume"), runScript(2));
     }
@@ -403,14 +409,14 @@ class DelegationToolsTest {
         // The first launch has not returned yet; its slot must already count.
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":102,\"method\":\"tools/call\",\"params\":{\"name\":\"delegate\",\"arguments\":" + args + "}}");
         var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-        while (out.sent.stream().noneMatch(m -> m.path("id").asInt() == 102) && System.nanoTime() < deadline) {
+        while (out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 102) && System.nanoTime() < deadline) {
             Thread.sleep(10);
         }
         var second = out.byId(102).path("result");
-        assertTrue(second.path("isError").asBoolean(), second.toString());
+        assertTrue(second.path("isError").asBoolean(false), second.toString());
         launchRelease.countDown();
         server.awaitIdle();
-        assertFalse(out.byId(101).path("result").path("isError").asBoolean());
+        assertFalse(out.byId(101).path("result").path("isError").asBoolean(false));
     }
 
     @Test
@@ -424,10 +430,10 @@ class DelegationToolsTest {
         assertTrue(launchEntered.await(5, java.util.concurrent.TimeUnit.SECONDS));
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":202,\"method\":\"tools/call\",\"params\":{\"name\":\"send_message\",\"arguments\":" + args + "}}");
         var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-        while (out.sent.stream().noneMatch(m -> m.path("id").asInt() == 202) && System.nanoTime() < deadline) {
+        while (out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 202) && System.nanoTime() < deadline) {
             Thread.sleep(10);
         }
-        assertTrue(out.byId(202).path("result").path("isError").asBoolean());
+        assertTrue(out.byId(202).path("result").path("isError").asBoolean(false));
         launchRelease.countDown();
         server.awaitIdle();
         assertEquals(1, backend.scripts.stream().filter(sc -> sc.contains("--unit=isx-task-" + task + "-2")).count());
@@ -438,19 +444,19 @@ class DelegationToolsTest {
         config.setMaxConcurrentTasks(1);
         delegateFresh();
         var before = backend.instances.size();
-        assertTrue(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\"}").path("isError").asBoolean());
+        assertTrue(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\"}").path("isError").asBoolean(false));
         assertEquals(before, backend.instances.size(), "no instance made only to be turned away");
 
         config.setMaxConcurrentTasks(5);
         failLaunch = true;
-        assertTrue(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\"}").path("isError").asBoolean());
+        assertTrue(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\"}").path("isError").asBoolean(false));
         assertEquals(before, backend.instances.size(), "an instance whose task failed to start is removed");
     }
 
     private String instanceOf(String task) throws Exception {
         var listed = call("list_instances", "{}").path("structuredContent").path("instances");
-        for (var inst : listed) {
-            for (var t : inst.path("tasks")) {
+        for (var inst : listed.asList()) {
+            for (var t : inst.path("tasks").asList()) {
                 if (t.path("task_id").asText().equals(task)) return inst.path("instance").asText();
             }
         }
@@ -462,9 +468,9 @@ class DelegationToolsTest {
         config.setMaxConcurrentTasks(1);
         var task = delegateFresh();
         var instance = instanceOf(task);
-        assertFalse(call("destroy_instance", "{\"instance\":\"" + instance + "\"}").path("isError").asBoolean());
+        assertFalse(call("destroy_instance", "{\"instance\":\"" + instance + "\"}").path("isError").asBoolean(false));
         var r = call("delegate", "{\"instruction\":\"next\",\"template\":\"tpl-agent\"}");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
     }
 
     @Test
@@ -473,7 +479,7 @@ class DelegationToolsTest {
         var instance = instanceOf(delegateFresh());
         backend.instances.remove(instance);
         var r = call("delegate", "{\"instruction\":\"next\",\"template\":\"tpl-agent\"}");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
         assertTrue(text(call("list_instances", "{}")).contains("\"state\" : \"running\""));
     }
 
@@ -482,12 +488,12 @@ class DelegationToolsTest {
         var instance = call("create_instance", "{\"template\":\"tpl-agent\"}").path("structuredContent")
                 .path("instance").asText();
         assertFalse(call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance + "\"}")
-                .path("isError").asBoolean());
+                .path("isError").asBoolean(false));
         taskState = "unknown";
         var status = text(call("task_status", "{\"task_id\":\"" + instanceTask(instance) + "\"}"));
         assertTrue(status.contains("state: unknown"), status);
         var second = call("delegate", "{\"instruction\":\"y\",\"instance\":\"" + instance + "\"}");
-        assertTrue(second.path("isError").asBoolean(), "a second agent in the same working tree");
+        assertTrue(second.path("isError").asBoolean(false), "a second agent in the same working tree");
         assertTrue(text(second).contains("already an agent"), text(second));
     }
 
@@ -512,16 +518,16 @@ class DelegationToolsTest {
 
     private String instanceTask(String instance) throws Exception {
         var listed = call("list_instances", "{}").path("structuredContent").path("instances");
-        for (var inst : listed) {
-            if (inst.path("instance").asText().equals(instance)) return inst.path("tasks").get(0).path("task_id").asText();
+        for (var inst : listed.asList()) {
+            if (inst.path("instance").asText().equals(instance)) return inst.path("tasks").getElement(0).path("task_id").asText();
         }
         throw new AssertionError("no task in " + instance);
     }
 
     @Test
     void anotherSessionsTaskIdIsUnknown() throws Exception {
-        assertTrue(call("task_status", "{\"task_id\":\"t1-zz\"}").path("isError").asBoolean());
-        assertTrue(call("cancel_task", "{\"task_id\":\"t1-zz\"}").path("isError").asBoolean());
+        assertTrue(call("task_status", "{\"task_id\":\"t1-zz\"}").path("isError").asBoolean(false));
+        assertTrue(call("cancel_task", "{\"task_id\":\"t1-zz\"}").path("isError").asBoolean(false));
     }
 
     @Test
@@ -540,7 +546,7 @@ class DelegationToolsTest {
     @Test
     void aSkillIsRunAsItsSlashCommand() throws Exception {
         var r = call("delegate", "{\"skill\":\"fix-issue\",\"args\":\"#870 --careful\",\"template\":\"tpl-agent\"}");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
         var launch = backend.scripts.indexOf(backend.scripts.stream().filter(sc -> sc.contains("systemd-run"))
                 .findFirst().orElseThrow());
         assertEquals("/fix-issue #870 --careful", backend.stdins.get(launch), "the prompt, on stdin");
@@ -549,7 +555,7 @@ class DelegationToolsTest {
                 "{\"skill\":\"/fix\",\"template\":\"tpl-agent\"}",
                 "{\"skill\":\"fix\",\"instruction\":\"x\",\"template\":\"tpl-agent\"}",
                 "{\"instruction\":\"x\",\"args\":\"y\",\"template\":\"tpl-agent\"}")) {
-            assertTrue(call("delegate", bad).path("isError").asBoolean(), bad);
+            assertTrue(call("delegate", bad).path("isError").asBoolean(false), bad);
         }
     }
 
@@ -562,13 +568,13 @@ class DelegationToolsTest {
         assertTrue(status.contains("state: attached"), status);
         assertTrue(status.contains("pid 77"), status);
         var r = call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"push it\"}");
-        assertTrue(r.path("isError").asBoolean());
+        assertTrue(r.path("isError").asBoolean(false));
         assertTrue(text(r).contains("a person is in"), text(r));
         assertTrue(backend.scripts.stream().noneMatch(sc -> sc.contains("--unit=isx-task-" + task + "-2")));
 
         attached = false;
         assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"push it\"}")
-                .path("isError").asBoolean());
+                .path("isError").asBoolean(false));
     }
 
     @Test
@@ -582,7 +588,7 @@ class DelegationToolsTest {
         var done = text(call("wait_any", "{\"task_ids\":[\"" + task + "\"],\"timeout_seconds\":30}"));
         assertTrue(done.contains("): finished, exit 0"), done);
         assertTrue(done.contains("Finished: " + task), done);
-        assertTrue(call("wait_any", "{\"task_ids\":[\"t9-nope\"]}").path("isError").asBoolean());
+        assertTrue(call("wait_any", "{\"task_ids\":[\"t9-nope\"]}").path("isError").asBoolean(false));
     }
 
     @Test
@@ -618,7 +624,7 @@ class DelegationToolsTest {
         assertTrue(diff.contains("It touches A.java only."), diff);
         assertTrue(backend.scripts.getLast().contains(TaskScripts.diffForReading(task, null)),
                 "the model reads the stat one file per line, not NUL-separated");
-        assertTrue(call("get_diff", "{\"task_id\":\"" + task + "\",\"ask\":\"x\",\"stat\":true}").path("isError").asBoolean());
+        assertTrue(call("get_diff", "{\"task_id\":\"" + task + "\",\"ask\":\"x\",\"stat\":true}").path("isError").asBoolean(false));
     }
 
     @Test
@@ -641,7 +647,7 @@ class DelegationToolsTest {
         assertTrue(listed.contains("\"state\" : \"orphaned\""), listed);
         assertTrue(listed.contains("#870 implement"), listed);
         assertTrue(listed.contains("orphan_until"), listed);
-        assertTrue(call("exec", "{\"instance\":\"mcp-agent-870-impl-abcde\",\"command\":\"ls\"}").path("isError").asBoolean(),
+        assertTrue(call("exec", "{\"instance\":\"mcp-agent-870-impl-abcde\",\"command\":\"ls\"}").path("isError").asBoolean(false),
                 "not held until adopted");
 
         taskListing = "t3-old agent 2 done claude-haiku-4-5 9 - /home/agentuser/repo dir\nnot a task line\n";
@@ -649,7 +655,7 @@ class DelegationToolsTest {
         assertTrue(adopted.contains("\"t3-old\""), adopted);
         taskState = "finished";
         assertTrue(text(call("task_result", "{\"task_id\":\"t3-old\"}")).contains("Fixed the race"));
-        assertFalse(call("send_message", "{\"task_id\":\"t3-old\",\"message\":\"rebase\"}").path("isError").asBoolean());
+        assertFalse(call("send_message", "{\"task_id\":\"t3-old\",\"message\":\"rebase\"}").path("isError").asBoolean(false));
         var run = runScript(3);
         assertTrue(run.contains("cd -- '/home/agentuser/repo dir'"), "resumed where it worked: " + run);
         assertTrue(run.contains("--resume"), run);
@@ -657,7 +663,7 @@ class DelegationToolsTest {
                 "an adopted task keeps its profile: " + run);
         assertEquals(0, modelChecks(), "a turn naming no model runs on the recorded one");
         assertFalse(call("send_message", "{\"task_id\":\"t3-old\",\"message\":\"m\",\"model\":\"claude-haiku-4-5\"}")
-                .path("isError").asBoolean());
+                .path("isError").asBoolean(false));
         assertEquals(1, modelChecks(), "naming the recorded model checks it: the instance wrote that record");
     }
 
@@ -689,7 +695,7 @@ class DelegationToolsTest {
                 dev.incusspawn.incus.Metadata.MCP_ORPHANED, "2026-09-28T10:00:00Z 9-9",
                 dev.incusspawn.incus.Metadata.MCP_DORMANT, "2026-09-30T10:00:00Z 9-9"));
         backend.stopped.add(name);
-        var listed = structured(call("list_instances", "{}")).path("instances").get(0);
+        var listed = structured(call("list_instances", "{}")).path("instances").getElement(0);
         assertEquals("orphaned", listed.path("state").asText(), "still an orphan: a dormant one is one too");
         assertEquals("2026-09-30T10:00:00Z", listed.path("dormant_since").asText());
         assertEquals("2026-10-07T10:00:00Z", listed.path("dormant_until").asText());
@@ -699,11 +705,11 @@ class DelegationToolsTest {
         var adopted = structured(call("adopt_instance", "{\"instance\":\"" + name + "\"}"));
         assertFalse(backend.stopped.contains(name), "started again");
         assertFalse(adopted.has("warning"), "its tasks were read: " + adopted);
-        assertEquals("t3-old", adopted.path("tasks").get(0).asText());
+        assertEquals("t3-old", adopted.path("tasks").getElement(0).asText());
         assertFalse(backend.instances.get(name).containsKey(dev.incusspawn.incus.Metadata.MCP_DORMANT));
 
         var sent = call("send_message", "{\"task_id\":\"t3-old\",\"message\":\"carry on\"}");
-        assertFalse(sent.path("isError").asBoolean(), text(sent));
+        assertFalse(sent.path("isError").asBoolean(false), text(sent));
         var run = runScript(2);
         assertTrue(run.contains("--resume") && run.contains("cd -- '/home/agentuser/repo'"), run);
     }
@@ -736,10 +742,10 @@ class DelegationToolsTest {
         var instance = call("create_instance", "{\"template\":\"tpl-plain\"}").path("structuredContent")
                 .path("instance").asText();
         var bad = "{\"instance\":\"" + instance + "\",\"command\":\"true\",\"background\":true,\"env\":{\"FOO-BAR\":\"x\"}}";
-        assertTrue(call("exec", bad).path("isError").asBoolean());
-        assertTrue(call("exec", bad).path("isError").asBoolean());
+        assertTrue(call("exec", bad).path("isError").asBoolean(false));
+        assertTrue(call("exec", bad).path("isError").asBoolean(false));
         var r = call("exec", "{\"instance\":\"" + instance + "\",\"command\":\"true\",\"background\":true}");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
     }
 
     @Test
@@ -749,8 +755,8 @@ class DelegationToolsTest {
         var instance = instanceOf(task);
         backend.stamp(instance, dev.incusspawn.incus.Metadata.MCP_SESSION, "8-8"); // forced adoption
         var r = call("delegate", "{\"instruction\":\"next\",\"template\":\"tpl-agent\"}");
-        assertFalse(r.path("isError").asBoolean(), text(r));
-        assertTrue(call("task_status", "{\"task_id\":\"" + task + "\"}").path("isError").asBoolean());
+        assertFalse(r.path("isError").asBoolean(false), text(r));
+        assertTrue(call("task_status", "{\"task_id\":\"" + task + "\"}").path("isError").asBoolean(false));
     }
 
     @Test
@@ -787,7 +793,7 @@ class DelegationToolsTest {
             taskState = "done";
         };
         var r = call("delegate", "{\"instruction\":\"next\",\"template\":\"tpl-agent\"}");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
     }
 
     private long modelChecks() {
@@ -803,18 +809,18 @@ class DelegationToolsTest {
         config.setDelegateMaxTurns(200);
         var r = call("delegate", "{\"instruction\":\"rebase\",\"template\":\"tpl-agent\","
                 + "\"model\":\"claude-haiku-4-5\",\"max_turns\":7}");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
         var task = r.path("structuredContent").path("task_id").asText();
         assertTrue(runScript(1).contains(" --model 'claude-haiku-4-5'"), runScript(1));
         assertTrue(runScript(1).contains(" --max-turns 7 "), runScript(1));
         assertTrue(text(call("task_status", "{\"task_id\":\"" + task + "\"}")).contains("model: claude-haiku-4-5"));
 
         taskState = "finished";
-        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"again\"}").path("isError").asBoolean());
+        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"again\"}").path("isError").asBoolean(false));
         assertTrue(runScript(2).contains(" --model 'claude-haiku-4-5'") && runScript(2).contains(" --max-turns 7 "),
                 "a later turn keeps the task's profile: " + runScript(2));
         assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"think\",\"max_turns\":3}")
-                .path("isError").asBoolean());
+                .path("isError").asBoolean(false));
         assertTrue(runScript(3).contains(" --model 'claude-haiku-4-5'") && runScript(3).contains(" --max-turns 3 "),
                 runScript(3));
         assertEquals(1, modelChecks(), "a model checked once is not checked again");
@@ -833,19 +839,19 @@ class DelegationToolsTest {
     void theTurnBudgetCanNarrowTheUsersCeilingButNeverWidenIt() throws Exception {
         config.setDelegateMaxTurns(50);
         var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":51}");
-        assertTrue(r.path("isError").asBoolean());
+        assertTrue(r.path("isError").asBoolean(false));
         assertTrue(text(r).contains("mcp.delegate-max-turns"), text(r));
         assertTrue(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":0}")
-                .path("isError").asBoolean());
+                .path("isError").asBoolean(false));
         assertEquals(0, instancesMade(), "refused before an instance was made");
         assertFalse(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"max_turns\":50}")
-                .path("isError").asBoolean());
+                .path("isError").asBoolean(false));
 
         // A budget recorded under a higher ceiling is held to the one the user set since.
         var task = tasks.all().get(0).id();
         taskState = "finished";
         config.setDelegateMaxTurns(20);
-        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"m\"}").path("isError").asBoolean());
+        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"m\"}").path("isError").asBoolean(false));
         assertTrue(runScript(2).contains(" --max-turns 20 "), runScript(2));
     }
 
@@ -853,7 +859,7 @@ class DelegationToolsTest {
     void aModelTheAccountCannotUseFailsTheCallAndLeavesNothingBehind() throws Exception {
         modelRefusal = "API Error: 404 model: claude-opus-9 not found";
         var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"claude-opus-9\"}");
-        assertTrue(r.path("isError").asBoolean());
+        assertTrue(r.path("isError").asBoolean(false));
         assertTrue(text(r).contains("claude-opus-9 not found"), text(r));
         assertTrue(backend.scripts.stream().noneMatch(s -> s.contains("systemd-run")), "no task started");
         assertEquals(0, instancesMade(), "the instance made for it is gone");
@@ -862,7 +868,7 @@ class DelegationToolsTest {
         // A failure is not remembered: the account may be fixed meanwhile.
         modelRefusal = null;
         assertFalse(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"claude-opus-9\"}")
-                .path("isError").asBoolean());
+                .path("isError").asBoolean(false));
         assertEquals(2, modelChecks());
     }
 
@@ -880,14 +886,14 @@ class DelegationToolsTest {
         // Another account can reach other models.
         backend.stamp(instance, dev.incusspawn.incus.Metadata.accountKey("claude"), "work");
         var r = call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance + "\",\"model\":\"haiku\"}");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
         assertEquals(3, modelChecks());
     }
 
     @Test
     void aModelThatIsNotAModelNameIsRefusedUnrun() throws Exception {
         var r = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\",\"model\":\"haiku --dangerously-skip-permissions\"}");
-        assertTrue(r.path("isError").asBoolean());
+        assertTrue(r.path("isError").asBoolean(false));
         assertTrue(text(r).contains("model"), text(r));
         assertTrue(backend.scripts.isEmpty(), "nothing ran");
         assertEquals(0, instancesMade());
@@ -898,11 +904,11 @@ class DelegationToolsTest {
         config.setDelegateMaxTurns(200);
         backend.delegateModel("tpl-agent", "claude-opus-5-5");
         var listed = call("list_templates", "{}").path("structuredContent");
-        var agent = listed.path("templates").get(0);
+        var agent = listed.path("templates").getElement(0);
         assertEquals("tpl-agent", agent.path("template").asText());
         assertEquals("claude-opus-5-5", agent.path("delegate_model").asText());
-        assertEquals(200, listed.path("delegate_max_turns").asInt());
-        assertTrue(listed.path("templates").get(1).path("delegate_model").isMissingNode(), listed.toString());
+        assertEquals(200, listed.path("delegate_max_turns").asInt(0));
+        assertTrue(listed.path("templates").getElement(1).path("delegate_model").isMissingNode(), listed.toString());
     }
 
     @Test
@@ -919,11 +925,11 @@ class DelegationToolsTest {
         taskState = "finished";
         modelRefusal = "API Error: 403";
         assertTrue(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"m\",\"model\":\"opus\"}")
-                .path("isError").asBoolean());
+                .path("isError").asBoolean(false));
         assertEquals(1, tasks.all().get(0).runs());
         assertEquals(null, tasks.all().get(0).profile().model());
         modelRefusal = null;
-        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"m\"}").path("isError").asBoolean());
+        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"m\"}").path("isError").asBoolean(false));
         assertTrue(runScript(2).contains("--resume") && !runScript(2).contains("--model"), runScript(2));
     }
 
@@ -949,7 +955,7 @@ class DelegationToolsTest {
         var instance = call("create_instance", "{\"template\":\"tpl-agent\"}").path("structuredContent")
                 .path("instance").asText();
         assertFalse(call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance + "\",\"model\":\"haiku\"}")
-                .path("isError").asBoolean());
+                .path("isError").asBoolean(false));
         assertEquals(1, modelChecks());
     }
 
@@ -968,25 +974,25 @@ class DelegationToolsTest {
         config.setDelegateMaxTurns(30);
         var started = call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\"}").path("structuredContent");
         var task = started.path("task_id").asText();
-        assertEquals(30, started.path("max_turns").asInt());
-        assertEquals(30, call("task_status", "{\"task_id\":\"" + task + "\"}").path("structuredContent").path("max_turns").asInt());
+        assertEquals(30, started.path("max_turns").asInt(0));
+        assertEquals(30, call("task_status", "{\"task_id\":\"" + task + "\"}").path("structuredContent").path("max_turns").asInt(0));
 
         // Chosen under a higher ceiling that was lowered since: the lower one, everywhere.
         config.setDelegateMaxTurns(200);
         var second = call("delegate", "{\"instruction\":\"y\",\"template\":\"tpl-agent\",\"max_turns\":150}")
                 .path("structuredContent");
-        assertEquals(150, second.path("max_turns").asInt());
+        assertEquals(150, second.path("max_turns").asInt(0));
         config.setDelegateMaxTurns(50);
         taskState = "finished";
         var id = second.path("task_id").asText();
         var sent = call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"more\"}").path("structuredContent");
-        assertEquals(50, sent.path("max_turns").asInt(), sent.toString());
-        assertEquals(50, call("task_status", "{\"task_id\":\"" + id + "\"}").path("structuredContent").path("max_turns").asInt());
+        assertEquals(50, sent.path("max_turns").asInt(0), sent.toString());
+        assertEquals(50, call("task_status", "{\"task_id\":\"" + id + "\"}").path("structuredContent").path("max_turns").asInt(0));
     }
 
     // --- idempotency keys (#1011) ---
 
-    private static String code(JsonNode result) {
+    private static String code(io.hyperfoil.tools.jjq.value.JqValue result) {
         return result.path("_meta").path(ToolResult.ERROR_META).path("code").asText();
     }
 
@@ -1010,8 +1016,8 @@ class DelegationToolsTest {
         taskState = "finished";
         var again = structured(call("delegate", args));
         assertEquals(first.path("task_id").asText(), again.path("task_id").asText());
-        assertTrue(again.path("replayed").asBoolean());
-        assertEquals(1, again.path("run").asInt());
+        assertTrue(again.path("replayed").asBoolean(false));
+        assertEquals(1, again.path("run").asInt(0));
         assertEquals(first.path("permission_mode").asText(), again.path("permission_mode").asText());
         assertEquals(1, launches());
 
@@ -1019,8 +1025,8 @@ class DelegationToolsTest {
         var started = structured(call("exec", cmd));
         var repeated = structured(call("exec", cmd));
         assertEquals(started.path("task_id").asText(), repeated.path("task_id").asText());
-        assertTrue(repeated.path("replayed").asBoolean());
-        assertTrue(repeated.path("background").asBoolean());
+        assertTrue(repeated.path("replayed").asBoolean(false));
+        assertTrue(repeated.path("background").asBoolean(false));
         assertEquals(2, launches());
         structured(call("exec", cmd.replace("c-1", "c-2")));
         assertEquals(3, launches(), "a different key is a different task");
@@ -1052,7 +1058,7 @@ class DelegationToolsTest {
         assertTrue(launchEntered.await(5, java.util.concurrent.TimeUnit.SECONDS), "first launch under way");
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":302,\"method\":\"tools/call\",\"params\":{\"name\":\"delegate\",\"arguments\":" + args + "}}");
         var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-        while (out.sent.stream().noneMatch(m -> m.path("id").asInt() == 302) && System.nanoTime() < deadline) {
+        while (out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 302) && System.nanoTime() < deadline) {
             Thread.sleep(10);
         }
         var second = out.byId(302).path("result");
@@ -1061,11 +1067,11 @@ class DelegationToolsTest {
         launchRelease.countDown();
         server.awaitIdle();
         var first = out.byId(301).path("result");
-        assertFalse(first.path("isError").asBoolean(), first.toString());
+        assertFalse(first.path("isError").asBoolean(false), first.toString());
         launchEntered = null;
         var third = structured(call("delegate", args));
         assertEquals(first.path("structuredContent").path("task_id").asText(), third.path("task_id").asText());
-        assertTrue(third.path("replayed").asBoolean());
+        assertTrue(third.path("replayed").asBoolean(false));
         assertEquals(1, launches());
     }
 
@@ -1075,7 +1081,7 @@ class DelegationToolsTest {
         var instance = instanceFor("cap");
         var args = "{\"instruction\":\"x\",\"instance\":\"" + instance + "\",\"idempotency_key\":\"k\"}";
         structured(call("delegate", args));
-        assertTrue(structured(call("delegate", args)).path("replayed").asBoolean());
+        assertTrue(structured(call("delegate", args)).path("replayed").asBoolean(false));
     }
 
     @Test
@@ -1093,7 +1099,7 @@ class DelegationToolsTest {
         var r = structured(call("delegate", "{\"instruction\":\"x\",\"instance\":\"mcp-agent-870-impl-abcde\","
                 + "\"idempotency_key\":\"issue-870\"}"));
         assertEquals("t3-old", r.path("task_id").asText());
-        assertTrue(r.path("replayed").asBoolean());
+        assertTrue(r.path("replayed").asBoolean(false));
         assertEquals(0, launches());
         // What the guest wrote is a key only if it reads as one.
         structured(call("exec", "{\"instance\":\"mcp-agent-870-impl-abcde\",\"command\":\"x\",\"background\":true,"
@@ -1117,7 +1123,7 @@ class DelegationToolsTest {
         var again = structured(call("delegate", args));
         assertEquals(first.path("task_id").asText(), again.path("task_id").asText());
         assertEquals(instance, again.path("instance").asText());
-        assertTrue(again.path("replayed").asBoolean());
+        assertTrue(again.path("replayed").asBoolean(false));
         assertEquals(1, launches());
         assertEquals(1, backend.mcpInstances().size());
 
@@ -1153,7 +1159,7 @@ class DelegationToolsTest {
         backend.stamp(a, dev.incusspawn.incus.Metadata.MCP_SESSION, "8-8"); // forced adoption
         assertEquals("not_held", code(call("exec", "{\"instance\":\"" + a + "\",\"command\":\"ls\"}")));
         var r = call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + b + "\",\"idempotency_key\":\"k\"}");
-        assertFalse(r.path("isError").asBoolean(), "not refused as a mismatch with a task this session let go: " + text(r));
+        assertFalse(r.path("isError").asBoolean(false), "not refused as a mismatch with a task this session let go: " + text(r));
     }
 
     @Test
@@ -1178,20 +1184,20 @@ class DelegationToolsTest {
             backend.onListing = null;
             server.handle("{\"jsonrpc\":\"2.0\",\"id\":401,\"method\":\"tools/call\",\"params\":{\"name\":\"delegate\",\"arguments\":" + args + "}}");
             var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-            while (out.sent.stream().noneMatch(m -> m.path("id").asInt() == 401) && System.nanoTime() < deadline) {
+            while (out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 401) && System.nanoTime() < deadline) {
                 Thread.onSpinWait();
             }
         };
         var first = call("delegate", args);
         server.awaitIdle();
         var repeat = out.byId(401).path("result");
-        assertFalse(repeat.path("isError").asBoolean(), repeat.toString());
+        assertFalse(repeat.path("isError").asBoolean(false), repeat.toString());
         var instance = repeat.path("structuredContent").path("instance").asText();
         assertEquals("busy", code(first), first.toString());
         assertEquals(List.of(), backend.destroyed, "the instance its repeat started the task in stays");
         assertEquals(java.util.Set.of(instance), backend.mcpInstances().keySet());
         assertEquals(1, launches());
-        assertTrue(structured(call("delegate", args)).path("replayed").asBoolean());
+        assertTrue(structured(call("delegate", args)).path("replayed").asBoolean(false));
     }
 
     @Test
@@ -1213,7 +1219,7 @@ class DelegationToolsTest {
         taskState = "finished";
         var again = structured(call("delegate", args));
         assertEquals("t3-old", again.path("task_id").asText());
-        assertTrue(again.path("replayed").asBoolean());
+        assertTrue(again.path("replayed").asBoolean(false));
         assertEquals(0, launches());
     }
 }

@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqNull;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -8,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Tests for the disk-metric helpers backing the TUI storage gauge and DISK columns. */
 class ListCommandDiskTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     // --- diskCell: compact per-row usage with the "~" approximate marker ---
 
@@ -99,21 +99,21 @@ class ListCommandDiskTest {
 
     @Test
     void sumDiskUsageAddsAllDevices() throws Exception {
-        var node = JSON.readTree("{\"root\":{\"usage\":1000},\"extra\":{\"usage\":500}}");
+        var node = JqValues.parse("{\"root\":{\"usage\":1000},\"extra\":{\"usage\":500}}");
         assertEquals(1500, ListCommand.sumDiskUsage(node));
     }
 
     @Test
     void sumDiskUsageMissingReturnsUnknown() throws Exception {
         // dir pools / stopped instances report no usage -> -1 (renders as "-")
-        var node = JSON.readTree("{\"root\":{}}");
+        var node = JqValues.parse("{\"root\":{}}");
         assertEquals(-1, ListCommand.sumDiskUsage(node));
     }
 
     @Test
     void sumDiskUsageEmptyOrMissingNode() throws Exception {
-        assertEquals(-1, ListCommand.sumDiskUsage(JSON.readTree("{}")));
-        assertEquals(-1, ListCommand.sumDiskUsage(JSON.nullNode()));
+        assertEquals(-1, ListCommand.sumDiskUsage(JqValues.parse("{}")));
+        assertEquals(-1, ListCommand.sumDiskUsage(JqNull.NULL));
     }
 
     // --- sharedBaseBytes: the base image + CoW-shared blocks folded into the root template ---

@@ -1,8 +1,8 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.annotation.JsonProperty;
+import io.hyperfoil.tools.jjq.mapper.JqInclude;
+import io.hyperfoil.tools.jjq.mapper.JqMapped;
+import io.hyperfoil.tools.jjq.mapper.JqName;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.util.List;
@@ -33,8 +33,8 @@ import java.util.regex.Pattern;
  * Unset limits are never written back, so a saved config does not pin today's defaults.
  */
 @RegisterForReflection
-@JsonIgnoreProperties(ignoreUnknown = true)
-@JsonInclude(JsonInclude.Include.NON_NULL)
+@JqInclude(JqInclude.Include.NON_NULL)
+@JqMapped
 public class McpConfig {
 
     public static final int DEFAULT_MAX_INSTANCES = 8;
@@ -56,25 +56,25 @@ public class McpConfig {
     private static final Pattern MODE = Pattern.compile("[A-Za-z]{1,40}");
     private static final Pattern MODEL = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:@/\\[\\]-]{0,119}");
 
-    @JsonProperty("templates")
+    @JqName("templates")
     private List<String> templates;
-    @JsonProperty("max-instances")
+    @JqName("max-instances")
     private Integer maxInstances;
-    @JsonProperty("max-concurrent-tasks")
+    @JqName("max-concurrent-tasks")
     private Integer maxConcurrentTasks;
-    @JsonProperty("delegate-max-turns")
+    @JqName("delegate-max-turns")
     private Integer delegateMaxTurns;
-    @JsonProperty("delegate-permission-mode")
+    @JqName("delegate-permission-mode")
     private String delegatePermissionMode;
-    @JsonProperty("delegate-permission-modes")
+    @JqName("delegate-permission-modes")
     private Map<String, String> delegatePermissionModes;
-    @JsonProperty("orphan-grace-hours")
+    @JqName("orphan-grace-hours")
     private Integer orphanGraceHours;
-    @JsonProperty("dormant-after-hours")
+    @JqName("dormant-after-hours")
     private Integer dormantAfterHours;
-    @JsonProperty("dormant-grace-hours")
+    @JqName("dormant-grace-hours")
     private Integer dormantGraceHours;
-    @JsonProperty("summary-model")
+    @JqName("summary-model")
     private String summaryModel;
 
     public List<String> templates() {

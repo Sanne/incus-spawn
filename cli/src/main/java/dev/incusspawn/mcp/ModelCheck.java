@@ -89,13 +89,14 @@ final class ModelCheck {
         var success = false;
         var last = out.strip().lines().reduce((a, b) -> b).orElse("");
         try {
-            var json = last.isEmpty() ? null : JsonRpc.JSON.readTree(last);
-            if (json != null && json.isObject()) {
-                isError = json.path("is_error").asBoolean(false);
-                result = json.path("result").asText(null);
-                success = "result".equals(json.path("type").asText()) && "success".equals(json.path("subtype").asText());
+            var json = last.isEmpty() ? null : JsonRpc.parse(last);
+            if (json instanceof io.hyperfoil.tools.jjq.value.JqObject obj) {
+                isError = JsonRpc.bool(obj, "is_error", false);
+                result = JsonRpc.text(obj, "result", null);
+                success = "result".equals(JsonRpc.text(obj, "type", ""))
+                        && "success".equals(JsonRpc.text(obj, "subtype", ""));
             }
-        } catch (java.io.IOException e) {
+        } catch (RuntimeException e) {
             // not a result: the exit code and stderr say what happened
         }
         if (exit == 0 && success && !isError && result != null) return null;

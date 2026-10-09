@@ -1,15 +1,16 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.JsonMappingException;
-import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import dev.incusspawn.util.OutputFormat;
+import io.hyperfoil.tools.jjq.mapper.JqMapperException;
+import io.hyperfoil.tools.jjq.mapper.ShapeMismatchException;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.yaml.JqYamlException;
 
-import java.util.Collection;
-import java.util.Map;
+import java.io.IOException;
 import java.util.regex.Pattern;
 
 /**
- * Transforms raw Jackson/SnakeYAML error messages into human-friendly diagnostics.
+ * Transforms raw parser error messages into human-friendly diagnostics.
  */
 public final class YamlErrors {
 
@@ -21,14 +22,11 @@ public final class YamlErrors {
     private static final Pattern DUPLICATE_FIELD = Pattern.compile(
             "Duplicate field '([^']+)'");
 
-    private static final Pattern RECEIVED_SHAPE = Pattern.compile(
-            "from (Array|Object|String|Integer|Floating-point|Boolean|Null) value");
-
     /**
      * Produce a one-line, human-readable error from a YAML parse exception.
      *
      * @param filename the YAML file that failed to parse (for context)
-     * @param ex       the exception thrown by Jackson/SnakeYAML
+     * @param ex       the exception thrown while parsing
      * @return a friendly error string, never null
      */
     public static String friendly(String filename, Exception ex) {
@@ -37,6 +35,21 @@ public final class YamlErrors {
     }
 
     private static String describe(String filename, Exception ex) {
+        // jjq failures are wrapped in IOException at the parse entry points
+        // (see Jjq) to preserve caller contracts; render the structured cause.
+        if (ex instanceof IOException && ex.getCause() instanceof JqMapperException) {
+            return describe(filename, (Exception) ex.getCause());
+        }
+        if (ex instanceof IOException && ex.getCause() instanceof JqYamlException) {
+            return describe(filename, (Exception) ex.getCause());
+        }
+        if (ex instanceof IOException
+                && ex.getCause() instanceof io.hyperfoil.tools.jjq.yaml.YamlParseException) {
+            return describe(filename, (Exception) ex.getCause());
+        }
+        if (ex instanceof io.hyperfoil.tools.jjq.yaml.YamlParseException nativeParse) {
+            return friendlyNative(filename, nativeParse);
+        }
         var raw = ex.getMessage();
         if (raw == null) return filename + ": unknown YAML error";
 
@@ -54,12 +67,21 @@ public final class YamlErrors {
             return prefix + "indentation error — check that nested items use consistent spaces (not tabs)";
         }
 
+        if (raw.contains("tabs are not allowed for indentation")
+                || raw.contains("tabs cannot separate")) {
+            return prefix + "tabs are not allowed in YAML — use spaces for indentation";
+        }
+
         if (raw.contains("\\t(TAB)") || raw.contains("found character '\\t'") || raw.contains("found character '\t'")) {
             return prefix + "tabs are not allowed in YAML — use spaces for indentation";
         }
 
         if (raw.contains("could not find expected ':'")) {
             return prefix + "expected a ':' after a key — this usually means wrong indentation or a missing key-value separator";
+        }
+
+        if (raw.contains("unexpected indentation")) {
+            return prefix + "unexpected indentation — check that nested items use consistent spaces (not tabs)";
         }
 
         if (raw.contains("expected <block end>")) {
@@ -74,43 +96,82 @@ public final class YamlErrors {
             return prefix + "malformed key — check for missing ':' or incorrect indentation";
         }
 
-        if (ex instanceof MismatchedInputException mismatch) {
-            var shape = describeMismatch(mismatch, raw);
+        if (ex instanceof JqYamlException dupKey && dupKey.key() != null) {
+            var dupPrefix = dupKey.line() > 0 ? filename + ":" + dupKey.line() + ": " : filename + ": ";
+            return dupPrefix + "duplicate key '" + dupKey.key()
+                    + "' — merge into a single '" + dupKey.key() + "' section or remove the duplicate";
+        }
+
+        if (ex instanceof ShapeMismatchException mismatch) {
+            var shape = describeJjqMismatch(mismatch);
             if (shape != null) return prefix + shape;
         }
 
-        // Fallback: extract the first meaningful SnakeYAML message line
+        // Fallback: extract the first meaningful message line
         var firstLine = extractFirstMeaningfulLine(raw);
-        if (ex instanceof JsonMappingException mapping) {
-            var path = fieldPath(mapping);
-            if (!path.isEmpty()) return prefix + "'" + path + "': " + firstLine;
-        }
         return prefix + firstLine;
     }
 
     /**
-     * Explain a value whose YAML shape (list, mapping, scalar) does not match what the
-     * field expects, naming the field. Returns null when the mismatch cannot be described.
+     * The native jjq parser reports structured messages with the line appended
+     * ({@code <message> at line N}). Render with the file:line prefix and the
+     * line suffix trimmed, plus guidance for the common mistakes.
      */
-    private static String describeMismatch(MismatchedInputException ex, String raw) {
-        var path = fieldPath(ex);
-        var target = ex.getTargetType();
-        var m = RECEIVED_SHAPE.matcher(raw);
-        if (path.isEmpty() || target == null || !m.find()) return null;
+    private static String friendlyNative(String filename,
+                                         io.hyperfoil.tools.jjq.yaml.YamlParseException ex) {
+        var raw = String.valueOf(ex.getMessage()).replaceAll(" at line \\d+$", "");
+        var prefix = ex.line() > 0 ? filename + ":" + ex.line() + ": " : filename + ": ";
+        if (raw.contains("tabs are not allowed for indentation")
+                || raw.contains("tabs cannot separate")) {
+            return prefix + "tabs are not allowed in YAML — use spaces for indentation";
+        }
+        if (raw.contains("unexpected indentation")) {
+            return prefix + "unexpected indentation — check that nested items use consistent spaces (not tabs)";
+        }
+        if (raw.contains("expected mapping key") || raw.contains("expected '-' sequence entry")
+                || raw.contains("expected end of line")) {
+            return prefix + raw + " — check indentation is consistent (YAML is whitespace-sensitive)";
+        }
+        return prefix + raw;
+    }
 
-        var expected = shapeOf(target);
-        var received = switch (m.group(1)) {
-            case "Array" -> "a list";
-            case "Object" -> "a mapping";
-            case "Null" -> "an empty value";
-            default -> "a single value";
+    /**
+     * The jjq equivalent of a shape mismatch, read structurally off
+     * {@code ShapeMismatchException} (see Hyperfoil/jjq#86) — no message
+     * parsing. Non-mismatch {@code JqMapperException}s (e.g. converter
+     * validation errors, already user-friendly) never reach here and fall
+     * through to the generic path.
+     */
+    private static String describeJjqMismatch(ShapeMismatchException ex) {
+        var expected = shapeName(ex.expected());
+        var received = receivedName(ex.actual());
+        if (expected == null || received == null || expected.equals(received)) return null;
+        var path = ex.path();
+        if (path == null || path.isEmpty()) return null;
+        if (path.startsWith("$.")) path = path.substring(2);
+        if (path.equals("$")) return null;
+        return mismatchMessage(path, expected, received, leafName(path));
+    }
+
+    private static String shapeName(JqValue.Type type) {
+        return switch (type) {
+            case ARRAY -> "a list";
+            case OBJECT -> "a mapping";
+            case STRING, NUMBER, BOOLEAN -> "a single value";
+            case NULL -> "an empty value";
         };
-        if (expected.equals(received)) return null;
+    }
 
+    private static String receivedName(JqValue.Type type) {
+        if (type == null) return null;
+        return shapeName(type);
+    }
+
+    private static String mismatchMessage(String path, String expected, String received, String leaf) {
         var field = "'" + path + "'";
         var hint = switch (received) {
             case "a list" -> expected.equals("a single value")
-                    ? " — write it on one line, e.g. '" + leafName(ex) + ": value', without a '- ' item"
+                    ? " — write it on one line, e.g. '" + leaf + ": value', without a '- ' item"
                     : "";
             case "a single value" -> expected.equals("a list")
                     ? " — put each item on its own line starting with '- '"
@@ -120,36 +181,14 @@ public final class YamlErrors {
         return field + " expects " + expected + ", but got " + received + hint;
     }
 
-    private static String shapeOf(Class<?> type) {
-        if (type.isArray() || Collection.class.isAssignableFrom(type)) return "a list";
-        if (Map.class.isAssignableFrom(type)) return "a mapping";
-        if (type.isPrimitive() || type.isEnum() || CharSequence.class.isAssignableFrom(type)
-                || Number.class.isAssignableFrom(type) || type == Boolean.class) {
-            return "a single value";
-        }
-        return "a mapping";
-    }
-
-    /** The YAML path of the failing value, e.g. {@code repos[1].url}. */
-    static String fieldPath(JsonMappingException ex) {
-        var sb = new StringBuilder();
-        for (var ref : ex.getPath()) {
-            if (ref.getFieldName() != null) {
-                if (!sb.isEmpty()) sb.append('.');
-                sb.append(ref.getFieldName());
-            } else if (ref.getIndex() >= 0) {
-                sb.append('[').append(ref.getIndex()).append(']');
-            }
-        }
-        return sb.toString();
-    }
-
-    private static String leafName(JsonMappingException ex) {
-        var refs = ex.getPath();
-        for (int i = refs.size() - 1; i >= 0; i--) {
-            if (refs.get(i).getFieldName() != null) return refs.get(i).getFieldName();
-        }
-        return "key";
+    /** Last dotted segment of a {@code $.a[0].b}-style path, without indices. */
+    static String leafName(String path) {
+        var leaf = path;
+        var dot = leaf.lastIndexOf('.');
+        if (dot >= 0) leaf = leaf.substring(dot + 1);
+        var bracket = leaf.indexOf('[');
+        if (bracket >= 0) leaf = leaf.substring(0, bracket);
+        return leaf.isEmpty() ? "key" : leaf;
     }
 
     static int extractLine(String message) {

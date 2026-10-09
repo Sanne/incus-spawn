@@ -1,8 +1,7 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.incus.IncusException;
 
 import java.io.IOException;
@@ -41,13 +40,13 @@ final class McpServer {
     private final Map<String, McpPrompt> prompts = new LinkedHashMap<>();
     private final String version;
     private final String instructions;
-    private final Consumer<JsonNode> onInitialize;
+    private final Consumer<JqValue> onInitialize;
     private final Map<String, Runnable> experimental;
-    private final Map<JsonNode, ToolContext> inFlight = new ConcurrentHashMap<>();
+    private final Map<String, ToolContext> inFlight = new ConcurrentHashMap<>();
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
 
     McpServer(McpTransport transport, List<McpTool> tools, String version, String instructions,
-              Consumer<JsonNode> onInitialize) {
+              Consumer<JqValue> onInitialize) {
         this(transport, tools, version, instructions, onInitialize, Map.of());
     }
 
@@ -57,13 +56,13 @@ final class McpServer {
      * the {@code initialize} response is out, so nothing they send can precede it.
      */
     McpServer(McpTransport transport, List<McpTool> tools, String version, String instructions,
-              Consumer<JsonNode> onInitialize, Map<String, Runnable> experimental) {
+              Consumer<JqValue> onInitialize, Map<String, Runnable> experimental) {
         this(transport, tools, List.of(), version, instructions, onInitialize, experimental);
     }
 
     /** {@code prompts}: offered under {@code capabilities.prompts}, when there are any. */
     McpServer(McpTransport transport, List<McpTool> tools, List<McpPrompt> prompts, String version,
-              String instructions, Consumer<JsonNode> onInitialize, Map<String, Runnable> experimental) {
+              String instructions, Consumer<JqValue> onInitialize, Map<String, Runnable> experimental) {
         this.transport = transport;
         prompts.forEach(p -> this.prompts.put(p.name(), p));
         this.experimental = experimental;
@@ -97,35 +96,38 @@ final class McpServer {
     }
 
     void handle(String line) {
-        JsonNode msg;
+        JqValue msg;
         try {
-            msg = JsonRpc.JSON.readTree(line);
-        } catch (JsonProcessingException e) {
-            send(JsonRpc.error(null, JsonRpc.PARSE_ERROR, "Parse error: " + e.getOriginalMessage()));
+            msg = JsonRpc.parse(line);
+        } catch (RuntimeException e) {
+            var detail = e.getMessage() == null ? "" : e.getMessage().lines().findFirst().orElse("");
+            send(JsonRpc.error(null, JsonRpc.PARSE_ERROR, "Parse error: " + detail));
             return;
         }
-        if (msg == null || !msg.isObject()) {
+        if (!(msg instanceof JqObject root)) {
             // Batches were removed from MCP in 2025-06-18; nobody sends them.
             send(JsonRpc.error(null, JsonRpc.INVALID_REQUEST, "Invalid request: expected a JSON object"));
             return;
         }
-        var id = msg.get("id");
-        var method = msg.path("method").asText(null);
+        var hasId = root.keys().contains("id");
+        var id = hasId ? root.getField("id") : JsonRpc.nullNode();
+        var method = JsonRpc.text(root, "method", null);
         if (method == null) return; // a response to a request we never send
-        var params = msg.path("params");
-        if (id == null) {
+        var params = root.getField("params");
+        if (!hasId) {
             handleNotification(method, params);
             return;
         }
         switch (method) {
             case "initialize" -> {
                 send(JsonRpc.response(id, initialize(params)));
-                var wanted = params.path("capabilities").path("experimental");
+                var wanted = params instanceof JqObject caps ? caps.getField("capabilities") : JsonRpc.nullNode();
+                var experimentalWanted = wanted instanceof JqObject capsObj ? capsObj.getField("experimental") : JsonRpc.nullNode();
                 experimental.forEach((name, start) -> {
-                    if (wanted.has(name)) start.run();
+                    if (experimentalWanted instanceof JqObject expObj && expObj.keys().contains(name)) start.run();
                 });
             }
-            case "ping" -> send(JsonRpc.response(id, JsonRpc.JSON.createObjectNode()));
+            case "ping" -> send(JsonRpc.response(id, JsonRpc.emptyObject()));
             case "tools/list" -> send(JsonRpc.response(id, listTools()));
             case "tools/call" -> callTool(id, params);
             case "prompts/list" -> send(JsonRpc.response(id, listPrompts()));
@@ -134,9 +136,10 @@ final class McpServer {
         }
     }
 
-    private void handleNotification(String method, JsonNode params) {
+    private void handleNotification(String method, JqValue params) {
         if (method.equals("notifications/cancelled")) {
-            var requestId = params.get("requestId");
+            var requestId = params instanceof JqObject obj && obj.keys().contains("requestId")
+                    ? obj.getField("requestId").toJsonString() : null;
             if (requestId == null) return;
             var ctx = inFlight.get(requestId);
             if (ctx != null) {
@@ -147,63 +150,64 @@ final class McpServer {
         // notifications/initialized and anything unknown need no action
     }
 
-    private ObjectNode initialize(JsonNode params) {
-        var requested = params.path("protocolVersion").asText("");
-        var result = JsonRpc.JSON.createObjectNode();
-        result.put("protocolVersion",
-                PROTOCOL_VERSIONS.contains(requested) ? requested : PROTOCOL_VERSIONS.getFirst());
-        var capabilities = result.putObject("capabilities");
-        capabilities.putObject("tools").put("listChanged", false);
-        if (!prompts.isEmpty()) capabilities.putObject("prompts").put("listChanged", false);
+    private JqObject initialize(JqValue params) {
+        var requested = JsonRpc.text(params, "protocolVersion", "");
+        var tools = JqObject.builder(1).put("listChanged", false).build();
+        var capabilities = JqObject.builder(3).put("tools", tools);
+        if (!prompts.isEmpty()) capabilities.put("prompts", JqObject.builder(1).put("listChanged", false).build());
         if (!experimental.isEmpty()) {
-            var offered = capabilities.putObject("experimental");
-            experimental.keySet().forEach(offered::putObject);
+            var offered = JqObject.builder(experimental.size());
+            experimental.keySet().forEach(name -> offered.put(name, JsonRpc.emptyObject()));
+            capabilities.put("experimental", offered.build());
         }
-        var info = result.putObject("serverInfo");
-        info.put("name", "isx");
-        info.put("version", version);
+        var info = JqObject.builder(2).put("name", "isx").put("version", version).build();
+        var result = JqObject.builder(4)
+                .put("protocolVersion",
+                        PROTOCOL_VERSIONS.contains(requested) ? requested : PROTOCOL_VERSIONS.getFirst())
+                .put("capabilities", capabilities.build())
+                .put("serverInfo", info);
         if (instructions != null) result.put("instructions", instructions);
-        if (onInitialize != null) onInitialize.accept(params.path("clientInfo"));
-        return result;
+        if (onInitialize != null) onInitialize.accept(params instanceof JqObject o ? o.getField("clientInfo") : JsonRpc.nullNode());
+        return result.build();
     }
 
-    private ObjectNode listTools() {
-        var result = JsonRpc.JSON.createObjectNode();
-        var list = result.putArray("tools");
+    private JqObject listTools() {
+        var list = io.hyperfoil.tools.jjq.value.JqArray.arrayBuilder();
         tools.values().forEach(t -> list.add(t.descriptor()));
-        return result;
+        return JqObject.builder(1).put("tools", list.build()).build();
     }
 
-    private ObjectNode listPrompts() {
-        var result = JsonRpc.JSON.createObjectNode();
-        var list = result.putArray("prompts");
+    private JqObject listPrompts() {
+        var list = io.hyperfoil.tools.jjq.value.JqArray.arrayBuilder();
         prompts.values().forEach(p -> list.add(p.descriptor()));
-        return result;
+        return JqObject.builder(1).put("prompts", list.build()).build();
     }
 
-    private void getPrompt(JsonNode id, JsonNode params) {
+    private void getPrompt(JqValue id, JqValue params) {
         var prompt = prompts.get(params.path("name").asText(""));
         send(prompt == null
                 ? JsonRpc.error(id, JsonRpc.INVALID_PARAMS, "Unknown prompt: " + params.path("name").asText(""))
                 : JsonRpc.response(id, prompt.get()));
     }
 
-    private void callTool(JsonNode id, JsonNode params) {
-        var name = params.path("name").asText("");
+    private void callTool(JqValue id, JqValue params) {
+        var name = params instanceof JqObject named ? JsonRpc.text(named, "name", "") : "";
         var tool = tools.get(name);
         if (tool == null) {
             send(JsonRpc.error(id, JsonRpc.INVALID_PARAMS, "Unknown tool: " + name));
             return;
         }
-        var arguments = params.path("arguments");
-        if (!arguments.isMissingNode() && !arguments.isNull() && !arguments.isObject()) {
+        var arguments = params instanceof JqObject withArgs ? withArgs.getField("arguments") : JsonRpc.nullNode();
+        if (!arguments.isNull() && !arguments.isObject()) {
             send(JsonRpc.error(id, JsonRpc.INVALID_PARAMS, "arguments must be an object"));
             return;
         }
-        var args = new McpTool.Args(arguments.isObject() ? arguments : JsonRpc.JSON.createObjectNode());
-        var ctx = new ToolContext(progressSink(params.path("_meta").get("progressToken")));
-        if (inFlight.putIfAbsent(id, ctx) != null) {
-            send(JsonRpc.error(id, JsonRpc.INVALID_REQUEST, "Duplicate request id: " + id));
+        var args = new McpTool.Args(arguments.isObject() ? arguments : JsonRpc.emptyObject());
+        var meta = params instanceof JqObject withMeta ? withMeta.getField("_meta") : JsonRpc.nullNode();
+        var ctx = new ToolContext(progressSink(meta instanceof JqObject metaObj ? metaObj.getField("progressToken") : JsonRpc.nullNode()));
+        var idKey = id.toJsonString();
+        if (inFlight.putIfAbsent(idKey, ctx) != null) {
+            send(JsonRpc.error(id, JsonRpc.INVALID_REQUEST, "Duplicate request id: " + id.toJsonString()));
             return;
         }
         workers.execute(() -> {
@@ -226,12 +230,12 @@ final class McpServer {
                 if (!ctx.cancelled()) send(JsonRpc.response(id, result.toJson()));
             } finally {
                 // Only once answered: a call is in flight until its response is out.
-                inFlight.remove(id);
+                inFlight.remove(idKey);
             }
         });
     }
 
-    private ToolContext.ProgressSink progressSink(JsonNode token) {
+    private ToolContext.ProgressSink progressSink(JqValue token) {
         if (token == null || token.isNull()) return null;
         var state = new Object() {
             int count;
@@ -243,23 +247,24 @@ final class McpServer {
                 if (now - state.last < PROGRESS_INTERVAL_MS) return;
                 state.last = now;
                 state.count++;
-                var params = JsonRpc.JSON.createObjectNode();
-                params.set("progressToken", token);
-                params.put("progress", state.count);
-                params.put("message", message);
+                var params = JqObject.builder(3)
+                        .put("progressToken", token)
+                        .put("progress", (long) state.count)
+                        .put("message", message)
+                        .build();
                 notify("notifications/progress", params);
             }
         };
     }
 
     /** Send a notification the client did not ask for by request: one it opted into. */
-    void notify(String method, JsonNode params) {
+    void notify(String method, JqValue params) {
         send(JsonRpc.notification(method, params));
     }
 
-    private void send(ObjectNode message) {
+    private void send(JqValue message) {
         try {
-            transport.send(JsonRpc.JSON.writeValueAsString(message));
+            transport.send(JsonRpc.write(message));
         } catch (IOException e) {
             System.err.println("isx mcp: could not send a message: " + e.getMessage());
         }

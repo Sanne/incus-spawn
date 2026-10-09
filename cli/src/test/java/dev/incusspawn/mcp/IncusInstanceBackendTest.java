@@ -3,6 +3,8 @@ package dev.incusspawn.mcp;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
+import io.hyperfoil.tools.jjq.value.JqValues;
+import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.tui.InstanceLockManager;
 import org.junit.jupiter.api.Test;
 
@@ -45,9 +47,13 @@ class IncusInstanceBackendTest {
 
     @Test
     void theStatusComesFromTheSameReadAsTheConfig() {
-        var instance = JsonRpc.JSON.createObjectNode();
-        instance.put("status", "Stopped");
-        instance.putObject("config").put(Metadata.MCP_SESSION, "2-200").put("volatile.uuid", "x");
+        var instance = JqObject.builder(2)
+                .put("status", "Stopped")
+                .put("config", JqObject.builder(2)
+                        .put(Metadata.MCP_SESSION, "2-200")
+                        .put("volatile.uuid", "x")
+                        .build())
+                .build();
         when(incus.instanceMetadataOrThrow("dev")).thenReturn(instance);
         var metadata = backend.metadata("dev");
         assertTrue(InstanceBackend.stopped(metadata));
@@ -66,9 +72,10 @@ class IncusInstanceBackendTest {
         var locks = mock(InstanceLockManager.class);
         when(locks.tryAcquire("orphan", Metadata.OP_DELETING)).thenReturn(Optional.of(() -> { }));
         var sweeper = new IncusInstanceBackend(incus, locks);
-        var adopted = JsonRpc.JSON.createObjectNode();
-        adopted.put("name", "orphan");
-        adopted.putObject("config").put(Metadata.MCP_SESSION, "3-300");
+        var adopted = JqObject.builder(2)
+                .put("name", "orphan")
+                .put("config", JqObject.builder(1).put(Metadata.MCP_SESSION, "3-300").build())
+                .build();
         when(incus.instanceMetadataOrThrow("orphan")).thenReturn(adopted);
 
         assertFalse(sweeper.destroyIfHeldBy("orphan", "2-200", false));
@@ -88,12 +95,17 @@ class IncusInstanceBackendTest {
         when(locks.tryAcquire(anyString(), org.mockito.ArgumentMatchers.eq(Metadata.OP_STOPPING)))
                 .thenReturn(Optional.of(() -> { }));
         var sweeper = new IncusInstanceBackend(incus, locks);
-        var held = JsonRpc.JSON.createObjectNode();
-        held.put("status", "Running");
-        held.putObject("config").put(Metadata.MCP_SESSION, "2-200");
+        var held = io.hyperfoil.tools.jjq.value.JqObject.builder(2)
+                .put("status", "Running")
+                .put("config", io.hyperfoil.tools.jjq.value.JqObject.builder(1)
+                        .put(Metadata.MCP_SESSION, "2-200").build())
+                .build();
         when(incus.instanceMetadataOrThrow("hung")).thenReturn(held);
-        var adopted = held.deepCopy();
-        adopted.putObject("config").put(Metadata.MCP_SESSION, "3-300");
+        var adopted = io.hyperfoil.tools.jjq.value.JqObject.builder(2)
+                .put("status", "Running")
+                .put("config", io.hyperfoil.tools.jjq.value.JqObject.builder(1)
+                        .put(Metadata.MCP_SESSION, "3-300").build())
+                .build();
         when(incus.instanceMetadataOrThrow("adopted")).thenReturn(adopted);
         var stamps = java.util.Map.of(Metadata.MCP_DORMANT, "2026-10-06T00:00:00Z 2-200");
 
@@ -116,9 +128,11 @@ class IncusInstanceBackendTest {
         var locks = mock(InstanceLockManager.class);
         when(locks.tryAcquire("hung", Metadata.OP_STOPPING)).thenReturn(Optional.of(() -> { }));
         var sweeper = new IncusInstanceBackend(incus, locks);
-        var held = JsonRpc.JSON.createObjectNode();
-        held.put("status", "Running");
-        held.putObject("config").put(Metadata.MCP_SESSION, "2-200");
+        var held = io.hyperfoil.tools.jjq.value.JqObject.builder(2)
+                .put("status", "Running")
+                .put("config", io.hyperfoil.tools.jjq.value.JqObject.builder(1)
+                        .put(Metadata.MCP_SESSION, "2-200").build())
+                .build();
         when(incus.instanceMetadataOrThrow("hung")).thenReturn(held);
         org.mockito.Mockito.doThrow(new IncusException("Failed to stop hung")).when(incus).stop("hung");
 
@@ -161,9 +175,9 @@ class IncusInstanceBackendTest {
     @Test
     void theMcpListingCarriesEachInstancesStatus() {
         // The per-user task count asks only running instances, from this same listing.
-        when(incus.listJsonConfig()).thenReturn("""
+        when(incus.listJsonConfig()).thenReturn(JqValues.parse("""
                 [{"name":"mcp-a","status":"Stopped","config":{"%s":"2-200","volatile.x":"y"}},
-                 {"name":"plain","status":"Running","config":{}}]""".formatted(Metadata.MCP_SESSION));
+                 {"name":"plain","status":"Running","config":{}}]""".formatted(Metadata.MCP_SESSION)));
         var listing = backend.mcpInstances();
         assertEquals(java.util.Set.of("mcp-a"), listing.keySet());
         assertEquals("Stopped", listing.get("mcp-a").get(InstanceBackend.STATUS));
@@ -173,8 +187,8 @@ class IncusInstanceBackendTest {
 
     @Test
     void aListingThatDoesNotSayReadsAsRunning() {
-        when(incus.listJsonConfig()).thenReturn("""
-                [{"name":"mcp-a","config":{"%s":"2-200"}}]""".formatted(Metadata.MCP_SESSION));
+        when(incus.listJsonConfig()).thenReturn(JqValues.parse("""
+                [{"name":"mcp-a","config":{"%s":"2-200"}}]""".formatted(Metadata.MCP_SESSION)));
         var listed = backend.mcpInstances().get("mcp-a");
         assertFalse(listed.containsKey(InstanceBackend.STATUS));
         assertTrue(InstanceBackend.running(listed), "asked, as the fake backend's instances are");

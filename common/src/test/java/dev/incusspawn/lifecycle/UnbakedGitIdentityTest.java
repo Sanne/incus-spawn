@@ -1,7 +1,6 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
@@ -39,18 +38,17 @@ import static org.mockito.Mockito.verify;
 @ExtendWith(TempHome.class)
 class UnbakedGitIdentityTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
     private static final String NAME = "work-1";
 
     private static SpawnConfig withToken() throws Exception {
-        return YAML.readValue("""
+        return Jjq.spawnConfig("""
                 github:
                   accounts:
                     me:
                       token: "ghp_userA"
                       email: "me@example.com"
                   default: me
-                """, SpawnConfig.class);
+                """);
     }
 
     private static SpawnConfig withoutToken() {
@@ -311,14 +309,14 @@ class UnbakedGitIdentityTest {
         assertEquals(new GhSetup().bakedAccountIdentity(withToken(), "me"),
                 daemon.instance(NAME).path("config").path(Metadata.accountIdentityKey("github")).asText());
 
-        var replaced = YAML.readValue("""
+        var replaced = Jjq.spawnConfig("""
                 github:
                   accounts:
                     me:
                       token: "ghp_userB"
                       email: "me@example.com"
                   default: me
-                """, SpawnConfig.class);
+                """);
         assertEquals(Map.of("github", "me"), stale(daemon, replaced), "the token was replaced with another user's");
     }
 

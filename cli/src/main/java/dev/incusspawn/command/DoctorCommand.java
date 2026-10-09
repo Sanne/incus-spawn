@@ -1,15 +1,15 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.LayeredDefinitions;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.config.YamlErrors;
 import dev.incusspawn.incus.BtrfsUsage;
 import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.UfwCheck;
@@ -35,6 +35,7 @@ import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -306,17 +307,11 @@ public class DoctorCommand extends BaseCommand {
             return Finding.warn("config.yaml", "(could not check permissions: " + e.getMessage() + ")", null);
         }
         try {
-            var yaml = new ObjectMapper(new YAMLFactory());
-            yaml.readValue(configFile.toFile(), SpawnConfig.class);
+            Jjq.spawnConfig(Files.readString(configFile, StandardCharsets.UTF_8));
             return Finding.ok("config.yaml", "exists and parses");
         } catch (Exception e) {
-            var msg = e.getClass().getSimpleName();
-            var loc = e.getMessage() == null ? "" : e.getMessage().replaceAll("(?s)\\n.*", "");
-            if (loc.contains("line:") || loc.contains("column:")) {
-                loc = loc.replaceAll("(?s)(line: \\d+, column: \\d+).*", "$1");
-                msg += " at " + loc;
-            }
-            return Finding.fail("config.yaml invalid", "(" + msg + ")", null);
+            return Finding.fail("config.yaml invalid",
+                    "(" + YamlErrors.friendly("config.yaml", e) + ")", null);
         }
     }
 
@@ -1589,8 +1584,7 @@ public class DoctorCommand extends BaseCommand {
 
     // ---- Bundle generation ----
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
+    
     private void generateBundle(List<Finding> findings) {
         SupportBundle.Result result;
         try {
@@ -1673,22 +1667,18 @@ public class DoctorCommand extends BaseCommand {
     }
 
     static String findingsToJson(List<Finding> findings) {
-        var root = JSON.createArrayNode();
+        var root = io.hyperfoil.tools.jjq.value.JqArray.arrayBuilder();
         for (var f : findings) {
-            var node = JSON.createObjectNode();
-            node.put("status", f.status().name());
-            node.put("label", f.label());
-            node.put("detail", f.detail() != null ? f.detail() : "");
+            var node = io.hyperfoil.tools.jjq.value.JqObject.builder(f.remediation() != null ? 4 : 3)
+                    .put("status", f.status().name())
+                    .put("label", f.label())
+                    .put("detail", f.detail() != null ? f.detail() : "");
             if (f.remediation() != null) {
                 node.put("remediation", f.remediation().description());
             }
-            root.add(node);
+            root.add(node.build());
         }
-        try {
-            return JSON.writerWithDefaultPrettyPrinter().writeValueAsString(root);
-        } catch (Exception e) {
-            return "[]";
-        }
+        return io.hyperfoil.tools.jjq.value.JqValues.toPrettyJsonString(root.build());
     }
 
 }

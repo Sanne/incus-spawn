@@ -1,8 +1,9 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.config.AccountOrigin;
 import dev.incusspawn.config.AccountSelection;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 
@@ -70,11 +71,13 @@ public final class BuildAccounts {
      * The build stamps what it bakes itself when it is done, and puts back the parent's for the
      * rest ({@link #identityStamps}).
      */
-    static Map<String, String> startConfig(JsonNode config, Map<String, String> selection, String template) {
+    static Map<String, String> startConfig(JqValue config, Map<String, String> selection, String template) {
         var updates = new LinkedHashMap<String, String>();
-        config.properties().forEach(e -> {
-            if (e.getKey().startsWith(Metadata.ACCOUNT_IDENTITY_PREFIX)) updates.put(e.getKey(), null);
-        });
+        if (config instanceof JqObject object) {
+            object.forEach((key, value) -> {
+                if (key.startsWith(Metadata.ACCOUNT_IDENTITY_PREFIX)) updates.put(key, null);
+            });
+        }
         if (!selection.isEmpty()) {
             var origins = new LinkedHashMap<String, AccountOrigin>();
             selection.keySet().forEach(ns -> origins.put(ns, AccountOrigin.template(template)));
@@ -89,13 +92,15 @@ public final class BuildAccounts {
      * of a parent's identity that no longer matches (#281) needs them after tool setup, and
      * {@link #identityStamps} puts back the ones the build does not stamp itself.
      */
-    static Map<String, String> inheritedIdentities(JsonNode config) {
+    static Map<String, String> inheritedIdentities(JqValue config) {
         var result = new LinkedHashMap<String, String>();
-        config.properties().forEach(e -> {
-            if (e.getKey().startsWith(Metadata.ACCOUNT_IDENTITY_PREFIX) && !e.getValue().isNull()) {
-                result.put(e.getKey().substring(Metadata.ACCOUNT_IDENTITY_PREFIX.length()), e.getValue().asText(""));
-            }
-        });
+        if (config instanceof JqObject object) {
+            object.forEach((key, value) -> {
+                if (key.startsWith(Metadata.ACCOUNT_IDENTITY_PREFIX) && !value.isNull()) {
+                    result.put(key.substring(Metadata.ACCOUNT_IDENTITY_PREFIX.length()), value.asText());
+                }
+            });
+        }
         return result;
     }
 

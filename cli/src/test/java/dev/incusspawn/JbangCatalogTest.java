@@ -1,6 +1,7 @@
 package dev.incusspawn;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -16,8 +17,6 @@ import static org.junit.jupiter.api.Assertions.*;
  * cannot run in-process, so an isx-only installation has no working proxy at all.
  */
 class JbangCatalogTest {
-
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     private static final Path CATALOG = Path.of("../jbang-catalog.json");
     private static final Path RELEASE_WORKFLOW = Path.of("../.github/workflows/release.yml");
@@ -37,8 +36,8 @@ class JbangCatalogTest {
     void everyAliasAssetIsUploadedByTheRelease() throws IOException {
         var uploads = releaseAssetArguments();
         var aliases = aliases();
-        aliases.fieldNames().forEachRemaining(alias -> {
-            var ref = aliases.get(alias).get("script-ref").asText();
+        aliases.keys().forEach(alias -> {
+            var ref = aliases.path(alias).path("script-ref").asText();
             var asset = ref.substring(ref.lastIndexOf('/') + 1);
             assertTrue(uploads.contains(asset),
                     "alias '" + alias + "' points at " + asset
@@ -63,10 +62,9 @@ class JbangCatalogTest {
         return workflow.substring(start, end);
     }
 
-    private static com.fasterxml.jackson.databind.JsonNode aliases() throws IOException {
-        var root = JSON.readTree(Files.readString(CATALOG));
-        var aliases = root.get("aliases");
-        assertNotNull(aliases, "jbang-catalog.json must declare aliases");
-        return aliases;
+    private static JqObject aliases() throws IOException {
+        var root = JqValues.parse(Files.readString(CATALOG));
+        assertTrue(root.path("aliases").isObject(), "jbang-catalog.json must declare aliases");
+        return (JqObject) root.path("aliases");
     }
 }

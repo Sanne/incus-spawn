@@ -1,6 +1,10 @@
 package dev.incusspawn.ai;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqArray;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.config.SpawnConfig;
 
 import dev.incusspawn.proxy.ProxyConfig;
@@ -22,8 +26,7 @@ import java.util.function.Consumer;
 
 public class AiHelpClient {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-    private static volatile HttpClient httpClient;
+        private static volatile HttpClient httpClient;
 
     private static HttpClient client() {
         if (httpClient == null) {
@@ -191,15 +194,16 @@ public class AiHelpClient {
      * cache read renews it, so follow-ups keep it warm, while the 1-hour lifetime doubles the
      * write cost for questions too sparse to repay it.
      */
-    static com.fasterxml.jackson.databind.node.ArrayNode cachedSystem(List<String> systemBlocks) {
-        var system = JSON.createArrayNode();
+    static JqArray cachedSystem(List<String> systemBlocks) {
+        var system = JqArray.arrayBuilder();
         for (var text : systemBlocks) {
-            var block = system.addObject();
-            block.put("type", "text");
-            block.put("text", text);
-            block.putObject("cache_control").put("type", "ephemeral");
+            system.add(JqObject.builder(3)
+                    .put("type", "text")
+                    .put("text", text)
+                    .put("cache_control", JqObject.builder(1).put("type", "ephemeral").build())
+                    .build());
         }
-        return system;
+        return system.build();
     }
 
     private static SpawnConfig.ClaudeAccount claudeAccount(SpawnConfig config, Target target) throws IOException {
@@ -214,22 +218,22 @@ public class AiHelpClient {
     private static Usage streamAnthropic(String question, List<String> systemBlocks, String model,
                                          SpawnConfig.ClaudeAccount account,
                                          Consumer<String> onChunk) throws IOException {
-        var body = JSON.createObjectNode();
-        body.put("model", model);
-        body.put("max_tokens", 4096);
-        body.put("stream", true);
-        body.set("system", cachedSystem(systemBlocks));
-        var messages = body.putArray("messages");
-        var msg = messages.addObject();
-        msg.put("role", "user");
-        msg.put("content", question);
+        var body = JqObject.builder(5)
+                .put("model", model)
+                .put("max_tokens", 4096L)
+                .put("stream", true)
+                .put("system", cachedSystem(systemBlocks))
+                .put("messages", JqArray.arrayBuilder()
+                        .add(JqObject.builder(2).put("role", "user").put("content", question).build())
+                        .build())
+                .build();
 
         var builder = HttpRequest.newBuilder()
                 .uri(URI.create("https://api.anthropic.com/v1/messages"))
                 .header("Content-Type", "application/json")
                 .header("anthropic-version", "2023-06-01")
                 .timeout(Duration.ofSeconds(120))
-                .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)));
+                .POST(HttpRequest.BodyPublishers.ofString(body.toJsonString()));
 
         builder.header("x-api-key", account.getApiKey());
 
@@ -241,15 +245,15 @@ public class AiHelpClient {
                                       Consumer<String> onChunk) throws IOException {
         var gcpToken = getGcloudAccessToken();
 
-        var body = JSON.createObjectNode();
-        body.put("anthropic_version", "vertex-2023-10-16");
-        body.put("max_tokens", 4096);
-        body.put("stream", true);
-        body.set("system", cachedSystem(systemBlocks));
-        var messages = body.putArray("messages");
-        var msg = messages.addObject();
-        msg.put("role", "user");
-        msg.put("content", question);
+        var body = JqObject.builder(5)
+                .put("anthropic_version", "vertex-2023-10-16")
+                .put("max_tokens", 4096L)
+                .put("stream", true)
+                .put("system", cachedSystem(systemBlocks))
+                .put("messages", JqArray.arrayBuilder()
+                        .add(JqObject.builder(2).put("role", "user").put("content", question).build())
+                        .build())
+                .build();
 
         var region = account.getCloudMlRegion();
         var project = account.getVertexProjectId();
@@ -263,7 +267,7 @@ public class AiHelpClient {
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + gcpToken)
                 .timeout(Duration.ofSeconds(120))
-                .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)))
+                .POST(HttpRequest.BodyPublishers.ofString(body.toJsonString()))
                 .build();
 
         return processStream(sendStream(request), onChunk);
@@ -272,25 +276,23 @@ public class AiHelpClient {
     private static Usage streamOpenAI(String question, String systemPrompt, String model,
                                       SpawnConfig.OpenaiConfig openai,
                                       Consumer<String> onChunk) throws IOException {
-        var body = JSON.createObjectNode();
-        body.put("model", model);
-        body.put("stream", true);
-        // Streamed responses only report token usage when asked to, in a final chunk.
-        body.putObject("stream_options").put("include_usage", true);
-        var messages = body.putArray("messages");
-        var sysMsg = messages.addObject();
-        sysMsg.put("role", "system");
-        sysMsg.put("content", systemPrompt);
-        var userMsg = messages.addObject();
-        userMsg.put("role", "user");
-        userMsg.put("content", question);
+        var body = JqObject.builder(4)
+                .put("model", model)
+                .put("stream", true)
+                // Streamed responses only report token usage when asked to, in a final chunk.
+                .put("stream_options", JqObject.builder(1).put("include_usage", true).build())
+                .put("messages", JqArray.arrayBuilder()
+                        .add(JqObject.builder(2).put("role", "system").put("content", systemPrompt).build())
+                        .add(JqObject.builder(2).put("role", "user").put("content", question).build())
+                        .build())
+                .build();
 
         var request = HttpRequest.newBuilder()
                 .uri(URI.create("https://api.openai.com/v1/chat/completions"))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + openai.effectiveApiKey())
                 .timeout(Duration.ofSeconds(120))
-                .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)))
+                .POST(HttpRequest.BodyPublishers.ofString(body.toJsonString()))
                 .build();
 
         return processOpenAiStream(sendStream(request), onChunk);
@@ -304,14 +306,14 @@ public class AiHelpClient {
                 if (!line.startsWith("data: ")) continue;
                 var data = line.substring(6).strip();
                 if ("[DONE]".equals(data)) break;
-                var node = JSON.readTree(data);
-                var text = node.path("choices").path(0).path("delta").path("content").asText(null);
+                var node = JqValues.parse(data);
+                var text = node.getField("choices").getElement(0).getField("delta").pathText("content", null);
                 if (text != null) onChunk.accept(text);
-                var reported = node.path("usage");
+                var reported = node.getField("usage");
                 if (reported.isObject()) {
-                    long cached = reported.path("prompt_tokens_details").path("cached_tokens").asLong(0);
-                    usage = new Usage(reported.path("prompt_tokens").asLong(0) - cached, cached, 0,
-                            reported.path("completion_tokens").asLong(0));
+                    long cached = Jjq.longOr(reported.getField("prompt_tokens_details").getField("cached_tokens"), 0);
+                    usage = new Usage(Jjq.longOr(reported.getField("prompt_tokens"), 0) - cached, cached, 0,
+                            Jjq.longOr(reported.getField("completion_tokens"), 0));
                 }
             }
         }
@@ -328,23 +330,23 @@ public class AiHelpClient {
                 var data = line.substring(6).strip();
                 if ("[DONE]".equals(data)) break;
 
-                var node = JSON.readTree(data);
-                var type = node.path("type").asText("");
+                var node = JqValues.parse(data);
+                var type = node.pathText("type", "");
 
                 switch (type) {
                     case "message_start":
-                        usage = withUsage(usage, node.path("message").path("usage"));
+                        usage = withUsage(usage, node.getField("message").getField("usage"));
                         break;
                     case "message_delta":
-                        usage = withUsage(usage, node.path("usage"));
+                        usage = withUsage(usage, node.getField("usage"));
                         break;
                     case "content_block_start":
                         inTextBlock = "text".equals(
-                                node.path("content_block").path("type").asText());
+                                node.getField("content_block").pathText("type", ""));
                         break;
                     case "content_block_delta":
                         if (inTextBlock) {
-                            var text = node.path("delta").path("text").asText(null);
+                            var text = node.getField("delta").pathText("text", null);
                             if (text != null) onChunk.accept(text);
                         }
                         break;
@@ -352,7 +354,7 @@ public class AiHelpClient {
                         inTextBlock = false;
                         break;
                     case "error":
-                        var errMsg = node.path("error").path("message").asText("Unknown error");
+                        var errMsg = node.getField("error").pathText("message", "Unknown error");
                         throw new IOException("API stream error: " + errMsg);
                 }
             }
@@ -365,13 +367,13 @@ public class AiHelpClient {
      * carries the input counts and {@code message_delta} the final output count (and may
      * repeat the input counts), so each field keeps the latest value it was given.
      */
-    static Usage withUsage(Usage usage, com.fasterxml.jackson.databind.JsonNode reported) {
+    static Usage withUsage(Usage usage, JqValue reported) {
         if (!reported.isObject()) return usage;
         return new Usage(
-                reported.path("input_tokens").asLong(usage.inputTokens()),
-                reported.path("cache_read_input_tokens").asLong(usage.cacheReadTokens()),
-                reported.path("cache_creation_input_tokens").asLong(usage.cacheWriteTokens()),
-                reported.path("output_tokens").asLong(usage.outputTokens()));
+                Jjq.longOr(reported.getField("input_tokens"), usage.inputTokens()),
+                Jjq.longOr(reported.getField("cache_read_input_tokens"), usage.cacheReadTokens()),
+                Jjq.longOr(reported.getField("cache_creation_input_tokens"), usage.cacheWriteTokens()),
+                Jjq.longOr(reported.getField("output_tokens"), usage.outputTokens()));
     }
 
     private static String getGcloudAccessToken() throws IOException {
@@ -407,13 +409,13 @@ public class AiHelpClient {
         var detail = new StringBuilder("API error (").append(status);
         String message = null;
         try {
-            var tree = JSON.readTree(body);
-            message = tree.path("error").path("message").asText(null);
-            var type = tree.path("error").path("type").asText(null);
+            var tree = JqValues.parse(body);
+            message = tree.getField("error").pathText("message", null);
+            var type = tree.getField("error").pathText("type", null);
             if (type != null) detail.append(", ").append(type);
-            var requestId = tree.path("request_id").asText(null);
+            var requestId = tree.pathText("request_id", null);
             if (requestId != null) detail.append(", ").append(requestId);
-        } catch (IOException e) {
+        } catch (RuntimeException e) {
             // Not JSON -- fall through and report the raw body below.
         }
         detail.append("): ");

@@ -1,6 +1,6 @@
 package dev.incusspawn.incus;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
 
 public enum MachineType {
     CONTAINER,
@@ -14,7 +14,7 @@ public enum MachineType {
         return "virtual-machine".equals(apiType) ? VM : CONTAINER;
     }
 
-    public static MachineType fromIncus(JsonNode instanceMetadata) {
+    public static MachineType fromIncus(JqValue instanceMetadata) {
         if (instanceMetadata == null) return CONTAINER;
         return fromIncus(instanceMetadata.path("type").asText(""));
     }

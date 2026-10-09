@@ -1,6 +1,6 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ToolDef;
@@ -50,11 +50,11 @@ public final class McpClientRegistration {
             + InstanceSecret.GUEST_PATH + ")\"";
 
     /** The server's entry, as {@code claude mcp add-json} takes it. */
-    static final String SERVER_JSON = new ObjectMapper().createObjectNode()
+    static final String SERVER_JSON = JqObject.builder(3)
             .put("type", "http")
             .put("url", "https://" + ProxyConfig.MCP_DOMAIN + "/mcp")
             .put("headersHelper", HEADERS_HELPER)
-            .toString();
+            .build().toJsonString();
 
     /**
      * What the marker records: a digest of {@link #SERVER_JSON}, so a coordinator registered by

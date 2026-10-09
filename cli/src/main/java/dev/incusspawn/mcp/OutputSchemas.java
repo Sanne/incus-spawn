@@ -1,6 +1,6 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqObject;
 
 /**
  * What each tool's {@code structuredContent} holds: the contract with a program driving
@@ -32,7 +32,7 @@ final class OutputSchemas {
                 .string("summarised", "What it read, e.g. '12 lines, 345 bytes'", true);
     }
 
-    static ObjectNode listTemplates() {
+    static JqObject listTemplates() {
         var template = Schema.object()
                 .string("template", null, true)
                 .string("description", null, true)
@@ -51,7 +51,7 @@ final class OutputSchemas {
                 .build();
     }
 
-    static ObjectNode createInstance() {
+    static JqObject createInstance() {
         return Schema.object()
                 .string("instance", null, true)
                 .string("template", "The template it descends from", true)
@@ -65,7 +65,7 @@ final class OutputSchemas {
                 .build();
     }
 
-    static ObjectNode listInstances() {
+    static JqObject listInstances() {
         var task = Schema.object()
                 .string("task_id", null, true)
                 .choice("kind", null, true, KINDS)
@@ -90,7 +90,7 @@ final class OutputSchemas {
         return Schema.object().list("instances", null, true, instance).build();
     }
 
-    static ObjectNode adoptInstance() {
+    static JqObject adoptInstance() {
         return Schema.object()
                 .string("instance", null, true)
                 .string("template", null, true)
@@ -101,7 +101,7 @@ final class OutputSchemas {
                 .build();
     }
 
-    static ObjectNode exec() {
+    static JqObject exec() {
         return Schema.object()
                 .bool("background", "Started as a task: only task_id, instance and kind are set", true)
                 .string("task_id", null, false)
@@ -122,12 +122,12 @@ final class OutputSchemas {
     }
 
     /** {@code send_message}: a run started. */
-    static ObjectNode runStarted() {
+    static JqObject runStarted() {
         return runStartedSchema().build();
     }
 
     /** {@code delegate}: a run started, or the one an earlier call with its idempotency_key started. */
-    static ObjectNode delegate() {
+    static JqObject delegate() {
         return runStartedSchema().bool("replayed", REPLAYED, false).build();
     }
 
@@ -142,7 +142,7 @@ final class OutputSchemas {
                 .integer("max_turns", null, false);
     }
 
-    static ObjectNode taskStatus() {
+    static JqObject taskStatus() {
         return Schema.object()
                 .string("task_id", null, true)
                 .string("instance", null, true)
@@ -167,7 +167,7 @@ final class OutputSchemas {
                 .build();
     }
 
-    static ObjectNode waitAny() {
+    static JqObject waitAny() {
         var task = Schema.object()
                 .string("task_id", null, true)
                 .string("instance", null, true)
@@ -180,7 +180,7 @@ final class OutputSchemas {
                 .build();
     }
 
-    static ObjectNode taskResult() {
+    static JqObject taskResult() {
         return Schema.object()
                 .string("task_id", null, true)
                 .string("instance", null, true)
@@ -204,7 +204,7 @@ final class OutputSchemas {
                 .build();
     }
 
-    static ObjectNode getDiff() {
+    static JqObject getDiff() {
         var file = Schema.object()
                 .string("path", "Relative to its repository", true)
                 .nullableInteger("added", "Lines; null for a binary file", true)
@@ -221,7 +221,7 @@ final class OutputSchemas {
                 .build();
     }
 
-    static ObjectNode cancelTask() {
+    static JqObject cancelTask() {
         return Schema.object()
                 .string("task_id", null, true)
                 .string("instance", null, true)
@@ -229,14 +229,14 @@ final class OutputSchemas {
                 .build();
     }
 
-    static ObjectNode destroyInstance() {
+    static JqObject destroyInstance() {
         return Schema.object()
                 .string("instance", null, true)
                 .bool("already", "It was already gone", true)
                 .build();
     }
 
-    static ObjectNode stopInstance() {
+    static JqObject stopInstance() {
         return Schema.object()
                 .string("instance", null, true)
                 .bool("already", "It was already stopped", true)
@@ -244,7 +244,7 @@ final class OutputSchemas {
                 .build();
     }
 
-    static ObjectNode startInstance() {
+    static JqObject startInstance() {
         return Schema.object()
                 .string("instance", null, true)
                 .bool("already", "It was already running", true)
@@ -253,7 +253,7 @@ final class OutputSchemas {
                 .build();
     }
 
-    static ObjectNode instanceActivity() {
+    static JqObject instanceActivity() {
         return Schema.object()
                 .string("instance", null, true)
                 .string("counting_since", "ISO-8601: when the proxy began counting this instance's calls; "
@@ -270,7 +270,7 @@ final class OutputSchemas {
                 .build();
     }
 
-    static ObjectNode keepInstance() {
+    static JqObject keepInstance() {
         return Schema.object()
                 .string("instance", null, true)
                 .build();

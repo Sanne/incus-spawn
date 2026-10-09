@@ -80,8 +80,8 @@ class ApiActivityProxyTest {
         listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
         registry = new InstanceRegistry(new IncusClient() {
             @Override
-            public String listJsonConfig() {
-                return listing;
+            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
+                return io.hyperfoil.tools.jjq.value.JqValues.parse(listing);
             }
         });
         registry.refresh();

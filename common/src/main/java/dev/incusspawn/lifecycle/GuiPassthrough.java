@@ -1,6 +1,7 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.BuildOutput;
@@ -132,7 +133,7 @@ public final class GuiPassthrough {
      * {@link #configureGui} sets {@code environment.WAYLAND_DISPLAY} before it pushes the
      * profile.d/tmpfiles.d scripts, so those scripts never exist without the config keys.
      */
-    static boolean hasGui(JsonNode instance) {
+    static boolean hasGui(JqValue instance) {
         var devices = instance.path("devices");
         if (devices.has("gpu") || devices.has("xdg-runtime")) return true;
         var config = instance.path("config");

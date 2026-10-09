@@ -1,12 +1,17 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.annotation.JsonAnyGetter;
-import com.fasterxml.jackson.annotation.JsonAnySetter;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import io.hyperfoil.tools.jjq.mapper.JqAccess;
+import io.hyperfoil.tools.jjq.mapper.JqAnyGetter;
+import io.hyperfoil.tools.jjq.mapper.JqAnySetter;
+import io.hyperfoil.tools.jjq.mapper.JqInclude;
+import io.hyperfoil.tools.jjq.mapper.JqEnum;
+import io.hyperfoil.tools.jjq.mapper.JqMapped;
+import io.hyperfoil.tools.jjq.mapper.JqVisibility;
+import io.hyperfoil.tools.jjq.mapper.JqName;
+import io.hyperfoil.tools.jjq.value.JqNull;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqString;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
@@ -20,28 +25,21 @@ import java.nio.file.Path;
  * Global incus-spawn configuration stored in ~/.config/incus-spawn/config.yaml
  */
 @RegisterForReflection
-@JsonIgnoreProperties(ignoreUnknown = true)
+@JqMapped
 public class SpawnConfig {
-
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory())
-            .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
-
-    /** For {@link #tree()}; separate from YAML so the view is a plain node, not YAML-flavoured. */
-    private static final ObjectMapper TREE = new ObjectMapper();
 
     /**
      * This config as a navigable tree.
      *
      * <p>Credential accounts are read off the serialized shape rather than typed fields -- that
      * is what lets a namespace isx has no Java for have accounts at all -- so several callers
-     * need this view. Built here so none of them constructs an {@code ObjectMapper} of its own,
-     * which is one of Jackson's most expensive objects and was being created per lookup.
+     * need this view.
      *
      * <p>Deliberately not cached: this object is mutable, and a stale tree would answer for a
      * credential that had just been changed. Hold the result when doing several lookups.
      */
-    public com.fasterxml.jackson.databind.JsonNode tree() {
-        return TREE.valueToTree(this);
+    public JqValue tree() {
+        return Jjq.mapper().toJqValue(this);
     }
 
     private ClaudeConfig claude = new ClaudeConfig();
@@ -50,65 +48,61 @@ public class SpawnConfig {
     private OpenaiConfig openai = new OpenaiConfig();
     private java.util.List<String> features = java.util.List.of();
     private java.util.List<String> searchPaths = java.util.List.of();
-    @JsonProperty(value = "host-path", access = JsonProperty.Access.WRITE_ONLY)
+    @JqAccess(JqAccess.Access.WRITE_ONLY)
+    @JqName("host-path")
     private String hostPath = "";
-    @JsonProperty("host-paths")
+    @JqName("host-paths")
     private java.util.List<String> hostPaths = java.util.List.of();
-    @JsonProperty("repo-paths")
+    @JqName("repo-paths")
     private Map<String, String> repoPaths = Map.of();
-    @JsonProperty("incus-bridge-gateway")
+    @JqName("incus-bridge-gateway")
     private String incusBridgeGateway = "";
-    @JsonProperty("auto-clone-repos")
+    @JqName("auto-clone-repos")
     private String autoCloneRepos = "";
     // Escape hatch for the TUI's live refresh (Incus event subscription plus its polling
     // fallback). Null means the default, on, and is never written back, so saving a config
     // doesn't pin today's default into every user's file.
-    @JsonProperty("tui-live-refresh")
-    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    @JqName("tui-live-refresh")
+    @JqInclude(JqInclude.Include.NON_NULL)
     private Boolean tuiLiveRefresh;
     // How long the proxy trusts a cached Maven/Gradle artifact's last confirmation with
     // upstream (ArtifactCacheConfig). Kept as the raw YAML value, so any shape loads and is
     // written back as it was; null means the defaults, and is never written back.
-    @JsonProperty("artifact-cache")
-    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    @JqName("artifact-cache")
+    @JqInclude(JqInclude.Include.NON_NULL)
     private Object artifactCache;
-    @JsonProperty("ready-timeouts")
-    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    @JqName("ready-timeouts")
+    @JqInclude(JqInclude.Include.NON_NULL)
     private Object readyTimeouts;
     // What `isx mcp` lets a local agent do. Null (absent) means nothing is approved, and is
     // never written back.
-    @JsonProperty("mcp")
-    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    @JqName("mcp")
+    @JqInclude(JqInclude.Include.NON_NULL)
     private McpConfig mcp;
     private Map<String, Object> extras = new java.util.LinkedHashMap<>();
 
     /** How a Claude account authenticates. Named for what the credential is, not what isx uses it for. */
+    /**
+     * Lenient by design (see {@code onUnknown = NULL}): load() answers a mapping
+     * error with a blank SpawnConfig, so a single typo here would otherwise discard
+     * host paths, tokens and all -- and the next save would persist those empty
+     * defaults over the real file. A null type falls back to
+     * {@link ClaudeAccount#effectiveType()}, which infers from the fields that are
+     * set; an account that still cannot be identified is dropped by the
+     * isComplete() filter.
+     */
+    @JqEnum(normalize = {JqEnum.Normalize.TRIM, JqEnum.Normalize.LOWERCASE,
+            JqEnum.Normalize.SEPARATOR_FOLD}, onUnknown = JqEnum.OnUnknown.NULL)
     public enum ClaudeAccountType {
-        API_KEY("api-key"),
-        OAUTH("oauth"),
-        VERTEX("vertex");
+        @JqName("api-key") API_KEY("api-key"),
+        @JqName("oauth") OAUTH("oauth"),
+        @JqName("vertex") VERTEX("vertex");
 
         private final String wireName;
 
         ClaudeAccountType(String wireName) { this.wireName = wireName; }
 
-        @com.fasterxml.jackson.annotation.JsonValue
         public String wireName() { return wireName; }
-
-        @com.fasterxml.jackson.annotation.JsonCreator
-        public static ClaudeAccountType fromWire(String value) {
-            if (value == null) return null;
-            var normalized = value.strip().toLowerCase(java.util.Locale.ROOT).replace('_', '-');
-            for (var type : values()) {
-                if (type.wireName.equals(normalized)) return type;
-            }
-            // Lenient by design: load() answers a mapping error with a blank SpawnConfig, so a
-            // single typo here would otherwise discard host paths, tokens and all -- and the next
-            // save would persist those empty defaults over the real file. A null type falls back
-            // to effectiveType(), which infers from the fields that are set; an account that still
-            // cannot be identified is dropped by the isComplete() filter.
-            return null;
-        }
     }
 
     /**
@@ -116,12 +110,9 @@ public class SpawnConfig {
      * run as different accounts; {@link ClaudeConfig#account()} picks the one to use.
      */
     @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    @com.fasterxml.jackson.annotation.JsonAutoDetect(
-            fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY,
-            getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE,
-            isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
-    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
+    @JqInclude(JqInclude.Include.NON_EMPTY)
+    @JqVisibility(getters = JqVisibility.Visibility.NONE, isGetters = JqVisibility.Visibility.NONE)
+    @JqMapped
     public static class ClaudeAccount {
         private ClaudeAccountType type;
         private String apiKey = "";
@@ -212,12 +203,9 @@ public class SpawnConfig {
         private static String orNotSet(String value) { return value.isBlank() ? "<not set>" : value; }
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    @com.fasterxml.jackson.annotation.JsonAutoDetect(
-            fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY,
-            getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE,
-            isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
-    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
+    @JqInclude(JqInclude.Include.NON_EMPTY)
+    @JqVisibility(getters = JqVisibility.Visibility.NONE, isGetters = JqVisibility.Visibility.NONE)
+    @JqMapped
     public static class ClaudeConfig {
         /** Prefix of tokens minted by 'claude setup-token'. */
         public static final String OAUTH_TOKEN_PREFIX = "sk-ant-oat01-";
@@ -233,7 +221,7 @@ public class SpawnConfig {
         // so a config.yaml written by an older isx (or copied between machines) keeps working.
         // NON_DEFAULT rather than NON_EMPTY: a primitive false is not "empty", and a stray
         // 'useVertex: false' alongside an accounts block reads like a contradiction.
-        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_DEFAULT)
+        @JqInclude(JqInclude.Include.NON_DEFAULT)
         private boolean useVertex;
         private String cloudMlRegion = "";
         private String vertexProjectId = "";
@@ -241,7 +229,7 @@ public class SpawnConfig {
         private String oauthToken = "";
 
         private Map<String, ClaudeAccount> accounts = new java.util.LinkedHashMap<>();
-        @JsonProperty("default")
+        @JqName("default")
         private String defaultAccount = "";
 
         public void setUseVertex(boolean useVertex) { this.useVertex = useVertex; }
@@ -272,16 +260,18 @@ public class SpawnConfig {
          */
         public static final AccountShape ACCOUNT_SHAPE = new AccountShape() {
             @Override
-            public boolean hasFlatCredential(JsonNode namespace) {
+            public boolean hasFlatCredential(JqValue namespace) {
                 var flat = bind(namespace, ClaudeConfig.class);
                 return flat != null && flat.legacyAccount() != null;
             }
 
             @Override
-            public com.fasterxml.jackson.databind.node.ObjectNode flatAccount(JsonNode namespace) {
+            public JqValue flatAccount(JqValue namespace) {
                 var flat = bind(namespace, ClaudeConfig.class);
                 var legacy = flat == null ? null : flat.legacyAccount();
-                return legacy == null ? TREE.createObjectNode() : TREE.valueToTree(legacy);
+                return legacy == null
+                        ? JqObject.builder(0).build()
+                        : Jjq.mapper().toJqValue(legacy);
             }
 
             @Override
@@ -290,7 +280,7 @@ public class SpawnConfig {
             }
 
             @Override
-            public String problem(JsonNode account, JsonNode namespace) {
+            public String problem(JqValue account, JqValue namespace) {
                 var typed = bind(account, ClaudeAccount.class);
                 if (typed == null || typed.effectiveType() == null) return "it holds no credential";
                 if (typed.isComplete()) return "";
@@ -298,20 +288,18 @@ public class SpawnConfig {
             }
         };
 
-        private static <T> T bind(JsonNode node, Class<T> type) {
+        private static <T> T bind(JqValue node, Class<T> type) {
             if (node == null || !node.isObject()) return null;
             try {
-                return TREE.treeToValue(node, type);
+                return Jjq.mapper().fromJqValue(node, type);
             } catch (Exception e) {
                 return null;
             }
         }
 
         /** This namespace alone, placed where {@link AccountResolver} expects to find it. */
-        private JsonNode asConfigTree() {
-            var root = TREE.createObjectNode();
-            root.set(NAMESPACE, TREE.valueToTree(this));
-            return root;
+        private JqValue asConfigTree() {
+            return JqObject.ofEntries(NAMESPACE, Jjq.mapper().toJqValue(this));
         }
 
         /** The typed account a resolved name refers to -- the flat credential for {@code default} on a pre-accounts file. */
@@ -509,14 +497,13 @@ public class SpawnConfig {
      * <p>Accounts are read generically off the serialized tree by {@link AccountResolver}, so
      * nothing here needs to know their shape.
      */
-    @JsonIgnoreProperties(ignoreUnknown = true)
     public abstract static class NamespaceConfig {
         private final Map<String, Object> extras = new java.util.LinkedHashMap<>();
 
-        @com.fasterxml.jackson.annotation.JsonAnySetter
+        @JqAnySetter
         public void setExtra(String key, Object value) { extras.put(key, value); }
 
-        @com.fasterxml.jackson.annotation.JsonAnyGetter
+        @JqAnyGetter
         public Map<String, Object> getExtras() { return extras; }
 
         /** The config namespace this class holds, matching its tool's {@code config-namespace}. */
@@ -533,8 +520,7 @@ public class SpawnConfig {
          */
         public String defaultValue(String key) {
             var namespace = namespace();
-            var tree = TREE.createObjectNode();
-            tree.set(namespace, TREE.valueToTree(this));
+            var tree = JqObject.ofEntries(namespace, Jjq.mapper().toJqValue(this));
             var shape = AccountResolver.shapeOf(Map.of(), namespace);
             var account = AccountResolver.effectiveAccount(tree, namespace, shape, null);
             return AccountResolver.value(tree, namespace, account, key);
@@ -544,8 +530,8 @@ public class SpawnConfig {
     // NON_EMPTY, like ClaudeConfig: once a credential moves into an account the flat fields
     // are blank, and writing them back as "" makes an older isx read the namespace as
     // configured-but-empty rather than simply absent.
-    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqInclude(JqInclude.Include.NON_EMPTY)
+    @JqMapped
     public static class GitHubConfig extends NamespaceConfig {
         private String token = "";
         private String email = "";
@@ -558,8 +544,8 @@ public class SpawnConfig {
         @Override protected String namespace() { return "github"; }
     }
 
-    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqInclude(JqInclude.Include.NON_EMPTY)
+    @JqMapped
     public static class BobConfig extends NamespaceConfig {
         private String apiKey = "";
         private boolean licenseConsent;
@@ -576,8 +562,8 @@ public class SpawnConfig {
         @Override protected String namespace() { return "bob"; }
     }
 
-    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqInclude(JqInclude.Include.NON_EMPTY)
+    @JqMapped
     public static class OpenaiConfig extends NamespaceConfig {
         private String apiKey = "";
 
@@ -636,10 +622,10 @@ public class SpawnConfig {
     public McpConfig mcp() { return mcp != null ? mcp : new McpConfig(); }
     public void setMcp(McpConfig mcp) { this.mcp = mcp; }
     public void setAutoCloneRepos(String autoCloneRepos) { this.autoCloneRepos = autoCloneRepos == null ? "" : autoCloneRepos; }
-    @JsonAnySetter
+    @JqAnySetter
     public void setExtra(String key, Object value) { extras.put(key, value); }
 
-    @JsonAnyGetter
+    @JqAnyGetter
     public Map<String, Object> getExtras() { return extras; }
 
     /**
@@ -653,29 +639,59 @@ public class SpawnConfig {
     public void removeConfigPath(String dotPath) {
         var segments = dotPath.split("\\.");
         if (segments.length == 0) return;
-        var tree = (com.fasterxml.jackson.databind.node.ObjectNode) YAML.valueToTree(this);
-        var chain = new java.util.ArrayList<com.fasterxml.jackson.databind.node.ObjectNode>();
-        var node = tree;
-        for (int i = 0; i < segments.length - 1; i++) {
-            chain.add(node);
-            var child = node.get(segments[i]);
-            if (!(child instanceof com.fasterxml.jackson.databind.node.ObjectNode object)) return;
-            node = object;
-        }
-        chain.add(node);
-        node.remove(segments[segments.length - 1]);
-        for (int i = chain.size() - 1; i > 0; i--) {
-            if (!chain.get(i).isEmpty()) break;
-            chain.get(i - 1).remove(segments[i - 1]);
-        }
+        if (!walkable(tree(), segments)) return;
+        var pruned = removePath(tree(), segments, 0);
+        // Re-read the pruned tree into a fresh instance and copy it over this one,
+        // so a removed key cannot survive as a stale field.
+        var next = pruned == null ? JqObject.builder(0).build() : pruned;
         try {
-            // readerForUpdating merges rather than replaces, so a removed key would survive.
-            // Re-read the pruned tree into a fresh instance and copy it over this one.
-            var replacement = YAML.treeToValue(tree, SpawnConfig.class);
-            copyFrom(replacement);
+            copyFrom(Jjq.mapper().fromJqValue(next, SpawnConfig.class));
         } catch (Exception e) {
             throw new RuntimeException("Failed to remove config path " + dotPath, e);
         }
+    }
+
+    /** Whether every intermediate of the path is an object (a failed walk is a no-op). */
+    private static boolean walkable(JqValue node, String[] segments) {
+        for (int i = 0; i < segments.length - 1; i++) {
+            if (!(node instanceof JqObject object)) return false;
+            node = object.getField(segments[i]);
+        }
+        return node instanceof JqObject;
+    }
+
+    /**
+     * Remove {@code segments[i..]} below an object, pruning objects left empty.
+     * Returns the rebuilt node, or null when it pruned away entirely. The caller
+     * verified the walk first ({@link #walkable}), so intermediates are objects.
+     */
+    private static JqValue removePath(JqValue node, String[] segments, int i) {
+        if (!(node instanceof JqObject object)) return node;
+        if (i == segments.length - 1) {
+            var rebuilt = withoutKey(object, segments[i]);
+            return rebuilt.size() == 0 ? null : rebuilt;
+        }
+        var child = object.getField(segments[i]);
+        if (!(child instanceof JqObject)) return node;
+        var pruned = removePath(child, segments, i + 1);
+        var builder = JqObject.builder(object.size());
+        object.forEach((key, value) -> {
+            if (key.equals(segments[i])) {
+                if (pruned != null) builder.put(key, pruned);
+            } else {
+                builder.put(key, value);
+            }
+        });
+        var rebuilt = builder.build();
+        return rebuilt.size() == 0 ? null : rebuilt;
+    }
+
+    private static JqObject withoutKey(JqObject object, String key) {
+        var builder = JqObject.builder(object.size());
+        object.forEach((k, v) -> {
+            if (!k.equals(key)) builder.put(k, v);
+        });
+        return builder.build();
     }
 
     /**
@@ -685,28 +701,51 @@ public class SpawnConfig {
      * absent; refuses to overwrite an existing {@code to}.
      */
     public void renameConfigKey(String parentPath, String from, String to) {
-        var tree = (com.fasterxml.jackson.databind.node.ObjectNode) YAML.valueToTree(this);
-        com.fasterxml.jackson.databind.JsonNode node = tree;
+        var node = tree();
         for (var segment : parentPath.split("\\.")) {
-            node = node.get(segment);
-            if (node == null) return;
+            node = node.getField(segment);
+            if (!(node instanceof JqObject)) return;
         }
-        if (!(node instanceof com.fasterxml.jackson.databind.node.ObjectNode parent)
-                || !parent.has(from) || from.equals(to)) return;
-        if (parent.has(to)) {
+        var parent = (JqObject) node;
+        if (!hasKey(parent, from) || from.equals(to)) return;
+        if (hasKey(parent, to)) {
             throw new IllegalArgumentException("'" + to + "' already exists under " + parentPath);
         }
-        var entries = new java.util.ArrayList<java.util.Map.Entry<String, com.fasterxml.jackson.databind.JsonNode>>();
-        parent.fields().forEachRemaining(entries::add);
-        parent.removeAll();
-        for (var entry : entries) {
-            parent.set(entry.getKey().equals(from) ? to : entry.getKey(), entry.getValue());
-        }
+        var renamed = renameKey(parent, from, to);
+        var segments = parentPath.split("\\.");
+        var rebuilt = segments.length == 0 || (segments.length == 1 && segments[0].isEmpty())
+                ? renamed : setChild(tree(), segments, 0, renamed);
         try {
-            copyFrom(YAML.treeToValue(tree, SpawnConfig.class));
+            copyFrom(Jjq.mapper().fromJqValue(rebuilt, SpawnConfig.class));
         } catch (Exception e) {
             throw new RuntimeException("Failed to rename " + parentPath + "." + from, e);
         }
+    }
+
+    private static boolean hasKey(JqObject object, String key) {
+        return object.keys().contains(key);
+    }
+
+    private static JqObject renameKey(JqObject parent, String from, String to) {
+        var builder = JqObject.builder(parent.size());
+        parent.forEach((key, value) -> builder.put(key.equals(from) ? to : key, value));
+        return builder.build();
+    }
+
+    /** Rebuild the tree with {@code segments[i..]} replaced by {@code leaf}. */
+    private static JqValue setChild(JqValue node, String[] segments, int i, JqValue leaf) {
+        if (!(node instanceof JqObject object)) return node;
+        var builder = JqObject.builder(object.size());
+        object.forEach((key, value) -> {
+            if (key.equals(segments[i]) && i == segments.length - 1) {
+                builder.put(key, leaf);
+            } else if (key.equals(segments[i])) {
+                builder.put(key, setChild(value, segments, i + 1, leaf));
+            } else {
+                builder.put(key, value);
+            }
+        });
+        return builder.build();
     }
 
     /** Overwrite every field from another instance, for a whole-tree replacement. */
@@ -732,22 +771,43 @@ public class SpawnConfig {
     public void setConfigByPath(String dotPath, String value) {
         var segments = dotPath.split("\\.");
         if (segments.length == 0) return;
-        var tree = YAML.valueToTree(this);
-        var node = tree;
-        for (int i = 0; i < segments.length - 1; i++) {
-            var child = node.get(segments[i]);
-            if (child == null || !child.isObject()) {
-                child = YAML.createObjectNode();
-                ((com.fasterxml.jackson.databind.node.ObjectNode) node).set(segments[i], child);
-            }
-            node = child;
-        }
-        ((com.fasterxml.jackson.databind.node.ObjectNode) node).put(segments[segments.length - 1], value);
+        var tree = setLeaf(tree(), segments, 0, value);
         try {
-            YAML.readerForUpdating(this).readValue(tree);
+            // Merge semantics: only the addressed keys change, everything else stays.
+            copyFrom(Jjq.mapper().fromJqValue(tree, SpawnConfig.class));
         } catch (Exception e) {
             throw new RuntimeException("Failed to apply config path " + dotPath, e);
         }
+    }
+
+    /** Rebuild the tree with the dotted path set to a string, creating intermediate objects. */
+    private static JqValue setLeaf(JqValue node, String[] segments, int i, String value) {
+        var leaf = i == segments.length - 1
+                ? (JqValue) JqString.of(value)
+                : setLeaf(childAt(node, segments[i]), segments, i + 1, value);
+        if (!(node instanceof JqObject object)) {
+            return JqObject.builder(1).put(segments[i], leaf).build();
+        }
+        var builder = JqObject.builder(object.size() + 1);
+        var placed = false;
+        for (var key : object.keys()) {
+            if (key.equals(segments[i])) {
+                builder.put(key, leaf);
+                placed = true;
+            } else {
+                builder.put(key, object.getField(key));
+            }
+        }
+        if (!placed) builder.put(segments[i], leaf);
+        return builder.build();
+    }
+
+    private static JqValue childAt(JqValue node, String segment) {
+        if (node instanceof JqObject object) {
+            var child = object.getField(segment);
+            if (child instanceof JqObject) return child;
+        }
+        return JqObject.builder(0).build();
     }
 
     public static Path configDir() {
@@ -760,7 +820,7 @@ public class SpawnConfig {
             return new SpawnConfig();
         }
         try {
-            var config = YAML.readValue(configFile.toFile(), SpawnConfig.class);
+            var config = Jjq.spawnConfig(configFile);
             config.migrateHostPath();
             return config;
         } catch (IOException e) {
@@ -786,7 +846,7 @@ public class SpawnConfig {
             migrateHostPath();
             var configFile = configDir().resolve("config.yaml");
             Files.createDirectories(configFile.getParent());
-            YAML.writeValue(configFile.toFile(), this);
+            Jjq.writeYaml(configFile, this);
             // Restrict permissions - config contains tokens
             configFile.toFile().setReadable(false, false);
             configFile.toFile().setReadable(true, true);

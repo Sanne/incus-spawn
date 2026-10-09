@@ -55,7 +55,7 @@ public final class NamespaceAccounts {
     public static void materialize(SpawnConfig config, String namespace, AccountShape shape) {
         var tree = config.tree();
         if (AccountResolver.hasAccountsBlock(tree, namespace)) return;
-        var ns = tree.get(namespace);
+        var ns = tree.getField(namespace);
         if (ns == null || !ns.isObject() || !shape.hasFlatCredential(ns)) return;
         var account = shape.flatAccount(ns);
         leaves("", account, (key, value) ->
@@ -170,14 +170,17 @@ public final class NamespaceAccounts {
         return namespace + "." + AccountResolver.ACCOUNTS_KEY + "." + account + "." + key;
     }
 
-    private static void leaves(String prefix, com.fasterxml.jackson.databind.JsonNode node,
+    private static void leaves(String prefix, io.hyperfoil.tools.jjq.value.JqValue node,
                                java.util.function.BiConsumer<String, String> sink) {
-        node.fields().forEachRemaining(e -> {
-            var key = prefix.isEmpty() ? e.getKey() : prefix + "." + e.getKey();
-            if (e.getValue().isObject()) {
-                leaves(key, e.getValue(), sink);
-            } else if (e.getValue().isValueNode() && !e.getValue().asText().isBlank()) {
-                sink.accept(key, e.getValue().asText());
+        if (!(node instanceof io.hyperfoil.tools.jjq.value.JqObject object)) return;
+        object.forEach((key, value) -> {
+            var dotted = prefix.isEmpty() ? key : prefix + "." + key;
+            if (value.isObject()) {
+                leaves(dotted, value, sink);
+            } else if (!value.isContainer()) {
+                // Jackson parity: NullNode is a value node reading as "null".
+                var text = value.isNull() ? "null" : value.asText();
+                if (!text.isBlank()) sink.accept(dotted, text);
             }
         });
     }

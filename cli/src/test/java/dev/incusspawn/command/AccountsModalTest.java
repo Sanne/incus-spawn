@@ -2,12 +2,11 @@ package dev.incusspawn.command;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import dev.incusspawn.config.Jjq;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.GhSetup;
@@ -118,7 +117,7 @@ class AccountsModalTest {
 
     @Test
     void rowsComeFromTheConfigAndThePins() throws Exception {
-        var config = new ObjectMapper(new YAMLFactory()).readValue("""
+        var config = Jjq.spawnConfig("""
                 claude:
                   accounts:
                     personal:
@@ -129,7 +128,7 @@ class AccountsModalTest {
                   default: personal
                 github:
                   token: "ghp_flat"
-                """, SpawnConfig.class);
+                """);
         var setups = new java.util.LinkedHashMap<String, ToolSetup>();
         setups.put("claude", new ClaudeSetup());
         setups.put("github", new GhSetup());

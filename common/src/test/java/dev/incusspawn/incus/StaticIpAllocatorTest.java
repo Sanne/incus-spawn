@@ -1,6 +1,7 @@
 package dev.incusspawn.incus;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqNull;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
@@ -10,9 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class StaticIpAllocatorTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
-    @Test
+        @Test
     void pickFreeIpReturnsFirstAvailable() {
         var cidr = CidrUtils.parseCidr("10.166.11.1/24");
         var claimed = new HashSet<Long>();
@@ -80,7 +79,7 @@ class StaticIpAllocatorTest {
 
     @Test
     void collectClaimedIpsFromDevicesJson() throws Exception {
-        var devices = JSON.readTree("""
+        var devices = JqValues.parse("""
                 {
                     "eth0": {
                         "type": "nic",
@@ -102,7 +101,7 @@ class StaticIpAllocatorTest {
 
     @Test
     void collectClaimedIpsIgnoresNonNicDevices() throws Exception {
-        var devices = JSON.readTree("""
+        var devices = JqValues.parse("""
                 {
                     "root": {
                         "type": "disk",
@@ -120,7 +119,7 @@ class StaticIpAllocatorTest {
 
     @Test
     void collectClaimedIpsIgnoresNicWithoutIp() throws Exception {
-        var devices = JSON.readTree("""
+        var devices = JqValues.parse("""
                 {
                     "eth0": {
                         "type": "nic",
@@ -137,13 +136,13 @@ class StaticIpAllocatorTest {
     @Test
     void collectClaimedIpsHandlesMissingNode() {
         var claimed = new HashSet<Long>();
-        StaticIpAllocator.collectClaimedIps(JSON.missingNode(), claimed);
+        StaticIpAllocator.collectClaimedIps(JqNull.NULL, claimed);
         assertTrue(claimed.isEmpty());
     }
 
     @Test
     void collectClaimedIpsHandlesMultipleNics() throws Exception {
-        var devices = JSON.readTree("""
+        var devices = JqValues.parse("""
                 {
                     "eth0": {
                         "type": "nic",

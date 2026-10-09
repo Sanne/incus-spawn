@@ -1,12 +1,11 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqArray;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.DownloadCache;
@@ -26,7 +25,6 @@ import java.util.function.Consumer;
 
 public final class HostResourceSetup {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
     private static final String OVERLAY_BASE = "/var/lib/incus-spawn/overlays";
     private static final String OVERLAY_CONF = "/etc/incus-spawn/overlay-mounts.conf";
     private static final String OVERLAY_SCRIPT = "/usr/local/sbin/incus-spawn-apply-overlays";
@@ -396,8 +394,8 @@ public final class HostResourceSetup {
      * removed device to {@code warn}.
      */
     public static void removeStaleDevices(IncusClient incus, String container,
-                                          JsonNode instanceMetadata, Consumer<String> warn) {
-        var hrJson = instanceMetadata.path("config").path(Metadata.HOST_RESOURCES).asText("");
+                                          JqValue instanceMetadata, Consumer<String> warn) {
+        var hrJson = instanceMetadata.getField("config").pathText(Metadata.HOST_RESOURCES, "");
         var resources = deserialize(hrJson);
         for (var hr : resources) {
             if ("copy".equals(hr.getMode())) continue;
@@ -490,18 +488,24 @@ public final class HostResourceSetup {
     }
 
     public static String serialize(List<ImageDef.HostResource> resources) {
-        try {
-            return JSON.writeValueAsString(resources);
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException("Failed to serialize host-resources", e);
+        var mapper = Jjq.mapper();
+        var array = JqArray.arrayBuilder();
+        for (var hr : resources) {
+            array.add(mapper.toJqValue(hr));
         }
+        return array.build().toJsonString();
     }
 
     public static List<ImageDef.HostResource> deserialize(String json) {
         if (json == null || json.isBlank()) return List.of();
         try {
-            return JSON.readValue(json, new TypeReference<>() {});
-        } catch (JsonProcessingException e) {
+            var mapper = Jjq.mapper();
+            var result = new java.util.ArrayList<ImageDef.HostResource>();
+            for (var e : JqValues.parse(json).asList()) {
+                result.add(mapper.fromJqValue(e, ImageDef.HostResource.class));
+            }
+            return result;
+        } catch (RuntimeException e) {
             System.err.println("Warning: could not parse host-resources metadata: " + e.getMessage());
             return List.of();
         }

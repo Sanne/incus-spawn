@@ -1,7 +1,5 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.SpawnConfig;
@@ -10,6 +8,7 @@ import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import dev.incusspawn.config.Jjq;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -20,7 +19,6 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith(TempHome.class)
 class ChangeAccountsTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     private static final String CONFIG = """
             claude:
@@ -56,7 +54,7 @@ class ChangeAccountsTest {
     }
 
     private static Map<String, String> change(FakeIncusDaemon daemon, Map<String, String> changes) throws Exception {
-        var config = YAML.readValue(CONFIG, SpawnConfig.class);
+        var config = Jjq.spawnConfig(CONFIG);
         return InstanceLifecycle.changeAccounts(daemon.client(), NAME, config,
                 dev.incusspawn.config.AccountSelection.namespaceSetups(config), changes, msg -> { }, msg -> { });
     }

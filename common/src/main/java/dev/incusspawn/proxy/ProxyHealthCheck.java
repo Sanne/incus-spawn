@@ -1,8 +1,9 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.util.BuildOutput;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.IncusClient;
@@ -46,8 +47,7 @@ public final class ProxyHealthCheck {
 
     private record HealthResult(boolean healthy, boolean dnsConfigured) {}
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
+    
     private ProxyHealthCheck() {}
 
     /**
@@ -269,11 +269,13 @@ public final class ProxyHealthCheck {
 
     static ProxyInfo parseProxyInfo(String json) {
         try {
-            var node = JSON.readTree(json);
-            var dnsNode = node.get("dnsConfigured");
-            var dnsConfigured = dnsNode == null ? true : (dnsNode.isBoolean() && dnsNode.asBoolean());
-            var driftNode = node.get("configDrifted");
-            var configDrifted = driftNode != null && driftNode.isBoolean() && driftNode.asBoolean();
+            var node = JqValues.parse(json);
+            // Missing reads as the healthy default; a present non-boolean is unhealthy.
+            // (The proxy writes booleans; this is only exactness against the old parse.)
+            var dnsConfigured = !(node instanceof io.hyperfoil.tools.jjq.value.JqObject dnsObj)
+                    || !dnsObj.keys().contains("dnsConfigured")
+                    || dnsObj.getField("dnsConfigured").asBoolean(false);
+            var configDrifted = node.getField("configDrifted").asBoolean(false);
             return new ProxyInfo(
                     textOrEmpty(node, "version"),
                     textOrEmpty(node, "gitSha"),
@@ -282,7 +284,7 @@ public final class ProxyHealthCheck {
                     configDrifted,
                     dnsConfigured,
                     textOrEmpty(node, "authError"),
-                    node.path("pid").canConvertToLong() ? node.path("pid").asLong() : -1);
+                    Jjq.longOr(node.getField("pid"), -1));
         } catch (Exception e) {
             return new ProxyInfo("", "", "", "", false, true, "");
         }
@@ -543,9 +545,9 @@ public final class ProxyHealthCheck {
         } catch (Exception ignored) {}
     }
 
-    private static String textOrEmpty(JsonNode node, String field) {
-        var child = node.get(field);
-        return child != null && child.isTextual() ? child.asText() : "";
+    private static String textOrEmpty(JqValue node, String field) {
+        var child = node.getField(field);
+        return child.isString() ? child.asText() : "";
     }
 
     private static String shortSha(String sha) {

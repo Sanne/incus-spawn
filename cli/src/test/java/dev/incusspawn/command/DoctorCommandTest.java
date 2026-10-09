@@ -1,7 +1,5 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.InstanceSubvolumes;
@@ -434,27 +432,29 @@ class DoctorCommandTest {
                 DoctorCommand.Finding.fail("Fail label", "", null)
         );
         var json = DoctorCommand.findingsToJson(findings);
-        var mapper = new ObjectMapper();
-        var root = mapper.readTree(json);
+        var root = io.hyperfoil.tools.jjq.value.JqValues.parse(json);
         assertTrue(root.isArray());
-        assertEquals(3, root.size());
+        assertEquals(3, root.arrayValue().size());
 
-        assertEquals("OK", root.get(0).get("status").asText());
-        assertEquals("Test label", root.get(0).get("label").asText());
-        assertEquals("some detail", root.get(0).get("detail").asText());
-        assertFalse(root.get(0).has("remediation"));
+        var first = (io.hyperfoil.tools.jjq.value.JqObject) root.arrayValue().get(0);
+        assertEquals("OK", first.path("status").asText());
+        assertEquals("Test label", first.path("label").asText());
+        assertEquals("some detail", first.path("detail").asText());
+        assertTrue(first.path("remediation").isMissingNode());
 
-        assertEquals("WARN", root.get(1).get("status").asText());
-        assertEquals("fix it", root.get(1).get("remediation").asText());
+        var second = (io.hyperfoil.tools.jjq.value.JqObject) root.arrayValue().get(1);
+        assertEquals("WARN", second.path("status").asText());
+        assertEquals("fix it", second.path("remediation").asText());
 
-        assertEquals("FAIL", root.get(2).get("status").asText());
-        assertEquals("", root.get(2).get("detail").asText());
+        var third = (io.hyperfoil.tools.jjq.value.JqObject) root.arrayValue().get(2);
+        assertEquals("FAIL", third.path("status").asText());
+        assertEquals("", third.path("detail").asText());
     }
 
     @Test
     void findingsToJsonEmptyListProducesEmptyArray() throws Exception {
         var json = DoctorCommand.findingsToJson(List.of());
-        assertEquals("[ ]", json);
+        assertEquals("[]", json);
     }
 
     // ---- Off-CoW-pool instance classification ----

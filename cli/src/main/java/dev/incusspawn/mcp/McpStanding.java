@@ -1,6 +1,7 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.incus.Metadata;
 
 import java.time.Instant;
@@ -42,11 +43,12 @@ public record McpStanding(State state, String purpose, String holder, String cli
     }
 
     /** Every instance's {@link Metadata#MCP_CALLER} grant in an Incus instance listing, by name. */
-    public static Map<String, String> callerGrants(JsonNode listing) {
+    public static Map<String, String> callerGrants(JqValue listing) {
         var grants = new HashMap<String, String>();
-        for (var node : listing) {
-            var grant = node.path("config").path(Metadata.MCP_CALLER).asText("");
-            if (!grant.isEmpty()) grants.put(node.path("name").asText(), grant);
+        for (var node : listing.asList()) {
+            if (!(node instanceof JqObject obj)) continue;
+            var grant = obj.getField("config").pathText(Metadata.MCP_CALLER, "");
+            if (!grant.isEmpty()) grants.put(obj.pathText("name", ""), grant);
         }
         return grants;
     }
@@ -57,14 +59,15 @@ public record McpStanding(State state, String purpose, String holder, String cli
      *
      * @param callerGrants {@link #callerGrants} of the same listing
      */
-    public static McpStanding fromListing(JsonNode instance, Map<String, String> callerGrants) {
-        var config = instance.path("config");
-        if (!config.has(Metadata.MCP_OWNER)) return null;
+    public static McpStanding fromListing(JqValue instance, Map<String, String> callerGrants) {
+        if (!(instance instanceof JqObject obj)) return null;
+        var config = obj.getField("config");
+        if (!(config instanceof JqObject cfg) || !cfg.keys().contains(Metadata.MCP_OWNER)) return null;
         var stamps = new HashMap<String, String>();
-        config.properties().forEach(e -> {
-            if (Metadata.isMcpKey(e.getKey())) stamps.put(e.getKey(), e.getValue().asText(""));
+        cfg.forEach((k, v) -> {
+            if (Metadata.isMcpKey(k)) stamps.put(k, v.asDisplayText(""));
         });
-        stamps.put(InstanceBackend.STATUS, instance.path("status").asText());
+        stamps.put(InstanceBackend.STATUS, obj.pathText("status", ""));
         return of(stamps, callerGrants);
     }
 

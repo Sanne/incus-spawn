@@ -1,6 +1,6 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
@@ -42,11 +42,11 @@ final class TemplateStaleness {
                  MachineType machineType) {
 
         /** {@code name} as Incus describes it, from one instance's metadata or a listing's entry. */
-        static Built of(String name, JsonNode instance) {
-            var config = instance.path("config");
-            return new Built(name, config.path(Metadata.CREATED).asText(""),
-                    config.path(Metadata.BUILD_VERSION).asText(""),
-                    config.path(Metadata.DEFINITION_SHA).asText(""), MachineType.fromIncus(instance));
+        static Built of(String name, JqValue instance) {
+            var config = instance.getField("config");
+            return new Built(name, config.pathText(Metadata.CREATED, ""),
+                    config.pathText(Metadata.BUILD_VERSION, ""),
+                    config.pathText(Metadata.DEFINITION_SHA, ""), MachineType.fromIncus(instance));
         }
     }
 

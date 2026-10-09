@@ -1,6 +1,7 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.AfterEach;
@@ -99,23 +100,23 @@ class TaskChangedNotificationTest {
                 + (optIn ? "{\"experimental\":{\"" + TaskWatcher.CAPABILITY + "\":{}}}" : "{}") + "}}");
     }
 
-    private JsonNode call(String tool, String args) throws Exception {
+    private JqValue call(String tool, String args) throws Exception {
         var id = nextId++;
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"tools/call\",\"params\":{\"name\":\""
                 + tool + "\",\"arguments\":" + args + "}}");
         server.awaitIdle();
         var result = out.byId(id).path("result");
-        assertFalse(result.path("isError").asBoolean(), result.toString());
+        assertFalse(result.path("isError").asBoolean(false), result.toString());
         return result;
     }
 
     private Tasks.Task delegate() throws Exception {
         var r = call("delegate", "{\"instruction\":\"fix the flaky test\",\"template\":\"tpl-agent\"}");
-        var id = JsonRpc.JSON.readTree(r.path("content").get(0).path("text").asText()).path("task_id").asText();
+        var id = JqValues.parse(r.path("content").getElement(0).path("text").asText()).path("task_id").asText();
         return tasks.require(id).task();
     }
 
-    private List<JsonNode> changes() {
+    private List<JqValue> changes() {
         return out.sent.stream().filter(m -> TaskWatcher.METHOD.equals(m.path("method").asText()))
                 .map(m -> m.path("params")).toList();
     }
@@ -157,8 +158,8 @@ class TaskChangedNotificationTest {
         var finished = changes().getLast();
         assertEquals(task.id(), finished.path("task_id").asText());
         assertEquals(task.instance(), finished.path("instance").asText());
-        assertEquals(1, finished.path("run").asInt());
-        assertEquals(3, finished.path("exit_code").asInt());
+        assertEquals(1, finished.path("run").asInt(0));
+        assertEquals(3, finished.path("exit_code").asInt(0));
         assertFalse(changes().getFirst().has("exit_code"), "a running task has none");
     }
 
@@ -209,7 +210,7 @@ class TaskChangedNotificationTest {
         var execs = backend.scripts.size();
         call("cancel_task", "{\"task_id\":\"" + task.id() + "\"}");
         assertEquals(List.of("running", "finished"), states());
-        assertEquals(143, changes().getLast().path("exit_code").asInt());
+        assertEquals(143, changes().getLast().path("exit_code").asInt(0));
         assertEquals(1, backend.scripts.size() - execs, "one exec cancels and says how it ended");
     }
 

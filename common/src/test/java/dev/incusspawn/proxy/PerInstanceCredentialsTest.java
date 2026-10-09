@@ -1,13 +1,12 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolSetup;
 import org.junit.jupiter.api.Test;
 
+import dev.incusspawn.config.Jjq;
 import java.util.List;
 import java.util.Map;
 
@@ -19,7 +18,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class PerInstanceCredentialsTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     private static final String TWO_CLAUDE_ACCOUNTS = """
             claude:
@@ -35,7 +33,7 @@ class PerInstanceCredentialsTest {
 
     @Test
     void selectionPicksTheNamedClaudeAccount() throws Exception {
-        var config = YAML.readValue(TWO_CLAUDE_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_CLAUDE_ACCOUNTS);
 
         assertEquals("sk-ant-api03-personal",
                 ProxyCredentials.forAccounts(config, Map.of()).anthropicApiKey());
@@ -47,7 +45,7 @@ class PerInstanceCredentialsTest {
 
     @Test
     void selectionCanPickAVertexAccountAlongsideAnApiKeyDefault() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 claude:
                   accounts:
                     console:
@@ -58,7 +56,7 @@ class PerInstanceCredentialsTest {
                       cloudMlRegion: europe-west1
                       vertexProjectId: acme-prod
                   default: console
-                """, SpawnConfig.class);
+                """);
 
         var vertex = ProxyCredentials.forAccounts(config, Map.of("claude", "gcp"));
         assertTrue(vertex.useVertex());
@@ -73,7 +71,7 @@ class PerInstanceCredentialsTest {
     /** Fail closed: a pin to a deleted account must not quietly serve the default. */
     @Test
     void pinningToAMissingAccountThrowsRatherThanFallingBack() throws Exception {
-        var config = YAML.readValue(TWO_CLAUDE_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_CLAUDE_ACCOUNTS);
         var e = assertThrows(AccountResolver.UnknownAccountException.class,
                 () -> ProxyCredentials.forAccounts(config, Map.of("claude", "deleted")));
         assertEquals("deleted", e.accountName());
@@ -87,10 +85,10 @@ class PerInstanceCredentialsTest {
      */
     @Test
     void pinningTheSynthesizedAccountOnAFlatConfigResolves() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 claude:
                   oauthToken: "sk-ant-oat01-legacy"
-                """, SpawnConfig.class);
+                """);
         var name = SpawnConfig.ClaudeConfig.LEGACY_ACCOUNT_NAME;
         assertEquals(name, config.getClaude().accountName());
 
@@ -126,7 +124,7 @@ class PerInstanceCredentialsTest {
 
     @Test
     void namedAccountsWorkForAnyNamespaceWithoutPerToolCode() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 github:
                   accounts:
                     personal:
@@ -134,7 +132,7 @@ class PerInstanceCredentialsTest {
                     acme:
                       token: "ghp_acme"
                   default: personal
-                """, SpawnConfig.class);
+                """);
         var tools = Map.of("github", toolWithNamespace("github"));
 
         var byDefault = ToolProxyResolver.resolve(config, tools, Map.of());
@@ -147,10 +145,10 @@ class PerInstanceCredentialsTest {
     /** A pre-accounts flat namespace keeps working untouched. */
     @Test
     void flatNamespaceStillResolves() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 github:
                   token: "ghp_flat"
-                """, SpawnConfig.class);
+                """);
         var resolved = ToolProxyResolver.resolve(config, Map.of("github", toolWithNamespace("github")), Map.of());
         assertEquals("Bearer ghp_flat", resolved.get(0).computeHeaderValue());
     }
@@ -161,13 +159,13 @@ class PerInstanceCredentialsTest {
      */
     @Test
     void accountOmittingAKeyFallsBackToTheFlatValue() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 github:
                   token: "ghp_shared"
                   accounts:
                     acme:
                       email: "bot@acme.example"
-                """, SpawnConfig.class);
+                """);
         var resolved = ToolProxyResolver.resolve(config,
                 Map.of("github", toolWithNamespace("github")), Map.of("github", "acme"));
         assertEquals("Bearer ghp_shared", resolved.get(0).computeHeaderValue());
@@ -181,7 +179,7 @@ class PerInstanceCredentialsTest {
      */
     @Test
     void domainsResolvableOnlyUnderANamedAccountAreStillIntercepted() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 github:
                   accounts:
                     personal:
@@ -189,7 +187,7 @@ class PerInstanceCredentialsTest {
                     acme:
                       token: "ghp_acme"
                   default: personal
-                """, SpawnConfig.class);
+                """);
         var tools = Map.of("github", toolWithNamespace("github"));
 
         // The default account has no token, so the default resolution finds nothing.
@@ -208,7 +206,7 @@ class PerInstanceCredentialsTest {
      */
     @Test
     void anIncompleteAccountDoesNotStopTheProxyResolvingTheOthers() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 claude:
                   accounts:
                     broken:
@@ -217,7 +215,7 @@ class PerInstanceCredentialsTest {
                       type: api-key
                       apiKey: "sk-ant-api03-xyz"
                   default: console
-                """, SpawnConfig.class);
+                """);
         Map<String, ToolSetup> tools = Map.of("claude", new dev.incusspawn.tool.ClaudeSetup());
 
         var across = assertDoesNotThrow(() -> ToolProxyResolver.resolveAcrossAccounts(config, tools));
@@ -234,13 +232,13 @@ class PerInstanceCredentialsTest {
      */
     @Test
     void aToolBorrowingAnotherNamespaceFollowsThatNamespacesAccount() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 github:
                   token: "ghp_flat"
                   accounts:
                     acme:
                       token: "ghp_acme"
-                """, SpawnConfig.class);
+                """);
 
         var borrower = toolBorrowing("github.token");
         var tools = Map.of("gh", toolWithNamespace("github"), "copilot", borrower);
@@ -255,7 +253,7 @@ class PerInstanceCredentialsTest {
 
     @Test
     void aBorrowedNamespacesAccountsStillWidenTheInterceptedDomainSet() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 github:
                   accounts:
                     personal:
@@ -263,7 +261,7 @@ class PerInstanceCredentialsTest {
                     acme:
                       token: "ghp_acme"
                   default: personal
-                """, SpawnConfig.class);
+                """);
         // The default account carries no token, so only the across-accounts pass can see
         // that this domain is worth intercepting at all.
         var tools = Map.of("copilot", toolBorrowing("github.token"));
@@ -278,7 +276,7 @@ class PerInstanceCredentialsTest {
      */
     @Test
     void theRealGhToolResolvesPerAccount() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 github:
                   accounts:
                     personal:
@@ -286,7 +284,7 @@ class PerInstanceCredentialsTest {
                     acme:
                       token: "ghp_acme"
                   default: personal
-                """, SpawnConfig.class);
+                """);
         var tools = Map.<String, ToolSetup>of("gh", new dev.incusspawn.tool.GhSetup());
 
         assertAllTokens(ToolProxyResolver.resolve(config, tools, Map.of()), "ghp_personal");
@@ -299,7 +297,7 @@ class PerInstanceCredentialsTest {
      */
     @Test
     void aNamespaceCollisionIsReportedOnce() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 github:
                   accounts:
                     personal:
@@ -307,7 +305,7 @@ class PerInstanceCredentialsTest {
                     acme:
                       token: "ghp_acme"
                   default: personal
-                """, SpawnConfig.class);
+                """);
         var tools = new java.util.LinkedHashMap<String, ToolSetup>();
         tools.put("gh", new dev.incusspawn.tool.GhSetup());
         tools.put("gh-twin", new dev.incusspawn.tool.GhSetup());
@@ -323,7 +321,7 @@ class PerInstanceCredentialsTest {
     /** A pre-accounts github block keeps working for the real tool too. */
     @Test
     void theRealGhToolStillResolvesAFlatToken() throws Exception {
-        var config = YAML.readValue("github:\n  token: \"ghp_flat\"\n", SpawnConfig.class);
+        var config = Jjq.spawnConfig("github:\n  token: \"ghp_flat\"\n");
         var tools = Map.<String, ToolSetup>of("gh", new dev.incusspawn.tool.GhSetup());
         assertAllTokens(ToolProxyResolver.resolve(config, tools, Map.of()), "ghp_flat");
     }
@@ -369,12 +367,12 @@ class PerInstanceCredentialsTest {
 
     @Test
     void pinningAnUnknownAccountInAToolNamespaceFailsClosed() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 github:
                   accounts:
                     personal:
                       token: "ghp_personal"
-                """, SpawnConfig.class);
+                """);
         assertThrows(AccountResolver.UnknownAccountException.class,
                 () -> ToolProxyResolver.resolve(config,
                         Map.of("github", toolWithNamespace("github")), Map.of("github", "gone")));

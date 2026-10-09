@@ -30,16 +30,16 @@ class McpPromptTest {
     void theServerOffersThePlaybook() {
         var server = server();
         server.handle(request(1, "initialize", "{\"capabilities\":{}}"));
-        assertTrue(out.byId(1).path("result").path("capabilities").has("prompts"));
+        assertFalse(out.byId(1).path("result").path("capabilities").path("prompts").isMissingNode());
 
         server.handle(request(2, "prompts/list", "{}"));
         var listed = out.byId(2).path("result").path("prompts");
         assertEquals(1, listed.size());
-        assertEquals("coordinate", listed.get(0).path("name").asText());
-        assertFalse(listed.get(0).path("description").asText().isBlank());
+        assertEquals("coordinate", listed.getElement(0).path("name").asText());
+        assertFalse(listed.getElement(0).path("description").asText().isBlank());
 
         server.handle(request(3, "prompts/get", "{\"name\":\"coordinate\"}"));
-        var message = out.byId(3).path("result").path("messages").get(0);
+        var message = out.byId(3).path("result").path("messages").getElement(0);
         assertEquals("user", message.path("role").asText());
         assertEquals(McpPrompt.COORDINATE.text(), message.path("content").path("text").asText());
     }
@@ -48,14 +48,14 @@ class McpPromptTest {
     void anUnknownPromptIsAnError() {
         var server = server();
         server.handle(request(1, "prompts/get", "{\"name\":\"nope\"}"));
-        assertEquals(JsonRpc.INVALID_PARAMS, out.byId(1).path("error").path("code").asInt());
+        assertEquals(JsonRpc.INVALID_PARAMS, out.byId(1).path("error").path("code").asInt(0));
     }
 
     @Test
     void aServerWithoutPromptsOffersNone() {
         var server = new McpServer(out, List.of(), "1", null, null);
         server.handle(request(1, "initialize", "{\"capabilities\":{}}"));
-        assertFalse(out.byId(1).path("result").path("capabilities").has("prompts"));
+        assertTrue(out.byId(1).path("result").path("capabilities").path("prompts").isMissingNode());
     }
 
     @Test

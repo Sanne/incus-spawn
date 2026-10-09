@@ -1,7 +1,6 @@
 package dev.incusspawn;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import io.hyperfoil.tools.jjq.yaml.JqYaml;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -40,10 +39,10 @@ class InstallScriptGraalVmTest {
     }
 
     private static Set<String> linuxReleaseGraalVmVersions() throws IOException {
-        JsonNode include = new YAMLMapper().readTree(RELEASE_WORKFLOW.toFile())
+        var include = JqYaml.parse(Files.readString(RELEASE_WORKFLOW))
                 .path("jobs").path("build").path("strategy").path("matrix").path("include");
         var versions = new HashSet<String>();
-        for (var entry : include) {
+        for (var entry : include.arrayValue()) {
             if ("linux".equals(entry.path("os").asText())) {
                 versions.add(entry.path("graalvm-version").asText());
             }

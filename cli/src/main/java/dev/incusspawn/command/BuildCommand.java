@@ -1,10 +1,10 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqArray;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.baseimage.BaseImageReleases;
@@ -3007,18 +3007,18 @@ public class BuildCommand extends BaseCommand {
      * ones this build skipped; a stamp is written only where it differs.
      */
     void syncDefaultActions(Map<String, ImageDef> defs) {
-        JsonNode instances;
+        JqValue instances;
         try {
-            instances = JSON.readTree(incus.listJsonConfig());
-        } catch (IncusException | JsonProcessingException e) {
+            instances = incus.listJsonConfig();
+        } catch (RuntimeException e) {
             System.err.println("Warning: could not sync default-action onto templates: " + e.getMessage());
             return;
         }
-        for (var instance : instances) {
-            var name = instance.path("name").asText("");
+        for (var instance : instances.asList()) {
+            var name = instance.pathText("name", "");
             var def = defs.get(name);
-            var config = instance.path("config");
-            if (def == null || !Metadata.TYPE_BASE.equals(config.path(Metadata.TYPE).asText(""))) continue;
+            var config = instance.getField("config");
+            if (def == null || !Metadata.TYPE_BASE.equals(config.pathText(Metadata.TYPE, ""))) continue;
             var chain = definitionChain(def, defs);
             if (chain == null) continue;
             var effective = resolveEffectiveDefaultAction(def, defs);
@@ -3063,14 +3063,14 @@ public class BuildCommand extends BaseCommand {
      * that matches what it has installed until it is rebuilt, and a template built from another
      * project's definitions is not theirs to change.
      */
-    private boolean builtFromCurrentChain(List<ImageDef> chain, JsonNode config, Map<String, ImageDef> defs) {
+    private boolean builtFromCurrentChain(List<ImageDef> chain, JqValue config, Map<String, ImageDef> defs) {
         var def = chain.getFirst();
-        if (!BuildInfo.instance().version().equals(config.path(Metadata.BUILD_VERSION).asText(""))
+        if (!BuildInfo.instance().version().equals(config.pathText(Metadata.BUILD_VERSION, ""))
                 || !def.contentFingerprint(computeToolFingerprints(def, toolDefLoader, defs))
-                        .equals(config.path(Metadata.DEFINITION_SHA).asText(""))) {
+                        .equals(config.pathText(Metadata.DEFINITION_SHA, ""))) {
             return false;
         }
-        var buildSource = BuildSource.fromJson(config.path(Metadata.BUILD_SOURCE).asText(""));
+        var buildSource = BuildSource.fromJson(config.pathText(Metadata.BUILD_SOURCE, ""));
         if (buildSource == null) return false;
         for (var current : chain) {
             var built = buildSource.getDefinitions().get(current.getName());
@@ -3348,11 +3348,10 @@ public class BuildCommand extends BaseCommand {
             var response = http.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) continue;
 
-            var mapper = new ObjectMapper();
-            var tree = mapper.readTree(response.body()).path("tree");
+            var tree = JqValues.parse(response.body()).getField("tree");
             var skills = new ArrayList<SkillFile>();
-            for (var node : tree) {
-                var path = node.path("path").asText();
+            for (var node : tree.asList()) {
+                var path = node.pathText("path", "");
                 // Match <skill-name>/SKILL.md at the top level only
                 if (path.matches("[^/]+/SKILL\\.md")) {
                     var skillName = path.substring(0, path.indexOf('/'));
@@ -4151,8 +4150,7 @@ public class BuildCommand extends BaseCommand {
 
     private static final String CLAUDE_JSON_PATH = "/home/agentuser/.claude.json";
     private static final String AGENTUSER_HOME = "/home/agentuser";
-    private static final ObjectMapper JSON = new ObjectMapper();
-
+    
     /**
      * Update .claude.json to pre-trust cloned repo directories and register GitHub repo paths.
      */
@@ -4169,47 +4167,60 @@ public class BuildCommand extends BaseCommand {
         }
 
         try {
-            var root = (ObjectNode) JSON.readTree(catResult.stdout());
+            var root = JqValues.parse(catResult.stdout());
 
-            var projects = root.has("projects")
-                    ? (ObjectNode) root.get("projects")
-                    : root.putObject("projects");
+            var projects = root.getField("projects");
+            if (!projects.isObject()) projects = JqObject.builder(0).build();
+            var githubRepoPaths = root.getField("githubRepoPaths");
+            if (!githubRepoPaths.isObject()) githubRepoPaths = JqObject.builder(0).build();
 
-            var githubRepoPaths = root.has("githubRepoPaths")
-                    ? (ObjectNode) root.get("githubRepoPaths")
-                    : root.putObject("githubRepoPaths");
+            var projectsBuilder = JqObject.builder(8);
+            if (projects instanceof JqObject projectsObj) projectsObj.forEach(projectsBuilder::put);
+            var pathsBuilder = JqObject.builder(8);
+            if (githubRepoPaths instanceof JqObject pathsObj) pathsObj.forEach(pathsBuilder::put);
 
             for (var repo : imageDef.getRepos()) {
                 var expandedPath = expandHome(repo.getPath());
 
-                if (!projects.has(expandedPath)) {
-                    var projectEntry = projects.putObject(expandedPath);
-                    projectEntry.putArray("allowedTools");
-                    projectEntry.put("hasTrustDialogAccepted", true);
+                if (!projectsBuilder.build().keys().contains(expandedPath)) {
+                    projectsBuilder.put(expandedPath, JqObject.builder(2)
+                            .put("allowedTools", JqArray.arrayBuilder().build())
+                            .put("hasTrustDialogAccepted", true)
+                            .build());
                 }
 
                 var ownerRepo = parseGitHubOwnerRepo(repo.getUrl());
                 if (ownerRepo != null) {
-                    ArrayNode paths;
-                    if (githubRepoPaths.has(ownerRepo)) {
-                        paths = (ArrayNode) githubRepoPaths.get(ownerRepo);
-                    } else {
-                        paths = githubRepoPaths.putArray(ownerRepo);
+                    var existing = pathsBuilder.build().getField(ownerRepo);
+                    var entries = JqArray.arrayBuilder();
+                    if (existing.isArray()) {
+                        existing.asList().forEach(entries::add);
+                    } else if (!existing.isNull()) {
+                        // Like the old cast: a non-array here is corrupt; warn instead of writing.
+                        throw new IllegalStateException(ownerRepo + " is not an array in " + CLAUDE_JSON_PATH);
                     }
                     boolean found = false;
-                    for (var node : paths) {
-                        if (node.asText().equals(expandedPath)) {
+                    for (var node : entries.build().asList()) {
+                        if (expandedPath.equals(node.asDisplayText(""))) {
                             found = true;
                             break;
                         }
                     }
-                    if (!found) {
-                        paths.add(expandedPath);
-                    }
+                    if (!found) entries.add(expandedPath);
+                    pathsBuilder.put(ownerRepo, entries.build());
                 }
             }
 
-            var updatedJson = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(root);
+            var updated = JqObject.builder(4);
+            if (root instanceof JqObject rootObj) {
+                rootObj.forEach((key, value) -> {
+                    if (!key.equals("projects") && !key.equals("githubRepoPaths")) updated.put(key, value);
+                });
+            }
+            updated.put("projects", projectsBuilder.build());
+            updated.put("githubRepoPaths", pathsBuilder.build());
+            // Pretty style differs from Jackson's; Claude Code parses the file, so only the shape matters.
+            var updatedJson = JqValues.toPrettyJsonString(updated.build());
             container.writeFile(CLAUDE_JSON_PATH, updatedJson);
             container.chown(CLAUDE_JSON_PATH, "agentuser:agentuser");
         } catch (Exception e) {

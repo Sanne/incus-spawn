@@ -1,7 +1,5 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.FakeIncusDaemon;
@@ -9,6 +7,7 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.GhSetup;
 import org.junit.jupiter.api.Test;
 
+import dev.incusspawn.config.Jjq;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -19,11 +18,10 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class TokenRotationIdentityTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
     private static final String NAME = "work-1";
 
     private static SpawnConfig config(String meToken, String meEmail) throws Exception {
-        return YAML.readValue("""
+        return Jjq.spawnConfig("""
                 github:
                   accounts:
                     me:
@@ -32,7 +30,7 @@ class TokenRotationIdentityTest {
                     bot:
                       token: "ghp_bot"
                   default: me
-                """.formatted(meToken, meEmail), SpawnConfig.class);
+                """.formatted(meToken, meEmail));
     }
 
     private static SpawnConfig config(String meToken) throws Exception {

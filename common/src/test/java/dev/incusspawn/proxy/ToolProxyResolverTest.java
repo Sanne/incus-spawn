@@ -1,7 +1,6 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.lifecycle.TempHome;
@@ -114,47 +113,39 @@ class ToolProxyResolverTest {
 
     // --- navigateConfigPath tests ---
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
     @Test
     void navigateConfigPathSimpleDotPath() {
-        var tree = JSON.createObjectNode();
-        tree.putObject("github").put("token", "ghp_abc123");
+        var tree = JqValues.parse("{\"github\":{\"token\":\"ghp_abc123\"}}");
         assertEquals("ghp_abc123", ToolProxyResolver.navigateConfigPath(tree, "github.token"));
     }
 
     @Test
     void navigateConfigPathTopLevelKey() {
-        var tree = JSON.createObjectNode();
-        tree.put("apiKey", "sk-test");
+        var tree = JqValues.parse("{\"apiKey\":\"sk-test\"}");
         assertEquals("sk-test", ToolProxyResolver.navigateConfigPath(tree, "apiKey"));
     }
 
     @Test
     void navigateConfigPathMissingIntermediateReturnsEmpty() {
-        var tree = JSON.createObjectNode();
-        tree.put("other", "value");
+        var tree = JqValues.parse("{\"other\":\"value\"}");
         assertEquals("", ToolProxyResolver.navigateConfigPath(tree, "github.token"));
     }
 
     @Test
     void navigateConfigPathMissingLeafReturnsEmpty() {
-        var tree = JSON.createObjectNode();
-        tree.putObject("github").put("user", "octocat");
+        var tree = JqValues.parse("{\"github\":{\"user\":\"octocat\"}}");
         assertEquals("", ToolProxyResolver.navigateConfigPath(tree, "github.token"));
     }
 
     @Test
     void navigateConfigPathNumberLeafReturnsText() {
-        var tree = JSON.createObjectNode();
-        tree.putObject("github").put("count", 42);
+        var tree = JqValues.parse("{\"github\":{\"count\":42}}");
         assertEquals("42", ToolProxyResolver.navigateConfigPath(tree, "github.count"));
     }
 
     @Test
     void navigateConfigPathBooleanLeafReturnsText() {
-        var tree = JSON.createObjectNode();
-        tree.putObject("bob").put("licenseConsent", true);
+        var tree = JqValues.parse("{\"bob\":{\"licenseConsent\":true}}");
         assertEquals("true", ToolProxyResolver.navigateConfigPath(tree, "bob.licenseConsent"));
     }
 
@@ -165,8 +156,7 @@ class ToolProxyResolverTest {
 
     @Test
     void navigateConfigPathObjectLeafReturnsEmpty() {
-        var tree = JSON.createObjectNode();
-        tree.putObject("github").putObject("nested").put("deep", "value");
+        var tree = JqValues.parse("{\"github\":{\"nested\":{\"deep\":\"value\"}}}");
         assertEquals("", ToolProxyResolver.navigateConfigPath(tree, "github.nested"));
     }
 

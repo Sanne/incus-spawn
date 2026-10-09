@@ -1,6 +1,6 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.ClientLog;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
@@ -231,9 +231,9 @@ public class CertificateAuthority {
      * read it -- as a start does ({@code InstanceLifecycle.startForUse}) -- rather than reading
      * the instance again; null reads it.
      */
-    public static boolean fixContainerCaIfNeeded(IncusClient incus, String container, JsonNode instance) {
+    public static boolean fixContainerCaIfNeeded(IncusClient incus, String container, JqValue instance) {
         var imageCaFp = instance != null
-                ? instance.path("config").path(Metadata.CA_FINGERPRINT).asText("")
+                ? instance.getField("config").pathText(Metadata.CA_FINGERPRINT, "")
                 : incus.configGet(container, Metadata.CA_FINGERPRINT);
         if (imageCaFp.isEmpty()) return false;
         var ca = loadOrCreate();

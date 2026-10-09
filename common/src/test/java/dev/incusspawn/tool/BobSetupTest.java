@@ -25,8 +25,8 @@ class BobSetupTest {
     void buildSystemSettingsDefaults() {
         var json = BobSetup.buildSystemSettings(Map.of());
 
-        assertTrue(json.contains("\"disableAutoUpdate\" : true"));
-        assertTrue(json.contains("\"disableUpdateNag\" : true"));
+        assertTrue(json.contains("\"disableAutoUpdate\": true"));
+        assertTrue(json.contains("\"disableUpdateNag\": true"));
         assertFalse(json.contains("\"model\""));
         assertFalse(json.contains("\"checkpointing\""));
     }
@@ -38,17 +38,17 @@ class BobSetupTest {
                 "compression-threshold", "0.6",
                 "checkpointing", "true"));
 
-        assertTrue(json.contains("\"disableAutoUpdate\" : true"));
-        assertTrue(json.contains("\"maxSessionTurns\" : -1"));
-        assertTrue(json.contains("\"contextPercentageThreshold\" : 0.6"));
-        assertTrue(json.contains("\"enabled\" : true"));
+        assertTrue(json.contains("\"disableAutoUpdate\": true"));
+        assertTrue(json.contains("\"maxSessionTurns\": -1"));
+        assertTrue(json.contains("\"contextPercentageThreshold\": 0.6"));
+        assertTrue(json.contains("\"enabled\": true"));
     }
 
     @Test
     void buildSystemSettingsWithOnlyTurns() {
         var json = BobSetup.buildSystemSettings(Map.of("max-session-turns", "50"));
 
-        assertTrue(json.contains("\"maxSessionTurns\" : 50"));
+        assertTrue(json.contains("\"maxSessionTurns\": 50"));
         assertFalse(json.contains("\"chatCompression\""));
         assertFalse(json.contains("\"checkpointing\""));
     }
@@ -57,7 +57,7 @@ class BobSetupTest {
     void buildSystemSettingsWithOnlyCompression() {
         var json = BobSetup.buildSystemSettings(Map.of("compression-threshold", "0.8"));
 
-        assertTrue(json.contains("\"contextPercentageThreshold\" : 0.8"));
+        assertTrue(json.contains("\"contextPercentageThreshold\": 0.8"));
         assertFalse(json.contains("\"maxSessionTurns\""));
         assertFalse(json.contains("\"checkpointing\""));
     }
@@ -66,7 +66,7 @@ class BobSetupTest {
     void buildSystemSettingsCheckpointingDisabled() {
         var json = BobSetup.buildSystemSettings(Map.of("checkpointing", "false"));
 
-        assertTrue(json.contains("\"enabled\" : false"));
+        assertTrue(json.contains("\"enabled\": false"));
     }
 
     @Test

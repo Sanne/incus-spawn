@@ -1,19 +1,13 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
-import com.fasterxml.jackson.databind.DeserializationContext;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.Warnings;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.tool.ToolDef;
+import dev.incusspawn.tool.ToolRefListConverter;
+import io.hyperfoil.tools.jjq.mapper.JqIgnore;
+import io.hyperfoil.tools.jjq.mapper.JqInclude;
+import io.hyperfoil.tools.jjq.mapper.JqMapped;
+import io.hyperfoil.tools.jjq.mapper.JqName;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
@@ -43,11 +37,8 @@ import java.util.function.Consumer;
  * can refuse to build and insist the user disambiguate.
  */
 @RegisterForReflection
-@JsonIgnoreProperties(ignoreUnknown = true)
 public class ImageDef {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory())
-            .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
     private static final String RESOURCE_DIR = "images/";
 
     // Hardcoded list of built-in image filenames. Classpath directory scanning
@@ -72,14 +63,14 @@ public class ImageDef {
     }
 
     /**
-     * Parse an image definition from a YAML file on disk.
+     * Parse an image definition from a YAML file on disk (via jjq).
      */
     public static ImageDef parseFile(Path file) throws IOException {
-        return YAML.readValue(file.toFile(), ImageDef.class);
+        return Jjq.imageDef(file);
     }
 
     public static ImageDef parseYaml(String yaml) throws IOException {
-        return YAML.readValue(yaml, ImageDef.class);
+        return Jjq.imageDef(yaml);
     }
 
     /**
@@ -92,43 +83,42 @@ public class ImageDef {
     private String name;
     private String description = "";
     private String image = "images:fedora/44";
-    @JsonProperty("image_url")
+    @JqName("image_url")
     private String imageUrl;
-    @JsonProperty("image_tag")
+    @JqName("image_tag")
     private String imageTag;
-    @JsonProperty("image_sha256")
+    @JqName("image_sha256")
     private Map<String, String> imageSha256;
-    @JsonProperty("vm_image_url")
+    @JqName("vm_image_url")
     private String vmImageUrl;
-    @JsonProperty("vm_image_sha256")
+    @JqName("vm_image_sha256")
     private Map<String, String> vmImageSha256;
     private String parent;
     private List<String> packages = List.of();
-    @JsonProperty("remove_packages")
+    @JqName("remove_packages")
     private List<String> removePackages = List.of();
-    @JsonDeserialize(using = ImageDef.ToolsDeserializer.class)
-    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = ToolDef.ToolRef.Serializer.class)
+    @io.hyperfoil.tools.jjq.mapper.JqConverter(ToolRefListConverter.class)
     private List<ToolDef.ToolRef> tools = List.of();
     private List<RepoEntry> repos = List.of();
-    @JsonDeserialize(using = SkillsDef.Deserializer.class)
+    @io.hyperfoil.tools.jjq.mapper.JqConverter(SkillsDefConverter.class)
     private SkillsDef skills = SkillsDef.EMPTY;
-    @JsonProperty("package_repos")
+    @JqName("package_repos")
     private List<PackageRepo> packageRepos = List.of();
-    @JsonProperty("host-resources")
+    @JqName("host-resources")
     private List<HostResource> hostResources = List.of();
-    @JsonProperty("mask_services")
+    @JqName("mask_services")
     private List<String> maskServices = List.of();
     private boolean gui;
     private boolean pinned;
     private String type;
     private String workdir;
-    @JsonProperty("shell-command")
+    @JqName("shell-command")
     private String shellCommand;
-    @JsonDeserialize(using = EnvEntry.ListDeserializer.class)
+    @io.hyperfoil.tools.jjq.mapper.JqConverter(EnvEntryListConverter.class)
     private List<EnvEntry> env = List.of();
-    @JsonProperty("default-action")
+    @JqName("default-action")
     private String defaultAction;
-    @JsonProperty("agent_note")
+    @JqName("agent_note")
     private String agentNote;
     /**
      * Credential account per config namespace, e.g. {@code {claude: work, github: acme-bot}}.
@@ -138,7 +128,7 @@ public class ImageDef {
      */
     private Map<String, String> accounts = Map.of();
 
-    @JsonIgnore
+    @JqIgnore
     private String source = "unknown";
 
     /**
@@ -147,7 +137,7 @@ public class ImageDef {
      * repository was cloned, so its host-resources are confined to this directory (#765).
      * Never read from YAML: a definition must not be able to vouch for itself.
      */
-    @JsonIgnore
+    @JqIgnore
     private Path projectRoot;
 
     public Path getProjectRoot() { return projectRoot; }
@@ -251,50 +241,9 @@ public class ImageDef {
         /** Skill sources declared in this image. */
         public List<String> getList() { return list; }
 
-        public static class Deserializer extends StdDeserializer<SkillsDef> {
-            public Deserializer() { super(SkillsDef.class); }
-
-            @Override
-            public SkillsDef deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
-                if (p.currentToken() == JsonToken.START_ARRAY) {
-                    // List shorthand: skills: [...]
-                    var items = new ArrayList<String>();
-                    while (p.nextToken() != JsonToken.END_ARRAY) {
-                        items.add(p.getText());
-                    }
-                    return new SkillsDef(null, items);
-                }
-                // Object form: skills: { repo: ..., list: [...] }
-                String repo = null;
-                List<String> list = List.of();
-                while (p.nextToken() != JsonToken.END_OBJECT) {
-                    var field = p.currentName();
-                    p.nextToken();
-                    switch (field) {
-                        // getText() reads a JSON null as "null", which a build-source snapshot writes
-                        case "repo" -> repo = p.currentToken() == JsonToken.VALUE_NULL ? null : p.getText();
-                        case "list" -> {
-                            // An empty "list:" is a null: reading on to an END_ARRAY would take
-                            // the rest of the definition as skills
-                            if (p.currentToken() != JsonToken.START_ARRAY) {
-                                p.skipChildren();
-                                continue;
-                            }
-                            var items = new ArrayList<String>();
-                            while (p.nextToken() != JsonToken.END_ARRAY) {
-                                items.add(p.getText());
-                            }
-                            list = items;
-                        }
-                        default -> p.skipChildren();
-                    }
-                }
-                return new SkillsDef(repo, list);
-            }
-        }
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqMapped
     public static class RepoEntry {
         private String url;
         private String path;
@@ -314,22 +263,11 @@ public class ImageDef {
         public void setBranch(String branch) { this.branch = branch; }
         public String getPrime() { return prime; }
         public void setPrime(String prime) { this.prime = prime; }
-        @JsonIgnore
         public boolean hasPrime() { return prime != null && !prime.isBlank(); }
     }
 
-    public static class ToolsDeserializer extends StdDeserializer<List<ToolDef.ToolRef>> {
-        public ToolsDeserializer() { super(List.class); }
-
-        @Override
-        public List<ToolDef.ToolRef> deserialize(JsonParser p, DeserializationContext ctxt)
-                throws IOException {
-            return ToolDef.ToolRef.deserializeList(p, "tools");
-        }
-    }
-
     @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqMapped
     public static class PackageRepo {
         private String type;
         private String name;
@@ -347,7 +285,7 @@ public class ImageDef {
         public void setName(String name) { this.name = name; }
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqMapped
     public static class HostResource {
         private String source;
         private String path;
@@ -357,8 +295,8 @@ public class ImageDef {
          * YAML is discarded there) when the declaring template is project-local. The source is
          * then an absolute real path that must stay inside this directory every time it is used.
          */
-        @JsonProperty("confined-to")
-        @JsonInclude(JsonInclude.Include.NON_NULL)
+        @JqName("confined-to")
+        @JqInclude(JqInclude.Include.NON_NULL)
         private String confinedTo;
 
         public HostResource() {}
@@ -702,7 +640,7 @@ public class ImageDef {
                     .toList();
             for (var path : paths) {
                 try (var is = Files.newInputStream(path)) {
-                    var def = YAML.readValue(is, ImageDef.class);
+                    var def = Jjq.imageDef(is);
                     if (def.getName() != null) {
                         var source = path.toAbsolutePath().normalize();
                         def.setSource(source.toString());
@@ -731,7 +669,7 @@ public class ImageDef {
     private static ImageDef loadResource(String path, Consumer<String> warnings) {
         try (InputStream is = ImageDef.class.getClassLoader().getResourceAsStream(path)) {
             if (is == null) return null;
-            return YAML.readValue(is, ImageDef.class);
+            return Jjq.imageDef(is);
         } catch (IOException e) {
             warnings.accept(YamlErrors.friendly(path, e));
             return null;

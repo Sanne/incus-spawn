@@ -5,11 +5,10 @@ import dev.incusspawn.config.AccountShape;
 import dev.incusspawn.config.NamespaceAccounts;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.GhSetup;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import dev.incusspawn.config.Jjq;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -28,7 +27,6 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith(IsolatedHome.class)
 class AccountMenuTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
     private static final AccountShape GITHUB = new GhSetup().accountShape();
 
     private static final String ONE_FLAT_CREDENTIAL = """
@@ -124,7 +122,7 @@ class AccountMenuTest {
 
     @Test
     void enterKeepsEverythingAsItIs() throws Exception {
-        var config = YAML.readValue(ONE_FLAT_CREDENTIAL, SpawnConfig.class);
+        var config = Jjq.spawnConfig(ONE_FLAT_CREDENTIAL);
         assertNull(choose(config, ""), "no target means nothing is written");
         assertEquals("ghp_flat", value(config, "github.token"));
     }
@@ -132,14 +130,14 @@ class AccountMenuTest {
     /** The flat credential is the account 'default', so replacing it targets that account. */
     @Test
     void replaceTargetsTheAccountTheFlatCredentialIs() throws Exception {
-        var config = YAML.readValue(ONE_FLAT_CREDENTIAL, SpawnConfig.class);
+        var config = Jjq.spawnConfig(ONE_FLAT_CREDENTIAL);
         assertEquals(target("default", true), choose(config, "r"));
         assertEquals("ghp_flat", value(config, "github.token"), "choosing is not writing");
     }
 
     @Test
     void addingASecondAccountReturnsItsName() throws Exception {
-        var config = YAML.readValue(ONE_FLAT_CREDENTIAL, SpawnConfig.class);
+        var config = Jjq.spawnConfig(ONE_FLAT_CREDENTIAL);
         assertEquals(target("acme-bot", false), choose(config, "a", "acme-bot"));
     }
 
@@ -151,12 +149,12 @@ class AccountMenuTest {
      */
     @Test
     void abandoningAfterNamingAnAccountChangesNothing() throws Exception {
-        var config = YAML.readValue(ONE_FLAT_CREDENTIAL, SpawnConfig.class);
-        var before = YAML.writeValueAsString(config);
+        var config = Jjq.spawnConfig(ONE_FLAT_CREDENTIAL);
+        var before = Jjq.toYaml(config);
 
         choose(config, "a", "acme-bot");
 
-        assertEquals(before, YAML.writeValueAsString(config),
+        assertEquals(before, Jjq.toYaml(config),
                 "the menu must not write anything; saving is the caller's job");
         assertEquals("ghp_flat", value(config, "github.token"));
         assertEquals(List.of("default"), NamespaceAccounts.names(config, "github"),
@@ -165,7 +163,7 @@ class AccountMenuTest {
 
     @Test
     void cancellingTheNamePromptKeepsEverythingAsItIs() throws Exception {
-        var config = YAML.readValue(ONE_FLAT_CREDENTIAL, SpawnConfig.class);
+        var config = Jjq.spawnConfig(ONE_FLAT_CREDENTIAL);
         assertNull(choose(config, "a", ""));
         assertEquals("ghp_flat", value(config, "github.token"));
     }
@@ -174,13 +172,13 @@ class AccountMenuTest {
 
     @Test
     void anExistingAccountCanBeTargetedForReplacement() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         assertEquals(target("acme", false), choose(config, "e", "acme"));
     }
 
     @Test
     void namingAnAccountThatDoesNotExistReturnsToTheMenu() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         // 'e' then a bad name loops; the following Enter then keeps things as they are.
         assertNull(choose(config, "e", "ghost", ""));
     }
@@ -188,14 +186,14 @@ class AccountMenuTest {
     /** 'd' and 'x' act immediately, so their confirmation cannot be left a lie by a later abort. */
     @Test
     void changingTheDefaultTakesEffectImmediately() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         assertNull(choose(config, "d", "acme", ""));
         assertEquals("acme", value(config, "github.default"));
     }
 
     @Test
     void removingAnAccountTakesEffectAndRepointsTheDefault() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         assertNull(choose(config, "x", "personal", ""));
 
         assertEquals(List.of("acme"), NamespaceAccounts.names(config, "github"));
@@ -209,7 +207,7 @@ class AccountMenuTest {
      */
     @Test
     void replaceAllIsDeferredUntilSomethingIsSaved() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         assertEquals(target("default", true), choose(config, "r"));
         assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
 
@@ -222,7 +220,7 @@ class AccountMenuTest {
     /** Skipping every prompt after "replace all" collected nothing, so nothing is replaced. */
     @Test
     void savingNothingReplacesNothing() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         assertFalse(InitCommand.saveAccount(config, "github", GITHUB, target("default", true), java.util.Map.of()));
         assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
     }
@@ -230,7 +228,7 @@ class AccountMenuTest {
     /** Values without the credential (an email alone) are not an account, so nothing is replaced. */
     @Test
     void savingWithoutTheCredentialReplacesNothing() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         assertFalse(InitCommand.saveAccount(config, "github", GITHUB, target("default", true),
                 java.util.Map.of("email", "me@example.com")));
         assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
@@ -239,7 +237,7 @@ class AccountMenuTest {
     /** An existing account keeps its credential, so its other values may change on their own. */
     @Test
     void anExistingAccountMayBeEditedWithoutItsCredential() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         assertTrue(InitCommand.saveAccount(config, "github", GITHUB, target("acme", false),
                 java.util.Map.of("email", "bot@example.com")));
         assertEquals("ghp_acme", value(config, "github.accounts.acme.token"));
@@ -249,13 +247,13 @@ class AccountMenuTest {
     /** With one account, the destructive options are not offered -- and not reachable blind. */
     @Test
     void removeIsNotActedOnWhenThereIsOnlyOneAccount() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 github:
                   accounts:
                     only:
                       token: "ghp_only"
                   default: only
-                """, SpawnConfig.class);
+                """);
         assertNull(choose(config, "x", ""));
         assertEquals(List.of("only"), NamespaceAccounts.names(config, "github"));
     }
@@ -263,7 +261,7 @@ class AccountMenuTest {
     /** Not configured at all: there is nothing to choose between, so the credential is the only one. */
     @Test
     void anUnconfiguredNamespaceTargetsAFreshDefaultAccount() throws Exception {
-        var config = YAML.readValue("github: {}\n", SpawnConfig.class);
+        var config = Jjq.spawnConfig("github: {}\n");
         assertEquals(InitCommand.AccountTarget.FRESH, choose(config));
     }
 
@@ -274,7 +272,7 @@ class AccountMenuTest {
      */
     @Test
     void anyAccountIsWorthAskingAboutEvenWhenTheDefaultHasNoCredential() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 github:
                   accounts:
                     a:
@@ -282,13 +280,13 @@ class AccountMenuTest {
                     b:
                       token: "ghp_b"
                   default: a
-                """, SpawnConfig.class);
+                """);
         assertEquals("", AccountResolver.defaultValue(config, "github", "token"),
                 "the trap: the default account alone looks unconfigured");
         assertTrue(InitCommand.hasAccountsToPreserve(config, "github"));
 
         assertFalse(InitCommand.hasAccountsToPreserve(
-                YAML.readValue("github:\n  email: \"x@example.com\"\n", SpawnConfig.class), "github"),
+                Jjq.spawnConfig("github:\n  email: \"x@example.com\"\n"), "github"),
                 "a leftover email is not an account, so a first credential needs no menu");
     }
 
@@ -297,7 +295,7 @@ class AccountMenuTest {
     /** Removing an account an instance is pinned to asks first; declining keeps it. */
     @Test
     void removingAPinnedAccountAsksAndCanBeDeclined() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         var init = new StubbedInit().pin("review-1", "github", "acme");
         assertNull(choose(init, config, "x", "acme", "n", ""));
         assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
@@ -305,7 +303,7 @@ class AccountMenuTest {
 
     @Test
     void removingAPinnedAccountProceedsWhenConfirmed() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         var init = new StubbedInit().pin("review-1", "github", "acme");
         assertNull(choose(init, config, "x", "acme", "y", ""));
         assertEquals(List.of("personal"), NamespaceAccounts.names(config, "github"));
@@ -314,7 +312,7 @@ class AccountMenuTest {
     /** A template naming the account counts too: it could no longer be branched. */
     @Test
     void removingAnAccountATemplateNamesAsks() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         var init = new StubbedInit();
         init.templates.put("github=acme", List.of("tpl-acme"));
         assertNull(choose(init, config, "x", "acme", "", ""), "Enter declines");
@@ -324,7 +322,7 @@ class AccountMenuTest {
     /** Nobody uses it: removed without a question, as before. */
     @Test
     void removingAnUnusedAccountDoesNotAsk() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         var init = new StubbedInit().pin("review-1", "github", "personal");
         assertNull(choose(init, config, "x", "acme", ""));
         assertEquals(List.of("personal"), NamespaceAccounts.names(config, "github"));
@@ -333,7 +331,7 @@ class AccountMenuTest {
     /** "Replace all" drops every other account, so pins to them are the same question. */
     @Test
     void replaceAllAsksWhenAnInstanceIsPinnedToAnAccountThatGoes() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         var init = new StubbedInit().pin("review-1", "github", "acme");
         assertNull(choose(init, config, "r", "n", ""), "declining returns to the menu");
         assertEquals(target("default", true), choose(init, config, "r", "y"));
@@ -341,7 +339,7 @@ class AccountMenuTest {
 
     @Test
     void renamingKeepsTheAccountAndItsPlaceAndMovesTheDefault() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         var init = new StubbedInit().pin("review-1", "github", "personal");
         assertNull(choose(init, config, "n", "personal", "me", ""));
 
@@ -356,7 +354,7 @@ class AccountMenuTest {
 
     @Test
     void renamingOntoAnExistingNameIsRefused() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         var init = new StubbedInit();
         // The taken name is re-asked; Enter then cancels the rename.
         assertNull(choose(init, config, "n", "personal", "acme", "", ""));
@@ -367,7 +365,7 @@ class AccountMenuTest {
     /** Claude accounts are typed; a rename must keep the type and credential intact. */
     @Test
     void renamingAClaudeAccountKeepsItsType() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 claude:
                   accounts:
                     personal:
@@ -378,7 +376,7 @@ class AccountMenuTest {
                       cloudMlRegion: europe-west1
                       vertexProjectId: acme-prod
                   default: personal
-                """, SpawnConfig.class);
+                """);
         NamespaceAccounts.rename(config, "claude", "acme", "client");
         var renamed = config.getClaude().allAccounts().get("client");
         assertNotNull(renamed);
@@ -390,7 +388,7 @@ class AccountMenuTest {
     /** A pre-accounts flat credential is the account 'default', and can be renamed like one. */
     @Test
     void renamingAFlatCredentialMaterializesItFirst() throws Exception {
-        var config = YAML.readValue(ONE_FLAT_CREDENTIAL, SpawnConfig.class);
+        var config = Jjq.spawnConfig(ONE_FLAT_CREDENTIAL);
         NamespaceAccounts.rename(config, "github", "default", "me");
         assertEquals(List.of("me"), NamespaceAccounts.names(config, "github"));
         assertEquals("ghp_flat", value(config, "github.accounts.me.token"));
@@ -402,7 +400,7 @@ class AccountMenuTest {
 
     @Test
     void changingTheDefaultWithNobodyFollowingItDoesNotAsk() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         var init = new StubbedInit().pin("review-1", "github", "personal");
         assertNull(choose(init, config, "d", "acme", ""));
         assertEquals("acme", value(config, "github.default"));
@@ -411,7 +409,7 @@ class AccountMenuTest {
     /** Enter switches: not pinned means following the default. */
     @Test
     void followersSwitchByDefaultAndRunningOnesGetTheirIdentityRefreshed() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         var init = new StubbedInit().following("scratch", true).following("idle", false);
         assertNull(choose(init, config, "d", "acme", "", ""));
         assertEquals("acme", value(config, "github.default"));
@@ -421,7 +419,7 @@ class AccountMenuTest {
 
     @Test
     void followersCanBeKeptOnTheAccountTheyUse() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         var init = new StubbedInit().following("scratch", true);
         assertNull(choose(init, config, "d", "acme", "k", ""));
         assertEquals("acme", value(config, "github.default"));
@@ -431,7 +429,7 @@ class AccountMenuTest {
 
     @Test
     void cancellingLeavesTheDefaultAlone() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         var init = new StubbedInit().following("scratch", true);
         assertNull(choose(init, config, "d", "acme", "c", ""));
         assertEquals("personal", value(config, "github.default"));
@@ -441,7 +439,7 @@ class AccountMenuTest {
     /** No answer at all (EOF) must never move anyone's principal. */
     @Test
     void endOfInputCancels() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         var init = new StubbedInit().following("scratch", true);
         choose(init, config, "d", "acme");
         assertEquals("personal", value(config, "github.default"));
@@ -449,7 +447,7 @@ class AccountMenuTest {
 
     @Test
     void removingTheDefaultNamesItsFollowersAndRefreshesTheRunningOnes() throws Exception {
-        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var config = Jjq.spawnConfig(TWO_ACCOUNTS);
         var init = new StubbedInit().following("scratch", true);
         assertNull(choose(init, config, "x", "personal", "y", ""));
         assertEquals(List.of("acme"), NamespaceAccounts.names(config, "github"));

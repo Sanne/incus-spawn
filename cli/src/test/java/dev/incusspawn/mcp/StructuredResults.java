@@ -1,6 +1,8 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import dev.incusspawn.incus.JacksonTrees;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import com.networknt.schema.JsonSchema;
 import com.networknt.schema.JsonSchemaFactory;
 import com.networknt.schema.SchemaId;
@@ -45,25 +47,25 @@ final class StructuredResults {
     }
 
     /** {@code result} is the {@code result} of a {@code tools/call} of {@code tool}. */
-    JsonNode check(String tool, JsonNode result) {
-        if (result.path("isError").asBoolean()) {
-            assertFalse(result.has("structuredContent"),
+    JqValue check(String tool, JqValue result) {
+        if (result.path("isError").asBoolean(false)) {
+            assertFalse(result instanceof JqObject o && o.keys().contains("structuredContent"),
                     tool + ": an error result must carry no structuredContent (1.x SDK clients validate it): " + result);
             var error = result.path("_meta").path(ToolResult.ERROR_META);
-            assertTrue(CODES.contains(error.path("code").asText()), tool + ": an error needs a known code: " + result);
-            assertEquals(result.path("content").get(0).path("text").asText(), error.path("message").asText());
+            assertTrue(CODES.contains(error.pathText("code", "")), tool + ": an error needs a known code: " + result);
+            assertEquals(result.path("content").getElement(0).path("text").asText(), error.path("message").asText());
             return result;
         }
-        var structured = result.get("structuredContent");
-        assertNotNull(structured, tool + " returned no structuredContent: " + result);
+        var structured = result.path("structuredContent");
+        assertFalse(structured.isMissingNode(), tool + " returned no structuredContent: " + result);
         assertTrue(structured.isObject(), tool + ": structuredContent must be an object");
         var errors = compiled.computeIfAbsent(tool, t -> {
             var schema = tools.get(t);
             assertNotNull(schema, "no tool " + t);
             return compile(t, schema.outputSchema());
-        }).validate(structured);
+        }).validate(JacksonTrees.toJsonNode(structured));
         assertTrue(errors.isEmpty(), tool + ": structuredContent does not match its outputSchema: " + errors
-                + "\n" + structured.toPrettyString());
+                + "\n" + structured.toJsonString());
         succeeded.add(tool);
         return result;
     }
@@ -73,7 +75,8 @@ final class StructuredResults {
      * and default to 2020-12), and valid against the 2020-12 metaschema -- a schema a client cannot
      * compile fails every call of its tool, not just a bad one.
      */
-    static JsonSchema compile(String tool, JsonNode schema) {
+    static JsonSchema compile(String tool, JqValue schemaValue) {
+        var schema = JacksonTrees.toJsonNode(schemaValue);
         var dialect = schema.path("$schema");
         assertTrue(dialect.isMissingNode() || dialect.asText().equals(SchemaId.V202012),
                 tool + ": declares the dialect " + dialect);

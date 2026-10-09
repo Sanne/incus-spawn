@@ -1,8 +1,8 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.tool.ToolDef;
+import io.hyperfoil.tools.jjq.mapper.JqMapped;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.nio.file.Path;
@@ -16,10 +16,8 @@ import java.util.Map;
  * out-of-scope templates can be displayed and rebuilt.
  */
 @RegisterForReflection
-@JsonIgnoreProperties(ignoreUnknown = true)
+@JqMapped
 public class BuildSource {
-
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     private Map<String, ImageDef> definitions = new LinkedHashMap<>();
     private Map<String, ToolDef> tools = new LinkedHashMap<>();
@@ -64,7 +62,7 @@ public class BuildSource {
     }
 
     @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqMapped
     public static class ToolInstance {
         private String name;
         private Map<String, String> parameterValues = Map.of();
@@ -90,11 +88,7 @@ public class BuildSource {
     }
 
     public String toJson() {
-        try {
-            return JSON.writeValueAsString(this);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to serialize build source", e);
-        }
+        return Jjq.mapper().toJson(this);
     }
 
     /**
@@ -121,7 +115,8 @@ public class BuildSource {
     public static String sourceOf(String json, String template) {
         if (json == null || json.isBlank()) return null;
         try {
-            return JSON.readTree(json).path("sources").path(template).textValue();
+            var node = JqValues.parse(json).path("sources").path(template);
+            return node.isString() ? node.asText() : null;
         } catch (Exception e) {
             return null;
         }
@@ -130,7 +125,11 @@ public class BuildSource {
     public static BuildSource fromJson(String json) {
         if (json == null || json.isBlank()) return null;
         try {
-            var bs = JSON.readValue(json, BuildSource.class);
+            var parsed = io.hyperfoil.tools.jjq.value.JqValues.parse(json);
+            // Jackson refuses a scalar or array for a POJO; a lenient bind would
+            // answer an empty snapshot instead of reporting the corrupt metadata.
+            if (!(parsed instanceof io.hyperfoil.tools.jjq.value.JqObject)) return null;
+            var bs = Jjq.mapper().fromJqValue(parsed, BuildSource.class);
             // Restore source locations on deserialized ImageDefs
             for (var entry : bs.definitions.entrySet()) {
                 var source = bs.sources.get(entry.getKey());

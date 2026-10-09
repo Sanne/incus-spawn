@@ -1,9 +1,9 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.tool.ToolDef;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqString;
+import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,13 +39,13 @@ public interface AccountShape {
      *
      * @param namespace the namespace's node, never null (an empty object when absent)
      */
-    boolean hasFlatCredential(JsonNode namespace);
+    boolean hasFlatCredential(JqValue namespace);
 
     /**
      * The flat credential rewritten as the account it presents as, for moving it into
      * {@code accounts.default} when the namespace is next written.
      */
-    ObjectNode flatAccount(JsonNode namespace);
+    JqValue flatAccount(JqValue namespace);
 
     /**
      * Whether values collected for one account -- keys relative to the namespace, as in
@@ -53,9 +53,9 @@ public interface AccountShape {
      * would give a usable account rather than one holding only its non-secret settings.
      */
     default boolean hasCredential(java.util.Map<String, String> values) {
-        var account = JsonNodeFactory.instance.objectNode();
-        values.forEach((key, value) -> set(account, key, value));
-        return hasFlatCredential(account);
+        var builder = JqObject.builder(values.size());
+        values.forEach((key, value) -> set(builder, key, value));
+        return hasFlatCredential(builder.build());
     }
 
     /**
@@ -74,7 +74,7 @@ public interface AccountShape {
      * @param account the account's own node
      * @param namespace the namespace's node, for keys the account inherits from the flat level
      */
-    default String problem(JsonNode account, JsonNode namespace) { return ""; }
+    default String problem(JqValue account, JqValue namespace) { return ""; }
 
     /**
      * A shape whose credential is {@code credentialKeys}, and whose accounts each hold
@@ -89,18 +89,18 @@ public interface AccountShape {
         var keys = List.copyOf(perAccount);
         return new AccountShape() {
             @Override
-            public boolean hasFlatCredential(JsonNode namespace) {
+            public boolean hasFlatCredential(JqValue namespace) {
                 return credential.stream().anyMatch(key -> !AccountResolver.navigate(namespace, key).isBlank());
             }
 
             @Override
-            public ObjectNode flatAccount(JsonNode namespace) {
-                var account = JsonNodeFactory.instance.objectNode();
+            public JqValue flatAccount(JqValue namespace) {
+                var builder = JqObject.builder(keys.size());
                 for (var key : keys) {
                     var value = AccountResolver.navigate(namespace, key);
-                    if (!value.isBlank()) set(account, key, value);
+                    if (!value.isBlank()) set(builder, key, value);
                 }
-                return account;
+                return builder.build();
             }
 
             @Override
@@ -135,14 +135,19 @@ public interface AccountShape {
         return declared(credential, perAccount);
     }
 
-    /** Set a dotted key under an object, creating intermediate objects. */
-    private static void set(ObjectNode node, String dottedKey, String value) {
+    /** Set a dotted key on a builder, creating intermediate objects. Keys collide by replacement. */
+    private static void set(JqObject.Builder builder, String dottedKey, String value) {
         var segments = dottedKey.split("\\.");
-        var current = node;
-        for (int i = 0; i < segments.length - 1; i++) {
-            var child = current.get(segments[i]);
-            current = child instanceof ObjectNode object ? object : current.putObject(segments[i]);
+        if (segments.length == 1) {
+            builder.put(segments[0], JqString.of(value));
+            return;
         }
-        current.put(segments[segments.length - 1], value);
+        var childBuilder = JqObject.builder(1);
+        var existing = builder.build().getField(segments[0]);
+        if (existing instanceof JqObject object) {
+            object.forEach(childBuilder::put);
+        }
+        set(childBuilder, String.join(".", java.util.Arrays.copyOfRange(segments, 1, segments.length)), value);
+        builder.put(segments[0], childBuilder.build());
     }
 }

@@ -46,7 +46,7 @@
         <skipITs>true</skipITs>
         <surefire-plugin.version>3.6.0</surefire-plugin.version>
         <tamboui.version>0.5.0</tamboui.version>
-        <aesh.version>3.18.0</aesh.version>
+        <aesh.version>3.18.3</aesh.version>
         <!--
           Keeps AESCrypt.makeSessionKey out of the test JVM's JIT: GraalVM 25's JIT sometimes
           gets an AES-256 key schedule wrong, and TLS tests fail with bad_record_mac (#940,

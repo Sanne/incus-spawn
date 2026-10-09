@@ -1,6 +1,6 @@
 package dev.incusspawn;
 
-import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import io.hyperfoil.tools.jjq.yaml.JqYaml;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -67,11 +67,11 @@ class WorkflowRunnerLabelsTest {
         int target = Integer.parseInt(pom.group(1));
 
         var release = WORKFLOWS.resolve("release.yml");
-        var jobs = new YAMLMapper().readTree(release.toFile()).path("jobs");
-        for (var entry : jobs.path("build").path("strategy").path("matrix").path("include")) {
-            var runner = MACOS_RUNNER.matcher(entry.path("runner").asText());
+        var jobs = JqYaml.parse(Files.readString(release)).path("jobs");
+        for (var entry : jobs.path("build").path("strategy").path("matrix").path("include").asList()) {
+            var runner = MACOS_RUNNER.matcher(entry.pathText("runner", ""));
             if (runner.matches()) {
-                assertTrue(Integer.parseInt(runner.group(1)) >= target, entry.path("runner").asText()
+                assertTrue(Integer.parseInt(runner.group(1)) >= target, entry.pathText("runner", "")
                         + " is older than the macOS " + target + " the release targets");
             }
         }

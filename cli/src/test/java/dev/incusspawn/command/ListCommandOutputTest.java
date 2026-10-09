@@ -1,6 +1,5 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusException;
@@ -13,7 +12,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -93,16 +91,21 @@ class ListCommandOutputTest {
 
     @Test
     void jsonIsAnArrayOfObjectsWithStableFields() throws Exception {
-        List<LinkedHashMap<String, Object>> json = new ObjectMapper().readValue(list(cmd("json")),
-                new TypeReference<>() {});
-        assertEquals(3, json.size());
-        var first = json.get(0);
+        var listing = io.hyperfoil.tools.jjq.value.JqValues.parse(list(cmd("json")));
+        assertEquals(3, listing.arrayValue().size());
+        var first = (io.hyperfoil.tools.jjq.value.JqObject) listing.arrayValue().get(0);
         assertEquals(List.of("name", "status", "ipv4", "parent", "runtime", "created", "mcp_state", "mcp_purpose"),
-                List.copyOf(first.keySet()));
+                List.copyOf(first.keys()));
         assertEquals(Arrays.asList("dev-1", "running", "10.166.11.20", "tpl-java", "container",
-                "2026-10-05T10:15:30+02:00", null, null), new ArrayList<>(first.values()));
-        assertTrue(json.get(1).containsKey("ipv4"));
-        assertNull(json.get(1).get("ipv4"), "an absent value is null, never \"-\"");
+                "2026-10-05T10:15:30+02:00", null, null),
+                new ArrayList<>(first.keys().stream().map(key -> {
+                    var v = first.get(key);
+                    return v == null || v.isNull() ? null : v.asText();
+                }).toList()));
+        var second = (io.hyperfoil.tools.jjq.value.JqObject) listing.arrayValue().get(1);
+        assertTrue(second.has("ipv4"));
+        var ipv4 = second.get("ipv4");
+        assertTrue(ipv4 == null || ipv4.isNull(), "an absent value is null, never \"-\"");
     }
 
     @Test
@@ -179,9 +182,9 @@ class ListCommandOutputTest {
         var daemon = new FakeIncusDaemon().container("odd", Map.of(
                 Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.CREATED, "sometime"));
         assertEquals("odd\tstopped\t-\t-\tcontainer\t-\t-\t-\n", list(cmd("plain"), daemon));
-        List<LinkedHashMap<String, Object>> json = new ObjectMapper().readValue(list(cmd("json"), daemon),
-                new TypeReference<>() {});
-        assertNull(json.get(0).get("created"));
+        var created = io.hyperfoil.tools.jjq.value.JqValues.parse(list(cmd("json"), daemon));
+        var createdAt = ((io.hyperfoil.tools.jjq.value.JqObject) created.arrayValue().get(0)).get("created");
+        assertTrue(createdAt == null || createdAt.isNull());
     }
 
     @Test
@@ -228,16 +231,22 @@ class ListCommandOutputTest {
                 released\tstopped\t-\ttpl-java\tcontainer\t-\torphaned\treview #12
                 mine-now\tstopped\t-\ttpl-java\tcontainer\t-\tkept\tspike
                 """, list(cmd("plain"), mcp));
-        List<LinkedHashMap<String, Object>> json = new ObjectMapper().readValue(list(cmd("json"), mcp),
-                new TypeReference<>() {});
-        assertNull(json.get(0).get("mcp_state"), "an instance no isx mcp session made");
-        assertEquals("held", json.get(1).get("mcp_state"));
-        assertEquals("#870 implement", json.get(1).get("mcp_purpose"));
-        assertTrue(json.get(2).containsKey("mcp_purpose"));
-        assertNull(json.get(2).get("mcp_purpose"), "no purpose given is null, never \"-\"");
-        assertEquals("orphaned", json.get(3).get("mcp_state"));
-        assertEquals("review\t#12", json.get(3).get("mcp_purpose"), "json keeps the value as stamped");
-        assertEquals("kept", json.get(4).get("mcp_state"));
+        var stated = io.hyperfoil.tools.jjq.value.JqValues.parse(list(cmd("json"), mcp));
+        var first = (io.hyperfoil.tools.jjq.value.JqObject) stated.arrayValue().get(0);
+        var statedState = first.get("mcp_state");
+        assertTrue(statedState == null || statedState.isNull(), "an instance no isx mcp session made");
+        var second = (io.hyperfoil.tools.jjq.value.JqObject) stated.arrayValue().get(1);
+        assertEquals("held", second.pathText("mcp_state", ""));
+        assertEquals("#870 implement", second.pathText("mcp_purpose", ""));
+        var third = (io.hyperfoil.tools.jjq.value.JqObject) stated.arrayValue().get(2);
+        assertTrue(third.has("mcp_purpose"));
+        var purpose3 = third.get("mcp_purpose");
+        assertTrue(purpose3 == null || purpose3.isNull(), "no purpose given is null, never \"-\"");
+        var fourth = (io.hyperfoil.tools.jjq.value.JqObject) stated.arrayValue().get(3);
+        var fifth = (io.hyperfoil.tools.jjq.value.JqObject) stated.arrayValue().get(4);
+        assertEquals("orphaned", fourth.pathText("mcp_state", ""));
+        assertEquals("review\t#12", fourth.pathText("mcp_purpose", ""), "json keeps the value as stamped");
+        assertEquals("kept", fifth.pathText("mcp_state", ""));
     }
 
     @Test
@@ -275,8 +284,9 @@ class ListCommandOutputTest {
         assertEquals("  Purpose:| [2J 2Jhi", rows(ListCommand.mcpDetailRows(entry.mcp())).getLast());
         var json = list(cmd("json"), daemon);
         assertFalse(json.contains("\u001b") || json.contains("\u009b"), json);
-        List<LinkedHashMap<String, Object>> parsed = new ObjectMapper().readValue(json, new TypeReference<>() {});
-        assertEquals(purpose, parsed.getFirst().get("mcp_purpose"), "json keeps the value as stamped");
+        var parsed = io.hyperfoil.tools.jjq.value.JqValues.parse(json);
+        assertEquals(purpose, ((io.hyperfoil.tools.jjq.value.JqObject) parsed.arrayValue().get(0)).pathText("mcp_purpose", ""),
+                "json keeps the value as stamped");
     }
 
     @Test

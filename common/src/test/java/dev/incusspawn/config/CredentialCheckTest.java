@@ -1,7 +1,5 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.RuntimeConstants;
 import dev.incusspawn.tool.ToolSetup;
 import org.junit.jupiter.api.Test;
@@ -18,7 +16,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class CredentialCheckTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     /** Built-in tools only, so no tool YAML on the developer's machine can leak in. */
     private static Map<String, ToolSetup> tools(ToolSetup... extra) {
@@ -30,7 +27,7 @@ class CredentialCheckTest {
 
     private static String check(String configYaml, String templateYaml, Map<String, String> selection,
                                 ToolSetup... extraTools) throws Exception {
-        var config = YAML.readValue(configYaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(configYaml);
         var all = tools(extraTools);
         return CredentialCheck.check(config, ImageDef.parseYaml(templateYaml), Map.of(), selection, all, all);
     }
@@ -116,7 +113,7 @@ class CredentialCheckTest {
 
     @Test
     void theWholeTemplateChainIsChecked() throws Exception {
-        var config = YAML.readValue("{}", SpawnConfig.class);
+        var config = Jjq.spawnConfig("{}");
         var parent = ImageDef.parseYaml("name: tpl-base\ntools: [gh]\n");
         var child = ImageDef.parseYaml("name: tpl-leaf\nparent: tpl-base\ntools: [podman]\n");
         var all = tools();

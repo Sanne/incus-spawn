@@ -1,6 +1,6 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -304,14 +304,14 @@ class McpClientRegistrationTest {
 
         var pb = new ProcessBuilder("env", "-i", "sh", "-c", helper);
         var run = pb.start();
-        var headers = new ObjectMapper().readValue(run.getInputStream().readAllBytes(), Map.class);
+        var headers = JqValues.parse(new String(run.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
         assertEquals(0, run.waitFor());
-        assertEquals(Map.of(InstanceSecret.HEADER, secret), headers);
+        assertEquals(secret, headers.path(InstanceSecret.HEADER).asText());
     }
 
     @Test
     void theServerIsTheProxysEndpoint() throws Exception {
-        var entry = new ObjectMapper().readTree(McpClientRegistration.SERVER_JSON);
+        var entry = JqValues.parse(McpClientRegistration.SERVER_JSON);
         assertEquals("http", entry.path("type").asText());
         assertEquals("https://" + ProxyConfig.MCP_DOMAIN + "/mcp", entry.path("url").asText());
         assertEquals(McpClientRegistration.HEADERS_HELPER, entry.path("headersHelper").asText());

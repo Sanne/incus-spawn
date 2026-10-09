@@ -1,7 +1,6 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import io.hyperfoil.tools.jjq.value.JqValues;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -16,8 +15,6 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class ApiTrafficLog {
 
-    private static final ObjectMapper JSON = new ObjectMapper()
-            .enable(SerializationFeature.INDENT_OUTPUT);
     private static final int MAX_BODY_CAPTURE = 65536;
 
     private final Path logDir;
@@ -110,8 +107,7 @@ public class ApiTrafficLog {
 
     private String formatBody(byte[] body) {
         try {
-            var tree = JSON.readTree(body);
-            return JSON.writeValueAsString(tree);
+            return JqValues.toPrettyJsonString(JqValues.parse(body));
         } catch (Exception e) {
             return new String(body, 0, Math.min(body.length, 4096));
         }

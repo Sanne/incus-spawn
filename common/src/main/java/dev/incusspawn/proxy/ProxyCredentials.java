@@ -62,7 +62,7 @@ public record ProxyCredentials(
      * proxy serializes it once per config read rather than once per selection it resolves.
      */
     public static ProxyCredentials forAccounts(SpawnConfig config,
-                                               com.fasterxml.jackson.databind.JsonNode configTree,
+                                               io.hyperfoil.tools.jjq.value.JqValue configTree,
                                                java.util.Map<String, String> accountsByNamespace,
                                                java.util.Map<String, dev.incusspawn.tool.ToolSetup> toolSetups) {
         var resolved = ToolProxyResolver.resolve(configTree, toolSetups, accountsByNamespace);

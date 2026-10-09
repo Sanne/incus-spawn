@@ -1,11 +1,11 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.AutoRemoteService;
@@ -48,8 +48,7 @@ import java.util.regex.Pattern;
  */
 public final class InstanceLifecycle {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
+    
     private InstanceLifecycle() {}
 
     /**
@@ -152,9 +151,12 @@ public final class InstanceLifecycle {
         // A copy carries its source's MCP ownership stamps. A branch of an agent's instance
         // (say, one it handed over with keep_instance) belongs to whoever made the branch, and
         // must not be mistaken for the dead session's orphan and reaped.
-        instance.path("config").fieldNames().forEachRemaining(key -> {
-            if (Metadata.isMcpKey(key) && !settings.extraConfig().containsKey(key)) update.unset(key);
-        });
+        var branchConfig = instance.path("config");
+        if (branchConfig instanceof io.hyperfoil.tools.jjq.value.JqObject branchObject) {
+            branchObject.forEach((key, value) -> {
+                if (Metadata.isMcpKey(key) && !settings.extraConfig().containsKey(key)) update.unset(key);
+            });
+        }
         update.config(settings.extraConfig());
         if (IncusClient.machineType(instance) == MachineType.VM) {
             // Templates built before free page reporting existed don't carry it to their copies
@@ -188,7 +190,7 @@ public final class InstanceLifecycle {
      * @param instance the build container, as read by the caller
      * @return the address assigned
      */
-    public static String assignBuildAddress(IncusClient incus, String name, JsonNode instance,
+    public static String assignBuildAddress(IncusClient incus, String name, JqValue instance,
                                             Map<String, String> config) {
         if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
         var bridge = BridgeAddress.require(incus);
@@ -273,12 +275,14 @@ public final class InstanceLifecycle {
     }
 
     /** The devices the instance's profiles give it, by name, one read per profile. */
-    private static Map<String, JsonNode> profileDevices(IncusClient incus, JsonNode instance) {
+    private static Map<String, JqValue> profileDevices(IncusClient incus, JqValue instance) {
         // Later profiles override earlier ones, as Incus expands them
-        var devices = new LinkedHashMap<String, JsonNode>();
-        for (var profile : instance.path("profiles")) {
-            incus.profileDevices(profile.asText()).properties()
-                    .forEach(e -> devices.put(e.getKey(), e.getValue()));
+        var devices = new LinkedHashMap<String, JqValue>();
+        for (var profile : instance.getField("profiles").asList()) {
+            var profileDevices = incus.profileDevices(profile.asDisplayText(""));
+            if (profileDevices instanceof JqObject devicesObj) {
+                devicesObj.forEach(devices::put);
+            }
         }
         return devices;
     }
@@ -294,7 +298,7 @@ public final class InstanceLifecycle {
      * @param pushNetworkConfig whether to push a static {@code .network} file into a container,
      *                          so it boots without asking DHCP; a branch does, a build does not
      */
-    private static String claimAndWrite(IncusClient incus, String name, JsonNode instance,
+    private static String claimAndWrite(IncusClient incus, String name, JqValue instance,
                                         InstanceUpdate update, String nicDevice, BridgeAddress bridge,
                                         Set<String> alsoTaken, boolean pushNetworkConfig) {
         var vm = IncusClient.machineType(instance) == MachineType.VM;
@@ -339,10 +343,13 @@ public final class InstanceLifecycle {
      * default} profile provides, or one the instance overrides from it (a clone's static IP),
      * applies again. A {@code type: none} device of the same name masks it.
      */
-    static void maskNics(JsonNode instance, InstanceUpdate update) {
-        instance.path("expanded_devices").properties().forEach(e -> {
-            if (IncusClient.isNic(e.getValue())) update.replaceDevice(e.getKey(), MASKED_DEVICE);
-        });
+    static void maskNics(JqValue instance, InstanceUpdate update) {
+        var expanded = instance.getField("expanded_devices");
+        if (expanded instanceof JqObject devices) {
+            devices.forEach((name, device) -> {
+                if (IncusClient.isNic(device)) update.replaceDevice(name, MASKED_DEVICE);
+            });
+        }
     }
 
     /**
@@ -352,20 +359,25 @@ public final class InstanceLifecycle {
      * masks of a profile NIC are touched: a {@code type: none} device the template set itself
      * stays.
      */
-    private static JsonNode unmaskNics(IncusClient incus, JsonNode instance, InstanceUpdate update) {
+    private static JqValue unmaskNics(IncusClient incus, JqValue instance, InstanceUpdate update) {
         var profileDevices = profileDevices(incus, instance);
-        var view = instance.deepCopy();
-        var expanded = (ObjectNode) view.path("expanded_devices");
-        instance.path("devices").properties().forEach(e -> {
-            var profileDevice = profileDevices.get(e.getKey());
-            if ("none".equals(e.getValue().path("type").asText())
-                    && profileDevice != null && IncusClient.isNic(profileDevice)) {
-                expanded.set(e.getKey(), profileDevice);
-                // A changed device is sent whole from the expanded view: the profile's NIC
-                update.device(e.getKey(), "type", "nic");
-            }
-        });
-        return view;
+        var expanded = JqObject.builder(8);
+        var current = instance.getField("expanded_devices");
+        if (current instanceof JqObject currentObj) currentObj.forEach(expanded::put);
+        var declared = instance.getField("devices");
+        if (declared instanceof JqObject declaredObj) {
+            declaredObj.forEach((name, device) -> {
+                var profileDevice = profileDevices.get(name);
+                if ("none".equals(device.pathText("type", ""))
+                        && profileDevice != null && IncusClient.isNic(profileDevice)) {
+                    expanded.put(name, profileDevice);
+                    // A changed device is sent whole from the expanded view: the profile's NIC
+                    update.device(name, "type", "nic");
+                }
+            });
+        }
+        if (!(instance instanceof JqObject root)) return instance;
+        return root.with("expanded_devices", expanded.build());
     }
 
     /**
@@ -445,7 +457,7 @@ public final class InstanceLifecycle {
      * caller already read it -- the shell path's, which would otherwise read it again. Its
      * account pins, stamps and network mode are all this looks at.
      */
-    public static void reconcileAccountIdentities(IncusClient incus, String name, JsonNode instance) {
+    public static void reconcileAccountIdentities(IncusClient incus, String name, JqValue instance) {
         reconcileAccountIdentities(incus, name, instance, SpawnConfig.load(), null, BuildOutput::step,
                 msg -> System.err.println("Warning: " + msg));
     }
@@ -472,7 +484,7 @@ public final class InstanceLifecycle {
      *                    passes its own so the tool definitions are not re-read from disk;
      *                    {@code null} decides against the built-in ones that can re-derive
      */
-    static void reconcileAccountIdentities(IncusClient incus, String name, JsonNode instance, SpawnConfig config,
+    static void reconcileAccountIdentities(IncusClient incus, String name, JqValue instance, SpawnConfig config,
                                            Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
                                            Consumer<String> progress, Consumer<String> warnings) {
         try {
@@ -666,7 +678,7 @@ public final class InstanceLifecycle {
      *
      * @param instance the instance as read, for its status and the pending mark
      */
-    public static void ensureReady(IncusClient incus, String name, JsonNode instance,
+    public static void ensureReady(IncusClient incus, String name, JqValue instance,
                                    MachineType machineType, Consumer<String> say) {
         if ("Stopped".equalsIgnoreCase(instance.path("status").asText(""))) {
             say.accept("Starting " + name + "...");
@@ -707,13 +719,13 @@ public final class InstanceLifecycle {
      * @return the instance as read once it answered ({@link #recordSecretBoot}), for the caller
      *         to reuse rather than read again; null when there is none
      */
-    public static JsonNode startForUse(IncusClient incus, String name, MachineType machineType,
+    public static JqValue startForUse(IncusClient incus, String name, MachineType machineType,
                                        Consumer<String> warn) {
         return startForUse(incus, name, incus.instanceMetadata(name), machineType, warn);
     }
 
     /** {@link #startForUse(IncusClient, String, MachineType, Consumer)}, with the stopped instance already read. */
-    static JsonNode startForUse(IncusClient incus, String name, JsonNode instance, MachineType machineType,
+    static JqValue startForUse(IncusClient incus, String name, JqValue instance, MachineType machineType,
                                 Consumer<String> warn) {
         var placeholders = ProofToken.declaredInBackground();
         prepareHostDevicesForStart(incus, name, instance, warn);
@@ -782,8 +794,8 @@ public final class InstanceLifecycle {
     }
 
     /** When Incus last started {@code instance} -- on every start, a reboot included -- or "". */
-    private static String bootOf(JsonNode instance) {
-        return instance.path("last_used_at").asText("");
+    private static String bootOf(JqValue instance) {
+        return instance.pathText("last_used_at", "");
     }
 
     /**
@@ -798,7 +810,7 @@ public final class InstanceLifecycle {
      *
      * @return the instance as read once the guest answered, or null for a VM or a failed read
      */
-    static JsonNode recordSecretBoot(IncusClient incus, String name, MachineType machineType) {
+    static JqValue recordSecretBoot(IncusClient incus, String name, MachineType machineType) {
         if (machineType == MachineType.VM) return null;
         try {
             // A failed read must not reach the CA check as an empty instance, which it would
@@ -1017,7 +1029,7 @@ public final class InstanceLifecycle {
      *
      * @param instance the instance as read; none of what is used here changes across a start
      */
-    private static VmPush pushVmNetworkConfig(IncusClient incus, String name, JsonNode instance,
+    private static VmPush pushVmNetworkConfig(IncusClient incus, String name, JqValue instance,
                                               int prefixLen, Consumer<String> warn) {
         var config = instance.path("config");
         var ip = config.path(Metadata.STATIC_IP).asText("");
@@ -1128,11 +1140,11 @@ public final class InstanceLifecycle {
                     var name = stale.getKey();
                     var listed = stale.getValue();
                     var type = MachineType.fromIncus(listed);
-                    var storedIp = listed.path("config").path(Metadata.STATIC_IP).asText("");
+                    var storedIp = listed.path("config").pathText(Metadata.STATIC_IP, "");
                     // Incus checks a running instance's NIC update against the address it holds
                     // now, which is off the new subnet: it refuses the update that would move it
                     // (#1009). Only a stopped instance can be moved.
-                    var status = listed.path("status").asText("");
+                    var status = listed.pathText("status", "");
                     if ("Frozen".equalsIgnoreCase(status)) {
                         // Paused on purpose, and a stop would wait on a guest that cannot answer
                         output.warn().accept(name + " is frozen and was not moved: resume it, then repair it again");
@@ -1197,7 +1209,7 @@ public final class InstanceLifecycle {
      *
      * @param instance the instance as read after its address was reassigned
      */
-    static void pushDeferredNetworkConfig(IncusClient incus, String name, JsonNode instance,
+    static void pushDeferredNetworkConfig(IncusClient incus, String name, JqValue instance,
                                           int prefixLen, Consumer<String> warn) {
         var settled = switch (pushVmNetworkConfig(incus, name, instance, prefixLen, warn)) {
             case FAILED -> false;
@@ -1232,19 +1244,14 @@ public final class InstanceLifecycle {
     }
 
     /** The listed instances whose static IP is off the bridge's subnet, by name. */
-    private static Map<String, JsonNode> staleStaticIps(IncusClient incus, BridgeAddress bridge) {
+    private static Map<String, JqValue> staleStaticIps(IncusClient incus, BridgeAddress bridge) {
         // The listing already carries each instance's config: one request, not one per instance.
-        JsonNode instances;
-        try {
-            instances = JSON.readTree(incus.listJsonConfig());
-        } catch (IOException e) {
-            throw new IncusException("Failed to parse instance list: " + e.getMessage());
-        }
-        var stale = new LinkedHashMap<String, JsonNode>();
-        for (var instance : instances) {
-            var name = instance.path("name").asText("");
+        JqValue instances = incus.listJsonConfig();
+        var stale = new LinkedHashMap<String, JqValue>();
+        for (var instance : instances.asList()) {
+            var name = instance.pathText("name", "");
             if (name.isEmpty()) continue;
-            var storedIp = instance.path("config").path(Metadata.STATIC_IP).asText("");
+            var storedIp = instance.getField("config").pathText(Metadata.STATIC_IP, "");
             if (storedIp.isEmpty()) continue;
             if (!CidrUtils.isInSubnet(storedIp, bridge.subnet())) {
                 stale.put(name, instance);
@@ -1297,7 +1304,7 @@ public final class InstanceLifecycle {
     }
 
     /** {@link #prepareHostDevicesForStart(IncusClient, String, Consumer)} with the instance already read. */
-    public static void prepareHostDevicesForStart(IncusClient incus, String name, JsonNode instance,
+    public static void prepareHostDevicesForStart(IncusClient incus, String name, JqValue instance,
                                                   Consumer<String> warn) {
         HostResourceSetup.removeStaleDevices(incus, name, instance, warn);
         removeStaleInbox(incus, name, instance, warn);
@@ -1317,7 +1324,7 @@ public final class InstanceLifecycle {
      * instance are not reliably applied. Reads the instance the other repairs already read, so
      * an instance that has it (every one branched since) costs no request at all.
      */
-    static void rearmIpFiltering(IncusClient incus, String name, JsonNode instance, Consumer<String> warn) {
+    static void rearmIpFiltering(IncusClient incus, String name, JqValue instance, Consumer<String> warn) {
         var nic = IncusClient.nic(instance, BridgeAddress.BRIDGE);
         // No bridge NIC: airgap, or a hand-made instance -- nothing to filter.
         if (nic == null || "true".equals(nic.config().get("security.ipv4_filtering"))) return;
@@ -1331,7 +1338,7 @@ public final class InstanceLifecycle {
      * host resource, so {@link HostResourceSetup#removeStaleDevices} never sees it. The user asked
      * for this mount, so dropping it is announced, with the command to add it back.
      */
-    static void removeStaleInbox(IncusClient incus, String name, JsonNode instance, Consumer<String> warn) {
+    static void removeStaleInbox(IncusClient incus, String name, JqValue instance, Consumer<String> warn) {
         var source = IncusClient.deviceSource(instance, INBOX_DEVICE);
         if (source.isEmpty()) return;
         var hostPath = HostResourceSetup.hostPathOfDeviceSource(source);
@@ -1430,7 +1437,7 @@ public final class InstanceLifecycle {
     public record RuntimeConfig(String buildSourceJson, boolean hasSshKeys,
                                 String workdir, String shellCommand,
                                 String subnetDiagnostic, String terminfo, String staticIp,
-                                String templateName, JsonNode instance) {
+                                String templateName, JqValue instance) {
 
         public IncusClient.ShellPrep toShellPrep() {
             return IncusClient.ShellPrep.fromPrefetched(

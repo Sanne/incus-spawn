@@ -1,7 +1,14 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqArray;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqString;
+import io.hyperfoil.tools.jjq.value.JqValue;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * A small builder for tool input and output schemas (JSON Schema 2020-12 objects, the dialect MCP
@@ -10,16 +17,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  */
 final class Schema {
 
-    private final ObjectNode root = JsonRpc.JSON.createObjectNode();
-    private final ObjectNode properties;
-    private final ArrayNode required;
+    private final Map<String, JqValue> properties = new LinkedHashMap<>();
+    private final List<String> required = new ArrayList<>();
 
-    private Schema() {
-        root.put("type", "object");
-        properties = root.putObject("properties");
-        required = root.putArray("required");
-        root.put("additionalProperties", false);
-    }
+    private Schema() {}
 
     static Schema object() {
         return new Schema();
@@ -35,9 +36,8 @@ final class Schema {
 
     /** An integer, or null where there is none to give (a binary file's line counts). */
     Schema nullableInteger(String name, String description, boolean isRequired) {
-        var p = add(name, description, isRequired);
-        p.putArray("type").add("integer").add("null");
-        return this;
+        var types = JqArray.arrayBuilder().add("integer").add("null").build();
+        return add(name, description, isRequired, Map.of("type", types));
     }
 
     Schema number(String name, String description, boolean isRequired) {
@@ -54,11 +54,12 @@ final class Schema {
 
     /** A string that is one of {@code values}. */
     Schema choice(String name, String description, boolean isRequired, String... values) {
-        var p = add(name, description, isRequired);
-        p.put("type", "string");
-        var e = p.putArray("enum");
+        var e = JqArray.arrayBuilder();
         for (var v : values) e.add(v);
-        return this;
+        var fields = new LinkedHashMap<String, JqValue>();
+        fields.put("type", JqString.of("string"));
+        fields.put("enum", e.build());
+        return add(name, description, isRequired, fields);
     }
 
     Schema stringList(String name, String description) {
@@ -66,45 +67,53 @@ final class Schema {
     }
 
     Schema stringList(String name, String description, boolean isRequired) {
-        var p = add(name, description, isRequired);
-        p.put("type", "array");
-        p.putObject("items").put("type", "string");
-        return this;
+        var fields = new LinkedHashMap<String, JqValue>();
+        fields.put("type", JqString.of("array"));
+        fields.put("items", JqObject.builder(1).put("type", "string").build());
+        return add(name, description, isRequired, fields);
     }
 
     Schema stringMap(String name, String description) {
-        var p = add(name, description, false);
-        p.put("type", "object");
-        p.putObject("additionalProperties").put("type", "string");
-        return this;
+        var fields = new LinkedHashMap<String, JqValue>();
+        fields.put("type", JqString.of("object"));
+        fields.put("additionalProperties", JqObject.builder(1).put("type", "string").build());
+        return add(name, description, false, fields);
     }
 
     Schema object(String name, String description, boolean isRequired, Schema nested) {
-        var p = add(name, description, isRequired);
-        p.setAll(nested.root);
-        return this;
+        return add(name, description, isRequired, nested.build().asMap());
     }
 
     Schema list(String name, String description, boolean isRequired, Schema items) {
-        var p = add(name, description, isRequired);
-        p.put("type", "array");
-        p.set("items", items.root);
-        return this;
+        var fields = new LinkedHashMap<String, JqValue>();
+        fields.put("type", JqString.of("array"));
+        fields.put("items", items.build());
+        return add(name, description, isRequired, fields);
     }
 
     private Schema prop(String name, String type, String description, boolean isRequired) {
-        add(name, description, isRequired).put("type", type);
+        return add(name, description, isRequired, Map.of("type", JqString.of(type)));
+    }
+
+    private Schema add(String name, String description, boolean isRequired, Map<String, JqValue> fields) {
+        var b = JqObject.builder(fields.size() + 1);
+        if (description != null) b.put("description", description);
+        fields.forEach(b::put);
+        properties.put(name, b.build());
+        if (isRequired) required.add(name);
         return this;
     }
 
-    private ObjectNode add(String name, String description, boolean isRequired) {
-        var p = properties.putObject(name);
-        if (description != null) p.put("description", description);
-        if (isRequired) required.add(name);
-        return p;
-    }
-
-    ObjectNode build() {
-        return root;
+    JqObject build() {
+        var props = JqObject.builder(properties.size());
+        properties.forEach(props::put);
+        var req = JqArray.arrayBuilder();
+        required.forEach(req::add);
+        return JqObject.builder(4)
+                .put("type", "object")
+                .put("properties", props.build())
+                .put("required", req.build())
+                .put("additionalProperties", false)
+                .build();
     }
 }

@@ -1,7 +1,5 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -10,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class SpawnConfigTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     @Test
     void deserializeWithHostPath() throws Exception {
@@ -20,7 +17,7 @@ class SpawnConfigTest {
                   quarkus: ~/work/quarkus
                   hibernate: /opt/hibernate
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         assertEquals("~/projects", config.getHostPath());
         assertEquals(java.util.List.of("~/projects"), config.getHostPaths());
         assertEquals(2, config.getRepoPaths().size());
@@ -38,7 +35,7 @@ class SpawnConfigTest {
                   quarkus: ~/work/quarkus
                   hibernate: /opt/hibernate
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         assertEquals(2, config.getHostPaths().size());
         assertEquals("~/projects", config.getHostPaths().get(0));
         assertEquals("~/workspace", config.getHostPaths().get(1));
@@ -56,7 +53,7 @@ class SpawnConfigTest {
                 github:
                   token: gh-token
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         assertEquals("", config.getHostPath());
         assertTrue(config.getHostPaths().isEmpty());
         assertTrue(config.getRepoPaths().isEmpty());
@@ -66,7 +63,7 @@ class SpawnConfigTest {
 
     @Test
     void deserializeEmptyYaml() throws Exception {
-        var config = YAML.readValue("{}", SpawnConfig.class);
+        var config = Jjq.spawnConfig("{}");
         assertEquals("", config.getHostPath());
         assertTrue(config.getHostPaths().isEmpty());
         assertTrue(config.getRepoPaths().isEmpty());
@@ -90,7 +87,7 @@ class SpawnConfigTest {
                 host-paths:
                   - ~/workspace
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         config.migrateHostPath();
         assertEquals("", config.getHostPath());
         assertEquals(java.util.List.of("~/projects", "~/workspace"), config.getHostPaths());
@@ -101,13 +98,13 @@ class SpawnConfigTest {
         var yaml = """
                 incus-bridge-gateway: "10.166.11.1"
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         assertEquals("10.166.11.1", config.getIncusBridgeGateway());
     }
 
     @Test
     void incusBridgeGatewayDefaultsToEmpty() throws Exception {
-        var config = YAML.readValue("{}", SpawnConfig.class);
+        var config = Jjq.spawnConfig("{}");
         assertEquals("", config.getIncusBridgeGateway());
     }
 
@@ -122,23 +119,23 @@ class SpawnConfigTest {
 
     @Test
     void tuiLiveRefreshDefaultsToOn() throws Exception {
-        assertTrue(YAML.readValue("{}", SpawnConfig.class).tuiLiveRefreshEnabled());
+        assertTrue(Jjq.spawnConfig("{}").tuiLiveRefreshEnabled());
     }
 
     @Test
     void tuiLiveRefreshCanBeTurnedOff() throws Exception {
-        assertFalse(YAML.readValue("tui-live-refresh: false", SpawnConfig.class).tuiLiveRefreshEnabled());
-        assertTrue(YAML.readValue("tui-live-refresh: true", SpawnConfig.class).tuiLiveRefreshEnabled());
+        assertFalse(Jjq.spawnConfig("tui-live-refresh: false").tuiLiveRefreshEnabled());
+        assertTrue(Jjq.spawnConfig("tui-live-refresh: true").tuiLiveRefreshEnabled());
     }
 
     @Test
     void tuiLiveRefreshCanBeRemoved() throws Exception {
         // removeConfigPath rebuilds the object via copyFrom; a field it skips keeps its old value,
         // so removing the switch would silently leave live refresh off.
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 tui-live-refresh: false
                 incus-bridge-gateway: "10.1.2.3"
-                """, SpawnConfig.class);
+                """);
         config.removeConfigPath("incus-bridge-gateway");
         assertFalse(config.tuiLiveRefreshEnabled(), "an unrelated removal must not touch it");
         config.removeConfigPath("tui-live-refresh");
@@ -147,44 +144,44 @@ class SpawnConfigTest {
 
     @Test
     void tuiLiveRefreshDefaultIsNotWrittenBack() throws Exception {
-        assertFalse(YAML.writeValueAsString(new SpawnConfig()).contains("live-refresh"));
+        assertFalse(Jjq.toYaml(new SpawnConfig()).contains("live-refresh"));
         var off = new SpawnConfig();
         off.setTuiLiveRefresh(false);
-        var yaml = YAML.writeValueAsString(off);
+        var yaml = Jjq.toYaml(off);
         assertTrue(yaml.contains("tui-live-refresh: false"), yaml);
-        assertFalse(YAML.readValue(yaml, SpawnConfig.class).tuiLiveRefreshEnabled());
+        assertFalse(Jjq.spawnConfig(yaml).tuiLiveRefreshEnabled());
     }
 
     @Test
     void artifactCacheIsAbsentByDefaultAndNotWrittenBack() throws Exception {
-        assertNull(YAML.readValue("{}", SpawnConfig.class).artifactCache());
-        assertFalse(YAML.writeValueAsString(new SpawnConfig()).contains("artifact-cache"));
+        assertNull(Jjq.spawnConfig("{}").artifactCache());
+        assertFalse(Jjq.toYaml(new SpawnConfig()).contains("artifact-cache"));
     }
 
     @Test
     void artifactCacheRoundTrips() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 artifact-cache:
                   fresh: 30m
                   max-stale: 3d
-                """, SpawnConfig.class);
+                """);
         assertEquals("30m", config.artifactCache().fresh());
         assertEquals("3d", config.artifactCache().maxStale());
-        var again = YAML.readValue(YAML.writeValueAsString(config), SpawnConfig.class);
+        var again = Jjq.spawnConfig(Jjq.toYaml(config));
         assertEquals("30m", again.artifactCache().fresh());
         assertEquals("3d", again.artifactCache().maxStale());
 
         // Only the key that was set is written back
-        var partial = YAML.readValue("artifact-cache: {fresh: 1h}", SpawnConfig.class);
-        assertFalse(YAML.writeValueAsString(partial).contains("max-stale"));
+        var partial = Jjq.spawnConfig("artifact-cache: {fresh: 1h}");
+        assertFalse(Jjq.toYaml(partial).contains("max-stale"));
     }
 
     @Test
     void artifactCacheSurvivesAnUnrelatedRemoval() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 artifact-cache: {fresh: 1h}
                 incus-bridge-gateway: "10.1.2.3"
-                """, SpawnConfig.class);
+                """);
         config.removeConfigPath("incus-bridge-gateway");
         assertEquals("1h", config.artifactCache().fresh());
     }
@@ -194,13 +191,12 @@ class SpawnConfigTest {
         // Following "set both to 0" too literally must not fail the whole file: load() would
         // then return an empty config, and the proxy would lose every credential
         for (var value : new String[] {"0", "off", "[2h, 7d]"}) {
-            var config = YAML.readValue("artifact-cache: " + value + "\nincus-bridge-gateway: \"10.1.2.3\"\n",
-                    SpawnConfig.class);
+            var config = Jjq.spawnConfig("artifact-cache: " + value + "\nincus-bridge-gateway: \"10.1.2.3\"\n");
             assertEquals("10.1.2.3", config.getIncusBridgeGateway(), value);
             assertFalse(config.artifactCache().wellFormed(), value);
-            assertTrue(YAML.writeValueAsString(config).contains("artifact-cache"), "written back as it was");
+            assertTrue(Jjq.toYaml(config).contains("artifact-cache"), "written back as it was");
         }
-        var numbers = YAML.readValue("artifact-cache: {fresh: 0, max-stale: 0}", SpawnConfig.class);
+        var numbers = Jjq.spawnConfig("artifact-cache: {fresh: 0, max-stale: 0}");
         assertEquals("0", numbers.artifactCache().fresh());
     }
 
@@ -223,7 +219,7 @@ class SpawnConfigTest {
                   - aider
                   - cursor
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         assertEquals(java.util.List.of("aider", "cursor"), config.getFeatures());
         assertTrue(config.isFeatureEnabled("aider"));
         assertTrue(config.isFeatureEnabled("cursor"));
@@ -232,7 +228,7 @@ class SpawnConfigTest {
 
     @Test
     void featuresDefaultsToEmpty() throws Exception {
-        var config = YAML.readValue("{}", SpawnConfig.class);
+        var config = Jjq.spawnConfig("{}");
         assertTrue(config.getFeatures().isEmpty());
         assertFalse(config.isFeatureEnabled("aider"));
     }
@@ -246,7 +242,7 @@ class SpawnConfigTest {
                 openai:
                   apiKey: sk-test-key
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         assertTrue(config.getFeatures().isEmpty());
         assertFalse(config.isFeatureEnabled("openai"));
     }
@@ -265,7 +261,7 @@ class SpawnConfigTest {
                   - ~/my-templates
                   - /absolute/path
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         var paths = config.getSearchPaths();
         assertEquals(2, paths.size());
         assertEquals("~/my-templates", paths.get(0));
@@ -289,7 +285,7 @@ class SpawnConfigTest {
                 claude:
                   oauthToken: "sk-ant-oat01-abc "
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         assertEquals("sk-ant-oat01-abc", config.getClaude().getOauthToken());
     }
 
@@ -367,7 +363,7 @@ class SpawnConfigTest {
     void serializationOmitsHostPath() throws Exception {
         var config = new SpawnConfig();
         config.setHostPaths(java.util.List.of("~/projects"));
-        var yaml = YAML.writeValueAsString(config);
+        var yaml = Jjq.toYaml(config);
         assertFalse(yaml.contains("host-path:"), "host-path (singular) should not appear in output");
         assertTrue(yaml.contains("host-paths:"), "host-paths (plural) should appear in output");
     }
@@ -378,7 +374,7 @@ class SpawnConfigTest {
                 host-path: ~/projects
                 incus-bridge-gateway: "10.166.11.1"
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         assertEquals("~/projects", config.getHostPath());
         assertEquals(java.util.List.of("~/projects"), config.getHostPaths());
 
@@ -386,11 +382,11 @@ class SpawnConfigTest {
         assertEquals("", config.getHostPath());
         assertEquals(java.util.List.of("~/projects"), config.getHostPaths());
 
-        var written = YAML.writeValueAsString(config);
+        var written = Jjq.toYaml(config);
         assertFalse(written.contains("host-path:"), "re-serialized config should not contain host-path");
         assertTrue(written.contains("host-paths:"));
 
-        var reloaded = YAML.readValue(written, SpawnConfig.class);
+        var reloaded = Jjq.spawnConfig(written);
         assertEquals("", reloaded.getHostPath());
         assertEquals(java.util.List.of("~/projects"), reloaded.getHostPaths());
         assertEquals("10.166.11.1", reloaded.getIncusBridgeGateway());
@@ -403,13 +399,13 @@ class SpawnConfigTest {
                   - ~/projects
                   - ~/workspace
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         config.migrateHostPath();
-        var written = YAML.writeValueAsString(config);
+        var written = Jjq.toYaml(config);
         assertFalse(written.contains("host-path:"), "should not produce host-path singular");
         assertTrue(written.contains("host-paths:"));
 
-        var reloaded = YAML.readValue(written, SpawnConfig.class);
+        var reloaded = Jjq.spawnConfig(written);
         assertEquals(java.util.List.of("~/projects", "~/workspace"), reloaded.getHostPaths());
     }
 

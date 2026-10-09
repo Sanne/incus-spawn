@@ -1,11 +1,7 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
-import com.fasterxml.jackson.databind.DeserializationContext;
-import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
+import io.hyperfoil.tools.jjq.mapper.JqMapped;
+import io.hyperfoil.tools.jjq.mapper.JqName;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
@@ -29,14 +25,14 @@ import java.util.regex.Pattern;
  * subject to conflict detection. YAML definitions cannot set that flag.
  */
 @RegisterForReflection
-@JsonIgnoreProperties(ignoreUnknown = true)
+@JqMapped
 public class EnvEntry {
 
     public enum Strategy {
-        @JsonProperty("set") SET,
-        @JsonProperty("set-if-unset") SET_IF_UNSET,
-        @JsonProperty("prepend") PREPEND,
-        @JsonProperty("append") APPEND
+        @JqName("set") SET,
+        @JqName("set-if-unset") SET_IF_UNSET,
+        @JqName("prepend") PREPEND,
+        @JqName("append") APPEND
     }
 
     private String name;
@@ -105,7 +101,7 @@ public class EnvEntry {
 
     /** Whether {@code name} is a variable name an env entry may set. */
     public static boolean isValidName(String name) {
-        return name != null && ListDeserializer.VALID_NAME.matcher(name).matches();
+        return name != null && EnvEntryListConverter.VALID_NAME.matcher(name).matches();
     }
 
     public String fingerprintString() {
@@ -113,99 +109,4 @@ public class EnvEntry {
                 + (expandAtLogin ? ",expand" : "");
     }
 
-    /**
-     * Deserializes a YAML/JSON list of structured env entries (maps with
-     * name/value/strategy/separator fields). A plain string such as
-     * {@code export FOO=bar} is rejected, naming the structured equivalent.
-     */
-    public static class ListDeserializer extends StdDeserializer<List<EnvEntry>> {
-        public ListDeserializer() { super(List.class); }
-
-        @Override
-        public List<EnvEntry> deserialize(JsonParser p, DeserializationContext ctxt)
-                throws IOException {
-            return deserializeList(p);
-        }
-
-        static List<EnvEntry> deserializeList(JsonParser p) throws IOException {
-            var result = new ArrayList<EnvEntry>();
-            if (p.currentToken() != JsonToken.START_ARRAY) {
-                throw new IOException("Expected array for env field");
-            }
-
-            while (p.nextToken() != JsonToken.END_ARRAY) {
-                if (p.currentToken() == JsonToken.VALUE_STRING) {
-                    throw new IOException(shellStringError(p.getText()));
-                } else if (p.currentToken() == JsonToken.START_OBJECT) {
-                    result.add(parseStructuredEntry(p));
-                } else {
-                    throw new IOException("Unexpected token in env array: " + p.currentToken());
-                }
-            }
-            return result;
-        }
-
-        private static final String NAME_REGEX = "[a-zA-Z_][a-zA-Z0-9_]*";
-        private static final Pattern VALID_NAME = Pattern.compile(NAME_REGEX);
-        private static final Pattern EXPORT_LINE =
-                Pattern.compile("\\s*(?:export\\s+)?(" + NAME_REGEX + ")=(.*)");
-
-        static String shellStringError(String line) {
-            var msg = new StringBuilder("Env entry '").append(line)
-                    .append("' is a shell string, which is not supported; use a structured entry");
-            var m = EXPORT_LINE.matcher(line);
-            if (m.matches()) {
-                msg.append(":\n  - name: ").append(m.group(1))
-                        .append("\n    value: ").append(m.group(2));
-            } else {
-                msg.append(" with 'name' and 'value'");
-            }
-            return msg.toString();
-        }
-
-        private static final Map<String, Strategy> STRATEGY_MAP = Map.of(
-                "set", Strategy.SET,
-                "set-if-unset", Strategy.SET_IF_UNSET,
-                "prepend", Strategy.PREPEND,
-                "append", Strategy.APPEND
-        );
-
-        private static EnvEntry parseStructuredEntry(JsonParser p) throws IOException {
-            var entry = new EnvEntry();
-            while (p.nextToken() != JsonToken.END_OBJECT) {
-                var field = p.currentName();
-                p.nextToken();
-                switch (field) {
-                    case "name" -> entry.setName(p.getText());
-                    case "value" -> entry.setValue(p.getText());
-                    case "strategy" -> {
-                        var strategyStr = p.getText();
-                        var strategy = STRATEGY_MAP.get(strategyStr);
-                        if (strategy == null) {
-                            throw new IOException("Unknown env strategy '" + strategyStr
-                                    + "'; expected one of: set, set-if-unset, prepend, append");
-                        }
-                        entry.setStrategy(strategy);
-                    }
-                    case "separator" -> entry.setSeparator(p.getText());
-                    default -> p.skipChildren();
-                }
-            }
-            if (entry.getName() == null || entry.getName().isBlank()) {
-                throw new IOException("Structured env entry requires a 'name' field");
-            }
-            if (!VALID_NAME.matcher(entry.getName()).matches()) {
-                throw new IOException("Invalid env var name '" + entry.getName()
-                        + "'; must match " + NAME_REGEX);
-            }
-            if (entry.getValue() == null) {
-                throw new IOException("Structured env entry '" + entry.getName() + "' requires a 'value' field");
-            }
-            if (entry.getValue().indexOf('\n') >= 0 || entry.getValue().indexOf('\r') >= 0) {
-                throw new IOException("Env var '" + entry.getName()
-                        + "' value must not contain newline or carriage return characters");
-            }
-            return entry;
-        }
-    }
 }

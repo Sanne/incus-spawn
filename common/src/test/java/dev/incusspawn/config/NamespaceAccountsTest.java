@@ -1,7 +1,5 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -16,18 +14,17 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class NamespaceAccountsTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     private static SpawnConfig parse(String yaml) throws Exception {
-        return YAML.readValue(yaml, SpawnConfig.class);
+        return Jjq.spawnConfig(yaml);
     }
 
     private static String dump(SpawnConfig config) throws Exception {
-        return YAML.writeValueAsString(config);
+        return Jjq.toYaml(config);
     }
 
     private static String value(SpawnConfig config, String path) {
-        return AccountResolver.navigate(new ObjectMapper().valueToTree(config), path);
+        return AccountResolver.navigate(config.tree(), path);
     }
 
     @Test

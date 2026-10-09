@@ -1,8 +1,8 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
@@ -60,8 +60,6 @@ final class McpBridge {
     static final long KEEPALIVE_MILLIS = 30_000;
     /** Notifications kept for a GET stream not yet opened; the oldest go first. */
     static final int MAX_BUFFERED = 1_000;
-
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final Vertx vertx;
     private final Supplier<InstanceRegistry> registry;
@@ -205,21 +203,22 @@ final class McpBridge {
     }
 
     private void post(HttpServerRequest req, String instance, Buffer body) {
-        JsonNode message;
+        JqValue message;
         try {
-            message = JSON.readTree(body.toString(StandardCharsets.UTF_8));
-        } catch (IOException e) {
+            message = JqValues.parse(body.toString(StandardCharsets.UTF_8));
+        } catch (RuntimeException e) {
             refuse(req, 400, "not JSON: " + e.getMessage());
             return;
         }
-        if (message == null || !message.isObject()) {
+        if (!message.isObject()) {
             refuse(req, 400, "one JSON-RPC message per POST; batches are not accepted");
             return;
         }
         // One line on the child's stdin: re-serialized, so it holds no newline whatever was sent.
-        var line = message.toString();
-        var isRequest = message.hasNonNull("method") && message.has("id");
-        if (isRequest && "initialize".equals(message.path("method").asText())) {
+        var line = message.toJsonString();
+        var isRequest = !message.path("method").isNull() && message instanceof JqObject reqObj
+                && reqObj.keys().contains("id");
+        if (isRequest && "initialize".equals(message.pathText("method", ""))) {
             vertx.executeBlocking(() -> startSession(instance), false).onComplete(ar -> {
                 if (ar.failed()) {
                     ProxyLog.warn("Could not start isx mcp for " + instance + ": " + ar.cause().getMessage());
@@ -228,7 +227,7 @@ final class McpBridge {
                 }
                 var session = ar.result();
                 req.response().putHeader(SESSION_HEADER, session.id);
-                session.request(message.get("id"), line, req.response());
+                session.request(message.getField("id"), line, req.response());
             });
             return;
         }
@@ -236,7 +235,7 @@ final class McpBridge {
         if (session == null) {
             refuse(req, 404, "no such MCP session; initialize again");
         } else if (isRequest) {
-            session.request(message.get("id"), line, req.response());
+            session.request(message.getField("id"), line, req.response());
         } else {
             session.write(line);
             req.response().setStatusCode(202).end();
@@ -318,7 +317,7 @@ final class McpBridge {
     }
 
     /** A request waiting for its response. */
-    private record Pending(JsonNode id, HttpServerResponse resp) {}
+    private record Pending(JqValue id, HttpServerResponse resp) {}
 
     /** One instance's session: its {@code isx mcp} process and the exchanges waiting on it. */
     private final class Session {
@@ -368,13 +367,13 @@ final class McpBridge {
             toChild.add(line);
         }
 
-        synchronized void request(JsonNode id, String line, HttpServerResponse resp) {
+        synchronized void request(JqValue id, String line, HttpServerResponse resp) {
             if (ended) {
                 answer(resp, error(id, "isx mcp has ended; initialize again"));
                 return;
             }
             beginEventStream(resp);
-            pending.put(id.toString(), new Pending(id, resp));
+            pending.put(id.toJsonString(), new Pending(id, resp));
             write(line);
         }
 
@@ -393,19 +392,20 @@ final class McpBridge {
 
         private void fromChild(String line) {
             // Parsed outside the lock, which the event loop takes too: a line may be megabytes.
-            JsonNode message;
+            JqValue message;
             try {
-                message = JSON.readTree(line);
-            } catch (IOException e) {
+                message = JqValues.parse(line);
+            } catch (RuntimeException e) {
                 ProxyLog.warn("isx mcp for " + instance + " wrote a line that is not JSON; dropped");
                 return;
             }
-            var isResponse = message.isObject() && !message.has("method") && message.has("id")
-                    && (message.has("result") || message.has("error"));
+            var isResponse = message instanceof JqObject respObj && !respObj.keys().contains("method")
+                    && respObj.keys().contains("id")
+                    && (respObj.keys().contains("result") || respObj.keys().contains("error"));
             synchronized (this) {
                 if (isResponse) {
                     // Its asker may have left; a response never goes to the stream.
-                    var waiting = pending.remove(message.get("id").toString());
+                    var waiting = pending.remove(message.getField("id").toJsonString());
                     if (waiting != null) answer(waiting.resp(), line);
                 } else if (stream != null) {
                     send(stream, event(line), false);
@@ -433,12 +433,9 @@ final class McpBridge {
             stream = null;
         }
 
-        private static String error(JsonNode id, String message) {
-            ObjectNode node = JSON.createObjectNode();
-            node.put("jsonrpc", "2.0");
-            node.set("id", id);
-            node.putObject("error").put("code", -32603).put("message", message);
-            return node.toString();
+        private static String error(JqValue id, String message) {
+            var error = JqObject.builder(2).put("code", (long) -32603).put("message", message).build();
+            return JqObject.builder(3).put("jsonrpc", "2.0").put("id", id).put("error", error).build().toJsonString();
         }
 
         private static void answer(HttpServerResponse resp, String line) {

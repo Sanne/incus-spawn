@@ -137,9 +137,9 @@ class CredentialPromptsTest {
 
         // Answering the confirm (No) is a value; skipping the others must not become "".
         assertEquals("false", saved("acme.telemetry"));
-        var acme = SpawnConfig.load().tree().get("acme");
-        assertEquals(1, acme.size(), acme.toString());
-        assertTrue(acme.has("telemetry"), acme.toString());
+        var acme = SpawnConfig.load().tree().getField("acme");
+        assertTrue(acme instanceof io.hyperfoil.tools.jjq.value.JqObject acmeObj
+                && acmeObj.size() == 1 && acmeObj.keys().contains("telemetry"), acme.toString());
     }
 
     @Test

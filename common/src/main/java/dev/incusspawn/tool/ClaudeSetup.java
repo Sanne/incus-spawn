@@ -5,7 +5,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.util.BuildOutput;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqObject;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -16,8 +16,7 @@ import java.util.Map;
 public class ClaudeSetup implements ToolSetup {
 
     private static final String DOWNLOAD_BASE_URL = "https://downloads.claude.ai/claude-code-releases";
-    private static final ObjectMapper JSON = new ObjectMapper();
-
+    
     private final DownloadCache downloadCache;
 
     public ClaudeSetup() {
@@ -361,8 +360,8 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     static String extractChecksum(String manifestJson, String platform) throws IOException {
-        var root = JSON.readTree(manifestJson);
-        var checksum = root.path("platforms").path(platform).path("checksum").asText(null);
+        var root = io.hyperfoil.tools.jjq.value.JqValues.parse(manifestJson);
+        var checksum = root.getField("platforms").getField(platform).pathText("checksum", null);
         if (checksum == null) {
             throw new IOException("Platform " + platform + " not found in manifest");
         }
@@ -536,8 +535,8 @@ public class ClaudeSetup implements ToolSetup {
             """;
 
     static String buildUserSettings(Map<String, String> params) {
-        var root = JSON.createObjectNode();
-        root.put("disableDeepLinkRegistration", "disable");
+        var root = JqObject.builder(6)
+                .put("disableDeepLinkRegistration", "disable");
 
         putIfPresent(root, params, "model", "model");
         putIfPresent(root, params, "theme", "theme");
@@ -547,23 +546,22 @@ public class ClaudeSetup implements ToolSetup {
         var commitTrailer = params.get("attribution-commit");
         var prAttribution = params.get("attribution-pr");
         if (commitTrailer != null || prAttribution != null) {
-            var attribution = root.putObject("attribution");
+            var attribution = JqObject.builder(2);
             if (commitTrailer != null) attribution.put("commit", commitTrailer);
             if (prAttribution != null) attribution.put("pr", prAttribution);
+            root.put("attribution", attribution.build());
         }
 
-        try {
-            return JSON.writerWithDefaultPrettyPrinter().writeValueAsString(root) + "\n";
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to serialize settings JSON", e);
-        }
+        // Pretty style differs from Jackson's ("k": v vs "k" : v); this file is
+        // machine-read inside the container, so only the parsed shape matters.
+        return io.hyperfoil.tools.jjq.value.JqValues.toPrettyJsonString(root.build()) + "\n";
     }
 
-    private static void putIfPresent(com.fasterxml.jackson.databind.node.ObjectNode node,
-                                      Map<String, String> params, String paramKey, String jsonKey) {
+    private static void putIfPresent(JqObject.Builder builder,
+                                     Map<String, String> params, String paramKey, String jsonKey) {
         var value = params.get(paramKey);
         if (value != null) {
-            node.put(jsonKey, value);
+            builder.put(jsonKey, value);
         }
     }
 

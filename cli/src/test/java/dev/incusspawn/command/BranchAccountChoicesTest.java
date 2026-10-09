@@ -2,13 +2,12 @@ package dev.incusspawn.command;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import dev.incusspawn.config.Jjq;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.config.AccountOrigin;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.lifecycle.BranchFlow;
@@ -64,7 +63,7 @@ class BranchAccountChoicesTest {
 
     /** Branched from tpl-acme, which pins github to acme-bot; the source was built for Pro/Max. */
     private static List<BranchAccountChoices.Row> rows() throws Exception {
-        var config = new ObjectMapper(new YAMLFactory()).readValue(CONFIG, SpawnConfig.class);
+        var config = Jjq.spawnConfig(CONFIG);
         var inherited = new BranchFlow.Inherited("tpl-acme", Map.of("github", "acme-bot"),
                 Map.of("github", AccountOrigin.template("tpl-acme")));
         return BranchAccountChoices.rowsFor(config, setups(), new java.util.LinkedHashSet<>(List.of("claude", "github", "bob")),
@@ -138,7 +137,7 @@ class BranchAccountChoicesTest {
 
     @Test
     void anInheritedPinToAMissingAccountGetsARowToFixItIn() throws Exception {
-        var config = new ObjectMapper(new YAMLFactory()).readValue(CONFIG, SpawnConfig.class);
+        var config = Jjq.spawnConfig(CONFIG);
         var inherited = new BranchFlow.Inherited("tpl-dev", Map.of("bob", "gone"),
                 Map.of("bob", AccountOrigin.EXPLICIT));
         var setups = setups();

@@ -1,7 +1,9 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 
@@ -56,8 +58,7 @@ public final class InstanceRegistry {
      */
     public static final long MISS_REFRESH_INTERVAL_MS = 1_000L;
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
+    
     /**
      * One instance's identity, as far as credential selection is concerned.
      *
@@ -273,12 +274,12 @@ public final class InstanceRegistry {
     public static Map<String, Map<String, String>> accountsByInstance(IncusClient incus) {
         var byInstance = new LinkedHashMap<String, Map<String, String>>();
         try {
-            var root = JSON.readTree(incus.listJsonConfig());
+            var root = incus.listJsonConfig();
             if (!root.isArray()) return byInstance;
-            for (var instance : root) {
-                var name = instance.path("name").asText("");
-                var config = instance.path("config");
-                if (name.isEmpty() || !config.isObject()) continue;
+            for (var instance : root.asList()) {
+                var name = instance.pathText("name", "");
+                var config = instance.getField("config");
+                if (name.isEmpty() || !(config instanceof JqObject)) continue;
                 var accounts = accountsOf(config);
                 if (!accounts.isEmpty()) byInstance.put(name, accounts);
             }
@@ -302,15 +303,15 @@ public final class InstanceRegistry {
     public static Map<String, AccountState> accountStates(IncusClient incus) {
         var states = new LinkedHashMap<String, AccountState>();
         try {
-            var root = JSON.readTree(incus.listJsonConfig());
+            var root = incus.listJsonConfig();
             if (!root.isArray()) return states;
-            for (var instance : root) {
-                var name = instance.path("name").asText("");
-                var config = instance.path("config");
-                if (name.isEmpty() || !config.isObject()
-                        || !Metadata.TYPE_CLONE.equals(config.path(Metadata.TYPE).asText(""))) continue;
+            for (var instance : root.asList()) {
+                var name = instance.pathText("name", "");
+                var config = instance.getField("config");
+                if (name.isEmpty() || !(config instanceof JqObject)
+                        || !Metadata.TYPE_CLONE.equals(config.pathText(Metadata.TYPE, ""))) continue;
                 states.put(name, new AccountState(accountsOf(config), identitiesOf(config),
-                        "Running".equalsIgnoreCase(instance.path("status").asText(""))));
+                        "Running".equalsIgnoreCase(instance.pathText("status", ""))));
             }
         } catch (Exception e) {
             throw new dev.incusspawn.incus.IncusException(
@@ -326,22 +327,31 @@ public final class InstanceRegistry {
     static Parsed parse(String instancesJson) {
         var claimants = new LinkedHashMap<String, List<Claimant>>();
         try {
-            var root = JSON.readTree(instancesJson);
-            if (!root.isArray()) return new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of());
-            for (var instance : root) {
-                var name = instance.path("name").asText("");
-                var config = instance.path("config");
-                if (name.isEmpty() || !config.isObject()) continue;
+            return parse(JqValues.parse(instancesJson));
+        } catch (Exception e) {
+            ProxyLog.warn("Could not parse instance list for the account registry: " + e.getMessage());
+            return new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of());
+        }
+    }
 
-                var address = config.path(Metadata.STATIC_IP).asText("").strip();
+    static Parsed parse(io.hyperfoil.tools.jjq.value.JqValue root) {
+        var claimants = new LinkedHashMap<String, List<Claimant>>();
+        try {
+            if (!root.isArray()) return new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of());
+            for (var instance : root.asList()) {
+                var name = instance.pathText("name", "");
+                var config = instance.getField("config");
+                if (name.isEmpty() || !(config instanceof JqObject)) continue;
+
+                var address = config.pathText(Metadata.STATIC_IP, "").strip();
                 if (address.isEmpty()) continue;
 
                 claimants.computeIfAbsent(normalize(address), a -> new ArrayList<>()).add(new Claimant(
                         new InstanceAccounts(name, accountsOf(config), identitiesOf(config)),
-                        "Running".equalsIgnoreCase(instance.path("status").asText("")),
-                        config.path(Metadata.INSTANCE_SECRET_SHA256).asText("").strip(),
-                        Metadata.isMcpCallerGrant(config.path(Metadata.MCP_CALLER).asText(null)),
-                        instance.path("created_at").asText("").strip()));
+                        "Running".equalsIgnoreCase(instance.pathText("status", "")),
+                        config.pathText(Metadata.INSTANCE_SECRET_SHA256, "").strip(),
+                        Metadata.isMcpCallerGrant(config.pathText(Metadata.MCP_CALLER, null)),
+                        instance.pathText("created_at", "").strip()));
             }
         } catch (Exception e) {
             ProxyLog.warn("Could not parse instance list for the account registry: " + e.getMessage());
@@ -389,27 +399,27 @@ public final class InstanceRegistry {
         return null;
     }
 
-    private static Map<String, String> identitiesOf(JsonNode config) {
+    private static Map<String, String> identitiesOf(JqValue config) {
         var identities = new LinkedHashMap<String, String>();
-        config.properties().forEach(entry -> {
-            var key = entry.getKey();
+        if (!(config instanceof JqObject object)) return identities;
+        object.forEach((key, value) -> {
             if (!key.startsWith(Metadata.ACCOUNT_IDENTITY_PREFIX)) return;
-            var value = entry.getValue().asText("").strip();
-            if (!value.isEmpty()) {
-                identities.put(key.substring(Metadata.ACCOUNT_IDENTITY_PREFIX.length()), value);
+            var text = value.asDisplayText("").strip();
+            if (!text.isEmpty()) {
+                identities.put(key.substring(Metadata.ACCOUNT_IDENTITY_PREFIX.length()), text);
             }
         });
         return identities;
     }
 
-    private static Map<String, String> accountsOf(JsonNode config) {
+    private static Map<String, String> accountsOf(JqValue config) {
         var accounts = new LinkedHashMap<String, String>();
-        config.properties().forEach(entry -> {
-            var key = entry.getKey();
+        if (!(config instanceof JqObject object)) return accounts;
+        object.forEach((key, value) -> {
             if (!key.startsWith(Metadata.ACCOUNT_PREFIX)) return;
-            var value = entry.getValue().asText("").strip();
-            if (!value.isEmpty()) {
-                accounts.put(key.substring(Metadata.ACCOUNT_PREFIX.length()), value);
+            var text = value.asDisplayText("").strip();
+            if (!text.isEmpty()) {
+                accounts.put(key.substring(Metadata.ACCOUNT_PREFIX.length()), text);
             }
         });
         return accounts;

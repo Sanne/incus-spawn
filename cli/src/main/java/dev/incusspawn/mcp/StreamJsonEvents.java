@@ -1,6 +1,7 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -20,18 +21,18 @@ final class StreamJsonEvents {
      * @param recent  the last few things the agent said or did, oldest first
      * @param result  the {@code result} event, or null while the run is still going
      */
-    record Summary(List<String> recent, int assistantMessages, JsonNode result) {
+    record Summary(List<String> recent, int assistantMessages, JqValue result) {
 
         boolean finished() {
             return result != null;
         }
 
         String resultText() {
-            return result == null ? null : result.path("result").asText("");
+            return result == null ? null : JsonRpc.text(result, "result", "");
         }
 
         boolean isError() {
-            return result != null && result.path("is_error").asBoolean(false);
+            return result != null && JsonRpc.bool(result, "is_error", false);
         }
 
         /**
@@ -41,8 +42,9 @@ final class StreamJsonEvents {
         List<String> permissionDenials() {
             if (result == null) return List.of();
             var names = new ArrayList<String>();
-            for (var denial : result.path("permission_denials")) {
-                names.add(denial.path("tool_name").asText("?"));
+            var denials = result instanceof JqObject obj ? obj.getField("permission_denials") : JsonRpc.nullNode();
+            for (var denial : denials.asList()) {
+                names.add(JsonRpc.text(denial, "tool_name", "?"));
             }
             return names;
         }
@@ -53,26 +55,28 @@ final class StreamJsonEvents {
     static Summary summarize(String tail, int keep) {
         var recent = new ArrayList<String>();
         int assistant = 0;
-        JsonNode result = null;
+        JqValue result = null;
         for (var line : tail.split("\n")) {
             if (line.isBlank() || line.charAt(0) != '{') continue;
-            JsonNode event;
+            JqValue event;
             try {
-                event = JsonRpc.JSON.readTree(line);
+                event = JsonRpc.parse(line);
             } catch (Exception e) {
                 continue; // cut off by the tail, or still being written
             }
-            switch (event.path("type").asText("")) {
+            switch (JsonRpc.text(event, "type", "")) {
                 case "assistant" -> {
                     assistant++;
-                    for (var block : event.path("message").path("content")) {
-                        switch (block.path("type").asText("")) {
+                    var content = event instanceof JqObject msg ? msg.getField("message") : JsonRpc.nullNode();
+                    var blocks = content instanceof JqObject contentObj ? contentObj.getField("content") : JsonRpc.nullNode();
+                    for (var block : blocks.asList()) {
+                        switch (JsonRpc.text(block, "type", "")) {
                             case "text" -> {
-                                var text = block.path("text").asText("").strip();
+                                var text = JsonRpc.text(block, "text", "").strip();
                                 if (!text.isEmpty()) recent.add("said: " + snippet(text));
                             }
-                            case "tool_use" -> recent.add("ran " + block.path("name").asText("a tool")
-                                    + describeInput(block.path("input")));
+                            case "tool_use" -> recent.add("ran " + JsonRpc.text(block, "name", "a tool")
+                                    + describeInput(block instanceof JqObject b ? b.getField("input") : JsonRpc.nullNode()));
                             default -> { }
                         }
                     }
@@ -85,9 +89,9 @@ final class StreamJsonEvents {
         return new Summary(List.copyOf(recent.subList(from, recent.size())), assistant, result);
     }
 
-    private static String describeInput(JsonNode input) {
+    private static String describeInput(JqValue input) {
         for (var key : List.of("command", "file_path", "pattern", "url", "description")) {
-            var v = input.path(key).asText("");
+            var v = JsonRpc.text(input, key, "");
             if (!v.isEmpty()) return ": " + snippet(v);
         }
         return "";

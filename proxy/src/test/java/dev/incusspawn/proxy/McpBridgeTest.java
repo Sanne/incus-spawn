@@ -89,8 +89,8 @@ class McpBridgeTest {
                 new ProxyCredentials("", "", false, "", "", List.of()));
         registry = new InstanceRegistry(new IncusClient() {
             @Override
-            public String listJsonConfig() {
-                return listing;
+            public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
+                return io.hyperfoil.tools.jjq.value.JqValues.parse(listing);
             }
         });
         proxy.useInstanceRegistry(registry);

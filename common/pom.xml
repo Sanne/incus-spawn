@@ -14,6 +14,22 @@
     <build>
         <plugins>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!-- Explicit processor path: plain classpath discovery does not
+                         trigger the processor under javac 25, so provided scope
+                         alone silently generates nothing. -->
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>io.hyperfoil.tools</groupId>
+                            <artifactId>jjq-mapper-processor</artifactId>
+                            <version>0.2.1</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>io.smallrye</groupId>
                 <artifactId>jandex-maven-plugin</artifactId>
                 <version>3.6.0</version>
@@ -56,16 +72,38 @@
             <artifactId>nativeimage</artifactId>
             <scope>provided</scope>
         </dependency>
+        <!-- Phase 1 spike (incus-spawn-jjq-migration): jjq YAML/mapper.
+             Pinned to the locally installed snapshot; not for main. -->
+        <dependency>
+            <groupId>io.hyperfoil.tools</groupId>
+            <artifactId>jjq-yaml</artifactId>
+            <version>0.2.1</version>
+        </dependency>
+        <dependency>
+            <groupId>io.hyperfoil.tools</groupId>
+            <artifactId>jjq-mapper</artifactId>
+            <version>0.2.1</version>
+        </dependency>
+        <!-- Compile-time only: generates _JqMapping classes for @JqMapped DTOs
+             (direct calls, no reflection or MethodHandle dispatch at runtime). -->
+        <dependency>
+            <groupId>io.hyperfoil.tools</groupId>
+            <artifactId>jjq-mapper-processor</artifactId>
+            <version>0.2.1</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Test dependencies -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
+            <scope>test</scope>
         </dependency>
-
-        <!-- Test dependencies -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit</artifactId>

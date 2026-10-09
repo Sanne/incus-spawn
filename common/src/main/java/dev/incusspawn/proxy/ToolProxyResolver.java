@@ -1,7 +1,8 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.JsonNode;
+
 import dev.incusspawn.config.AccountResolver;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
@@ -74,7 +75,7 @@ public final class ToolProxyResolver {
      * {@link SpawnConfig} is not free, and {@link #resolveAcrossAccounts} resolves once per
      * configured account.
      */
-    public static List<ResolvedToolProxy> resolve(JsonNode configTree,
+    public static List<ResolvedToolProxy> resolve(JqValue configTree,
                                                   Map<String, ToolSetup> toolSetups,
                                                   Map<String, String> accountsByNamespace) {
         var result = new ArrayList<ResolvedToolProxy>();
@@ -154,7 +155,7 @@ public final class ToolProxyResolver {
      * selection's entries the caller already resolved from it, so neither is done twice.
      */
     public static List<ResolvedToolProxy> resolveAcrossAccounts(
-            JsonNode configTree, Map<String, ToolSetup> toolSetups, List<ResolvedToolProxy> defaults) {
+            JqValue configTree, Map<String, ToolSetup> toolSetups, List<ResolvedToolProxy> defaults) {
         var seen = new LinkedHashMap<String, ResolvedToolProxy>();
         for (var resolved : defaults) {
             seen.putIfAbsent(resolved.toolName() + "\t" + resolved.domain(), resolved);
@@ -196,7 +197,7 @@ public final class ToolProxyResolver {
     }
 
     /** As above, against a config tree the caller already serialized. */
-    public static List<UnresolvedToolProxy> findUnresolved(JsonNode configTree, Map<String, ToolSetup> toolSetups) {
+    public static List<UnresolvedToolProxy> findUnresolved(JqValue configTree, Map<String, ToolSetup> toolSetups) {
         var result = new ArrayList<UnresolvedToolProxy>();
 
         for (var toolEntry : toolSetups.entrySet()) {
@@ -247,7 +248,7 @@ public final class ToolProxyResolver {
      *
      * @param toolSetups the tools the proxy serves ({@link #proxyToolSetups})
      */
-    public static List<MissingSecret> missingSecrets(JsonNode configTree, Map<String, ToolSetup> toolSetups,
+    public static List<MissingSecret> missingSecrets(JqValue configTree, Map<String, ToolSetup> toolSetups,
                                                      java.util.Collection<String> toolNames,
                                                      Map<String, String> accountsByNamespace) {
         var result = new LinkedHashMap<String, MissingSecret>();
@@ -351,7 +352,7 @@ public final class ToolProxyResolver {
 
     private static Map<String, String> resolveConfiguration(
             ToolDef.ProxyDef proxyDef,
-            JsonNode configTree,
+            JqValue configTree,
             Map<String, ToolSetup> toolSetups,
             Map<String, String> accountsByNamespace) {
         var resolved = new LinkedHashMap<String, String>();
@@ -371,7 +372,7 @@ public final class ToolProxyResolver {
      * @see ToolDef.ProxyDef#namespaceOf
      */
     private static String accountFor(ToolDef.ProxyDef proxyDef, ToolDef.ConfigEntry configDef,
-                                     JsonNode configTree, Map<String, ToolSetup> toolSetups,
+                                     JqValue configTree, Map<String, ToolSetup> toolSetups,
                                      Map<String, String> accountsByNamespace) {
         var namespace = proxyDef.namespaceOf(configDef);
         if (namespace.isBlank()) return "";
@@ -392,7 +393,7 @@ public final class ToolProxyResolver {
     private static String resolveConfigValue(
             ToolDef.ProxyDef proxyDef,
             ToolDef.ConfigEntry configDef,
-            JsonNode configTree,
+            JqValue configTree,
             Map<String, ToolSetup> toolSetups,
             Map<String, String> accountsByNamespace) {
         if (!configDef.getValue().isBlank()) {
@@ -435,7 +436,7 @@ public final class ToolProxyResolver {
     }
 
     /** @deprecated use {@link AccountResolver#navigate} -- kept for existing callers. */
-    public static String navigateConfigPath(JsonNode tree, String path) {
+    public static String navigateConfigPath(JqValue tree, String path) {
         return AccountResolver.navigate(tree, path);
     }
 

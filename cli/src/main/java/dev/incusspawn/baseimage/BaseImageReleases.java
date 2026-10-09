@@ -1,6 +1,7 @@
 package dev.incusspawn.baseimage;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.Environment;
 
 import java.io.IOException;
@@ -30,8 +31,7 @@ import java.util.regex.Pattern;
  */
 public final class BaseImageReleases {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-    private static final Pattern GITHUB_RELEASE_URL =
+        private static final Pattern GITHUB_RELEASE_URL =
             Pattern.compile("^https://github\\.com/([^/]+)/([^/]+)/releases/");
 
     private final String releasesApi;
@@ -75,14 +75,14 @@ public final class BaseImageReleases {
             throw new IOException("GitHub API returned " + response.statusCode());
         }
         var releases = new ArrayList<Release>();
-        for (var node : JSON.readTree(response.body())) {
-            var tag = node.path("tag_name").asText("");
+        for (var node : JqValues.parse(response.body()).asList()) {
+            var tag = node.pathText("tag_name", "");
             if (!tag.startsWith("fedora-")) continue;
-            var date = node.path("published_at").asText("").split("T")[0];
+            var date = node.pathText("published_at", "").split("T")[0];
             String sha256Url = null;
-            for (var asset : node.path("assets")) {
-                if ("SHA256SUMS".equals(asset.path("name").asText(""))) {
-                    sha256Url = asset.path("browser_download_url").asText(null);
+            for (var asset : node.getField("assets").asList()) {
+                if ("SHA256SUMS".equals(asset.pathText("name", ""))) {
+                    sha256Url = asset.pathText("browser_download_url", null);
                     break;
                 }
             }

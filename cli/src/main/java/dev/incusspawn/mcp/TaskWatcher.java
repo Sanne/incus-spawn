@@ -1,6 +1,6 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -46,7 +46,7 @@ final class TaskWatcher {
      * {@link #revive}d.
      */
     private final Map<String, Reported> last = new HashMap<>();
-    private volatile BiConsumer<String, JsonNode> sink;
+    private volatile BiConsumer<String, JqValue> sink;
     private volatile boolean enabled;
     private Thread poller;
     /** False in tests, which run each round themselves. */
@@ -58,7 +58,7 @@ final class TaskWatcher {
     }
 
     /** Where notifications go: the method and its params. */
-    void sendTo(BiConsumer<String, JsonNode> sink) {
+    void sendTo(BiConsumer<String, JqValue> sink) {
         this.sink = sink;
     }
 
@@ -139,12 +139,12 @@ final class TaskWatcher {
     private void send(String taskId, String instance, Reported r) {
         var s = sink;
         if (s == null) return;
-        var params = JsonRpc.JSON.createObjectNode();
-        params.put("task_id", taskId);
-        params.put("instance", instance);
-        params.put("run", r.run());
-        params.put("state", r.state());
-        if (r.exit() != null) params.put("exit_code", r.exit());
-        s.accept(METHOD, params);
+        var builder = io.hyperfoil.tools.jjq.value.JqObject.builder(5)
+                .put("task_id", taskId)
+                .put("instance", instance)
+                .put("run", (long) r.run())
+                .put("state", r.state());
+        if (r.exit() != null) builder.put("exit_code", (long) r.exit());
+        s.accept(METHOD, builder.build());
     }
 }

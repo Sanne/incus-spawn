@@ -164,7 +164,7 @@ class ClaudeSetupTest {
         var settingsWrite = captor.getAllValues().stream()
                 .filter(cmd -> cmd.contains(".claude/settings.json") && !cmd.contains("/etc/claude-code"))
                 .findFirst().orElseThrow();
-        assertTrue(settingsWrite.contains("\"model\" : \"claude-sonnet-4-6\""),
+        assertTrue(settingsWrite.contains("\"model\": \"claude-sonnet-4-6\""),
                 "User settings.json should contain model when parameter is set");
     }
 
@@ -201,7 +201,7 @@ class ClaudeSetupTest {
 
         var commands = captor.getAllValues();
         assertTrue(commands.stream().anyMatch(cmd ->
-                        cmd.contains(".claude/settings.json") && cmd.contains("\"model\" : \"claude-opus-4-6\"")),
+                        cmd.contains(".claude/settings.json") && cmd.contains("\"model\": \"claude-opus-4-6\"")),
                 "reconfigure should write model to settings.json");
         assertFalse(commands.stream().anyMatch(cmd -> cmd.contains(".local/bin/claude")),
                 "reconfigure should not install the binary");
@@ -238,21 +238,21 @@ class ClaudeSetupTest {
 
         var json = ClaudeSetup.buildUserSettings(params);
 
-        assertTrue(json.contains("\"disableDeepLinkRegistration\" : \"disable\""));
-        assertTrue(json.contains("\"model\" : \"claude-opus-4-6\""));
-        assertTrue(json.contains("\"theme\" : \"dark\""));
-        assertTrue(json.contains("\"editorMode\" : \"vim\""));
-        assertTrue(json.contains("\"outputStyle\" : \"Proactive\""));
+        assertTrue(json.contains("\"disableDeepLinkRegistration\": \"disable\""));
+        assertTrue(json.contains("\"model\": \"claude-opus-4-6\""));
+        assertTrue(json.contains("\"theme\": \"dark\""));
+        assertTrue(json.contains("\"editorMode\": \"vim\""));
+        assertTrue(json.contains("\"outputStyle\": \"Proactive\""));
         assertTrue(json.contains("\"attribution\""));
-        assertTrue(json.contains("\"commit\" : \"Assisted-By: Claude Code <noreply@anthropic.com>\""));
-        assertTrue(json.contains("\"pr\" : \"\""));
+        assertTrue(json.contains("\"commit\": \"Assisted-By: Claude Code <noreply@anthropic.com>\""));
+        assertTrue(json.contains("\"pr\": \"\""));
     }
 
     @Test
     void buildUserSettingsMinimal() {
         var json = ClaudeSetup.buildUserSettings(Map.of());
 
-        assertTrue(json.contains("\"disableDeepLinkRegistration\" : \"disable\""));
+        assertTrue(json.contains("\"disableDeepLinkRegistration\": \"disable\""));
         assertFalse(json.contains("\"model\""));
         assertFalse(json.contains("\"theme\""));
         assertFalse(json.contains("\"attribution\""));
@@ -263,7 +263,7 @@ class ClaudeSetupTest {
         var json = ClaudeSetup.buildUserSettings(
                 Map.of("attribution-commit", "Custom trailer"));
 
-        assertTrue(json.contains("\"commit\" : \"Custom trailer\""));
+        assertTrue(json.contains("\"commit\": \"Custom trailer\""));
         assertFalse(json.contains("\"pr\""));
     }
 

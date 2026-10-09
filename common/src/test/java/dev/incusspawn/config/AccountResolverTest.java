@@ -1,7 +1,7 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -12,8 +12,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class AccountResolverTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
-    private static final ObjectMapper JSON = new ObjectMapper();
 
     /** GitHub's shape, as {@code GhSetup} declares it. */
     private static final AccountShape GITHUB =
@@ -29,12 +27,11 @@ class AccountResolverTest {
                   token: "ghp_acme"
             """;
 
-    private static com.fasterxml.jackson.databind.JsonNode tree(String yaml) throws Exception {
-        return JSON.valueToTree(YAML.readValue(yaml, SpawnConfig.class));
+    private static JqValue tree(String yaml) throws Exception {
+        return Jjq.spawnConfig(yaml).tree();
     }
 
-    private static com.fasterxml.jackson.databind.JsonNode twoAccountsWithDefault(String name)
-            throws Exception {
+    private static JqValue twoAccountsWithDefault(String name) throws Exception {
         return tree(TWO_ACCOUNTS + "  default: " + name + "\n");
     }
 
@@ -137,14 +134,14 @@ class AccountResolverTest {
     @Test
     void anUnusableAccountIsSkippedAndExplained() throws Exception {
         var needsToken = new AccountShape() {
-            @Override public boolean hasFlatCredential(com.fasterxml.jackson.databind.JsonNode ns) { return false; }
-            @Override public com.fasterxml.jackson.databind.node.ObjectNode flatAccount(com.fasterxml.jackson.databind.JsonNode ns) {
-                return JSON.createObjectNode();
+            @Override public boolean hasFlatCredential(JqValue ns) { return false; }
+            @Override public JqValue flatAccount(JqValue ns) {
+                return JqObject.builder(0).build();
             }
             @Override public java.util.List<String> flatKeys() { return java.util.List.of(); }
-            @Override public String problem(com.fasterxml.jackson.databind.JsonNode account,
-                                            com.fasterxml.jackson.databind.JsonNode ns) {
-                return account.path("token").asText().isBlank() ? "it has no token" : "";
+            @Override public String problem(JqValue account, JqValue ns) {
+                var token = account.getField("token");
+                return (token.isNull() || token.asText().isBlank()) ? "it has no token" : "";
             }
         };
         var t = tree("""

@@ -1,8 +1,9 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqArray;
+import io.hyperfoil.tools.jjq.value.JqBoolean;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.BuildOutput;
 
@@ -320,30 +321,33 @@ final class McpTools {
     private ToolResult listTemplates() {
         var approved = policy.approved();
         var config = session.config();
-        var result = JsonRpc.JSON.createObjectNode();
-        var list = result.putArray("templates");
+        var list = JqArray.arrayBuilder();
         for (var t : approved) {
-            var node = list.addObject();
-            node.put("template", t.name());
-            node.put("description", t.description() == null ? "" : t.description());
-            node.put("built", t.built());
-            node.put("stale", t.stale());
-            var tools = node.putArray("tools");
+            var tools = JqArray.arrayBuilder();
             t.tools().forEach(tools::add);
-            node.put("supports_delegate", t.supportsDelegate());
+            var node = JqObject.builder(8)
+                    .put("template", t.name())
+                    .put("description", t.description() == null ? "" : t.description())
+                    .put("built", t.built())
+                    .put("stale", t.stale())
+                    .put("tools", tools.build())
+                    .put("supports_delegate", t.supportsDelegate());
             if (t.supportsDelegate()) {
                 node.put("permission_mode", permissionMode(t.name()));
                 if (t.delegateModel() != null) node.put("delegate_model", t.delegateModel());
             }
+            list.add(node.build());
         }
-        result.put("max_instances", config.maxInstances());
-        result.put("max_concurrent_tasks", config.maxConcurrentTasks());
-        result.put("orphan_grace_hours", config.orphanGraceHours());
-        if (config.delegateMaxTurns() != null) result.put("delegate_max_turns", config.delegateMaxTurns());
+        var result = JqObject.builder(5)
+                .put("templates", list.build())
+                .put("max_instances", (long) config.maxInstances())
+                .put("max_concurrent_tasks", (long) config.maxConcurrentTasks())
+                .put("orphan_grace_hours", (long) config.orphanGraceHours());
+        if (config.delegateMaxTurns() != null) result.put("delegate_max_turns", (long) config.delegateMaxTurns());
         if (approved.isEmpty()) {
-            return ToolResult.text("No templates are approved for agents. " + TemplatePolicy.HOW_TO_APPROVE, result);
+            return ToolResult.text("No templates are approved for agents. " + TemplatePolicy.HOW_TO_APPROVE, result.build());
         }
-        return ToolResult.json(result);
+        return ToolResult.json(result.build());
     }
 
     private String permissionMode(String template) {
@@ -389,19 +393,20 @@ final class McpTools {
     }
 
     /** What {@code create_instance} says about an instance, made now or by an earlier call with its key. */
-    private static ObjectNode instanceNode(String name, InstanceBackend.TemplateInfo info,
+    private static io.hyperfoil.tools.jjq.value.JqObject instanceNode(String name, InstanceBackend.TemplateInfo info,
             String purpose, String forkedFrom, String ip, String workdir) {
-        var node = JsonRpc.JSON.createObjectNode();
-        node.put("instance", name);
-        node.put("template", info.name());
+        var tools = JqArray.arrayBuilder();
+        info.tools().forEach(tools::add);
+        var node = JqObject.builder(8)
+                .put("instance", name)
+                .put("template", info.name());
         if (purpose != null) node.put("purpose", purpose);
         if (forkedFrom != null) node.put("forked_from", forkedFrom);
         if (ip != null && !ip.isEmpty()) node.put("ip", ip);
         node.put("workdir", workdir);
-        var tools = node.putArray("tools");
-        info.tools().forEach(tools::add);
+        node.put("tools", tools.build());
         node.put("supports_delegate", info.supportsDelegate());
-        return node;
+        return node.build();
     }
 
     /** An instance just made, and what to answer if it stays: if it is the first made under its key. */
@@ -447,7 +452,7 @@ final class McpTools {
         McpAuditLog.record(session.id, "create_instance", name, null, 0, "replayed key=" + key);
         var node = instanceNode(name, info, config.get(Metadata.MCP_PURPOSE), forkedFrom(config),
                 config.get(Metadata.STATIC_IP), IncusInstanceBackend.workdir(config));
-        node.put("replayed", true);
+        node = node.with("replayed", JqBoolean.TRUE);
         return ToolResult.json(node, "An earlier call with this idempotency_key made it; nothing new was made.");
     }
 
@@ -571,30 +576,31 @@ final class McpTools {
     }
 
     private ToolResult listInstances() {
-        var result = JsonRpc.JSON.createObjectNode();
-        var list = result.putArray("instances");
+        var list = JqArray.arrayBuilder();
         for (var o : session.instances()) {
-            var node = list.addObject();
-            node.put("instance", o.name());
-            node.put("template", o.template());
+            var owned = JqArray.arrayBuilder();
+            tasks.all().stream().filter(t -> t.instance().equals(o.name())).forEach(t -> owned.add(
+                    JqObject.builder(3)
+                            .put("task_id", t.id())
+                            .put("kind", t.kind())
+                            .put("state", t.state())
+                            .build()));
+            var node = JqObject.builder(7)
+                    .put("instance", o.name())
+                    .put("template", o.template());
             if (o.purpose() != null) node.put("purpose", o.purpose());
             node.put("created", o.created().toString());
             node.put("state", o.ready() ? "ready" : "creating");
             node.put("kept", o.kept());
-            var owned = node.putArray("tasks");
-            tasks.all().stream().filter(t -> t.instance().equals(o.name())).forEach(t -> {
-                var tn = owned.addObject();
-                tn.put("task_id", t.id());
-                tn.put("kind", t.kind());
-                tn.put("state", t.state());
-            });
+            node.put("tasks", owned.build());
+            list.add(node.build());
         }
         var windows = Orphans.Windows.of(session.config());
         for (var other : session.others().values()) {
             var config = other.config();
-            var node = list.addObject();
-            node.put("instance", other.name());
-            node.put("template", McpSession.templateOf(config));
+            var node = JqObject.builder(7)
+                    .put("instance", other.name())
+                    .put("template", McpSession.templateOf(config));
             var purpose = config.get(Metadata.MCP_PURPOSE);
             if (purpose != null) node.put("purpose", purpose);
             // othersOf leaves kept instances out today; read from the stamp, the field cannot lie if that changes.
@@ -618,9 +624,10 @@ final class McpTools {
                 var client = config.getOrDefault(Metadata.MCP_CLIENT, "");
                 if (!client.isEmpty()) node.put("held_by_client", client);
             }
-            node.putArray("tasks");
+            node.put("tasks", JqArray.arrayBuilder().build());
+            list.add(node.build());
         }
-        return ToolResult.json(result);
+        return ToolResult.json(JqObject.builder(1).put("instances", list.build()).build());
     }
 
     private ToolResult adoptInstance(McpTool.Args args, ToolContext ctx) {
@@ -637,20 +644,23 @@ final class McpTools {
             McpAuditLog.record(session.id, "adopt_instance", name, null, millisSince(waking), "failed: " + e.getMessage());
             throw e;
         }
-        var node = JsonRpc.JSON.createObjectNode();
-        node.put("instance", adopted.name());
-        node.put("template", adopted.template());
-        if (adopted.purpose() != null) node.put("purpose", adopted.purpose());
-        node.put("supports_delegate", adopted.supportsDelegate());
-        var ids = node.putArray("tasks");
+        var ids = JqArray.arrayBuilder();
+        String warning = null;
         try {
             tasks.adopt(name).forEach(ids::add);
         } catch (RuntimeException e) {
-            node.put("warning", "its tasks could not be read, so their ids do not work here: " + e.getMessage());
+            warning = "its tasks could not be read, so their ids do not work here: " + e.getMessage();
         }
+        var node = JqObject.builder(6)
+                .put("instance", adopted.name())
+                .put("template", adopted.template());
+        if (adopted.purpose() != null) node.put("purpose", adopted.purpose());
+        node.put("supports_delegate", adopted.supportsDelegate());
+        node.put("tasks", ids.build());
+        if (warning != null) node.put("warning", warning);
         McpAuditLog.record(session.id, "adopt_instance", name, null, millisSince(start),
                 args.bool("force") ? "adopted(force)" : "adopted");
-        return ToolResult.json(node);
+        return ToolResult.json(node.build());
     }
 
     private ToolResult exec(McpTool.Args args, ToolContext ctx) throws InterruptedException {
@@ -670,18 +680,18 @@ final class McpTools {
             if (ask != null) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "ask does not apply to a background command; set it on task_result");
             var replayed = key == null ? null : tasks.keyed(name, Tasks.COMMAND, key);
             if (replayed != null) {
-                var node = taskNode(replayed);
-                node.put("background", true);
-                node.put("replayed", true);
+                var node = taskNode(replayed)
+                        .put("background", true)
+                        .put("replayed", true);
                 return ToolResult.text("Task " + replayed.id() + " in " + name + " was started by an earlier call with this "
-                        + "idempotency_key; nothing new was started. Check it with task_status or wait_any.", node);
+                        + "idempotency_key; nothing new was started. Check it with task_status or wait_any.", node.build());
             }
             var task = tasks.startCommand(name, cwd, env, command, key);
             McpAuditLog.record(session.id, "exec(background)", name, command, 0, "task=" + task.id());
-            var node = taskNode(task);
-            node.put("background", true);
+            var node = taskNode(task)
+                    .put("background", true);
             return ToolResult.text("Started task " + task.id() + " in " + name
-                    + ". Check it with task_status or wait_any.", node);
+                    + ". Check it with task_status or wait_any.", node.build());
         }
         if (key != null) {
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "idempotency_key applies to a background command only; "
@@ -738,14 +748,14 @@ final class McpTools {
         McpAuditLog.record(session.id, ask == null ? "exec" : "exec(ask)", name, command, millis, "exit=" + exit);
 
         var timedOut = timeout != null && (exit == 124 || exit == 137);
-        var node = JsonRpc.JSON.createObjectNode();
+        var node = JqObject.builder();
         node.put("background", false);
         node.put("exit_code", exit);
         node.put("duration_ms", millis);
         node.put("timed_out", timedOut);
         node.put("cancelled", ctx.cancelled());
         if (answer != null) {
-            node.set("answer", answer(answer));
+            node.put("answer", answer(answer));
         } else {
             node.put("stdout", out.text());
             node.put("stderr", err.text());
@@ -765,7 +775,7 @@ final class McpTools {
             appendStream(sb, "stdout", out);
             appendStream(sb, "stderr", err);
         }
-        return ToolResult.text(sb.toString(), node);
+        return ToolResult.text(sb.toString(), node.build());
     }
 
     private String summaryModel() {
@@ -789,11 +799,11 @@ final class McpTools {
         return AskScript.parse(out.toString(StandardCharsets.UTF_8));
     }
 
-    private static ObjectNode answer(AskScript.Answer answer) {
-        var node = JsonRpc.JSON.createObjectNode();
-        node.put("text", answer.text());
-        node.put("summarised", answer.summarised());
-        return node;
+    private static JqObject answer(AskScript.Answer answer) {
+        return JqObject.builder(2)
+                .put("text", answer.text())
+                .put("summarised", answer.summarised())
+                .build();
     }
 
     private void appendAnswer(StringBuilder sb, AskScript.Answer answer) {
@@ -875,9 +885,9 @@ final class McpTools {
         var mode = permissionMode(from);
         var replayed = key == null ? null : tasks.keyed(name, Tasks.AGENT, key);
         if (replayed != null) {
-            var node = runStarted(replayed, mode);
-            node.put("replayed", true);
-            return ToolResult.json(node, "An earlier call with this idempotency_key started this task; nothing new was "
+            var node = runStarted(replayed, mode)
+                    .put("replayed", true);
+            return ToolResult.json(node.build(), "An earlier call with this idempotency_key started this task; nothing new was "
                     + "started. Use task_status with wait_seconds, or wait_any, to wait for it.");
         }
         return startDelegate(name, from, metadata.get(Metadata.accountKey(ModelCheck.NAMESPACE)), cwd,
@@ -949,12 +959,12 @@ final class McpTools {
         }
         McpAuditLog.record(session.id, "delegate", instance, prompt, 0, "task=" + task.id() + " mode=" + mode
                 + describe(profile));
-        return ToolResult.json(runStarted(task, mode), "The agent is working. Use task_status with wait_seconds, "
+        return ToolResult.json(runStarted(task, mode).build(), "The agent is working. Use task_status with wait_seconds, "
                 + "or wait_any, to wait for it, then task_result and get_diff.");
     }
 
     /** What {@code delegate} and {@code send_message} say about the run they started. */
-    private ObjectNode runStarted(Tasks.Task task, String mode) {
+    private JqObject.Builder runStarted(Tasks.Task task, String mode) {
         var node = taskNode(task);
         node.put("run", task.runs());
         node.put("permission_mode", mode);
@@ -1014,17 +1024,17 @@ final class McpTools {
             sb.append("\nassistant_messages: ").append(summary.assistantMessages());
             node.put("assistant_messages", summary.assistantMessages());
             if (summary.finished()) {
-                sb.append("\ncost_usd: ").append(summary.result().path("total_cost_usd").asText("?"));
-                putNumber(node, "cost_usd", summary.result().path("total_cost_usd"));
+                sb.append("\ncost_usd: ").append(summary.result().path("total_cost_usd").asDisplayText("?"));
+                putNumber(node, "cost_usd", summary.result().getField("total_cost_usd"));
                 appendDenials(sb, summary);
-                node.set("permission_denials", denials(summary));
+                node.put("permission_denials", denials(summary));
                 sb.append("\nThe agent has finished: read its report with task_result.");
             }
             if (!summary.recent().isEmpty()) {
                 sb.append("\nrecent activity:");
                 summary.recent().forEach(r -> sb.append("\n- ").append(r));
             }
-            node.set("recent", strings(summary.recent()));
+            node.put("recent", strings(summary.recent()));
             if ("lost".equals(status.state()) || (status.exit() != null && status.exit() != 0 && !summary.finished())) {
                 sb.append("\nagent stderr:\n").append(status.stderr().strip());
                 node.put("agent_stderr", status.stderr().strip());
@@ -1041,13 +1051,13 @@ final class McpTools {
             node.put("stdout_tail", stdoutTail);
             node.put("stderr_tail", stderrTail);
         }
-        return ToolResult.text(sb.toString(), node);
+        return ToolResult.text(sb.toString(), node.build());
     }
 
-    private static ArrayNode strings(Collection<String> values) {
-        var array = JsonRpc.JSON.createArrayNode();
+    private static JqArray strings(Collection<String> values) {
+        var array = JqArray.arrayBuilder();
         values.forEach(array::add);
-        return array;
+        return array.build();
     }
 
     /** Each tool refused, once. */
@@ -1055,23 +1065,22 @@ final class McpTools {
         return summary.permissionDenials().stream().distinct().toList();
     }
 
-    private static ArrayNode denials(StreamJsonEvents.Summary summary) {
+    private static JqArray denials(StreamJsonEvents.Summary summary) {
         return strings(distinctDenials(summary));
     }
 
     /** What every result about one task starts with. */
-    private static ObjectNode taskNode(Tasks.Task task) {
-        var node = JsonRpc.JSON.createObjectNode();
-        node.put("task_id", task.id());
-        node.put("instance", task.instance());
-        node.put("kind", task.kind());
-        return node;
+    private static JqObject.Builder taskNode(Tasks.Task task) {
+        return JqObject.builder(3)
+                .put("task_id", task.id())
+                .put("instance", task.instance())
+                .put("kind", task.kind());
     }
 
     /** Copies a number Claude Code reported; leaves it out if what it reported is not one. */
-    private static void putNumber(ObjectNode node, String key,
-                                  JsonNode value) {
-        if (value.isNumber()) node.set(key, value);
+    private static void putNumber(JqObject.Builder node, String key,
+                                  JqValue value) {
+        if (value.isNumber()) node.put(key, value);
     }
 
     /** What the agent was not allowed to do: a headless agent cannot ask, so say so here. */
@@ -1090,10 +1099,10 @@ final class McpTools {
             // Not a run still launching: until it has, the probe cannot see it and would call it done.
             tasks.all().stream().filter(t -> t.running() && !t.launching()).forEach(watched::add);
             if (watched.isEmpty()) {
-                var none = JsonRpc.JSON.createObjectNode();
-                none.putArray("tasks");
-                none.putArray("finished");
-                return ToolResult.text("No task of this session is running.", none);
+                var none = JqObject.builder()
+                        .put("tasks", JqArray.arrayBuilder().build())
+                        .put("finished", JqArray.arrayBuilder().build());
+                return ToolResult.text("No task of this session is running.", none.build());
             }
         } else {
             for (var id : ids) watched.add(tasks.requireHeld(id));
@@ -1103,12 +1112,11 @@ final class McpTools {
         var states = tasks.awaitAny(watched, seconds, ctx);
         var sb = new StringBuilder();
         var finished = new ArrayList<String>();
-        var node = JsonRpc.JSON.createObjectNode();
-        var list = node.putArray("tasks");
+        var node = JqObject.builder();
+        var list = JqArray.arrayBuilder();
         for (var t : watched) {
             var state = states.get(t.id());
             var entry = taskNode(t);
-            list.add(entry);
             sb.append(t.id()).append(" (").append(t.kind()).append(" in ").append(t.instance()).append("): ");
             if ("done".equals(state)) {
                 finished.add(t.id());
@@ -1130,11 +1138,13 @@ final class McpTools {
                 entry.put("state", state);
             }
             sb.append('\n');
+            list.add(entry.build());
         }
-        node.set("finished", strings(finished));
+        node.put("tasks", list.build());
+        node.put("finished", strings(finished));
         sb.append(finished.isEmpty() ? "None finished within " + seconds + "s."
                 : "Finished: " + String.join(", ", finished) + ". Read them with task_result.");
-        return ToolResult.text(sb.toString(), node);
+        return ToolResult.text(sb.toString(), node.build());
     }
 
     private ToolResult taskResult(McpTool.Args args) {
@@ -1160,8 +1170,8 @@ final class McpTools {
                 sb.append('\n');
                 var answer = ask(task.instance(), TaskScripts.output(task.id()), false, null, ask);
                 appendAnswer(sb, answer);
-                node.set("answer", answer(answer));
-                return ToolResult.text(sb.toString(), node);
+                node.put("answer", answer(answer));
+                return ToolResult.text(sb.toString(), node.build());
             }
             sb.append("\n--- stdout").append(tailNote(status.outputBytes(), limit)).append(" ---\n")
                     .append(status.output())
@@ -1170,7 +1180,7 @@ final class McpTools {
             node.put("stdout", status.output());
             node.put("stderr", status.stderr());
             node.put("truncated", status.outputBytes() > limit || status.stderrBytes() > limit);
-            return ToolResult.text(sb.toString(), node);
+            return ToolResult.text(sb.toString(), node.build());
         }
         var summary = StreamJsonEvents.summarize(status.output(), args.bool("events") ? 20 : 0);
         if (!summary.finished()) {
@@ -1179,21 +1189,21 @@ final class McpTools {
             throw new ToolError(ToolError.Code.TASK_FAILED, sb.toString());
         }
         var result = summary.result();
-        sb.append("\noutcome: ").append(result.path("subtype").asText("?"))
+        sb.append("\noutcome: ").append(JsonRpc.orDefault(result.path("subtype"), "?"))
                 .append(summary.isError() ? " (error)" : "")
-                .append("\nturns: ").append(result.path("num_turns").asText("?"))
-                .append("\ncost_usd: ").append(result.path("total_cost_usd").asText("?"));
-        if (result.path("subtype").isTextual()) node.put("outcome", result.path("subtype").asText());
+                .append("\nturns: ").append(result.path("num_turns").asDisplayText("?"))
+                .append("\ncost_usd: ").append(result.path("total_cost_usd").asDisplayText("?"));
+        if (result.path("subtype").isString()) node.put("outcome", result.path("subtype").asText());
         node.put("is_error", summary.isError());
-        if (result.path("num_turns").canConvertToInt()) node.put("turns", result.path("num_turns").asInt());
+        if (result.path("num_turns").isNumber()) node.put("turns", result.path("num_turns").asInt(0));
         putNumber(node, "cost_usd", result.path("total_cost_usd"));
         appendDenials(sb, summary);
-        node.set("permission_denials", denials(summary));
+        node.put("permission_denials", denials(summary));
         if (!summary.recent().isEmpty()) {
             sb.append("\nlast activity:");
             summary.recent().forEach(r -> sb.append("\n- ").append(r));
         }
-        node.set("recent", strings(summary.recent()));
+        node.put("recent", strings(summary.recent()));
         var report = summary.resultText();
         var bytes = report.getBytes(StandardCharsets.UTF_8);
         node.put("report_bytes", bytes.length);
@@ -1201,7 +1211,7 @@ final class McpTools {
             sb.append('\n');
             var answer = ask(task.instance(), "cat", false, report, ask);
             appendAnswer(sb, answer);
-            node.set("answer", answer(answer));
+            node.put("answer", answer(answer));
         } else {
             sb.append("\n--- report");
             if (bytes.length > limit) {
@@ -1214,7 +1224,7 @@ final class McpTools {
             node.put("truncated", bytes.length > limit);
         }
         sb.append("\nReview the changes with get_diff; continue with send_message.");
-        return ToolResult.text(sb.toString(), node);
+        return ToolResult.text(sb.toString(), node.build());
     }
 
     private static String tailNote(long total, int limit) {
@@ -1239,14 +1249,14 @@ final class McpTools {
         McpAuditLog.record(session.id, "send_message", task.instance(), message, 0,
                 "task=" + task.id() + " turn=" + updated.runs() + describe(override));
         return ToolResult.text("Sent. Task " + task.id() + " is running turn " + updated.runs()
-                + "; follow it with task_status or wait_any.", runStarted(updated, mode));
+                + "; follow it with task_status or wait_any.", runStarted(updated, mode).build());
     }
 
     private ToolResult cancelTask(McpTool.Args args) {
         var task = tasks.require(args.requireString("task_id")).task();
         tasks.cancel(task);
         McpAuditLog.record(session.id, "cancel_task", task.instance(), null, 0, "task=" + task.id());
-        return ToolResult.text("Stopped task " + task.id() + ".", taskNode(task));
+        return ToolResult.text("Stopped task " + task.id() + ".", taskNode(task).build());
     }
 
     private ToolResult getDiff(McpTool.Args args) {
@@ -1262,9 +1272,9 @@ final class McpTools {
             var answer = ask(task.instance(),
                     TaskScripts.diffForReading(task.id(), args.string("path")), false, null, ask);
             appendAnswer(sb, answer);
-            var node = JsonRpc.JSON.createObjectNode();
-            node.set("answer", answer(answer));
-            return ToolResult.text(sb.toString(), node);
+            var node = JqObject.builder();
+            node.put("answer", answer(answer));
+            return ToolResult.text(sb.toString(), node.build());
         }
         var max = args.integer("max_bytes");
         int limit = max == null ? DEFAULT_DIFF_BYTES : Math.clamp(max, 1024, MAX_DIFF_BYTES);
@@ -1279,10 +1289,10 @@ final class McpTools {
         tasks.forgetInstance(name);
         McpAuditLog.record(session.id, "destroy_instance", name, null, millisSince(start),
                 destroyed ? "destroyed" : "already-gone");
-        var node = JsonRpc.JSON.createObjectNode();
+        var node = JqObject.builder();
         node.put("instance", name);
         node.put("already", !destroyed);
-        return ToolResult.text(destroyed ? "Destroyed " + name + "." : name + " was already gone.", node);
+        return ToolResult.text(destroyed ? "Destroyed " + name + "." : name + " was already gone.", node.build());
     }
 
     /**
@@ -1320,25 +1330,27 @@ final class McpTools {
                 stopped(name, false, busy));
     }
 
-    private static ObjectNode stopped(String name, boolean already,
+    private static JqObject stopped(String name, boolean already,
                                                                          List<Tasks.Task> cancelled) {
-        var node = JsonRpc.JSON.createObjectNode();
+        var ids = JqArray.arrayBuilder();
+        cancelled.forEach(t -> ids.add(t.id()));
+        var node = JqObject.builder();
         node.put("instance", name);
         node.put("already", already);
-        var ids = node.putArray("cancelled_tasks");
-        cancelled.forEach(t -> ids.add(t.id()));
-        return node;
+        node.put("cancelled_tasks", ids.build());
+        return node.build();
     }
 
     private ToolResult startInstance(McpTool.Args args, ToolContext ctx) {
         var name = args.requireString("instance");
         var metadata = session.requireOwned(name);
-        var node = JsonRpc.JSON.createObjectNode();
+        var node = JqObject.builder();
         node.put("instance", name);
-        var taskIds = node.putArray("tasks");
+        var taskIds = JqArray.arrayBuilder();
         if (InstanceBackend.running(metadata)) {
             node.put("already", true);
-            return ToolResult.text(name + " is already running.", node);
+            node.put("tasks", taskIds.build());
+            return ToolResult.text(name + " is already running.", node.build());
         }
         node.put("already", false);
         if (!InstanceBackend.stopped(metadata)) {
@@ -1367,7 +1379,8 @@ final class McpTools {
             node.put("warning", "its tasks " + why);
             note = " Its tasks " + why;
         }
-        return ToolResult.text("Started " + name + "." + note, node);
+        node.put("tasks", taskIds.build());
+        return ToolResult.text("Started " + name + "." + note, node.build());
     }
 
     private ToolResult instanceActivity(McpTool.Args args) {
@@ -1375,7 +1388,7 @@ final class McpTools {
         session.requireOwned(name);
         var activity = backend.proxyActivity();
         var counted = activity.of(name);
-        var node = JsonRpc.JSON.createObjectNode();
+        var node = JqObject.builder();
         node.put("instance", name);
         if (counted.countingSince() != null) node.put("counting_since", counted.countingSince().toString());
         node.put("requests", counted.requests());
@@ -1390,17 +1403,17 @@ final class McpTools {
         node.put("output_tokens", counted.outputTokens());
         node.put("cache_read_input_tokens", counted.cacheReadInputTokens());
         node.put("cache_creation_input_tokens", counted.cacheCreationInputTokens());
-        return ToolResult.json(node);
+        return ToolResult.json(node.build());
     }
 
     private ToolResult keepInstance(McpTool.Args args) {
         var name = args.requireString("instance");
         session.keep(name);
         McpAuditLog.record(session.id, "keep_instance", name, null, 0, "kept");
-        var node = JsonRpc.JSON.createObjectNode();
+        var node = JqObject.builder();
         node.put("instance", name);
         return ToolResult.text(name + " now belongs to the user: it is never destroyed as an orphan, and "
-                + "they can open it with: isx shell " + name, node);
+                + "they can open it with: isx shell " + name, node.build());
     }
 
     private static String blankToNull(String value) {

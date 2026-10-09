@@ -1,6 +1,7 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.InstanceUpdate;
 import dev.incusspawn.incus.Metadata;
@@ -48,7 +49,7 @@ public final class KvmPassthrough {
      * current state. Contributes nothing when there is none, so an instance without KVM devices
      * costs no device rewrite.
      */
-    public static void removeKvm(JsonNode instance, InstanceUpdate update) {
+    public static void removeKvm(JqValue instance, InstanceUpdate update) {
         for (var device : DEVICES) {
             if (instance.path("devices").has(device)) update.removeDevice(device);
         }

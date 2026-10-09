@@ -1,7 +1,5 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.config.SpawnConfig.ClaudeAccountType;
 import dev.incusspawn.proxy.ProxyCredentials;
 import org.junit.jupiter.api.Test;
@@ -22,7 +20,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ClaudeLegacyConfigCompatTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     /** A flat config as an older isx wrote it: all fields present, plus the phantom getter key. */
     private static String legacyFile(String body) {
@@ -38,7 +35,7 @@ class ClaudeLegacyConfigCompatTest {
     }
 
     private static SpawnConfig load(String yaml) throws Exception {
-        return YAML.readValue(yaml, SpawnConfig.class);
+        return Jjq.spawnConfig(yaml);
     }
 
     @Test
@@ -167,11 +164,11 @@ class ClaudeLegacyConfigCompatTest {
      * still round-trips through the flat keys.
      */
     private static void assertStillFlat(SpawnConfig config) throws Exception {
-        var written = YAML.writeValueAsString(config);
+        var written = Jjq.toYaml(config);
         assertFalse(written.contains("accounts:"), "legacy file was silently migrated:\n" + written);
         assertFalse(written.contains("default:"), "legacy file gained an account default:\n" + written);
 
-        var reloaded = YAML.readValue(written, SpawnConfig.class).getClaude();
+        var reloaded = Jjq.spawnConfig(written).getClaude();
         var original = config.getClaude();
         assertEquals(original.isUseVertex(), reloaded.isUseVertex());
         assertEquals(original.isOauthMode(), reloaded.isOauthMode());

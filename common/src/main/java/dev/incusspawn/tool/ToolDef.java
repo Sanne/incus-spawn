@@ -1,16 +1,10 @@
 package dev.incusspawn.tool;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
-import com.fasterxml.jackson.databind.DeserializationContext;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.mapper.JqMapped;
+import io.hyperfoil.tools.jjq.mapper.JqName;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
@@ -32,38 +26,34 @@ import java.util.TreeMap;
  * environment variables to export.
  */
 @RegisterForReflection
-@JsonIgnoreProperties(ignoreUnknown = true)
+@JqMapped
 public class ToolDef {
-
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory())
-            .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
 
     private String name;
     private String description = "";
     private List<DownloadEntry> downloads = List.of();
     private List<String> packages = List.of();
     private List<String> run = List.of();
-    @JsonProperty("run_as_user")
+    @JqName("run_as_user")
     private List<String> runAsUser = List.of();
     private List<FileEntry> files = List.of();
-    @JsonDeserialize(using = EnvEntry.ListDeserializer.class)
+    @io.hyperfoil.tools.jjq.mapper.JqConverter(dev.incusspawn.config.EnvEntryListConverter.class)
     private List<EnvEntry> env = List.of();
-    @JsonDeserialize(using = ToolRef.Deserializer.class)
-    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = ToolRef.Serializer.class)
+    @io.hyperfoil.tools.jjq.mapper.JqConverter(ToolRefListConverter.ForRequires.class)
     private List<ToolRef> requires = List.of();
     private String verify;
-    @JsonProperty("verify_as_root")
+    @JqName("verify_as_root")
     private boolean verifyAsRoot;
     private String ready;
     private List<ActionEntry> actions = List.of();
-    @JsonProperty("package_repos")
+    @JqName("package_repos")
     private List<ImageDef.PackageRepo> packageRepos = List.of();
     private Map<String, ParameterDef> parameters = Map.of();
     private String feature;
     private ProxyDef proxy;
-    @JsonProperty("agent_note")
+    @JqName("agent_note")
     private String agentNote;
-    @JsonDeserialize(using = ImageDef.SkillsDef.Deserializer.class)
+    @io.hyperfoil.tools.jjq.mapper.JqConverter(dev.incusspawn.config.SkillsDefConverter.class)
     private ImageDef.SkillsDef skills = ImageDef.SkillsDef.EMPTY;
 
     private transient volatile String cachedFingerprint;
@@ -109,15 +99,15 @@ public class ToolDef {
     public ImageDef.SkillsDef getSkills() { return skills; }
     public void setSkills(ImageDef.SkillsDef skills) { this.skills = skills != null ? skills : ImageDef.SkillsDef.EMPTY; }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqMapped
     public static class DownloadEntry {
         private String url;
         private String sha256;
         private String extract;
-        @JsonProperty("destination_file")
+        @JqName("destination_file")
         private String destinationFile;
         private Map<String, String> links = Map.of();
-        @JsonProperty("extract_in_container")
+        @JqName("extract_in_container")
         private boolean extractInContainer = false;
         private String arch;
 
@@ -137,7 +127,7 @@ public class ToolDef {
         public void setArch(String arch) { this.arch = arch; }
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqMapped
     public static class FileEntry {
         private String path;
         private String content;
@@ -151,20 +141,20 @@ public class ToolDef {
         public void setOwner(String owner) { this.owner = owner; }
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqMapped
     public static class ActionEntry {
         private String label;
         private String type;
-        @JsonProperty("requires_running")
+        @JqName("requires_running")
         private boolean requiresRunning = true;
         private String expand;
         private String url;
         private String command;
         private String text;
-        @JsonProperty("auto_return")
+        @JqName("auto_return")
         private boolean autoReturn = false;
         private String id;
-        @JsonProperty("shell_menu")
+        @JqName("shell_menu")
         private boolean shellMenu = false;
         private String shortcut;
 
@@ -193,10 +183,9 @@ public class ToolDef {
     }
 
     @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ToolRef {
         private String name;
-        @JsonProperty("params")
+        @JqName("params")
         private Map<String, String> params = Map.of();
 
         public ToolRef() {}
@@ -218,109 +207,14 @@ public class ToolDef {
             this.params = params != null ? params : Map.of();
         }
 
-        /**
-         * Deserializes a YAML/JSON array of tool references. Each entry can be:
-         * <ul>
-         *   <li>A plain string: {@code - maven-3}</li>
-         *   <li>A single-key map: {@code - idea-backend: {memory: "8g"}}</li>
-         * </ul>
-         */
-        public static List<ToolRef> deserializeList(JsonParser p, String fieldName) throws IOException {
-            var result = new ArrayList<ToolRef>();
-
-            if (p.currentToken() != JsonToken.START_ARRAY) {
-                throw new IOException("Expected array for " + fieldName + " field");
-            }
-
-            while (p.nextToken() != JsonToken.END_ARRAY) {
-                if (p.currentToken() == JsonToken.VALUE_STRING) {
-                    result.add(new ToolRef(p.getText()));
-                } else if (p.currentToken() == JsonToken.START_OBJECT) {
-                    // Single-key map: the key is the tool name, the value is a params object (or null)
-                    var token = p.nextToken();
-                    if (token == JsonToken.END_OBJECT) {
-                        throw new IOException("Empty object in " + fieldName + " — use a plain string for tools without parameters");
-                    }
-
-                    var name = p.currentName();
-                    p.nextToken();
-
-                    Map<String, String> params = new LinkedHashMap<>();
-                    if (p.currentToken() == JsonToken.START_OBJECT) {
-                        while (p.nextToken() != JsonToken.END_OBJECT) {
-                            var paramName = p.currentName();
-                            p.nextToken();
-                            if (!p.currentToken().isScalarValue()) {
-                                throw new IOException("Parameter '" + paramName + "' for tool '" + name
-                                        + "' in " + fieldName + " must be a scalar value (string, number, boolean)");
-                            }
-                            params.put(paramName, p.getValueAsString());
-                        }
-                    } else if (p.currentToken() != JsonToken.VALUE_NULL) {
-                        throw new IOException("Parameters for '" + name + "' in " + fieldName
-                                + " must be a map, e.g. '- " + name + ": {memory: \"8g\"}'");
-                    }
-
-                    // Verify no extra keys — must be a single-key map
-                    if (p.nextToken() != JsonToken.END_OBJECT) {
-                        throw new IOException("Tool entry in " + fieldName
-                                + " must be a single-key map like '- " + name + ": {params}', got multiple keys");
-                    }
-
-                    result.add(new ToolRef(name, params));
-                } else {
-                    throw new IOException("Unexpected entry in " + fieldName
-                            + " array: expected a string or object, got " + p.currentToken());
-                }
-            }
-
-            return result;
-        }
-
-        public static class Deserializer extends StdDeserializer<List<ToolRef>> {
-            public Deserializer() { super(List.class); }
-
-            @Override
-            public List<ToolRef> deserialize(JsonParser p, DeserializationContext ctxt)
-                    throws IOException {
-                return deserializeList(p, "requires");
-            }
-        }
-
-        /**
-         * Serializes a {@code List<ToolRef>} in the canonical format:
-         * plain strings for tools without parameters, single-key maps for tools with parameters.
-         */
-        public static class Serializer extends com.fasterxml.jackson.databind.ser.std.StdSerializer<List<ToolRef>> {
-            public Serializer() { super(List.class, false); }
-
-            @Override
-            public void serialize(List<ToolRef> value, com.fasterxml.jackson.core.JsonGenerator gen,
-                                  com.fasterxml.jackson.databind.SerializerProvider provider) throws IOException {
-                gen.writeStartArray();
-                for (var ref : value) {
-                    if (ref.getParams().isEmpty()) {
-                        gen.writeString(ref.getName());
-                    } else {
-                        gen.writeStartObject();
-                        gen.writeObjectFieldStart(ref.getName());
-                        for (var entry : ref.getParams().entrySet()) {
-                            gen.writeStringField(entry.getKey(), entry.getValue());
-                        }
-                        gen.writeEndObject();
-                        gen.writeEndObject();
-                    }
-                }
-                gen.writeEndArray();
-            }
-        }
+        // Union shapes (string-or-map) live in ToolRefListConverter.
     }
 
     @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqMapped
     public static class ParameterDef {
         private String type;  // "string", "integer", "boolean", "enum"
-        @JsonProperty("default")
+        @JqName("default")
         private String defaultValue;
         private String description;
         private String pattern;  // regex for string validation
@@ -351,9 +245,9 @@ public class ToolDef {
     }
 
     @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqMapped
     public static class ProxyDef {
-        @JsonProperty("config-namespace")
+        @JqName("config-namespace")
         private String configNamespace = "";
         private Map<String, ConfigEntry> configuration = Map.of();
         private List<AuthDef> auth = List.of();
@@ -423,12 +317,12 @@ public class ToolDef {
     }
 
     @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqMapped
     public static class ConfigEntry {
         private String type = "string"; // "string" or "confirm"
         private String description = "";
         private boolean secret = false;
-        @JsonProperty("config-path")
+        @JqName("config-path")
         private String configPath = "";
         private String value = "";
         private List<String> help = List.of();
@@ -456,7 +350,7 @@ public class ToolDef {
      * is whatever the tool checks a credential's shape by, e.g. {@code gho_}.
      */
     @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqMapped
     public static class PlaceholderDef {
         private String env = "";
         private String prefix = "";
@@ -474,7 +368,7 @@ public class ToolDef {
     }
 
     @RegisterForReflection
-    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JqMapped
     public static class AuthDef {
         private List<String> domains = List.of();
         private String type;       // "basic", "bearer", "header", "anthropic"
@@ -634,6 +528,6 @@ public class ToolDef {
     }
 
     public static ToolDef loadFromStream(InputStream is) throws IOException {
-        return YAML.readValue(is, ToolDef.class);
+        return Jjq.toolDef(is);
     }
 }

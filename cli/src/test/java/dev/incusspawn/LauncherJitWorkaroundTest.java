@@ -1,6 +1,6 @@
 package dev.incusspawn;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -46,11 +46,12 @@ class LauncherJitWorkaroundTest {
     void jbangAliasesCarryTheWorkaround() throws IOException {
         // A catalog cannot depend on the JDK it ends up on, so the options are unconditional:
         // HotSpot accepts them with or without JVMCI (checked on Temurin, OpenJDK and GraalVM 25).
-        var aliases = new ObjectMapper().readTree(Files.readString(CATALOG)).get("aliases");
+        var aliases = (io.hyperfoil.tools.jjq.value.JqObject)
+                JqValues.parse(Files.readString(CATALOG)).path("aliases");
         var expected = workaroundOptions();
-        aliases.fieldNames().forEachRemaining(alias -> {
+        aliases.keys().forEach(alias -> {
             var options = new ArrayList<String>();
-            aliases.get(alias).path("java-options").forEach(o -> options.add(o.asText()));
+            for (var o : aliases.path(alias).path("java-options").arrayValue()) options.add(o.asText());
             assertEquals(expected, options, "alias '" + alias + "' must run with the JIT workaround");
         });
     }

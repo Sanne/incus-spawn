@@ -1,7 +1,5 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.config.SpawnConfig.ClaudeAccount;
 import dev.incusspawn.config.SpawnConfig.ClaudeAccountType;
 import org.junit.jupiter.api.Test;
@@ -10,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ClaudeAccountsTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     @Test
     void legacyFlatConfigStillResolves() throws Exception {
@@ -19,7 +16,7 @@ class ClaudeAccountsTest {
                   useVertex: false
                   oauthToken: "sk-ant-oat01-abc"
                 """;
-        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var claude = Jjq.spawnConfig(yaml).getClaude();
         assertTrue(claude.hasAuth());
         assertTrue(claude.isOauthMode());
         assertEquals("sk-ant-oat01-abc", claude.getOauthToken());
@@ -34,7 +31,7 @@ class ClaudeAccountsTest {
                   cloudMlRegion: europe-west1
                   vertexProjectId: acme
                 """;
-        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var claude = Jjq.spawnConfig(yaml).getClaude();
         assertTrue(claude.isUseVertex());
         assertEquals("europe-west1", claude.getCloudMlRegion());
         assertEquals("acme", claude.getVertexProjectId());
@@ -54,7 +51,7 @@ class ClaudeAccountsTest {
                       vertexProjectId: acme
                   default: personal
                 """;
-        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var claude = Jjq.spawnConfig(yaml).getClaude();
         assertEquals("personal", claude.accountName());
         assertTrue(claude.isOauthMode());
         assertEquals(2, claude.effectiveAccounts().size());
@@ -73,7 +70,7 @@ class ClaudeAccountsTest {
                       apiKey: "sk-ant-api03-xyz"
                   default: personal
                 """;
-        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var claude = Jjq.spawnConfig(yaml).getClaude();
         // Instances keep the default account...
         assertEquals("personal", claude.accountName());
         // ...while a direct API call uses the first account that can actually serve one.
@@ -89,7 +86,7 @@ class ClaudeAccountsTest {
                       type: oauth
                       oauthToken: "sk-ant-oat01-abc"
                 """;
-        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var claude = Jjq.spawnConfig(yaml).getClaude();
         assertNull(claude.accountFor(ClaudeAccount::servesDirectApi));
     }
 
@@ -101,7 +98,7 @@ class ClaudeAccountsTest {
                     console:
                       apiKey: "sk-ant-api03-xyz"
                 """;
-        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var claude = Jjq.spawnConfig(yaml).getClaude();
         assertEquals(ClaudeAccountType.API_KEY, claude.account().effectiveType());
         assertEquals("sk-ant-api03-xyz", claude.getApiKey());
     }
@@ -118,7 +115,7 @@ class ClaudeAccountsTest {
                       type: api-key
                       apiKey: "sk-ant-api03-xyz"
                 """;
-        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var claude = Jjq.spawnConfig(yaml).getClaude();
         assertEquals(1, claude.effectiveAccounts().size());
         assertEquals("console", claude.accountName());
     }
@@ -135,7 +132,7 @@ class ClaudeAccountsTest {
                       type: api-key
                       apiKey: "sk-ant-api03-xyz"
                 """;
-        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var claude = Jjq.spawnConfig(yaml).getClaude();
         var all = claude.allAccounts();
         assertEquals(2, all.size());
         assertTrue(all.containsKey("broken"));
@@ -155,7 +152,7 @@ class ClaudeAccountsTest {
                       type: api-key
                       apiKey: "sk-ant-api03-xyz"
                 """;
-        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var claude = Jjq.spawnConfig(yaml).getClaude();
         assertEquals(1, claude.effectiveAccounts().size());
         assertEquals(2, claude.allAccounts().size());
         assertEquals("incomplete account", claude.allAccounts().get("weird").describe());
@@ -168,7 +165,7 @@ class ClaudeAccountsTest {
      */
     @Test
     void pinningAnIncompleteAccountSaysWhyRatherThanThatItIsMissing() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 claude:
                   accounts:
                     broken:
@@ -178,7 +175,7 @@ class ClaudeAccountsTest {
                       type: api-key
                       apiKey: "sk-ant-api03-xyz"
                   default: broken
-                """, SpawnConfig.class);
+                """);
         assertEquals("console", config.getClaude().accountName(), "an unusable default is skipped");
 
         var typed = assertThrows(AccountResolver.UnknownAccountException.class,
@@ -199,10 +196,10 @@ class ClaudeAccountsTest {
     /** #773: the flat credential is 'default' to the shared resolver too, not only to ClaudeConfig. */
     @Test
     void aFlatClaudeCredentialIsTheDefaultAccountEverywhere() throws Exception {
-        var config = YAML.readValue("""
+        var config = Jjq.spawnConfig("""
                 claude:
                   apiKey: "sk-ant-api03-flat"
-                """, SpawnConfig.class);
+                """);
         assertDoesNotThrow(() -> AccountSelection.validate(config, java.util.Map.of("claude", "default")));
         var listing = AccountSelection.listAccounts(config, "claude");
         assertEquals(java.util.List.of("default"), listing.names());
@@ -216,9 +213,9 @@ class ClaudeAccountsTest {
                 claude:
                   oauthToken: "sk-ant-oat01-abc"
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         config.getClaude().setSingleAccount("personal", ClaudeAccount.ofOauth("sk-ant-oat01-abc"));
-        var written = YAML.writeValueAsString(config);
+        var written = Jjq.toYaml(config);
         assertTrue(written.contains("accounts:"), written);
         assertTrue(written.contains("personal:"), written);
         assertTrue(written.contains("default: \"personal\"") || written.contains("default: personal"), written);
@@ -233,7 +230,7 @@ class ClaudeAccountsTest {
         var config = new SpawnConfig();
         config.getClaude().putAccount("personal", ClaudeAccount.ofOauth("sk-ant-oat01-abc"));
         config.getClaude().putAccount("console", ClaudeAccount.ofApiKey("sk-ant-api03-xyz"));
-        var reloaded = YAML.readValue(YAML.writeValueAsString(config), SpawnConfig.class).getClaude();
+        var reloaded = Jjq.spawnConfig(Jjq.toYaml(config)).getClaude();
         assertEquals("personal", reloaded.accountName());
         assertEquals("console", reloaded.accountNameFor(ClaudeAccount::servesDirectApi));
         assertEquals(ClaudeAccountType.OAUTH, reloaded.account().effectiveType());
@@ -247,7 +244,7 @@ class ClaudeAccountsTest {
         var config = new SpawnConfig();
         config.getClaude().putAccount("personal", ClaudeAccount.ofOauth("sk-ant-oat01-abc"));
         config.getClaude().putAccount("console", ClaudeAccount.ofApiKey("sk-ant-api03-xyz"));
-        var written = YAML.writeValueAsString(config);
+        var written = Jjq.toYaml(config);
         assertTrue(written.contains("type: \"oauth\"") || written.contains("type: oauth"), written);
         assertTrue(written.contains("type: \"api-key\"") || written.contains("type: api-key"), written);
     }
@@ -259,7 +256,7 @@ class ClaudeAccountsTest {
         // written into every config.yaml. Re-detecting it would resurrect that phantom key.
         var config = new SpawnConfig();
         config.getClaude().putAccount("personal", ClaudeAccount.ofOauth("sk-ant-oat01-abc"));
-        var written = YAML.writeValueAsString(config);
+        var written = Jjq.toYaml(config);
         assertFalse(written.contains("oauthMode"), written);
         assertFalse(written.contains("auth:"), written);
     }
@@ -273,7 +270,7 @@ class ClaudeAccountsTest {
                   oauthMode: true
                   apiKey: "sk-ant-api03-xyz"
                 """;
-        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var claude = Jjq.spawnConfig(yaml).getClaude();
         assertEquals(ClaudeAccountType.API_KEY, claude.account().effectiveType());
         assertFalse(claude.isOauthMode());
     }
@@ -286,7 +283,7 @@ class ClaudeAccountsTest {
                 claude:
                   oauthToken: "sk-ant-oat01-abc"
                 """;
-        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var claude = Jjq.spawnConfig(yaml).getClaude();
         claude.putAccount("console", ClaudeAccount.ofApiKey("sk-ant-api03-xyz"));
 
         assertEquals(2, claude.effectiveAccounts().size());
@@ -313,7 +310,7 @@ class ClaudeAccountsTest {
                   useVertex: true
                   cloudMlRegion: europe-west1
                 """;
-        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var claude = Jjq.spawnConfig(yaml).getClaude();
         assertTrue(claude.hasAuth());
         assertTrue(claude.isUseVertex());
         assertEquals("", claude.getVertexProjectId());
@@ -335,7 +332,7 @@ class ClaudeAccountsTest {
                 github:
                   token: "ghp_keepme"
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         assertEquals("ghp_keepme", config.getGithub().getToken(), "the rest of the config must survive");
         // The fields still identify it, so the account stays usable.
         assertEquals(ClaudeAccountType.API_KEY, config.getClaude().account().effectiveType());
@@ -349,7 +346,7 @@ class ClaudeAccountsTest {
                     weird:
                       type: carrier-pigeon
                 """;
-        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var claude = Jjq.spawnConfig(yaml).getClaude();
         assertTrue(claude.effectiveAccounts().isEmpty());
     }
 }

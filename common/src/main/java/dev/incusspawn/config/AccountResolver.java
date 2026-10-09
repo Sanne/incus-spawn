@@ -1,8 +1,7 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.MissingNode;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -86,7 +85,7 @@ public final class AccountResolver {
      *
      * @param selected the name chosen by instance or template, or null/blank for none
      */
-    public static String effectiveAccount(JsonNode configTree, String namespace,
+    public static String effectiveAccount(JqValue configTree, String namespace,
                                           AccountShape shape, String selected) {
         var ns = namespaceNode(configTree, namespace);
         var accounts = accounts(ns, shape);
@@ -99,7 +98,7 @@ public final class AccountResolver {
                         : "Account '" + selected + "' is not configured under '" + namespace
                                 + "'. Configured: " + String.join(", ", accounts.keySet()));
             }
-            var problem = problem(shape, account, ns);
+            var problem = accountProblem(shape, account, ns);
             if (!problem.isEmpty()) {
                 throw new UnknownAccountException(namespace, selected,
                         "Account '" + selected + "' under '" + namespace + "' is configured but"
@@ -110,9 +109,9 @@ public final class AccountResolver {
         }
         var configured = defaultName(configTree, namespace);
         var preferred = accounts.get(configured);
-        if (preferred != null && problem(shape, preferred, ns).isEmpty()) return configured;
+        if (preferred != null && accountProblem(shape, preferred, ns).isEmpty()) return configured;
         for (var entry : accounts.entrySet()) {
-            if (problem(shape, entry.getValue(), ns).isEmpty()) return entry.getKey();
+            if (accountProblem(shape, entry.getValue(), ns).isEmpty()) return entry.getKey();
         }
         return "";
     }
@@ -122,22 +121,22 @@ public final class AccountResolver {
     // thing in this feature. They look the namespace's shape up themselves; the tree-taking
     // forms stay for callers that resolve repeatedly against one snapshot and one set of tools.
 
-    /** @see #effectiveAccount(JsonNode, String, AccountShape, String) */
+    /** @see #effectiveAccount(JqValue, String, AccountShape, String) */
     public static String effectiveAccount(SpawnConfig config, String namespace, String selected) {
         return effectiveAccount(config.tree(), namespace, shapeOf(config, namespace), selected);
     }
 
-    /** @see #accountNames(JsonNode, String, AccountShape) */
+    /** @see #accountNames(JqValue, String, AccountShape) */
     public static List<String> accountNames(SpawnConfig config, String namespace) {
         return accountNames(config.tree(), namespace, shapeOf(config, namespace));
     }
 
-    /** @see #usableAccountNames(JsonNode, String, AccountShape) */
+    /** @see #usableAccountNames(JqValue, String, AccountShape) */
     public static List<String> usableAccountNames(SpawnConfig config, String namespace) {
         return usableAccountNames(config.tree(), namespace, shapeOf(config, namespace));
     }
 
-    /** @see #value(JsonNode, String, String, String) */
+    /** @see #value(JqValue, String, String, String) */
     public static String value(SpawnConfig config, String namespace, String account, String key) {
         return value(config.tree(), namespace, account, key);
     }
@@ -156,22 +155,22 @@ public final class AccountResolver {
      * Names of every account configured under a namespace, in file order, usable or not -- the
      * account a flat credential presents as included.
      */
-    public static List<String> accountNames(JsonNode configTree, String namespace, AccountShape shape) {
+    public static List<String> accountNames(JqValue configTree, String namespace, AccountShape shape) {
         return new ArrayList<>(accounts(namespaceNode(configTree, namespace), shape).keySet());
     }
 
-    /** As {@link #accountNames(JsonNode, String, AccountShape)}, without the unusable ones. */
-    public static List<String> usableAccountNames(JsonNode configTree, String namespace, AccountShape shape) {
+    /** As {@link #accountNames(JqValue, String, AccountShape)}, without the unusable ones. */
+    public static List<String> usableAccountNames(JqValue configTree, String namespace, AccountShape shape) {
         var ns = namespaceNode(configTree, namespace);
         var names = new ArrayList<String>();
         accounts(ns, shape).forEach((name, account) -> {
-            if (problem(shape, account, ns).isEmpty()) names.add(name);
+            if (accountProblem(shape, account, ns).isEmpty()) names.add(name);
         });
         return names;
     }
 
     /** Whether the namespace holds its accounts under {@code accounts:}, rather than flat or not at all. */
-    public static boolean hasAccountsBlock(JsonNode configTree, String namespace) {
+    public static boolean hasAccountsBlock(JqValue configTree, String namespace) {
         return accountsNode(namespaceNode(configTree, namespace)) != null;
     }
 
@@ -186,7 +185,7 @@ public final class AccountResolver {
      *
      * @param accountName the resolved account, or blank for none
      */
-    public static String value(JsonNode configTree, String namespace,
+    public static String value(JqValue configTree, String namespace,
                                String accountName, String key) {
         if (namespace.isBlank() || key.isBlank()) return "";
         if (accountName != null && !accountName.isBlank()) {
@@ -237,20 +236,25 @@ public final class AccountResolver {
      * <p>Lives here rather than in the proxy package because it is a plain config utility with
      * two owners now: tool-proxy credential resolution and every account lookup above.
      */
-    public static String navigate(JsonNode tree, String path) {
+    public static String navigate(JqValue tree, String path) {
         var node = tree;
-        for (var segment : path.split("\\.")) {
-            if (node == null || !node.isObject()) return "";
-            node = node.get(segment);
+        var segments = path.split("\\.");
+        for (int i = 0; i < segments.length; i++) {
+            // Jackson parity: node.get() returns null for a missing key (reads as ""),
+            // while an explicit null is a NullNode (a value node reading as "null").
+            if (!(node instanceof JqObject object) || !object.keys().contains(segments[i])) return "";
+            node = object.getField(segments[i]);
         }
-        return node != null && node.isValueNode() ? node.asText() : "";
+        if (node == null) return "";
+        if (node.isNull()) return "null";
+        return !node.isContainer() ? node.asText() : "";
     }
 
     /** The name in {@code <ns>.default}, or {@code ""}. */
-    public static String defaultName(JsonNode configTree, String namespace) {
+    public static String defaultName(JqValue configTree, String namespace) {
         var ns = namespaceNode(configTree, namespace);
-        var node = ns.get(DEFAULT_KEY);
-        return node != null && node.isTextual() ? node.asText().strip() : "";
+        var node = ns.getField(DEFAULT_KEY);
+        return node.isString() ? node.asText().strip() : "";
     }
 
     /**
@@ -258,13 +262,21 @@ public final class AccountResolver {
      * account {@code default} when the namespace holds a flat credential instead. That account
      * has no fields of its own -- {@link #value} reads them from the flat level.
      */
-    private static Map<String, JsonNode> accounts(JsonNode namespace, AccountShape shape) {
-        var result = new LinkedHashMap<String, JsonNode>();
-        var accounts = accountsNode(namespace);
-        if (accounts != null) {
-            accounts.fields().forEachRemaining(e -> result.put(e.getKey(), e.getValue()));
+    /**
+     * An account, and whether it is the marker for a flat credential rather than a
+     * configured one. The marker must be explicit: empty {@link JqObject}s are
+     * canonicalized to one instance, so identity cannot tell a genuinely empty
+     * account (unusable, must be reported) from the flat one (usable, never asked).
+     */
+    private record Account(JqValue node, boolean flat) {}
+
+    private static Map<String, Account> accounts(JqValue namespace, AccountShape shape) {
+        var result = new LinkedHashMap<String, Account>();
+        var block = accountsNode(namespace);
+        if (block != null) {
+            block.asMap().forEach((name, node) -> result.put(name, new Account(node, false)));
         } else if (shape.hasFlatCredential(namespace)) {
-            result.put(FLAT_ACCOUNT_NAME, FLAT_ACCOUNT);
+            result.put(FLAT_ACCOUNT_NAME, new Account(FLAT_ACCOUNT, true));
         }
         return result;
     }
@@ -274,22 +286,26 @@ public final class AccountResolver {
      * judged it when deciding it was one, and Claude relies on a flat Vertex setup with no region
      * still presenting as an account so the proxy can report exactly that misconfiguration.
      */
-    private static String problem(AccountShape shape, JsonNode account, JsonNode namespace) {
-        if (account == FLAT_ACCOUNT) return "";
-        var problem = shape.problem(account == null ? MissingNode.getInstance() : account, namespace);
+    private static String accountProblem(AccountShape shape, Account account, JqValue namespace) {
+        if (account.flat()) return "";
+        var problem = shape.problem(account.node() == null ? io.hyperfoil.tools.jjq.value.JqNull.NULL
+                : account.node(), namespace);
         return problem == null ? "" : problem;
     }
 
     /** Identity marker for the account a flat credential presents as. */
-    private static final JsonNode FLAT_ACCOUNT = JsonNodeFactory.instance.objectNode();
+    private static final JqValue FLAT_ACCOUNT = JqObject.builder(0).build();
 
-    private static JsonNode namespaceNode(JsonNode configTree, String namespace) {
-        var ns = configTree == null ? null : configTree.get(namespace);
-        return ns != null && ns.isObject() ? ns : JsonNodeFactory.instance.objectNode();
+    private static JqValue namespaceNode(JqValue configTree, String namespace) {
+        var ns = configTree == null ? null : configTree.getField(namespace);
+        return ns != null && ns.isObject() ? ns : JqObject.builder(0).build();
     }
 
-    private static JsonNode accountsNode(JsonNode namespace) {
-        var accounts = namespace.get(ACCOUNTS_KEY);
-        return accounts != null && accounts.isObject() && !accounts.isEmpty() ? accounts : null;
+    private static JqValue accountsNode(JqValue namespace) {
+        if (namespace instanceof JqObject object) {
+            var accounts = object.getField(ACCOUNTS_KEY);
+            if (accounts instanceof JqObject acc && acc.size() > 0) return acc;
+        }
+        return null;
     }
 }

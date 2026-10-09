@@ -1,5 +1,6 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.config.Jjq;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -59,14 +60,14 @@ class IncusApiLiveTest {
         var metadata = resp.body().path("metadata");
         assertTrue(metadata.isArray());
         // Each instance should have a 'state' field (may be null for stopped instances)
-        for (var instance : metadata) {
-            assertFalse(instance.path("state").isMissingNode(),
-                    "Instance " + instance.path("name").asText() + " missing 'state' field");
-            assertFalse(instance.path("config").isMissingNode(),
-                    "Instance " + instance.path("name").asText() + " missing 'config' field");
-            System.out.println("  " + instance.path("name").asText()
-                    + " status=" + instance.path("status").asText()
-                    + " type=" + instance.path("type").asText());
+        for (var instance : metadata.asList()) {
+            assertFalse(instance.getField("state").isMissingNode(),
+                    "Instance " + instance.pathText("name", "") + " missing 'state' field");
+            assertFalse(instance.getField("config").isMissingNode(),
+                    "Instance " + instance.pathText("name", "") + " missing 'config' field");
+            System.out.println("  " + instance.pathText("name", "")
+                    + " status=" + instance.pathText("status", "")
+                    + " type=" + instance.pathText("type", ""));
         }
     }
 
@@ -78,9 +79,9 @@ class IncusApiLiveTest {
         var metadata = resp.body().path("metadata");
         assertTrue(metadata.isArray());
         assertTrue(metadata.size() > 0, "Expected at least one storage pool");
-        for (var pool : metadata) {
-            System.out.println("  pool: " + pool.path("name").asText()
-                    + " driver=" + pool.path("driver").asText());
+        for (var pool : metadata.asList()) {
+            System.out.println("  pool: " + pool.pathText("name", "")
+                    + " driver=" + pool.pathText("driver", ""));
         }
     }
 
@@ -131,9 +132,9 @@ class IncusApiLiveTest {
 
         String imageFingerprint = null;
         String imageType = "container";
-        for (var img : imagesResp.body().path("metadata")) {
-            imageFingerprint = img.path("fingerprint").asText();
-            imageType = img.path("type").asText("container");
+        for (var img : imagesResp.body().getField("metadata").asList()) {
+            imageFingerprint = img.pathText("fingerprint", "");
+            imageType = img.pathText("type", "container");
             break;
         }
 
@@ -283,12 +284,12 @@ class IncusApiLiveTest {
         if (skip()) return;
 
         var imagesResp = http.get("/1.0/images?recursion=1");
-        if (imagesResp.body().path("metadata").size() == 0) {
+        if (imagesResp.body().getField("metadata").size() == 0) {
             System.out.println("Skipping launch test: no local images."); return;
         }
-        var imageNode = imagesResp.body().path("metadata").get(0);
-        var fingerprint = imageNode.path("fingerprint").asText();
-        var imageType = imageNode.path("type").asText("container");
+        var imageNode = imagesResp.body().getField("metadata").getElement(0);
+        var fingerprint = imageNode.pathText("fingerprint", "");
+        var imageType = imageNode.pathText("type", "container");
 
         String name = "isx-launch-test-" + System.currentTimeMillis() % 10000;
         try {
@@ -362,8 +363,8 @@ class IncusApiLiveTest {
         var r = http.get("/1.0/images?recursion=1");
         var meta = r.body().path("metadata");
         if (meta.size() == 0) return null;
-        var img = meta.get(0);
-        return new TestImage(img.path("fingerprint").asText(), img.path("type").asText("container"));
+        var img = meta.getElement(0);
+        return new TestImage(img.pathText("fingerprint", ""), img.pathText("type", "container"));
     }
 
     private static String createAndStartContainer(String name, TestImage image) throws Exception {
@@ -491,7 +492,7 @@ class IncusApiLiveTest {
             System.out.println("Log files: " + logs.size());
             if (logs.size() > 0) {
                 // Get the last log file content
-                var logPath = logs.get(logs.size() - 1).asText();
+                var logPath = logs.getElement(logs.size() - 1).asDisplayText("");
                 var content = http.getText(logPath);
                 assertNotNull(content);
                 System.out.println("Log content length: " + content.length() + " chars");
@@ -594,12 +595,11 @@ class IncusApiLiveTest {
 
     private static void awaitAction(java.util.concurrent.BlockingQueue<String> events,
                                     String action, String name) throws Exception {
-        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         long deadline = System.currentTimeMillis() + 20_000;
         while (System.currentTimeMillis() < deadline) {
             var message = events.poll(1, java.util.concurrent.TimeUnit.SECONDS);
             if (message == null) continue;
-            var metadata = mapper.readTree(message).path("metadata");
+            var metadata = io.hyperfoil.tools.jjq.value.JqValues.parse(message).path("metadata");
             if (action.equals(metadata.path("action").asText()) && name.equals(metadata.path("name").asText())) return;
         }
         fail("no " + action + " event for " + name);

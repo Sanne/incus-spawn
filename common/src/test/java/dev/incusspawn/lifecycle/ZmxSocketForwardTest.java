@@ -1,7 +1,7 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.Platform;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
@@ -30,9 +30,7 @@ class ZmxSocketForwardTest {
 
     private static final String DEVICE = "zmx-sockets";
     private static final String NAME = "demo";
-    private static final ObjectMapper JSON = new ObjectMapper();
-
-    @TempDir
+        @TempDir
     Path zmxDir;
 
     private IncusClient incus;
@@ -52,20 +50,19 @@ class ZmxSocketForwardTest {
     }
 
     /** An instance as {@code IncusClient.instanceMetadata} returns it. */
-    private JsonNode instanceWithZmxDevice(String source) {
-        var metadata = legacyInstanceWithZmxDevice(source);
-        ((com.fasterxml.jackson.databind.node.ObjectNode) metadata.path("devices").path(DEVICE))
-                .put("required", "false");
-        return metadata;
+    private JqValue instanceWithZmxDevice(String source) {
+        var device = JqObject.builder(3).put("type", "disk").put("source", source).put("required", "false").build();
+        return JqObject.builder(1)
+                .put("devices", JqObject.builder(1).put(DEVICE, device).build())
+                .build();
     }
 
     /** An instance branched before the device was optional (#1044): no {@code required} key. */
-    private JsonNode legacyInstanceWithZmxDevice(String source) {
-        var metadata = JSON.createObjectNode();
-        metadata.putObject("devices").putObject(DEVICE)
-                .put("type", "disk")
-                .put("source", source);
-        return metadata;
+    private JqValue legacyInstanceWithZmxDevice(String source) {
+        var device = JqObject.builder(2).put("type", "disk").put("source", source).build();
+        return JqObject.builder(1)
+                .put("devices", JqObject.builder(1).put(DEVICE, device).build())
+                .build();
     }
 
     @Test
@@ -98,7 +95,7 @@ class ZmxSocketForwardTest {
 
     @Test
     void ensureHostDirForStart_noZmxDevice_createsNothing() {
-        ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir, JSON.createObjectNode());
+        ZmxSocketForward.ensureHostDirForStart(incus, NAME, zmxDir, JqObject.builder(0).build());
 
         assertFalse(Files.exists(containerDir()),
                 "instances without the device must not get a stray directory");
@@ -189,8 +186,9 @@ class ZmxSocketForwardTest {
         // A name no real host directory can collide with: this call resolves
         // the zmx dir from the environment, unlike the tests above.
         var name = "wiring-" + java.util.UUID.randomUUID();
-        var instance = JSON.createObjectNode();
-        instance.putObject("config").put(Metadata.HOST_RESOURCES, "");
+        var instance = JqObject.builder(1)
+                .put("config", JqObject.builder(1).put(Metadata.HOST_RESOURCES, "").build())
+                .build();
         when(incus.instanceMetadata(name)).thenReturn(instance);
 
         InstanceLifecycle.prepareHostDevicesForStart(incus, name);

@@ -2,6 +2,7 @@ package dev.incusspawn.config;
 
 import dev.incusspawn.proxy.ProxyCredentials;
 import dev.incusspawn.proxy.ResolvedToolProxy;
+import io.hyperfoil.tools.jjq.yaml.JqYaml;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.io.TempDir;
@@ -257,12 +258,12 @@ class PreviousReleaseConfigCompatTest {
             assertEquals("default", AccountResolver.defaultName(reloaded.tree(), namespace));
         }
         assertFalse(saved.contains("oauthMode"), "the phantom key is not carried forward:\n" + saved);
-        var raw = new com.fasterxml.jackson.databind.ObjectMapper(
-                new com.fasterxml.jackson.dataformat.yaml.YAMLFactory()).readTree(saved);
+        var raw = JqYaml.parse(saved);
         for (var namespace : NAMESPACES) {
-            raw.path(namespace).fields().forEachRemaining(field -> assertFalse(
-                    field.getValue().isTextual() && field.getValue().asText().isEmpty(),
-                    namespace + "." + field.getKey() + " was left as an empty string:\n" + saved));
+            var node = raw.path(namespace);
+            if (node.isObject()) node.objectValue().forEach((key, value) -> assertFalse(
+                    value.isString() && value.asText().isEmpty(),
+                    namespace + "." + key + " was left as an empty string:\n" + saved));
         }
         if (fixture.equals("full")) {
             assertTrue(reloaded.getBob().isLicenseConsent(), "consent is shared, not moved:\n" + saved);

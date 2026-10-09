@@ -1,10 +1,9 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
 
+import dev.incusspawn.config.Jjq;
 import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.time.Instant;
@@ -21,7 +20,7 @@ class ArtifactCacheTiersTest {
     }
 
     private static ArtifactCacheTiers fromYaml(String yaml) throws Exception {
-        return ArtifactCacheTiers.from(new ObjectMapper(new YAMLFactory()).readValue(yaml, SpawnConfig.class));
+        return ArtifactCacheTiers.from(Jjq.spawnConfig(yaml));
     }
 
     @Test

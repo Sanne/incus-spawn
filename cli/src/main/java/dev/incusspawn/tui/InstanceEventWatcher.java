@@ -1,7 +1,8 @@
 package dev.incusspawn.tui;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.incus.IncusEventStream;
 
 import java.util.Set;
@@ -54,8 +55,7 @@ public final class InstanceEventWatcher implements AutoCloseable {
     private static final Set<String> STARTS = Set.of(
             "instance-started", "instance-restarted", "instance-resumed");
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-    static final long INITIAL_BACKOFF_MS = 2_000;
+        static final long INITIAL_BACKOFF_MS = 2_000;
     static final int MAX_CONSECUTIVE_FAILURES = 3;
     static final long HEALTHY_SESSION_MS = 60_000;
 
@@ -166,20 +166,20 @@ public final class InstanceEventWatcher implements AutoCloseable {
 
     /** Parse one event message; null unless it's a lifecycle event the instance list cares about. */
     static Change parse(String message) {
-        JsonNode node;
+        JqValue node;
         try {
-            node = JSON.readTree(message);
+            node = JqValues.parse(message);
         } catch (Exception e) {
             return null;
         }
-        if (node == null || !"lifecycle".equals(node.path("type").asText())) return null;
-        var metadata = node.path("metadata");
-        var action = metadata.path("action").asText("");
+        if (!"lifecycle".equals(node.pathText("type", ""))) return null;
+        var metadata = node.getField("metadata");
+        var action = metadata.pathText("action", "");
         if (!RELEVANT_ACTIONS.contains(action)) return null;
-        var name = metadata.path("name").asText("");
+        var name = metadata.pathText("name", "");
         if (name.isEmpty()) {
             // Older daemons carry the instance only in the source URL.
-            var source = metadata.path("source").asText("");
+            var source = metadata.pathText("source", "");
             var prefix = "/1.0/instances/";
             if (source.startsWith(prefix)) {
                 name = source.substring(prefix.length());

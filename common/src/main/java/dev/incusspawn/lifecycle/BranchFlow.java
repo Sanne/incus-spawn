@@ -1,6 +1,7 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.config.AccountOrigin;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.AccountResolver;
@@ -126,7 +127,7 @@ public final class BranchFlow {
      * {@code .incus-spawn/} gets only what stays inside its project, so its {@code gui: true}
      * still needs {@code --gui}.
      */
-    public static Defaults defaultsFor(String source, JsonNode instance, Map<String, ImageDef> defs) {
+    public static Defaults defaultsFor(String source, JqValue instance, Map<String, ImageDef> defs) {
         var def = defs.get(source);
         var config = instance.path("config");
         var machineType = IncusClient.machineType(instance);
@@ -152,7 +153,7 @@ public final class BranchFlow {
     }
 
     /** Whether {@code def}, or any definition the source was built from, is project-local. */
-    private static boolean projectLocal(ImageDef def, JsonNode config) {
+    private static boolean projectLocal(ImageDef def, JqValue config) {
         if (def != null && def.getProjectRoot() != null) return true;
         var built = BuildSource.fromJson(config.path(Metadata.BUILD_SOURCE).asText(""));
         return built != null && built.usedProjectLocal();
@@ -172,7 +173,7 @@ public final class BranchFlow {
      */
     public record Preflight(Request request, Map<String, ImageDef> defs,
                             Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins,
-                            JsonNode sourceInstance, String template) {}
+                            JqValue sourceInstance, String template) {}
 
     /** An account selection and who chose each pin in it. */
     /** @param template the leaf template the source was built from ({@link Inherited#template}) */
@@ -291,9 +292,12 @@ public final class BranchFlow {
         // Nor its source's isx mcp ownership: configureBranch drops what the caller did not
         // stamp, but the copy is listed before that, and an agent's idempotency key would make it
         // answer for its source's create meanwhile (#1011). An empty value unsets.
-        sourceInstance.path("config").fieldNames().forEachRemaining(key -> {
-            if (Metadata.isMcpKey(key)) copyConfig.putIfAbsent(key, "");
-        });
+        var sourceConfig = sourceInstance.path("config");
+        if (sourceConfig instanceof io.hyperfoil.tools.jjq.value.JqObject sourceObj) {
+            sourceObj.keys().forEach(key -> {
+                if (Metadata.isMcpKey(key)) copyConfig.putIfAbsent(key, "");
+            });
+        }
         BuildOutput.stepStart("Copying from template...");
         incus.copy(source, name, copyPlan, copyConfig);
         BuildOutput.stepDone();
@@ -421,7 +425,7 @@ public final class BranchFlow {
      * was built for.
      */
     private static ResolvedAccounts resolveAccountSelection(IncusClient incus, String source,
-                                                            JsonNode sourceInstance,
+                                                            JqValue sourceInstance,
                                                             List<String> accountOverrides,
                                                             Map<String, ImageDef> defs, SpawnConfig config,
                                                             Map<String, ToolSetup> setups) {
@@ -477,7 +481,7 @@ public final class BranchFlow {
     }
 
     /** {@link #inheritedAccounts(IncusClient, String, Map)} from a source already read with {@link IncusClient#instanceMetadata}. */
-    public static Inherited inheritedAccounts(JsonNode instance, String source, Map<String, ImageDef> defs) {
+    public static Inherited inheritedAccounts(JqValue instance, String source, Map<String, ImageDef> defs) {
         if (!instance.isObject()) { // Incus answers a missing instance with "metadata": null
             throw new IncusException("Failed to read instance " + source);
         }

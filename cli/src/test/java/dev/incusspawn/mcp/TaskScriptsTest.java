@@ -507,9 +507,9 @@ class TaskScriptsTest {
         assertTrue(read.contains("1\t0\t\"a\\tb\\n1\\t0\\tforged\"\n"), read);
         assertFalse(read.contains("\n1\t0\tforged"), read);
         assertTrue(read.contains("\n1\t0\tNEW_FILE\n") && read.contains("+more"), read);
-        var files = diff.structured().path("repos").get(0).path("files");
+        var files = diff.structured().path("repos").getElement(0).path("files");
         assertEquals(java.util.List.of("NEW_FILE", odd, "tracked.txt"),
-                files.findValuesAsText("path").stream().sorted().toList(), files.toString());
+                files.asList().stream().map(f -> f.path("path").asText()).sorted().toList(), files.toString());
     }
 
     @Test

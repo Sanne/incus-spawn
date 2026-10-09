@@ -1,7 +1,8 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import io.hyperfoil.tools.jjq.mapper.JqMapper;
+import io.hyperfoil.tools.jjq.yaml.JqYaml;
+import io.hyperfoil.tools.jjq.yaml.YamlOptions;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -201,12 +202,11 @@ class EnvEntryTest {
     }
 
     private record Wrapper(
-            @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using = EnvEntry.ListDeserializer.class)
+            @io.hyperfoil.tools.jjq.mapper.JqConverter(EnvEntryListConverter.class)
             List<EnvEntry> env
     ) {}
 
     private static List<EnvEntry> parseEnvList(String yaml) throws Exception {
-        var mapper = new ObjectMapper(new YAMLFactory());
-        return mapper.readValue(yaml, Wrapper.class).env();
+        return JqYaml.fromYaml(yaml, JqMapper.create(), Wrapper.class, YamlOptions.STRICT).env();
     }
 }

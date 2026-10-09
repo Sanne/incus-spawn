@@ -58,3 +58,5 @@ bench/results/
 
 # Site build output
 _site/
+
+.cachebro/

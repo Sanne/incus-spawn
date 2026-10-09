@@ -221,7 +221,7 @@ final class SupportBundle {
 
     private static String collectInstances() {
         try {
-            return RuntimeServices.incus().listJsonConfig();
+            return RuntimeServices.incus().listJsonConfig().toJsonString();
         } catch (Exception e) {
             return "[]";
         }

@@ -1,7 +1,8 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.hyperfoil.tools.jjq.value.JqNull;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -15,8 +16,8 @@ import java.util.Map;
  *                     every result it returns matches it
  * @param annotations MCP tool annotations ({@code readOnlyHint}, {@code destructiveHint}, ...)
  */
-record McpTool(String name, String description, ObjectNode inputSchema, ObjectNode outputSchema,
-               ObjectNode annotations, Handler handler) {
+record McpTool(String name, String description, JqObject inputSchema, JqObject outputSchema,
+               JqObject annotations, Handler handler) {
 
     @FunctionalInterface
     interface Handler {
@@ -27,28 +28,27 @@ record McpTool(String name, String description, ObjectNode inputSchema, ObjectNo
         ToolResult call(Args args, ToolContext ctx) throws Exception;
     }
 
-    ObjectNode descriptor() {
-        var node = JsonRpc.JSON.createObjectNode();
-        node.put("name", name);
-        node.put("description", description);
-        node.set("inputSchema", inputSchema);
-        node.set("outputSchema", outputSchema);
-        node.set("annotations", annotations);
-        return node;
+    JqObject descriptor() {
+        return JqObject.builder(5)
+                .put("name", name)
+                .put("description", description)
+                .put("inputSchema", inputSchema)
+                .put("outputSchema", outputSchema)
+                .put("annotations", annotations)
+                .build();
     }
 
-    static ObjectNode annotations(boolean readOnly, boolean destructive, boolean idempotent) {
-        var node = JsonRpc.JSON.createObjectNode();
-        node.put("readOnlyHint", readOnly);
-        if (!readOnly) node.put("destructiveHint", destructive);
-        node.put("idempotentHint", idempotent);
+    static JqObject annotations(boolean readOnly, boolean destructive, boolean idempotent) {
+        var builder = JqObject.builder(4).put("readOnlyHint", readOnly);
+        if (!readOnly) builder.put("destructiveHint", destructive);
+        builder.put("idempotentHint", idempotent);
         // Everything acts on isx instances, never on the open world directly
-        node.put("openWorldHint", false);
-        return node;
+        builder.put("openWorldHint", false);
+        return builder.build();
     }
 
     /** Typed access to a call's arguments, turning a missing or mistyped one into a {@link ToolError}. */
-    record Args(JsonNode node) {
+    record Args(JqValue node) {
 
         String requireString(String name) {
             var value = string(name);
@@ -57,52 +57,63 @@ record McpTool(String name, String description, ObjectNode inputSchema, ObjectNo
         }
 
         String string(String name) {
-            var v = node.get(name);
-            if (v == null || v.isNull()) return null;
-            if (!v.isTextual()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be a string");
+            var v = field(name);
+            if (v.isNull()) return null;
+            if (!v.isString()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be a string");
             return v.asText();
         }
 
         Integer integer(String name) {
-            var v = node.get(name);
-            if (v == null || v.isNull()) return null;
-            if (!v.canConvertToInt() || !v.isIntegralNumber()) {
+            var v = field(name);
+            if (v.isNull()) return null;
+            if (!v.isIntegralNumber()) {
                 throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an integer");
             }
-            return v.asInt();
+            var l = v.longValue();
+            if (l < Integer.MIN_VALUE || l > Integer.MAX_VALUE) {
+                throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an integer");
+            }
+            return (int) l;
         }
 
         boolean bool(String name) {
-            var v = node.get(name);
-            if (v == null || v.isNull()) return false;
+            var v = field(name);
+            if (v.isNull()) return false;
             if (!v.isBoolean()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be a boolean");
-            return v.asBoolean();
+            return v.booleanValue();
         }
 
         List<String> stringList(String name) {
-            var v = node.get(name);
+            var v = field(name);
             var list = new java.util.ArrayList<String>();
-            if (v == null || v.isNull()) return list;
+            if (v.isNull()) return list;
             if (!v.isArray()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an array of strings");
-            for (var e : v) {
-                if (!e.isTextual()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an array of strings");
+            for (var e : v.asList()) {
+                if (!e.isString()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an array of strings");
                 list.add(e.asText());
             }
             return list;
         }
 
         Map<String, String> stringMap(String name) {
-            var v = node.get(name);
+            var v = field(name);
             var map = new LinkedHashMap<String, String>();
-            if (v == null || v.isNull()) return map;
-            if (!v.isObject()) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an object of strings");
-            for (var e : v.properties()) {
-                if (!e.getValue().isTextual()) {
+            if (v.isNull()) return map;
+            if (!(v instanceof JqObject object)) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "' must be an object of strings");
+            for (var e : object.entries()) {
+                if (!e.getValue().isString()) {
                     throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "argument '" + name + "." + e.getKey() + "' must be a string");
                 }
                 map.put(e.getKey(), e.getValue().asText());
             }
             return map;
+        }
+
+        private JqValue field(String name) {
+            if (!(node instanceof JqObject object)) return JqNull.NULL;
+            return object.keys().contains(name)
+                    ? object.getField(name)
+                    : JqNull.NULL;
         }
     }
 }

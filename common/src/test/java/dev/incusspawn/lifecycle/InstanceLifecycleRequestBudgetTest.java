@@ -3,6 +3,8 @@ package dev.incusspawn.lifecycle;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.JacksonTrees;
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
@@ -96,7 +98,7 @@ class InstanceLifecycleRequestBudgetTest {
         // The shell path already read the instance to see it is stopped: the start's device
         // repairs and its mcp-caller grant (#1182) take that read
         var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
-        var instance = daemon.instance(NAME);
+        var instance = JacksonTrees.fromJsonNode(daemon.instance(NAME));
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(daemon.clientWithShortReadyWait(),
                 NAME, instance, dev.incusspawn.incus.MachineType.CONTAINER, msg -> {}));
         var requests = daemon.requests();
@@ -212,14 +214,12 @@ class InstanceLifecycleRequestBudgetTest {
     /** The shell path hands over the read it made for ensureReady. */
     @Test
     void reconcilingFromTheCallersReadCostsNothing() throws Exception {
-        var config = new com.fasterxml.jackson.databind.ObjectMapper(new com.fasterxml.jackson.dataformat.yaml.YAMLFactory())
-                .readValue("github:\n  accounts:\n    me:\n      token: ghp_x\n  default: me\n",
-                        dev.incusspawn.config.SpawnConfig.class);
+        var config = dev.incusspawn.config.Jjq.spawnConfig("github:\n  accounts:\n    me:\n      token: ghp_x\n  default: me\n");
         var gh = new dev.incusspawn.tool.GhSetup();
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(
                 Metadata.accountIdentityKey("github"), gh.bakedAccountIdentity(config, "me"),
                 Metadata.ACCOUNT_IDENTITY_VERIFIED, "true"));
-        var instance = daemon.instance(NAME);
+        var instance = JacksonTrees.fromJsonNode(daemon.instance(NAME));
 
         InstanceLifecycle.reconcileAccountIdentities(daemon.client(), NAME, instance, config, null,
                 msg -> { }, msg -> { });
@@ -244,9 +244,7 @@ class InstanceLifecycleRequestBudgetTest {
      */
     @Test
     void aVerifiedInstanceWithATokenIsReadOnceAndNeverExecs() throws Exception {
-        var config = new com.fasterxml.jackson.databind.ObjectMapper(new com.fasterxml.jackson.dataformat.yaml.YAMLFactory())
-                .readValue("github:\n  accounts:\n    me:\n      token: ghp_x\n  default: me\n",
-                        dev.incusspawn.config.SpawnConfig.class);
+        var config = dev.incusspawn.config.Jjq.spawnConfig("github:\n  accounts:\n    me:\n      token: ghp_x\n  default: me\n");
         var gh = new dev.incusspawn.tool.GhSetup();
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(
                 Metadata.accountIdentityKey("github"), gh.bakedAccountIdentity(config, "me"),
@@ -539,8 +537,14 @@ class InstanceLifecycleRequestBudgetTest {
 
     /** Every NIC Incus would attach at start, whatever it comes from. */
     private static List<String> attachedNics(FakeIncusDaemon daemon) {
-        return daemon.instance(NAME).path("expanded_devices").properties().stream()
-                .filter(e -> IncusClient.isNic(e.getValue())).map(Map.Entry::getKey).toList();
+        var expanded = JacksonTrees.fromJsonNode(daemon.instance(NAME)).getField("expanded_devices");
+        var nics = new java.util.ArrayList<String>();
+        if (expanded instanceof io.hyperfoil.tools.jjq.value.JqObject devices) {
+            devices.forEach((name, device) -> {
+                if (IncusClient.isNic(device)) nics.add(name);
+            });
+        }
+        return nics;
     }
 
     @Test

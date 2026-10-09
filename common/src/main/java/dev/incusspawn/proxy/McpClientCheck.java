@@ -1,7 +1,8 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.util.OutputFormat;
 
@@ -73,8 +74,6 @@ public final class McpClientCheck {
             """.formatted(InstanceSecret.GUEST_PATH, InstanceSecret.HEADER, ProxyConfig.MCP_DOMAIN,
                     McpClientRegistration.CONFIG_HAS_ENTRY);
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
     private McpClientCheck() {}
 
     /** Run the check in running instance {@code name}. Never throws: a failure is an outcome. */
@@ -120,7 +119,7 @@ public final class McpClientCheck {
     }
 
     /** One curl call's output: its JSON-RPC result. */
-    private static JsonNode answer(List<String> lines) throws Unanswered {
+    private static JqValue answer(List<String> lines) throws Unanswered {
         String code = null;
         var body = new ArrayList<String>();
         for (var line : lines) {
@@ -139,10 +138,14 @@ public final class McpClientCheck {
             var json = line.startsWith("data:") ? line.substring("data:".length()).strip() : line.strip();
             if (!json.startsWith("{")) continue;
             try {
-                var message = JSON.readTree(json);
-                if (message.has("error")) throw new Unanswered(message.path("error").path("message").asText("error"));
-                if (message.has("result")) return message.get("result");
-            } catch (com.fasterxml.jackson.core.JsonProcessingException notJson) {
+                var message = JqValues.parse(json);
+                if (message instanceof JqObject obj && obj.keys().contains("error")) {
+                    throw new Unanswered(obj.getField("error").pathText("message", "error"));
+                }
+                if (message instanceof JqObject res && res.keys().contains("result")) {
+                    return res.getField("result");
+                }
+            } catch (RuntimeException notJson) {
                 // keep looking
             }
         }

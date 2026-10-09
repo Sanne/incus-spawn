@@ -1,6 +1,6 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
@@ -19,11 +19,9 @@ import static org.junit.jupiter.api.Assertions.*;
 @ExtendWith(TempHome.class)
 class BuildAccountsTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
-    @Test
+        @Test
     void theTemplatesPinsAreStampedWithTheTemplateAsTheirOrigin() {
-        var updates = BuildAccounts.startConfig(JSON.createObjectNode(),
+        var updates = BuildAccounts.startConfig(JqObject.builder(0).build(),
                 Map.of("github", "bot"), "tpl-q");
         assertEquals("bot", updates.get(Metadata.accountKey("github")));
         assertEquals("template:tpl-q", updates.get(Metadata.accountOriginKey("github")));
@@ -33,10 +31,10 @@ class BuildAccountsTest {
     void theParentsBakedIdentitiesAreCleared() {
         // A copy of a parent built for another Claude auth mode: the proxy would refuse this
         // build the account its own template chose
-        var config = JSON.createObjectNode()
+        var config = JqObject.builder(3)
                 .put(Metadata.accountIdentityKey("claude"), "oauth")
                 .put(Metadata.accountIdentityKey("github"), "me")
-                .put("limits.memory", "8GiB");
+                .put("limits.memory", "8GiB").build();
         var updates = BuildAccounts.startConfig(config, Map.of(), "tpl-q");
         assertTrue(updates.containsKey(Metadata.accountIdentityKey("claude")));
         assertNull(updates.get(Metadata.accountIdentityKey("claude")));
@@ -49,21 +47,21 @@ class BuildAccountsTest {
     void theParentsBakedIdentitiesAreKeptForTheRebakeBeforeTheyAreCleared() {
         // settleIdentities compares these with the build's own accounts after tool
         // setup, when the pre-start write has long removed them from the container
-        var config = JSON.createObjectNode()
+        var config = JqObject.builder(2)
                 .put(Metadata.accountIdentityKey("github"), "me#0123456789ab")
-                .put(Metadata.accountKey("github"), "bot");
+                .put(Metadata.accountKey("github"), "bot").build();
         assertEquals(Map.of("github", "me#0123456789ab"), BuildAccounts.inheritedIdentities(config));
     }
 
     @Test
     void noSelectionLeavesCopiedPinsAlone() {
-        var config = JSON.createObjectNode().put(Metadata.accountKey("github"), "bot");
+        var config = JqObject.builder(1).put(Metadata.accountKey("github"), "bot").build();
         assertTrue(BuildAccounts.startConfig(config, Map.of(), "tpl-q").isEmpty());
     }
 
     @Test
     void aSelectionReplacesThePinsItWasCopiedWith() {
-        var config = JSON.createObjectNode().put(Metadata.accountKey("openai"), "old");
+        var config = JqObject.builder(1).put(Metadata.accountKey("openai"), "old").build();
         var updates = BuildAccounts.startConfig(config, Map.of("github", "bot"), "tpl-q");
         assertTrue(updates.containsKey(Metadata.accountKey("openai")));
         assertNull(updates.get(Metadata.accountKey("openai")));

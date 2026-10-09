@@ -55,7 +55,7 @@ class McpClientRegistrationStartTest {
         var daemon = new FakeIncusDaemon().container(NAME, config(grant)).ipFiltering(NAME, "true");
         // FakeIncusDaemon serves no exec, so the wait times out; the probes are what matters
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.clientWithShortReadyWait(), NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {}));
+                daemon.clientWithShortReadyWait(), NAME, dev.incusspawn.incus.JacksonTrees.fromJsonNode(daemon.instance(NAME)), MachineType.CONTAINER, msg -> {}));
         var told = grantsTold(daemon);
         assertFalse(told.isEmpty(), "the readiness probe delivered the secret");
         return told;
@@ -125,7 +125,7 @@ class McpClientRegistrationStartTest {
         var daemon = new FakeIncusDaemon().instance(NAME, "container", "Running", config)
                 .lastUsedAt(NAME, "2026-10-05T07:30:00Z");
 
-        InstanceLifecycle.ensureReady(daemon.client(), NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {});
+        InstanceLifecycle.ensureReady(daemon.client(), NAME, dev.incusspawn.incus.JacksonTrees.fromJsonNode(daemon.instance(NAME)), MachineType.CONTAINER, msg -> {});
 
         assertEquals(List.of(told), grantsTold(daemon));
     }
@@ -139,7 +139,7 @@ class McpClientRegistrationStartTest {
         doReturn(new IncusClient.ExecResult(0, InstanceSecret.MISSING + "\n", ""))
                 .when(incus).shellExec(eq(NAME), eq("sh"), eq("-c"), eq(InstanceSecret.GUEST_CHECK));
 
-        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.VM, msg -> {});
+        InstanceLifecycle.ensureReady(incus, NAME, dev.incusspawn.incus.JacksonTrees.fromJsonNode(daemon.instance(NAME)), MachineType.VM, msg -> {});
 
         assertEquals(List.of(told), grantsTold(daemon));
     }

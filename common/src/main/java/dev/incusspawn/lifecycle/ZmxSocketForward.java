@@ -1,6 +1,7 @@
 package dev.incusspawn.lifecycle;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqObject;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.incus.IncusClient;
@@ -105,12 +106,12 @@ public final class ZmxSocketForward {
      *        pre-start repairs so a start pays for only one round-trip
      */
     public static void ensureHostDirForStart(IncusClient incus, String name,
-                                             JsonNode instanceMetadata) {
+                                             JqValue instanceMetadata) {
         ensureHostDirForStart(incus, name, hostZmxDir(), instanceMetadata);
     }
 
     static void ensureHostDirForStart(IncusClient incus, String name, Path zmxDir,
-                                      JsonNode instanceMetadata) {
+                                      JqValue instanceMetadata) {
         if (Platform.isMacOS()) return;
 
         var device = instanceMetadata.path("devices").path(DEVICE_NAME);

@@ -1,6 +1,7 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.incus.Metadata;
@@ -65,7 +66,7 @@ class McpToolsTest {
         System.setProperty("user.home", realHome);
     }
 
-    private JsonNode call(String tool, String args) throws Exception {
+    private JqValue call(String tool, String args) throws Exception {
         var id = nextId++;
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"method\":\"tools/call\",\"params\":{\"name\":\""
                 + tool + "\",\"arguments\":" + args + "}}");
@@ -73,13 +74,13 @@ class McpToolsTest {
         return results.check(tool, out.byId(id).path("result"));
     }
 
-    private static String text(JsonNode result) {
-        return result.path("content").get(0).path("text").asText();
+    private static String text(JqValue result) {
+        return result.path("content").getElement(0).path("text").asText();
     }
 
     private String createJava() throws Exception {
         var result = call("create_instance", "{\"template\":\"tpl-java\"}");
-        assertFalse(result.path("isError").asBoolean(), text(result));
+        assertFalse(result.path("isError").asBoolean(false), text(result));
         return result.path("structuredContent").path("instance").asText();
     }
 
@@ -87,8 +88,8 @@ class McpToolsTest {
     void onlyApprovedTemplatesAreListed() throws Exception {
         var listed = call("list_templates", "{}").path("structuredContent").path("templates");
         assertEquals(1, listed.size());
-        assertEquals("tpl-java", listed.get(0).path("template").asText());
-        assertTrue(listed.get(0).path("supports_delegate").asBoolean());
+        assertEquals("tpl-java", listed.getElement(0).path("template").asText());
+        assertTrue(listed.getElement(0).path("supports_delegate").asBoolean(false));
     }
 
     @Test
@@ -96,8 +97,8 @@ class McpToolsTest {
         config.setMaxInstances(12);
         config.setMaxConcurrentTasks(10);
         var listed = call("list_templates", "{}").path("structuredContent");
-        assertEquals(12, listed.path("max_instances").asInt());
-        assertEquals(10, listed.path("max_concurrent_tasks").asInt());
+        assertEquals(12, listed.path("max_instances").asInt(0));
+        assertEquals(10, listed.path("max_concurrent_tasks").asInt(0));
     }
 
     @Test
@@ -117,7 +118,7 @@ class McpToolsTest {
     @Test
     void anUnapprovedTemplateIsRefused() throws Exception {
         var result = call("create_instance", "{\"template\":\"tpl-secret\"}");
-        assertTrue(result.path("isError").asBoolean());
+        assertTrue(result.path("isError").asBoolean(false));
         assertEquals(List.of(), session.instances());
     }
 
@@ -125,7 +126,7 @@ class McpToolsTest {
     void aFailedCreateLeavesNoReservationBehind() throws Exception {
         config.setMaxInstances(1);
         backend.createFailure = new ToolError(ToolError.Code.UNAVAILABLE, "proxy is down");
-        assertTrue(call("create_instance", "{\"template\":\"tpl-java\"}").path("isError").asBoolean());
+        assertTrue(call("create_instance", "{\"template\":\"tpl-java\"}").path("isError").asBoolean(false));
         backend.createFailure = null;
         createJava();
     }
@@ -160,7 +161,7 @@ class McpToolsTest {
     void execRefusesAnInstanceItDoesNotOwn() throws Exception {
         backend.instance("users-box", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE));
         var result = call("exec", "{\"instance\":\"users-box\",\"command\":\"rm -rf ~\"}");
-        assertTrue(result.path("isError").asBoolean());
+        assertTrue(result.path("isError").asBoolean(false));
         assertEquals(List.of(), backend.scripts);
     }
 
@@ -178,21 +179,21 @@ class McpToolsTest {
     void destroyAndKeepActOnlyOnOwnInstances() throws Exception {
         var a = createJava();
         var b = createJava();
-        assertFalse(call("keep_instance", "{\"instance\":\"" + a + "\"}").path("isError").asBoolean());
-        assertFalse(call("destroy_instance", "{\"instance\":\"" + b + "\"}").path("isError").asBoolean());
+        assertFalse(call("keep_instance", "{\"instance\":\"" + a + "\"}").path("isError").asBoolean(false));
+        assertFalse(call("destroy_instance", "{\"instance\":\"" + b + "\"}").path("isError").asBoolean(false));
         assertEquals(List.of(b), backend.destroyed);
-        assertTrue(call("destroy_instance", "{\"instance\":\"tpl-java\"}").path("isError").asBoolean());
+        assertTrue(call("destroy_instance", "{\"instance\":\"tpl-java\"}").path("isError").asBoolean(false));
         assertTrue(backend.instances.containsKey("tpl-java"));
 
         var listed = call("list_instances", "{}").path("structuredContent").path("instances");
         assertEquals(1, listed.size());
-        assertTrue(listed.get(0).path("kept").asBoolean());
+        assertTrue(listed.getElement(0).path("kept").asBoolean(false));
 
         // Deleted behind the session's back: destroying it says it was already gone, as stop and start do.
         var c = createJava();
         backend.instances.remove(c);
         var gone = call("destroy_instance", "{\"instance\":\"" + c + "\"}");
-        assertTrue(gone.path("structuredContent").path("already").asBoolean(), gone.toString());
+        assertTrue(gone.path("structuredContent").path("already").asBoolean(false), gone.toString());
     }
 
     @Test
@@ -205,19 +206,19 @@ class McpToolsTest {
         backend.instance("mcp-java-kept-abcde", Map.of(Metadata.PROFILE, "tpl-java", Metadata.MCP_OWNER, "alice",
                 Metadata.MCP_SESSION, "9-9", Metadata.MCP_KEPT, "true"));
         var listed = call("list_instances", "{}").path("structuredContent").path("instances");
-        var byName = new HashMap<String, JsonNode>();
-        listed.forEach(i -> byName.put(i.path("instance").asText(), i));
+        var byName = new HashMap<String, io.hyperfoil.tools.jjq.value.JqValue>();
+        listed.asList().forEach(i -> byName.put(i.path("instance").asText(), i));
         assertEquals(Set.of("mcp-java-a-abcde", "mcp-java-b-abcde"), byName.keySet(),
                 "a kept instance is the user's, even while a live session still holds it");
         var a = byName.get("mcp-java-a-abcde");
         assertEquals("held", a.path("state").asText());
         assertEquals("9-9", a.path("held_by").asText());
         assertEquals("claude-code", a.path("held_by_client").asText());
-        assertFalse(a.path("kept").asBoolean());
+        assertFalse(a.path("kept").asBoolean(false));
         var b = byName.get("mcp-java-b-abcde");
         assertEquals("held", b.path("state").asText(), "an unreadable session stamp counts as held");
-        assertFalse(b.has("held_by"), "no session id is made up: " + b);
-        assertFalse(b.has("held_by_client"));
+        assertTrue(b.path("held_by").isMissingNode(), "no session id is made up: " + b);
+        assertTrue(b.path("held_by_client").isMissingNode());
     }
 
     @Test
@@ -241,10 +242,10 @@ class McpToolsTest {
         assertTrue(script.contains("--model 'haiku'"), script);
         assertFalse(script.contains("which tests fail"), "the question travels encoded, never as shell text");
         assertTrue(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"x\",\"ask\":\"q\",\"background\":true}")
-                .path("isError").asBoolean());
+                .path("isError").asBoolean(false));
     }
 
-    private JsonNode fork(String source, String extra) throws Exception {
+    private JqValue fork(String source, String extra) throws Exception {
         return call("create_instance", "{\"from_instance\":\"" + source + "\"" + extra + "}");
     }
 
@@ -258,7 +259,7 @@ class McpToolsTest {
 
         backend.metadataReads.set(0);
         var result = fork(source, ",\"name_hint\":\"review\",\"purpose\":\"correctness review\"");
-        assertFalse(result.path("isError").asBoolean(), text(result));
+        assertFalse(result.path("isError").asBoolean(false), text(result));
         assertEquals(1, backend.metadataReads.get(), "ownership, status and lineage come from one read");
         var node = result.path("structuredContent");
         var name = node.path("instance").asText();
@@ -277,10 +278,10 @@ class McpToolsTest {
                 "the fork starts without the source's tasks");
 
         // A fork is an instance like any other: it can be used, stopped and forked again.
-        assertFalse(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"true\"}").path("isError").asBoolean());
+        assertFalse(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"true\"}").path("isError").asBoolean(false));
         call("stop_instance", "{\"instance\":\"" + name + "\"}");
         var again = fork(name, "");
-        assertFalse(again.path("isError").asBoolean(), text(again));
+        assertFalse(again.path("isError").asBoolean(false), text(again));
         assertEquals("tpl-java", again.path("structuredContent").path("template").asText());
     }
 
@@ -288,16 +289,16 @@ class McpToolsTest {
     void onlyAStoppedInstanceThisSessionHoldsCanBeForked() throws Exception {
         var running = createJava();
         var r = fork(running, "");
-        assertTrue(r.path("isError").asBoolean());
+        assertTrue(r.path("isError").asBoolean(false));
         assertTrue(text(r).contains("stop_instance"), text(r));
 
         backend.instance("users-box", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PROFILE, "tpl-java"));
         backend.stopped.add("users-box");
-        assertTrue(fork("users-box", "").path("isError").asBoolean());
+        assertTrue(fork("users-box", "").path("isError").asBoolean(false));
 
-        assertTrue(call("create_instance", "{}").path("isError").asBoolean(), "neither");
+        assertTrue(call("create_instance", "{}").path("isError").asBoolean(false), "neither");
         assertTrue(call("create_instance", "{\"template\":\"tpl-java\",\"from_instance\":\"" + running + "\"}")
-                .path("isError").asBoolean(), "both");
+                .path("isError").asBoolean(false), "both");
         assertEquals(List.of(), backend.forks);
     }
 
@@ -307,7 +308,7 @@ class McpToolsTest {
         call("stop_instance", "{\"instance\":\"" + source + "\"}");
         config.setTemplates(List.of("tpl-secret"));
         var r = fork(source, "");
-        assertTrue(r.path("isError").asBoolean());
+        assertTrue(r.path("isError").asBoolean(false));
         assertTrue(text(r).contains("not approved"), text(r));
         assertEquals(List.of(), backend.forks);
     }
@@ -317,9 +318,9 @@ class McpToolsTest {
         config.setMaxInstances(2);
         var source = createJava();
         call("stop_instance", "{\"instance\":\"" + source + "\"}");
-        assertFalse(fork(source, "").path("isError").asBoolean());
+        assertFalse(fork(source, "").path("isError").asBoolean(false));
         var r = fork(source, "");
-        assertTrue(r.path("isError").asBoolean());
+        assertTrue(r.path("isError").asBoolean(false));
         assertTrue(text(r).contains("mcp.max-instances"), text(r));
     }
 
@@ -329,7 +330,7 @@ class McpToolsTest {
         call("stop_instance", "{\"instance\":\"" + source + "\"}");
         backend.execExit = 1;
         var r = fork(source, "");
-        assertTrue(r.path("isError").asBoolean());
+        assertTrue(r.path("isError").asBoolean(false));
         var name = backend.forks.getFirst().split(" -> ")[1];
         assertEquals(List.of(name), backend.destroyed);
         assertEquals(1, session.instances().size(), "only the source is held");
@@ -340,7 +341,7 @@ class McpToolsTest {
         var source = createJava();
         call("stop_instance", "{\"instance\":\"" + source + "\"}");
         var r = fork(source, ",\"template\":\"\"");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
     }
 
     @Test
@@ -351,7 +352,7 @@ class McpToolsTest {
         assertTrue(text(exec).contains("is error, which isx mcp cannot change. Ask the user"), text(exec));
         assertTrue(text(fork(name, "")).contains("is error, not stopped"));
         var start = call("start_instance", "{\"instance\":\"" + name + "\"}");
-        assertTrue(start.path("isError").asBoolean(), "never reported started when nothing could start it");
+        assertTrue(start.path("isError").asBoolean(false), "never reported started when nothing could start it");
         assertTrue(text(start).contains("only a stopped instance can be started"), text(start));
         backend.statuses.put(name, "Frozen");
         assertTrue(text(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"ls\"}")).contains("is frozen"));
@@ -369,57 +370,57 @@ class McpToolsTest {
 
         var result = call("instance_activity", "{\"instance\":\"" + name + "\"}");
 
-        assertFalse(result.path("isError").asBoolean(), text(result));
-        var node = JsonRpc.JSON.readTree(text(result));
+        assertFalse(result.path("isError").asBoolean(false), text(result));
+        var node = io.hyperfoil.tools.jjq.value.JqValues.parse(text(result));
         assertEquals(name, node.path("instance").asText());
         assertEquals("2026-10-05T08:00:00Z", node.path("counting_since").asText());
-        assertEquals(12, node.path("requests").asLong());
-        assertEquals(0, node.path("requests_in_flight").asLong());
+        assertEquals(12, node.path("requests").asLong(0));
+        assertEquals(0, node.path("requests_in_flight").asLong(0));
         assertEquals(ended.toString(), node.path("last_response_at").asText());
-        assertTrue(node.path("idle_seconds").asLong() >= 90, node.toString());
-        assertEquals(1_000, node.path("input_tokens").asLong());
-        assertEquals(300, node.path("output_tokens").asLong());
-        assertEquals(40_000, node.path("cache_read_input_tokens").asLong());
-        assertEquals(2_000, node.path("cache_creation_input_tokens").asLong());
+        assertTrue(node.path("idle_seconds").asLong(0) >= 90, node.toString());
+        assertEquals(1_000, node.path("input_tokens").asLong(0));
+        assertEquals(300, node.path("output_tokens").asLong(0));
+        assertEquals(40_000, node.path("cache_read_input_tokens").asLong(0));
+        assertEquals(2_000, node.path("cache_creation_input_tokens").asLong(0));
     }
 
     @Test
     void anInstanceThatNeverCalledReadsAsZeroAndACallInFlightIsNotIdle() throws Exception {
         var name = createJava();
-        var silent = JsonRpc.JSON.readTree(text(call("instance_activity", "{\"instance\":\"" + name + "\"}")));
-        assertEquals(0, silent.path("requests").asLong());
-        assertFalse(silent.has("last_request_at"));
-        assertFalse(silent.has("counting_since"), "an instance the proxy does not know: nothing to subtract from");
-        assertFalse(silent.has("idle_seconds"));
+        var silent = io.hyperfoil.tools.jjq.value.JqValues.parse(text(call("instance_activity", "{\"instance\":\"" + name + "\"}")));
+        assertEquals(0, silent.path("requests").asLong(0));
+        assertTrue(silent.path("last_request_at").isMissingNode());
+        assertTrue(silent.path("counting_since").isMissingNode(), "an instance the proxy does not know: nothing to subtract from");
+        assertTrue(silent.path("idle_seconds").isMissingNode());
 
         var now = java.time.Instant.now();
         backend.activity = new dev.incusspawn.proxy.ProxyActivity(Map.of(
                 name, new dev.incusspawn.proxy.ProxyActivity.Instance(now, 2, 1, now, now.minusSeconds(600), 0, 0, 0, 0)));
-        var busy = JsonRpc.JSON.readTree(text(call("instance_activity", "{\"instance\":\"" + name + "\"}")));
-        assertEquals(1, busy.path("requests_in_flight").asLong());
+        var busy = io.hyperfoil.tools.jjq.value.JqValues.parse(text(call("instance_activity", "{\"instance\":\"" + name + "\"}")));
+        assertEquals(1, busy.path("requests_in_flight").asLong(0));
         assertFalse(busy.has("idle_seconds"), "a long call in flight is work, not silence");
     }
 
     @Test
     void activityIsOnlyForOwnInstancesAndSaysWhenTheProxyCannotAnswer() throws Exception {
         backend.instance("users-box", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE));
-        assertTrue(call("instance_activity", "{\"instance\":\"users-box\"}").path("isError").asBoolean());
+        assertTrue(call("instance_activity", "{\"instance\":\"users-box\"}").path("isError").asBoolean(false));
 
         var name = createJava();
         backend.activity = null;
         var down = call("instance_activity", "{\"instance\":\"" + name + "\"}");
-        assertTrue(down.path("isError").asBoolean());
+        assertTrue(down.path("isError").asBoolean(false));
         assertTrue(text(down).contains("isx proxy status"), text(down));
         assertEquals("unavailable", down.path("_meta").path(ToolResult.ERROR_META).path("code").asText());
     }
 
     // --- idempotency keys (#1011) ---
 
-    private JsonNode createKeyed(String key) throws Exception {
+    private io.hyperfoil.tools.jjq.value.JqValue createKeyed(String key) throws Exception {
         return call("create_instance", "{\"template\":\"tpl-java\",\"idempotency_key\":\"" + key + "\"}");
     }
 
-    private static String code(JsonNode result) {
+    private static String code(io.hyperfoil.tools.jjq.value.JqValue result) {
         return result.path("_meta").path(ToolResult.ERROR_META).path("code").asText();
     }
 
@@ -431,24 +432,24 @@ class McpToolsTest {
     @Test
     void theSameKeyTwiceMakesOneInstanceAndSaysTheSecondCallMadeNothing() throws Exception {
         var first = createKeyed("issue-1011:impl");
-        assertFalse(first.path("isError").asBoolean(), text(first));
+        assertFalse(first.path("isError").asBoolean(false), text(first));
         var name = first.path("structuredContent").path("instance").asText();
         assertFalse(first.path("structuredContent").has("replayed"), "a create that made it says nothing of replays");
         assertEquals("issue-1011:impl", backend.instances.get(name).get(Metadata.MCP_IDEMPOTENCY_KEY));
 
         var again = createKeyed("issue-1011:impl");
-        assertFalse(again.path("isError").asBoolean(), text(again));
+        assertFalse(again.path("isError").asBoolean(false), text(again));
         var replayed = again.path("structuredContent");
         assertEquals(name, replayed.path("instance").asText());
-        assertTrue(replayed.path("replayed").asBoolean());
+        assertTrue(replayed.path("replayed").asBoolean(false));
         assertEquals("tpl-java", replayed.path("template").asText());
         assertEquals("10.0.0.2", replayed.path("ip").asText(), "rebuilt from what Incus holds: " + replayed);
         assertEquals("/home/agentuser", replayed.path("workdir").asText());
-        assertTrue(replayed.path("supports_delegate").asBoolean());
+        assertTrue(replayed.path("supports_delegate").asBoolean(false));
         assertEquals(Set.of(name), made());
 
         var other = createKeyed("issue-1011:review");
-        assertFalse(other.path("isError").asBoolean(), text(other));
+        assertFalse(other.path("isError").asBoolean(false), text(other));
         assertEquals(2, made().size(), "a different key is a different instance");
     }
 
@@ -472,11 +473,11 @@ class McpToolsTest {
     void aKeyThatIsNotOneIsRefused() throws Exception {
         for (var bad : List.of("", "has space", "semi;colon", "x".repeat(65), "\u00e9t\u00e9")) {
             var r = createKeyed(bad);
-            assertTrue(r.path("isError").asBoolean(), bad);
+            assertTrue(r.path("isError").asBoolean(false), bad);
             assertEquals("invalid_argument", code(r), bad);
         }
         assertEquals(Set.of(), made());
-        assertFalse(createKeyed("A-z.0_9:" + "x".repeat(56)).path("isError").asBoolean(), "64 of the allowed characters");
+        assertFalse(createKeyed("A-z.0_9:" + "x".repeat(56)).path("isError").asBoolean(false), "64 of the allowed characters");
     }
 
     @Test
@@ -484,23 +485,23 @@ class McpToolsTest {
         config.setTemplates(List.of("tpl-java", "tpl-secret"));
         var name = createKeyed("k1").path("structuredContent").path("instance").asText();
         var otherTemplate = call("create_instance", "{\"template\":\"tpl-secret\",\"idempotency_key\":\"k1\"}");
-        assertTrue(otherTemplate.path("isError").asBoolean());
+        assertTrue(otherTemplate.path("isError").asBoolean(false));
         assertEquals("invalid_argument", code(otherTemplate));
         assertTrue(text(otherTemplate).contains(name) && text(otherTemplate).contains("tpl-java"), text(otherTemplate));
 
         var source = createJava();
         call("stop_instance", "{\"instance\":\"" + source + "\"}");
         var asFork = fork(source, ",\"idempotency_key\":\"k1\"");
-        assertTrue(asFork.path("isError").asBoolean());
+        assertTrue(asFork.path("isError").asBoolean(false));
         assertEquals("invalid_argument", code(asFork));
         assertEquals(List.of(), backend.forks);
 
         var forked = fork(source, ",\"idempotency_key\":\"k2\"");
-        assertFalse(forked.path("isError").asBoolean(), text(forked));
+        assertFalse(forked.path("isError").asBoolean(false), text(forked));
         var fromTemplate = createKeyed("k2");
         assertEquals("invalid_argument", code(fromTemplate), "a fork's key is not its template's: " + text(fromTemplate));
         var forkAgain = fork(source, ",\"idempotency_key\":\"k2\"");
-        assertTrue(forkAgain.path("structuredContent").path("replayed").asBoolean(), text(forkAgain));
+        assertTrue(forkAgain.path("structuredContent").path("replayed").asBoolean(false), text(forkAgain));
         assertEquals(source, forkAgain.path("structuredContent").path("forked_from").asText());
     }
 
@@ -527,7 +528,7 @@ class McpToolsTest {
         var name = createKeyed("k1").path("structuredContent").path("instance").asText();
         call("keep_instance", "{\"instance\":\"" + name + "\"}");
         var r = createKeyed("k1");
-        assertTrue(r.path("isError").asBoolean());
+        assertTrue(r.path("isError").asBoolean(false));
         assertEquals("refused", code(r));
         assertTrue(text(r).contains("list_instances"), text(r));
         assertEquals(Set.of(name), made(), "refused, not made again");
@@ -546,7 +547,7 @@ class McpToolsTest {
         wire(s -> true);
         madeElsewhere("mcp-java-theirs", "k1", "9-9", true);
         var r = createKeyed("k1");
-        assertTrue(r.path("isError").asBoolean());
+        assertTrue(r.path("isError").asBoolean(false));
         assertEquals("not_held", code(r));
         assertTrue(text(r).contains("adopt_instance"), text(r));
         assertEquals(Set.of("mcp-java-theirs"), made());
@@ -558,7 +559,7 @@ class McpToolsTest {
         madeElsewhere("mcp-java-bobs", "k1", "9-9", true);
         backend.stamp("mcp-java-bobs", Metadata.MCP_OWNER, "bob");
         var r = createKeyed("k1");
-        assertFalse(r.path("structuredContent").path("replayed").asBoolean(), text(r));
+        assertFalse(r.path("structuredContent").path("replayed").asBoolean(false), text(r));
         assertEquals("bob", backend.instances.get("mcp-java-bobs").get(Metadata.MCP_OWNER));
     }
 
@@ -568,9 +569,9 @@ class McpToolsTest {
         session.release();
         wire(new SessionId(5151, 2), s -> false);
         var r = createKeyed("k1");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
         assertEquals(name, r.path("structuredContent").path("instance").asText());
-        assertTrue(r.path("structuredContent").path("replayed").asBoolean());
+        assertTrue(r.path("structuredContent").path("replayed").asBoolean(false));
         assertEquals("5151-2", backend.instances.get(name).get(Metadata.MCP_SESSION), "adopted, with adopt's checks");
         assertFalse(backend.instances.get(name).containsKey(Metadata.MCP_ORPHANED));
         assertTrue(session.holds(name));
@@ -595,9 +596,9 @@ class McpToolsTest {
             backend.createdAt.put("mcp-java-earlier", "2026-10-06T07:00:00Z");
         };
         var r = createKeyed("k1");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
         assertEquals("mcp-java-earlier", r.path("structuredContent").path("instance").asText());
-        assertTrue(r.path("structuredContent").path("replayed").asBoolean());
+        assertTrue(r.path("structuredContent").path("replayed").asBoolean(false));
         assertEquals(1, backend.destroyed.size(), "its own copy is gone: " + backend.destroyed);
         assertEquals(Set.of("mcp-java-earlier"), made());
         assertEquals("4242-1", backend.instances.get("mcp-java-earlier").get(Metadata.MCP_SESSION));
@@ -648,7 +649,7 @@ class McpToolsTest {
         assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS), "first copy under way");
         server.handle("{\"jsonrpc\":\"2.0\",\"id\":902,\"method\":\"tools/call\",\"params\":{\"name\":\"create_instance\",\"arguments\":" + args + "}}");
         var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-        while (out.sent.stream().noneMatch(m -> m.path("id").asInt() == 902) && System.nanoTime() < deadline) {
+        while (out.sent.stream().noneMatch(m -> m.path("id").asInt(0) == 902) && System.nanoTime() < deadline) {
             Thread.sleep(10);
         }
         assertEquals("busy", code(out.byId(902).path("result")), out.byId(902).toString());
@@ -700,12 +701,12 @@ class McpToolsTest {
             backend.onCreate = null;
             throw new IllegalStateException("killed");
         };
-        assertTrue(fork(source, ",\"idempotency_key\":\"k1\"").path("isError").asBoolean());
+        assertTrue(fork(source, ",\"idempotency_key\":\"k1\"").path("isError").asBoolean(false));
         session.release();
         wire(new SessionId(5151, 2), s -> false);
         call("adopt_instance", "{\"instance\":\"" + source + "\"}");
         var r = fork(source, ",\"idempotency_key\":\"k1\"");
-        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertFalse(r.path("isError").asBoolean(false), text(r));
         assertFalse(r.path("structuredContent").has("replayed"), "the half-made fork is not what the key made: " + text(r));
         assertEquals("10.0.0.3", r.path("structuredContent").path("ip").asText(), "its own address, never its source's");
     }
@@ -717,7 +718,7 @@ class McpToolsTest {
         madeElsewhere("mcp-java-released", "k1", "9-9", true);
         backend.stamp("mcp-java-released", Metadata.MCP_ORPHANED, Orphans.orphanedStamp(java.time.Instant.now(), "9-9"));
         var r = createKeyed("k1");
-        assertTrue(r.path("structuredContent").path("replayed").asBoolean(), text(r));
+        assertTrue(r.path("structuredContent").path("replayed").asBoolean(false), text(r));
         assertEquals("4242-1", backend.instances.get("mcp-java-released").get(Metadata.MCP_SESSION));
     }
 }

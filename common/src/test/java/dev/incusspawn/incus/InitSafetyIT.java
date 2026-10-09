@@ -1,5 +1,6 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.config.Jjq;
 import org.junit.jupiter.api.*;
 
 import java.util.List;
@@ -102,9 +103,9 @@ class InitSafetyIT {
     @Test @Order(7)
     void repairedProfileHasUsableRootDisk() {
         var devices = client.profileDevices(TEST_PROFILE);
-        assertEquals("disk", devices.path("root").path("type").asText());
-        assertEquals("/", devices.path("root").path("path").asText());
-        assertFalse(devices.path("root").path("pool").asText().isEmpty(),
+        assertEquals("disk", devices.getField("root").pathText("type", ""));
+        assertEquals("/", devices.getField("root").pathText("path", ""));
+        assertFalse(devices.getField("root").pathText("pool", "").isEmpty(),
                 "The root disk must name a storage pool");
     }
 
@@ -113,7 +114,7 @@ class InitSafetyIT {
     void ensureProfileDevicesPreservesExistingDevices() {
         var pool = client.findCowPool();
         Assumptions.assumeTrue(pool != null, "No CoW pool — skipping");
-        var before = client.profileDevices(TEST_PROFILE).path("root").deepCopy();
+        var before = client.profileDevices(TEST_PROFILE).getField("root");
         // Without this the test passes vacuously if the profile was never repaired: a missing
         // node compares equal to a missing node, and nothing would have been preserved.
         assertFalse(before.isMissingNode(),
@@ -121,7 +122,7 @@ class InitSafetyIT {
 
         client.ensureProfileDevices(TEST_PROFILE, "some-other-pool", "some-other-bridge");
 
-        assertEquals(before, client.profileDevices(TEST_PROFILE).path("root"),
+        assertEquals(before, client.profileDevices(TEST_PROFILE).getField("root"),
                 "An existing root disk must not be repointed at another pool");
     }
 }

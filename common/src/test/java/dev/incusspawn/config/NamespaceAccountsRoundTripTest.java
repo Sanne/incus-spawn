@@ -1,7 +1,5 @@
 package dev.incusspawn.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -17,10 +15,9 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class NamespaceAccountsRoundTripTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     private static String roundTrip(String yaml) throws Exception {
-        return YAML.writeValueAsString(YAML.readValue(yaml, SpawnConfig.class));
+        return Jjq.toYaml(Jjq.spawnConfig(yaml));
     }
 
     @Test
@@ -39,8 +36,8 @@ class NamespaceAccountsRoundTripTest {
         assertTrue(out.contains("acme"), out);
 
         // And still resolve after the round trip.
-        var reloaded = YAML.readValue(out, SpawnConfig.class);
-        var tree = new ObjectMapper().<com.fasterxml.jackson.databind.JsonNode>valueToTree(reloaded);
+        var reloaded = Jjq.spawnConfig(out);
+        var tree = reloaded.tree();
         assertEquals("acme", AccountResolver.effectiveAccount(reloaded, "github", null));
         assertEquals("ghp_personal", dev.incusspawn.proxy.ToolProxyResolver
                 .navigateConfigPath(tree, "github.accounts.personal.token"));

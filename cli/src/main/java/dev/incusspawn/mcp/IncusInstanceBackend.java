@@ -1,6 +1,9 @@
 package dev.incusspawn.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.command.InstancePrep;
 import dev.incusspawn.config.AccountResolver;
@@ -292,14 +295,14 @@ final class IncusInstanceBackend implements InstanceBackend {
     @Override
     public Map<String, String> metadata(String name) {
         // Only a 404 means gone: a refused or failed read would otherwise drop a live instance.
-        JsonNode instance;
+        JqValue raw;
         try {
-            instance = incus.instanceMetadataOrThrow(name);
+            raw = incus.instanceMetadataOrThrow(name);
         } catch (IncusException e) {
             throw new ToolError(ToolError.Code.UNAVAILABLE, "cannot read '" + name + "' from Incus right now (" + e.getMessage()
                     + "); nothing was changed, try again.");
         }
-        return instance == null ? null : configOf(instance);
+        return raw == null || raw.isNull() ? null : configOf(raw);
     }
 
     @Override
@@ -329,27 +332,31 @@ final class IncusInstanceBackend implements InstanceBackend {
     /** Every instance's {@code user.incus-spawn.*} config, from one listing. */
     private Map<String, Map<String, String>> instanceConfigs() {
         var result = new LinkedHashMap<String, Map<String, String>>();
-        JsonNode list;
+        JqValue list;
         try {
-            list = JsonRpc.JSON.readTree(incus.listJsonConfig());
+            list = incus.listJsonConfig();
         } catch (Exception e) {
             throw new ToolError(ToolError.Code.UNAVAILABLE, "cannot list Incus instances: " + e.getMessage());
         }
-        for (var instance : list) {
-            result.put(instance.path("name").asText(), configOf(instance));
+        for (var instance : list.asList()) {
+            if (!(instance instanceof JqObject obj)) continue;
+            result.put(JsonRpc.text(obj, "name", ""), configOf(instance));
         }
         return result;
     }
 
-    private static Map<String, String> configOf(JsonNode instance) {
-        var config = new LinkedHashMap<String, String>();
-        instance.path("config").properties().forEach(e -> {
-            if (e.getKey().startsWith(Metadata.PREFIX)) config.put(e.getKey(), e.getValue().asText());
-        });
-        var status = instance.path("status").asText("");
-        if (!status.isEmpty()) config.put(STATUS, status);
-        var createdAt = instance.path("created_at").asText("");
-        if (!createdAt.isEmpty()) config.put(CREATED_AT, createdAt);
-        return config;
+    private static Map<String, String> configOf(JqValue instance) {
+        var config = instance instanceof JqObject obj ? obj.getField("config") : JsonRpc.nullNode();
+        var result = new LinkedHashMap<String, String>();
+        if (config instanceof JqObject object) {
+            object.forEach((key, value) -> {
+                if (key.startsWith(Metadata.PREFIX)) result.put(key, JsonRpc.text(value));
+            });
+        }
+        var status = instance instanceof JqObject statusObj ? JsonRpc.text(statusObj, "status", "") : "";
+        if (!status.isEmpty()) result.put(STATUS, status);
+        var createdAt = instance instanceof JqObject createdObj ? JsonRpc.text(createdObj, "created_at", "") : "";
+        if (!createdAt.isEmpty()) result.put(CREATED_AT, createdAt);
+        return result;
     }
 }

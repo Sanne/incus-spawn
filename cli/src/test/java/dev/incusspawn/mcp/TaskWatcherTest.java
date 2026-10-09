@@ -15,7 +15,7 @@ class TaskWatcherTest {
 
     TaskWatcherTest() {
         watcher.autoPoll = false;
-        watcher.sendTo((method, params) -> sent.add(params.path("state").asText() + " " + params.path("run").asInt()));
+        watcher.sendTo((method, params) -> sent.add(params.path("state").asText() + " " + params.path("run").asInt(0)));
         watcher.start();
     }
 

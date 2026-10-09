@@ -1,17 +1,14 @@
 package dev.incusspawn.util;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.SerializableString;
-import com.fasterxml.jackson.core.io.CharacterEscapes;
-import com.fasterxml.jackson.core.io.SerializedString;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
+import io.hyperfoil.tools.jjq.value.PrettyPrintOptions;
 
 import java.io.PrintStream;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -35,9 +32,13 @@ import java.util.stream.Collectors;
 public enum OutputFormat {
     TABLE, PLAIN, JSON;
 
-    private static final ObjectMapper JSON_WRITER = new ObjectMapper(
-            new JsonFactory().setCharacterEscapes(new ControlEscapes()))
-            .enable(SerializationFeature.INDENT_OUTPUT);
+    private static final Pattern LINE_BREAKING = Pattern.compile("[\t\r\n]");
+
+    /** Jackson INDENT_OUTPUT with full {@link #isControl} escaping (#1118). */
+    private static final PrettyPrintOptions ISX_PRETTY = new PrettyPrintOptions(
+            PrettyPrintOptions.Separator.SPACED,
+            PrettyPrintOptions.ArrayStyle.FLOW,
+            PrettyPrintOptions.Escaping.STRICT);
 
     /** The value of a {@code --format} option; {@code null} (not given) is {@link #TABLE}. */
     public static OutputFormat parse(String value) {
@@ -129,35 +130,15 @@ public enum OutputFormat {
 
     /** {@code value} -- a list of records, or one record -- as JSON, then a line break. */
     public static void printJson(PrintStream out, Object value) {
-        try {
-            out.println(JSON_WRITER.writeValueAsString(value));
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("cannot write JSON: " + e.getMessage(), e);
-        }
+        // Jackson INDENT_OUTPUT style, pinned byte-for-byte by OutputFormatTest (#1118).
+        out.println(toPrettyJson(JqValues.fromJavaObject(value)));
     }
 
     /**
-     * Jackson escapes C0 itself (JSON requires it) but writes the rest of {@link #isControl} raw;
-     * these escape it all, so json keeps every value exact and never writes one of them raw.
+     * A {@link JqValue} tree as Jackson-INDENT_OUTPUT-style JSON: same style as
+     * {@link #printJson}, for callers that already hold a tree (MCP result text).
      */
-    private static final class ControlEscapes extends CharacterEscapes {
-        private final int[] ascii = standardAsciiEscapesForJSON();
-
-        ControlEscapes() {
-            // Jackson reads the ASCII table and asks getEscapeSequence only above it.
-            for (int c = 0; c < ascii.length; c++) {
-                if (ascii[c] == 0 && isControl(c)) ascii[c] = ESCAPE_STANDARD;
-            }
-        }
-
-        @Override
-        public int[] getEscapeCodesForAscii() {
-            return ascii;
-        }
-
-        @Override
-        public SerializableString getEscapeSequence(int ch) {
-            return isControl(ch) ? new SerializedString(String.format("\\u%04X", ch)) : null;
-        }
+    public static String toPrettyJson(JqValue value) {
+        return JqValues.toPrettyJsonString(value, ISX_PRETTY);
     }
 }

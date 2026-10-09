@@ -1,12 +1,13 @@
 package dev.incusspawn.incus;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.incusspawn.config.Jjq;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqValue;
+import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.Environment;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.HostLock;
 
-import java.io.IOException;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Set;
@@ -14,9 +15,7 @@ import java.util.function.Consumer;
 
 public final class StaticIpAllocator {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
-    /**
+        /**
      * Dot-prefixed, as no instance name can be: the TUI's per-instance locks in the same
      * directory are {@code <instance>.lock}, so an instance named {@code static-ip} would
      * otherwise open, close and delete this very file.
@@ -121,32 +120,26 @@ public final class StaticIpAllocator {
      */
     static Set<Long> getClaimedIps(IncusClient incus) {
         var claimed = new HashSet<Long>();
-        JsonNode instances;
-        try {
-            instances = JSON.readTree(incus.listJsonConfig());
-        } catch (IOException e) {
-            throw new IncusException("Failed to parse the instance listing: " + e.getMessage(), e);
-        }
-        for (var instance : instances) {
-            collectClaimedIps(instance.path("expanded_devices"), claimed);
-            collectClaimedIps(instance.path("devices"), claimed);
+        JqValue instances = incus.listJsonConfig();
+        for (var instance : instances.asList()) {
+            collectClaimedIps(instance.getField("expanded_devices"), claimed);
+            collectClaimedIps(instance.getField("devices"), claimed);
         }
         return claimed;
     }
 
-    static void collectClaimedIps(JsonNode devices, Set<Long> claimed) {
-        if (devices.isMissingNode()) return;
-        for (var it = devices.fields(); it.hasNext(); ) {
-            var dev = it.next().getValue();
-            if (!"nic".equals(dev.path("type").asText())) continue;
-            var ipStr = dev.path("ipv4.address").asText("");
+    static void collectClaimedIps(JqValue devices, Set<Long> claimed) {
+        if (!(devices instanceof JqObject all)) return;
+        all.forEach((name, dev) -> {
+            if (!"nic".equals(dev.pathText("type", ""))) return;
+            var ipStr = dev.pathText("ipv4.address", "");
             if (!ipStr.isEmpty()) {
                 try {
                     claimed.add(CidrUtils.ipToLong(ipStr));
                 } catch (IllegalArgumentException ignored) {
                 }
             }
-        }
+        });
     }
 
 }

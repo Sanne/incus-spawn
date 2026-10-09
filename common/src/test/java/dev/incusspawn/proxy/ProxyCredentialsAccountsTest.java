@@ -1,7 +1,6 @@
 package dev.incusspawn.proxy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
 
@@ -13,7 +12,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ProxyCredentialsAccountsTest {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     @Test
     void proxyUsesTheDefaultAccountNotTheDirectApiOne() throws Exception {
@@ -28,7 +26,7 @@ class ProxyCredentialsAccountsTest {
                       apiKey: "sk-ant-api03-xyz"
                   default: personal
                 """;
-        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var config = Jjq.spawnConfig(yaml);
         var credentials = ProxyCredentials.fromConfig(config);
 
         assertEquals("sk-ant-oat01-abc", credentials.oauthToken());
@@ -50,7 +48,7 @@ class ProxyCredentialsAccountsTest {
                       vertexProjectId: acme
                   default: work
                 """;
-        var credentials = ProxyCredentials.fromConfig(YAML.readValue(yaml, SpawnConfig.class));
+        var credentials = ProxyCredentials.fromConfig(Jjq.spawnConfig(yaml));
         assertTrue(credentials.useVertex());
         assertEquals("europe-west1", credentials.vertexRegion());
         assertEquals("acme", credentials.vertexProjectId());
@@ -64,7 +62,7 @@ class ProxyCredentialsAccountsTest {
                   useVertex: false
                   oauthToken: "sk-ant-oat01-abc"
                 """;
-        var credentials = ProxyCredentials.fromConfig(YAML.readValue(yaml, SpawnConfig.class));
+        var credentials = ProxyCredentials.fromConfig(Jjq.spawnConfig(yaml));
         assertEquals("sk-ant-oat01-abc", credentials.oauthToken());
     }
 }

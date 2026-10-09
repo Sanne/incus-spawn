@@ -1,6 +1,8 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.JacksonTrees;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import org.junit.jupiter.api.Test;
@@ -46,7 +48,7 @@ class IpFilteringRearmTest {
         // FakeIncusDaemon serves no exec, so the readiness wait after the start can only time
         // out; what matters here is what reached Incus before it.
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.clientWithShortReadyWait(), NAME, daemon.instance(NAME),
+                daemon.clientWithShortReadyWait(), NAME, JacksonTrees.fromJsonNode(daemon.instance(NAME)),
                 MachineType.CONTAINER, said::add));
 
         assertEquals("true", filtering(daemon));
