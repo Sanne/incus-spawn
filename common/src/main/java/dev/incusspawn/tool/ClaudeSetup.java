@@ -273,6 +273,23 @@ public class ClaudeSetup implements ToolSetup {
     private static final String STUB_MARKER = "placeholder-for-proxy";
     /** What {@link #VERTEX_TOKEN_ENV} holds until a start exports the instance's own. */
     static final String VERTEX_PLACEHOLDER_TOKEN = "ya29." + STUB_MARKER;
+    /**
+     * Succeeds when {@code stub} is one isx wrote, before #1108 too. Tested at the stub's own path,
+     * not on PATH, so another gcloud resolving first cannot hide a stale stub.
+     */
+    static String isxStubCheck(String stub) {
+        return "grep -q '" + STUB_MARKER + "' " + stub + " 2>/dev/null";
+    }
+
+    /**
+     * Succeeds when no stub needs writing at {@code stub}: it already reads {@link #VERTEX_TOKEN_ENV},
+     * or it is not isx's and some gcloud is installed. A pre-#1108 stub, which prints a fixed token,
+     * fails it, so a reconfigure or a child build replaces it.
+     */
+    static String keepGcloudCheck(String stub) {
+        return "if " + isxStubCheck(stub) + "; then grep -q '" + VERTEX_TOKEN_ENV + "' " + stub
+                + "; else command -v gcloud >/dev/null; fi";
+    }
 
     /**
      * Prints the token of the environment it is called from, never one fixed at build time: the
@@ -290,19 +307,19 @@ public class ClaudeSetup implements ToolSetup {
      * Ensure the gcloud stub state matches the current Vertex config.
      * In Vertex mode: install a stub that satisfies credential-refresh attempts
      * inside the container with the instance's own token, which the MITM proxy
-     * replaces with a real one.  Never overwrites an existing non-stub gcloud.
+     * replaces with a real one.  Replaces an older stub of isx's own, never a real gcloud.
      * Outside Vertex mode: remove a leftover stub (from a parent built with Vertex)
      * so it doesn't shadow a real gcloud installed later.
      */
     public void syncGcloudStub(Container c, SpawnConfig.ClaudeConfig claude) {
         if (claude.isUseVertex()) {
-            if (c.sh("command -v gcloud").success()) {
+            if (c.sh(keepGcloudCheck(GCLOUD_STUB_PATH)).success()) {
                 return;
             }
             c.writeFile(GCLOUD_STUB_PATH, GCLOUD_STUB_SCRIPT);
             c.exec("chmod", "+x", GCLOUD_STUB_PATH);
         } else {
-            c.sh("grep -q '" + STUB_MARKER + "' " + GCLOUD_STUB_PATH + " 2>/dev/null && rm -f " + GCLOUD_STUB_PATH);
+            c.sh(isxStubCheck(GCLOUD_STUB_PATH) + " && rm -f " + GCLOUD_STUB_PATH);
         }
     }
 

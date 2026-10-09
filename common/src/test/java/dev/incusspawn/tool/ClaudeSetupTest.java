@@ -358,9 +358,9 @@ class ClaudeSetupTest {
     }
 
     @Test
-    void syncGcloudStubSkipsWhenGcloudExists() {
+    void syncGcloudStubKeepsWhatTheCheckKeeps() {
         var incus = mock(IncusClient.class);
-        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), eq("command -v gcloud")))
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), eq(ClaudeSetup.keepGcloudCheck(ClaudeSetup.GCLOUD_STUB_PATH))))
                 .thenReturn(OK);
 
         var claude = new SpawnConfig.ClaudeConfig();
@@ -369,14 +369,15 @@ class ClaudeSetupTest {
         new ClaudeSetup().syncGcloudStub(new Container(incus, CONTAINER), claude);
 
         verify(incus, never()).shellExec(eq(CONTAINER),
-                eq("sh"), eq("-c"), contains(ClaudeSetup.GCLOUD_STUB_PATH));
+                eq("sh"), eq("-c"), contains("cat > "));
+        verify(incus, never()).shellExec(eq(CONTAINER), eq("chmod"), eq("+x"), eq(ClaudeSetup.GCLOUD_STUB_PATH));
     }
 
     @Test
-    void syncGcloudStubInstallsWhenNoGcloud() {
+    void syncGcloudStubWritesTheStubWhenTheCheckFails() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), eq("command -v gcloud")))
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), eq(ClaudeSetup.keepGcloudCheck(ClaudeSetup.GCLOUD_STUB_PATH))))
                 .thenReturn(new IncusClient.ExecResult(1, "", ""));
 
         var claude = new SpawnConfig.ClaudeConfig();

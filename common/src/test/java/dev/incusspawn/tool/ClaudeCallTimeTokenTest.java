@@ -48,6 +48,53 @@ class ClaudeCallTimeTokenTest {
     }
 
     @Test
+    void anOldStubIsReplacedButARealGcloudOrTheCurrentStubIsKept() throws Exception {
+        // The stub isx wrote before #1108, which printed a token fixed at build time
+        var oldStub = """
+                #!/bin/bash
+                case "$*" in
+                  *auth*print-access-token*) echo "ya29.placeholder-for-proxy" ;;
+                  *) echo "gcloud stub: unsupported command: $*" >&2; exit 1 ;;
+                esac
+                """;
+        assertEquals("replace", gcloudDecision(oldStub, false), "an old stub must give way to the current one");
+        assertEquals("replace", gcloudDecision(oldStub, true),
+                "another gcloud resolving first must not hide an old stub");
+        assertEquals("keep", gcloudDecision(ClaudeSetup.GCLOUD_STUB_SCRIPT, false), "the current stub needs no rewrite");
+        assertEquals("keep", gcloudDecision("#!/bin/sh\nexec python3 -m gcloud \"$@\"\n", false),
+                "a real gcloud is never overwritten");
+        assertEquals("keep", gcloudDecision(null, true), "nor one installed elsewhere");
+        assertEquals("replace", gcloudDecision(null, false), "with no gcloud, the stub is installed");
+    }
+
+    /**
+     * What {@link ClaudeSetup#syncGcloudStub} decides with {@code stub} (none, if null) at the stub
+     * path and, if {@code otherGcloud}, another gcloud first on PATH. PATH holds nothing of the
+     * host's but {@code grep}, so a gcloud installed on the host cannot change the answer.
+     */
+    private String gcloudDecision(String stub, boolean otherGcloud) throws Exception {
+        var stubDir = Files.createTempDirectory(home, "stub");
+        var otherDir = Files.createTempDirectory(home, "other");
+        if (stub != null) {
+            executable(stubDir.resolve("gcloud"), stub);
+        }
+        if (otherGcloud) {
+            executable(otherDir.resolve("gcloud"), "#!/bin/sh\n");
+        }
+        var grep = new ProcessBuilder("sh", "-c", "command -v grep").start();
+        Files.createSymbolicLink(otherDir.resolve("grep"),
+                Path.of(new String(grep.getInputStream().readAllBytes()).strip()));
+        var env = Map.of("PATH", otherDir + ":" + stubDir);
+        return run(env, "/bin/sh", "-c", "if " + ClaudeSetup.keepGcloudCheck(stubDir.resolve("gcloud").toString())
+                + "; then echo keep; else echo replace; fi").strip();
+    }
+
+    private static void executable(Path file, String content) throws IOException {
+        Files.writeString(file, content);
+        assertTrue(file.toFile().setExecutable(true));
+    }
+
+    @Test
     void vertexLoginSendsTheTokenAsTheAuthorizationHeader() throws Exception {
         // Under CLAUDE_CODE_SKIP_VERTEX_AUTH Claude Code sends no Authorization header of its
         // own: the only one it sends is from ANTHROPIC_CUSTOM_HEADERS
