@@ -356,8 +356,9 @@ public final class BranchFlow {
             // The template baked its own account's identity; a branch pinned to a different one
             // must not commit under it. Re-derived here rather than only on the next
             // InstancePrep, so an instance used via incus exec, SSH or an IDE is right too.
-            // Needs the CA and resolv.conf above -- re-deriving goes through the proxy.
-            InstanceLifecycle.reconcileAccountIdentities(incus, name);
+            // Needs the CA and resolv.conf above -- re-deriving goes through the proxy. From the
+            // read before the start: nothing since has written a pin or a stamp.
+            InstanceLifecycle.reconcileAccountIdentities(incus, name, prefetched.instance());
         }
         return prefetched;
     }

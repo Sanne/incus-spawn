@@ -132,6 +132,57 @@ public final class BuildAccounts {
     }
 
     /**
+     * Bring the identities a build bakes in line with its accounts, once its tools are set up,
+     * and say what to stamp for them: decided by what the guest holds, not by what config.yaml
+     * says it should ({@link #toRederive}). Where an identity is missing and no account can
+     * supply it, warns ({@link dev.incusspawn.tool.ToolSetup#unbakedIdentityWarning}) and stamps
+     * {@link Metadata#ACCOUNT_IDENTITY_NONE}. Every result carries
+     * {@link Metadata#ACCOUNT_IDENTITY_VERIFIED}, without which every branch of the template
+     * would pay the check an older template's branches pay on first use.
+     *
+     * @param selection   the template's pins, by namespace ({@code ImageDef.resolveAccounts})
+     * @param rederivable the namespaces to ask the guest about
+     *                    ({@link AccountSelection#rederivableNamespaces})
+     * @param inherited   the parent's stamps ({@link #inheritedIdentities})
+     * @return the stamps the finished template gets
+     */
+    public static Map<String, String> settleIdentities(dev.incusspawn.incus.Container container,
+                                                       dev.incusspawn.config.SpawnConfig config,
+                                                       Map<String, dev.incusspawn.tool.ToolSetup> setups,
+                                                       Map<String, String> selection,
+                                                       java.util.Collection<String> rederivable,
+                                                       Map<String, String> inherited,
+                                                       java.util.function.Consumer<String> progress,
+                                                       java.util.function.Consumer<String> warnings) {
+        // Every namespace gets a say, not just the ones this template selected: the build baked
+        // *some* auth mode either way, and a later swap has to be checked against it. A null
+        // account means "this template made no choice", which resolves to the namespace's
+        // configured default -- the account the build actually used.
+        var wanted = AccountSelection.bakedIdentities(config,
+                AccountSelection.effectiveSelection(selection, setups), setups);
+        var lacking = new java.util.LinkedHashSet<String>();
+        for (var namespace : rederivable) {
+            if (setups.get(namespace).lacksBakedIdentity(container)) lacking.add(namespace);
+        }
+        java.util.function.Function<String, String> accountFor = namespace ->
+                dev.incusspawn.config.AccountResolver.effectiveAccount(config, namespace, selection.get(namespace));
+        var rederived = toRederive(wanted, inherited, lacking, setups);
+        rederived.forEach(namespace -> {
+            var account = accountFor.apply(namespace);
+            progress.accept("Updating " + namespace + " identity for account '" + account + "'...");
+            setups.get(namespace).rebakeForAccount(container, account);
+        });
+        lacking.removeAll(rederived);
+        for (var namespace : lacking) {
+            var warning = setups.get(namespace).unbakedIdentityWarning(accountFor.apply(namespace));
+            if (warning != null) warnings.accept(warning);
+        }
+        var stamps = identityStamps(wanted, inherited, lacking);
+        stamps.put(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true");
+        return stamps;
+    }
+
+    /**
      * The {@code account-identity} stamps a finished template gets: what this build baked, and
      * for every other namespace what it inherited. {@link #startConfig} cleared the inherited
      * ones before the start, but a namespace the build derives nothing for -- its credential no

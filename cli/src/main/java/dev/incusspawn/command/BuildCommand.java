@@ -2304,34 +2304,10 @@ public class BuildCommand extends BaseCommand {
     private Map<String, String> settleIdentities(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
                                                  Map<String, String> inherited) {
         var config = SpawnConfig.load();
-        var setups = AccountSelection.namespaceSetups(config);
-        var selection = ImageDef.resolveAccounts(imageDef, defs);
-        // Every namespace gets a say, not just the ones this template selected: the build baked
-        // *some* auth mode either way, and a later swap has to be checked against it. A null
-        // account means "this template made no choice", which resolves to the namespace's
-        // configured default -- the account the build actually used.
-        var wanted = AccountSelection.bakedIdentities(config,
-                AccountSelection.effectiveSelection(selection, setups), setups);
-        var lacking = new java.util.LinkedHashSet<String>();
-        for (var namespace : AccountSelection.rederivableNamespaces(imageDef, defs,
-                toolDefLoader.allToolSetups(), setups)) {
-            if (setups.get(namespace).lacksBakedIdentity(container)) lacking.add(namespace);
-        }
-        java.util.function.Function<String, String> accountFor = namespace ->
-                dev.incusspawn.config.AccountResolver.effectiveAccount(config, namespace, selection.get(namespace));
-        var rederived = BuildAccounts.toRederive(wanted, inherited, lacking, setups);
-        rederived.forEach(namespace -> {
-            var account = accountFor.apply(namespace);
-            BuildOutput.step("Updating " + namespace + " identity for account '" + account + "'...");
-            setups.get(namespace).rebakeForAccount(container, account);
-        });
-        lacking.removeAll(rederived);
-        for (var namespace : lacking) {
-            BuildOutput.warn(setups.get(namespace).unbakedIdentityWarning(accountFor.apply(namespace)));
-        }
-        var stamps = new java.util.LinkedHashMap<>(BuildAccounts.identityStamps(wanted, inherited, lacking));
-        stamps.put(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true");
-        return stamps;
+        var setups = AccountSelection.namespaceSetups(config, toolDefLoader);
+        return BuildAccounts.settleIdentities(container, config, setups, ImageDef.resolveAccounts(imageDef, defs),
+                AccountSelection.rederivableNamespaces(imageDef, defs, toolDefLoader.allToolSetups(), setups),
+                inherited, BuildOutput::step, BuildOutput::warn);
     }
 
     /**

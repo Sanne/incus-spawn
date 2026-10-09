@@ -59,12 +59,19 @@ class UnbakedGitIdentityTest {
 
     /** What the build of a template stamps, given the accounts configured then and what the guest lacks. */
     private static Map<String, String> builtStamps(SpawnConfig config, Set<String> lacking) {
-        var setups = Map.<String, ToolSetup>of("github", new GhSetup());
-        var baked = AccountSelection.bakedIdentities(config,
-                AccountSelection.effectiveSelection(Map.of(), setups), setups);
-        var unbaked = new java.util.LinkedHashSet<>(lacking);
-        unbaked.removeAll(BuildAccounts.toRederive(baked, Map.of(), lacking, setups));
-        return BuildAccounts.identityStamps(baked, Map.of(), unbaked);
+        return build(config, Map.of(), new RecordingGh(), lacking.contains("github"), new ArrayList<>());
+    }
+
+    /** {@link BuildAccounts#settleIdentities} for a template with gh, on {@code inherited}. */
+    private static Map<String, String> build(SpawnConfig config, Map<String, String> inherited, RecordingGh gh,
+                                             boolean lacks, List<String> warnings) {
+        gh.lacks = lacks;
+        return BuildAccounts.settleIdentities(null, config, Map.of("github", gh), Map.of(), List.of("github"),
+                inherited, msg -> { }, warnings::add);
+    }
+
+    private static Map<String, String> verified(String identity) {
+        return Map.of(Metadata.accountIdentityKey("github"), identity, Metadata.ACCOUNT_IDENTITY_VERIFIED, "true");
     }
 
     private static Map<String, String> stale(FakeIncusDaemon daemon, SpawnConfig config) {
@@ -76,14 +83,38 @@ class UnbakedGitIdentityTest {
 
     @Test
     void aBuildWithGhButNoTokenIsStampedAsHavingNoIdentity() {
-        assertEquals(Map.of(Metadata.accountIdentityKey("github"), Metadata.ACCOUNT_IDENTITY_NONE),
-                builtStamps(withoutToken(), Set.of("github")));
+        var warnings = new ArrayList<String>();
+        assertEquals(verified(Metadata.ACCOUNT_IDENTITY_NONE),
+                build(withoutToken(), Map.of(), new RecordingGh(), true, warnings));
+        assertEquals(List.of(new GhSetup().unbakedIdentityWarning("")), warnings);
     }
 
     @Test
-    void aBuildWithoutGhIsStampedWithNothing() {
-        assertEquals(Map.of(), builtStamps(withoutToken(), Set.of()),
+    void aBuildWithoutGhIsStampedWithNothingButVerified() {
+        assertEquals(Map.of(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true"), builtStamps(withoutToken(), Set.of()),
                 "nothing in the image could take an identity, so there is nothing to reconcile");
+    }
+
+    /** Without the marker every branch of a template this isx built would pay an older one's check. */
+    @Test
+    void everyBuildIsMarkedVerified() throws Exception {
+        for (var config : List.of(withToken(), withoutToken())) {
+            for (var lacks : List.of(true, false)) {
+                assertEquals("true", build(config, Map.of(), new RecordingGh(), lacks, new ArrayList<>())
+                        .get(Metadata.ACCOUNT_IDENTITY_VERIFIED));
+            }
+        }
+    }
+
+    /** A child of a token-less template, built once a token is configured: given the identity. */
+    @Test
+    void aBuildWithATokenOnAParentWithoutAnIdentityDerivesAndStampsIt() throws Exception {
+        var gh = new RecordingGh();
+        var warnings = new ArrayList<String>();
+        var stamps = build(withToken(), Map.of("github", Metadata.ACCOUNT_IDENTITY_NONE), gh, true, warnings);
+        assertEquals(List.of("me"), gh.rebaked);
+        assertEquals(List.of(), warnings);
+        assertEquals(verified(new GhSetup().bakedAccountIdentity(withToken(), "me")), stamps);
     }
 
     @Test
@@ -269,6 +300,87 @@ class UnbakedGitIdentityTest {
         assertEquals("true", daemon.instance(NAME).path("config").path(Metadata.ACCOUNT_IDENTITY_VERIFIED).asText());
         reconcile(daemon, gh);
         assertEquals(1, gh.checks);
+    }
+
+    /** An older instance with no stamp: marked, and stamped, so a later change is still seen. */
+    @Test
+    void anUnverifiedInstanceWithItsIdentityIsStampedSoALaterChangeIsReconciled() throws Exception {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of());
+        var gh = new RecordingGh();
+        reconcile(daemon, gh);
+        assertEquals(new GhSetup().bakedAccountIdentity(withToken(), "me"),
+                daemon.instance(NAME).path("config").path(Metadata.accountIdentityKey("github")).asText());
+
+        var replaced = YAML.readValue("""
+                github:
+                  accounts:
+                    me:
+                      token: "ghp_userB"
+                      email: "me@example.com"
+                  default: me
+                """, SpawnConfig.class);
+        assertEquals(Map.of("github", "me"), stale(daemon, replaced), "the token was replaced with another user's");
+    }
+
+    /** An older instance whose stamp is simply stale is re-derived, and is then as good as verified. */
+    @Test
+    void anUnverifiedInstanceWithAStaleStampIsMarkedOnceRepaired() throws Exception {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.accountIdentityKey("github"), "other#0123456789ab"));
+        var gh = new RecordingGh();
+        reconcile(daemon, gh);
+        assertEquals(List.of("me"), gh.rebaked);
+        assertEquals("true", daemon.instance(NAME).path("config").path(Metadata.ACCOUNT_IDENTITY_VERIFIED).asText());
+        reconcile(daemon, gh);
+        assertEquals(0, gh.checks, "nothing left to ask the guest");
+    }
+
+    /**
+     * An older instance with no stamps, while nothing is configured: settled from the read, so
+     * the tool definitions are not read from disk on every shell. It is never marked (no account
+     * to check it against yet), so this would go on for good.
+     */
+    @Test
+    void anUnverifiedInstanceWithNoAccountDoesNotReadTheToolDefinitions() {
+        assertNothingToDoWithoutReadingToolDefinitions(Map.of(), withoutToken());
+    }
+
+    /**
+     * The other paths every shell takes: a template built without a token, while there still is
+     * none, and one built with the token still configured. Only a built-in tool can re-derive,
+     * so neither needs the tool YAMLs read from disk.
+     */
+    @Test
+    void theCommonPathsDoNotReadTheToolDefinitions() throws Exception {
+        assertNothingToDoWithoutReadingToolDefinitions(verified(Metadata.ACCOUNT_IDENTITY_NONE), withoutToken());
+        assertNothingToDoWithoutReadingToolDefinitions(
+                verified(new GhSetup().bakedAccountIdentity(withToken(), "me")), withToken());
+    }
+
+    private static void assertNothingToDoWithoutReadingToolDefinitions(Map<String, String> stamps, SpawnConfig config) {
+        var daemon = new FakeIncusDaemon().container(NAME, stamps);
+        try (var selection = org.mockito.Mockito.mockStatic(AccountSelection.class, org.mockito.Mockito.CALLS_REAL_METHODS)) {
+            assertTrue(AccountSelection.identityReconcile(config, daemon.client(), NAME, null).isEmpty(), stamps.toString());
+            selection.verify(() -> AccountSelection.namespaceSetups(any(SpawnConfig.class)), never());
+            selection.verify(() -> AccountSelection.namespaceSetups(any(SpawnConfig.class), any()), never());
+        }
+    }
+
+    /** Only tools that can re-derive, so one borrowing a namespace never stands in for its owner. */
+    @Test
+    void theBuiltInSetupsAreTheOnesThatCanReDerive() {
+        var setups = AccountSelection.rederivableSetups();
+        assertInstanceOf(GhSetup.class, setups.get("github"));
+        setups.values().forEach(tool -> assertTrue(tool.canRebakeForAccount(), tool.name()));
+    }
+
+    /** With no setups passed, what is found is still decided by the built-in gh. */
+    @Test
+    void withoutKnownSetupsTheBuiltInToolsDecide() throws Exception {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.accountIdentityKey("github"), Metadata.ACCOUNT_IDENTITY_NONE));
+        assertEquals(Map.of("github", "me"),
+                AccountSelection.identityReconcile(withToken(), daemon.client(), NAME, null).stale());
     }
 
     /** Only re-deriving needs the network; asking the guest does not, so no wait for an address. */

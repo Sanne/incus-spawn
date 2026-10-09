@@ -96,13 +96,11 @@ public class InstancePrep {
         }
 
         // Read after the repair above, so a VM it just reassigned is seen to owe its file
-        InstanceLifecycle.ensureReady(incus, name, incus.instanceMetadata(name), machineType, say);
+        var instance = incus.instanceMetadata(name);
+        InstanceLifecycle.ensureReady(incus, name, instance, machineType, say);
 
-        // An airgapped instance has no proxy to re-derive through; skipped here as well as in the
-        // reconcile, which would spend a read to find that out again
-        if (!NetworkMode.AIRGAP.name().equals(networkMode)) {
-            InstanceLifecycle.reconcileAccountIdentities(incus, name);
-        }
+        // From the same read: what ensureReady writes is none of what the reconcile looks at
+        InstanceLifecycle.reconcileAccountIdentities(incus, name, instance);
 
         return templateName;
     }

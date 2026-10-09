@@ -68,6 +68,19 @@ class AccountRenameInInstancesTest {
                         + " a token that was replaced before the rename");
     }
 
+    /** The no-identity marker names no account, even one whose name it happens to be. */
+    @Test
+    void theNoIdentityMarkerIsNeverRenamed() throws Exception {
+        var none = Metadata.ACCOUNT_IDENTITY_NONE;
+        var daemon = new FakeIncusDaemon()
+                .container("unbaked", Map.of(Metadata.accountIdentityKey("github"), none));
+        var config = YAML.readValue(RENAMED, SpawnConfig.class);
+
+        AccountSelection.renameInInstances(daemon.client(), config, "github", none, "acme-bot");
+
+        assertEquals(none, config(daemon, "unbaked", Metadata.accountIdentityKey("github")));
+    }
+
     /**
      * Claude bakes an auth mode, not the account; an account whose name happens to be a mode
      * must never have its rename written over a mode stamp.

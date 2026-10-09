@@ -401,7 +401,16 @@ public final class InstanceLifecycle {
      * exec and one write for such an instance, none for one whose template this isx built.
      */
     public static void reconcileAccountIdentities(IncusClient incus, String name) {
-        reconcileAccountIdentities(incus, name, BuildOutput::step,
+        reconcileAccountIdentities(incus, name, null);
+    }
+
+    /**
+     * As {@link #reconcileAccountIdentities(IncusClient, String)}, from the instance as the
+     * caller already read it -- the shell path's, which would otherwise read it again. Its
+     * account pins, stamps and network mode are all this looks at.
+     */
+    public static void reconcileAccountIdentities(IncusClient incus, String name, JsonNode instance) {
+        reconcileAccountIdentities(incus, name, instance, SpawnConfig.load(), null, BuildOutput::step,
                 msg -> System.err.println("Warning: " + msg));
     }
 
@@ -412,31 +421,48 @@ public final class InstanceLifecycle {
      */
     public static void reconcileAccountIdentities(IncusClient incus, String name,
                                                   Consumer<String> progress, Consumer<String> warnings) {
-        reconcileAccountIdentities(incus, name, SpawnConfig.load(), null, progress, warnings);
+        reconcileAccountIdentities(incus, name, null, SpawnConfig.load(), null, progress, warnings);
+    }
+
+    static void reconcileAccountIdentities(IncusClient incus, String name, SpawnConfig config,
+                                           Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
+                                           Consumer<String> progress, Consumer<String> warnings) {
+        reconcileAccountIdentities(incus, name, null, config, knownSetups, progress, warnings);
     }
 
     /**
+     * @param instance    the instance as the caller read it, or {@code null} to read it
      * @param knownSetups the credential namespaces' tools, when the caller has them -- the TUI
      *                    passes its own so the tool definitions are not re-read from disk;
-     *                    {@code null} discovers them
+     *                    {@code null} decides against the built-in ones that can re-derive
      */
-    static void reconcileAccountIdentities(IncusClient incus, String name, SpawnConfig config,
-                                                   Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
-                                                   Consumer<String> progress, Consumer<String> warnings) {
+    static void reconcileAccountIdentities(IncusClient incus, String name, JsonNode instance, SpawnConfig config,
+                                           Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
+                                           Consumer<String> progress, Consumer<String> warnings) {
         try {
-            var plan = AccountSelection.identityReconcile(config, incus, name, knownSetups);
+            var plan = instance != null
+                    ? AccountSelection.identityReconcile(config, instance, knownSetups)
+                    : AccountSelection.identityReconcile(config, incus, name, knownSetups);
             if (plan.isEmpty()) return;
 
             var container = new Container(incus, name);
-            var setups = knownSetups != null ? knownSetups : AccountSelection.namespaceSetups(config);
+            var setups = knownSetups != null ? knownSetups : AccountSelection.rederivableSetups();
             var stale = new LinkedHashMap<>(plan.stale());
+            var updates = new LinkedHashMap<String, String>();
             // From a template an older isx built: its stamp may claim an identity the guest never
             // got, so ask the guest once. The marker is set only once everything here succeeded.
             // Asked before waiting for an address, which only re-deriving needs: an instance
-            // that has its identity is just marked.
+            // that has its identity is just marked -- and stamped with the account's identity, so
+            // a later change of account or token is still seen as one. Whose identity the guest
+            // holds is not something the check can tell (DESIGN.md).
             plan.unverified().forEach((namespace, account) -> {
                 var setup = setups.get(namespace);
-                if (setup != null && setup.lacksBakedIdentity(container)) stale.put(namespace, account);
+                if (setup == null) return;
+                if (setup.lacksBakedIdentity(container)) {
+                    stale.put(namespace, account);
+                } else {
+                    updates.put(Metadata.accountIdentityKey(namespace), setup.bakedAccountIdentity(config, account));
+                }
             });
 
             // Re-deriving goes out through the proxy, and a just-started instance may not have
@@ -448,8 +474,7 @@ public final class InstanceLifecycle {
                 throw new IncusException(name + " has no IPv4 address");
             }
 
-            var updates = new LinkedHashMap<String, String>();
-            if (!plan.unverified().isEmpty()) updates.put(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true");
+            if (!plan.verified()) updates.put(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true");
             stale.forEach((namespace, account) -> {
                 var setup = setups.get(namespace);
                 if (setup == null) return;
@@ -1257,8 +1282,11 @@ public final class InstanceLifecycle {
      * contention with the seccomp_notify handler that activates on start.
      */
     public static RuntimeConfig prefetchRuntimeConfig(IncusClient incus, String name) {
-        // One read for all four keys: configGet is a full instance GET per key.
-        var config = incus.configByPrefix(name, "");
+        // One read for all four keys: configGet is a full instance GET per key. Kept, for the
+        // account reconcile once the instance is up.
+        var instance = incus.instanceMetadataOrThrow(name);
+        if (instance == null) throw new IncusException("Failed to read config from " + name);
+        var config = IncusClient.configByPrefix(instance, "");
         var buildSourceJson = config.getOrDefault(Metadata.BUILD_SOURCE, "");
         var hasSshKeys = !config.getOrDefault("user.incus-spawn.ssh-setup", "").isEmpty()
                 || hasSshdTool(buildSourceJson);
@@ -1268,7 +1296,7 @@ public final class InstanceLifecycle {
         var terminfo = captureHostTerminfo();
         return new RuntimeConfig(buildSourceJson, hasSshKeys, workdir, shellCommand,
                 subnetDiag, terminfo, config.getOrDefault(Metadata.STATIC_IP, ""),
-                Metadata.templateOf(config));
+                Metadata.templateOf(config), instance);
     }
 
     private static String captureHostTerminfo() {
@@ -1285,11 +1313,14 @@ public final class InstanceLifecycle {
         }
     }
 
-    /** @param staticIp the address {@code configureBranch} assigned, or "" for none */
+    /**
+     * @param staticIp the address {@code configureBranch} assigned, or "" for none
+     * @param instance the instance as read before the start, or null
+     */
     public record RuntimeConfig(String buildSourceJson, boolean hasSshKeys,
                                 String workdir, String shellCommand,
                                 String subnetDiagnostic, String terminfo, String staticIp,
-                                String templateName) {
+                                String templateName, JsonNode instance) {
 
         public IncusClient.ShellPrep toShellPrep() {
             return IncusClient.ShellPrep.fromPrefetched(

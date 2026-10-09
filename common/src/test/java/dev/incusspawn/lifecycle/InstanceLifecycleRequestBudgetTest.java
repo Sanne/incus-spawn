@@ -148,6 +148,8 @@ class InstanceLifecycleRequestBudgetTest {
         assertEquals("10.166.11.20", config.staticIp());
         assertEquals("zsh", config.shellCommand());
         assertEquals("", config.buildSourceJson());
+        // And the branch's account reconcile, once it has started.
+        assertEquals("10.166.11.20", config.instance().path("config").path(Metadata.STATIC_IP).asText());
         assertTrue(config.hasSshKeys());
     }
 
@@ -171,6 +173,24 @@ class InstanceLifecycleRequestBudgetTest {
         assertBudget(1, daemon, "reconcileAccountIdentities, nothing stale");
         assertEquals(List.of(), warnings);
         assertTrue(daemon.execs().isEmpty(), "and nothing is asked of the guest");
+    }
+
+    /** The shell path hands over the read it made for ensureReady. */
+    @Test
+    void reconcilingFromTheCallersReadCostsNothing() throws Exception {
+        var config = new com.fasterxml.jackson.databind.ObjectMapper(new com.fasterxml.jackson.dataformat.yaml.YAMLFactory())
+                .readValue("github:\n  accounts:\n    me:\n      token: ghp_x\n  default: me\n",
+                        dev.incusspawn.config.SpawnConfig.class);
+        var gh = new dev.incusspawn.tool.GhSetup();
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.accountIdentityKey("github"), gh.bakedAccountIdentity(config, "me"),
+                Metadata.ACCOUNT_IDENTITY_VERIFIED, "true"));
+        var instance = daemon.instance(NAME);
+
+        InstanceLifecycle.reconcileAccountIdentities(daemon.client(), NAME, instance, config, null,
+                msg -> { }, msg -> { });
+
+        assertBudget(0, daemon, "reconcileAccountIdentities from the caller's read");
     }
 
     @Test

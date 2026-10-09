@@ -281,8 +281,11 @@ public final class AccountSelection {
      *                   it predates {@link Metadata#ACCOUNT_IDENTITY_VERIFIED}, so ask the guest
      *                   ({@link ToolSetup#lacksBakedIdentity}) and re-derive what it lacks, then
      *                   set the marker so this is done once
+     * @param verified   whether the instance already carries that marker: one without it gets
+     *                   it from a reconcile that found anything to do, whichever list it is in
      */
-    public record IdentityReconcile(Map<String, String> stale, Map<String, String> unverified) {
+    public record IdentityReconcile(Map<String, String> stale, Map<String, String> unverified,
+                                    boolean verified) {
         public boolean isEmpty() { return stale.isEmpty() && unverified.isEmpty(); }
     }
 
@@ -301,34 +304,70 @@ public final class AccountSelection {
      * not. Only once the instance is checked does it cost a guest exec, and only for such
      * instances, and only while an account is configured.
      *
+     * <p>Only a built-in tool can re-derive, so with no {@code knownSetups} the plan is decided
+     * against those ({@link #rederivableSetups}) and the tool definitions are read from disk only
+     * when it finds something, to drop a namespace the proxy does not serve: on the common path,
+     * nothing to do, this is the one read and no more.
+     *
      * <p>An airgapped instance has nothing to reconcile: it has no proxy to re-derive through.
      */
     public static IdentityReconcile identityReconcile(SpawnConfig config, IncusClient incus,
                                                       String instance, Map<String, ToolSetup> knownSetups) {
-        var stale = new LinkedHashMap<String, String>();
-        var unverified = new LinkedHashMap<String, String>();
         var metadata = incus.instanceMetadataOrThrow(instance);
         if (metadata == null) {
             throw new dev.incusspawn.incus.IncusException("Failed to read config from " + instance);
         }
+        return identityReconcile(config, metadata, knownSetups);
+    }
+
+    /** As {@link #identityReconcile(SpawnConfig, IncusClient, String, Map)}, from a read the caller already made. */
+    public static IdentityReconcile identityReconcile(SpawnConfig config, JsonNode metadata,
+                                                      Map<String, ToolSetup> knownSetups) {
+        if (metadata == null || metadata.isMissingNode()) {
+            throw new dev.incusspawn.incus.IncusException("Failed to read the instance's config");
+        }
+        var stale = new LinkedHashMap<String, String>();
+        var unverified = new LinkedHashMap<String, String>();
+        var instanceConfig = metadata.path("config");
+        var verified = instanceConfig.has(Metadata.ACCOUNT_IDENTITY_VERIFIED);
+        var nothing = new IdentityReconcile(Map.of(), Map.of(), verified);
         // No proxy to re-derive through: nothing an airgapped instance's reconcile could do
         // but wait for an address it never gets (BranchFlow skips it for the same reason).
-        if (NetworkMode.isAirgapped(metadata)) return new IdentityReconcile(stale, unverified);
+        if (NetworkMode.isAirgapped(metadata)) return nothing;
         var baked = IncusClient.configByPrefix(metadata, Metadata.ACCOUNT_IDENTITY_PREFIX);
-        var verified = metadata.path("config").has(Metadata.ACCOUNT_IDENTITY_VERIFIED);
-        if (baked.isEmpty() && verified) return new IdentityReconcile(stale, unverified);
-        var setups = knownSetups != null ? knownSetups : namespaceSetups(config);
-        var selection = fromConfig(metadata.path("config"));
+        if (baked.isEmpty() && verified) return nothing;
+        var selection = fromConfig(instanceConfig);
+        var setups = knownSetups != null ? knownSetups : rederivableSetups();
         bakedIdentities(config, effectiveSelection(selection, setups), setups)
                 .forEach((namespace, identity) -> {
                     var setup = setups.get(namespace);
-                    if (needsRederive(setup, baked.get(namespace), identity)) {
-                        stale.put(namespace, AccountResolver.effectiveAccount(config, namespace, selection.get(namespace)));
-                    } else if (!verified && canRebake(setup)) {
-                        unverified.put(namespace, AccountResolver.effectiveAccount(config, namespace, selection.get(namespace)));
-                    }
+                    Map<String, String> target;
+                    if (needsRederive(setup, baked.get(namespace), identity)) target = stale;
+                    else if (!verified && canRebake(setup)) target = unverified;
+                    else return;
+                    target.put(namespace, AccountResolver.effectiveAccount(config, namespace, selection.get(namespace)));
                 });
-        return new IdentityReconcile(stale, unverified);
+        if (knownSetups == null && !(stale.isEmpty() && unverified.isEmpty())) {
+            var served = namespaceSetups(config);
+            stale.keySet().removeIf(namespace -> !canRebake(served.get(namespace)));
+            unverified.keySet().removeIf(namespace -> !canRebake(served.get(namespace)));
+        }
+        return new IdentityReconcile(java.util.Collections.unmodifiableMap(stale),
+                java.util.Collections.unmodifiableMap(unverified), verified);
+    }
+
+    /**
+     * The built-in tools that {@linkplain ToolSetup#canRebakeForAccount can re-derive}, by the
+     * namespace each owns -- every tool that can, since re-deriving takes Java code a tool YAML
+     * cannot supply. Built without reading anything from disk. Filtered before keying, so a tool
+     * that merely borrows a namespace's credential (Copilot) cannot hide the one that owns it.
+     */
+    public static Map<String, ToolSetup> rederivableSetups() {
+        var tools = new LinkedHashMap<String, ToolSetup>();
+        for (var tool : dev.incusspawn.RuntimeConstants.CDI_TOOLS) {
+            if (canRebake(tool)) tools.put(tool.name(), tool);
+        }
+        return byNamespace(tools);
     }
 
     /**
@@ -375,8 +414,10 @@ public final class AccountSelection {
             if (name.isEmpty() || !instanceConfig.isObject()) continue;
             var updates = new LinkedHashMap<String, String>();
             if (from.equals(instanceConfig.path(pinKey).asText(""))) updates.put(pinKey, to);
-            var renamedIdentity = setup == null ? null
-                    : setup.renameBakedIdentity(instanceConfig.path(identityKey).asText(""), from, to);
+            var baked = instanceConfig.path(identityKey).asText("");
+            // The no-identity marker names no account, whatever a tool would make of it
+            var renamedIdentity = setup == null || baked.equals(Metadata.ACCOUNT_IDENTITY_NONE) ? null
+                    : setup.renameBakedIdentity(baked, from, to);
             if (renamedIdentity != null) updates.put(identityKey, renamedIdentity);
             if (updates.isEmpty()) continue;
             incus.configSetAll(name, updates);

@@ -164,10 +164,18 @@ class GhSetupTest {
     }
 
     /** "Nothing was baked" names no account, so no account's rename may claim it. */
+    /** Nothing to derive from, so nothing baked: claiming the name would make every use re-derive, and fail. */
     @Test
-    void theNoIdentityMarkerIsNeverRenamed() {
-        var none = dev.incusspawn.incus.Metadata.ACCOUNT_IDENTITY_NONE;
-        assertNull(new GhSetup().renameBakedIdentity(none, none, "acme"));
+    void anAccountWithoutATokenBakesNothing() throws Exception {
+        var config = new com.fasterxml.jackson.databind.ObjectMapper(new com.fasterxml.jackson.dataformat.yaml.YAMLFactory())
+                .readValue("""
+                        github:
+                          accounts:
+                            work:
+                              email: "me@example.com"
+                          default: work
+                        """, dev.incusspawn.config.SpawnConfig.class);
+        assertEquals("", new GhSetup().bakedAccountIdentity(config, "work"));
     }
 
     @Test

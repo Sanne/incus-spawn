@@ -106,7 +106,6 @@ public class GhSetup implements ToolSetup {
     /** The fingerprint carries over: the credential it describes is the same one, renamed. */
     @Override
     public String renameBakedIdentity(String baked, String from, String to) {
-        if (baked.equals(dev.incusspawn.incus.Metadata.ACCOUNT_IDENTITY_NONE)) return null;
         if (baked.equals(from)) return to;
         var rest = baked.startsWith(from) ? baked.substring(from.length()) : "";
         return rest.matches(IDENTITY_FINGERPRINT_SEPARATOR + "[0-9a-f]{" + IDENTITY_FINGERPRINT_LENGTH + "}")
