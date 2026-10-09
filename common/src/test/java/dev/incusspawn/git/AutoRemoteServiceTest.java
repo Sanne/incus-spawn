@@ -43,6 +43,48 @@ class AutoRemoteServiceTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"file://{absolute}/.git", "{absolute}", "file:direct-source", "./direct-source"})
+    void explicitHostSourceAddsAndRemovesRemoteWithinTemplateSearchRoot(String form) throws Exception {
+        var images = Files.createDirectories(tempDir.resolve("templates/images"));
+        var configDir = Files.createDirectories(tempDir.resolve(".config/incus-spawn"));
+        Files.writeString(configDir.resolve("config.yaml"), "searchPaths: ['" + images.getParent() + "']\n");
+        var repoDir = Files.createDirectories(images.resolve("direct-source"));
+        runGit(repoDir, "init", "-b", "main");
+        Files.writeString(images.resolve("direct.yaml"), """
+                name: tpl-direct
+                repos:
+                  - url: %s
+                    path: /home/agentuser/direct
+                """.formatted(form.replace("{absolute}", repoDir.toString())));
+        var incus = mock(IncusClient.class);
+        when(incus.instanceMetadataOrThrow("work")).thenReturn(instance("tpl-direct", ""));
+
+        AutoRemoteService.addRemotes(incus, "work");
+        assertThat(runGit(repoDir, "remote", "get-url", "work").strip())
+                .isEqualTo("isx://work/home/agentuser/direct");
+        AutoRemoteService.removeRemotes("work");
+        assertThat(runGit(repoDir, "remote")).isEmpty();
+    }
+
+    @Test
+    void escapedHostSourceCannotAddOrRemoveRemotes() throws Exception {
+        var images = Files.createDirectories(tempDir.resolve("templates/images"));
+        var configDir = Files.createDirectories(tempDir.resolve(".config/incus-spawn"));
+        Files.writeString(configDir.resolve("config.yaml"), "searchPaths: ['" + images.getParent() + "']\n");
+        var outside = Files.createDirectory(tempDir.resolve("outside"));
+        runGit(outside, "init", "-b", "main");
+        Files.writeString(images.resolve("escaped.yaml"), "name: tpl-escaped\nrepos:\n  - url: '" + outside + "'\n");
+        var incus = mock(IncusClient.class);
+        when(incus.instanceMetadataOrThrow("work")).thenReturn(instance("tpl-escaped", ""));
+        AutoRemoteService.addRemotes(incus, "work");
+        assertThat(runGit(outside, "remote")).isEmpty();
+
+        runGit(outside, "remote", "add", "work", "isx://work/~/outside");
+        AutoRemoteService.removeRemotes("work");
+        assertThat(runGit(outside, "remote", "get-url", "work").strip()).isEqualTo("isx://work/~/outside");
+    }
+
     @Test
     void addRemotesChecksAllRemotesNotJustOrigin() throws IOException, InterruptedException {
         // Setup: create host repo with fork as origin, upstream as canonical

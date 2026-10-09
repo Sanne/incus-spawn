@@ -413,10 +413,10 @@ class RepoClonerShallowTest {
         var host = tmp.resolve("host-releases");
         git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
         var repo = repo(1, "main");
-        repo.setUrl(tmp.resolve("gone").toUri().toString());
+        repo.setUrl(server.url(tmp.resolve("gone")));
 
         assertEquals(StepState.FAILED, run(repo, host).state(), "the network clone fails too");
-        assertTrue(stderr.stream().anyMatch(e -> e.contains("does not appear to be a git repository")), stderr.toString());
+        assertTrue(stderr.stream().anyMatch(e -> e.contains("access denied or repository not exported")), stderr.toString());
         assertFalse(stderr.stream().anyMatch(e -> e.contains("no branch or tag") || e.contains("refs/tags/")), stderr.toString());
     }
 

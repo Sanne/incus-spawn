@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Full Git clone acceleration is specified in [Git preparation](docs/dev/GIT-PREPARATION.md): remote-authoritative selection, bare reference/dissociation, immutable bounded clean snapshots and reader leases.
 Borrow host objects directly, without a preliminary pack copy; a failed reference attempt retries once from the remote before publication.
 Refresh verified snapshots incrementally when their old history remains selected, sharing owned packs and validating new objects; removed history and pack compaction use a clean rebuild.
-Never run build-time fetch or maintenance in a user checkout, or mount its full object store for a full clone.
+Never run build-time fetch or maintenance in a user checkout, or mount its full object store for a network-source full clone.
 Network-source preparation accepts only HTTPS, SSH and Git network URLs; file transport and remote helpers are blocked even after URL rewrites.
 Check the guest's template-account access before preparing and match its complete advertised selection before mounting any snapshot, including warm hits.
 Complete all access checks before priming; only raw shallow references gate other repos' primes once preparation begins.
@@ -13,9 +13,18 @@ The shallow transport/fixup path remains separate.
 Explicit `repos[].host-source` uses a separate offline export of local branches/tags and their reachable objects, including unpushed history.
 It never copies the source object store wholesale, fetches its remote, mounts its checkout or falls back to the network.
 Only a leased independent prepared repository enters the guest; checksum verification and detachment precede prime.
-Host sources require full history and trusted templates; project-local definitions remain unable to prepare host repositories.
+Explicit `host-source` entries require full history and trusted templates.
 Resolved source associations are stamped at build for automatic remotes, with host-owned cleanup records that survive instance or template deletion.
 
+
+**Host-only Git sources:** Template repo URLs may use local paths or `file:` URLs.
+Relative paths resolve against the declaring template directory; all forms are confined on normalized and real paths to the loader-stamped `hostRepoRoot` (the enclosing project directory for project-local templates in `<project>/.incus-spawn/images`, the configured search path for search-path templates, `~/.config/incus-spawn` for user templates).
+`BuildSource.hostRepoRoots` preserves provenance, and missing roots fail closed.
+Copied URL userinfo is stripped before snapshotting.
+`HostRepoSource` snapshots committed host state during build, preserving HEAD/branch, refs, and remote/branch configuration without remote fetches or fallback.
+It reuses read-only reference mounts and the parallel clone/prime pipeline.
+Automatic updates skip these repos using `isx.hostOnly`; fingerprints include captured host state.
+See `.claude/rules/build.md` and DESIGN.md for limits and lifecycle details.
 
 ## Project Overview
 
@@ -231,7 +240,8 @@ See DESIGN.md "Support bundles: redaction by construction" and `.claude/rules/co
 `.incus-spawn/` is whatever a cloned repository ships, so project-local templates get only what stays inside their project (#765).
 Their host-resources and `file://` base images are confined to the project on real paths (`HostResourceSetup.collectEffective()`, re-checked at build, branch and start).
 Their `image_url` may only replace an image their own project imported (the `incus-spawn.project` image stamp, which fails closed).
-Their repos never get host checkout mounts or host-side clones.
+Their remote repos never get host checkout mounts or host-side clones.
+Host-only local URLs may mount a Git directory confined to the project directory containing `.incus-spawn`.
 Their `gui: true` is never a branch default (GUI hands over the host's GPU and `XDG_RUNTIME_DIR`; `--gui` still can).
 For every definition, `DownloadCache.download()` is `http(s)`-only and refuses loopback and link-local hosts on every redirect hop, and no `prime` runs while any host checkout is mounted.
 A new capability that reaches host state outside the project needs the same gate.

@@ -30,6 +30,8 @@ public class BuildSource {
      */
     @JqInclude(JqInclude.Include.NON_NULL)
     private String trackedImageTag;
+    /** Original allowed roots; old snapshots without this provenance fail closed for host Git sources. */
+    private Map<String, String> hostRepoRoots = new LinkedHashMap<>();
 
     public BuildSource() {}
 
@@ -39,6 +41,9 @@ public class BuildSource {
         this.tools = tools != null ? tools : new LinkedHashMap<>();
         this.toolInstances = toolInstances != null ? toolInstances : new LinkedHashMap<>();
         this.sources = sources != null ? sources : new LinkedHashMap<>();
+        this.definitions.forEach((name, def) -> {
+            if (def.getHostRepoRoot() != null) hostRepoRoots.put(name, def.getHostRepoRoot().toString());
+        });
     }
 
     public Map<String, ImageDef> getDefinitions() { return definitions; }
@@ -63,6 +68,10 @@ public class BuildSource {
 
     public String getTrackedImageTag() { return trackedImageTag; }
     public void setTrackedImageTag(String trackedImageTag) { this.trackedImageTag = trackedImageTag; }
+    public Map<String, String> getHostRepoRoots() { return hostRepoRoots; }
+    public void setHostRepoRoots(Map<String, String> hostRepoRoots) {
+        this.hostRepoRoots = hostRepoRoots != null ? hostRepoRoots : new LinkedHashMap<>();
+    }
 
     public Map<String, ToolInstance> getToolInstances() { return toolInstances; }
     public void setToolInstances(Map<String, ToolInstance> instances) {
@@ -157,6 +166,8 @@ public class BuildSource {
                 var projectRoot = bs.projectRoots.get(entry.getKey());
                 if (projectRoot == null) projectRoot = legacyProjectRoot(source);
                 if (projectRoot != null) entry.getValue().setProjectRoot(Path.of(projectRoot));
+                var hostRepoRoot = bs.hostRepoRoots.get(entry.getKey());
+                entry.getValue().setHostRepoRoot(hostRepoRoot == null ? null : Path.of(hostRepoRoot));
             }
             return bs;
         } catch (Exception e) {

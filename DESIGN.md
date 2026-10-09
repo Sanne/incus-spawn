@@ -2261,12 +2261,13 @@ Trusted layers (user, search paths, built-in) are unaffected, and so are a proje
   `BuildSource` records `projectRoots` alongside `sources`, so a template rebuilt out of scope from `build-source` stays confined.
   For metadata written before the field existed, the root is inferred from a `…/.incus-spawn/images/*.yaml` source.
 
-#### Project-local templates never touch host checkouts
+#### Project-local host sources stay inside the project
 
-A project-local template's `repos:` get no host reference mount, and `HostRepoRefresh.collectAllRepos()` leaves them out of the host-side fetch/clone.
+A project-local template's remote `repos:` get no host reference mount, and `HostRepoRefresh.collectAllRepos()` leaves them out of the host-side fetch/clone.
 Otherwise a cloned repository could list the URL of a repo you have checked out and get your working tree mounted into a build it controls.
 With `auto-clone-repos: always` it could also name a `file:///` URL and get any local repository cloned into your host-paths first.
-Their repos are cloned from the network inside the container, which is slower but reaches nothing of the host's.
+Their remote repos are cloned from the network inside the container.
+Host-only local URLs can mount only a Git directory inside the enclosing project directory, checked on normalized and canonical paths by `HostRepoSource`.
 Trusted ancestors of a project-local template keep their references.
 
 #### Project-local templates cannot swap shared base images
@@ -2603,7 +2604,7 @@ The selection and cache contracts are specified in [Git preparation](docs/dev/GI
 Its [clean-snapshot decision table](docs/dev/GIT-PREPARATION.md#when-and-why-we-use-a-clean-snapshot) explains the build's ready-line labels and when snapshots are reused, updated incrementally, rebuilt or bypassed.
 
 **Explicit host repositories** (`repos[].host-source`, #756 / #1408) export local branches and tags, including unpushed history, through `GitPreparation.prepareHost`.
-The source is an absolute or tilde-expanded host path in a trusted template; project-local templates remain unable to prepare host repositories.
+The source is an absolute or tilde-expanded host path in a trusted template; project-local templates cannot use `host-source`.
 `branch` selects the initial checkout without narrowing the export, and `depth` is refused.
 Only objects reachable from the captured branch/tag tips enter a newly packed independent repository, excluding stash-only, reflog-only, remote-tracking-only and unreachable objects, uncommitted files, hooks and configuration.
 No build fetches into or modifies the source, contacts its corporate remote, or mounts the original checkout.
@@ -2613,7 +2614,39 @@ The guest preserves all exported branches locally and removes the temporary orig
 Canonical source associations are stamped by destination as `host-repositories` and inherited with the guest repository.
 Automatic `isx://` remotes use those paths without URL matching or global `repo-paths` entries.
 A host-owned `git-remotes/` record in the data directory makes cleanup independent of the current template definitions and the deleted instance.
-Host sources are excluded from host refresh, and existing guest `file://` URLs retain their meaning.
+Explicit host sources are excluded from host refresh.
+
+**Host-only Git sources**: A `repos[*].url` using a local path or `file:` URL selects a required local source.
+Relative paths resolve against the declaring template directory.
+`ImageDef` stamps each repo with the allowed root at load time: the enclosing project directory (`<project>` for `<project>/.incus-spawn/images`) for project-local templates, the configured search path for a search-path template, or `~/.config/incus-spawn` for user templates.
+All forms, including absolute and home-relative paths, must remain inside that root on both normalized and canonical paths; the selected `.git` is checked too.
+Symlinks are resolved before collapsing parent components so `link/..` cannot disguise an escape.
+Errors identify the failed rule and allowed root.
+`BuildSource.hostRepoRoots` retains each ancestor's original root on rebuild; missing provenance fails closed, and template YAML cannot supply it.
+`HostRepoSource` parses the URI without remote-URL case folding, validates a self-contained Git directory (bare repositories also work), and captures HEAD, symbolic branch, refs, and repository remote/branch configuration through Git, including local config includes.
+URL userinfo is stripped from copied configuration before it enters a snapshot, fingerprint or clone script, including fetch, push and proxy URLs; percent escapes and other URL components are preserved.
+Linked worktree gitfiles, shallow/partial repositories, and alternates are rejected initially.
+`branch:` is rejected because host HEAD defines the checkout; `depth:` is rejected because the copy includes full history.
+Host refresh excludes these sources unconditionally.
+
+The build uses the same per-worker read-only mount / parallel clone-and-prime / cleanup pipeline as reference optimization, including host-to-appliance path translation.
+Source validation precedes all mounts.
+A required mount failure aborts the build and removes any remaining mounts.
+VM sources wait for virtiofs attachment.
+Host-only preparation performs `git clone --local --mirror --no-hardlinks` into the destination's `.git`, changes `core.bare` to false, removes the generated remote config without deleting refs, restores symbolic refs and captured remote/branch settings, and populates the index/worktree at the captured HEAD.
+Mirror cloning preserves the host's ref namespaces; an ordinary clone would misleadingly map host branches to `origin/*`.
+Detached and unborn HEADs are preserved.
+The clone is self-contained after unmounting; no worktree changes, host index, hooks, or unrelated config are imported.
+Git runs without global/system configuration, with lazy object fetching disabled and only local file transport permitted.
+There is no remote fetch, remote HEAD discovery, or network fallback.
+A connectivity check and a second source metadata capture detect missing objects and source changes during copying, which fail preparation before prime.
+
+`ImageDef.contentFingerprint()` includes host HEAD/branch, refs and copied configuration; build stamps use the captured fingerprint rather than rereading a potentially advanced host after priming.
+An unavailable source produces an outdated fingerprint for display and a specific error during build.
+File-source clones carry `isx.hostOnly=true` so automatic template/project Git maintenance skips them even if their YAML changes later.
+Explicit user Git operations and prime commands remain unrestricted.
+Branching only copies the template.
+Auto-remotes and TUI source lookup resolve the explicit Git directory directly; remote cleanup also uses host-owned source records that survive template removal.
 
 **One clone per destination** (#1394): a repo's identity is its destination (`~/x` and `/home/agentuser/x` are one, and the default path comes from the URL), resolved across the whole template chain by `ImageDef.chainRepos`.
 A layer clones only the destinations it declares first; one an ancestor declared is already in the parent copy (or was cloned by that ancestor's layer in a build from scratch), so the build prints `✓ Inherited <repo> (from <template>)` and neither clones nor primes it again, and a repeat within a template is the same clone.

@@ -16,8 +16,8 @@ This is a separate source policy: local branches and tags authorize their comple
 Neither remote-tracking refs, stash refs, reflogs, the index nor a detached HEAD add roots to that closure.
 A detached HEAD outside it needs an explicit branch or tag selection.
 Shallow sources and `depth` are refused, because their missing history cannot be supplied without upstream access.
-Project-local templates cannot prepare host sources, including when rebuilding from stored definitions.
-Guest-side `file://` URLs retain their existing meaning and never select this path.
+Project-local templates cannot use `host-source`, including when rebuilding from stored definitions.
+Local paths and `file:` URLs in `url` use the separate [host-only local URL](../TEMPLATES.md#host-only-local-urls) policy, including project-confined sources.
 
 `GitPreparation.prepareHost` reads source refs, then packs their captured object IDs through fresh owned metadata with a temporary alternate pointing at the source object directory.
 Object and delta reuse and bitmap selection are disabled so no extra source objects enter the export.

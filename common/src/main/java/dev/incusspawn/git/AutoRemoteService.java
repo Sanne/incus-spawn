@@ -34,7 +34,6 @@ public final class AutoRemoteService {
                 output.accept("Warning: could not set up host-source remote: " + e.getMessage());
             }
         }
-        if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
         var template = metadata.path(Metadata.PROFILE).asText("");
         if (template.isEmpty()) template = metadata.path(Metadata.PARENT).asText("");
         var repos = GitRemoteUtils.collectReposForTemplate(template);
@@ -46,6 +45,12 @@ public final class AutoRemoteService {
         for (var repo : repos) {
             if (repo.isHostSource()) continue;
             try {
+                if (HostRepoSource.isHostOnly(repo.getUrl())) {
+                    var source = HostRepoSource.gitDirectory(repo);
+                    HostRepoSources.remember(instanceName, source);
+                    addRemoteInHostRepo(source, instanceName, dev.incusspawn.config.ImageDef.repoDestination(repo), output, cache);
+                    continue;
+                }
                 var normalizedUrl = GitRemoteUtils.normalizeGitUrl(repo.getUrl());
                 var matchingDirs = urlIndex.getOrDefault(normalizedUrl, java.util.List.of());
                 for (var hostPath : matchingDirs) {

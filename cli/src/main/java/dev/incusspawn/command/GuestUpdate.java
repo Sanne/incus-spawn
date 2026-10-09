@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.util.BuildOutput;
 
@@ -10,14 +11,11 @@ import dev.incusspawn.util.BuildOutput;
 final class GuestUpdate {
 
     /**
-     * Fetches every git repository directly under agentuser's home. Exits non-zero, naming each
+     * Fetches every non-host-only git repository directly under agentuser's home. Exits non-zero, naming each
      * repository, when any fetch failed. Nothing may prompt (there is nobody to answer), and
      * fetches are quiet so stderr holds only what went wrong.
      */
-    static final String GIT_FETCH_SCRIPT = "export GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes';"
-            + " failed=0; for d in ~/*/; do if [ -d \"$d/.git\" ]; then"
-            + " echo \"  Fetching $d\"; git -C \"$d\" fetch --all --quiet"
-            + " || { echo \"git fetch failed in $d\" >&2; failed=1; }; fi; done; exit $failed";
+    static final String GIT_FETCH_SCRIPT = GitRemoteUtils.automaticFetchScript();
 
     private GuestUpdate() {
     }

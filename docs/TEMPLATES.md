@@ -116,7 +116,7 @@ repos:
 ```
 
 Repo entry fields:
-- `url` -- git clone URL (HTTPS, for proxy compatibility); use either `url` or `host-source`
+- `url` -- git clone URL (HTTPS, for proxy compatibility), or a confined host-only local path or `file:` URL; use either `url` or `host-source`
 - `host-source` -- an absolute host repository path or `~/...`, available in trusted templates; exports local branches and tags without contacting its remote
 - `path` (optional) -- target directory (`~` expands to agentuser's home); defaults to `~/<repo name>`
 - `branch` (optional) -- branch or tag to check out; defaults to the repo's default branch
@@ -145,8 +145,36 @@ Branching registers an `isx://` remote in the resolved host checkout, so `git fe
 No `repo-paths` entry or `host-resources` overlay is needed, on Linux or macOS.
 Host sources require complete history (`depth` and shallow source repositories are refused), and project-local `.incus-spawn/` templates cannot declare them.
 An unexported detached host HEAD requires an explicit `branch` or tag.
-Existing `url: file:///...` entries still refer to paths inside the guest.
 
+
+### Host-only local URLs
+
+To build from committed work on your host, including commits you have not pushed:
+
+```yaml
+repos:
+  # For a template in .incus-spawn/images/, clone the enclosing project:
+  - url: ../..
+    path: ~/my-project
+```
+
+Local sources accept a working copy, its `.git` directory, or a bare repository, independent of `host-paths` and `repo-paths`:
+
+| Relative to | Accepted forms |
+| --- | --- |
+| Host filesystem root | `/path/to/repo`, `file:/path/to/repo`, `file:///path/to/repo` |
+| Host user's home | `~/repo`, `file:~/repo`, `file://~/repo` |
+| Directory containing the declaring template | `repo`, `dir/repo`, `./dir/repo`, `file:repo`, `file:dir/repo`, `file:./dir/repo`, `file://repo`, `file://./dir/repo` |
+
+Relative paths resolve against the directory containing the declaring template. All local forms (including absolute paths, `~/`, and `file:` URLs) must stay within the template's allowed root after normalization and symlink resolution. For templates loaded from `<project>/.incus-spawn/images`, the root is `<project>`, the directory containing `.incus-spawn`. For example, `/project/.incus-spawn/images/app.yaml` may use `/project` via `../..`, but `../../..` escapes that root. For templates loaded from a configured `searchPaths` entry, the root is that search path. For templates in `~/.config/incus-spawn/images`, it is `~/.config/incus-spawn`. Parent components (`..`) are allowed within the root. Escapes through symlinks, including a symlinked `.git`, are rejected with the failed rule and allowed root. Stored build definitions retain their original roots; a stored definition without a recorded root must be reloaded before building host sources. `file://repo` is a single-name shorthand; `file://host/path` is rejected, including `localhost`. For nested relative paths use `file:dir/repo` or `file://./dir/repo`. URL-encode spaces and reserved characters in `file:` URLs; plain paths use literal characters.
+
+During **build**, isx mounts only the Git directory read-only, copies its objects and refs without hardlinks, and creates a clean working tree at the host's HEAD. The current branch is preserved; a detached HEAD stays detached, and an empty repository keeps its unborn branch. Staged changes, unstaged edits, untracked files, host hooks, and unrelated host Git settings are not copied.
+
+The host's repository remote configuration (including push URLs and refspecs) and branch tracking settings are recreated. URL userinfo is removed before copying (for example, `https://user:token@example.com/repo` becomes `https://example.com/repo`), including fetch, push and proxy URLs. Other URL components are retained; using them later requires the corresponding container-side connectivity and authentication. Preparation performs no remote fetch, does not refresh the host repository, and never falls back to a remote clone. Missing or unsupported sources fail the build. `branch:` and `depth:` are not allowed with a local source: the host's HEAD selects the checkout and the copy includes full history.
+
+Sources must have a standalone Git directory with complete local objects. Linked worktrees, shallow/partial repositories, and repositories borrowing objects through alternates are unsupported. Submodules are not initialized and Git LFS content is not downloaded. A `prime` command still runs normally and can perform any network operations you explicitly put in it.
+
+`isx branch` inherits the built repository; it does not reread the host. Changes to host HEAD, refs, or remote/branch configuration mark the template outdated. Rebuild to capture them. Automatic template/project updates skip fetching these repositories; ordinary Git commands remain available inside the container. Host remote integration also uses the explicit source path, without requiring configured search paths.
 
 ## Shell Defaults
 
@@ -196,6 +224,7 @@ Three modes are available:
 
 If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`. Missing host paths are skipped with a warning, so templates remain portable. Host resources compose across the parent chain, with child entries overriding parent entries matched by container path.
 
-**Project-local templates** (`.incus-spawn/images/`) come from whatever repository you cloned, so they can't reach outside it: host resources and `file://` images must point inside the project directory, and their `repos` are always cloned from the network, never from your host checkouts. To give a template you trust wider access, move it to `~/.config/incus-spawn/images/`.
+**Project-local templates** (`.incus-spawn/images/`) come from whatever repository you cloned, so they can't reach outside it: host resources and `file://` images must point inside the project directory, and their remote `repos` are cloned from the network.
+Explicit host-only Git sources must stay inside the project directory containing `.incus-spawn`. To give a template you trust wider access, move it to `~/.config/incus-spawn/images/`.
 
 **VMs** mount host resources via virtiofs. Single-file resources fall back to `copy` mode, since VMs only mount directories.

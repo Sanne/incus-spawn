@@ -52,6 +52,16 @@ public final class GitRemoteUtils {
 
     private GitRemoteUtils() {}
 
+    /** Automatic maintenance skips host-only repositories and reports any failed non-interactive fetch. */
+    public static String automaticFetchScript() {
+        return "export GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes';"
+                + " failed=0; for d in ~/*/; do if [ -d \"$d/.git\" ]; then "
+                + "if [ \"$(git -C \"$d\" config --bool --get " + HostRepoSource.CONFIG_KEY + ")\" = true ]; then "
+                + "echo \"  Skipping host-only repository $d\"; else "
+                + "echo \"  Fetching $d\"; git -C \"$d\" fetch --all --quiet"
+                + " || { echo \"git fetch failed in $d\" >&2; failed=1; }; fi; fi; done; exit $failed";
+    }
+
     public static IsxUrl parseIsxUrl(String url) {
         if (url == null || !url.startsWith("isx://")) return null;
         var rest = url.substring("isx://".length());
@@ -72,6 +82,7 @@ public final class GitRemoteUtils {
 
     public static String repoNameFromUrl(String gitUrl) {
         if (gitUrl == null || gitUrl.isEmpty()) return "";
+        if (HostRepoSource.isHostOnly(gitUrl)) return HostRepoSource.repoName(gitUrl);
         var url = gitUrl.strip();
         // Handle SSH: git@github.com:org/repo.git
         var colonIdx = url.indexOf(':');
@@ -94,6 +105,10 @@ public final class GitRemoteUtils {
 
     public static String normalizeGitUrl(String url) {
         if (url == null || url.isEmpty()) return "";
+        if (HostRepoSource.isHostOnly(url)) {
+            var path = HostRepoSource.path(url);
+            return path.isAbsolute() ? path.toUri().toString() : "file:" + path;
+        }
         var s = url.strip();
         // SSH format: git@github.com:org/repo.git -> github.com/org/repo
         var atIdx = s.indexOf('@');

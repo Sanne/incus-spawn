@@ -73,6 +73,8 @@ incus exec isx-test-container -- bash -c '
 
 run_tests isx-test-container || FAILED=true
 
+bash "$SCRIPT_DIR/test-host-repos.sh" || FAILED=true
+
 # --- VM (optional) ---
 if $WITH_VM; then
     echo ""

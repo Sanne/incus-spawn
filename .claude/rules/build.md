@@ -183,12 +183,28 @@ A VM has only 8 PCI hotplug slots, so attaches go through `HotplugSlots`: a budg
 Only when the budget would reach zero does the repo clone from the network, with a `RepoReference.skipped` note on its line.
 A VM's incus-agent mounts the share some time after the device add returns (#1233), so the reference clone's exec starts with `awaitMount` (`mountpoint -q` under `timeout`, at most `MOUNT_WAIT_SECONDS`, no extra request; skipped where the guest has no `mountpoint`); a share that never appears exits `MOUNT_TIMEOUT_EXIT` and the repo clones from the network.
 A failed clone from a reference also says why on its line (`CloneResult.fallbackReason`): no fallback to the network is silent.
-The `referencesDetached` latch counts *planned raw shallow* references, each counted down once in a `finally` after its attach is resolved and anything attached is detached.
+The `referencesDetached` latch counts *planned raw shallow and host-only* references, each counted down once in a `finally` after its attach is resolved and anything attached is detached.
 A failed detach fails the build, before the count-down.
 Concurrency is bounded by a semaphore in `prepareOne` held around clone and prime separately, never while waiting (`repoConcurrency()`).
 Holding a slot while waiting would deadlock once referenced repos outnumber slots.
-Project-local templates get no references (see `.claude/rules/config.md`).
+Project-local remote repositories get no references (see `.claude/rules/config.md`).
 Clone/prime failures are aggregated and abort the build; once any repo fails, workers whose clone finishes afterward skip launching their prime (best-effort fail-fast -- primes already running finish).
+
+# Host-only Git Sources
+
+Host-only `repos[*].url` local paths and file URLs use `git/HostRepoSource`: required host Git sources excluded from host refresh.
+Relative paths resolve from the declaring template directory.
+Every path form must stay inside the loader-stamped root on normalized and canonical paths, including the selected `.git` directory.
+Project-local roots are the enclosing project directory (`<project>` for `<project>/.incus-spawn/images`); search-path roots are the configured search path; user-template roots are `~/.config/incus-spawn`.
+Stored definitions preserve roots in `BuildSource.hostRepoRoots`; missing roots fail closed.
+URL userinfo is stripped from copied Git configuration before creating the snapshot or clone script.
+The existing per-worker mount/parallel-clone/cleanup phases are reused, but preparation locally mirror-clones into the target `.git` without hardlinks, restores symbolic refs and remote/branch configuration, and checks out the captured HEAD without fetching.
+Detached/unborn HEADs work; `branch:` and `depth:` overrides, linked worktrees, shallow/partial repos, and alternates are rejected.
+Mount/clone failure is fatal, never a remote fallback; VM mounts wait for virtiofs.
+Source metadata is checked again before prime to detect changes while copying.
+Build fingerprints use the captured host state, and the `isx.hostOnly` Git config marker makes automatic template/project updates skip fetching.
+Host auto-remotes and TUI lookup use explicit source paths; cleanup uses host-owned source records even when definitions are removed.
+No branch-time recloning or synchronization.
 
 # Host Resources
 

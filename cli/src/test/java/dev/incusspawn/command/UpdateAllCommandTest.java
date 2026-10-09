@@ -75,6 +75,13 @@ class UpdateAllCommandTest {
         Files.createDirectories(home.resolve("not-a-repo"));
         assertEquals(0, runAsLoginShell(script, home), "the script must parse and succeed");
 
+        git(home, "init", "-q", "host-only");
+        var hostOnly = home.resolve("host-only");
+        git(hostOnly, "remote", "add", "origin", home.resolve("missing").toString());
+        git(hostOnly, "config", "isx.hostOnly", "true");
+        assertEquals(0, runAsLoginShell(script, home), "host-only repositories must not be fetched");
+        assertFalse(Files.exists(hostOnly.resolve(".git/FETCH_HEAD")));
+
         git(home, "init", "-q", "broken");
         git(home.resolve("broken"), "remote", "add", "origin", home.resolve("missing").toString());
         assertEquals(1, runAsLoginShell(script, home), "a failed fetch must fail the script");

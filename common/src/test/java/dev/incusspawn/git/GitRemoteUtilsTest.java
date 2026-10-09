@@ -129,6 +129,12 @@ class GitRemoteUtilsTest {
     }
 
     @Test
+    void matchingExistingRelativeGitRemotesDoesNotApplyTemplateTraversalRules() {
+        assertTrue(GitRemoteUtils.urlsMatch("../repo", "file:../repo"));
+        assertFalse(GitRemoteUtils.urlsMatch("../repo", "https://example.com/repo"));
+    }
+
+    @Test
     void matchWithAndWithoutGitSuffix() {
         assertTrue(GitRemoteUtils.urlsMatch(
                 "https://github.com/org/repo.git",

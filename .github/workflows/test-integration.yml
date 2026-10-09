@@ -680,6 +680,9 @@ jobs:
       - name: Test airgapped branches
         run: sg incus-admin -c "bash .github/scripts/test-airgap.sh"
 
+      - name: Test host repository paths
+        run: sg incus-admin -c "bash .github/scripts/test-host-repos.sh"
+
       - name: Test container
         run: |
           sg incus-admin -c "isx branch test-container --from tpl-minimal"

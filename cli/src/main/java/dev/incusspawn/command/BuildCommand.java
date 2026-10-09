@@ -193,6 +193,9 @@ public class BuildCommand extends BaseCommand {
     record ActiveBuild(String tempName, String canonicalName, MachineType machineType) {}
     private volatile ActiveBuild activeBuild;
 
+    /** Host state actually cloned, retained until build metadata is stamped. */
+    private final Map<String, String> builtHostRepoFingerprints = new java.util.concurrent.ConcurrentHashMap<>();
+
     /** Templates whose build failed in this invocation, so a later target built on them is skipped. */
     private final Set<String> failedInRun = new LinkedHashSet<>();
     /** Building several targets, whose run names every failure once, at its end. */
@@ -2230,7 +2233,7 @@ public class BuildCommand extends BaseCommand {
         incus.configSet(container, Metadata.BUILD_VERSION, info.version());
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
         incus.configSet(container, Metadata.DEFINITION_SHA,
-                imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader)));
+                imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader), builtHostRepoFingerprints));
         stampAccountIdentities(container, identityStamps);
     }
 
@@ -2661,7 +2664,9 @@ public class BuildCommand extends BaseCommand {
 
     /** Prepare and clone the repos without changing user checkouts. */
     void cloneRepos(Container container, ImageDef imageDef, Map<String, ImageDef> defs, MachineType machineType) {
-        new RepoCloner(incus).cloneRepos(container, imageDef, defs, machineType);
+        var cloner = new RepoCloner(incus);
+        cloner.cloneRepos(container, imageDef, defs, machineType);
+        builtHostRepoFingerprints.putAll(cloner.builtHostRepoFingerprints);
     }
 
     enum InstanceType {

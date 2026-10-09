@@ -107,7 +107,7 @@ class TemplateDetailViewTest {
             @Override public List<String> autoDeps(List<String> tools) {
                 return tools.contains("claude") ? List.of("node") : List.of();
             }
-            @Override public Path hostRepoMatch(String url) { return null; }
+            @Override public Path hostRepoMatch(ImageDef.RepoEntry repo) { return null; }
             @Override public boolean definitionChanged(String t) { return defChanged.contains(t); }
             @Override public boolean parentRebuilt(String t) { return false; }
             @Override public String overriddenSource(String t) { return overridden.get(t); }

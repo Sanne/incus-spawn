@@ -8,6 +8,7 @@ import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.git.GitCommandException;
 import dev.incusspawn.git.GitPreparation;
 import dev.incusspawn.git.HostRepoSources;
+import dev.incusspawn.git.HostRepoSource;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -40,6 +41,7 @@ class RepoCloner {
 
     private final IncusClient incus;
     private GitPreparation preparation;
+    final java.util.Map<String, String> builtHostRepoFingerprints = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<Integer, GitPreparation.Prepared> prepared = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<Integer, String> preparationTimings = new java.util.concurrent.ConcurrentHashMap<>();
     /** By repo: why its Git preparation failed, isx's words then Git's quoted, for a warning after the group. */
@@ -61,7 +63,11 @@ class RepoCloner {
 
     /** A preparation request, prepared repository, or shallow checkout, attached by the repo's worker. */
     record RepoReference(String deviceName, String containerPath, String source, String skipReason,
-                         GitPreparation.Request request, GitPreparation.Prepared prepared) {
+                         GitPreparation.Request request, GitPreparation.Prepared prepared, HostRepoSource.Snapshot hostSource) {
+        RepoReference(String deviceName, String containerPath, String source, String skipReason,
+                      GitPreparation.Request request, GitPreparation.Prepared prepared) {
+            this(deviceName, containerPath, source, skipReason, request, prepared, null);
+        }
         RepoReference(String deviceName, String containerPath, String source, String skipReason) {
             this(deviceName, containerPath, source, skipReason, null, null);
         }
@@ -245,7 +251,17 @@ class RepoCloner {
             for (int i = 0; i < repos.size(); i++) {
                 var repo = repos.get(i);
                 if (repo.sourceProblem() != null) throw new IncusException(repo.sourceProblem());
-                if (repo.isHostSource()) {
+                if (HostRepoSource.isHostOnly(repo.getUrl())) {
+                    if (repo.getBranch() != null) {
+                        throw new IllegalArgumentException("Host-only repositories use the host HEAD; remove 'branch' from " + repo.getUrl());
+                    }
+                    if (repo.getDepth() != null) {
+                        throw new IllegalArgumentException("Host-only repositories copy full history; remove 'depth' from " + repo.getUrl());
+                    }
+                    var snapshot = HostRepoSource.capture(repo);
+                    refs[i] = new RepoReference("ref-local-" + i, "/mnt/isx-local-repo-" + i,
+                            HostResourceSetup.translateForVm(snapshot.gitDirectory().toString()), null, null, null, snapshot);
+                } else if (repo.isHostSource()) {
                     if (projectLocal) throw new IncusException("project-local templates cannot prepare host repositories");
                     try {
                         var source = repo.hostSourcePath().toRealPath();
@@ -270,7 +286,7 @@ class RepoCloner {
                     // They must not PATCH the same device or remove each other's mount.
                     var r = refs[i];
                     refs[i] = new RepoReference(r.deviceName() + "-" + i, r.containerPath() + "-" + i,
-                            r.source(), r.skipReason(), r.request(), r.prepared());
+                            r.source(), r.skipReason(), r.request(), r.prepared(), r.hostSource());
                 }
             }
             if (!hostSources.isEmpty() || java.util.Arrays.stream(refs).anyMatch(r -> r != null && r.request() != null)) {
@@ -299,7 +315,7 @@ class RepoCloner {
                     planned = new String[0];
                 }
             }
-            // Only raw shallow checkouts expose host-private objects. Their gate includes planned
+            // Raw shallow checkouts and host-only Git directories expose host-private objects. Their gate includes planned
             // mounts, so a prime cannot race a shallow worker that has not attached its checkout yet.
             int rawReferences = (int) java.util.stream.IntStream.range(0, refs.length)
                     .filter(i -> !repos.get(i).isHostSource() && rawReference(refs[i])).count();
@@ -444,7 +460,7 @@ class RepoCloner {
         var reason = clone.usedReference() ? null
                 : clone.fallbackReason() != null ? clone.fallbackReason()
                 : ref != null ? ref.skipReason() : null;
-        String note = clone.usedReference()
+        String note = HostRepoSource.isHostOnly(repo.getUrl()) ? "from host HEAD" : clone.usedReference()
                 ? ref.prepared() == null ? "via host reference (shallow, depth " + repo.getDepth() + ")"
                     : "via " + ref.prepared().strategy()
                 : reason != null ? reason : repo.getDepth() != null ? "via remote (shallow, depth " + repo.getDepth() + ")" : null;
@@ -577,6 +593,24 @@ class RepoCloner {
     private CloneResult cloneOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
                                  AtomicReferenceArray<StepProgress> states, int idx) {
         try {
+            if (HostRepoSource.isHostOnly(repo.getUrl())) {
+                if (ref == null || !ref.hasDevice() || ref.hostSource() == null) {
+                    throw new IllegalStateException("Required host repository is not mounted: " + repo.getUrl()
+                            + (ref != null && ref.skipReason() != null ? ": " + ref.skipReason() : ""));
+                }
+                var snapshot = ref.hostSource();
+                var clone = container.shAsUser("agentuser", "set -eu\n" + awaitMount(ref.containerPath()) + "\n"
+                        + snapshot.cloneScript(ref.containerPath(), expandHome(repo.getPath())));
+                if (!clone.success()) {
+                    states.set(idx, StepProgress.failed(gitError(clone), combinedOutput(clone)));
+                    return CloneResult.FAILED;
+                }
+                if (!snapshot.fingerprint().equals(HostRepoSource.capture(repo).fingerprint())) {
+                    throw new IllegalStateException("Host repository changed while cloning; retry the build: " + repo.getUrl());
+                }
+                builtHostRepoFingerprints.put(repo.getUrl(), snapshot.fingerprint());
+                return new CloneResult(true, true, null);
+            }
             boolean usedReference = false;
             String fallbackReason = null;
 
