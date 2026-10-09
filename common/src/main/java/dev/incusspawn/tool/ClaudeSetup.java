@@ -209,6 +209,12 @@ public class ClaudeSetup implements ToolSetup {
         configureSettings(c, claude, resolvedParams);
     }
 
+    @Override
+    public void refreshInherited(Container c) {
+        syncGcloudStub(c, SpawnConfig.load().getClaude());
+        c.writeFile(LOGIN_AUTH_PATH, LOGIN_AUTH_SCRIPT);
+    }
+
     private void linkSkillsDir(Container c) {
         c.sh("mkdir -p /home/agentuser/.agents/skills /home/agentuser/.claude"
                 // Replace a pre-existing .claude/skills directory (from builds before the shared path)

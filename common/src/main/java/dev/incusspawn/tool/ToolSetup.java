@@ -278,4 +278,12 @@ public interface ToolSetup {
     default void reconfigure(Container container, java.util.Map<String, String> resolvedParams) {
         install(container, resolvedParams);
     }
+
+    /**
+     * Brings the guest files isx owns for this tool up to date in a child build that inherits the
+     * tool from an ancestor without installing or reconfiguring it, so a parent built by an older
+     * isx does not hand its children files this one writes differently (#1108). Each call rewrites
+     * them; a tool whose files never change keeps the default, which does nothing.
+     */
+    default void refreshInherited(Container container) {}
 }

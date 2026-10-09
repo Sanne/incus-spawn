@@ -107,6 +107,11 @@ public class CodexSetup implements ToolSetup {
         configureSettings(c, resolvedParams);
     }
 
+    @Override
+    public void refreshInherited(Container c) {
+        c.writeFile(LOGIN_AUTH_PATH, LOGIN_AUTH_SCRIPT);
+    }
+
     private void installBinary(Container c) {
         BuildOutput.stepStart("Installing Codex CLI...");
         NpmGlobalInstall.install(c, NPM_CLI);

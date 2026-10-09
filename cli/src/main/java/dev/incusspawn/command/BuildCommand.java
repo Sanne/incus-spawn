@@ -1219,7 +1219,7 @@ public class BuildCommand extends BaseCommand {
         removePackages(container, imageDef);
 
         var toolResolution = collectEffectiveTools(imageDef, defs);
-        syncInheritedGcloudStub(container, toolResolution);
+        refreshInheritedTools(container, toolResolution);
         enablePackageRepos(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
         installAllPackages(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
 
@@ -2386,12 +2386,13 @@ public class BuildCommand extends BaseCommand {
         ToolVerifier.verifyAll(container, checks);
     }
 
-    static void syncInheritedGcloudStub(Container container, ToolResolution toolResolution) {
+    /** Refreshes what isx owns of each tool this layer inherits without setting it up again. */
+    static void refreshInheritedTools(Container container, ToolResolution toolResolution) {
         var effectiveNames = toolResolution.effective().stream()
                 .map(ResolvedTool::name).collect(java.util.stream.Collectors.toSet());
         for (var tool : toolResolution.ancestors()) {
-            if (!effectiveNames.contains(tool.name()) && tool.setup() instanceof ClaudeSetup claudeSetup) {
-                claudeSetup.syncGcloudStub(container, SpawnConfig.load().getClaude());
+            if (!effectiveNames.contains(tool.name())) {
+                tool.setup().refreshInherited(container);
             }
         }
     }

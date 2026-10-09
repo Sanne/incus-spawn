@@ -14,6 +14,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.InstanceSubvolumes;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ClaudeSetup;
+import dev.incusspawn.tool.CodexSetup;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
@@ -2862,30 +2863,34 @@ class BuildCommandTest {
         assertTrue(ex.getMessage().contains("different parameters"));
     }
 
-    // --- syncInheritedGcloudStub ---
+    // --- refreshInheritedTools ---
 
     @Test
-    void syncInheritedGcloudStubCallsForInheritedClaude() {
+    void refreshInheritedToolsRewritesWhatInheritedClaudeAndCodexOwn() {
+        // A parent built before #1108 has neither script, and a child that only inherits the
+        // tools never runs their setup: without these its model calls present a stale token
         var claudeSetup = spy(new ClaudeSetup());
         doNothing().when(claudeSetup).syncGcloudStub(any(), any());
 
         var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
         var container = new Container(incus, "test");
 
         var ancestors = List.of(
-                new BuildCommand.ResolvedTool("claude", claudeSetup, java.util.Map.of()));
-        var effective = List.<BuildCommand.ResolvedTool>of();
-        var resolution = new BuildCommand.ToolResolution(effective, ancestors);
+                new BuildCommand.ResolvedTool("claude", claudeSetup, Map.of()),
+                new BuildCommand.ResolvedTool("codex", new CodexSetup(), Map.of()));
+        var resolution = new BuildCommand.ToolResolution(List.of(), ancestors);
 
-        BuildCommand.syncInheritedGcloudStub(container, resolution);
+        BuildCommand.refreshInheritedTools(container, resolution);
 
         verify(claudeSetup).syncGcloudStub(eq(container), any());
+        verify(incus).shellExec(eq("test"), eq("sh"), eq("-c"), contains("cat > '/etc/profile.d/isx-zz-claude-auth.sh'"));
+        verify(incus).shellExec(eq("test"), eq("sh"), eq("-c"), contains("cat > '/etc/profile.d/isx-zz-codex-auth.sh'"));
     }
 
     @Test
-    void syncInheritedGcloudStubSkipsWhenClaudeInEffective() {
+    void refreshInheritedToolsSkipsAToolTheLayerSetsUpItself() {
         var claudeSetup = spy(new ClaudeSetup());
-        doNothing().when(claudeSetup).syncGcloudStub(any(), any());
 
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
@@ -2895,13 +2900,14 @@ class BuildCommandTest {
         var effective = List.of(resolved);
         var resolution = new BuildCommand.ToolResolution(effective, ancestors);
 
-        BuildCommand.syncInheritedGcloudStub(container, resolution);
+        BuildCommand.refreshInheritedTools(container, resolution);
 
-        verify(claudeSetup, never()).syncGcloudStub(any(), any());
+        verify(claudeSetup, never()).refreshInherited(any());
+        verifyNoInteractions(incus);
     }
 
     @Test
-    void syncInheritedGcloudStubIgnoresNonClaudeAncestors() {
+    void refreshInheritedToolsLeavesAToolWithNothingToRefreshAlone() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
 
@@ -2911,7 +2917,7 @@ class BuildCommandTest {
         var effective = List.<BuildCommand.ResolvedTool>of();
         var resolution = new BuildCommand.ToolResolution(effective, ancestors);
 
-        BuildCommand.syncInheritedGcloudStub(container, resolution);
+        BuildCommand.refreshInheritedTools(container, resolution);
 
         verifyNoInteractions(incus);
     }
