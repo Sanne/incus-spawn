@@ -152,6 +152,7 @@ public class BuildCommand extends BaseCommand {
     private static final int MACOS_TUNNEL_BUDGET = 24;
     static final String REBUILDING_SUFFIX = "-rebuilding";
     private static final String INBOX_FAILURE_PATH = "/home/agentuser/inbox/BUILD_FAILURE.txt";
+    private static final String STEP_OUTPUT_PATH = "/home/agentuser/inbox/STEP_OUTPUT.txt";
 
     private int buildIndex;
     private int buildTotal;
@@ -1073,7 +1074,11 @@ public class BuildCommand extends BaseCommand {
         }
 
         var diagnostics = printBuildDiagnostics(buildName);
+        var stepOutput = readStepOutput(buildName);
         var report = errorLine + "\n\n" + diagnostics;
+        if (!stepOutput.isEmpty()) {
+            report += "\n" + stepOutput;
+        }
 
         // Update the host report with the full diagnostics. Write to a temp file and move so
         // a failure (e.g. disk full) after truncation cannot erase the initial error-only report.
@@ -1195,6 +1200,7 @@ public class BuildCommand extends BaseCommand {
         maskServices(container, imageDef);
         // Only this layer's tools: an ancestor's tool skills came in with the parent copy.
         installSkills(container, imageDef, defs, toolResolution.effective());
+        requireToolsReady(buildName, allTools);
         cloneRepos(container, imageDef, machineType);
         updateClaudeJsonTrust(container, imageDef);
         updateCodexTrust(container, imageDef);
@@ -1438,6 +1444,7 @@ public class BuildCommand extends BaseCommand {
             allTools.addAll(toolResolution.effective());
             maskServices(container, layer);
             installSkills(container, layer, defs, toolResolution.effective());
+            requireToolsReady(buildName, allTools);
             cloneRepos(container, layer, machineType);
             updateClaudeJsonTrust(container, layer);
             updateCodexTrust(container, layer);
@@ -2341,6 +2348,29 @@ public class BuildCommand extends BaseCommand {
                 .filter(check -> check.command() != null)
                 .toList();
         ToolVerifier.verifyAll(container, checks);
+    }
+
+    /**
+     * Check that every tool with a {@code ready} command is still running. A service that
+     * crashed between {@link #runToolSetup} and the prime would doom the build to a confusing
+     * timeout; catching it here reports the real cause.
+     *
+     * <p>Polls each ready command for up to 15 seconds, matching the ready-check pattern
+     * in {@link dev.incusspawn.lifecycle.InstanceLifecycle#awaitToolReadiness}.
+     */
+    private void requireToolsReady(String buildName, List<ResolvedTool> allTools) {
+        for (var tool : allTools) {
+            if (!(tool.setup() instanceof YamlToolSetup yaml)) continue;
+            var ready = yaml.toolDef().getReady();
+            if (ready == null || ready.isBlank()) continue;
+            if (incus.pollUntilReady(buildName, 15, "sh", "-c", ready)) continue;
+            var result = incus.shellExec(buildName, "sh", "-c", ready);
+            var output = result.stderr().isBlank() ? result.stdout().strip() : result.stderr().strip();
+            throw new IncusException("Tool '" + tool.name() + "' is not ready before priming"
+                    + " (" + ready + " exited " + result.exitCode() + ")."
+                    + " The service may have crashed after setup."
+                    + (output.isEmpty() ? "" : "\n\nOutput:\n" + output));
+        }
     }
 
     static void syncInheritedGcloudStub(Container container, ToolResolution toolResolution) {
@@ -3618,7 +3648,12 @@ public class BuildCommand extends BaseCommand {
                 }
             }
 
-            assertNoStepFailures(repos, states, "prepare");
+            try {
+                assertNoStepFailures(repos, states, "prepare");
+            } catch (IncusException e) {
+                saveStepOutput(container, repos, states, "prepare");
+                throw e;
+            }
         }
     }
 
@@ -3845,6 +3880,40 @@ public class BuildCommand extends BaseCommand {
         if (!errors.isEmpty()) {
             throw new IncusException("Failed to " + verb + " " + errors.size()
                     + " repo(s):\n  " + String.join("\n  ", errors));
+        }
+    }
+
+    /**
+     * Write the full output of failed steps to a file inside the container, so
+     * {@link #reportBuildFailure} can include it in the persisted failure report.
+     */
+    private static void saveStepOutput(Container container, List<ImageDef.RepoEntry> repos,
+                                       AtomicReferenceArray<StepProgress> states, String verb) {
+        var sb = new StringBuilder();
+        for (int i = 0; i < repos.size(); i++) {
+            var progress = states.get(i);
+            if (progress == null || progress.log() == null || progress.log().isBlank()) continue;
+            var name = repoDisplayName(repos.get(i));
+            sb.append("─── ").append(verb).append(" output: ").append(name).append(" ───\n");
+            sb.append(progress.log().strip()).append('\n');
+            sb.append("─── end ").append(verb).append(" output: ").append(name).append(" ───\n\n");
+        }
+        if (sb.isEmpty()) return;
+        try {
+            container.writeFile(STEP_OUTPUT_PATH, sb.toString());
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * Read step output saved by {@link #saveStepOutput}, if any.  Best-effort: returns
+     * an empty string when the file does not exist or the exec channel is wedged.
+     */
+    private String readStepOutput(String buildName) {
+        try {
+            var result = incus.shellExec(buildName, "cat", STEP_OUTPUT_PATH);
+            return result.success() ? result.stdout() : "";
+        } catch (Exception ignored) {
+            return "";
         }
     }
 
