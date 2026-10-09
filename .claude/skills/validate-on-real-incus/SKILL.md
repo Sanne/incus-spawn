@@ -64,7 +64,15 @@ What it cannot fix:
   `incus launch images:fedora/43 <n>`, then push `~/.config/incus-spawn/ca.crt` to
   `/etc/pki/ca-trust/source/anchors/` and run `update-ca-trust`. Its traffic takes the same
   bridge DNS -> redirect -> proxy path as a branch. The proxy does not know its address, so it
-  gets the default accounts.
+  gets the default accounts. When the change is in the build itself, a measurement-only patch
+  that drops both `incus.deviceAdd(buildName, "tun", ...)` calls in `BuildCommand` lets
+  templates build here; apply it to both sides identically (see Pitfalls) and never commit it.
+- **Branches do not get a disk size.** Every branch sets its root disk's `size`, which Incus turns
+  into a btrfs qgroup limit, and the nested kernel refuses quotas (`btrfs quota enable` gives
+  EPERM), so every `isx branch` fails with `btrfs qgroup limit ... invalid qgroupid`. For a
+  change that does not touch disk limits, a measurement-only patch dropping
+  `update.device("root", "size", settings.disk())` in `InstanceLifecycle.configureBranch` gets
+  past it, under the same rules; anything about `--disk` needs a non-nested host.
 - **The outer proxy sits between this one and the real upstream.** It intercepts the same
   domains and speaks only HTTP/1.1. To reach the real host, run the proxy binary directly with
   the benchmark override: `ISX_BENCH_UPSTREAM=<host>=<ip>:443 isx-proxy --gateway-ip <gw>`,
@@ -74,8 +82,9 @@ What it cannot fix:
 
 ## 3. Exercise the change
 
-Branch with `--no-start`, then `incus start` it. A branch that starts also attaches a shell, and
-without a TTY that loops on "Connection lost -- reconnecting" until killed. Cover every path the
+A branch that starts tries to attach a shell; without a TTY it says "No terminal, so no shell
+opened" and exits, so `isx branch` is safe to script. Use `--no-start` and `incus start` when the
+change is about what happens on a later start rather than at branch time. Cover every path the
 change touches, typically:
 
 - plain branch; `--cpu/--memory/--disk`; `--proxy-only`; `--airgap`
