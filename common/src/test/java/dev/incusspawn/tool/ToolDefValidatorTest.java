@@ -394,4 +394,31 @@ class ToolDefValidatorTest {
         assertTrue(errors.stream().anyMatch(e -> e.contains("prefix of ACME_TOKEN")), errors.toString());
         assertTrue(errors.stream().anyMatch(e -> e.contains("'ACME TOKEN' is not a variable name")), errors.toString());
     }
+
+    @Test
+    void aPlaceholderTheToolDoesNotExportIsAnError(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: my-tool
+                env:
+                  - name: ACME_TOKEN
+                    value: acme_placeholder
+                proxy:
+                  config-namespace: acme
+                  placeholders:
+                    - env: ACME_TOKN
+                      prefix: acme_
+                  configuration:
+                    token:
+                      config-path: token
+                      description: Acme token
+                      secret: true
+                  auth:
+                    - domains: [api.acme.example]
+                      type: bearer
+                      token: "${token}"
+                """);
+        var errors = ToolDefValidator.validate(file).errors();
+        assertTrue(errors.stream().anyMatch(e -> e.contains("ACME_TOKN") && e.contains("env:")), errors.toString());
+    }
 }

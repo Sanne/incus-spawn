@@ -129,12 +129,14 @@ public final class ProofToken {
 
     /**
      * The placeholders of the tools the proxy serves ({@link ToolProxyResolver#proxyToolSetups}):
-     * feature-gated tools only when enabled, and never a project-local tool's proxy entry.
-     * Reads tool definitions from disk.
+     * feature-gated tools only when enabled, and never a project's own tool definitions -- the
+     * directory isx runs from must not change what a start delivers, and the proxy never sees
+     * them. Reads tool definitions from disk.
      */
     public static List<Placeholder> declared() {
         var config = SpawnConfig.load();
-        return declaredBy(ToolProxyResolver.proxyToolSetups(config, new ToolDefLoader(config.getSearchPaths())).values());
+        return declaredBy(ToolProxyResolver.proxyToolSetups(config,
+                ToolDefLoader.withoutProjectTools(config.getSearchPaths())).values());
     }
 
     /**

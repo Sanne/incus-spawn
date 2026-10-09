@@ -68,9 +68,14 @@ class InstanceSecretRebootTest {
     }
 
     private static FakeIncusDaemon runningContainer(String bootedAt, String stampedBoot) {
+        return runningContainerStamped(bootedAt, stampedBoot == null ? null : InstanceLifecycle.secretBootStamp(stampedBoot));
+    }
+
+    /** A running container whose boot stamp is {@code stamp} exactly, as whichever isx wrote it. */
+    private static FakeIncusDaemon runningContainerStamped(String bootedAt, String stamp) {
         var config = new HashMap<String, String>();
         config.put(Metadata.INSTANCE_SECRET_SHA256, InstanceSecret.sha256(InstanceSecret.generate()));
-        if (stampedBoot != null) config.put(Metadata.INSTANCE_SECRET_BOOT, stampedBoot);
+        if (stamp != null) config.put(Metadata.INSTANCE_SECRET_BOOT, stamp);
         return new FakeIncusDaemon().instance(NAME, "container", "Running", config).lastUsedAt(NAME, bootedAt);
     }
 
@@ -84,7 +89,7 @@ class InstanceSecretRebootTest {
 
         var recorded = config(daemon, Metadata.INSTANCE_SECRET_SHA256);
         assertNotEquals(previous, recorded, "the reboot emptied /run: the box needs a new secret");
-        assertEquals(REBOOTED, config(daemon, Metadata.INSTANCE_SECRET_BOOT), "recorded with the boot it went to");
+        assertEquals(InstanceLifecycle.secretBootStamp(REBOOTED), config(daemon, Metadata.INSTANCE_SECRET_BOOT), "recorded with the boot it went to");
         assertEquals(1, secrets.size(), daemon.requests()::toString);
         assertEquals(recorded, InstanceSecret.sha256(secrets.getFirst()));
     }
@@ -126,7 +131,7 @@ class InstanceSecretRebootTest {
         InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {});
 
         assertEquals(1, secrets.size(), "once per boot, not once per shell");
-        assertEquals(STARTED, config(daemon, Metadata.INSTANCE_SECRET_BOOT));
+        assertEquals(InstanceLifecycle.secretBootStamp(STARTED), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
     }
 
     @Test
@@ -140,7 +145,7 @@ class InstanceSecretRebootTest {
 
         var bootedAt = daemon.instance(NAME).path("last_used_at").asText("");
         assertFalse(bootedAt.isEmpty());
-        assertEquals(bootedAt, config(daemon, Metadata.INSTANCE_SECRET_BOOT));
+        assertEquals(InstanceLifecycle.secretBootStamp(bootedAt), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
 
         // So the shell that follows finds nothing to do
         daemon.clearRequests();
@@ -160,7 +165,7 @@ class InstanceSecretRebootTest {
 
         var bootedAt = daemon.instance(NAME).path("last_used_at").asText("");
         assertFalse(bootedAt.isEmpty());
-        assertEquals(bootedAt, config(daemon, Metadata.INSTANCE_SECRET_BOOT));
+        assertEquals(InstanceLifecycle.secretBootStamp(bootedAt), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
     }
 
     @Test
@@ -181,7 +186,7 @@ class InstanceSecretRebootTest {
 
         var bootedAt = daemon.instance(NAME).path("last_used_at").asText("");
         assertNotEquals(STARTED, bootedAt);
-        assertEquals(bootedAt, config(daemon, Metadata.INSTANCE_SECRET_BOOT));
+        assertEquals(InstanceLifecycle.secretBootStamp(bootedAt), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
     }
 
     /**
@@ -242,5 +247,34 @@ class InstanceSecretRebootTest {
         var incus = spy(daemon.client());
         doReturn(new IncusClient.ExecResult(0, stdout, "")).when(incus).shellExec(eq(NAME), any(String[].class));
         return incus;
+    }
+
+    /**
+     * A container an isx from before proof tokens started holds its secret but none of them
+     * (#1106): its boot stamp is the bare boot, so the next shell gives it a secret with its
+     * proofs -- once, and from the instance it already read.
+     */
+    @Test
+    void aContainerStartedBeforeProofTokensGetsThemAtTheNextShell() {
+        // What isx wrote before proof tokens: the bare boot
+        var daemon = runningContainerStamped(STARTED, STARTED);
+
+        var envs = new ArrayList<Map<String, String>>();
+        var incus = spy(daemon.client());
+        doAnswer(call -> {
+            envs.add(call.getArgument(1));
+            return new IncusClient.ExecResult(0, "", "");
+        }).when(incus).shellExec(eq(NAME), anyMap(), any(String[].class));
+        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {});
+
+        assertEquals(1, envs.size(), daemon.requests()::toString);
+        var secret = envs.getFirst().get(InstanceSecret.DELIVERY_ENV);
+        assertTrue(envs.getFirst().get(InstanceSecret.PROOFS_DELIVERY_ENV)
+                .contains(dev.incusspawn.proxy.ProofToken.derive(secret, "github")), envs.getFirst().toString());
+        assertEquals(InstanceLifecycle.secretBootStamp(STARTED), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
+
+        envs.clear();
+        InstanceLifecycle.ensureReady(incus, NAME, daemon.instance(NAME), MachineType.CONTAINER, msg -> {});
+        assertEquals(List.of(), envs, "delivered once: the next shell costs nothing again");
     }
 }

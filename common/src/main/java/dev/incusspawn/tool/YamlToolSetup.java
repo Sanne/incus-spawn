@@ -90,6 +90,42 @@ public class YamlToolSetup implements ToolSetup {
                 .toList();
     }
 
+    /**
+     * Only the declared placeholders this tool sets through {@code env:}: a start replaces a
+     * variable the build set, so any other name could only be a typo, which would silently keep
+     * the static placeholder -- or another tool's variable ({@code PATH}, {@code LD_PRELOAD}),
+     * which a proof would clobber in every login shell. {@link ToolDefValidator} reports either.
+     */
+    @Override
+    public java.util.List<dev.incusspawn.proxy.ProofToken.Placeholder> placeholders() {
+        var exported = new java.util.HashSet<>(placeholderCandidates(def));
+        var own = new java.util.ArrayList<dev.incusspawn.proxy.ProofToken.Placeholder>();
+        for (var placeholder : declaredPlaceholders()) {
+            if (exported.contains(placeholder.env())) {
+                own.add(placeholder);
+            } else {
+                dev.incusspawn.Warnings.warn("tool '" + name() + "' declares " + placeholder.env()
+                        + " as a credential placeholder but does not export it; it gets no proof token");
+            }
+        }
+        return own;
+    }
+
+    /**
+     * The variables {@code def} sets outright -- a placeholder's value is all the variable holds,
+     * never a part prepended or appended to one, as {@code PATH} is.
+     */
+    static java.util.List<String> placeholderCandidates(ToolDef def) {
+        return def.getEnv().stream()
+                .filter(e -> e.getStrategy() == EnvEntry.Strategy.SET || e.getStrategy() == EnvEntry.Strategy.SET_IF_UNSET)
+                .map(EnvEntry::getName).toList();
+    }
+
+    /** Every placeholder the {@code proxy:} entry declares, exported or not. */
+    java.util.List<dev.incusspawn.proxy.ProofToken.Placeholder> declaredPlaceholders() {
+        return ToolSetup.super.placeholders();
+    }
+
     @Override
     public void install(Container container, java.util.Map<String, String> resolvedParams) {
         var label = def.getDescription().isEmpty() ? def.getName() : def.getDescription();

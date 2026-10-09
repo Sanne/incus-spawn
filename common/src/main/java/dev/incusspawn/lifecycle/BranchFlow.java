@@ -172,8 +172,7 @@ public final class BranchFlow {
      */
     public record Preflight(Request request, Map<String, ImageDef> defs,
                             Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins,
-                            JsonNode sourceInstance, String template,
-                            List<ProofToken.Placeholder> placeholders) {}
+                            JsonNode sourceInstance, String template) {}
 
     /** An account selection and who chose each pin in it. */
     /** @param template the leaf template the source was built from ({@link Inherited#template}) */
@@ -254,7 +253,7 @@ public final class BranchFlow {
             throw new BranchException(e.getMessage());
         }
         return new Preflight(req, defs, accounts.accounts(), accounts.origins(), sourceInstance,
-                accounts.inherited().template(), ProofToken.declaredBy(served.values()));
+                accounts.inherited().template());
     }
 
     /**
@@ -269,6 +268,9 @@ public final class BranchFlow {
         var networkMode = req.networkMode();
 
         BuildOutput.branchHeader(name, source);
+        // Read while the copy runs, as every start does: the tools preflight loaded may include
+        // the current directory's own, which must not decide what the branch is given
+        var placeholders = req.start() ? ProofToken.declaredInBackground() : null;
 
         // The source as preflight read it: the copy plan, its machine type and every default the request leaves open
         var sourceInstance = preflight.sourceInstance();
@@ -350,7 +352,7 @@ public final class BranchFlow {
 
         // The grant is the request's own: a copy never carries its source's (configureBranch)
         InstanceLifecycle.setupRuntime(incus, name, networkMode, prefetched, secret,
-                Metadata.isMcpCaller(req.extraConfig()), preflight.placeholders());
+                Metadata.isMcpCaller(req.extraConfig()), placeholders.join());
         // Or the first shell would take this boot for one isx did not start, and replace its secret
         var booted = InstanceLifecycle.recordSecretBoot(incus, name, machineType);
 

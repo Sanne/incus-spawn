@@ -165,10 +165,14 @@ public class ToolDefValidator {
                 }
             }
 
-            for (var placeholder : new YamlToolSetup(def).placeholders()) {
+            var exported = YamlToolSetup.placeholderCandidates(def);
+            for (var placeholder : new YamlToolSetup(def).declaredPlaceholders()) {
                 var problem = placeholder.problem();
                 if (!problem.isEmpty()) {
                     errors.add("placeholder in proxy for '" + def.getName() + "': " + problem);
+                } else if (!exported.contains(placeholder.env())) {
+                    errors.add("placeholder " + placeholder.env() + " in proxy for '" + def.getName()
+                            + "' is not a variable its env: entries set -- a start only fills one the tool sets outright");
                 }
             }
         }

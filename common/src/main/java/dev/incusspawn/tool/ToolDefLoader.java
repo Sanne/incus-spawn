@@ -83,6 +83,17 @@ public class ToolDefLoader {
                 .toList();
     }
 
+    /**
+     * A loader over {@code searchPaths} that never reads a project's {@code .incus-spawn/tools/},
+     * whatever directory isx runs from: what the proxy sees, which is what a start must deliver
+     * for -- a cloned repository must not change it (#765).
+     */
+    public static ToolDefLoader withoutProjectTools(List<String> searchPaths) {
+        var loader = new ToolDefLoader(searchPaths);
+        loader.projectToolsDir = null;
+        return loader;
+    }
+
     /** Override the project tools directory (for testing). */
     void setProjectToolsDir(Path dir) {
         this.projectToolsDir = dir;
@@ -137,6 +148,7 @@ public class ToolDefLoader {
      * These tools are CWD-dependent and invisible to the proxy daemon.
      */
     public Set<String> projectLocalToolNames() {
+        if (projectToolsDir == null) return Set.of();
         var absProjectDir = projectToolsDir.toAbsolutePath().normalize();
         var result = new HashSet<String>();
         var layered = load();
@@ -194,7 +206,7 @@ public class ToolDefLoader {
             loadFromDirectory(userToolsDir());
             var paths = searchPaths != null ? searchPaths : SpawnConfig.load().getSearchPaths();
             searchPathToolDirs(paths).forEach(this::loadFromDirectory);
-            loadFromDirectory(projectToolsDir);
+            if (projectToolsDir != null) loadFromDirectory(projectToolsDir);
             warnings.forEach(Warnings::warn);
         }
         return defs;

@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /** The proof token each credential placeholder carries (#1106): what it is, and who declares it. */
 class ProofTokenTest {
@@ -86,10 +87,21 @@ class ProofTokenTest {
     void aYamlToolDeclaresItsPlaceholdersOnItsProxyEntry() throws Exception {
         var def = ToolDef.loadFromStream(new java.io.ByteArrayInputStream("""
                 name: acme
+                env:
+                  - name: ACME_TOKEN
+                    value: acme_placeholder
+                  - name: PATH
+                    value: /opt/acme/bin
+                    strategy: prepend
+                    separator: ":"
                 proxy:
                   config-namespace: acme
                   placeholders:
                     - env: ACME_TOKEN
+                      prefix: acme_
+                    - env: LD_PRELOAD
+                      prefix: acme_
+                    - env: PATH
                       prefix: acme_
                   configuration:
                     token:
@@ -101,7 +113,8 @@ class ProofTokenTest {
                       token: "${token}"
                 """.getBytes()));
         assertEquals(List.of(new ProofToken.Placeholder("ACME_TOKEN", "acme_", "acme")),
-                new YamlToolSetup(def).placeholders());
+                new YamlToolSetup(def).placeholders(),
+                "only a variable the tool exports: a proof must never clobber another one");
     }
 
     @Test
@@ -140,6 +153,36 @@ class ProofTokenTest {
         // and Vertex's, which a build only exports for a Vertex account (#1108)
         assertTrue(declared.containsAll(List.of("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN",
                 "ISX_VERTEX_ACCESS_TOKEN")), declared.toString());
+    }
+
+    /**
+     * A cloned repository's own tool definitions must not change what a start delivers (#765):
+     * the proxy never reads them, so a project {@code gh.yaml} that shadows the built-in would
+     * otherwise leave {@code GH_TOKEN} without a proof whenever isx runs from that repository.
+     */
+    @Test
+    @ExtendWith(TempHome.class)
+    void aProjectsOwnToolsNeverChangeWhatAStartDelivers() throws Exception {
+        var project = java.nio.file.Path.of(".incus-spawn");
+        assumeFalse(java.nio.file.Files.exists(project), "the working directory is already a project");
+        try {
+            java.nio.file.Files.createDirectories(project.resolve("tools"));
+            java.nio.file.Files.writeString(project.resolve("tools/gh.yaml"), """
+                    name: gh
+                    description: a repository's own gh, with no proxy entry
+                    """);
+            assertTrue(new ToolDefLoader().projectLocalToolNames().contains("gh"),
+                    "the fixture shadows the built-in gh for a loader that reads the project");
+
+            var declared = ProofToken.declared().stream().map(ProofToken.Placeholder::env).toList();
+            assertTrue(declared.contains("GH_TOKEN"), declared.toString());
+        } finally {
+            try (var walk = java.nio.file.Files.walk(project)) {
+                for (var path : walk.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                    java.nio.file.Files.deleteIfExists(path);
+                }
+            }
+        }
     }
 
     private static ToolSetup tool(String name, ProofToken.Placeholder... placeholders) {

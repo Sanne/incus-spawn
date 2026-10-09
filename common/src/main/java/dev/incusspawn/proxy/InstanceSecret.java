@@ -155,11 +155,14 @@ public final class InstanceSecret {
 
     /**
      * Shell that prints {@link #MISSING} when the guest holds no secret, as after a reboot isx
-     * did not do, for a probe that already runs in the guest to ask on the way. Silent when
-     * {@code /run} is no tmpfs: {@link #GUEST_SCRIPT} would not write one there, so asking for
-     * a new secret on every probe could not help.
+     * did not do, for a probe that already runs in the guest to ask on the way -- or holds one
+     * without its proof tokens ({@link #PROOFS_PATH}): given by an isx that predates them, or a
+     * delivery whose proofs write failed. An empty proofs file counts as delivered: no tool
+     * declared any. Silent when {@code /run} is no tmpfs: {@link #GUEST_SCRIPT} would not write
+     * there, so asking for a new secret on every probe could not help.
      */
-    public static final String GUEST_CHECK = RUN_IS_TMPFS + " && ! [ -s " + GUEST_PATH + " ] && echo " + MISSING + "; true";
+    public static final String GUEST_CHECK = RUN_IS_TMPFS + " && { ! [ -s " + GUEST_PATH + " ] || ! [ -e "
+            + PROOFS_PATH + " ]; } && echo " + MISSING + "; true";
 
     /** Whether the output of a probe running {@link #GUEST_CHECK} says the guest holds no secret. */
     public static boolean missingIn(String stdout) {

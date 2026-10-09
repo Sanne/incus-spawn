@@ -656,7 +656,7 @@ public final class InstanceLifecycle {
             // Every container reboot is a start: the instance already read says which boot it is
             var bootedAt = bootOf(instance);
             if (!bootedAt.isEmpty()
-                    && !bootedAt.equals(instance.path("config").path(Metadata.INSTANCE_SECRET_BOOT).asText(""))) {
+                    && !secretBootStamp(bootedAt).equals(instance.path("config").path(Metadata.INSTANCE_SECRET_BOOT).asText(""))) {
                 giveSecretToThisBoot(incus, name, bootedAt, Metadata.isMcpCaller(instance), say);
             }
         }
@@ -738,6 +738,17 @@ public final class InstanceLifecycle {
         return secret;
     }
 
+    /**
+     * What {@link Metadata#INSTANCE_SECRET_BOOT} records for a delivery to boot {@code bootedAt}:
+     * the boot, and that the delivery carried proof tokens (#1106). A stamp written by an isx
+     * that predates them is the bare boot, so it no longer matches, and the next shell into a
+     * container that isx started then gives it a new secret with its proofs -- once, from the
+     * instance it already read.
+     */
+    static String secretBootStamp(String bootedAt) {
+        return bootedAt + " proofs";
+    }
+
     /** When Incus last started {@code instance} -- on every start, a reboot included -- or "". */
     private static String bootOf(JsonNode instance) {
         return instance.path("last_used_at").asText("");
@@ -763,7 +774,7 @@ public final class InstanceLifecycle {
             var instance = incus.instanceMetadataOrThrow(name);
             if (instance == null) return null;
             var bootedAt = bootOf(instance);
-            if (!bootedAt.isEmpty()) incus.configSet(name, Metadata.INSTANCE_SECRET_BOOT, bootedAt);
+            if (!bootedAt.isEmpty()) incus.configSet(name, Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(bootedAt));
             return instance;
         } catch (RuntimeException e) {
             // The next ensureReady sees an unrecorded boot
@@ -783,7 +794,7 @@ public final class InstanceLifecycle {
         try {
             var placeholders = ProofToken.declaredInBackground();
             var secret = rotateInstanceSecret(incus, name,
-                    bootedAt == null ? Map.of() : Map.of(Metadata.INSTANCE_SECRET_BOOT, bootedAt));
+                    bootedAt == null ? Map.of() : Map.of(Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(bootedAt)));
             // GUEST_SCRIPT never fails, so the same exec asks whether the secret is now there:
             // a write it skipped would otherwise give a VM a new secret on every shell, silently
             var delivery = incus.shellExec(name, InstanceSecret.guestEnv(secret, mcpCaller, placeholders.join()), "sh", "-c",

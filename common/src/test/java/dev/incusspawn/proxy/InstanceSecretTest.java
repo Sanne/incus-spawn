@@ -151,4 +151,30 @@ class InstanceSecretTest {
         pb.environment().putAll(InstanceSecret.guestEnv(secret, false, PLACEHOLDERS));
         return pb.start();
     }
+
+    /**
+     * The probe a VM's shell already runs asks for a new secret when the guest holds one without
+     * its proofs (#1106): given by an isx that predates them, or a delivery whose proofs write
+     * failed. An empty proofs file is a delivery in which no tool declared any.
+     */
+    @Test
+    void theGuestCheckAsksAgainForASecretWithoutItsProofs(@TempDir Path root) throws Exception {
+        var check = InstanceSecret.GUEST_CHECK
+                .replace("/run/isx", root + "/run/isx")
+                .replace("/proc/mounts", root + "/mounts");
+        Files.writeString(root.resolve("mounts"), "tmpfs /run tmpfs rw 0 0\n");
+        Files.createDirectories(root.resolve("run/isx"));
+        Files.writeString(root.resolve("run/isx/instance-secret"), InstanceSecret.generate() + "\n");
+
+        assertTrue(InstanceSecret.missingIn(output(check)), "a secret with no proofs beside it");
+        Files.writeString(root.resolve("run/isx/proof-tokens"), "");
+        assertFalse(InstanceSecret.missingIn(output(check)), "an empty proofs file was still delivered");
+    }
+
+    private static String output(String script) throws Exception {
+        var process = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true).start();
+        var out = new String(process.getInputStream().readAllBytes());
+        assertEquals(0, process.waitFor());
+        return out;
+    }
 }
