@@ -62,24 +62,27 @@ assert "rootful podman.socket is not enabled" \
 
 echo ""
 echo "[2] Short image names (short-names=permissive)"
-# Pull using a short name -- without permissive mode this would prompt
-echo "  Pulling alpine (short name, with retries)..."
-alpine_pulled=false
+# The image must have no alias in Fedora's shortnames.conf: alpine and postgres
+# do, so they resolve without a prompt under enforcing too and would not test
+# the parameter. Under enforcing this pull fails ("cannot prompt without a TTY").
+SHORT_NAME_IMAGE="testcontainers/ryuk:0.11.0"
+echo "  Pulling ${SHORT_NAME_IMAGE} (unaliased short name, with retries)..."
+short_pulled=false
 for attempt in 1 2 3; do
-    if su -l agentuser -c 'podman pull alpine' 2>&1; then
-        alpine_pulled=true
+    if su -l agentuser -c "podman pull ${SHORT_NAME_IMAGE}" </dev/null 2>&1; then
+        short_pulled=true
         break
     fi
     echo "  Pull attempt $attempt failed, retrying..."
     sleep 2
 done
-if $alpine_pulled; then
-    assert_eq "podman run with short name" "hello" \
-        su -l agentuser -c "podman run --rm alpine echo hello"
+if $short_pulled; then
+    assert "unaliased short name resolved to docker.io" \
+        su -l agentuser -c "podman image exists docker.io/${SHORT_NAME_IMAGE}"
 else
-    echo "  FAIL: podman pull alpine (short name) failed after 3 attempts"
+    echo "  FAIL: podman pull ${SHORT_NAME_IMAGE} (short name) failed after 3 attempts"
     FAIL=$((FAIL + 1))
-    ERRORS="${ERRORS}  - podman pull alpine (short name) failed\n"
+    ERRORS="${ERRORS}  - podman pull ${SHORT_NAME_IMAGE} (short name) failed\n"
 fi
 
 echo ""
