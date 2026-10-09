@@ -300,6 +300,8 @@ public final class AccountSelection {
      * an account would bake into and whose tool can re-derive is {@code unverified}, stamped or
      * not. Only once the instance is checked does it cost a guest exec, and only for such
      * instances, and only while an account is configured.
+     *
+     * <p>An airgapped instance has nothing to reconcile: it has no proxy to re-derive through.
      */
     public static IdentityReconcile identityReconcile(SpawnConfig config, IncusClient incus,
                                                       String instance, Map<String, ToolSetup> knownSetups) {
@@ -309,6 +311,9 @@ public final class AccountSelection {
         if (metadata == null) {
             throw new dev.incusspawn.incus.IncusException("Failed to read config from " + instance);
         }
+        // No proxy to re-derive through: nothing an airgapped instance's reconcile could do
+        // but wait for an address it never gets (BranchFlow skips it for the same reason).
+        if (NetworkMode.isAirgapped(metadata)) return new IdentityReconcile(stale, unverified);
         var baked = IncusClient.configByPrefix(metadata, Metadata.ACCOUNT_IDENTITY_PREFIX);
         var verified = metadata.path("config").has(Metadata.ACCOUNT_IDENTITY_VERIFIED);
         if (baked.isEmpty() && verified) return new IdentityReconcile(stale, unverified);
@@ -317,10 +322,9 @@ public final class AccountSelection {
         bakedIdentities(config, effectiveSelection(selection, setups), setups)
                 .forEach((namespace, identity) -> {
                     var setup = setups.get(namespace);
-                    if (!canRebake(setup)) return;
                     if (needsRederive(setup, baked.get(namespace), identity)) {
                         stale.put(namespace, AccountResolver.effectiveAccount(config, namespace, selection.get(namespace)));
-                    } else if (!verified) {
+                    } else if (!verified && canRebake(setup)) {
                         unverified.put(namespace, AccountResolver.effectiveAccount(config, namespace, selection.get(namespace)));
                     }
                 });
@@ -622,14 +626,21 @@ public final class AccountSelection {
     public static java.util.Set<String> templateNamespaces(ImageDef template, Map<String, ImageDef> defs,
                                                           java.util.function.Function<String, ToolSetup> tools) {
         var namespaces = new java.util.LinkedHashSet<String>();
-        if (template == null) return namespaces;
-        for (var layer : ImageDef.chain(template, defs)) {
-            for (var ref : layer.getTools()) {
-                var setup = tools.apply(ref.getName());
-                if (setup != null) namespaces.addAll(setup.credentialNamespaces());
-            }
+        for (var name : chainToolNames(template, defs)) {
+            var setup = tools.apply(name);
+            if (setup != null) namespaces.addAll(setup.credentialNamespaces());
         }
         return namespaces;
+    }
+
+    /** The tools a template's chain lists, root first, each once. */
+    private static java.util.Set<String> chainToolNames(ImageDef template, Map<String, ImageDef> defs) {
+        var names = new java.util.LinkedHashSet<String>();
+        if (template == null) return names;
+        for (var layer : ImageDef.chain(template, defs)) {
+            for (var ref : layer.getTools()) names.add(ref.getName());
+        }
+        return names;
     }
 
     /**
@@ -647,12 +658,9 @@ public final class AccountSelection {
                                                               Map<String, ToolSetup> allTools,
                                                               Map<String, ToolSetup> setups) {
         var namespaces = new java.util.LinkedHashSet<String>();
-        if (template == null) return namespaces;
         // With what each tool requires: a tool that pulls gh in installs it as surely as a list.
         var installed = new java.util.LinkedHashSet<String>();
-        for (var layer : ImageDef.chain(template, defs)) {
-            for (var ref : layer.getTools()) ToolSetup.addWithRequires(ref.getName(), allTools, installed);
-        }
+        for (var name : chainToolNames(template, defs)) ToolSetup.addWithRequires(name, allTools, installed);
         for (var name : installed) {
             var setup = allTools.get(name);
             if (!canRebake(setup) || setup.proxy() == null) continue;

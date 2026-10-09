@@ -23,4 +23,10 @@ public enum NetworkMode {
     public String label() {
         return label;
     }
+
+    /** Whether an instance, as Incus returns it, was branched {@link #AIRGAP airgapped}. */
+    public static boolean isAirgapped(com.fasterxml.jackson.databind.JsonNode instance) {
+        return AIRGAP.name().equals(
+                instance.path("config").path(dev.incusspawn.incus.Metadata.NETWORK_MODE).asText(""));
+    }
 }

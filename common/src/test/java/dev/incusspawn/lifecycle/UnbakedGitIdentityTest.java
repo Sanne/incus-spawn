@@ -25,7 +25,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 
 /**
  * A template built while no GitHub token was configured has gh's {@code .gitconfig} defaults
@@ -269,6 +271,49 @@ class UnbakedGitIdentityTest {
         assertEquals(1, gh.checks);
     }
 
+    /** Only re-deriving needs the network; asking the guest does not, so no wait for an address. */
+    @Test
+    void anUnverifiedInstanceWithItsIdentityIsMarkedWithoutWaitingForAnAddress() throws Exception {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of());
+        var incus = addresslessClient(daemon);
+        var gh = new RecordingGh();
+        var warnings = new ArrayList<String>();
+
+        InstanceLifecycle.reconcileAccountIdentities(incus, NAME, withToken(), Map.of("github", gh),
+                msg -> { }, warnings::add);
+
+        assertEquals(List.of(), warnings);
+        assertEquals("true", daemon.instance(NAME).path("config").path(Metadata.ACCOUNT_IDENTITY_VERIFIED).asText());
+        verify(incus, never()).pollUntilReady(any(), anyInt(), any(String[].class));
+    }
+
+    /**
+     * An airgapped instance has no proxy to re-derive through and never gets an address: before,
+     * every shell in one from an older template, or from one built without a token, waited 30 s
+     * for it and then warned.
+     */
+    @Test
+    void anAirgappedInstanceIsNeverReconciled() throws Exception {
+        for (var stamps : List.of(
+                Map.of(Metadata.NETWORK_MODE, "AIRGAP"),
+                Map.of(Metadata.NETWORK_MODE, "AIRGAP", Metadata.ACCOUNT_IDENTITY_VERIFIED, "true",
+                        Metadata.accountIdentityKey("github"), Metadata.ACCOUNT_IDENTITY_NONE))) {
+            var daemon = new FakeIncusDaemon().container(NAME, stamps);
+            var incus = addresslessClient(daemon);
+            var gh = new RecordingGh();
+            gh.lacks = true;
+            var warnings = new ArrayList<String>();
+
+            InstanceLifecycle.reconcileAccountIdentities(incus, NAME, withToken(), Map.of("github", gh),
+                    msg -> { }, warnings::add);
+
+            assertEquals(List.of(), warnings, stamps.toString());
+            assertEquals(0, gh.checks, stamps.toString());
+            assertEquals(List.of(), gh.rebaked, stamps.toString());
+            verify(incus, never()).pollUntilReady(any(), anyInt(), any(String[].class));
+        }
+    }
+
     private static void reconcile(FakeIncusDaemon daemon, RecordingGh gh) throws Exception {
         var warnings = new ArrayList<String>();
         InstanceLifecycle.reconcileAccountIdentities(readyClient(daemon), NAME, withToken(), Map.of("github", gh),
@@ -318,8 +363,17 @@ class UnbakedGitIdentityTest {
 
     /** The fake serves no exec; the instance is taken to have its address already. */
     private static IncusClient readyClient(FakeIncusDaemon daemon) {
+        return client(daemon, true);
+    }
+
+    /** An instance that never gets an address, as an airgapped one. */
+    private static IncusClient addresslessClient(FakeIncusDaemon daemon) {
+        return client(daemon, false);
+    }
+
+    private static IncusClient client(FakeIncusDaemon daemon, boolean hasAddress) {
         var incus = spy(daemon.client());
-        doReturn(true).when(incus).pollUntilReady(eq(NAME), anyInt(), any(String[].class));
+        doReturn(hasAddress).when(incus).pollUntilReady(eq(NAME), anyInt(), any(String[].class));
         return incus;
     }
 

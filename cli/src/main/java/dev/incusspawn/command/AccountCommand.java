@@ -321,7 +321,9 @@ public class AccountCommand extends BaseCommand {
      * when it follows the global default; {@code chosen_in} names the template or instance it
      * came from. {@code problem} is why requests using it fail, or are refused.
      * {@code identity_pending} is the git identity the instance takes on its next start or shell,
-     * when it differs from the one inside. {@code template_problem} is why the template's own
+     * when it differs from the one it was stamped with. Read from the stamps alone: an instance
+     * from a template an older isx built may also have an identity it lacks filled in on that
+     * start, which only its guest can tell, so that is not listed. {@code template_problem} is why the template's own
      * choice cannot be used (it names an account that is not configured), which fails a branch
      * from it.
      */

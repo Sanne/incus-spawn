@@ -2317,15 +2317,18 @@ public class BuildCommand extends BaseCommand {
                 toolDefLoader.allToolSetups(), setups)) {
             if (setups.get(namespace).lacksBakedIdentity(container)) lacking.add(namespace);
         }
+        java.util.function.Function<String, String> accountFor = namespace ->
+                dev.incusspawn.config.AccountResolver.effectiveAccount(config, namespace, selection.get(namespace));
         var rederived = BuildAccounts.toRederive(wanted, inherited, lacking, setups);
         rederived.forEach(namespace -> {
-            var account = dev.incusspawn.config.AccountResolver.effectiveAccount(
-                    config, namespace, selection.get(namespace));
+            var account = accountFor.apply(namespace);
             BuildOutput.step("Updating " + namespace + " identity for account '" + account + "'...");
             setups.get(namespace).rebakeForAccount(container, account);
         });
         lacking.removeAll(rederived);
-        for (var namespace : lacking) BuildOutput.warn(setups.get(namespace).unbakedIdentityWarning());
+        for (var namespace : lacking) {
+            BuildOutput.warn(setups.get(namespace).unbakedIdentityWarning(accountFor.apply(namespace)));
+        }
         var stamps = new java.util.LinkedHashMap<>(BuildAccounts.identityStamps(wanted, inherited, lacking));
         stamps.put(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true");
         return stamps;

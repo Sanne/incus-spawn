@@ -128,7 +128,7 @@ class BuildAccountsTest {
         // gh's credential is gone from config.yaml, so the build derived nothing for it, but the
         // parent's .gitconfig is still in the rootfs
         var stamps = BuildAccounts.identityStamps(Map.of("claude", "api-key"),
-                Map.of("claude", "oauth", "github", "me#0123456789ab"));
+                Map.of("claude", "oauth", "github", "me#0123456789ab"), java.util.Set.of());
         assertEquals(Map.of(Metadata.accountIdentityKey("claude"), "api-key",
                 Metadata.accountIdentityKey("github"), "me#0123456789ab"), stamps);
     }

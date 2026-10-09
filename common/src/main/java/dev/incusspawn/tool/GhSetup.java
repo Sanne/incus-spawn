@@ -179,14 +179,16 @@ public class GhSetup implements ToolSetup {
      * sentence true.
      */
     @Override
-    public String unbakedIdentityWarning() {
-        return NO_IDENTITY_WARNING;
+    public String unbakedIdentityWarning(String accountName) {
+        var problem = accountName == null || accountName.isBlank()
+                ? "no GitHub token is configured, so commits made in this template and its branches"
+                        + " have no author. Add a token with 'isx init'"
+                : "GitHub account '" + accountName + "', which this template uses, has no token, so"
+                        + " commits made in this template and its branches have no author. Add a token"
+                        + " to it with 'isx init', or have the template use another account";
+        return "No git identity: " + problem + "; branches pick the identity up the next time isx"
+                + " branches, opens a shell in or runs a command in them.";
     }
-
-    static final String NO_IDENTITY_WARNING = "No git identity: no GitHub token is configured,"
-            + " so commits made in this template and its branches have no author. Add a token with"
-            + " 'isx init'; branches pick the identity up the next time isx branches, opens a shell"
-            + " in or runs a command in them.";
 
     private void configureGit(Container c, SpawnConfig config, String accountName) {
         boolean existingConfig = c.sh("test -f /home/agentuser/.gitconfig").success();

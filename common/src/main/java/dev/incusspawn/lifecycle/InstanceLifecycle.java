@@ -97,7 +97,7 @@ public final class InstanceLifecycle {
         var instance = incus.instanceMetadata(name);
         if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
         var update = new InstanceUpdate();
-        if (mode != NetworkMode.AIRGAP && isAirgapped(instance)) {
+        if (mode != NetworkMode.AIRGAP && NetworkMode.isAirgapped(instance)) {
             instance = unmaskNics(incus, instance, update);
         }
 
@@ -321,11 +321,6 @@ public final class InstanceLifecycle {
 
     private static final Map<String, String> MASKED_DEVICE = Map.of("type", "none");
 
-    private static boolean isAirgapped(JsonNode instance) {
-        return NetworkMode.AIRGAP.name().equals(
-                instance.path("config").path(Metadata.NETWORK_MODE).asText(""));
-    }
-
     /**
      * Take every NIC away from the instance, whichever network it is on and wherever it comes
      * from. Removing an instance device only drops the instance's own copy: a NIC the {@code
@@ -432,24 +427,27 @@ public final class InstanceLifecycle {
             var plan = AccountSelection.identityReconcile(config, incus, name, knownSetups);
             if (plan.isEmpty()) return;
 
-            // Re-deriving goes out through the proxy, and a just-started instance may not have
-            // an address yet. Only paid for when something is actually stale, and returns as
-            // soon as the address is up -- which for an instance that has been running a while
-            // is the first poll.
-            if (!incus.pollUntilReady(name, 30, "sh", "-c",
-                    "ip -4 -o addr show scope global | grep -q inet")) {
-                throw new IncusException(name + " has no IPv4 address");
-            }
-
             var container = new Container(incus, name);
             var setups = knownSetups != null ? knownSetups : AccountSelection.namespaceSetups(config);
             var stale = new LinkedHashMap<>(plan.stale());
             // From a template an older isx built: its stamp may claim an identity the guest never
             // got, so ask the guest once. The marker is set only once everything here succeeded.
+            // Asked before waiting for an address, which only re-deriving needs: an instance
+            // that has its identity is just marked.
             plan.unverified().forEach((namespace, account) -> {
                 var setup = setups.get(namespace);
                 if (setup != null && setup.lacksBakedIdentity(container)) stale.put(namespace, account);
             });
+
+            // Re-deriving goes out through the proxy, and a just-started instance may not have
+            // an address yet. Only paid for when something is actually stale, and returns as
+            // soon as the address is up -- which for an instance that has been running a while
+            // is the first poll.
+            if (!stale.isEmpty() && !incus.pollUntilReady(name, 30, "sh", "-c",
+                    "ip -4 -o addr show scope global | grep -q inet")) {
+                throw new IncusException(name + " has no IPv4 address");
+            }
+
             var updates = new LinkedHashMap<String, String>();
             if (!plan.unverified().isEmpty()) updates.put(Metadata.ACCOUNT_IDENTITY_VERIFIED, "true");
             stale.forEach((namespace, account) -> {

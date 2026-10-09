@@ -125,10 +125,20 @@ class GhSetupTest {
 
     @Test
     void theNoIdentityWarningSaysHowToFixIt() {
-        var warning = new GhSetup().unbakedIdentityWarning();
+        var warning = new GhSetup().unbakedIdentityWarning("");
         assertTrue(warning.contains("No git identity"), warning);
+        assertTrue(warning.contains("no GitHub token is configured"), warning);
         assertTrue(warning.contains("isx init"), warning);
         assertFalse(warning.contains("next start"), "a plain start does not reconcile: " + warning);
+    }
+
+    /** Pinned to a token-less account while another has one: "no token is configured" would be untrue. */
+    @Test
+    void theNoIdentityWarningNamesATokenlessAccount() {
+        var warning = new GhSetup().unbakedIdentityWarning("work");
+        assertTrue(warning.contains("account 'work'"), warning);
+        assertFalse(warning.contains("no GitHub token is configured"), warning);
+        assertTrue(warning.contains("isx init"), warning);
     }
 
     /** With a token configured, an empty login is a failed lookup: it fails the build. */

@@ -154,8 +154,11 @@ public interface ToolSetup {
     /**
      * What a build says when it ends with this tool's identity missing and no account to supply
      * it ({@link #lacksBakedIdentity}), or {@code null} to say nothing.
+     *
+     * @param accountName the account the template uses, which has no credential to derive from,
+     *                    or {@code ""} when the namespace has no account at all
      */
-    default String unbakedIdentityWarning() { return null; }
+    default String unbakedIdentityWarning(String accountName) { return null; }
 
     /**
      * What an {@link #bakedAccountIdentity} stamp becomes when account {@code from} is renamed

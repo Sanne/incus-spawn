@@ -122,9 +122,9 @@ public final class BuildAccounts {
         var result = new java.util.LinkedHashSet<String>();
         wanted.forEach((namespace, identity) -> {
             var setup = setups.get(namespace);
-            if (setup == null || !setup.canRebakeForAccount()) return;
-            if (lacking.contains(namespace)
-                    || AccountSelection.needsRederive(setup, inherited.get(namespace), identity)) {
+            if (lacking.contains(namespace)) {
+                if (setup != null && setup.canRebakeForAccount()) result.add(namespace);
+            } else if (AccountSelection.needsRederive(setup, inherited.get(namespace), identity)) {
                 result.add(namespace);
             }
         });
@@ -137,14 +137,8 @@ public final class BuildAccounts {
      * ones before the start, but a namespace the build derives nothing for -- its credential no
      * longer configured -- still has the parent's {@code .gitconfig} or Claude environment in
      * the rootfs, and the stamp is how the reconcile and the proxy know it.
-     */
-    public static Map<String, String> identityStamps(Map<String, String> baked, Map<String, String> inherited) {
-        return identityStamps(baked, inherited, java.util.Set.of());
-    }
-
-    /**
-     * As {@link #identityStamps(Map, Map)}, also marking what the image has the tool for but no
-     * identity in: each of {@code unbaked} -- the guest lacks it
+     *
+     * <p>Also marks what the image has the tool for but no identity in: each of {@code unbaked} -- the guest lacks it
      * ({@link dev.incusspawn.tool.ToolSetup#lacksBakedIdentity}) and no account could supply it
      * -- gets {@link Metadata#ACCOUNT_IDENTITY_NONE}, over whatever the parent's stamp claimed, so
      * configuring an account later is seen as a change of identity and reconciled, rather than
