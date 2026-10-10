@@ -979,7 +979,8 @@ This is more robust than blocklisting individual beta fields, since new Claude C
   The proxy strips the header entirely without adding it to the body.
 - **Auth skipping**: `CLAUDE_CODE_SKIP_VERTEX_AUTH=1` causes the Vertex SDK to skip GCP authentication and send no Authorization header of its own: the only headers it adds are `ANTHROPIC_CUSTOM_HEADERS` (checked against Claude Code 2.1.289 with a local listener).
   A login script sets that to `Authorization: Bearer $ISX_VERTEX_ACCESS_TOKEN`, so the request carries the instance's token for the proxy to check (#1108), and the proxy replaces it with a real GCP token.
-  A stub `/usr/local/bin/gcloud` is installed inside Vertex containers (by `ClaudeSetup`) that prints `$ISX_VERTEX_ACCESS_TOKEN` (falling back to `ya29.placeholder-for-proxy`) for `auth print-access-token`, for anything that refreshes a token through `gcloud`; it was added for Claude Code's credential refresh, which current releases skip under the flag.
+  A stub `/usr/local/bin/gcloud` is installed inside Vertex containers (by `ClaudeSetup`) that prints `$ISX_VERTEX_ACCESS_TOKEN` (falling back to `ya29.placeholder-for-proxy`) for `auth print-access-token`, for anything that refreshes a token through `gcloud`.
+  It was added for Claude Code's credential refresh, which current releases skip under the flag.
 - **Base URL override**: `ANTHROPIC_VERTEX_BASE_URL` redirects all Vertex SDK requests to a custom endpoint.
   Setting it to `https://api.anthropic.com/v1` causes the container's Vertex SDK to send requests to `api.anthropic.com`, which resolves to the proxy via dnsmasq.
 - **Response format**: Vertex `rawPredict` returns standard Anthropic response format — no response translation is needed.
@@ -992,7 +993,9 @@ No Vertex-specific environment variables are needed inside the container; `ANTHR
 **WebSocket passthrough:** The proxy also handles WebSocket upgrade requests.
 When a client sends an HTTP Upgrade to a proxied domain, the proxy establishes a corresponding upstream WebSocket connection (injecting credentials on the initial handshake), then relays frames bidirectionally.
 The client socket is paused until the upstream connection is established to prevent frame drops.
-The client's handshake is completed (`ServerWebSocket.accept()`) before any of this, and a refused one goes no further: Vert.x 4 runs the WebSocket handler before Netty validates the handshake, and only completes it once the handler returns, so a request Netty refused (no key, no `Upgrade` token in `Connection`, ...) was answered 400 after the credential had been injected and an upstream socket opened for it (#972).
+The client's handshake is completed (`ServerWebSocket.accept()`) before any of this, and a refused one goes no further.
+Vert.x 4 runs the WebSocket handler before Netty validates the handshake, and only completes it once the handler returns.
+So a request Netty refused (no key, no `Upgrade` token in `Connection`, ...) was answered 400 after the credential had been injected and an upstream socket opened for it (#972).
 Copying Netty's checks into the handler was rejected: Vert.x's own pre-checks are looser than Netty's (a substring match on `Connection`), so a copy misses refusals and drifts with Netty.
 `accept()` is deprecated and gone in Vert.x 5; a regression test covering each refused shape pins the behaviour for whatever replaces it.
 Keepalive pings are sent on both legs, and close codes are propagated.
@@ -1007,17 +1010,23 @@ User-defined tools can add additional domains.
 
 All other domains (package mirrors, PyPI, etc.) route normally via Incus bridge NAT and are unaffected by the proxy.
 
-**Credential validation**: Branching (CLI and TUI alike, through `BranchFlow`) refuses up front when the new instance would lack a credential its tools need; airgapped branches skip the check, and building a template needs none, since only the proxy spends them at runtime.
-`CredentialCheck` answers for the accounts the branch will *actually* be stamped with -- the template chain's `accounts:`, the source instance's own pins and any `--account` or TUI account row, merged exactly as `BranchFlow` stamps them -- and against the leaf template recorded on the source, so a branch of a branch is checked too (#793).
+**Credential validation**: Branching (CLI and TUI alike, through `BranchFlow`) refuses up front when the new instance would lack a credential its tools need.
+Airgapped branches skip the check, and building a template needs none, since only the proxy spends them at runtime.
+`CredentialCheck` answers for the accounts the branch will *actually* be stamped with -- the template chain's `accounts:`, the source instance's own pins and any `--account` or TUI account row, merged exactly as `BranchFlow` stamps them -- and against the leaf template recorded on the source.
+So a branch of a branch is checked too (#793).
 What a tool needs is declared, not listed.
 Every tool the template chain names, plus everything they `requires:`, spends its credential namespaces (`ToolSetup.credentialNamespaces(params)`, with params resolved as the build resolves them, so pi names only the one its `provider` uses).
-The tools serving those namespaces, and the tool itself (Copilot's borrowed `github.token`), are then judged as the proxy judges them, by `ToolProxyResolver.missingSecrets()`: an auth entry is served once every key it references resolves against that selection, and a tool is refused only when none of its entries would be, naming the keys they reference.
+The tools serving those namespaces, and the tool itself (Copilot's borrowed `github.token`), are then judged as the proxy judges them, by `ToolProxyResolver.missingSecrets()`.
+An auth entry is served once every key it references resolves against that selection.
+A tool is refused only when none of its entries would be, naming the keys they reference.
 A tool with alternative auth entries on different domains is usable with any one configured.
 A key with no navigable config path is never asked for (`SecretRegistry.isNavigable`), since nobody could set it.
 The chain is the one the source was *built* from, as its build source recorded it (`BranchFlow.Inherited.builtFrom`): a template edited since, but not rebuilt, does not make its existing branches ask for a tool they do not have.
 Only a source with no build record falls back to the current YAML.
 Tools the proxy does not serve (feature-gated off, or project-local) are not checked, as their credentials would not be injected anyway.
-Readiness that is more than a key being set is the tool's to state, through `ToolSetup.credentialProblem()`, so `CredentialCheck` names no tool: `ClaudeSetup` requires the resolved Claude account to be *complete* (a pre-accounts `useVertex: true` with no region still presents as an account, and fails every request), and `PiSetup` applies the same rule for its Anthropic provider and requires a Vertex account for `vertex`/`google`.
+Readiness that is more than a key being set is the tool's to state, through `ToolSetup.credentialProblem()`.
+So `CredentialCheck` names no tool: `ClaudeSetup` requires the resolved Claude account to be *complete* (a pre-accounts `useVertex: true` with no region still presents as an account, and fails every request).
+`PiSetup` applies the same rule for its Anthropic provider and requires a Vertex account for `vertex`/`google`.
 
 **Auth error reporting**: When credential injection fails the proxy records an `authError` and surfaces it on `/health`, which `isx proxy status`, `isx doctor` and the TUI banner all render.
 Injection only runs on real container traffic, so that latch alone makes the status wrong in both directions: it reports failures the user has already fixed, and reports nothing at all before the first API call of a session.
@@ -1039,8 +1048,12 @@ The `gcloud` invocation is bounded at 15 seconds and an empty token is rejected 
 **PID in `/health`**: the CLI signals the proxy (SIGUSR1: re-read the instance list) after every branch, destroy and `isx account set`.
 Finding its PID by the listening port meant `fuser`, which scans the open files of every process on the host -- a measured 90 ms of every branch.
 The proxy now reports `pid` in `/health`, and `ProxyService.signalAccountRefresh()` asks for it at signalling time (never a remembered value, so a restarted proxy cannot be signalled by a stale PID), falling back to `fuser` for proxies that predate it.
-`isx proxy stop` finds a proxy started by hand the same way (`ProxyService.stopManualProxy`, #155): `fuser` alone has no `port/tcp` form on macOS and is missing where psmisc is not installed, so it left that proxy running and said "Proxy is not running."
-The signal goes to whatever proxy runs on the machine, so unit tests must never send it: the one seam is in `signalAccountRefresh()` itself, and the test home extensions (`TempHome`, `IsolatedHome`) replace it with a counter for the classes that use them -- so one opt-in covers every caller a test reaches, rather than each caller needing a hook of its own (#871).
+`isx proxy stop` finds a proxy started by hand the same way (`ProxyService.stopManualProxy`, #155).
+`fuser` alone has no `port/tcp` form on macOS and is missing where psmisc is not installed, so it left that proxy running and said "Proxy is not running."
+The signal goes to whatever proxy runs on the machine, so unit tests must never send it.
+The one seam is in `signalAccountRefresh()` itself.
+The test home extensions (`TempHome`, `IsolatedHome`) replace it with a counter for the classes that use them.
+So one opt-in covers every caller a test reaches, rather than each caller needing a hook of its own (#871).
 Containers reach `/health` too, so the PID goes only to host callers (`MitmProxy.isHostCaller`: loopback, or a source equal to the bridge address the endpoint listens on -- a container's source is its own address, which `security.ipv4_filtering` stops it spoofing).
 
 **Version drift detection**: The proxy health check (run before builds, branches, and shell access) compares the running proxy's version against the CLI version.
@@ -1048,25 +1061,31 @@ If they differ and the proxy runs as a service, the service is restarted, whethe
 A proxy run in the foreground only gets a warning with the command to restart it.
 This prevents subtle failures from CA certificate or protocol mismatches.
 A restart only helps if it changes the running build, and the service starts the *installed* `isx-proxy`, not a binary matching the CLI.
-A CLI built from another commit than the installed proxy (every source build, or a partial upgrade) therefore restarted the proxy on every command: each restart added ~2.5 s and cut every instance's connection, and the drift was still there afterwards (#798).
+A CLI built from another commit than the installed proxy (every source build, or a partial upgrade) therefore restarted the proxy on every command.
+Each restart added ~2.5 s and cut every instance's connection, and the drift was still there afterwards (#798).
 `DriftRestartRecord` ends that loop.
 Whenever the service starts onto the binary its files were just pointed at (`reinstallIfChanged()`, `upgradeIfNeeded()`, or `install()` of a stopped service), the CLI records its own build together with that binary's path, mtime and size in `~/.local/state/incus-spawn/`.
 If version drift persists while the same CLI and binary are in place, `ProxyHealthCheck.assessDrift()` reports that another restart cannot help, and the CLI warns instead of restarting.
 Every drift consumer reads that one `DriftReport`.
-The CLI build is part of the key even though a restart runs the same binary whatever the CLI, because install.sh's JVM mode rebuilds the jar behind a byte-identical launcher; a new CLI build is then the only sign a restart would help.
+The CLI build is part of the key even though a restart runs the same binary whatever the CLI, because install.sh's JVM mode rebuilds the jar behind a byte-identical launcher.
+A new CLI build is then the only sign a restart would help.
 Installing a different proxy or CLI allows one more restart.
 The obvious alternative, asking the installed binary for its version, was rejected: `isx-proxy` releases before v0.3.2 have no `--version` and ignore unknown flags, so the probe started a whole second proxy.
 It would also have cost a process start on every drifted command.
 The record costs one `stat`, plus at most one futile restart per (CLI, proxy) pair.
 Its remaining blind spot is a JBang launcher whose jar changes while the CLI does not; the warning still tells the user how to restart by hand.
 Config drift is never gated, since a restart re-reads the config.
-**Tool proxy config drift** is detected via file stamps: at startup and on each reload, `ConfigFingerprint.load()` records a `ConfigFingerprint` -- the mtime and size of `config.yaml` and each tool definition `ToolDefLoader` reads from `tools/` -- just *before* reading the config, and then of each tool definition under the `tools/` of every search path that config names.
+**Tool proxy config drift** is detected via file stamps.
+At startup and on each reload, `ConfigFingerprint.load()` records a `ConfigFingerprint` -- the mtime and size of `config.yaml` and each tool definition `ToolDefLoader` reads from `tools/` -- just *before* reading the config, and then of each tool definition under the `tools/` of every search path that config names.
 Those are stamped after the read, the one place their paths are known, but still before any tool definition is read; an edit to the search paths themselves is an edit to `config.yaml`, stamped first.
-The proxy's tools are read from that same config's search paths (`new ToolDefLoader(config.getSearchPaths())`), never from a second `config.yaml` read: before #890 the loader read `config.yaml` again for them, so an edit could be served without showing as drift, and tool definitions under a search path were neither fingerprinted nor watched, so the proxy kept their old domains and credential paths until restarted by hand.
+The proxy's tools are read from that same config's search paths (`new ToolDefLoader(config.getSearchPaths())`), never from a second `config.yaml` read.
+Before #890 the loader read `config.yaml` again for them, so an edit could be served without showing as drift.
+Tool definitions under a search path were neither fingerprinted nor watched, so the proxy kept their old domains and credential paths until restarted by hand.
 `ConfigWatcher` watches the same tool directories (`tools/` and each search path's), following the config loaded last, so an edit there reloads the proxy as one to `config.yaml` does.
 Each `/health` request takes a fresh one and reports drift when it differs in any entry; a file added or removed changes the set of entries.
 This avoids the cost of re-parsing configuration on every health poll.
-It used to compare mtimes against the wall-clock time of the load instead, and a file with a future mtime (`cp -p` from a machine whose clock ran ahead, a clock stepped back, a restored backup) then read as drifted after every restart, so every command restarted the proxy until the clock caught up (#818).
+It used to compare mtimes against the wall-clock time of the load instead.
+A file with a future mtime (`cp -p` from a machine whose clock ran ahead, a clock stepped back, a restored backup) then read as drifted after every restart, so every command restarted the proxy until the clock caught up (#818).
 Comparing recorded values involves no clock, and also catches an edit landing in the same timestamp tick as the load.
 Capturing before the read means an edit racing the load shows as drift rather than being recorded as already seen; the premise that a restart always clears config drift, which keeps it out of the `DriftRestartRecord` gate, depends on this.
 Everything the proxy serves is derived from that one read: startup and `reload()` both build an immutable `ConfigState` from the loaded config (credentials, routing, tool setups and the per-account caches) and publish it whole.
@@ -1082,7 +1101,8 @@ This prevents TLS failures in branches where the container's trusted CA doesn't 
 This fixes an intermittent "certificate is not yet valid" failure.
 A cert's `notBefore` is stamped from the **host** clock at mint time, but it is validated against the **container** clock.
 These are independent clocks: on macOS the proxy runs on the Mac host (launchd, `KeepAlive=true`) while containers run inside an Incus VM whose clock lags after the Mac sleeps — `--timesync` only re-seeds at boot, not on resume.
-`KeepAlive` relaunches the proxy whenever it exits (including right after wake, when the Mac clock has already jumped forward to real time); re-minting at that moment produced a `notBefore` in the lagging container's future, failing validation with "certificate is not yet valid".
+`KeepAlive` relaunches the proxy whenever it exits (including right after wake, when the Mac clock has already jumped forward to real time).
+Re-minting at that moment produced a `notBefore` in the lagging container's future, failing validation with "certificate is not yet valid".
 No clock ever runs backward — both are monotonic — but the gap between the mint clock (host, ahead) and the validating clock (container, behind) can exceed a day.
 Reusing a persisted leaf keeps its original `notBefore` (stamped while the clocks were in sync), so the container's lagging-but-monotonic clock always accepts it.
 `CertificateAuthority.BACKDATE_MS` (2 days) backdates `notBefore` as a margin for the rare remaining fresh-mint moments (first install, CA rotation, near-expiry renewal).
@@ -1094,7 +1114,10 @@ Planned per-container interception (a different intercepted-domain set per conta
 Certs are already resolved per SNI name on demand against this same on-disk store (see below), so that feature needs no change here.
 
 **Certificates are chosen per SNI name, at any depth (#783)**: dnsmasq's `address=/<domain>/` sends *every* name under an intercepted domain to the proxy, however deep, but a wildcard SAN matches exactly one label (RFC 6125).
-The proxy used to serve one JKS holding `<domain>` and `*.<domain>` for each intercepted domain; a deeper name such as `results-receiver.actions.githubusercontent.com` (where `gh run view --log-failed` fetches logs) matched no alias, and Vert.x then fell back to an arbitrary keystore entry -- the container was offered `*.api.openai.com` for a GitHub host, an error that points at the wrong domain entirely.
+The proxy used to serve one JKS holding `<domain>` and `*.<domain>` for each intercepted domain.
+A deeper name such as `results-receiver.actions.githubusercontent.com` (where `gh run view --log-failed` fetches logs) matched no alias.
+Vert.x then fell back to an arbitrary keystore entry.
+The container was offered `*.api.openai.com` for a GitHub host, an error that points at the wrong domain entirely.
 `InterceptedCertOptions` (proxy module) now implements Vert.x's `KeyCertOptions.keyManagerFactoryMapper`: `certNameFor()` maps the SNI name to the exact domain, or to a wildcard for the name's own parent (`*.actions.githubusercontent.com`), minted through `CertStore` on first use and so persisted like every other leaf.
 Vert.x runs this mapping on a worker thread, so the RSA key generation never blocks the event loop.
 The `<domain>`/`*.<domain>` certs are still pre-minted at start.
@@ -1110,7 +1133,8 @@ The refusal is expressed by the mapper returning `null` and the **default** key 
 Throwing from the mapper looks equivalent but is not: Netty's SNI handler then leaves the connection hanging until the handshake timeout.
 Returning `null` also keeps Vert.x from caching an SSL context per refused name.
 Because SNI names become file names in the cert store, `CertStore.get()` accepts only strict hostnames (`CertStore.isHostname`), optionally as a one-label wildcard.
-`InterceptedCertOptionsTest` handshakes with a client that trusts only the isx CA and verifies hostnames, at several depths, and checks every shipped intercepted domain (built-ins plus every bundled tool's `proxy:` domains) resolves to a matching cert name at depths 0-3, so a newly added domain is covered without being listed.
+`InterceptedCertOptionsTest` handshakes with a client that trusts only the isx CA and verifies hostnames, at several depths, and checks every shipped intercepted domain (built-ins plus every bundled tool's `proxy:` domains) resolves to a matching cert name at depths 0-3.
+So a newly added domain is covered without being listed.
 
 **Vertex AI token refresh**: Vertex AI requests that receive a 401 response are retried once with a fresh GCP access token (the cached token is invalidated).
 This handles token expiry during long-running sessions without user intervention.
@@ -1122,7 +1146,9 @@ This handles token expiry during long-running sessions without user intervention
   When the packument ETag is unchanged, cached tarballs are served without re-verification.
   When the ETag changes, per-version shasum is checked — matching shasum updates the marker, mismatched shasum evicts and re-fetches.
   The per-version shasum is looked up asynchronously through `probeClient`, the same client and verification as Maven/Gradle checksums, so a cold install's lookups run concurrently over shared HTTP/2 connections (#960).
-  They used to be a raw `SSLSocket` per tarball inside an *ordered* `executeBlocking`, and in Vert.x 4.5 an ordered task on a request's duplicated context joins its parent context's single queue, which every MITM connection shares: every lookup from every instance ran one after another, so 540 packages took 195s through the proxy against 53s direct.
+  They used to be a raw `SSLSocket` per tarball inside an *ordered* `executeBlocking`.
+  In Vert.x 4.5 an ordered task on a request's duplicated context joins its parent context's single queue, which every MITM connection shares.
+  Every lookup from every instance ran one after another, so 540 packages took 195s through the proxy against 53s direct.
   So nothing that waits on the network runs in an ordered `executeBlocking`.
   The npm path's disk checks still do, on purpose: ordering keeps a tarball's ETag read behind the packument's ETag write (`relayNpmPackument`), which an unordered read could overtake and serve a tarball on a stale ETag without a shasum check
 
@@ -1139,7 +1165,9 @@ Only an unreachable upstream serves an older one.
   Background confirmations are single-flight per artifact, at most 16 in flight with the rest queued (dropping them would leave copies unconfirmed build after build under a parallel resolver), and confirm nothing during a domain's backoff.
   A domain that can withdraw releases never gets the tiers (`Revalidation.mayWithdraw`: the Plugin Portal), so its every hit is confirmed first.
   `artifact-cache:` is read from the raw YAML value, so a mistyped section (`artifact-cache: 0`) is warned about and ignored instead of failing config.yaml, which would leave the proxy with no credentials.
-  The stored checksum goes out as `X-Checksum-SHA1` with bytes the proxy opens by path (Vert.x 4.5 has no `sendFile` from an open handle), so just before `sendFile` the path is checked to still be the file the checksum was read with, and a copy replaced meanwhile is confirmed first; the window left is the few microseconds between that stat and the open, on the same thread.
+  The stored checksum goes out as `X-Checksum-SHA1` with bytes the proxy opens by path (Vert.x 4.5 has no `sendFile` from an open handle).
+  So just before `sendFile` the path is checked to still be the file the checksum was read with, and a copy replaced meanwhile is confirmed first.
+  The window left is the few microseconds between that stat and the open, on the same thread.
   The hit path reads the copy without the store's lock (commits hold it across an fsync), re-reading under it when the artifact changed between the reads.
   Why tiers: a warm build that asks for 1,500 artifacts one after another paid ~20 ms per `HEAD`, ~30 s against ~3.5 s with no confirmation (Maven's default depth-first collector cannot overlap them).
   What they give up: within `fresh`, a republished or withdrawn artifact is served until the window ends, and in the background tier it is served once more before the eviction.
@@ -1172,56 +1200,79 @@ Only an unreachable upstream serves an older one.
 - *Sidecar requests go upstream* once the artifact's confirmation is past `fresh`/`max-stale` (within them the stored copy is served, see the tiers), and the answer is reconciled with the stored copy the same way.
   This is a second line of defence; confirming the artifact is what provides correctness.
   A checksum we cannot parse says nothing and evicts nothing (Maven accepts the `sha1sum` and BSD/OpenSSL formats, and so does `Sidecar.hex`).
-  On `HEAD_CHECKSUM` domains a sidecar never evicts on its own: a separately uploaded `.sha1` can be wrong where the server-computed header is right (old Central artifacts), so a disagreement (`Outcome.DISAGREES`) is settled by a `HEAD`, and only by its header (`SidecarAnswer.fromHeader`), never by the `.sha1` a header-less `HEAD` falls back to.
+  On `HEAD_CHECKSUM` domains a sidecar never evicts on its own.
+  A separately uploaded `.sha1` can be wrong where the server-computed header is right (old Central artifacts), so a disagreement (`Outcome.DISAGREES`) is settled by a `HEAD`, and only by its header (`SidecarAnswer.fromHeader`), never by the `.sha1` a header-less `HEAD` falls back to.
   When the header confirms the artifact, the stored sidecar follows upstream: a changed `.asc` is kept, a withdrawn one dropped.
 - *Resume a broken download.*
-  A download to any cache (OCI blob, Maven/Gradle artifact, npm tarball) that stalls or breaks off mid-body asks for the rest with `Range`, and streams it on in the same response, so the client never sees the break (`CachingDownload`). npm is why: it treats a failed optional dependency as skippable, so a broken platform-package download (`@openai/codex-linux-x64`, 162 MB) left `npm install -g` exiting 0 without the binary (#808, #925).
-  A stall is 20s without a byte from upstream (`downloadIdleSeconds`), not counting time it waits on our own backpressure, a client or disk that stopped reading, or on a resume being asked for; Vert.x's request idle timeout stops at the response head, so the proxy watches the body itself.
+  A download to any cache (OCI blob, Maven/Gradle artifact, npm tarball) that stalls or breaks off mid-body asks for the rest with `Range`, and streams it on in the same response, so the client never sees the break (`CachingDownload`).
+  npm is why: it treats a failed optional dependency as skippable, so a broken platform-package download (`@openai/codex-linux-x64`, 162 MB) left `npm install -g` exiting 0 without the binary (#808, #925).
+  A stall is 20s without a byte from upstream (`downloadIdleSeconds`), not counting time it waits on our own backpressure, a client or disk that stopped reading, or on a resume being asked for.
+  Vert.x's request idle timeout stops at the response head, so the proxy watches the body itself.
   Everything is fitted into the client's *silence budget*: 110s without a byte from us (`clientSilenceBudgetSeconds`), below the MITM server's 120s idle timeout, which otherwise drops the client silently while the upstream read is still pending (the upstream client's read-idle timeout, 300s, outlasts it; lowering that for every relay would cut slow uploads, which get no bytes back for as long as they send).
   The budget runs from the client's request, so waiting for the response head gets what the lookups before it (an npm shasum, a Maven confirmation) left, a head that never comes becomes a logged 502 the client can retry, each resume (connect, head, backoff after one that could not be made) gets what is left of it since the client's last byte, and the stall check looks again the moment a pause ends (the temp file opening, a drain, a resume's head), since a head or a resume that arrived late can leave less of the budget than one check.
   Upstream always gets a second after we let it go before it counts as stalled, and only a client that drains renews its budget, not a disk.
   When too little is left, the client gets the error, logged, rather than a silent drop.
   A connect timed out that early says nothing about the domain, so it does not start the unreachable backoff below.
-  A resume needs a validator for `If-Range`: a strong `ETag`, or `Last-Modified` when there is no `ETag` at all and it is at least a second older than the response's `Date` (servers ignore a weak ETag, RFC 9110 does not let a date stand in for an entity tag, and a date within the second it was sent could match two versions); without one there is no resume, since a file changed meanwhile would be spliced onto the old one's bytes.
-  Only a `206` whose `Content-Range` runs from the byte the client has to the end of the same length continues; anything else (a `200` from an upstream that ignores `Range` or whose file changed) ends the response with an error, and a response that ends before that length is another break.
+  A resume needs a validator for `If-Range`: a strong `ETag`, or `Last-Modified` when there is no `ETag` at all and it is at least a second older than the response's `Date` (servers ignore a weak ETag, RFC 9110 does not let a date stand in for an entity tag, and a date within the second it was sent could match two versions).
+  Without one there is no resume, since a file changed meanwhile would be spliced onto the old one's bytes.
+  Only a `206` whose `Content-Range` runs from the byte the client has to the end of the same length continues.
+  Anything else (a `200` from an upstream that ignores `Range` or whose file changed) ends the response with an error.
+  A response that ends before that length is another break.
   A `5xx` or `429` to the Range request is retried like a resume that could not connect: an overloaded upstream is what stalls a download in the first place.
   Three resumes in a row that get no further give up; one that got further starts the count again.
   A gzip-encoded body is never resumed: compressed on the fly, the same file need not give the same bytes twice.
-  A download that could never be resumed (gzip, no length, no validator) is not cut at a stall either, since that could only fail a body that may yet carry on: only the client's budget ends it, with a line, where before the MITM server's 120s did so silently.
+  A download that could never be resumed (gzip, no length, no validator) is not cut at a stall either, since that could only fail a body that may yet carry on.
+  Only the client's budget ends it, with a line, where before the MITM server's 120s did so silently.
   An error sent before the first byte drops the headers set for the artifact, so a 502 never carries its `X-Checksum-SHA1`.
   Verification is unchanged: the whole file is checked before it is committed.
-  A client that leaves mid-download, or while its head was still awaited, does not stop it: it goes on into the cache, as it always has, so a client that gave up and retries gets a hit, and with nobody waiting the budget no longer applies.
-  Plain relays (`relayRequest`, including an npm tarball whose shasum could not be fetched) are held to the same budget without a resume (`RelayWatchdog`, #929): 110s since the client's last byte either way, not counting the time its request body is still arriving or the client holds the response back, so an upload is never cut and nothing is ended that the 120s timeout would have let live.
+  A client that leaves mid-download, or while its head was still awaited, does not stop it.
+  It goes on into the cache, as it always has, so a client that gave up and retries gets a hit.
+  With nobody waiting the budget no longer applies.
+  Plain relays (`relayRequest`, including an npm tarball whose shasum could not be fetched) are held to the same budget without a resume (`RelayWatchdog`, #929): 110s since the client's last byte either way, not counting the time its request body is still arriving or the client holds the response back.
+  So an upload is never cut and nothing is ended that the 120s timeout would have let live.
   A head that never comes is a logged 502, a body that stops a logged reset, and the upstream request is let go rather than left for its 300s read-idle timeout.
-  A relay cannot resume, so a shasum lookup answered with a `5xx` is asked once more, while over half the client's budget is left, before the tarball falls back to a relay (`fetchNpmVersion`); a `429` is not, since asked again at once it would be refused again.
+  A relay cannot resume, so a shasum lookup answered with a `5xx` is asked once more, while over half the client's budget is left, before the tarball falls back to a relay (`fetchNpmVersion`).
+  A `429` is not, since asked again at once it would be refused again.
   The npm fallback logs that it relays, so a codex install that fails without a stall or resume line in the proxy log points at it directly.
-  A relayed request's body is claimed as the request is routed (`claimBody`), before the proxy waits on anything (#1164): Vert.x drops a body that arrives with nothing reading it, and then refuses to read the request at all, so a body read only once the upstream connection was ready was lost whenever it beat the connect -- a small POST that found no idle pooled connection, such as npm's audit request after an install, which sends its tarballs with `Connection: close` -- and the relay waited forever with nothing to cut it.
-  A request with a body is therefore never served from a cache (all of them are keyed by path alone), and a relay whose client left before its body was all sent resets its unsent upstream request, which gives the connection back to the pool instead of holding it for good.
+  A relayed request's body is claimed as the request is routed (`claimBody`), before the proxy waits on anything (#1164).
+  Vert.x drops a body that arrives with nothing reading it, and then refuses to read the request at all.
+  So a body read only once the upstream connection was ready was lost whenever it beat the connect -- a small POST that found no idle pooled connection, such as npm's audit request after an install, which sends its tarballs with `Connection: close` -- and the relay waited forever with nothing to cut it.
+  A request with a body is therefore never served from a cache (all of them are keyed by path alone).
+  A relay whose client left before its body was all sent resets its unsent upstream request, which gives the connection back to the pool instead of holding it for good.
 - *Offline.*
   Only when upstream cannot be reached (connect/DNS/TLS failure, an exchange that broke on an established connection, or a 5xx or 429, i.e. cases where the client would otherwise get an error) are cached artifacts and stored sidecars served unconfirmed.
   A broken exchange is retried once first, since a pooled keep-alive connection may simply have died while idle; a timeout is not, which would double the wait on a black-holed network.
   An answer we cannot use (an oversized sidecar, a redirect loop, a redirect to anything but http(s)) is a different thing, `SidecarAnswer.UNUSABLE`: upstream answered, so it confirms nothing and the request goes upstream rather than to the cache.
   Redirects are followed over TLS, an `http` Location included, as the proxy always has.
   Only a failure to connect starts the domain's 30s backoff (not a connect timeout the proxy cut short to fit a client's budget), so a black-holed network does not cost a connect timeout per request.
-  The backoff short-circuits only requests that have a cached copy to fall back on (a request without one still asks upstream, which it might answer), and only a response from the domain ends it: a request on a pooled connection is sent without any network I/O first, so getting the connection proves nothing about reachability now, and would let one request end a backoff a real connect failure started.
+  The backoff short-circuits only requests that have a cached copy to fall back on (a request without one still asks upstream, which it might answer).
+  Only a response from the domain ends it.
+  A request on a pooled connection is sent without any network I/O first, so getting the connection proves nothing about reachability now, and would let one request end a backoff a real connect failure started.
   It is kept where every upstream connection is made (`requestWithAsyncDns`), so no fetch path can forget to update it.
 
 *Why only these domains.*
 With both tiers at zero an online serve does not depend on a repository's publishing rules, so `Revalidation`'s allowlist is not a claim of immutability.
 A domain is still vetted before it is cached, for three reasons.
-**Offline serves are unconfirmed, and serves within the tiers are not confirmed now**, so they are only right if the repository does not change or withdraw what it published: Central forbids both, Gradle does not withdraw distributions, and the Plugin Portal can delete a version (an accepted risk while offline).
+**Offline serves are unconfirmed, and serves within the tiers are not confirmed now**.
+So they are only right if the repository does not change or withdraw what it published: Central forbids both, Gradle does not withdraw distributions, and the Plugin Portal can delete a version (an accepted risk while offline).
 **The confirmation must be sound for that repository**: a server-computed header describes exactly the bytes the server would send, so `HEAD_CHECKSUM` is sound even for changing content.
-A separately uploaded sidecar is not (`mvn deploy` PUTs the jar and its `.sha1` one by one, so a repository can briefly serve a new jar beside the old `.sha1`), so `SIDECAR` only fits repositories that publish the two together and never replace them.
+A separately uploaded sidecar is not (`mvn deploy` PUTs the jar and its `.sha1` one by one, so a repository can briefly serve a new jar beside the old `.sha1`).
+So `SIDECAR` only fits repositories that publish the two together and never replace them.
 **Public repositories only**: the cache is shared by every instance and confirmation carries no client credentials, so a private repository's artifact cached for one instance would be served to others, and offline serving would bypass its authorization entirely.
 `maven-metadata.xml` stays relayed because confirming it costs the same round trip as fetching it.
 SNAPSHOTs stay relayed because no cached domain serves them, and were one to, sidecar confirmation would be unsound and offline serves of content replaced on every deploy rarely right.
 
 `VerifiedArtifactStore` owns the on-disk half and serializes commit, reconcile and evict per artifact with a striped lock, so a store racing an eviction cannot leave a sidecar beside an artifact it does not describe.
 A commit is ordered for crashes as well: the download is flushed to disk before it is renamed into place, sidecars of a previous copy are dropped before the rename, and the new checksum is written after it, so an interrupted commit never leaves a checksum beside bytes it does not describe (an artifact without one is hashed before it is trusted).
-Checksums are fetched through a Vert.x client of their own (`probeClient`: hostname verification, the proxy's truststore, async DNS, pooled keep-alive connections), npm's version lookups included, never a raw socket; a separate pool keeps a cache hit's confirmation from queueing behind large downloads.
-Since every hit waits on one, that client is tuned for round trips: it negotiates HTTP/2 through ALPN (Central offers it; others fall back to HTTP/1.1), so a build's concurrent confirmations share a connection rather than a TLS handshake each, and idle connections stay open for `PROBE_KEEP_ALIVE_SECONDS` (60s), across short pauses between a build's Maven invocations.
+Checksums are fetched through a Vert.x client of their own (`probeClient`: hostname verification, the proxy's truststore, async DNS, pooled keep-alive connections), npm's version lookups included, never a raw socket.
+A separate pool keeps a cache hit's confirmation from queueing behind large downloads.
+Since every hit waits on one, that client is tuned for round trips.
+It negotiates HTTP/2 through ALPN (Central offers it; others fall back to HTTP/1.1), so a build's concurrent confirmations share a connection rather than a TLS handshake each.
+Idle connections stay open for `PROBE_KEEP_ALIVE_SECONDS` (60s), across short pauses between a build's Maven invocations.
 Longer buys little (one handshake per longer pause) and widens the window for a connection dropped silently while idle (NAT, suspend, a VPN coming up).
-Such a connection is still found: the client's read-idle timeout (15s) fires only while an exchange is waiting on the connection, and being shorter than the exchange's own (30s) it closes the dead connection first, so the exchange fails as broken and gets the one retry above, on a new connection.
+Such a connection is still found.
+The client's read-idle timeout (15s) fires only while an exchange is waiting on the connection.
+Being shorter than the exchange's own (30s) it closes the dead connection first, so the exchange fails as broken and gets the one retry above, on a new connection.
 Without it an HTTP/2 connection would never be evicted: a timed-out exchange resets only its own stream, and every later confirmation would wait out 30s on the dead connection and be served unconfirmed.
 Up to four HTTP/2 connections per host (`setHttp2MaxPoolSize`): with one, Vert.x admits a single connect at a time, so a burst to a host that falls back to HTTP/1.1 (a nested isx's own proxy, the benchmark stub) ran one request at a time, and a burst to one that does not answer failed one connect timeout after another.
 Connections are pooled per resolved address, so reuse also ends when the DNS cache (60s) re-resolves a host to a different one.
@@ -1250,12 +1301,14 @@ Anthropic entries use relaxed configuration resolution (at least one non-blank c
 `ToolProxyResolver` (in `common`) handles configuration resolution; `findUnresolved()` returns configuration entries that could not be resolved (excluding `type: anthropic` entries), and `ProxyMain` warns at startup when unresolved entries are found.
 `MitmProxy` stores resolved generic entries in exact-match and wildcard-suffix maps for O(1)/O(n) domain lookup.
 Domain collisions between tools are warned at startup (exact-domain conflicts and wildcard-suffix overlaps); tool domains that shadow built-in intercepted domains (registry, Maven, Gradle, npm) are warned during validation since built-in routing takes precedence.
-A `proxy:` entry also declares `placeholders:` -- each an `env` variable the tool reads its credential from and the `prefix` its value must start with -- which every start fills with the instance's proof token for the entry's namespace (see "Proof tokens" below); a YAML tool that exports a static placeholder through `env:` declares the same variable here (`typesafe.yaml` does).
+A `proxy:` entry also declares `placeholders:` -- each an `env` variable the tool reads its credential from and the `prefix` its value must start with -- which every start fills with the instance's proof token for the entry's namespace (see "Proof tokens" below).
+A YAML tool that exports a static placeholder through `env:` declares the same variable here (`typesafe.yaml` does).
 
 **Dynamic credential setup:** `isx init` builds its credential menu dynamically from tool setups via `ToolDefLoader.allToolSetups()`.
 Tools with proxy configuration are discovered, filtered by `ToolSetup.hasOwnCredentials()` (a tool whose `proxy()` configuration borrows another tool's credential, like `CopilotSetup` reusing `github.token`, overrides this to `false` so it isn't offered as a separately "configurable" entry), and sorted (known tools first: claude, gh, bob, codex; then alphabetically).
 Each entry shows `ToolSetup.description()` and a `[configured]` tag.
-Known tools dispatch to specialized setup methods with validation (e.g., `setupClaudeAuth` with env-var detection and API verification); unknown tools use a generic prompt (`setupGenericToolCredentials`) that iterates `proxy.getConfiguration()` directly, respects `ConfigEntry.isSecret()` and `ConfigEntry.isConfirm()` (for y/n prompts like license acceptance), and saves via `SpawnConfig.setConfigByPath()` using the entry's `config-path`.
+Known tools dispatch to specialized setup methods with validation (e.g., `setupClaudeAuth` with env-var detection and API verification).
+Unknown tools use a generic prompt (`setupGenericToolCredentials`) that iterates `proxy.getConfiguration()` directly, respects `ConfigEntry.isSecret()` and `ConfigEntry.isConfirm()` (for y/n prompts like license acceptance), and saves via `SpawnConfig.setConfigByPath()` using the entry's `config-path`.
 User-defined tool YAMLs with proxy entries appear in the menu automatically.
 
 **Claude accounts:** `claude.accounts` is a named map of credentials, so one host can hold several Claude identities at once (a personal Pro/Max subscription and a work Vertex project, say) instead of swapping whole `config.yaml` files by hand.
@@ -1266,7 +1319,9 @@ Accounts are named in `ClaudeAccount`/`ClaudeAccountType` (nested in `SpawnConfi
 Selection is by capability, via `ClaudeConfig.accountFor(Predicate)`: the default account when it can do the job, otherwise the first account in file order that can.
 `account()` (the unfiltered form) is what instances get today.
 `ClaudeConfig`'s familiar accessors (`isOauthMode()`, `getApiKey()`, `isUseVertex()`, …) are **derived from the resolved account**, not from the flat fields, so `ClaudeSetup`, `PiSetup`, `ProxyCredentials` and `DoctorCommand` needed no changes.
-Both `ClaudeConfig` and `ClaudeAccount` bind Jackson **by field** (`@JsonAutoDetect` with getters `NONE`): the derived getters share names with the legacy fields, and an `@JsonIgnore` on one accessor of a split property silently disables the whole property — which is how a flat `config.yaml` stops deserializing.
+Both `ClaudeConfig` and `ClaudeAccount` bind Jackson **by field** (`@JsonAutoDetect` with getters `NONE`).
+The derived getters share names with the legacy fields.
+An `@JsonIgnore` on one accessor of a split property silently disables the whole property — which is how a flat `config.yaml` stops deserializing.
 Claude stays typed because the type drives real behaviour — which variables a build bakes, whether an account can answer `isx ask` — but only as a *reader*: which accounts exist, which one is the default and whether a pin is valid are answered by `AccountResolver`, the same as for every other namespace (see "One accounts model" below).
 
 **Per-instance selection.**
@@ -1274,7 +1329,8 @@ Which account an instance uses is decided in three layers, each explicit, resolv
 Only the last two are written onto the instance, as `user.incus-spawn.account.<namespace>`, so an instance that says nothing keeps following the global default as it changes.
 
 Selection is always written `<namespace>=<account>`.
-A bare account name is deliberately not accepted even though it would read better: it would have to fan out over whichever namespaces happened to hold an account of that name, so adding a credential namespace later would silently widen the meaning of a command someone had already written down.
+A bare account name is deliberately not accepted even though it would read better.
+It would have to fan out over whichever namespaces happened to hold an account of that name, so adding a credential namespace later would silently widen the meaning of a command someone had already written down.
 
 **Accounts are generic, not Claude-specific.**
 `ToolDef.ProxyDef.fullConfigPath()` already built `<config-namespace>.<config-path>` (`github.token`); `accountConfigPath()` builds `<ns>.accounts.<account>.<path>` beside it, and `ToolProxyResolver` prefers it, falling back to the flat path when the account omits that key.
@@ -1284,11 +1340,13 @@ That one preference is the whole mechanism: every namespace gains named accounts
 **One accounts model (#773).**
 Claude got accounts first and grew its own rules: it presented a pre-accounts flat file as an account named `default`, and always wrote the accounts layout.
 Every other namespace kept a flat credential flat until a second account was added, and did not present it as an account at all.
-With identical-looking files, `isx account list` showed Claude and nothing else, and `--account claude=default` was accepted while `--account github=default` was refused — and the difference had leaked into generic code as `if (namespace is claude)` branches in `AccountSelection` and a namespace removal in `ProxyCredentials`.
+With identical-looking files, `isx account list` showed Claude and nothing else, and `--account claude=default` was accepted while `--account github=default` was refused.
+The difference had leaked into generic code as `if (namespace is claude)` branches in `AccountSelection` and a namespace removal in `ProxyCredentials`.
 Claude's rules won, for every namespace:
 
 - *A flat credential is the account `default`.*
-  `AccountResolver` presents a namespace with no `accounts:` block but with a credential as one account named `default`, with no fields of its own — `value()` already falls back from an account's key to the flat one, so that account reads the flat credential.
+  `AccountResolver` presents a namespace with no `accounts:` block but with a credential as one account named `default`, with no fields of its own.
+  `value()` already falls back from an account's key to the flat one, so that account reads the flat credential.
   Nothing is synthesized into the file, and reading a file written by any earlier isx is unaffected.
   Listing, pin validation and the proxy all ask the same resolver, so a pin the CLI accepts is one the proxy serves.
 - *Writing always produces the accounts layout.*
@@ -1301,12 +1359,16 @@ What the resolver needs to know about a namespace is an `AccountShape`, declared
 Two built-in tools override it.
 `GhSetup` names `email` as per-account, because the commit email belongs to an identity but is not something the proxy injects.
 `ClaudeConfig.ACCOUNT_SHAPE` recognises the flat Vertex setup (`useVertex: true` is not a secret) and judges each account by its type.
-That judgement is the shape's one hook, `problem(account, namespace)`: an unusable account is skipped when picking a default, and pinning it is refused as "configured but incomplete: <why>" rather than "not configured", because an incomplete account is easy to overlook in `isx init` (#742).
+That judgement is the shape's one hook, `problem(account, namespace)`.
+An unusable account is skipped when picking a default, and pinning it is refused as "configured but incomplete: <why>" rather than "not configured", because an incomplete account is easy to overlook in `isx init` (#742).
 The flat credential is never judged — the shape already decided it was one, and a flat `useVertex: true` without a region must still reach `ProxyMain` as a Vertex account so it can report exactly that misconfiguration.
-The tree-taking resolver methods take the shape as a parameter, so the proxy resolves against the tool setups it already loaded and never scans for tool YAMLs on the event loop; the `SpawnConfig`-taking conveniences look it up among the built-in Java tools first and scan only for a YAML tool's namespace.
+The tree-taking resolver methods take the shape as a parameter, so the proxy resolves against the tool setups it already loaded and never scans for tool YAMLs on the event loop.
+The `SpawnConfig`-taking conveniences look it up among the built-in Java tools first and scan only for a YAML tool's namespace.
 
 The typed classes follow.
-`BobConfig.hasAuth()` and `OpenaiConfig.hasAuth()` used to read the flat field, which is empty once a key lives under `accounts:`; they now resolve through `NamespaceConfig.defaultValue()`, and the branch-time credential check asks for Bob and OpenAI the way it already asked for GitHub, against the instance's account (see "Credential validation").
+`BobConfig.hasAuth()` and `OpenaiConfig.hasAuth()` used to read the flat field, which is empty once a key lives under `accounts:`.
+They now resolve through `NamespaceConfig.defaultValue()`.
+The branch-time credential check asks for Bob and OpenAI the way it already asked for GitHub, against the instance's account (see "Credential validation").
 Bob and OpenAI got named accounts in the same change, through the generic `isx init` flow rather than code of their own.
 
 The credential namespaces that *do* have a Java class (`GitHubConfig`, `BobConfig`, `OpenaiConfig`) extend `SpawnConfig.NamespaceConfig`, which preserves keys the class does not declare.
@@ -1315,7 +1377,8 @@ Namespaces with no Java class at all were already safe: they land in `SpawnConfi
 
 **How the proxy tells callers apart.**
 One shared proxy on `DEFAULT_MITM_PORT` still serves every instance, but it now identifies the caller by source address.
-Every branch is given a static IP (`InstanceLifecycle.configureBranch`, recorded as `user.incus-spawn.static-ip`) and the iptables REDIRECT that sends `:443` to the proxy preserves the source address, so one `/1.0/instances?recursion=1` call maps every address to an instance and its pinned accounts at once.
+Every branch is given a static IP (`InstanceLifecycle.configureBranch`, recorded as `user.incus-spawn.static-ip`) and the iptables REDIRECT that sends `:443` to the proxy preserves the source address.
+So one `/1.0/instances?recursion=1` call maps every address to an instance and its pinned accounts at once.
 `InstanceRegistry` holds that snapshot; `lookup()` never blocks, and refreshes run through `executeBlocking` following the single-flight pattern already used for DNS and Vertex tokens.
 `isx branch` and `isx account set` signal the proxy (SIGHUP) so a change lands immediately rather than at the next poll.
 `RequestContext` carries domain, caller, credentials and routing down the request path in place of the bare domain, and per-selection credentials are cached keyed by the selection itself and cleared on every config reload.
@@ -1324,19 +1387,29 @@ An address that is *not* a known instance — host-side traffic — gets the con
 An instance that pins nothing gets the same.
 
 **Builds are served their template's accounts (#903).**
-A build container used to get a DHCP address, so the proxy could not tell it from host traffic and served every namespace's default, whatever the template's `accounts:` chose: `repos:` were cloned and `prime` ran with the user's default token -- for a project-local template, handing that identity to code the cloned repository controls -- and `GhSetup` baked the default account's name next to the template account's email, stamped as the template account so nothing ever repaired it.
+A build container used to get a DHCP address, so the proxy could not tell it from host traffic and served every namespace's default, whatever the template's `accounts:` chose.
+`repos:` were cloned and `prime` ran with the user's default token -- for a project-local template, handing that identity to code the cloned repository controls -- and `GhSetup` baked the default account's name next to the template account's email, stamped as the template account so nothing ever repaired it.
 Before its first start, a build container now gets what a branch gets: an address from `StaticIpAllocator` with `security.ipv4_filtering`, and the template's pins (origin `template:<name>`), in one write (`InstanceLifecycle.assignBuildAddress`), then a SIGUSR1 so the proxy knows it before anything inside asks (`lifecycle/BuildAccounts.start`).
 Only a build that pins something does: one pinning nothing -- neither its template nor what it was copied with -- is served the defaults either way, so it keeps plain DHCP and skips the round trips.
-The `account-identity` stamps a copy carries from its parent are cleared in the same write, all of them and not only the pinned namespaces': they describe the parent's build, and the proxy refuses an account -- pinned *or* default -- whose auth mode does not match one, so it would refuse this build the account its own template chose, or a default changed since the parent was built.
+The `account-identity` stamps a copy carries from its parent are cleared in the same write, all of them and not only the pinned namespaces'.
+They describe the parent's build.
+The proxy refuses an account -- pinned *or* default -- whose auth mode does not match one, so it would refuse this build the account its own template chose, or a default changed since the parent was built.
 They are read first: after tool setup, `settleIdentities` compares them with this build's accounts to re-derive a parent's identity that no longer matches (#281), and reading them back from the container then would find nothing.
-When the build is done it stamps what it baked and puts the parent's back for every other namespace (`BuildAccounts.identityStamps`): a namespace whose credential is no longer configured derives nothing, yet the parent's `.gitconfig` or Claude environment is still in the rootfs.
+When the build is done it stamps what it baked and puts the parent's back for every other namespace (`BuildAccounts.identityStamps`).
+A namespace whose credential is no longer configured derives nothing, yet the parent's `.gitconfig` or Claude environment is still in the rootfs.
 No `.network` file is pushed: the guest keeps DHCP, and Incus's DHCP server hands out the NIC's `ipv4.address`.
-It will not while another MAC holds a lease on that address, and one usually does when a chain is built: the allocator hands out the lowest free address, so a child's build is offered the one its parent's build has just given back, whose lease the parent's MAC keeps -- Incus clears only IPv6 leases when a NIC's `ipv4.address` changes, and a force-stopped guest never releases its own. dnsmasq would then give the child a dynamic address that filtering drops, and the build would fail minutes later as a DNS error.
-So a build's claim also skips every address in the bridge's leases (`IncusClient.networkLeaseAddresses`, read before the allocation lock), and once the guest is up `InstanceLifecycle.requireBuildAddress` fails the build, saying why, if it holds another address on the bridge's subnet anyway -- only that subnet, since a parent's docker0 or podman bridge also shows up in the instance's state.
+It will not while another MAC holds a lease on that address, and one usually does when a chain is built.
+The allocator hands out the lowest free address, so a child's build is offered the one its parent's build has just given back, whose lease the parent's MAC keeps.
+Incus clears only IPv6 leases when a NIC's `ipv4.address` changes, and a force-stopped guest never releases its own.
+dnsmasq would then give the child a dynamic address that filtering drops, and the build would fail minutes later as a DNS error.
+So a build's claim also skips every address in the bridge's leases (`IncusClient.networkLeaseAddresses`, read before the allocation lock).
+Once the guest is up `InstanceLifecycle.requireBuildAddress` fails the build, saying why, if it holds another address on the bridge's subnet anyway -- only that subnet, since a parent's docker0 or podman bridge also shows up in the instance's state.
 Incus lists leases per project, so an instance of another Incus project on the same bridge stays invisible to the allocator, as its static reservations always were; the check turns that collision into a clear failure.
 The build prints the accounts it is served.
-Once stopped, the template gives the address back (`releaseBuildAddress`), returning the bridge NIC it was claimed on -- and no other -- to the profile's, since a template makes no requests and its copies never keep an address; a release that fails only warns, since the template is built and an address it keeps is freed when it is rebuilt or removed.
-A failed build keeps both address and pins as `<template>-failed-build`, so starting it for inspection serves it its template's accounts rather than the defaults; deleting it frees the address, as the template's next failed build, `isx clean` or a destroy does.
+Once stopped, the template gives the address back (`releaseBuildAddress`), returning the bridge NIC it was claimed on -- and no other -- to the profile's, since a template makes no requests and its copies never keep an address.
+A release that fails only warns, since the template is built and an address it keeps is freed when it is rebuilt or removed.
+A failed build keeps both address and pins as `<template>-failed-build`, so starting it for inspection serves it its template's accounts rather than the defaults.
+Deleting it frees the address, as the template's next failed build, `isx clean` or a destroy does.
 The allocator reads claimed addresses from the instance listing each time, so a deleted instance's address is free with nothing to undo.
 The proxy is another matter: until it re-reads, it would serve the deleted build's accounts to the next holder of the address.
 So `isx clean`, `isx clean pool` and `isx doctor`'s remediation signal it after deleting failed builds (`CleanCommand.deleteFailedBuilds`/`deleteFailedBuild`), as `isx destroy` does.
@@ -1349,7 +1422,8 @@ Every stopped start of an existing instance turns it back on where it is off (`I
 So an instance regains protection once its host can enforce it, rather than staying open until it is re-branched.
 The check reads the instance the other pre-start repairs already read, so it costs no request when filtering is already on.
 A host whose firewall backend cannot apply it warns rather than failing the branch, and the warning says plainly what is not enforced.
-That warning has to come from the *start* path, not the config path: Incus accepts `security.ipv4_filtering` on a host that cannot enforce it and only fails when the instance starts, so `InstanceLifecycle.startInstance` recognises that specific failure, drops the setting and retries.
+That warning has to come from the *start* path, not the config path.
+Incus accepts `security.ipv4_filtering` on a host that cannot enforce it and only fails when the instance starts, so `InstanceLifecycle.startInstance` recognises that specific failure, drops the setting and retries.
 Otherwise the hardening would take a working host and leave it unable to start anything it branched.
 The macOS appliance was such a host until its kernel gained the nft `bridge` family (#905): Incus's nftables driver installs the per-NIC rules there, so every Mac branch fell back to no filtering.
 `CONFIG_NF_TABLES_BRIDGE` is now built in, and the appliance smoke test fails CI if it is dropped (`appliance/DESIGN.md`).
@@ -1367,27 +1441,38 @@ Keeping the hash in instance config also means a destroyed instance forgets it w
 The hash sits beside the accounts in the registry's snapshot rather than inside `InstanceAccounts`, which `MitmProxy` caches by value: a key that changed on every restart would grow those caches.
 In the guest it is `/run/isx/instance-secret`, root-owned and readable by the instance user's group (0440), and the login profile exports `ISX_INSTANCE_SECRET_FILE` naming it.
 The path is exported, not the value, so the secret is not in the environment of every process, nor in an agent's `env` dump.
-`/run` is a tmpfs: any reboot isx did not perform (`incus restart`, a reboot inside the guest, autostart after a host reboot) leaves the box without a secret, so it fails closed rather than keeping the previous start's -- until the next `isx shell` or `isx run` notices and gives it one (#1024, below).
+`/run` is a tmpfs.
+Any reboot isx did not perform (`incus restart`, a reboot inside the guest, autostart after a host reboot) leaves the box without a secret, so it fails closed rather than keeping the previous start's -- until the next `isx shell` or `isx run` notices and gives it one (#1024, below).
 
 *Where it is made, and what it costs.*
 The start path is latency-sensitive, so delivery adds no round trip of its own.
-A branch's secret is generated in `BranchFlow.create`: its hash rides on the copy request (no extra write, and no moment in which a branch of a branch carries its source's hash), and the secret goes into the post-start setup script beside the SSH keys.
-A stopped start goes through `InstanceLifecycle.startForUse` -- `isx shell`/`isx run`, the TUI's shell, and the CA repairs before them -- and the TUI's restart through `restartForUse`: `rotateInstanceSecret` records the new hash before the start or restart, while no boot contends for the Incus API (one PATCH, the only new request, pinned in `InstanceLifecycleRequestBudgetTest`), and `waitForReady`'s probe writes the secret as it checks the guest answers.
+A branch's secret is generated in `BranchFlow.create`.
+Its hash rides on the copy request (no extra write, and no moment in which a branch of a branch carries its source's hash).
+The secret goes into the post-start setup script beside the SSH keys.
+A stopped start goes through `InstanceLifecycle.startForUse` -- `isx shell`/`isx run`, the TUI's shell, and the CA repairs before them -- and the TUI's restart through `restartForUse`.
+`rotateInstanceSecret` records the new hash before the start or restart, while no boot contends for the Incus API (one PATCH, the only new request, pinned in `InstanceLifecycleRequestBudgetTest`).
+`waitForReady`'s probe writes the secret as it checks the guest answers.
 `VmAgentRecovery` records the hash in the write that already stamps the boot it restarted into.
 The proxy is not signalled: on Linux that costs every start a bridge read, a `/health` call and a fork, and has the proxy list every instance while this one boots.
-Nothing needs it sooner -- the previous secret went with the guest's `/run` -- and `identify()` documents that a refusal right after a start is worth one refresh and a retry, throttled by `wantsMissRefresh()` as a lookup miss is: a guest can present wrong secrets at will, and each refresh lists every instance.
+Nothing needs it sooner -- the previous secret went with the guest's `/run` -- and `identify()` documents that a refusal right after a start is worth one refresh and a retry, throttled by `wantsMissRefresh()` as a lookup miss is.
+A guest can present wrong secrets at will, and each refresh lists every instance.
 Template builds get none, so no image carries one.
 The write is best-effort: a box left without its secret is refused by whatever checks it, which is the safe way for this to fail, and must not fail the start it rides on.
-It waits (up to 3 s) for the tmpfs on `/run`, and skips the write without one: a container answers exec as soon as its init runs, and a secret written before systemd mounts `/run` would land on the rootfs, hidden under the mount and carried into copies.
+It waits (up to 3 s) for the tmpfs on `/run`, and skips the write without one.
+A container answers exec as soon as its init runs.
+A secret written before systemd mounts `/run` would land on the rootfs, hidden under the mount and carried into copies.
 Every `IncusClient.copy` clears the hash beside the address, so no copy holds its source's; a branch sets its own in that same request.
-The secret travels in the exec's environment (`InstanceSecret.guestEnv`), never its arguments: any user in the guest can read a process's `/proc/<pid>/cmdline` for as long as it runs -- and the branch setup script can run for many seconds -- while `/proc/<pid>/environ` is readable only by its own uid.
+The secret travels in the exec's environment (`InstanceSecret.guestEnv`), never its arguments.
+Any user in the guest can read a process's `/proc/<pid>/cmdline` for as long as it runs -- and the branch setup script can run for many seconds -- while `/proc/<pid>/environ` is readable only by its own uid.
 The script moves it into an unexported variable at once, so nothing it starts inherits it.
 Nor does it sit in `RuntimeConfig`, which `BranchFlow.create` hands back to its callers: `setupRuntime` takes it as an argument.
 
 *A reboot isx did not do (#1024).*
 `InstanceLifecycle.ensureReady`, the step before every `isx shell` and `isx run` (and the TUI's shell), gives a running instance that lost its secret a new one: the hash recorded, then `GUEST_SCRIPT` run in one exec (`giveSecretToThisBoot`, best-effort and warning through `say`, so the shell still opens; a delivery that fails unsets the boot stamp it was recorded with, so the next shell tries again; since `GUEST_SCRIPT` never fails, the same exec runs `GUEST_CHECK` after it, and a secret the guest did not keep counts as a failed delivery and is reported, rather than silently given anew on every shell).
 Telling that it is needed costs no request of its own, but how differs by machine type, because the host sees a reboot differently.
-Every container reboot -- `incus restart`, `reboot` in the guest, autostart -- is a start, and Incus sets the instance's `last_used_at` on every start; the instance `ensureReady` already holds carries it, so it is compared with `user.incus-spawn.instance-secret-boot`, the boot the secret was made for (with the mark that it carried proof tokens, #1106; see "Proof tokens").
+Every container reboot -- `incus restart`, `reboot` in the guest, autostart -- is a start.
+Incus sets the instance's `last_used_at` on every start.
+The instance `ensureReady` already holds carries it, so it is compared with `user.incus-spawn.instance-secret-boot`, the boot the secret was made for (with the mark that it carried proof tokens, #1106; see "Proof tokens").
 Since a boot's `last_used_at` exists only once it starts, isx's own starts (`startForUse`, `restartForUse`, a branch's first start) record it after the guest answers, after the boot and not during it, where `setupRuntime` documents that API calls contend.
 That takes a read of the instance, which the starts followed by a CA check (`isx shell` and `isx run`, the TUI's shell, a branch that is not airgapped) were about to make anyway, so `startForUse` and `recordSecretBoot` return it and `CertificateAuthority.fixContainerCaIfNeeded(incus, name, instance)` uses it: there the stamp's write is the one request added (an airgapped start and the TUI's restart have no CA check, and pay the read too) (start plus CA check 5 -> 6, branch 18 -> 19 against `FakeIncusDaemon`, pinned in `InstanceLifecycleRequestBudgetTest`).
 Two isx processes acting on one container within its start can still leave the guest's secret and the recorded hash out of step for that boot (fails closed; #1065).
@@ -1398,7 +1483,8 @@ Asking the guest the same way for containers was the alternative: one exec on ev
 Guessing from the pre-start state was rejected: a stamp written before a start cannot tell the boot it was made for from a later one.
 
 **Proof tokens: the placeholder proves the start (#1106, plan in #1100).**
-The proxy attributes a request to an instance by its source address, and everything nested in an instance -- a nested container NAT'd behind it, rootless Podman under pasta, an ssh tunnel -- reaches the proxy from that same address, so it was served the instance's credentials too (#1100).
+The proxy attributes a request to an instance by its source address.
+Everything nested in an instance -- a nested container NAT'd behind it, rootless Podman under pasta, an ssh tunnel -- reaches the proxy from that same address, so it was served the instance's credentials too (#1100).
 What those have not got, unless someone hands it to them, is the instance's login environment.
 So the placeholder each tool already sends in place of its credential becomes a proof of that environment: `ProofToken.derive(secret, namespace)`, an HMAC-SHA256 keyed with this start's secret over the namespace name (128 bits of it, hex), carried as the tool's own prefix plus `isx_` plus the digest -- `gho_isx_…`, `sk-ant-isx_…`, `sk-ant-oat01-isx_…` -- so the tool still accepts its shape and anyone debugging can tell it is isx's.
 It changes on every start, differs per namespace (one namespace's proof opens no other's), and reveals neither the secret, which is what the MCP bridge accepts and so must stay out of `env` dumps, nor the recorded hash.
@@ -1408,38 +1494,50 @@ Checking the proof before injecting is #1107; until then the proxy replaces what
 Which variables carry a namespace's placeholder, with which prefix, is declared on the tool: `placeholders:` (`env`, `prefix`) on its `proxy:` entry, in the one namespace the tool's credential belongs to (`ToolSetup.credentialNamespaces()`, so Copilot's `COPILOT_GITHUB_TOKEN` is `github`'s), surfaced as `ToolSetup.placeholders()`.
 Pi, which spends Claude's and OpenAI's credentials with no proxy entry of its own, reads `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` as Claude Code and Codex do -- their declarations cover it -- and overrides `placeholders()` only for `ANTHROPIC_OAUTH_TOKEN`, its own name for Claude's OAuth token.
 Claude declares one variable per auth mode: `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, and for Vertex `ISX_VERTEX_ACCESS_TOKEN` (`ya29.isx_…`), which #1108's login script puts in `ANTHROPIC_CUSTOM_HEADERS` and its `gcloud` stub prints: under `CLAUDE_CODE_SKIP_VERTEX_AUTH` Claude Code sends no credential header of its own.
-The set an instance is given is that of the tools the proxy serves (`ToolProxyResolver.proxyToolSetups`: feature-gated tools only when enabled, never a project-local tool's proxy entry), merged by `ProofToken.declaredBy`, which drops a declaration that could not be written into a shell safely (`ToolDefValidator` reports it as an error) and a variable two tools declare differently: guessing which tool the image's variable belongs to could hand it another namespace's proof, and dropping leaves the static placeholder, which proves nothing.
+The set an instance is given is that of the tools the proxy serves (`ToolProxyResolver.proxyToolSetups`: feature-gated tools only when enabled, never a project-local tool's proxy entry), merged by `ProofToken.declaredBy`, which drops a declaration that could not be written into a shell safely (`ToolDefValidator` reports it as an error) and a variable two tools declare differently.
+Guessing which tool the image's variable belongs to could hand it another namespace's proof, and dropping leaves the static placeholder, which proves nothing.
 The start, the proxy's check (#1107) and the in-guest `isx doctor` (#1109) read the same declaration.
 
 *Delivered with the secret, in the same exec.*
-`InstanceSecret.guestEnv(secret, placeholders)` hands the guest the secret and the proof exports together, both in the exec's environment, and `GUEST_SCRIPT` writes the exports to `/run/isx/proof-tokens` beside the secret, root-owned and readable by the instance user's group (0440): other users of the guest get neither.
+`InstanceSecret.guestEnv(secret, placeholders)` hands the guest the secret and the proof exports together, both in the exec's environment.
+`GUEST_SCRIPT` writes the exports to `/run/isx/proof-tokens` beside the secret, root-owned and readable by the instance user's group (0440).
+Other users of the guest get neither.
 It removes the previous proofs first, so none outlive the secret they came from.
-`/etc/profile.d/isx-instance-secret.sh`, which the same script writes and which sorts after `isx-env.sh`, sources that file, and each line replaces a variable only while it holds the build's own placeholder -- every static one starts with its prefix and `placeholder` (`gho_placeholder`, `ya29.placeholder-for-proxy`; `ToolDefValidator` requires that shape of a YAML tool) -- or an earlier proof: `case "${GH_TOKEN-}" in gho_placeholder*|gho_isx_*) export GH_TOKEN='gho_isx_…' ;; esac`.
+`/etc/profile.d/isx-instance-secret.sh`, which the same script writes and which sorts after `isx-env.sh`, sources that file.
+Each line replaces a variable only while it holds the build's own placeholder -- every static one starts with its prefix and `placeholder` (`gho_placeholder`, `ya29.placeholder-for-proxy`; `ToolDefValidator` requires that shape of a YAML tool) -- or an earlier proof: `case "${GH_TOKEN-}" in gho_placeholder*|gho_isx_*) export GH_TOKEN='gho_isx_…' ;; esac`.
 So the build still decides which variables an instance has (an OAuth-configured Claude never grows an `ANTHROPIC_API_KEY`), and a value somebody else put in the variable -- a template's own `env:` pointing `GH_TOKEN` at another service, a `set-if-unset` that kept the user's -- stays theirs.
 Computing the proofs on the host, rather than deriving them in the guest, needs no HMAC tool in the image and gives most instances built before this their proofs at the next start or shell, with no rebuild.
 
 *Except where the tool cannot take a new value on every start.*
 A placeholder may carry a guard, a shell condition its line checks in the guest (`Placeholder.onlyWhen`; code only, never from YAML, since it runs in every login).
 Claude's `ANTHROPIC_API_KEY` has one: Claude Code asks interactively, defaulting to no, about a key whose last 20 characters `~/.claude.json` has not approved, and an image built before #1108's login script (`/etc/profile.d/isx-zz-claude-auth.sh`, which approves each login's key) approves only `sk-ant-placeholder`.
-So the key gets a proof only where that script exists, or where there is no `~/.claude.json` to ask (pi without Claude Code); an API-key Claude image built before #1108 keeps the static key, and works as before, until it is rebuilt.
+So the key gets a proof only where that script exists, or where there is no `~/.claude.json` to ask (pi without Claude Code).
+An API-key Claude image built before #1108 keeps the static key, and works as before, until it is rebuilt.
 Once #1107 checks proofs that image's Claude requests carry none, so #1107 has to ask for the rebuild where it refuses them.
 The other namespaces need no guard: gh, Copilot, Bob, pi and Typesafe read the variable on every call, Claude's OAuth token has no approval list, Codex reads `auth.json` (which #1108's script rewrites, and which keeps its build-time key in an older image, where `OPENAI_API_KEY` changes nothing for Codex), and only an image built after #1108 exports `ISX_VERTEX_ACCESS_TOKEN` at all.
 Every path that delivers a secret delivers its proofs: a branch's setup script, `startForUse`, `restartForUse`, `VmAgentRecovery`, and `ensureReady`'s new secret after a reboot isx did not do.
 Nothing is added to the start's Incus requests (`InstanceLifecycleRequestBudgetTest` is unchanged).
-The declarations come from tool definitions on disk (about 160 ms cold on the JVM, a few warm), so the start paths, the branch's included, read them in the background while the instance is copied or starts (`ProofToken.declaredInBackground`), and a failed read gives no proofs and a warning -- the static placeholders, which prove nothing.
+The declarations come from tool definitions on disk (about 160 ms cold on the JVM, a few warm).
+So the start paths, the branch's included, read them in the background while the instance is copied or starts (`ProofToken.declaredInBackground`).
+A failed read gives no proofs and a warning -- the static placeholders, which prove nothing.
 `giveSecretToThisBoot` has only one PATCH to overlap the read with, so on that path -- a reboot isx did not do, or an instance from before proofs, once -- the read is close to synchronous.
-They are read as the proxy reads them, never from the current directory's `.incus-spawn/tools/` (`ToolDefLoader.withoutProjectTools`): the tool setups `BranchFlow.preflight` loads do include it, and a cloned repository that ships its own `gh.yaml` would otherwise leave `GH_TOKEN` without a proof whenever isx runs from it -- untrusted project input deciding what a start delivers (#765).
-A YAML tool's placeholder must be one of its own `env:` entries (`YamlToolSetup.placeholders()` drops any other with a warning, `ToolDefValidator` reports it as an error): a start only fills what the build exported, so another name is a typo, or a variable such as `PATH` or `LD_PRELOAD` a proof would clobber in every login shell.
+They are read as the proxy reads them, never from the current directory's `.incus-spawn/tools/` (`ToolDefLoader.withoutProjectTools`).
+The tool setups `BranchFlow.preflight` loads do include it.
+A cloned repository that ships its own `gh.yaml` would otherwise leave `GH_TOKEN` without a proof whenever isx runs from it -- untrusted project input deciding what a start delivers (#765).
+A YAML tool's placeholder must be one of its own `env:` entries (`YamlToolSetup.placeholders()` drops any other with a warning, `ToolDefValidator` reports it as an error).
+A start only fills what the build exported, so another name is a typo, or a variable such as `PATH` or `LD_PRELOAD` a proof would clobber in every login shell.
 Proofs live only in `/run`, like the secret, so no image or copy carries one, and a branch gets its own with its own secret before its first start.
 *Reaching instances already running.*
 An instance an older isx started holds its secret but no proofs, and so does one whose proofs write failed after its secret's.
 A VM's agent probe, which runs on every shell, asks for the proofs file as well as the secret (`GUEST_CHECK`; an empty file is a delivery in which no tool declared any), so the next shell delivers both.
 A container has no probe: `ensureReady` compares its boot with the boot stamp, which now records that the delivery carried proofs (`InstanceLifecycle.secretBootStamp`: `<last_used_at> proofs`).
-A stamp an older isx wrote is the bare boot, so it no longer matches, and the next shell gives the container a new secret with its proofs -- once, from the instance it already read, at no request of its own on every later shell.
+A stamp an older isx wrote is the bare boot, so it no longer matches.
+The next shell gives the container a new secret with its proofs -- once, from the instance it already read, at no request of its own on every later shell.
 A build keeps the static placeholder in `isx-env.sh`, and a long-lived shell keeps the proofs of the start it was opened in until it is replaced (#1109 reports that).
 
 *Keyed with the secret, not its hash.*
-The host records only the secret's SHA-256, which a guest can read from `/dev/incus`, so a proof keyed with the hash would be forgeable by any user in the guest; keyed with the secret, nothing the host holds lets anyone derive one.
+The host records only the secret's SHA-256, which a guest can read from `/dev/incus`, so a proof keyed with the hash would be forgeable by any user in the guest.
+Keyed with the secret, nothing the host holds lets anyone derive one.
 The proxy therefore cannot recompute a proof from what it has today: #1107 decides between recording a hash of each namespace's proof at the start (option 1) and re-keying with the hash (option 2, which gives that property up).
 
 **Fail closed.**
@@ -1453,10 +1551,12 @@ An instance records only its pins, so "which account is this instance spending?"
 
 **Who chose a pin is recorded, not inferred.**
 A pin always lives on the instance, whoever chose it: `isx branch` copies the template's `accounts:` onto the branch exactly as it writes an `--account`.
-Inferring the chooser from whether the pin matches the template was tried first and is wrong in both directions -- an explicit choice of the template's account reads as the template's, and a template edited since makes its own pin read as an override.
+Inferring the chooser from whether the pin matches the template was tried first and is wrong in both directions.
+An explicit choice of the template's account reads as the template's, and a template edited since makes its own pin read as an override.
 So every pin is written with `user.incus-spawn.account-origin.<ns>` (`AccountOrigin`): `template:<name>` (the build stamps it; branches copy it unchanged), `explicit` (`--account`, `isx account set`, the TUI), or `copied:<instance>` for an explicit choice made on the instance a branch was copied from -- the instance where it was chosen, not every hop since.
 `AccountSelection.stampUpdates` writes and clears pin and origin together, so no path can set one without the other.
-Pins written before origins existed read as unknown and are reported as such; the one inference made is at branch time, where an unrecorded pin on the source that equals its template's choice is recorded as the template's, since that is how every earlier template build stamped it.
+Pins written before origins existed read as unknown and are reported as such.
+The one inference made is at branch time, where an unrecorded pin on the source that equals its template's choice is recorded as the template's, since that is how every earlier template build stamped it.
 The template is also compared as it reads *now*, which answers what no record can: a template whose `accounts:` was edited after the instance was branched.
 A branch keeps what it was branched with, deliberately -- silently re-pointing running work because a YAML file changed is the wrong default for credentials -- so `show` reports the difference and prints the `isx account set` that would follow it, never suggesting an account that no longer exists.
 For a template instance the advice is a rebuild instead, since its pins are what its build stamped.
@@ -1469,14 +1569,17 @@ Pinning the account that happens to be the default is not the same as following 
 
 **In the TUI.**
 `a` on an instance -- in the list or its details -- opens the same choice as a form: per namespace, "default (<account>)" first, then each account.
-The refusal check runs while the dialog is open, so a Claude cross-mode swap is explained where it was attempted, and the change itself runs in the background through `InstanceLifecycle.changeAccounts`, the path `isx account set/unset` also take, so the two front ends cannot drift the way the TUI's branch flow did (#800).
+The refusal check runs while the dialog is open, so a Claude cross-mode swap is explained where it was attempted.
+The change itself runs in the background through `InstanceLifecycle.changeAccounts`, the path `isx account set/unset` also take.
+So the two front ends cannot drift the way the TUI's branch flow did (#800).
 The F3 instance details carry the same "Credential accounts" section `isx account show` prints.
 
 **Choosing accounts when branching in the TUI.**
 The branch dialog offers a dropdown per credential the template's tools use (`ToolSetup.credentialNamespaces()`, which derives them from proxy entries -- borrowed ones included, as Copilot's `github.token` -- and which `PiSetup` overrides, since Pi spends Claude's or OpenAI's credential without declaring one) and per credential the inheritance already mentions, but only where there is a choice: two or more usable accounts, or an inherited pin that no longer resolves.
 A credential with a single account gets no row.
 The first entry is always *inherit*: exactly what `isx branch` without `--account` does, computed by the same `BranchFlow.inheritedAccounts`, and labelled with where it comes from ("as tpl-acme chooses", "global default, follows it").
-Everything below it is an explicit pin, recorded as `explicit` like `--account` -- the inherited account included, because pinning the account that happens to be the default is a different choice from following the default: the pin stays when the default moves, and the entry says so.
+Everything below it is an explicit pin, recorded as `explicit` like `--account` -- the inherited account included, because pinning the account that happens to be the default is a different choice from following the default.
+The pin stays when the default moves, and the entry says so.
 Offering it twice under two different meanings is what keeps "let it be" and "pin this" distinguishable without a second control; the closed row shows the account with its source in grey when inherited, and highlighted "pinned" when not.
 An account the source was not built for (a different Claude auth mode, `AccountSelection.requiredRebuild`) is listed, greyed, with the reason, rather than hidden, so nobody wonders where their account went -- and cannot be chosen.
 Tamboui has no dropdown, only the inline `< >` select, so `BranchAccountChoices` draws its own overlay; Space opens it, since Space toggles every other field and Enter confirms the branch.
@@ -1490,9 +1593,12 @@ Removing the default account names its followers the same way.
 For a hand edit nothing can ask, so the proxy's `reload()` logs which instances a changed default moved (`logDefaultChanges`), and `isx account list` shows who follows each default.
 *Safe*: the two things a default change could break are handled as a pin change is.
 GitHub's baked git identity is re-derived for running followers straight away (`refreshIdentities`, the same reconcile `isx account set` runs; stopped ones catch up in `InstancePrep`).
-A Claude auth mode cannot be re-derived, and `isx account set` refuses such a move while the user chooses -- but a default change moves instances without asking, so the proxy checks instead: `AccountSelection.servingMismatches` compares the account an instance would be served (its pin, or the default it follows) with its `account-identity` stamp, which the registry now reads, and for a tool that cannot rebake it fails the request closed with a message naming an account the instance was built for -- the same rule as a pin to an account that is gone, never a mismatched credential.
+A Claude auth mode cannot be re-derived, and `isx account set` refuses such a move while the user chooses.
+But a default change moves instances without asking, so the proxy checks instead.
+`AccountSelection.servingMismatches` compares the account an instance would be served (its pin, or the default it follows) with its `account-identity` stamp, which the registry now reads, and for a tool that cannot rebake it fails the request closed with a message naming an account the instance was built for -- the same rule as a pin to an account that is gone, never a mismatched credential.
 The refusal is scoped to that credential's domains (`namespacesByDomain`/`namespacesForDomain`, from the tools' own proxy declarations, `*.suffix` patterns included), so the instance's GitHub traffic keeps working while Claude is refused.
-Results are cached per registry record inside the proxy's `ConfigState`, which each reload replaces whole, so a request that read the old config and finishes after the reload can only write its stale answer into a cache nothing reads any more.
+Results are cached per registry record inside the proxy's `ConfigState`, which each reload replaces whole.
+So a request that read the old config and finishes after the reload can only write its stale answer into a cache nothing reads any more.
 Only branches count as followers (`accountStates` skips templates and failed builds): a template makes no requests, and pinning one on "keep" would pin every future branch of it.
 `isx doctor` and `isx account show` report the same state.
 If #866 makes Claude's auth modes interchangeable, `bakedAccountIdentity` returns "" for Claude and all of this goes quiet by itself.
@@ -1501,7 +1607,8 @@ If #866 makes Claude's auth modes interchangeable, `bakedAccountIdentity` return
 Removing or renaming an account breaks every instance pinned to it -- fail closed means their next request errors -- and every template whose `accounts:` names it.
 `isx init` therefore names those instances and templates before a removal (including "replace all", which removes every account but one) and asks, defaulting to no.
 Rename is offered for the same reason: the alternative, remove and re-add, orphans every pin.
-`NamespaceAccounts.rename` keeps the account's position in the file (with no usable default, the first usable account in file order serves) via `SpawnConfig.renameConfigKey`, and `AccountSelection.renameInInstances` re-points the pins in one list request plus one PATCH per affected instance -- and, for a tool whose baked identity names the account (GitHub; `ToolSetup.renameBakedIdentity()`), the identity stamp too, so a rename is not mistaken for a change of identity.
+`NamespaceAccounts.rename` keeps the account's position in the file (with no usable default, the first usable account in file order serves) via `SpawnConfig.renameConfigKey`.
+`AccountSelection.renameInInstances` re-points the pins in one list request plus one PATCH per affected instance -- and, for a tool whose baked identity names the account (GitHub; `ToolSetup.renameBakedIdentity()`), the identity stamp too, so a rename is not mistaken for a change of identity.
 GitHub's fingerprint carries over unchanged: it describes the same token, and recomputing it would hide a token replaced before the rename.
 Template YAML is the user's file and is reported, never rewritten.
 The instance and template lookups are overridable seams on `InitCommand`, so `AccountMenuTest` covers these flows without Incus.
@@ -1514,50 +1621,65 @@ Two tools *can* tell them apart, and each does so differently.
 
 `ToolSetup.bakedAccountIdentity()` returns whichever of those applies, or `""` for a namespace whose credential is pure header substitution.
 The build stamps it as `user.incus-spawn.account-identity.<namespace>`.
-When a re-point makes it stale, the tool is asked to bring the instance in line: `GhSetup.canRebakeForAccount()` is true, and `rebakeForAccount` clears the git identity and asks the API again — which resolves *through the proxy*, so it answers for the new account without this code knowing which one that is.
+When a re-point makes it stale, the tool is asked to bring the instance in line.
+`GhSetup.canRebakeForAccount()` is true, and `rebakeForAccount` clears the git identity and asks the API again — which resolves *through the proxy*, so it answers for the new account without this code knowing which one that is.
 `InstanceLifecycle.reconcileAccountIdentities` does this, and only stamps back on success.
 
 GitHub's stamp is the account name plus a fingerprint of its token and configured email (`<account>#<12 hex of SHA-256>`), not the name alone.
-The name alone missed the most ordinary change of all (#281): replacing an account's token with another user's keeps the name, so nothing was stale, and every instance -- and every child template, which inherits its parent's `.gitconfig` and whose gh setup skips an identity already present -- went on committing as the previous user while pushing as the new one.
+The name alone missed the most ordinary change of all (#281).
+Replacing an account's token with another user's keeps the name, so nothing was stale.
+Every instance -- and every child template, which inherits its parent's `.gitconfig` and whose gh setup skips an identity already present -- went on committing as the previous user while pushing as the new one.
 The fingerprint is truncated and one-way, so the stamp never carries the credential.
 A stamp from a build that recorded only the name cannot say whether its token has changed since, so it is re-derived once.
-Child templates are covered by `BuildAccounts.settleIdentities` (from `BuildCommand`), which re-derives an inherited identity that no longer matches after tool setup (before it, a child adding gh to a parent without it would get its identity written first, and gh's setup, finding a `.gitconfig`, would skip its git defaults); otherwise the stamp written at the end of the build would claim the current identity over the parent's `.gitconfig` and hide it from the branch-time reconcile too.
+Child templates are covered by `BuildAccounts.settleIdentities` (from `BuildCommand`), which re-derives an inherited identity that no longer matches after tool setup (before it, a child adding gh to a parent without it would get its identity written first, and gh's setup, finding a `.gitconfig`, would skip its git defaults).
+Otherwise the stamp written at the end of the build would claim the current identity over the parent's `.gitconfig` and hide it from the branch-time reconcile too.
 Since every build stamps every namespace, instances without gh carry a GitHub stamp as well; `GhSetup.rebakeForAccount` does nothing where gh is not installed.
 It runs from every point a pin can change or first take effect: `isx branch --account` after the instance starts, `isx account set` while it is running, and `InstancePrep` on the next `isx shell`/`isx run`, alongside the other `fix*` reconcilers.
-Reconciling only in `InstancePrep` was not enough: the token swaps on the next request, but the identity is baked, so an instance driven over `incus exec`, SSH or an IDE would push as one account and commit as another until someone happened to open a shell.
+Reconciling only in `InstancePrep` was not enough.
+The token swaps on the next request, but the identity is baked, so an instance driven over `incus exec`, SSH or an IDE would push as one account and commit as another until someone happened to open a shell.
 A tool that cannot re-derive — Claude, whose variables a running agent has already read — has the swap refused at selection time instead, while the user is still choosing.
 
-**An identity that was never baked is reconciled too.** gh's setup derives the git identity only when an account can supply one: a template built while no GitHub token was configured -- an `isx init` whose GitHub step was skipped -- gets gh's `.gitconfig` defaults and no `[user]`, so every commit in every branch was unattributed.
+**An identity that was never baked is reconciled too.** gh's setup derives the git identity only when an account can supply one.
+A template built while no GitHub token was configured -- an `isx init` whose GitHub step was skipped -- gets gh's `.gitconfig` defaults and no `[user]`, so every commit in every branch was unattributed.
 It used to happen silently and nothing repaired it: with no account, `bakedAccountIdentity` is `""`, no stamp was written, and an absent stamp reads as "nothing baked, nothing to reconcile".
 Worse, stamps were computed from config.yaml, not from the guest: a child built once a token existed, on such a parent, was stamped with an identity its `.gitconfig` never got, and the reconcile trusted it.
 
 So the stamp is now decided by the guest.
 After tool setup, `BuildAccounts.settleIdentities` (called from `BuildCommand`) asks each tool in the template's chain that owns a namespace and can re-derive (`AccountSelection.rederivableNamespaces`: gh itself, not Copilot, which borrows the GitHub credential but derives nothing; never Claude, where a stamp the account does not match would refuse the account; only namespaces `namespaceSetups` knows, so a gated-out one is never marked) whether its identity is missing (`ToolSetup.lacksBakedIdentity`, one exec for gh).
-Missing, with an account to derive from, it is re-derived (`BuildAccounts.toRederive`, which shares `AccountSelection.needsRederive` with the branch-time reconcile, so the two cannot drift) -- whether the parent was stamped `<none>`, unstamped by an older isx, or stamped with an identity it never got; a failure fails the build, as for a fresh template.
+Missing, with an account to derive from, it is re-derived (`BuildAccounts.toRederive`, which shares `AccountSelection.needsRederive` with the branch-time reconcile, so the two cannot drift) -- whether the parent was stamped `<none>`, unstamped by an older isx, or stamped with an identity it never got.
+A failure fails the build, as for a fresh template.
 Missing with no account, the build warns (`ToolSetup.unbakedIdentityWarning`, whichever layer installed gh; it names the account when the template uses one that has no token, since "no token is configured" would be untrue while the default has one) and stamps `Metadata.ACCOUNT_IDENTITY_NONE` (`<none>`) over whatever the parent claimed.
 A parent that has an identity but no stamp -- built before stamps existed -- keeps it, so a GitHub outage cannot fail a child build that never needed the API.
 A token-less account bakes `""`, not its name, so it is never stale against the marker.
 
-The marker differs from every account's identity, so once a token is configured it is an ordinary stale identity: the branch-time reconcile re-derives it and stamps the real one, and while there is still no token the namespace bakes nothing and is left alone rather than failing on every start.
+The marker differs from every account's identity, so once a token is configured it is an ordinary stale identity.
+The branch-time reconcile re-derives it and stamps the real one.
+While there is still no token the namespace bakes nothing and is left alone rather than failing on every start.
 A real value rather than an absent key, because absence is what an image without gh looks like, and telling the two apart at branch time would cost a guest exec on every branch.
 
 Every template this isx builds is also stamped `Metadata.ACCOUNT_IDENTITY_VERIFIED`, which every branch inherits: its stamps came from the guest and are trusted, and its reconcile costs one instance read and no exec (`InstanceLifecycleRequestBudgetTest`).
 An instance without it comes from a template an older isx built, so its stamps -- or their absence -- may lie.
-`AccountSelection.identityReconcile` lists its re-derivable namespaces with a configured account as `unverified`, and `InstanceLifecycle.reconcileAccountIdentities` asks the guest once, re-derives what is missing and sets the marker: one exec and one write, once per such instance, and nothing at all while no account is configured.
+`AccountSelection.identityReconcile` lists its re-derivable namespaces with a configured account as `unverified`.
+`InstanceLifecycle.reconcileAccountIdentities` asks the guest once, re-derives what is missing and sets the marker: one exec and one write, once per such instance, and nothing at all while no account is configured.
 One that has its identity is stamped with the account's, so a later change of account or token is still reconciled; marked without a stamp, it would be skipped for good.
 The marker is written by any reconcile of an unmarked instance that had something to do, so one whose stamp was merely stale is marked once re-derived.
-Only a built-in tool can re-derive (it takes Java code a tool YAML cannot supply), so the plan is decided against those (`AccountSelection.rederivableSetups`) and the tool definitions are read from disk only when it finds something, to drop a namespace the proxy does not serve: an instance with nothing to do -- verified and current, `<none>` while there is still no token, or an older one while no account is configured, which is never marked and so would pay on every use -- reads nothing from disk.
+Only a built-in tool can re-derive (it takes Java code a tool YAML cannot supply).
+So the plan is decided against those (`AccountSelection.rederivableSetups`) and the tool definitions are read from disk only when it finds something, to drop a namespace the proxy does not serve.
+An instance with nothing to do -- verified and current, `<none>` while there is still no token, or an older one while no account is configured, which is never marked and so would pay on every use -- reads nothing from disk.
 That repairs templates already built without an identity, and their branches, without a rebuild.
 
 The guest is asked before waiting for the instance's address, which only re-deriving needs, so an older instance that has its identity is marked without that wait.
 The marker goes on the instance, not its template, so until an older template is rebuilt every new branch of it pays the exec and the write on its first use.
-Marking the template from a branch's answer was rejected: the template is stopped, so it cannot be asked, and a branch's `.gitconfig` may have changed since the copy, so a marker written from it would be trusted by every later branch.
+Marking the template from a branch's answer was rejected.
+The template is stopped, so it cannot be asked.
+A branch's `.gitconfig` may have changed since the copy, so a marker written from it would be trusted by every later branch.
 An airgapped instance is never reconciled: it has no proxy to re-derive through, and it never gets the address the re-derive waits for, so every `isx shell` in one would wait 30 s and warn.
 `BranchFlow` already skipped it; `AccountSelection.identityReconcile` now returns nothing for it, which covers `InstancePrep`, `isx account set` and init's refresh alike.
 `InstancePrep` and `BranchFlow` hand over the read they already made (for `ensureReady`, and the prefetch before the start), so on the shell and branch paths the reconcile itself costs no request.
 
 What the guest check does not catch: it asks whether an identity is *missing*, never whose it is.
-A parent built before stamps existed, holding account A's identity and no stamp, yields a child built for account B that is stamped B and verified while its `.gitconfig` still holds A's: the build finds an identity, and with no stamp to compare there is nothing stale.
+A parent built before stamps existed, holding account A's identity and no stamp, yields a child built for account B that is stamped B and verified while its `.gitconfig` still holds A's.
+The build finds an identity, and with no stamp to compare there is nothing stale.
 Before the marker that stamp was equally trusted -- an unstamped parent was never re-derived -- but the marker makes it permanent.
 The same holds for an older instance with an identity and no stamp, which the reconcile stamps with its account's identity.
 Rebuilding the parent fixes it.
@@ -1567,18 +1689,25 @@ Refusing is the fallback for what cannot be fixed, not the general rule: GitHub 
 Moving git identity out of template-build time is also what closes the older complaint that every branch of a template shares one GitHub identity (#281).
 
 The deeper fix would be to stop telling the container which mode it is in at all.
-`handleApiRequestWithBody` already branches on the request *path*, not on how the container was built, and `translateToVertex()` already converts a standard `/v1/messages` call into a Vertex `rawPredict` — so dropping `CLAUDE_CODE_USE_VERTEX` and always baking the standard placeholder would make all three Claude types environmentally identical and every swap live.
+`handleApiRequestWithBody` already branches on the request *path*, not on how the container was built, and `translateToVertex()` already converts a standard `/v1/messages` call into a Vertex `rawPredict`.
+So dropping `CLAUDE_CODE_USE_VERTEX` and always baking the standard placeholder would make all three Claude types environmentally identical and every swap live.
 The open risks are Vertex model-ID mapping and the non-messages endpoints that currently fall through to `api.anthropic.com`; both want measuring against a real Vertex project rather than arguing about.
 
 **AI help credentials (`isx ask` / `?` in the TUI):** `AiHelpClient.targets()` lists the accounts satisfying `ClaudeAccount::servesDirectApi` (the default account first), then `openai`; the first is the one used by default.
-An `oauth` account never satisfies it: a Claude Pro/Max token is only valid for Claude Code itself, and the Messages API rejects it unless `system` is a block array whose *first* block is Claude Code's own identity string — rejecting it with an opaque HTTP 429 `rate_limit_error` whose message is the literal text `Error`, so the failure reads as a generic API error rather than an auth hint.
+An `oauth` account never satisfies it.
+A Claude Pro/Max token is only valid for Claude Code itself.
+The Messages API rejects it unless `system` is a block array whose *first* block is Claude Code's own identity string — rejecting it with an opaque HTTP 429 `rate_limit_error` whose message is the literal text `Error`, so the failure reads as a generic API error rather than an auth hint.
 Satisfying that check would mean isx presenting itself as Claude Code to spend the user's subscription, so a Pro/Max account simply keeps serving instances while an `api-key` or `vertex` account answers here.
 This is the one place isx calls a model API on its own behalf; everywhere else (`ProxyCredentials`, `ClaudeSetup`, `PiSetup`) credentials are only forwarded into instances.
 Because providers answer errors with varying usefulness, `describeError()` reports the HTTP status, the error `type` and the `request_id` alongside the message.
-`isx ask` always uses that first one, but the TUI's AI Help dialog makes the account explicit, offering every target as a selector -- a fixed line when there is only one -- because which credentials are billed should be visible rather than implied.
+`isx ask` always uses that first one.
+But the TUI's AI Help dialog makes the account explicit, offering every target as a selector -- a fixed line when there is only one -- because which credentials are billed should be visible rather than implied.
 `subscriptionAccounts()` names the Pro/Max accounts so the dialog can show them as unavailable with the reason, instead of leaving a subscriber to wonder why their account is missing.
-The optional template and tool definitions are presented as an *attachment* with their measured size -- the word itself says they leave the machine with the question, which matters because they include the user's own YAML files; `HelpContext.definitions()` is built once per opening of the dialog, so the size shown is exactly what gets sent.
-**Prompt caching:** every question carries the whole README and DESIGN.md (~205 KB, the bulk of the cost; kept because answers are markedly less complete without the design rationale), so `HelpContext.systemBlocks()` returns the prompt as two blocks -- the fixed documentation, then the attached definitions -- and `AiHelpClient.cachedSystem()` puts a 5-minute `cache_control` breakpoint on each for Anthropic and Vertex.
+The optional template and tool definitions are presented as an *attachment* with their measured size.
+The word itself says they leave the machine with the question, which matters because they include the user's own YAML files.
+`HelpContext.definitions()` is built once per opening of the dialog, so the size shown is exactly what gets sent.
+**Prompt caching:** every question carries the whole README and DESIGN.md (~205 KB, the bulk of the cost; kept because answers are markedly less complete without the design rationale).
+So `HelpContext.systemBlocks()` returns the prompt as two blocks -- the fixed documentation, then the attached definitions -- and `AiHelpClient.cachedSystem()` puts a 5-minute `cache_control` breakpoint on each for Anthropic and Vertex.
 A follow-up question within five minutes then reads the documentation from the cache at ~0.1x the input price (the first question pays 1.25x to write it; OpenAI caches the same stable prefix on its own).
 The attachment has its own breakpoint so ticking it still reuses the cached documentation, and its content is sorted so it is byte-identical between questions.
 Anything that varies per request must never enter the first block: a single changed byte turns every question back into a full-price write, and nothing fails -- the bill just rises.
@@ -1654,7 +1783,8 @@ The reasons:
   Incus's QEMU driver gives each device present at start its own PCIe root port, then allocates exactly 8 spare ports for hot-plugging.
   Measured on Incus 6.23: a VM created with 40 directory disks boots with all 40 mounted and all 8 hotplug slots still free.
   So a boot-time device costs nothing from that pool, while each hot-plug into a running VM takes a slot.
-  Repo references (#826) are hot-plugged mid-build, because each one is detached as soon as its clone finishes; each worker attaches its own just before its clone, under a slot budget (see "Parallel cloning"), so more references than slots take turns rather than lose.
+  Repo references (#826) are hot-plugged mid-build, because each one is detached as soon as its clone finishes.
+  Each worker attaches its own just before its clone, under a slot budget (see "Parallel cloning"), so more references than slots take turns rather than lose.
   Host resources and the DNF cache used to be hot-plugged too, which pushed a template with 8 repo references past the limit.
   Attached before start, they leave all 8 slots to repo references.
   The inbox moved for the same reason: it used to leave a running instance with 7.
@@ -1676,7 +1806,10 @@ The reasons:
   The TUI starts an instance while it still owns the terminal, where a stderr warning would be drawn over and lost, so it passes `prepareHostDevicesForStart` its warning log as the sink, the way the static-IP repair already does.
   The log announces them on the status line when the shell returns to the TUI, and keeps them for the `w` dialog.
   A plain `incus start` still fails on such a device; isx cannot intercept it.
-  The zmx device is the exception: its source sits on the `XDG_RUNTIME_DIR` tmpfs, so every reboot would leave it missing, and it is added with `required=false` -- a start that bypasses isx (`incus start`, `boot.autostart`) skips it, and the guest has no host-visible zmx sockets until isx itself starts the stopped instance and repairs the device first (#1044).
+  The zmx device is the exception.
+  Its source sits on the `XDG_RUNTIME_DIR` tmpfs, so every reboot would leave it missing.
+  It is added with `required=false`.
+  A start that bypasses isx (`incus start`, `boot.autostart`) skips it, and the guest has no host-visible zmx sockets until isx itself starts the stopped instance and repairs the device first (#1044).
   An instance already running, such as one `boot.autostart` brought up after a reboot, keeps running without the mount until it is stopped and started through isx.
   The pre-start repair also re-adds a device from before that change, which costs no request when the device is already optional.
 - **The attach is quiet.**
@@ -1684,7 +1817,8 @@ The reasons:
 - **The agent's home may already exist.**
   A mount under `/home/agentuser` makes Incus (or incus-agent) create the directory, as root, before a from-scratch build on an image without `agentuser` gets to `useradd -m`.
   `useradd` then succeeds but silently skips `/etc/skel`, and a `chown -R` of the home fails on the read-only mount.
-  So user creation runs `BuildCommand.AGENT_HOME_OWNERSHIP`: it copies skel with `cp -an` (no clobbering) and ignores the copy's exit status, because GNU coreutils 9.2 to 9.4 exit 1 whenever `-n` leaves a file alone, which after a normal `useradd -m` is every file (#981).
+  So user creation runs `BuildCommand.AGENT_HOME_OWNERSHIP`.
+  It copies skel with `cp -an` (no clobbering) and ignores the copy's exit status, because GNU coreutils 9.2 to 9.4 exit 1 whenever `-n` leaves a file alone, which after a normal `useradd -m` is every file (#981).
   Only the copy is best-effort: the ownership and mode steps after it still fail the build.
   It then chowns everything except mount points (which belong to the host), and sets the home to the `0700` that `useradd -m` would have given it (a directory created by a mount is `0755`).
   On a fresh home this does exactly what `useradd -m` plus `chown -R` did.
@@ -1763,7 +1897,8 @@ Trusted layers (user, search paths, built-in) are unaffected, and so are a proje
 - **Covers `file://` base images too.**
   `image_url`/`vm_image_url` accept `file://` (the incus-spawn-images local-testing workflow), so the build preflight applies the same `HostResourceSetup.projectEscape()` check to a project-local template's resolved base image URL.
 - **No GUI by default.**
-  A branch's GUI passthrough mounts the host's whole `XDG_RUNTIME_DIR` (user bus, agent and podman sockets) and hands over its GPU, so a project-local `gui: true` -- the definition's own, or any the source was built from (`BuildSource.usedProjectLocal()`) -- does not turn it on by default; `BranchFlow.defaultsFor()` leaves it off with a note, and `--gui` still turns it on (#869).
+  A branch's GUI passthrough mounts the host's whole `XDG_RUNTIME_DIR` (user bus, agent and podman sockets) and hands over its GPU, so a project-local `gui: true` -- the definition's own, or any the source was built from (`BuildSource.usedProjectLocal()`) -- does not turn it on by default.
+  `BranchFlow.defaultsFor()` leaves it off with a note, and `--gui` still turns it on (#869).
 - **Survives rebuilds from metadata.**
   `BuildSource` records `projectRoots` alongside `sources`, so a template rebuilt out of scope from `build-source` stays confined.
   For metadata written before the field existed, the root is inferred from a `…/.incus-spawn/images/*.yaml` source.
@@ -1815,7 +1950,8 @@ So it applies to all definitions, trusted or not:
   The check comes before the cache lookup.
 - **Retries start over, and are checked again.**
   A 429, 500, 502, 503 or 504, or a connection that fails or breaks mid-body, is retried twice (after 2s, then 8s, or a longer `Retry-After` capped at 30s), because GitHub release downloads have been seen to answer 500 transiently, around when a new base image had just been published and was first pulled.
-  Each attempt starts again at the original URL and runs the host-local check on it again just before connecting: a retry comes seconds after the first check, long enough for the JDK's address cache to let a rebinding domain move to `127.0.0.1`.
+  Each attempt starts again at the original URL and runs the host-local check on it again just before connecting.
+  A retry comes seconds after the first check, long enough for the JDK's address cache to let a rebinding domain move to `127.0.0.1`.
   Starting over also means a short-lived signed redirect target is never reused.
   What another attempt cannot fix fails at once: other statuses, these rules' refusals, an unresolvable name, a TLS handshake or certificate failure, a malformed response, and anything on this side of the connection (a failed write to the cache, a throwing `Listener`).
   `CountingSubscriber` tells the two apart once the body has started, since only the connection signals `onError`.
