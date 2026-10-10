@@ -12,8 +12,6 @@ import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpMethod;
@@ -26,7 +24,6 @@ import io.vertx.core.http.RequestOptions;
 import io.vertx.core.http.ServerWebSocket;
 import io.vertx.core.http.WebSocket;
 import io.vertx.core.http.WebSocketConnectOptions;
-import io.vertx.core.net.SocketAddress;
 
 import java.net.InetAddress;
 import java.net.URI;
@@ -160,11 +157,8 @@ public class MitmProxy {
     // bind and after a failed one, so it cannot say whether a server is listening.
     private volatile int boundMitmPort;
     private volatile int boundHealthPort;
-    private HttpClient upstreamClient;
-    // Cache confirmations (HEADs, sidecars) get their own pool, so a cache hit never
-    // queues behind large downloads on upstreamClient's
-    private HttpClient probeClient;
-    private HttpClient wsUpstreamClient;
+    /** The upstream side: clients, DNS, backoff, relay, and the helpers the caches share. */
+    final Upstream upstream;
     /** Created once, so a {@link #stop()} that comes before {@link #start} is not lost (#966). */
     private final CountDownLatch stopLatch = new CountDownLatch(1);
 
@@ -181,16 +175,6 @@ public class MitmProxy {
     private long authNotificationSentMs;
     private long authRevalidatedMs;
     private boolean authRevalidateInFlight;
-    private static final long DNS_CACHE_TTL_MS = 60_000;
-    private record DnsEntry(String ip, long expiresAt, Future<String> inflight) {
-        static DnsEntry resolving(Future<String> f) { return new DnsEntry(null, 0, f); }
-        static DnsEntry resolved(String ip) {
-            return new DnsEntry(ip, System.currentTimeMillis() + DNS_CACHE_TTL_MS, null);
-        }
-        boolean isValid() { return ip != null && System.currentTimeMillis() < expiresAt; }
-        boolean isResolving() { return inflight != null; }
-    }
-    private final ConcurrentHashMap<String, DnsEntry> dns = new ConcurrentHashMap<>();
 
     private final String healthBindAddress;
 
@@ -313,45 +297,19 @@ public class MitmProxy {
     // Overridable for tests: upstream WebSocket connections default to port 443 + TLS
     int upstreamWsPort = 443;
     boolean upstreamWsSsl = true;
-    boolean upstreamTrustAll = false;
-    // Overridable for tests: see probeClient's options
-    int probeReadIdleSeconds = 15;
     static final int MITM_IDLE_TIMEOUT_SECONDS = 120;
     // How long a download to the cache may go without a byte from upstream before it is
     // resumed (#925)
     int downloadIdleSeconds = 20;
-    // How long a client fetching into the cache may go without a byte from us. Below the MITM
-    // server's idle timeout, which drops the client silently, with the upstream read still
-    // pending: the upstream client's read-idle timeout (300s) outlasts it. Waiting for a
-    // response head and every resume get only what is left of it.
-    int clientSilenceBudgetSeconds = MITM_IDLE_TIMEOUT_SECONDS - 10;
     // From config.yaml's artifact-cache: section, through useConfig()
     volatile ArtifactCacheTiers artifactCacheTiers = ArtifactCacheTiers.DEFAULT;
-    // For the benchmark (bench/run.sh --load=maven, via ISX_BENCH_UPSTREAM) and tests:
-    // send a host's upstream connections to a local stub. Host header and SNI still
-    // name the real host. Set before start().
-    private final Map<String, SocketAddress> upstreamOverrides = new ConcurrentHashMap<>();
-    private volatile String extraUpstreamTrustPem;
-
     void overrideUpstream(String host, String ip, int port) {
-        upstreamOverrides.put(host, SocketAddress.inetSocketAddress(port, ip));
-    }
-
-    SocketAddress upstreamOverride(String host) {
-        return upstreamOverrides.get(host);
+        upstream.overrideUpstream(host, ip, port);
     }
 
     /** Trust a stub's certificate for upstream connections, alongside the system CAs. Set before start(). */
     void trustUpstreamCertificate(String pemPath) {
-        extraUpstreamTrustPem = pemPath;
-    }
-
-    void overrideDns(String host, String ip) {
-        dns.put(host, DnsEntry.resolved(ip));
-    }
-
-    void clearUnreachable() {
-        unreachableSince.clear();
+        upstream.trustUpstreamCertificate(pemPath);
     }
 
     /**
@@ -391,6 +349,7 @@ public class MitmProxy {
         this.requestedHealthPort = healthPort;
         // Null would compare unequal to every capture: permanent drift, a restart per command.
         this.configFingerprint = java.util.Objects.requireNonNull(configFingerprint, "configFingerprint");
+        this.upstream = new Upstream(vertx, this::lookupHost);
     }
 
     public void setDnsConfigured(boolean configured) {
@@ -799,58 +758,7 @@ public class MitmProxy {
                 .setMaxWebSocketFrameSize(1024 * 1024)
                 .setMaxWebSocketMessageSize(16 * 1024 * 1024);
 
-        // Upstream HTTPS client with connection pooling.
-        // GraalVM native images don't embed the build-time trust store reliably
-        // when built via container, so point Vert.x at the system PEM CA bundle.
-        var clientOptions = new HttpClientOptions()
-                .setSsl(true)
-                .setVerifyHost(!upstreamTrustAll)
-                .setTrustAll(upstreamTrustAll)
-                .setMaxPoolSize(20)
-                .setKeepAliveTimeout(30)
-                .setConnectTimeout(UPSTREAM_CONNECT_TIMEOUT_MILLIS)
-                // Outlasts the MITM server's idle timeout: a stalled relay or wait for the cache is
-                // ended by clientSilenceBudgetSeconds instead (RelayWatchdog, CachingDownload). Not
-                // lowered for everything: an upload gets no bytes back for as long as it sends.
-                .setReadIdleTimeout(300);
-        var upstreamTrust = upstreamTrust();
-        if (upstreamTrust != null) clientOptions.setTrustOptions(upstreamTrust);
-        upstreamClient = vertx.createHttpClient(clientOptions);
-
-        // Every cache hit waits on one of these: h2 (via ALPN) shares a connection.
-        // The read-idle timeout only fires while an exchange is waiting, and being
-        // shorter than probeOptions()' it closes a silently dead connection (whose
-        // exchange is then retried on a new one) before any request times out on it.
-        // A few h2 connections per host, so a burst to a host that falls back to
-        // HTTP/1.1, or does not answer at all, is not handled one connect at a time.
-        var probeOptions = new HttpClientOptions()
-                .setSsl(true)
-                .setVerifyHost(!upstreamTrustAll)
-                .setTrustAll(upstreamTrustAll)
-                .setProtocolVersion(HttpVersion.HTTP_2)
-                .setUseAlpn(true)
-                .setHttp2KeepAliveTimeout(PROBE_KEEP_ALIVE_SECONDS)
-                .setHttp2MaxPoolSize(4)
-                .setMaxPoolSize(32)
-                .setKeepAliveTimeout(PROBE_KEEP_ALIVE_SECONDS)
-                .setConnectTimeout(10_000)
-                .setReadIdleTimeout(probeReadIdleSeconds);
-        if (upstreamTrust != null) probeOptions.setTrustOptions(upstreamTrust);
-        probeClient = vertx.createHttpClient(probeOptions);
-
-        // Separate client for WebSocket: no read-idle timeout (WebSocket
-        // connections are long-lived and may be idle between prompts) and
-        // no connection pooling (each WebSocket is its own connection).
-        var wsClientOptions = new HttpClientOptions()
-                .setSsl(true)
-                .setVerifyHost(!upstreamTrustAll)
-                .setTrustAll(upstreamTrustAll)
-                .setConnectTimeout(30_000)
-                .setReadIdleTimeout(0)
-                .setMaxWebSocketFrameSize(1024 * 1024)
-                .setMaxWebSocketMessageSize(16 * 1024 * 1024);
-        if (upstreamTrust != null) wsClientOptions.setTrustOptions(upstreamTrust);
-        wsUpstreamClient = vertx.createHttpClient(wsClientOptions);
+        upstream.createClients();
 
         int maxRetries = 30;
         for (int attempt = 1; ; attempt++) {
@@ -947,15 +855,7 @@ public class MitmProxy {
             try {
                 if (mitmServer != null) mitmServer.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
             } catch (Exception ignored) {}
-            try {
-                if (upstreamClient != null) upstreamClient.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
-            } catch (Exception ignored) {}
-            try {
-                if (probeClient != null) probeClient.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
-            } catch (Exception ignored) {}
-            try {
-                if (wsUpstreamClient != null) wsUpstreamClient.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
-            } catch (Exception ignored) {}
+            upstream.closeClients();
             if (mcpBridge != null) mcpBridge.stop();
             try {
                 if (healthHttpServer != null) healthHttpServer.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
@@ -1331,7 +1231,7 @@ public class MitmProxy {
 
     /** Opens the upstream leg of a relayed WebSocket; overridable so tests can see every dial. */
     Future<WebSocket> connectUpstreamWebSocket(WebSocketConnectOptions options) {
-        return wsUpstreamClient.webSocket(options);
+        return upstream.wsUpstreamClient.webSocket(options);
     }
 
     private void injectWebSocketAuth(WebSocketConnectOptions options, RequestContext ctx) {
@@ -1444,77 +1344,10 @@ public class MitmProxy {
     }
 
     private Future<HttpClientRequest> requestWithAsyncDns(RequestOptions options) {
-        return requestWithAsyncDns(upstreamClient, options);
+        return upstream.requestWithAsyncDns(options);
     }
 
-    private Future<HttpClientRequest> requestWithAsyncDns(HttpClient client, RequestOptions options) {
-        var host = options.getHost();
-        // Cut to fit what a waiting client has left, a connect timeout says nothing about the domain
-        var cutShort = options.getConnectTimeout() > 0 && options.getConnectTimeout() < UPSTREAM_CONNECT_TIMEOUT_MILLIS;
-        var override = upstreamOverrides.get(host);
-        Future<HttpClientRequest> connected;
-        if (override != null) {
-            // Host header and SNI still name the real host; only the connection moves
-            options.setServer(override);
-            connected = client.request(options);
-        } else {
-            connected = resolveHost(host).compose(ip -> {
-                options.setServer(SocketAddress.inetSocketAddress(options.getPort(), ip));
-                return client.request(options);
-            });
-        }
-        if (Revalidation.forDomain(host) == null) return connected;
-        // Every request to a caching domain, whatever its purpose, keeps its backoff current: a
-        // failed connect starts it, and only a response ends it, since a request on a pooled
-        // connection is handed out without any network I/O.
-        return connected.andThen(ar -> {
-            if (ar.succeeded()) {
-                ar.result().response().onSuccess(resp -> unreachableSince.remove(host));
-            } else if (cutShort && (ar.cause() instanceof java.util.concurrent.TimeoutException
-                    || ar.cause() instanceof io.netty.channel.ConnectTimeoutException)) {
-                return;
-            } else if (unreachableSince.put(host, System.nanoTime()) == null) {
-                ProxyLog.warn("Cannot reach " + host + " (" + ar.cause().getMessage() +
-                        "); serving cached copies unconfirmed for " + UNREACHABLE_BACKOFF_SECONDS + "s");
-            }
-        });
-    }
-
-    // JVM resolver is blocking (Quarkus use-async-dns=false); resolve on a worker thread.
-    // compute() only claims the host with an inflight entry, so concurrent callers share one
-    // lookup. The lookup itself starts after compute() returns: one that finishes before its
-    // callback is attached runs that callback synchronously, and the callback's write to
-    // this map from inside compute() throws "Recursive update".
-    Future<String> resolveHost(String host) {
-        var claimed = new AtomicReference<Promise<String>>();
-        var entry = dns.compute(host, (h, existing) -> {
-            if (existing != null && (existing.isValid() || existing.isResolving()))
-                return existing;
-            var promise = Promise.<String>promise();
-            claimed.set(promise);
-            return DnsEntry.resolving(promise.future());
-        });
-        var promise = claimed.get();
-        if (promise != null) {
-            vertx.<String>executeBlocking(() -> lookupHost(host), false)
-                    .onComplete(ar -> {
-                        // Update the cache before waking waiters, so none of them re-resolves.
-                        // Only replace our own inflight entry: one written meanwhile (overrideDns)
-                        // is newer than this lookup and must not be overwritten or dropped.
-                        if (ar.succeeded()) {
-                            dns.replace(host, entry, DnsEntry.resolved(ar.result()));
-                        } else {
-                            dns.remove(host, entry);
-                        }
-                        promise.handle(ar);
-                    });
-        }
-        return entry.isValid()
-                ? Future.succeededFuture(entry.ip())
-                : entry.inflight();
-    }
-
-    /** The blocking lookup behind {@link #resolveHost}; overridable so tests can hold it open. */
+    /** The blocking lookup behind {@link Upstream#resolveHost}; overridable so tests can hold it open. */
     String lookupHost(String host) throws Exception {
         return InetAddress.getByName(host).getHostAddress();
     }
@@ -1639,14 +1472,14 @@ public class MitmProxy {
                     }
                 }).onFailure(err -> {
                     System.err.println("Cache check error: " + err.getMessage());
-                    relayRequest(clientReq, domain);
+                    upstream.relayRequest(clientReq, domain);
                 });
                 return;
             }
         }
 
         // Non-cacheable (auth tokens, manifests, HEAD, tag lookups) — relay
-        relayRequest(clientReq, domain);
+        upstream.relayRequest(clientReq, domain);
     }
 
     private Future<Long> cachedFileSize(Path cacheFile) {
@@ -1666,7 +1499,7 @@ public class MitmProxy {
         clientResp.sendFile(cacheFile.toString()).onFailure(err -> {
             System.err.println("Failed to serve cached file: " + err.getMessage());
             if (!clientResp.ended() && !clientResp.closed()) {
-                sendError(clientResp, 500, "Cache read error");
+                upstream.sendError(clientResp, 500, "Cache read error");
             }
         });
     }
@@ -1682,12 +1515,12 @@ public class MitmProxy {
                 .setHost(domain)
                 .setPort(443)
                 .setURI(clientReq.uri())
-                .setConnectTimeout(Math.min(UPSTREAM_CONNECT_TIMEOUT_MILLIS, timeoutLeftMillis(started)));
+                .setConnectTimeout(Math.min(Upstream.UPSTREAM_CONNECT_TIMEOUT_MILLIS, upstream.timeoutLeftMillis(started)));
 
-        requestWithAsyncDns(options).onSuccess(upReq -> {
+        upstream.requestWithAsyncDns(options).onSuccess(upReq -> {
             // A head that never comes is an error the client can retry, not a silent drop
-            upReq.idleTimeout(timeoutLeftMillis(started));
-            copyRequestHeaders(clientReq, upReq, domain);
+            upReq.idleTimeout(upstream.timeoutLeftMillis(started));
+            upstream.copyRequestHeaders(clientReq, upReq, domain);
             upReq.putHeader("Connection", "close");
             // Don't let upstream gzip the response — we cache raw bytes
             // and serve them directly via sendFile on cache hits.
@@ -1707,16 +1540,16 @@ public class MitmProxy {
                     var clientResp = clientReq.response();
                     clientResp.setStatusCode(statusCode);
                     clientResp.setStatusMessage(upResp.statusMessage());
-                    copyResponseHeaders(upResp, clientResp);
-                    pipeResponse(upResp, clientResp);
+                    upstream.copyResponseHeaders(upResp, clientResp);
+                    upstream.pipeResponse(upResp, clientResp);
                 }
             }).onFailure(err -> {
                 ProxyLog.warn("Upstream error fetching " + ref + ": " + err.getMessage());
-                sendError(clientReq.response(), 502, "Upstream error");
+                upstream.sendError(clientReq.response(), 502, "Upstream error");
             });
         }).onFailure(err -> {
             ProxyLog.warn("Connect error fetching " + ref + ": " + err.getMessage());
-            sendError(clientReq.response(), 502, "Upstream connection failed");
+            upstream.sendError(clientReq.response(), 502, "Upstream connection failed");
         });
     }
 
@@ -1733,14 +1566,14 @@ public class MitmProxy {
                                 Verification verification, int depth, long started) {
         if (depth >= MAX_REDIRECTS) {
             System.err.println("Too many redirects for " + ref);
-            sendError(clientReq.response(), 502, "Too many redirects");
+            upstream.sendError(clientReq.response(), 502, "Too many redirects");
             return;
         }
 
         var location = upResp.getHeader("Location");
         if (location == null) {
             System.err.println("Redirect with no Location header for " + ref);
-            sendError(clientReq.response(), 502, "Redirect with no Location");
+            upstream.sendError(clientReq.response(), 502, "Redirect with no Location");
             return;
         }
 
@@ -1748,7 +1581,7 @@ public class MitmProxy {
         var redirectUri = redirectTarget(from.getHost(), from.getPort(), from.getURI(), location);
         if (redirectUri == null) {
             System.err.println("Invalid redirect Location for " + ref + ": " + location);
-            sendError(clientReq.response(), 502, "Invalid redirect Location");
+            upstream.sendError(clientReq.response(), 502, "Invalid redirect Location");
             return;
         }
 
@@ -1761,10 +1594,10 @@ public class MitmProxy {
                 .setHost(redirectHost)
                 .setPort(redirectPort)
                 .setURI(redirectPath)
-                .setConnectTimeout(Math.min(UPSTREAM_CONNECT_TIMEOUT_MILLIS, timeoutLeftMillis(started)));
+                .setConnectTimeout(Math.min(Upstream.UPSTREAM_CONNECT_TIMEOUT_MILLIS, upstream.timeoutLeftMillis(started)));
 
-        requestWithAsyncDns(redirectOptions).onSuccess(redReq -> {
-            redReq.idleTimeout(timeoutLeftMillis(started));
+        upstream.requestWithAsyncDns(redirectOptions).onSuccess(redReq -> {
+            redReq.idleTimeout(upstream.timeoutLeftMillis(started));
             redReq.putHeader("Host", redirectHost);
             redReq.putHeader("Connection", "close");
 
@@ -1780,31 +1613,19 @@ public class MitmProxy {
                     var clientResp = clientReq.response();
                     clientResp.setStatusCode(statusCode);
                     clientResp.setStatusMessage(redResp.statusMessage());
-                    copyResponseHeaders(redResp, clientResp);
-                    pipeResponse(redResp, clientResp);
+                    upstream.copyResponseHeaders(redResp, clientResp);
+                    upstream.pipeResponse(redResp, clientResp);
                 }
             }).onFailure(err -> {
                 ProxyLog.warn("Redirect fetch error for " + ref + ": " + err.getMessage());
-                sendError(clientReq.response(), 502, "Redirect fetch failed");
+                upstream.sendError(clientReq.response(), 502, "Redirect fetch failed");
             });
         }).onFailure(err -> {
             ProxyLog.warn("Redirect connect error for " + ref + ": " + err.getMessage());
-            sendError(clientReq.response(), 502, "Redirect connection failed");
+            upstream.sendError(clientReq.response(), 502, "Redirect connection failed");
         });
     }
 
-    /** What is left of the client's silence budget, counted from {@code since}. */
-    private long silenceLeftMillis(long since) {
-        return TimeUnit.SECONDS.toMillis(clientSilenceBudgetSeconds)
-                - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - since);
-    }
-
-    /** {@link #silenceLeftMillis} as a timeout, which must be positive. */
-    private long timeoutLeftMillis(long since) {
-        return Math.max(1, silenceLeftMillis(since));
-    }
-
-    private static final int UPSTREAM_CONNECT_TIMEOUT_MILLIS = 30_000;
     // How often a download may be resumed in a row without getting further
     private static final int MAX_DOWNLOAD_RESUMES = 3;
     // The least of the client's silence budget worth starting a resume with
@@ -1921,7 +1742,7 @@ public class MitmProxy {
                     finish();
                     // Relay what is left uncached; the handlers above only knew the cache
                     current.handler(null).endHandler(null).exceptionHandler(null);
-                    pipeResponse(current, clientResp);
+                    upstream.pipeResponse(current, clientResp);
                     current.resume();
                 }
             });
@@ -2016,8 +1837,8 @@ public class MitmProxy {
                     // client's budget ends it, with a line. With nobody waiting, nothing does
                     // but the upstream client's read-idle timeout, as before resumes
                     if (clientGone) return;
-                    wait = Math.max(silenceLeftMillis(clientActive), grace);
-                    why = "no byte for the client in " + clientSilenceBudgetSeconds + "s";
+                    wait = Math.max(upstream.silenceLeftMillis(clientActive), grace);
+                    why = "no byte for the client in " + upstream.clientSilenceBudgetSeconds + "s";
                 } else {
                     wait = Math.min(idleMillis() - quiet, Math.max(resumeBudgetMillis(), grace));
                     why = "no data for " + quiet / 1000 + "s";
@@ -2039,12 +1860,12 @@ public class MitmProxy {
 
         /** What a resume can still take before the client has waited too long for a byte. */
         private long resumeBudgetMillis() {
-            return clientGone ? Long.MAX_VALUE : silenceLeftMillis(clientActive) - MIN_RESUME_MILLIS;
+            return clientGone ? Long.MAX_VALUE : upstream.silenceLeftMillis(clientActive) - MIN_RESUME_MILLIS;
         }
 
         /** A resume's connect and head timeouts: what the budget leaves, if anyone is waiting. */
         private long resumeTimeoutMillis(long cap) {
-            return clientGone ? cap : Math.min(cap, timeoutLeftMillis(clientActive));
+            return clientGone ? cap : Math.min(cap, upstream.timeoutLeftMillis(clientActive));
         }
 
         private void finish() {
@@ -2091,7 +1912,7 @@ public class MitmProxy {
             if (received >= length) return "every byte had arrived";
             if (resumes >= MAX_DOWNLOAD_RESUMES) return MAX_DOWNLOAD_RESUMES + " resumes in a row got nowhere";
             if (resumeBudgetMillis() < 0) {
-                return "the client has waited " + clientSilenceBudgetSeconds + "s for the next byte";
+                return "the client has waited " + upstream.clientSilenceBudgetSeconds + "s for the next byte";
             }
             return null;
         }
@@ -2104,10 +1925,10 @@ public class MitmProxy {
                     .setHost(from.getHost())
                     .setPort(from.getPort())
                     .setURI(from.getURI())
-                    .setConnectTimeout(resumeTimeoutMillis(UPSTREAM_CONNECT_TIMEOUT_MILLIS));
+                    .setConnectTimeout(resumeTimeoutMillis(Upstream.UPSTREAM_CONNECT_TIMEOUT_MILLIS));
             var headers = io.vertx.core.MultiMap.caseInsensitiveMultiMap().setAll(from.headers());
             var resumeAt = received;
-            requestWithAsyncDns(options).compose(req -> {
+            upstream.requestWithAsyncDns(options).compose(req -> {
                 req.idleTimeout(resumeTimeoutMillis(idleMillis()));
                 req.headers().setAll(headers);
                 req.putHeader("Range", "bytes=" + resumeAt + "-");
@@ -2152,7 +1973,7 @@ public class MitmProxy {
             failed = true;
             vertx.cancelTimer(stallTimer);
             abandonCurrent();
-            sendError(clientResp, 502, message);
+            upstream.sendError(clientResp, 502, message);
             if (file != null) discardTempFile();
         }
 
@@ -2263,7 +2084,7 @@ public class MitmProxy {
     private void handleNpmRequest(HttpServerRequest clientReq, long started, String domain) {
         var path = clientReq.path();
         if (path == null) {
-            relayRequest(clientReq, domain);
+            upstream.relayRequest(clientReq, domain);
             return;
         }
 
@@ -2277,7 +2098,7 @@ public class MitmProxy {
                 if (pkgRef != null) {
                     var cacheFile = cacheDir.resolve(tarballPath).normalize();
                     if (!cacheFile.startsWith(cacheDir)) {
-                        relayRequest(clientReq, domain);
+                        upstream.relayRequest(clientReq, domain);
                         return;
                     }
                     var ref = domain + path;
@@ -2294,7 +2115,7 @@ public class MitmProxy {
             return;
         }
 
-        relayRequest(clientReq, domain);
+        upstream.relayRequest(clientReq, domain);
     }
 
     /**
@@ -2304,7 +2125,7 @@ public class MitmProxy {
      */
     private void relayNpmPackument(HttpServerRequest clientReq, String domain,
                                     String packageName) {
-        relayRequest(clientReq, domain, upResp -> {
+        upstream.relayRequest(clientReq, domain, upResp -> {
             var etag = upResp.getHeader("ETag");
             if (etag != null && !etag.isBlank()) {
                 vertx.executeBlocking(() -> {
@@ -2373,7 +2194,7 @@ public class MitmProxy {
             if (result == null) {
                 // Said here, so a relay that fails points at the lookup that sent it there
                 ProxyLog.warn("No npm shasum for " + ref + "; relaying it uncached");
-                relayRequest(clientReq, domain);
+                upstream.relayRequest(clientReq, domain);
             } else if (result.cacheHit()) {
                 System.out.println("npm cache hit: " + ref +
                         " (" + formatSize(result.size()) + ")");
@@ -2385,7 +2206,7 @@ public class MitmProxy {
         }).onFailure(err -> {
             System.err.println("npm integrity check error for " + ref +
                     ": " + err.getMessage());
-            relayRequest(clientReq, domain);
+            upstream.relayRequest(clientReq, domain);
         });
     }
 
@@ -2469,7 +2290,7 @@ public class MitmProxy {
         var path = "/" + packageName.replace("/", "%2F") + "/" + version;
         return fetchSmallBody(domain, path, MAX_NPM_VERSION_BYTES)
                 .compose(answer -> answer.status() >= 500
-                        && silenceLeftMillis(started) > TimeUnit.SECONDS.toMillis(clientSilenceBudgetSeconds) / 2
+                        && upstream.silenceLeftMillis(started) > TimeUnit.SECONDS.toMillis(upstream.clientSilenceBudgetSeconds) / 2
                         ? fetchSmallBody(domain, path, MAX_NPM_VERSION_BYTES)
                         : Future.succeededFuture(answer))
                 .map(answer -> answer.status() == 200 ? answer.body() : null);
@@ -2587,15 +2408,6 @@ public class MitmProxy {
     record ArtifactTarget(Path artifact, Sidecar checksum, Path hostCopy) {}
 
     private static final int MAX_SIDECAR_BYTES = 64 * 1024;
-    static final long UNREACHABLE_BACKOFF_SECONDS = 30;
-
-    // How long probeClient keeps an idle connection; DESIGN.md says why not longer
-    private static final int PROBE_KEEP_ALIVE_SECONDS = 60;
-
-    // Per caching domain, when a connection to it last failed (requestWithAsyncDns
-    // keeps this). While recent, a request with a cached copy to fall back on uses it
-    // at once instead of each waiting out a connect timeout.
-    private final Map<String, Long> unreachableSince = new ConcurrentHashMap<>();
 
     /**
      * Handle a GET for an artifact or one of its sidecars on a domain vetted for
@@ -2625,7 +2437,7 @@ public class MitmProxy {
             }
         }
 
-        relayRequest(clientReq, domain);
+        upstream.relayRequest(clientReq, domain);
     }
 
     /** A Maven-layout repository: metadata and SNAPSHOTs are not cached ({@link #isMavenCacheable}). */
@@ -2676,7 +2488,7 @@ public class MitmProxy {
             }
         }).onFailure(err -> {
             System.err.println("Artifact cache check error for " + ref + ": " + err.getMessage());
-            relayRequest(clientReq, domain);
+            upstream.relayRequest(clientReq, domain);
         });
     }
 
@@ -2841,7 +2653,7 @@ public class MitmProxy {
             }
         }).onFailure(err -> {
             System.err.println("Artifact revalidation error for " + ref + ": " + err.getMessage());
-            relayRequest(clientReq, domain);
+            upstream.relayRequest(clientReq, domain);
         });
     }
 
@@ -2866,7 +2678,7 @@ public class MitmProxy {
                                   ArtifactTarget target, String ref, SidecarAnswer answer) {
         if (answer == SidecarAnswer.UNREACHABLE) {
             // Downloading would only wait out the same failed connection
-            sendError(clientReq.response(), 502, "Upstream unreachable");
+            upstream.sendError(clientReq.response(), 502, "Upstream unreachable");
             return;
         }
         var checksum = target.checksum();
@@ -2950,12 +2762,12 @@ public class MitmProxy {
                 if (stored != null) {
                     sendSidecar(clientResp, 200, stored);
                 } else {
-                    sendError(clientResp, answer.errorStatus(), "Upstream unreachable");
+                    upstream.sendError(clientResp, answer.errorStatus(), "Upstream unreachable");
                 }
                 return;
             }
             if (answer == SidecarAnswer.UNUSABLE) {
-                sendError(clientResp, 502, "Unusable upstream answer");
+                upstream.sendError(clientResp, 502, "Unusable upstream answer");
                 return;
             }
             var artifactPath = sidecar.artifactPath(path);
@@ -3042,7 +2854,7 @@ public class MitmProxy {
      * the sidecar; any other status is returned as is.
      */
     Future<SidecarAnswer> fetchChecksumHeader(String domain, String path, Revalidation revalidation) {
-        return retryOnceAfterConnect(() -> requestWithAsyncDns(probeClient, probeOptions(HttpMethod.HEAD, domain, 443, path))
+        return retryOnceAfterConnect(() -> upstream.requestWithAsyncDns(upstream.probeClient, probeOptions(HttpMethod.HEAD, domain, 443, path))
                         .compose(req -> afterConnect(req.send().compose(resp -> resp.end().map(v -> {
                             var status = resp.statusCode();
                             if (status != 200) return new SidecarAnswer(status, null, true);
@@ -3065,10 +2877,10 @@ public class MitmProxy {
     }
 
     boolean inBackoff(String domain) {
-        var since = unreachableSince.get(domain);
+        var since = upstream.unreachableSince.get(domain);
         if (since == null) return false;
-        if (System.nanoTime() - since < TimeUnit.SECONDS.toNanos(UNREACHABLE_BACKOFF_SECONDS)) return true;
-        unreachableSince.remove(domain, since);
+        if (System.nanoTime() - since < TimeUnit.SECONDS.toNanos(Upstream.UNREACHABLE_BACKOFF_SECONDS)) return true;
+        upstream.unreachableSince.remove(domain, since);
         return false;
     }
 
@@ -3099,7 +2911,7 @@ public class MitmProxy {
     // Fails when no connection could be made or the exchange broke (fetchSmallBody maps
     // both to UNREACHABLE); an answer we cannot use is UNUSABLE.
     private Future<SidecarAnswer> fetchSmallBody(String host, int port, String uri, int depth, int maxBytes) {
-        return requestWithAsyncDns(probeClient, probeOptions(HttpMethod.GET, host, port, uri))
+        return upstream.requestWithAsyncDns(upstream.probeClient, probeOptions(HttpMethod.GET, host, port, uri))
                 .compose(req -> afterConnect(req.send().compose(resp -> {
                     var location = resp.getHeader("Location");
                     if (resp.statusCode() >= 300 && resp.statusCode() < 400 && location != null) {
@@ -3177,142 +2989,32 @@ public class MitmProxy {
         }, false).onFailure(err -> ProxyLog.warn("Failed to delete legacy cache: " + err.getMessage()));
     }
 
-    // --- Generic relay (non-cacheable) ---
+    // --- Upstream helpers the credential path uses ---
 
-    /** Relay a non-cacheable request transparently to upstream. */
     private void relayRequest(HttpServerRequest clientReq, String domain) {
-        relayRequest(clientReq, domain, null);
+        upstream.relayRequest(clientReq, domain);
     }
 
-    /**
-     * Relay a request to upstream with an optional response callback.
-     * When {@code responseCallback} is non-null it fires after the upstream
-     * response headers arrive but before the body is piped to the client.
-     * Its body is claimed here ({@link #claimBody}), so a request with one is relayed before anything
-     * waits; the caching handlers, which wait, only ever get requests without one.
-     */
-    private void relayRequest(HttpServerRequest clientReq, String domain,
-                               java.util.function.Consumer<HttpClientResponse> responseCallback) {
-        var body = claimBody(clientReq);
-        var options = new RequestOptions()
-                .setMethod(clientReq.method())
-                .setHost(domain)
-                .setPort(443)
-                .setURI(clientReq.uri());
-        var watchdog = new RelayWatchdog(clientReq, domain, body != null);
-        // From here on, waiting is upstream's time: a lookup or connect that stalls is cut (#929)
-        if (body != null) body.onSuccess(read -> watchdog.requestRead());
-
-        requestWithAsyncDns(options).onSuccess(upReq -> {
-            if (watchdog.cut) {
-                upReq.reset();
-                return;
-            }
-            watchdog.upReq = upReq;
-            copyRequestHeaders(clientReq, upReq, domain);
-
-            sendWithBody(body, upReq).onSuccess(upResp -> {
-                if (watchdog.cut) return;
-                if (responseCallback != null) {
-                    responseCallback.accept(upResp);
-                }
-                var clientResp = clientReq.response();
-                clientResp.setStatusCode(upResp.statusCode());
-                clientResp.setStatusMessage(upResp.statusMessage());
-                copyResponseHeaders(upResp, clientResp);
-                watchdog.upResp = upResp;
-                pipeResponse(upResp, clientResp, watchdog);
-            }).onFailure(err -> {
-                if (watchdog.cut) return;
-                if (body != null && body.failed()) {
-                    // Never sent: give its connection back to the pool rather than hold it for good
-                    upReq.exceptionHandler(ignored -> {}).reset();
-                    System.err.println("Relay (" + domain + "): request body not received from the client: "
-                            + err.getMessage());
-                    sendError(clientReq.response(), 502, "Request body not received");
-                    return;
-                }
-                System.err.println("Relay upstream error (" + domain + "): " + err.getMessage());
-                sendError(clientReq.response(), 502, "Upstream error");
-            });
-        }).onFailure(err -> {
-            if (watchdog.cut) return;
-            System.err.println("Relay connect error (" + domain + "): " + err.getMessage());
-            sendError(clientReq.response(), 502, "Upstream connection failed");
-        });
+    private static boolean hasBody(HttpServerRequest clientReq) {
+        return Upstream.hasBody(clientReq);
     }
 
-    /**
-     * Ends a relay whose client has gone {@link #clientSilenceBudgetSeconds} without a byte either
-     * way, with a line and a 502, or a reset once the head was sent (#929). Just short of the MITM
-     * server's idle timeout, which would drop the client silently with the upstream read still
-     * pending (the upstream client's read-idle timeout outlasts it), so it cuts nothing that
-     * would have lived: an upload counts as the client's bytes until its body is read. Not while
-     * upstream is paused because the client holds the response back.
-     */
-    private final class RelayWatchdog {
-        private final HttpServerRequest clientReq;
-        private final String domain;
-        HttpClientRequest upReq;
-        HttpClientResponse upResp;
-        boolean cut;
-        // Until the request body is read, and while the client holds the response back
-        private boolean waitingOnClient = true;
-        private boolean over;
-        private long clientActive = System.nanoTime();
-        // Vert.x numbers timers from 0: cancelling 0 before one is set would cancel another's
-        private long timer = -1;
+    private void copyRequestHeaders(HttpServerRequest clientReq, HttpClientRequest upReq,
+                                    String domain) {
+        upstream.copyRequestHeaders(clientReq, upReq, domain);
+    }
 
-        RelayWatchdog(HttpServerRequest clientReq, String domain, boolean hasBody) {
-            this.clientReq = clientReq;
-            this.domain = domain;
-            // With no body to wait for, the DNS lookup and connect are already upstream's time
-            waitingOnClient = hasBody;
-            var clientResp = clientReq.response();
-            clientResp.endHandler(v -> stop());
-            clientResp.closeHandler(v -> stop());
-            // It may have left during the lookups before the relay, with no handler yet to tell
-            if (clientResp.closed()) stop();
-            check();
-        }
+    private void copyResponseHeaders(HttpClientResponse upResp, HttpServerResponse clientResp) {
+        upstream.copyResponseHeaders(upResp, clientResp);
+    }
 
-        void requestRead() {
-            if (waitingOnClient) waitingOnClient(false);
-        }
+    private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp,
+                              Upstream.RelayWatchdog watchdog, java.util.function.Consumer<Buffer> tap) {
+        upstream.pipeResponse(upResp, clientResp, watchdog, tap);
+    }
 
-        void touch() {
-            clientActive = System.nanoTime();
-        }
-
-        void waitingOnClient(boolean waiting) {
-            waitingOnClient = waiting;
-            touch();
-        }
-
-        private void stop() {
-            over = true;
-            vertx.cancelTimer(timer);
-        }
-
-        private void check() {
-            if (over) return;
-            // Not a stall
-            if (waitingOnClient) touch();
-            var left = silenceLeftMillis(clientActive);
-            if (left > 0) {
-                timer = vertx.setTimer(left, id -> check());
-                return;
-            }
-            stop();
-            cut = true;
-            var clientResp = clientReq.response();
-            ProxyLog.warn("Relay cut (" + domain + clientReq.path() + "): "
-                    + (clientResp.headWritten() ? "no data from upstream" : "no answer from upstream")
-                    + " for the client in " + clientSilenceBudgetSeconds + "s");
-            if (upResp != null) upResp.handler(null).endHandler(null).exceptionHandler(ignored -> {});
-            sendError(clientResp, 502, "Upstream timed out");
-            if (upReq != null) upReq.reset();
-        }
+    private void sendError(HttpServerResponse resp, int statusCode, String message) {
+        upstream.sendError(resp, statusCode, message);
     }
 
     // --- Vertex AI translation ---
@@ -3462,7 +3164,7 @@ public class MitmProxy {
     /**
      * Acquire a GCP access token asynchronously, returning a cached value when valid.
      * Single-flight: concurrent callers share one in-flight {@code gcloud} invocation
-     * via a CAS loop on {@link #vertexToken}, mirroring the {@link #resolveHost} pattern.
+     * via a CAS loop on {@link #vertexToken}, mirroring the {@link Upstream#resolveHost} pattern.
      * The {@code gcloud} fork runs on a Vert.x worker thread, so this never blocks
      * the event loop.
      */
@@ -3778,128 +3480,6 @@ public class MitmProxy {
                 .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
-    // --- SSL trust ---
-
-    private static final String[] SYSTEM_CA_BUNDLES = {
-            "/etc/ssl/cert.pem",                                    // Fedora (symlink), macOS, Alpine
-            "/etc/ssl/certs/ca-certificates.crt",                   // Debian, Ubuntu
-            "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",    // RHEL, CentOS
-    };
-
-    private static String findSystemCaBundle() {
-        for (var path : SYSTEM_CA_BUNDLES) {
-            if (Files.exists(Path.of(path))) return path;
-        }
-        return null;
-    }
-
-    /** The system CA bundle, plus a benchmark stub's certificate when one is configured. */
-    private io.vertx.core.net.PemTrustOptions upstreamTrust() {
-        var systemCaBundle = findSystemCaBundle();
-        if (systemCaBundle == null && extraUpstreamTrustPem == null) return null;
-        var trust = new io.vertx.core.net.PemTrustOptions();
-        if (systemCaBundle != null) trust.addCertPath(systemCaBundle);
-        if (extraUpstreamTrustPem != null) trust.addCertPath(extraUpstreamTrustPem);
-        return trust;
-    }
-
-    // --- Vert.x helpers ---
-
-    private void copyRequestHeaders(HttpServerRequest clientReq, HttpClientRequest upReq,
-                                    String domain) {
-        upReq.headers().setAll(clientReq.headers());
-        upReq.headers().remove("Host");
-        upReq.headers().remove("Connection");
-        upReq.headers().remove("Transfer-Encoding");
-        upReq.putHeader("Host", domain);
-    }
-
-    private void copyResponseHeaders(HttpClientResponse upResp, HttpServerResponse clientResp) {
-        clientResp.headers().setAll(upResp.headers());
-        clientResp.headers().remove("Connection");
-        clientResp.headers().remove("Transfer-Encoding");
-    }
-
-    /** Sends the client's request body, if any, once it has all arrived. */
-    private static Future<HttpClientResponse> sendWithBody(Future<Buffer> body, HttpClientRequest upReq) {
-        return body != null ? body.compose(upReq::send) : upReq.send();
-    }
-
-    /**
-     * Starts reading the request's body, if it has one, for a relay to send on. Called as the request
-     * is routed, before anything waits: Vert.x drops a body that arrives with nothing reading it, and
-     * then refuses to read the request at all, so a body claimed only once the upstream connection was
-     * ready was gone whenever it beat the connect, and the relay hung (#1164). One claimed too late
-     * anyway fails here, for the relay to answer, rather than throwing where nothing would.
-     */
-    private static Future<Buffer> claimBody(HttpServerRequest clientReq) {
-        if (!hasBody(clientReq)) return null;
-        try {
-            return clientReq.body();
-        } catch (IllegalStateException e) {
-            return Future.failedFuture(e);
-        }
-    }
-
-    private static boolean hasBody(HttpServerRequest clientReq) {
-        var cl = clientReq.getHeader("Content-Length");
-        var te = clientReq.getHeader("Transfer-Encoding");
-        return (cl != null && !"0".equals(cl))
-                || (te != null && te.toLowerCase().contains("chunked"));
-    }
-
-    private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp) {
-        pipeResponse(upResp, clientResp, null, null);
-    }
-
-    private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp, RelayWatchdog watchdog) {
-        pipeResponse(upResp, clientResp, watchdog, null);
-    }
-
-    /** As above, showing each chunk to {@code tap} too, when there is one. */
-    private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp, RelayWatchdog watchdog,
-                              java.util.function.Consumer<Buffer> tap) {
-        int status = clientResp.getStatusCode();
-        if (upResp.getHeader("Content-Length") == null
-                && status != 204 && status != 304 && (status < 100 || status >= 200)) {
-            clientResp.setChunked(true);
-        }
-        upResp.handler(chunk -> {
-            if (tap != null) tap.accept(chunk);
-            clientResp.write(chunk);
-            if (watchdog != null) watchdog.touch();
-            if (clientResp.writeQueueFull()) {
-                upResp.pause();
-                if (watchdog != null) watchdog.waitingOnClient(true);
-                clientResp.drainHandler(v -> {
-                    if (watchdog != null) watchdog.waitingOnClient(false);
-                    upResp.resume();
-                });
-            }
-        });
-        upResp.endHandler(v -> clientResp.end());
-        upResp.exceptionHandler(err -> {
-            ProxyLog.warn("Relay stream error: " + err.getMessage());
-            sendError(clientResp, 502, "Upstream stream error");
-        });
-    }
-
-    private void sendError(HttpServerResponse resp, int statusCode, String message) {
-        try {
-            if (!resp.ended() && !resp.closed()) {
-                if (resp.headWritten()) {
-                    resp.reset();
-                } else {
-                    // Whatever was set for the answer that failed (copied from upstream, or an
-                    // artifact's type and checksum) would describe the error as that answer
-                    resp.headers().clear();
-                    resp.setStatusCode(statusCode).end(message);
-                }
-            }
-        } catch (Exception e) {
-            ProxyLog.warn("Failed to send error response: " + e.getMessage());
-        }
-    }
 
     // --- Debug logging helpers ---
 

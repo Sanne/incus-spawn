@@ -148,7 +148,7 @@ class WebSocketProxyTest {
         };
         proxy.upstreamWsPort = mockPort;
         proxy.upstreamWsSsl = true;
-        proxy.upstreamTrustAll = true;
+        proxy.upstream.upstreamTrustAll = true;
 
         ContainerTls.startInBackground(proxy);
         mitmPort = proxy.mitmPort();

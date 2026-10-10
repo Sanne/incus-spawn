@@ -172,8 +172,8 @@ class RelayRequestBodyTest {
         var port = blackHole.listen(0, "127.0.0.1").toCompletionStage().toCompletableFuture()
                 .get(5, TimeUnit.SECONDS).actualPort();
         proxy.overrideUpstream(host, "127.0.0.1", port);
-        var budget = proxy.clientSilenceBudgetSeconds;
-        proxy.clientSilenceBudgetSeconds = 2;
+        var budget = proxy.upstream.clientSilenceBudgetSeconds;
+        proxy.upstream.clientSilenceBudgetSeconds = 2;
         try {
             var answer = exchange(host, Buffer.buffer("POST /v2/app/blobs/uploads/ HTTP/1.1\r\n"
                     + "Host: " + host + "\r\n"
@@ -182,7 +182,7 @@ class RelayRequestBodyTest {
             assertTrue(answer.startsWith("HTTP/1.1 502"), answer);
             assertTrue(answer.contains("Upstream timed out"), answer);
         } finally {
-            proxy.clientSilenceBudgetSeconds = budget;
+            proxy.upstream.clientSilenceBudgetSeconds = budget;
             blackHole.close();
         }
     }

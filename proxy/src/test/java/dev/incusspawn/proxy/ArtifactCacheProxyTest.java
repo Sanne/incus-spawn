@@ -170,8 +170,8 @@ class ArtifactCacheProxyTest {
 
         proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1",
                 new ProxyCredentials("", "", false, "", "", java.util.List.of()));
-        proxy.upstreamTrustAll = true;
-        proxy.probeReadIdleSeconds = 1;
+        proxy.upstream.upstreamTrustAll = true;
+        proxy.upstream.probeReadIdleSeconds = 1;
         // Tests read the hit counts themselves; a summary logged meanwhile would drain them
         proxy.cacheStatsIntervalMs = TimeUnit.HOURS.toMillis(1);
         ContainerTls.startInBackground(proxy);
@@ -322,7 +322,7 @@ class ArtifactCacheProxyTest {
         cutPauseMs = 0;
         rangesToRefuse.set(0);
         proxy.downloadIdleSeconds = 20;
-        proxy.clientSilenceBudgetSeconds = 110;
+        proxy.upstream.clientSilenceBudgetSeconds = 110;
         proxy.maxBackgroundConfirmations = 16;
         // Most tests are about confirming a hit; the tiers that skip it have tests of their own
         proxy.artifactCacheTiers = ArtifactCacheTiers.CONFIRM_EVERY_HIT;
@@ -360,7 +360,7 @@ class ArtifactCacheProxyTest {
 
     /** Every repository host goes to the mock, through the same hook the benchmark uses. */
     static void online() {
-        proxy.clearUnreachable();
+        proxy.upstream.clearUnreachable();
         for (var host : REPOSITORY_HOSTS) {
             online(host);
         }
@@ -787,7 +787,7 @@ class ArtifactCacheProxyTest {
     void offlineIsRefusedOnEveryPlatform() throws Exception {
         offline();
         for (var host : REPOSITORY_HOSTS) {
-            var target = proxy.upstreamOverride(host);
+            var target = proxy.upstream.upstreamOverride(host);
             var address = new InetSocketAddress(target.host(), target.port());
             assertNotNull(NetworkInterface.getByInetAddress(address.getAddress()), host
                     + ": an address no interface holds is refused on Linux but hangs until the timeout on macOS");
@@ -1138,7 +1138,7 @@ class ArtifactCacheProxyTest {
         publishCutJar(false);
         etag = null;
         proxy.downloadIdleSeconds = 20;
-        proxy.clientSilenceBudgetSeconds = 2;
+        proxy.upstream.clientSilenceBudgetSeconds = 2;
 
         // A reset (bytes were sent) long before a stall check would come
         assertDownloadFails(8);
@@ -1152,7 +1152,7 @@ class ArtifactCacheProxyTest {
     void relayThatStallsMidBodyIsCutAtTheClientsBudget() throws Exception {
         // Not left to the MITM server's idle timeout, which drops the client silently at 120s (#929)
         publishCutJar(false);
-        proxy.clientSilenceBudgetSeconds = 2;
+        proxy.upstream.clientSilenceBudgetSeconds = 2;
 
         try {
             var response = getAsync(CENTRAL, RELAYED_JAR).toCompletionStage().toCompletableFuture()
@@ -1168,7 +1168,7 @@ class ArtifactCacheProxyTest {
     void relayWithNoAnswerIsA502AtTheClientsBudget() throws Exception {
         publishJar(CENTRAL, JAR, "v1");
         getsToIgnore.set(1);
-        proxy.clientSilenceBudgetSeconds = 2;
+        proxy.upstream.clientSilenceBudgetSeconds = 2;
 
         assertEquals(502, getAsync(CENTRAL, RELAYED_JAR).toCompletionStage().toCompletableFuture()
                 .get(8, TimeUnit.SECONDS).status());
@@ -1185,7 +1185,7 @@ class ArtifactCacheProxyTest {
             first.connect(blackHole.getLocalSocketAddress());
             second.connect(blackHole.getLocalSocketAddress());
             proxy.overrideUpstream(CENTRAL, "127.0.0.1", blackHole.getLocalPort());
-            proxy.clientSilenceBudgetSeconds = 2;
+            proxy.upstream.clientSilenceBudgetSeconds = 2;
 
             assertEquals(502, getAsync(CENTRAL, RELAYED_JAR).toCompletionStage().toCompletableFuture()
                     .get(8, TimeUnit.SECONDS).status());
@@ -1202,7 +1202,7 @@ class ArtifactCacheProxyTest {
         var content = publishCutJar(false);
         nextGetDelayMs = 2_000;
         cutPauseMs = 2_000;
-        proxy.clientSilenceBudgetSeconds = 3;
+        proxy.upstream.clientSilenceBudgetSeconds = 3;
 
         assertEquals(content, get(CENTRAL, RELAYED_JAR).text());
     }
@@ -1214,7 +1214,7 @@ class ArtifactCacheProxyTest {
         cutBeforeBody = true;
         // The head gets 1.5s of slack; after it, less of the budget is left than a resume needs
         nextGetDelayMs = 2_500;
-        proxy.clientSilenceBudgetSeconds = 4;
+        proxy.upstream.clientSilenceBudgetSeconds = 4;
 
         requestAsync(CENTRAL, JAR, req -> {
             req.send();
@@ -1239,7 +1239,7 @@ class ArtifactCacheProxyTest {
             first.connect(blackHole.getLocalSocketAddress());
             second.connect(blackHole.getLocalSocketAddress());
             proxy.overrideUpstream(CENTRAL, "127.0.0.1", blackHole.getLocalPort());
-            proxy.clientSilenceBudgetSeconds = 2;
+            proxy.upstream.clientSilenceBudgetSeconds = 2;
 
             assertEquals(502, get(CENTRAL, JAR).status());
             assertFalse(proxy.inBackoff(CENTRAL), "our own short timeout says nothing about the domain");
@@ -1290,7 +1290,7 @@ class ArtifactCacheProxyTest {
         // Otherwise the MITM server's idle timeout drops the client, silently (#925)
         publishJar(CENTRAL, JAR, "v1");
         getsToIgnore.set(1);
-        proxy.clientSilenceBudgetSeconds = 1;
+        proxy.upstream.clientSilenceBudgetSeconds = 1;
 
         assertEquals(502, get(CENTRAL, JAR).status());
     }
@@ -1307,7 +1307,7 @@ class ArtifactCacheProxyTest {
         honourRange = false;
         proxy.downloadIdleSeconds = 20;
         nextGetDelayMs = 2_000;
-        proxy.clientSilenceBudgetSeconds = 4;
+        proxy.upstream.clientSilenceBudgetSeconds = 4;
 
         // What is under test is the timeout: the proxy answers before the MITM server would
         // drop the client (10s past the budget in production), not a stall check 20s away

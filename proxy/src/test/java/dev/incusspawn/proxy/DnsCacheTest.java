@@ -63,25 +63,25 @@ class DnsCacheTest {
     @Test
     void concurrentCallersShareOneLookupAndItIsCached() throws Exception {
         var proxy = new GatedProxy();
-        var first = proxy.resolveHost("example.test");
-        var second = proxy.resolveHost("example.test");
+        var first = proxy.upstream.resolveHost("example.test");
+        var second = proxy.upstream.resolveHost("example.test");
         proxy.release.countDown();
 
         assertEquals("192.0.2.1", await(first));
         assertEquals("192.0.2.1", await(second));
-        assertEquals("192.0.2.1", await(proxy.resolveHost("example.test")));
+        assertEquals("192.0.2.1", await(proxy.upstream.resolveHost("example.test")));
         assertEquals(1, proxy.lookups.get(), "One lookup must serve every caller until it expires");
     }
 
     @Test
     void lookupFinishingAfterAnOverrideDoesNotReplaceIt() throws Exception {
         var proxy = new GatedProxy();
-        var pending = proxy.resolveHost("example.test");
-        proxy.overrideDns("example.test", "198.51.100.7");
+        var pending = proxy.upstream.resolveHost("example.test");
+        proxy.upstream.overrideDns("example.test", "198.51.100.7");
         proxy.release.countDown();
 
         assertEquals("192.0.2.1", await(pending), "Callers already waiting get the lookup's answer");
-        assertEquals("198.51.100.7", await(proxy.resolveHost("example.test")),
+        assertEquals("198.51.100.7", await(proxy.upstream.resolveHost("example.test")),
                 "The override was written after the lookup started, so it must win");
     }
 
@@ -89,12 +89,12 @@ class DnsCacheTest {
     void failedLookupAfterAnOverrideDoesNotDropIt() throws Exception {
         var proxy = new GatedProxy();
         proxy.fail = true;
-        var pending = proxy.resolveHost("example.test");
-        proxy.overrideDns("example.test", "198.51.100.7");
+        var pending = proxy.upstream.resolveHost("example.test");
+        proxy.upstream.overrideDns("example.test", "198.51.100.7");
         proxy.release.countDown();
 
         assertThrows(Exception.class, () -> await(pending));
-        assertEquals("198.51.100.7", await(proxy.resolveHost("example.test")));
+        assertEquals("198.51.100.7", await(proxy.upstream.resolveHost("example.test")));
         assertEquals(1, proxy.lookups.get());
     }
 
@@ -103,10 +103,10 @@ class DnsCacheTest {
         var proxy = new GatedProxy();
         proxy.fail = true;
         proxy.release.countDown();
-        assertThrows(Exception.class, () -> await(proxy.resolveHost("example.test")));
+        assertThrows(Exception.class, () -> await(proxy.upstream.resolveHost("example.test")));
 
         proxy.fail = false;
-        assertEquals("192.0.2.1", await(proxy.resolveHost("example.test")));
+        assertEquals("192.0.2.1", await(proxy.upstream.resolveHost("example.test")));
         assertEquals(2, proxy.lookups.get(), "A failure must be retried, not served from the cache");
     }
 }
