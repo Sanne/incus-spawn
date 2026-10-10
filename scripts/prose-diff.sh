@@ -7,7 +7,8 @@
 # for files (gh api markdown, mode=markdown) and diffs the HTML with whitespace collapsed. A
 # change that only moves line breaks in prose prints nothing in any part (#1243).
 # Needs gh logged in. The API takes 400 KB at most, so a larger file is rendered in pieces cut
-# at its "## " headings, the same cuts for both versions.
+# at "## " headings outside code; a heading ends every block before it, so where the cuts fall
+# does not change the HTML.
 
 set -euo pipefail
 
