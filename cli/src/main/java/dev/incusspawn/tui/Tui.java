@@ -1924,20 +1924,6 @@ public class Tui {
         return template != null && !template.pendingOp().isEmpty();
     }
 
-    private void execWithFeedback(TuiRunner tui, TableState tableState, String progressVerb,
-                                    String doneVerb, String failVerb, String name, Runnable action) {
-        progressMessage = progressVerb + " " + name + "...";
-        tui.draw(frame -> render(frame, tableState));
-        try {
-            action.run();
-            statusMessage = doneVerb + " " + name;
-        } catch (Exception e) {
-            statusMessage = failVerb + " " + name;
-        }
-        progressMessage = null;
-        refreshData(tableState);
-    }
-
     /**
      * Execute an operation in the background using a virtual thread.
      * Two coordination layers:

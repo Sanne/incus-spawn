@@ -24,7 +24,6 @@ import io.vertx.core.http.WebSocketConnectOptions;
 
 import java.net.InetAddress;
 import java.io.IOException;
-import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
