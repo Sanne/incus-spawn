@@ -8,6 +8,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.function.Consumer;
+import java.util.function.UnaryOperator;
 
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;
@@ -56,7 +57,15 @@ public final class TuiSnapshot {
      * the actual rendering to {@code target/tui-snapshots/} either way.
      */
     public static void assertMatches(String name, Buffer buffer) {
-        var actual = toText(buffer);
+        assertMatches(name, buffer, UnaryOperator.identity());
+    }
+
+    /**
+     * {@link #assertMatches(String, Buffer)}, with what varies between builds (the version in a
+     * header) replaced in the plain text by {@code normalise} before it is compared.
+     */
+    public static void assertMatches(String name, Buffer buffer, UnaryOperator<String> normalise) {
+        var actual = normalise.apply(toText(buffer));
         try {
             Files.createDirectories(OUTPUT_DIR);
             Files.writeString(OUTPUT_DIR.resolve(name + ".txt"), actual);

@@ -1,0 +1,24 @@
+ isx   <version>  ● 1 container running
+╭ Templates ───────────────────────────────────────────────────────────────────╮
+│  NAME                    BUILT                DISK     DESCRIPTION           │
+│▸ tpl-minimal             3 days ago           -        Minimal Fedora        │
+│  tpl-dev                 not built            -        Development tools     │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭ Instances ─╔ Pool cleanup ══════════════════════════════════════╗────────────╮
+│  NAME      ║                                                    ║      DISK  │
+│  work-1    ║        Failed builds — none                        ║      -     │
+│  vm-1      ║        Unused images — all match a template        ║  ago -     │
+│            ║        Cached base images — none downloaded        ║            │
+│            ║        DNF build cache — no cache volume           ║            │
+│            ║                                                    ║            │
+│            ║   Pool is clean.                                   ║            │
+│            ║  Esc Close                                         ║            │
+│            ║                                                    ║            │
+│            ╚════════════════════════════════════════════════════╝            │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ tpl-minimal  Minimal Fedora
+│F1Info │F2Shell│F3Detai│F4Branc│F5Build│F6Renam│F7Stop │F8Destr│F9Actio│F10Quit

@@ -1,0 +1,24 @@
+ isx   <version>  ● 1 container running
+╭ Templates ───────────────────────────────────────────────────────────────────╮
+│  NAME                    BUILT                DISK     DESCRIPTION           │
+│▸ tpl-min╔ Build Templates ═════════════════════════════════════════╗a        │
+│  tpl-dev║                                                          ║  ls     │
+╰─────────║  ▶ [1] Rebuild tpl-minimal                               ║  ───────╯
+╭ Instance║        Deletes and rebuilds this template                ║  ───────╮
+│  NAME   ║                                                          ║   DISK  │
+│  work-1 ║    [2] Rebuild tpl-minimal with descendants              ║   -     │
+│  vm-1   ║        Rebuilds tpl-minimal → tpl-dev                    ║   -     │
+│         ║                                                          ║         │
+│         ║    [3] Build templates not yet built  1 template         ║         │
+│         ║        Builds all templates that haven't been built yet  ║         │
+│         ║                                                          ║         │
+│         ║    [4] Rebuild out of sync templates  all in sync        ║         │
+│         ║        All templates match their current definitions     ║         │
+│         ║                                                          ║         │
+│         ║    [5] (Re)build all templates                           ║         │
+│         ║        Deletes and rebuilds every template               ║         │
+│         ║  1-5 Select   Enter Build   Esc Cancel                   ║         │
+│         ╚══════════════════════════════════════════════════════════╝         │
+╰───────────                                                            ───────╯
+ tpl-minimal  Minimal Fedora
+│F1Info │F2Shell│F3Detai│F4Branc│F5Build│F6Renam│F7Stop │F8Destr│F9Actio│F10Quit

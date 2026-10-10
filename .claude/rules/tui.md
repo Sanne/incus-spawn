@@ -178,7 +178,9 @@ To see what a TUI change looks like, render it headlessly rather than launching 
 `TuiSnapshot` (test scope) renders into an in-memory buffer; `TuiSnapshot.assertMatches(name, buffer)` compares against `cli/src/test/resources/tui-snapshots/<name>.txt` and always writes the actual output to `cli/target/tui-snapshots/<name>.{txt,ansi}` -- read those files to review a layout.
 Accept intended changes with `mvn test -pl cli -am -Dtest=<Test> -Dsurefire.failIfNoSpecifiedTests=false -Dtui.snapshots.update=true`, then check the golden diff.
 
-Only modals extracted from `ListCommand` into their own class can be rendered this way.
+`TuiCharacterisationTest` renders the whole TUI this way: it hands the TUI class its services and a `FakeIncusDaemon` listing (`startSession`), drives keys through a real `TuiRunner` on a `HeadlessBackend`, and pins the main screen and every dialog at 80×24 and 120×40 (#959).
+Those goldens pinned the TUI before it was taken apart, so a change that moves code must leave them byte-identical.
+A dialog is easier to test on its own once it has its own class.
 `HelpChatModal` is the pattern: it owns its state, key handling (`handleKey` returns false to close) and `render(frame, screen)`, and takes its side effects (the `Asker`, an `Executor`, an on-answer callback) as constructor arguments so tests can answer synchronously.
 When touching another modal, prefer extracting it the same way and adding snapshots at 80×24 plus one or two larger sizes.
 `ModalRenderer.renderScrollableContent` is the shared scroll-with-scrollbar helper.

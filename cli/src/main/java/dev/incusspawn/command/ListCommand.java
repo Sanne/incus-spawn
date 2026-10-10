@@ -214,7 +214,7 @@ public class ListCommand extends BaseCommand {
                                 IncusClient.PoolUsage poolUsage, RuntimeException error) {}
     private static final Duration TASK_DISPLAY_DURATION = Duration.ofSeconds(5);
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, ACCOUNTS, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT, WARNINGS }
+    enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, ACCOUNTS, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT, WARNINGS }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     private String pendingDeleteName;
@@ -286,7 +286,7 @@ public class ListCommand extends BaseCommand {
 
     private boolean deferredBuildForBranch;
 
-    private enum PendingAction { NONE, SHELL, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, NEW_TEMPLATE, EXECUTE_ACTION }
+    enum PendingAction { NONE, SHELL, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, NEW_TEMPLATE, EXECUTE_ACTION }
     private PendingAction pendingAction = PendingAction.NONE;
     private ActionContext pendingActionTarget;
     private String pendingShellCommand;
@@ -4517,6 +4517,45 @@ public class ListCommand extends BaseCommand {
         this.cdiTools = cdiTools;
     }
 
+    /**
+     * The TUI as a session starts on {@code instances}, with its services given rather than taken
+     * from {@code RuntimeServices}, and without a terminal: what the characterisation tests (#959)
+     * render and drive keys into. Call {@link #useDefinitions} first.
+     */
+    void startSession(IncusClient incus, BackgroundTaskManager backgroundTasks, InstanceLockManager lockManager,
+                      List<InstanceInfo> instances) {
+        this.incus = incus;
+        this.backgroundTasks = backgroundTasks;
+        this.lockManager = lockManager;
+        mergeInstances(instances);
+        publishRows();
+        mode = Mode.BROWSE;
+        pendingAction = PendingAction.NONE;
+        templateTableState = new TableState();
+        instanceTableState = new TableState();
+        if (!templateEntries.isEmpty()) templateTableState.select(0);
+        selectFirstDataRow(instanceTableState);
+        focusedPanel = Panel.TEMPLATES;
+    }
+
+    /** One frame, as the runner draws it. */
+    void render(dev.tamboui.terminal.Frame frame) {
+        render(frame, instanceTableState);
+    }
+
+    /** One event, as the runner hands it over; {@code tui} is only asked to quit or draw. */
+    boolean handleEvent(Event event, TuiRunner tui) {
+        return handleEvent(event, tui, instanceTableState);
+    }
+
+    Mode mode() {
+        return mode;
+    }
+
+    PendingAction pendingAction() {
+        return pendingAction;
+    }
+
     boolean dispatchAction(ToolAction action, ActionContext context) {
         var cmd = action.shellCommand(context);
         if (cmd.isPresent()) {
@@ -5463,7 +5502,8 @@ public class ListCommand extends BaseCommand {
         thread.start();
     }
 
-    private boolean showProxyError() {
+    // Package-private so the characterisation tests can stand in for the host's proxy (#959).
+    boolean showProxyError() {
         var proxyStatus = ProxyHealthCheck.check(incus);
         if (proxyStatus == ProxyHealthCheck.ProxyStatus.RUNNING) {
             tryFixStaleDns();

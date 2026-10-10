@@ -1,0 +1,40 @@
+ isx   <version>  ● 1 container running
+╭ Templates ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  NAME                                        BUILT                DISK     DESCRIPTION                               │
+│▸ tpl-minimal                                 3 days ago           -        Minimal Fedora                            │
+│  tpl-dev                                     not built            -        Development tools                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ Instances ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  NAME                STATUS              IP                  PARENT              RUNTIME    AGE                DISK  │
+│  work-1              Running                                 tpl-minimal         container  3h ago             -     │
+│  vm-1                Stopped                                 tpl-minimal         virtual-ma 2 days ago         -     │
+│                                                                                                                      │
+│                             ╔ Build Templates ═════════════════════════════════════════╗                             │
+│                             ║                                                          ║                             │
+│                             ║  ▶ [1] Rebuild tpl-minimal                               ║                             │
+│                             ║        Deletes and rebuilds this template                ║                             │
+│                             ║                                                          ║                             │
+│                             ║    [2] Rebuild tpl-minimal with descendants              ║                             │
+│                             ║        Rebuilds tpl-minimal → tpl-dev                    ║                             │
+│                             ║                                                          ║                             │
+│                             ║    [3] Build templates not yet built  1 template         ║                             │
+│                             ║        Builds all templates that haven't been built yet  ║                             │
+│                             ║                                                          ║                             │
+│                             ║    [4] Rebuild out of sync templates  all in sync        ║                             │
+│                             ║        All templates match their current definitions     ║                             │
+│                             ║                                                          ║                             │
+│                             ║    [5] (Re)build all templates                           ║                             │
+│                             ║        Deletes and rebuilds every template               ║                             │
+│                             ║  1-5 Select   Enter Build   Esc Cancel                   ║                             │
+│                             ╚══════════════════════════════════════════════════════════╝                             │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ tpl-minimal  Minimal Fedora
+│F1Info     │F2Shell    │F3Details  │F4Branch…  │F5Build…   │F6Rename…  │F7Stop     │F8Destroy… │F9Actions  │F10Quit
