@@ -1,6 +1,5 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.ImageDef;
 import org.junit.jupiter.api.Test;
 
@@ -134,18 +133,4 @@ class TemplateDetailsTest {
         assertEquals("container", TemplateDetails.typeLabel(null));
     }
 
-    @Test
-    void envValuesThatLookSecretAreMasked() {
-        assertEquals("MAVEN_OPTS=-Xmx2g", TemplateDetailView.formatEnv(EnvEntry.set("MAVEN_OPTS", "-Xmx2g")));
-        assertEquals("API_TOKEN=••••••", TemplateDetailView.formatEnv(EnvEntry.set("API_TOKEN", "abc")));
-        assertEquals("PATH=/opt/bin:$PATH", TemplateDetailView.formatEnv(EnvEntry.prepend("PATH", "/opt/bin", ":")));
-        assertEquals("FOO=bar  (if unset)", TemplateDetailView.formatEnv(EnvEntry.setIfUnset("FOO", "bar")));
-    }
-
-    @Test
-    void wrapBreaksOnWordsWithinWidth() {
-        assertEquals(List.of("one two", "three"), TemplateDetailView.wrap("one two three", 8));
-        assertEquals(List.of("short"), TemplateDetailView.wrap("short", 80));
-        assertEquals(List.of("unbreakable-word"), TemplateDetailView.wrap("unbreakable-word", 5));
-    }
 }

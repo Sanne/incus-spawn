@@ -3,66 +3,56 @@ package dev.incusspawn.command;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.baseimage.BaseImageReleases;
-import dev.incusspawn.config.AgentContextGenerator;
 import dev.incusspawn.config.BuildSource;
-import dev.incusspawn.config.EnvEntry;
-import dev.incusspawn.config.EnvResolver;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
-import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.git.HostRepoRefresh;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusDiagnostics;
 import dev.incusspawn.Platform;
-import static dev.incusspawn.incus.Container.shellQuote;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.lifecycle.BuildAccounts;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.RuntimeSetup;
+import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
 
-import dev.incusspawn.tool.ClaudeSetup;
-import dev.incusspawn.tool.CodexSetup;
 import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
-import dev.incusspawn.tool.ToolVerifier;
 import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.util.BuildOutput;
-import dev.incusspawn.util.CpuInfo;
-import dev.incusspawn.util.TerminalProgress;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.command.BuildProgress.StepProgress;
+import dev.incusspawn.command.BuildProgress.TransferProgress;
+import dev.incusspawn.command.BuildTools.ResolvedTool;
+import dev.incusspawn.command.BuildTools.ToolResolution;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Arguments;
 import org.aesh.command.option.Option;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -70,16 +60,35 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReferenceArray;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import static dev.incusspawn.command.BuildTools.computeToolFingerprints;
+import static dev.incusspawn.command.BuildProgress.dnfCommand;
+import static dev.incusspawn.command.BuildProgress.formatDuration;
+import static dev.incusspawn.command.BuildProgress.runDnf;
+import static dev.incusspawn.command.BuildProgress.runLiveStep;
+import static dev.incusspawn.command.BuildProgress.runWithSpinner;
+import static dev.incusspawn.command.BuildProgress.stepFrom;
+import static dev.incusspawn.command.GuestProvisioning.assertGuestSelinuxNotEnforcing;
+import static dev.incusspawn.command.GuestProvisioning.disableGuestSelinux;
+import static dev.incusspawn.command.GuestProvisioning.enablePackageRepos;
+import static dev.incusspawn.command.GuestProvisioning.expandHome;
+import static dev.incusspawn.command.GuestProvisioning.installAllPackages;
+import static dev.incusspawn.command.GuestProvisioning.linkJavaTrustStores;
+import static dev.incusspawn.command.GuestProvisioning.maskServices;
+import static dev.incusspawn.command.GuestProvisioning.refreshInheritedTools;
+import static dev.incusspawn.command.GuestProvisioning.removePackages;
+import static dev.incusspawn.command.GuestProvisioning.runToolSetup;
+import static dev.incusspawn.command.GuestProvisioning.updateClaudeJsonTrust;
+import static dev.incusspawn.command.GuestProvisioning.updateCodexTrust;
+import static dev.incusspawn.command.GuestProvisioning.verifyTools;
+import static dev.incusspawn.command.GuestProvisioning.warnDnfCacheUnavailable;
+import static dev.incusspawn.command.GuestProvisioning.writeAgentContext;
+import static dev.incusspawn.command.GuestProvisioning.writeEnvFile;
+import static dev.incusspawn.command.SkillInstaller.installSkills;
 import static dev.incusspawn.util.BuildOutput.BOLD;
 import static dev.incusspawn.util.BuildOutput.RED;
 import static dev.incusspawn.util.BuildOutput.YELLOW;
@@ -146,12 +155,7 @@ public class BuildCommand extends BaseCommand {
         return Prompts.console();
     }
 
-    private static final String DNF_CACHE_DEVICE = "dnf-cache";
-    // 4 WebSocket fds (stdin, stdout, stderr, control) + 1 /wait long-poll per non-PTY exec
-    private static final int CONNECTIONS_PER_EXEC = 5;
-    // Half the 48-connection valve, leaving room for concurrent TUI/status activity
-    private static final int MACOS_TUNNEL_BUDGET = 24;
-    static final String REBUILDING_SUFFIX = "-rebuilding";
+    public static final String REBUILDING_SUFFIX = "-rebuilding";
 
     /** The longest template name that can be rebuilt: it is built as {@code <name>-rebuilding} first. */
     static final int MAX_TEMPLATE_NAME_LENGTH = TemplateLock.MAX_INSTANCE_NAME_LENGTH - REBUILDING_SUFFIX.length();
@@ -515,7 +519,7 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    static void collectAllRecursive(ImageDef imageDef, Map<String, ImageDef> defs,
+    public static void collectAllRecursive(ImageDef imageDef, Map<String, ImageDef> defs,
                                      List<String> result, Set<String> seen) {
         var name = imageDef.getName();
         if (seen.contains(name)) return;
@@ -529,7 +533,7 @@ public class BuildCommand extends BaseCommand {
         result.add(name);
     }
 
-    static void collectDescendants(String parentName, Map<String, ImageDef> defs,
+    public static void collectDescendants(String parentName, Map<String, ImageDef> defs,
                                             List<String> result, Set<String> seen) {
         for (var def : defs.values()) {
             if (parentName.equals(def.getParent()) && seen.add(def.getName())) {
@@ -992,7 +996,7 @@ public class BuildCommand extends BaseCommand {
                 }
             }
 
-            var mem = incus.getServerMemoryUsage();
+            var mem = new IncusDiagnostics(incus).getServerMemoryUsage();
             if (!mem.isEmpty()) {
                 appendDiag(diag, "  " + mem);
             }
@@ -1003,7 +1007,7 @@ public class BuildCommand extends BaseCommand {
                     appendDiag(diag, "  Cause: " + cause);
                 }
                 if ("Error".equals(status)) {
-                    var dmesg = incus.queryDmesgForContainer(buildName);
+                    var dmesg = new IncusDiagnostics(incus).queryDmesgForContainer(buildName);
                     if (!dmesg.isEmpty()) {
                         var dmesgCause = diagnoseCrashCause(dmesg);
                         if (dmesgCause != null && cause == null) {
@@ -1041,7 +1045,7 @@ public class BuildCommand extends BaseCommand {
 
     static String diagnoseInotifyExhaustion(IncusClient incus) {
         try {
-            int limit = incus.getInotifyMaxInstances();
+            int limit = new IncusDiagnostics(incus).getInotifyMaxInstances();
             if (limit < 0) return null;
             var instances = incus.list();
             long running = instances.stream()
@@ -1064,7 +1068,7 @@ public class BuildCommand extends BaseCommand {
         var promotedName = canonicalName + "-failed-build";
         try {
             incus.deleteIfExists(promotedName);
-            try { unmountDnfCache(buildName, machineType); } catch (Exception ignored) {}
+            try { new GuestProvisioning(incus).unmountDnfCache(buildName, machineType); } catch (Exception ignored) {}
             if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(buildName))) {
                 incus.forceStop(buildName);
             }
@@ -1246,9 +1250,9 @@ public class BuildCommand extends BaseCommand {
         }
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
-        unmountDnfCache(buildName, machineType);
+        new GuestProvisioning(incus).unmountDnfCache(buildName, machineType);
 
-        cleanCaches(buildName);
+        new GuestProvisioning(incus).cleanCaches(buildName);
 
         tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs,
                 identityStamps);
@@ -1492,9 +1496,9 @@ public class BuildCommand extends BaseCommand {
         }
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
-        unmountDnfCache(buildName, machineType);
+        new GuestProvisioning(incus).unmountDnfCache(buildName, machineType);
 
-        cleanCaches(buildName);
+        new GuestProvisioning(incus).cleanCaches(buildName);
 
         var parentCanonical = imageDef.isRoot() ? null : imageDef.getParent();
         tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs,
@@ -1579,7 +1583,7 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    static String resolveImageUrl(String imageUrl, String tag) {
+    public static String resolveImageUrl(String imageUrl, String tag) {
         var resolved = imageUrl.replace("{arch}", normalizeHostArch());
         return tag != null ? resolved.replace("{tag}", tag) : resolved;
     }
@@ -1713,133 +1717,6 @@ public class BuildCommand extends BaseCommand {
                     }
                 });
         return result.get();
-    }
-
-    /**
-     * Run {@code work} behind a one-line spinner whose dim detail is re-read from
-     * {@code detail} on every frame, for steps that report their own progress. {@code work}
-     * records the outcome in {@code state[0]}; a DONE note is the whole completion line. On a
-     * plain (non-ANSI) terminal the label is printed up front, since nothing animates there.
-     */
-    private static void runLiveStep(String label, java.util.function.Supplier<String> detail,
-                                    String failureMessage,
-                                    Consumer<AtomicReferenceArray<StepProgress>> work) {
-        var state = new AtomicReferenceArray<StepProgress>(1);
-        state.set(0, StepProgress.running(""));
-        if (!TerminalProgress.isAnsiTerminal()) BuildOutput.step(label + "...");
-        TerminalProgress.run(1, 1,
-                idx -> runSpinnerWork(work, state),
-                (idx, frame) -> formatLiveStepLine(label, state.get(0), detail, frame),
-                idx -> state.get(0).state() == StepState.DONE
-                        ? BuildOutput.indent() + state.get(0).note() : null,
-                System.out::println);
-        finishSpinner(label, failureMessage, state);
-    }
-
-    static String formatLiveStepLine(String label, StepProgress p, java.util.function.Supplier<String> detail,
-                                     int frame) {
-        return switch (p.state()) {
-            case RUNNING -> {
-                var line = BuildOutput.indent()
-                        + TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length] + " " + label;
-                var d = detail.get();
-                yield d == null || d.isEmpty() ? line : line + "  \033[2m" + d + "\033[0m"; // raw ANSI: animated line
-            }
-            case DONE -> BuildOutput.indent() + BuildOutput.CHECK + " " + p.note();
-            case FAILED -> formatDnfLine(label, p, frame);
-        };
-    }
-
-    /**
-     * What a download is doing, recorded by {@link DownloadCache} as it happens and turned
-     * into text only when the spinner redraws, so a chunk costs a few field writes.
-     */
-    static final class TransferProgress implements DownloadCache.Listener {
-        // Set when the body starts, so re-hashing a stale cached copy and connecting do not
-        // count against the rate, the time left or the reported duration.
-        private volatile long start;
-        private volatile String phase = "connecting";
-        private volatile long bytes;
-        private volatile long total = -1;
-        private volatile boolean fetched;
-        private volatile long end;
-
-        @Override
-        public void verifyingCached() {
-            phase = "verifying cached copy";
-        }
-
-        @Override
-        public void received(long bytes, long total) {
-            if (start == 0) start = System.nanoTime();
-            this.bytes = bytes;
-            this.total = total;
-            fetched = true;
-            phase = null;
-        }
-
-        @Override
-        public void retrying(String reason, int attempt, int attempts) {
-            // The next attempt starts from byte 0, so its rate and time left must not count the
-            // failed one or the pause.
-            start = 0;
-            bytes = 0;
-            total = -1;
-            phase = reason + ", retrying (attempt " + attempt + " of " + attempts + ")";
-        }
-
-        @Override
-        public void verifying() {
-            end = System.nanoTime();
-            phase = "verifying checksum";
-        }
-
-        /** Whether the body was fetched (or copied from a {@code file://} URL) rather than reused from the cache. */
-        boolean fetched() {
-            return fetched;
-        }
-
-        String detail() {
-            var p = phase;
-            return p != null ? p : describeTransfer(bytes, total, System.nanoTime() - start);
-        }
-
-        /** Size and duration of a finished download, e.g. {@code 1.9 GB in 5m 12s}. */
-        String summary() {
-            var finished = end != 0 ? end : System.nanoTime();
-            return CleanCommand.formatSize(bytes) + " in " + formatDuration(finished - start);
-        }
-    }
-
-    /**
-     * {@code 42%  812.0 MB / 1.9 GB  3.1 MB/s  4m 30s left}, or just the size and rate when the
-     * server sent no length. The rate waits for a full second of data, since the first chunks
-     * alone would project a wildly wrong one.
-     */
-    static String describeTransfer(long bytes, long total, long elapsedNanos) {
-        var sb = new StringBuilder();
-        if (total > 0) {
-            sb.append(Math.min(100, bytes * 100 / total)).append("%  ")
-                    .append(CleanCommand.formatSize(bytes)).append(" / ").append(CleanCommand.formatSize(total));
-        } else {
-            sb.append(CleanCommand.formatSize(bytes));
-        }
-        if (elapsedNanos >= 1_000_000_000L && bytes > 0) {
-            double perSecond = bytes / (elapsedNanos / 1e9);
-            sb.append("  ").append(CleanCommand.formatSize((long) perSecond)).append("/s");
-            if (total > bytes) {
-                sb.append("  ").append(formatDuration((long) ((total - bytes) / perSecond * 1e9))).append(" left");
-            }
-        }
-        return sb.toString();
-    }
-
-    /** {@code 42s}, {@code 5m 12s} or {@code 1h 03m}. */
-    static String formatDuration(long nanos) {
-        long seconds = nanos / 1_000_000_000L;
-        if (seconds < 60) return seconds + "s";
-        if (seconds < 3600) return (seconds / 60) + "m " + String.format("%02ds", seconds % 60);
-        return (seconds / 3600) + "h " + String.format("%02dm", (seconds % 3600) / 60);
     }
 
     DownloadCache newDownloadCache() {
@@ -1996,325 +1873,16 @@ public class BuildCommand extends BaseCommand {
         };
     }
 
-    /**
-     * Resolve all tools referenced by the image definition, including
-     * transitive dependencies declared via {@code requires}.
-     */
-    record ResolvedTool(
-        String name,
-        ToolSetup setup,
-        Map<String, String> parameters,
-        boolean reconfigureOnly
-    ) {
-        ResolvedTool(String name, ToolSetup setup, Map<String, String> parameters) {
-            this(name, setup, parameters, false);
-        }
-    }
-
-    record ToolResolution(
-        List<ResolvedTool> effective,
-        List<ResolvedTool> ancestors
-    ) {}
-
     private List<ResolvedTool> resolveTools(ImageDef imageDef) {
-        return resolveTools(imageDef, toolDefLoader, toolSetups, false);
-    }
-
-    static List<ResolvedTool> resolveTools(ImageDef imageDef, ToolDefLoader toolDefLoader, boolean quiet) {
-        return resolveTools(imageDef, toolDefLoader, List.of(), quiet);
-    }
-
-    static List<ResolvedTool> resolveTools(ImageDef imageDef, ToolDefLoader toolDefLoader,
-                                                      Iterable<ToolSetup> cdiTools, boolean quiet) {
-        var explicit = new LinkedHashSet<String>();
-        for (var toolRef : imageDef.getTools()) {
-            explicit.add(toolRef.getName());
-        }
-        var resolved = new LinkedHashMap<String, ResolvedTool>();
-        var explicitlyResolved = new HashSet<String>();
-
-        for (var toolRef : imageDef.getTools()) {
-            resolveWithDeps(toolRef.getName(), toolRef.getParams(), resolved,
-                new LinkedHashSet<>(), explicit, explicitlyResolved, true,
-                toolDefLoader, cdiTools, quiet);
-        }
-        return new ArrayList<>(resolved.values());
+        return BuildTools.resolveTools(imageDef, toolDefLoader, toolSetups, false);
     }
 
     private void resolveWithDeps(String name, Map<String, String> params,
                                   LinkedHashMap<String, ResolvedTool> resolved,
                                   LinkedHashSet<String> visiting, Set<String> explicit,
                                   Set<String> explicitlyResolved, boolean isExplicit) {
-        resolveWithDeps(name, params, resolved, visiting, explicit, explicitlyResolved, isExplicit,
+        BuildTools.resolveWithDeps(name, params, resolved, visiting, explicit, explicitlyResolved, isExplicit,
             toolDefLoader, toolSetups, false);
-    }
-
-    private static void resolveWithDeps(String name, Map<String, String> params,
-                                  LinkedHashMap<String, ResolvedTool> resolved,
-                                  LinkedHashSet<String> visiting, Set<String> explicit,
-                                  Set<String> explicitlyResolved, boolean isExplicit,
-                                  ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools, boolean quiet) {
-        if (!visiting.add(name)) {
-            if (!quiet) {
-                System.err.println("Warning: dependency cycle detected: " +
-                        String.join(" -> ", visiting) + " -> " + name + ", skipping.");
-            }
-            return;
-        }
-        var tool = findTool(name, toolDefLoader, cdiTools);
-        if (tool == null) {
-            if (!quiet) {
-                var ungated = findToolUngated(name, toolDefLoader, cdiTools);
-                if (ungated != null) {
-                    System.err.println("Warning: tool '" + name + "' requires feature '"
-                            + ungated.feature() + "' — add it to the features list in config.yaml to enable.");
-                } else {
-                    System.err.println("Warning: unknown tool '" + name + "', skipping.");
-                }
-            }
-            visiting.remove(name);
-            return;
-        }
-
-        // Resolve parameters and validate
-        Map<String, String> resolvedParams = params != null ? params : Map.of();
-        var parameterDefs = tool.parameters();
-        if (!parameterDefs.isEmpty()) {
-            var validation = dev.incusspawn.tool.ParameterResolver.resolve(
-                parameterDefs, resolvedParams);
-            if (validation.hasErrors()) {
-                throw new IllegalArgumentException(
-                    "Error in tool '" + name + "' parameters:\n" +
-                    String.join("\n", validation.errors().stream().map(e -> "  " + e).toList())
-                );
-            }
-            resolvedParams = validation.resolvedValues();
-        } else if (!resolvedParams.isEmpty()) {
-            throw new IllegalArgumentException(
-                "Tool '" + name + "' does not accept parameters, but received: " + resolvedParams.keySet()
-            );
-        }
-
-        // Check if tool already resolved - if parameters differ, explicit config wins over transitive deps
-        if (resolved.containsKey(name)) {
-            var existing = resolved.get(name);
-            if (!existing.parameters().equals(resolvedParams)) {
-                if (!isExplicit && explicit.contains(name)) {
-                    // Transitive dep for a tool the user explicitly configured — skip
-                    if (!quiet && params != null && !params.isEmpty()) {
-                        System.err.println("Warning: tool '" + name +
-                            "' is explicitly configured, overriding parameters from a transitive dependency.");
-                    }
-                } else if (isExplicit && !explicitlyResolved.contains(name)) {
-                    // Explicit config replaces a prior transitive-dep resolution
-                    if (!quiet) {
-                        var defaultOnly = dev.incusspawn.tool.ParameterResolver.resolve(
-                            tool.parameters(), Map.of());
-                        if (defaultOnly.hasErrors() ||
-                                !defaultOnly.resolvedValues().equals(existing.parameters())) {
-                            System.err.println("Warning: tool '" + name +
-                                "' is explicitly configured, overriding parameters from a transitive dependency.");
-                        }
-                    }
-                    resolved.put(name, new ResolvedTool(name, tool, resolvedParams));
-                    explicitlyResolved.add(name);
-                } else {
-                    throw new IllegalArgumentException(
-                        "Tool '" + name + "' specified multiple times with different parameters:\n" +
-                        "  First:  " + existing.parameters() + "\n" +
-                        "  Second: " + resolvedParams
-                    );
-                }
-            }
-            visiting.remove(name);
-            return;
-        }
-
-        // Recursively resolve dependencies with their parameters
-        if (tool instanceof dev.incusspawn.tool.YamlToolSetup yts) {
-            for (var depRef : yts.toolDef().getRequires()) {
-                if (!quiet && !explicit.contains(depRef.getName())) {
-                    BuildOutput.note("Auto-adding dependency: " + depRef.getName() + " (required by " + name + ")");
-                }
-                resolveWithDeps(depRef.getName(), depRef.getParams(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, quiet);
-            }
-        } else {
-            for (var dep : tool.requires()) {
-                if (!quiet && !explicit.contains(dep)) {
-                    BuildOutput.note("Auto-adding dependency: " + dep + " (required by " + name + ")");
-                }
-                resolveWithDeps(dep, Map.of(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, quiet);
-            }
-        }
-
-        resolved.put(name, new ResolvedTool(name, tool, resolvedParams));
-        if (isExplicit) {
-            explicitlyResolved.add(name);
-        }
-        visiting.remove(name);
-    }
-
-    private void removePackages(Container container, ImageDef imageDef) {
-        var pkgs = imageDef.getRemovePackages();
-        if (pkgs.isEmpty()) return;
-        BuildOutput.step("Removing unnecessary packages...");
-        container.sh(
-                "dnf remove -y --setopt=clean_requirements_on_remove=True " +
-                String.join(" ", pkgs) + " 2>/dev/null; true");
-    }
-
-    static final String SELINUX_CONFIG = "/etc/selinux/config";
-
-    /**
-     * Pins a VM guest's SELinux to {@code disabled} before any package is installed (#842).
-     * The base image ships no policy and a filesystem nothing ever labelled, but a package
-     * like {@code perl} pulls in {@code selinux-policy-targeted}, whose {@code %post} writes
-     * {@code SELINUX=enforcing}: the next boot then denies the incus-agent's vsock
-     * {@code listen} and the instance is unreachable. Relabelling cannot fix that -- the
-     * targeted policy has no rule for the agent at all. The {@code %post} only writes the
-     * file when it is missing or empty, so a non-empty file seeded here also survives every
-     * later install, in the template and in its branches. An existing file is rewritten, not
-     * skipped. That cannot rescue a parent whose file already says {@code enforcing}: its copy
-     * boots enforcing and the agent is gone before this runs. Such a parent was built by an
-     * older isx, so {@code isImageOutdated} has {@code buildChain} rebuild it first.
-     */
-    void disableGuestSelinux(Container container) {
-        container.sh(disableSelinuxScript(SELINUX_CONFIG))
-                .assertSuccess("Failed to disable SELinux in the VM guest");
-    }
-
-    static String disableSelinuxScript(String config) {
-        return "if grep -q '^[[:space:]]*SELINUX=' " + config + " 2>/dev/null; then "
-                + "sed -i 's/^[[:space:]]*SELINUX=.*/SELINUX=disabled/' " + config + "; "
-                + "else mkdir -p \"$(dirname " + config + ")\" && "
-                + "printf '%s\\n' '# Set by incus-spawn: the guest filesystem is not labelled (issue #842).' "
-                + "SELINUX=disabled SELINUXTYPE=targeted >> " + config + "; fi";
-    }
-
-    /**
-     * Fails the build if the VM guest would boot SELinux enforcing, which kills the
-     * incus-agent on the next boot. The build itself runs on the boot before the policy
-     * takes effect, so without this the breakage only shows up later, on {@code isx shell}.
-     */
-    void assertGuestSelinuxNotEnforcing(Container container) {
-        if (!container.sh(selinuxNotEnforcingScript(SELINUX_CONFIG)).success()) {
-            throw new IllegalStateException("The VM guest would boot SELinux enforcing: "
-                    + SELINUX_CONFIG + " was set to 'enforcing' during the build (a package or "
-                    + "tool setup rewrote it). The guest filesystem is not labelled and the "
-                    + "policy denies the incus-agent, so the instance would be unreachable.");
-        }
-    }
-
-    static String selinuxNotEnforcingScript(String config) {
-        return "! grep -qiE '^[[:space:]]*SELINUX=[[:space:]]*\"?enforcing' " + config + " 2>/dev/null";
-    }
-
-    private void maskServices(Container container, ImageDef imageDef) {
-        var services = imageDef.getMaskServices();
-        if (services.isEmpty()) return;
-        BuildOutput.step("Masking unnecessary services...");
-        container.sh(
-                "systemctl mask " + String.join(" ", services) + " 2>/dev/null; true");
-    }
-
-    /**
-     * Collect all packages from the image definition and its tools,
-     * subtract those already installed by ancestor images, and install
-     * only the remaining packages. Accepts pre-resolved ancestor tools
-     * to avoid redundant resolution.
-     */
-    private void installAllPackages(Container container, ImageDef imageDef,
-                                    List<ResolvedTool> tools,
-                                    List<ResolvedTool> ancestorTools,
-                                    Map<String, ImageDef> defs) {
-        var allPackages = new LinkedHashSet<>(imageDef.getPackages());
-        for (var tool : tools) {
-            allPackages.addAll(tool.setup().packages());
-        }
-        if (allPackages.isEmpty()) return;
-
-        // Collect packages already installed by ancestor images
-        var ancestorPackages = new LinkedHashSet<String>();
-        for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
-            ancestorPackages.addAll(ancestor.getPackages());
-        }
-        for (var tool : ancestorTools) {
-            ancestorPackages.addAll(tool.setup().packages());
-        }
-
-        var totalCount = allPackages.size();
-        allPackages.removeAll(ancestorPackages);
-
-        if (allPackages.isEmpty()) {
-            BuildOutput.ok("All " + totalCount + " packages already installed");
-            return;
-        }
-
-        var alreadyInstalled = totalCount - allPackages.size();
-        var pkgDetail = allPackages.size() + " to install"
-                + (alreadyInstalled > 0 ? " (" + alreadyInstalled + " already installed)" : "");
-        try (var group = BuildOutput.group("Packages", pkgDetail)) {
-            BuildOutput.list(allPackages);
-            var rest = new ArrayList<String>(List.of("install", "-y"));
-            rest.addAll(allPackages);
-            // Label carries no count: the group header states the requested packages, while
-            // dnf's own N/M in the spinner detail counts the fully-resolved transaction
-            // (requested packages + their dependencies, one step per action phase), so a count
-            // here would look like it should match dnf's much larger N when it never will.
-            runDnf(container, "Installing packages and dependencies", "Failed to install packages",
-                    dnfCommand(rest.toArray(String[]::new)));
-        }
-    }
-
-    /**
-     * Enable package repositories (e.g. COPR) from the image and its tools,
-     * skipping any already enabled by ancestor images. Must be called before
-     * {@link #installAllPackages}.
-     */
-    private record RepoKey(String type, String name) {
-        RepoKey(ImageDef.PackageRepo repo) { this(repo.getType(), repo.getName()); }
-    }
-
-    private void enablePackageRepos(Container container, ImageDef imageDef,
-                                    List<ResolvedTool> tools,
-                                    List<ResolvedTool> ancestorTools,
-                                    Map<String, ImageDef> defs) {
-        var allRepos = new LinkedHashSet<RepoKey>();
-        for (var repo : imageDef.getPackageRepos()) {
-            allRepos.add(new RepoKey(repo));
-        }
-        for (var tool : tools) {
-            for (var repo : tool.setup().packageRepos()) {
-                allRepos.add(new RepoKey(repo));
-            }
-        }
-        if (allRepos.isEmpty()) return;
-
-        var ancestorRepos = new LinkedHashSet<RepoKey>();
-        for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
-            for (var repo : ancestor.getPackageRepos()) {
-                ancestorRepos.add(new RepoKey(repo));
-            }
-        }
-        for (var tool : ancestorTools) {
-            for (var repo : tool.setup().packageRepos()) {
-                ancestorRepos.add(new RepoKey(repo));
-            }
-        }
-
-        allRepos.removeAll(ancestorRepos);
-        if (allRepos.isEmpty()) return;
-
-        for (var key : allRepos) {
-            switch (key.type()) {
-                case "copr" -> runWithSpinner("Enabling", "COPR repo " + key.name(),
-                        "Failed to enable COPR repo " + key.name(),
-                        state -> state.set(0, stepFrom(
-                                container.exec("dnf", "copr", "enable", "-y", key.name()))));
-                default -> System.err.println("Warning: unknown package_repos type '" + key.type()
-                        + "' for '" + key.name() + "', skipping.");
-            }
-        }
     }
 
     /**
@@ -2350,381 +1918,7 @@ public class BuildCommand extends BaseCommand {
                 inherited, BuildOutput::step, BuildOutput::warn);
     }
 
-    /**
-     * Run the non-package setup steps for each tool (scripts, files, env, verify).
-     */
-    private void runToolSetup(Container container, List<ResolvedTool> tools,
-                              Map<String, String> accountSelection) {
-        if (tools.isEmpty()) return;
-        var names = tools.stream().map(ResolvedTool::name).toList();
-        try (var group = BuildOutput.group("Tools", String.join(", ", names))) {
-            for (var resolved : tools) {
-                if (resolved.reconfigureOnly()) {
-                    resolved.setup().reconfigure(container, resolved.parameters());
-                } else {
-                    resolved.setup().install(container, resolved.parameters(), accountSelection);
-                }
-            }
-        }
-    }
-
-    /**
-     * Verify the tools this build installed, after {@link #writeEnvFile}: a verify runs in the
-     * environment the image will have, so one tool may rely on another's (Maven on the JDK's
-     * {@code JAVA_HOME}) -- except a {@code verify_as_root} check, which gets root's own
-     * environment (see {@link ToolVerifier}). A reconfigure-only tool was verified when its
-     * ancestor installed it.
-     */
-    private static void verifyTools(Container container, List<ResolvedTool> tools) {
-        var checks = tools.stream()
-                .filter(t -> !t.reconfigureOnly())
-                .map(t -> new ToolVerifier.Check(t.name(), t.setup().verifyCommand(t.parameters()),
-                        t.setup().verifyAsRoot()))
-                .filter(check -> check.command() != null)
-                .toList();
-        ToolVerifier.verifyAll(container, checks);
-    }
-
-    /** Refreshes what isx owns of each tool this layer inherits without setting it up again. */
-    static void refreshInheritedTools(Container container, ToolResolution toolResolution) {
-        var effectiveNames = toolResolution.effective().stream()
-                .map(ResolvedTool::name).collect(java.util.stream.Collectors.toSet());
-        for (var tool : toolResolution.ancestors()) {
-            if (!effectiveNames.contains(tool.name())) {
-                tool.setup().refreshInherited(container);
-            }
-        }
-    }
-
-    private void writeEnvFile(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
-                               List<ResolvedTool> allTools, String canonicalName) {
-        var resolver = new EnvResolver();
-
-        resolver.add(EnvEntry.set("ISX_CONTAINER", "${HOSTNAME}").expandingAtLogin(), "built-in");
-        resolver.add(EnvEntry.set("ISX_TEMPLATE", canonicalName), "built-in");
-        resolver.add(EnvEntry.set("ISX_VERSION", BuildInfo.instance().version()), "built-in");
-        for (var layer : ImageDef.chain(imageDef, defs)) {
-            resolver.addAll(layer.getEnv(), "template " + layer.getName());
-        }
-
-        // The account the template selected decides which auth mode gets baked, so it has to
-        // reach envEntries -- resolving the default here would ignore the template's choice.
-        var accountSelection = ImageDef.resolveAccounts(imageDef, defs);
-        for (var resolved : allTools) {
-            var entries = resolved.setup().envEntries(resolved.parameters(), accountSelection);
-            resolver.addAll(entries, "tool " + resolved.name());
-        }
-
-        var script = resolver.resolve();
-        container.writeFile("/etc/profile.d/isx-env.sh", script);
-    }
-
-    /**
-     * Write the managed-policy CLAUDE.md that tells an agent what this box already
-     * provides. Runs once per build, after the chain loop, so it sees the fully
-     * resolved image rather than one layer at a time.
-     *
-     * <p>Written to {@code /etc/claude-code/CLAUDE.md} — Claude Code's managed policy
-     * layer, beside the managed-settings.json that {@code ClaudeSetup} already owns.
-     * That layer loads ahead of, and concatenates with, {@code ~/.claude/CLAUDE.md} and
-     * any project CLAUDE.md, so isx never merges with or overwrites a file someone else
-     * owns. Root ownership is correct here; no chown.
-     */
-    void writeAgentContext(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
-                           List<ResolvedTool> allTools, String canonicalName) {
-        var chain = ImageDef.chain(imageDef, defs);
-
-        // generate() drops blanks and repeats, so collect freely here.
-        var notes = new ArrayList<String>();
-        var repos = new ArrayList<AgentContextGenerator.Repo>();
-        var seenRepoPaths = new HashSet<String>();
-        for (var layer : chain) {
-            notes.add(layer.getAgentNote());
-            // Ancestor repos are in the final image too: buildFromScratch clones them
-            // per-layer in the chain loop, buildFromParent inherits them with the copy.
-            for (var repo : layer.getRepos()) {
-                // getPath() derives ~/<name> from the url, but yields null for an entry
-                // with neither — nothing was cloned for it, so there is nothing to list.
-                var path = repo.getPath();
-                if (path == null || path.isBlank()) continue;
-                // Dedupe on the resolved path: ~/jdk and /home/agentuser/jdk are one clone.
-                if (seenRepoPaths.add(expandHome(path))) {
-                    repos.add(new AgentContextGenerator.Repo(path, repo.getUrl()));
-                }
-            }
-        }
-
-        var toolNames = new ArrayList<String>(allTools.size());
-        for (var resolved : allTools) {
-            toolNames.add(resolved.name());
-            notes.add(resolved.setup().agentNote());
-        }
-
-        var content = AgentContextGenerator.generate(canonicalName, toolNames, repos, notes);
-        container.writeFile(ClaudeSetup.MANAGED_MEMORY_PATH, content);
-    }
-
-    private static void linkJavaTrustStores(Container container) {
-        container.sh(
-                "find /usr/lib/jvm /opt -name cacerts -path '*/lib/security/cacerts' 2>/dev/null | while IFS= read -r f; do " +
-                "t=$(readlink -f \"$f\" 2>/dev/null); " +
-                "if [ \"$t\" != /etc/pki/java/cacerts ]; then " +
-                "ln -sf /etc/pki/java/cacerts \"$f\"; " +
-                "fi; done");
-    }
-
-    private static ToolSetup findTool(String name, ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools) {
-        var tool = toolDefLoader.find(name);
-        if (tool != null) return isFeatureGated(tool) ? null : tool;
-        for (var t : cdiTools) {
-            if (t.name().equals(name)) return isFeatureGated(t) ? null : t;
-        }
-        return null;
-    }
-
-    static boolean isFeatureGated(ToolSetup tool) {
-        var feature = tool.feature();
-        return feature != null && !SpawnConfig.load().isFeatureEnabled(feature);
-    }
-
-    static boolean isFeatureGated(ToolSetup tool, SpawnConfig config) {
-        var feature = tool.feature();
-        return feature != null && !config.isFeatureEnabled(feature);
-    }
-
-    private static ToolSetup findToolUngated(String name, ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools) {
-        var tool = toolDefLoader.find(name);
-        if (tool != null && tool.feature() != null) return tool;
-        for (var t : cdiTools) {
-            if (t.name().equals(name) && t.feature() != null) return t;
-        }
-        return null;
-    }
-
-    /**
-     * Shared dnf options: keep the download cache, cap metadata refresh, skip
-     * docs, and parallelize downloads. {@code max_parallel_downloads} is bounded
-     * to dnf's practical ceiling (20) and scaled to the host's logical cores so
-     * beefier machines fetch more concurrently — the download phase is the only
-     * parallelizable part; the rpm transaction itself is serial.
-     */
-    private static final String[] DNF_BASE_OPTS = {
-            "--setopt=keepcache=true",
-            "--setopt=metadata_expire=3600",
-            "--setopt=tsflags=nodocs",
-            "--setopt=max_parallel_downloads=" + Math.min(20, Math.max(8, CpuInfo.logicalCores())),
-    };
-
-    /** Build a full {@code dnf} command line: {@code dnf <shared opts> <rest>}. */
-    private static String[] dnfCommand(String... rest) {
-        var cmd = new ArrayList<String>();
-        cmd.add("dnf");
-        cmd.addAll(List.of(DNF_BASE_OPTS));
-        cmd.addAll(List.of(rest));
-        return cmd.toArray(String[]::new);
-    }
-
-    /** dnf5's non-TTY per-step progress line, e.g.
-     *  {@code [3/6] Installing setup-0:2.15.0-28.fc  100% | 26 MiB/s | ...} or a
-     *  download line {@code [1/2] filesystem-0:3.18-52.fc44.aarch64  100% | ...}.
-     *  Group 1/2 are the counters, group 3 is the action+package (dnf truncates it
-     *  to its assumed 80-col width). */
-    private static final Pattern DNF_STEP = Pattern.compile("^\\[(\\d+)/(\\d+)]\\s+(.*)$");
-
-    /**
-     * Run a dnf command behind an animated one-line spinner. dnf's verbose output
-     * is streamed through a parser (not echoed to the terminal) so the spinner can
-     * show live "N/M — current package" feedback from dnf's own progress lines,
-     * keeping isx's warnings visible instead of buried in a flood. On failure it
-     * clears metadata and retries once with {@code --refresh}; if that also fails
-     * the full captured output is printed and {@code failureMessage} thrown.
-     *
-     * @param label the full phrase for the spinner line (e.g. "Installing base packages")
-     */
-    private void runDnf(Container container, String label, String failureMessage, String... args) {
-        var state = new AtomicReferenceArray<StepProgress>(1);
-        state.set(0, StepProgress.running("", "starting"));
-        var started = System.nanoTime();
-        TerminalProgress.run(1, 1,
-                idx -> dnfWork(container, args, state),
-                (idx, frame) -> formatDnfLine(label, state.get(0), frame,
-                        (System.nanoTime() - started) / 1_000_000),
-                idx -> plainDnfLine(label, state.get(0)),
-                System.out::println);
-        finishSpinner(label, failureMessage, state);
-    }
-
-    /** The install/retry work for {@link #runDnf}, recording progress in {@code state[0]}.
-     *  A thrown exception (e.g. an Incus transport error) is recorded as a failed state
-     *  rather than propagated, since {@code TerminalProgress} swallows task exceptions —
-     *  an uncaught one would leave the step stuck RUNNING and lose the real cause. */
-    private void dnfWork(Container container, String[] args, AtomicReferenceArray<StepProgress> state) {
-        try {
-            var log = new StringBuilder();
-            int code = container.execLines(line -> onDnfLine(line, log, state), args);
-            if (code == 0) {
-                state.set(0, StepProgress.done(null));
-                return;
-            }
-            // Metadata may be stale — clear it and retry once with --refresh.
-            state.set(0, StepProgress.running("", "retrying with --refresh"));
-            container.sh("dnf clean metadata");
-            var retryArgs = new ArrayList<>(List.of(args));
-            retryArgs.add(1, "--refresh");
-            var retryLog = new StringBuilder();
-            int retryCode = container.execLines(line -> onDnfLine(line, retryLog, state),
-                    retryArgs.toArray(String[]::new));
-            if (retryCode == 0) {
-                state.set(0, StepProgress.done("succeeded after refresh"));
-            } else {
-                var out = retryLog.toString();
-                state.set(0, StepProgress.failed(lastNonEmptyLine(out), out));
-            }
-        } catch (RuntimeException e) {
-            state.set(0, StepProgress.failed(e.getMessage(), stackTrace(e)));
-        }
-    }
-
-    /** Accumulate a streamed dnf line into {@code log} and, if it's a progress line,
-     *  update the spinner's live detail to "N/M — package". */
-    static void onDnfLine(String line, StringBuilder log, AtomicReferenceArray<StepProgress> state) {
-        synchronized (log) { log.append(line).append('\n'); }
-        var m = DNF_STEP.matcher(line.strip());
-        if (!m.matches()) return;
-        // Drop the trailing "100% | rate | size | time" progress bar. dnf truncates
-        // the action/package to a fixed column, so there may be only a single space
-        // before the percentage — key off the "<n>% |" shape, not the spacing.
-        var body = m.group(3).replaceAll("\\s+\\d+%\\s*\\|.*$", "").strip();
-        if (body.isEmpty() || body.equals("Total")) return; // skip the download subtotal line
-        state.set(0, StepProgress.running("", m.group(1) + "/" + m.group(2) + "  " + shortenNevra(body)));
-    }
-
-    /** dnf's non-TTY column truncates the version/arch tail off each NEVRA anyway, and the
-     *  version is just noise in a live progress line, so reduce {@code name-epoch:ver-rel.arch}
-     *  to its bare package name (everything before the {@code -<epoch>:} marker). Action-only
-     *  lines ("Verify package files") and names truncated before the epoch are left untouched. */
-    static String shortenNevra(String body) {
-        return body.replaceFirst("-\\d+:.*$", "");
-    }
-
-    /** Render the dnf spinner line: {@code     ⠋ <label>  <dim live detail>}, then {@code ✓ <label>}. */
-    static String formatDnfLine(String label, StepProgress p, int frame) {
-        return formatDnfLine(label, p, frame, 0);
-    }
-
-    static String formatDnfLine(String label, StepProgress p, int frame, long elapsedMs) {
-        var sb = new StringBuilder(BuildOutput.indent());
-        switch (p.state()) {
-            case RUNNING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
-                    .append(' ').append(label);
-            case DONE    -> sb.append(BuildOutput.CHECK).append(' ').append(label);
-            case FAILED  -> sb.append(BuildOutput.CROSS).append(' ').append(label);
-        }
-        if (p.state() == StepState.RUNNING && p.detail() != null && !p.detail().isEmpty()) {
-            sb.append("  \033[2m").append(p.detail()).append("\033[0m"); // raw ANSI: animated line
-        }
-        if (p.state() == StepState.DONE && p.note() != null && !p.note().isEmpty()) {
-            sb.append(" \033[2m(").append(p.note()).append(")\033[0m"); // raw ANSI: animated line
-        }
-        if (p.state() == StepState.DONE && elapsedMs >= 2000) {
-            sb.append("  \033[2m").append(BuildOutput.formatElapsed(elapsedMs)).append("\033[0m"); // raw ANSI: animated line
-        }
-        if (p.state() == StepState.FAILED && p.detail() != null && !p.detail().isEmpty()) {
-            sb.append("  \033[31m").append(p.detail()).append("\033[0m"); // raw ANSI: animated line
-        }
-        return sb.toString();
-    }
-
-    /** Non-ANSI fallback line for a dnf step (emitted once, on completion). */
-    private static String plainDnfLine(String label, StepProgress p) {
-        if (p.state() == StepState.DONE) {
-            var line = BuildOutput.indent() + label + "... done.";
-            if (p.note() != null && !p.note().isEmpty()) line += " (" + p.note() + ")";
-            return line;
-        }
-        var msg = BuildOutput.indent() + "Warning: " + label + " failed";
-        if (p.detail() != null && !p.detail().isEmpty()) msg += ": " + p.detail();
-        return msg;
-    }
-
-    /**
-     * Run a single operation behind an animated one-line spinner (mirroring the
-     * clone/prime display) instead of streaming its output. {@code work} performs
-     * the operation with captured exec and records the terminal {@link StepProgress}
-     * in {@code state[0]}; it may set an intermediate {@code running(...)} to advance
-     * the verb mid-flight. On a non-DONE result the captured log is printed to
-     * stderr and {@code failureMessage} thrown.
-     */
-    private void runWithSpinner(String activity, String label, String failureMessage,
-                                Consumer<AtomicReferenceArray<StepProgress>> work) {
-        var state = new AtomicReferenceArray<StepProgress>(1);
-        state.set(0, StepProgress.running(activity));
-        TerminalProgress.run(1, 1,
-                idx -> runSpinnerWork(work, state),
-                (idx, frame) -> formatStepLine(label, null, state.get(0), frame, "Done"),
-                idx -> plainStepLine(label, state.get(0), "Done", activity.toLowerCase()),
-                System.out::println);
-        finishSpinner(label, failureMessage, state);
-    }
-
-    /** Run a {@link #runWithSpinner} task, converting a thrown exception into a recorded
-     *  failed state. {@code TerminalProgress} swallows task exceptions, so without this the
-     *  step would stay RUNNING and {@code finishSpinner} would throw the generic failure
-     *  message with no captured cause. */
-    static void runSpinnerWork(Consumer<AtomicReferenceArray<StepProgress>> work,
-                                       AtomicReferenceArray<StepProgress> state) {
-        try {
-            work.accept(state);
-        } catch (RuntimeException e) {
-            state.set(0, StepProgress.failed(e.getMessage(), stackTrace(e)));
-        }
-    }
-
-    /** Render a throwable's stack trace to a string for a failed step's captured log. */
-    private static String stackTrace(Throwable t) {
-        var sw = new java.io.StringWriter();
-        t.printStackTrace(new java.io.PrintWriter(sw));
-        return sw.toString();
-    }
-
-    /** After a one-task spinner completes, surface a non-DONE result: print the full
-     *  captured log (if any) to stderr — after the animated line, so it doesn't
-     *  interleave with the live display — and throw {@code failureMessage}. */
-    private static void finishSpinner(String label, String failureMessage,
-                                      AtomicReferenceArray<StepProgress> state) {
-        var progress = state.get(0);
-        if (progress != null && progress.state() == StepState.DONE) return;
-
-        if (progress != null && progress.log() != null && !progress.log().isBlank()) {
-            System.err.println(styled(BOLD, "─── output: " + label + " ───"));
-            System.err.println(progress.log().strip());
-            System.err.println(styled(BOLD, "─── end output: " + label + " ───"));
-        }
-        var detail = progress != null && progress.detail() != null && !progress.detail().isEmpty()
-                ? ": " + progress.detail() : "";
-        throw new IncusException(failureMessage + detail);
-    }
-
-    /** Turn a captured exec result into a terminal {@link StepProgress}. */
-    private static StepProgress stepFrom(IncusClient.ExecResult result) {
-        if (result.success()) return StepProgress.done(null);
-        var combined = combinedOutput(result);
-        return StepProgress.failed(lastNonEmptyLine(combined), combined);
-    }
-
-    void cleanCaches(String container) {
-        BuildOutput.stepStart("Cleaning up caches...");
-        // If the shared cache volume is somehow still mounted, dnf clean / rm -rf would
-        // wipe it for every later build, not just this image: clean only /tmp then.
-        incus.shellExec(container, "sh", "-c",
-                "if mountpoint -q " + DNF_CACHE_PATH + "; then "
-                        + "echo 'Warning: DNF cache volume still mounted, not cleaning it' >&2; "
-                        + "else dnf clean all; rm -rf " + DNF_CACHE_PATH + "; fi; "
-                        + "rm -rf /tmp/* /var/tmp/*; true");
-        BuildOutput.stepDone();
-    }
-
-    /** Containers only: their NIC is eth0, a VM's is not (see InstanceLifecycle.addressUpCheck). */
+    /** Containers only: their NIC is eth0, a VM's is not (see RuntimeSetup.addressUpCheck). */
     private void waitForIpv4(Container container) {
         BuildOutput.stepStart("Waiting for network...");
         var result = container.sh(
@@ -2835,7 +2029,7 @@ public class BuildCommand extends BaseCommand {
     /** Fail the build if its guest did not take the address {@link #startBuild} gave it. */
     void requireBuildAddress(String buildName, BuildAccounts.Started started) {
         if (started.address() != null) {
-            InstanceLifecycle.requireBuildAddress(incus, buildName, started.address());
+            InstanceNetwork.requireBuildAddress(incus, buildName, started.address());
         }
     }
 
@@ -2854,7 +2048,7 @@ public class BuildCommand extends BaseCommand {
      */
     private void releaseBuildAddress(String buildName) {
         try {
-            InstanceLifecycle.releaseBuildAddress(incus, buildName);
+            InstanceNetwork.releaseBuildAddress(incus, buildName);
         } catch (RuntimeException e) {
             BuildOutput.warn("Could not release the build's static IP: " + e.getMessage()
                     + ". The template keeps it until it is rebuilt or removed.");
@@ -2881,26 +2075,6 @@ public class BuildCommand extends BaseCommand {
      */
     private void stampAccountIdentities(String container, Map<String, String> identityStamps) {
         if (!identityStamps.isEmpty()) incus.configSetAll(container, identityStamps);
-    }
-
-    private static Map<String, String> computeToolFingerprints(
-            dev.incusspawn.config.ImageDef imageDef,
-            ToolDefLoader toolDefLoader,
-            Map<String, ImageDef> defs) {
-        var rawFps = new TreeMap<String, String>();
-        var depMap = new TreeMap<String, List<String>>();
-        // Always quiet: this method only fingerprints YAML tools and doesn't have
-        // CDI tools, so non-YAML tools would produce spurious "unknown tool" warnings.
-        for (var resolvedTool : resolveTools(imageDef, toolDefLoader, true)) {
-            if (resolvedTool.setup() instanceof YamlToolSetup yts) {
-                rawFps.put(yts.toolDef().getName(), yts.toolDef().contentFingerprint());
-                var depNames = yts.toolDef().getRequires().stream()
-                    .map(dev.incusspawn.tool.ToolDef.ToolRef::getName)
-                    .toList();
-                depMap.put(yts.toolDef().getName(), depNames);
-            }
-        }
-        return dev.incusspawn.tool.ToolDef.compositeFingerprints(rawFps, depMap);
     }
 
     private BuildSource collectBuildSource(ImageDef imageDef, Map<String, ImageDef> defs) {
@@ -3146,15 +2320,6 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * Mount a shared DNF cache volume into the container. This shares
-     * metadata and downloaded packages across builds, avoiding redundant
-     * downloads when building a parent→child image chain.
-     */
-    static final String DNF_CACHE_VOLUME = "dnf-cache";
-
-    static final String DNF_CACHE_PATH = "/var/cache/libdnf5";
-
-    /**
      * Give agentuser its home when {@code useradd -m} created it, and when it did not: host
      * resources are attached before start (#828), so a mount under {@code /home/agentuser} already
      * made the directory as root. {@code useradd} then succeeds but skips {@code /etc/skel}, and a
@@ -3171,31 +2336,6 @@ public class BuildCommand extends BaseCommand {
             + "-o -exec chown -h agentuser:agentuser {} +";
 
     /**
-     * Attach the DNF cache volume to a stopped build instance. Returns why it could not be
-     * attached, or null: the caller is inside a progress line and reports it after the step.
-     */
-    String attachDnfCache(String container) {
-        try {
-            var pool = incus.findCowPool();
-            if (pool == null) return null;
-            incus.ensureStorageVolume(pool, DNF_CACHE_VOLUME);
-            incus.deviceAdd(container, DNF_CACHE_DEVICE, "disk",
-                    "pool=" + pool,
-                    "source=" + DNF_CACHE_VOLUME,
-                    "path=" + DNF_CACHE_PATH);
-            return null;
-        } catch (Exception e) {
-            return e.getMessage();
-        }
-    }
-
-    private static void warnDnfCacheUnavailable(String reason) {
-        if (reason != null) {
-            System.err.println("Warning: could not mount DNF cache (builds will be slower): " + reason);
-        }
-    }
-
-    /**
      * Attach every disk device the build needs while the instance is still stopped (#828). On a VM
      * a device present at start gets its own PCIe root port, while a hot-plug takes one of only 8
      * spare slots, which repo references need; and incus-agent mounts boot-time devices before it
@@ -3203,484 +2343,17 @@ public class BuildCommand extends BaseCommand {
      */
     private String attachBootDevices(String buildName, List<ImageDef.HostResource> hostResources,
                                      MachineType machineType) {
-        var dnfCacheWarning = attachDnfCache(buildName);
+        var dnfCacheWarning = new GuestProvisioning(incus).attachDnfCache(buildName);
         HostResourceSetup.attachBuildDevices(incus, buildName, hostResources, machineType);
         return dnfCacheWarning;
     }
 
-    void unmountDnfCache(String container, MachineType machineType) {
-        // A VM's virtiofs mount is owned by incus-agent and goes away asynchronously after
-        // deviceRemove; unmount it in the guest first so cleanCaches can't run against it.
-        if (machineType == MachineType.VM) {
-            incus.shellExec(container, "sh", "-c",
-                    "mountpoint -q " + DNF_CACHE_PATH + " && umount " + DNF_CACHE_PATH + "; true");
-        }
-        // Safe even if mountDnfCache was skipped: deviceRemove is a read-modify-write
-        // that filters the device map — a missing device is a no-op, not an error.
-        incus.deviceRemove(container, DNF_CACHE_DEVICE);
-    }
-
-    /** Agent home directory inside the container, shared across agents. */
-    private static final String AGENTS_DIR = "/home/agentuser/.agents";
-
-    /** Global skills directory inside the container, shared across agents. */
-    private static final String SKILLS_DIR = AGENTS_DIR + "/skills";
-
-    /**
-     * Install agent skills declared in the image definition.
-     * Fetches SKILL.md files on the host and writes them directly into the container.
-     * Deduplicates against skills already declared by ancestor images.
-     */
-    void installSkills(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
-                       List<ResolvedTool> tools) {
-        // A skill can be declared by the image or by a tool it installs. Tools carry the
-        // procedures that drive them, so the skill travels with the tool into every
-        // template using it. Dedupe: two sources can name the same skill.
-        var resolvedSet = new LinkedHashSet<String>();
-        for (var entry : collectEffectiveSkills(imageDef, defs)) {
-            resolvedSet.add(resolveSkillOrFail(entry, imageDef.getSkills().getRepo(),
-                    "image definition"));
-        }
-        for (var tool : tools) {
-            // A reconfigureOnly tool was installed by an ancestor, so its skills came with
-            // it: in buildFromParent they arrived with the CoW copy, in buildFromScratch
-            // the ancestor's own installSkills ran earlier in the chain loop. Re-fetching
-            // would make a parameter-only rebuild depend on the skill source still being
-            // reachable. This mirrors collectEffectiveSkills subtracting ancestor skills.
-            if (tool.reconfigureOnly()) continue;
-            var toolSkills = tool.setup().skills();
-            for (var entry : toolSkills.getList()) {
-                resolvedSet.add(resolveSkillOrFail(entry, toolSkills.getRepo(),
-                        "tool '" + tool.name() + "'"));
-            }
-        }
-        if (resolvedSet.isEmpty()) return;
-        var resolvedNames = new ArrayList<>(resolvedSet);
-
-        try (var skillsGroup = BuildOutput.group("Skills", resolvedNames.size() + " to install")) {
-
-            var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
-                    .followRedirects(HttpClient.Redirect.NORMAL).build();
-            var cache = new dev.incusspawn.tool.SkillsCache();
-
-            container.exec("mkdir", "-p", SKILLS_DIR);
-
-            for (var resolved : resolvedNames) {
-                BuildOutput.stepStart(resolved + "...");
-                try {
-                    var skills = fetchSkills(resolved, http, cache);
-                    for (var skill : skills) {
-                        var skillDir = SKILLS_DIR + "/" + skill.name();
-                        container.exec("mkdir", "-p", skillDir);
-                        container.writeFile(skillDir + "/SKILL.md", skill.content());
-                    }
-                    BuildOutput.stepDone();
-                } catch (IOException | InterruptedException e) {
-                    BuildOutput.stepBreak();
-                    System.err.println("Error: Failed to fetch skill '" + resolved + "': " + e.getMessage());
-                    throw new BuildFailedException();
-                }
-            }
-        }
-        // Fix ownership so agentuser owns the agents / skills directories
-        container.exec("chown", "-R", "agentuser:agentuser", AGENTS_DIR);
-        // Ensure .claude/skills points to the shared location if Claude Code is installed
-        // (handles inherited-claude case where ClaudeSetup.linkSkillsDir didn't run)
-        container.sh("[ ! -d /home/agentuser/.claude ] || [ -L /home/agentuser/.claude/skills ]"
-                + " || { rm -rf /home/agentuser/.claude/skills"
-                + " && ln -sfn " + SKILLS_DIR + " /home/agentuser/.claude/skills; }");
-    }
-
-    /** A fetched skill ready to be written into the container. */
-    record SkillFile(String name, String content) {}
-
-    /**
-     * Fetch one or more SKILL.md files for the given resolved source.
-     * GitHub skills are cached on the host at {@code ~/.cache/incus-spawn/skills/}.
-     * Supports:
-     * <ul>
-     *   <li>{@code owner/repo@skill-name} — single skill from a GitHub repo</li>
-     *   <li>{@code owner/repo} — all skills from a GitHub repo (via Trees API)</li>
-     *   <li>{@code https://github.com/owner/repo} — same as owner/repo</li>
-     *   <li>{@code ./local/path} or {@code /absolute/path} — local directory</li>
-     * </ul>
-     */
-    static List<SkillFile> fetchSkills(String source, HttpClient http,
-            dev.incusspawn.tool.SkillsCache cache)
-            throws IOException, InterruptedException {
-        // Local path
-        if (source.startsWith("./") || source.startsWith("/")) {
-            return fetchLocalSkills(Path.of(source));
-        }
-
-        // Normalise GitHub URL to owner/repo[@skill]
-        var normalised = source;
-        if (normalised.startsWith("https://github.com/")) {
-            normalised = normalised.substring("https://github.com/".length()).replaceAll("\\.git$", "");
-        }
-
-        // owner/repo@skill-name
-        var atIdx = normalised.indexOf('@');
-        if (atIdx >= 0) {
-            var ownerRepo = normalised.substring(0, atIdx);
-            var skillName = normalised.substring(atIdx + 1);
-            return List.of(new SkillFile(skillName, cache.fetchSkillMd(ownerRepo, skillName, http)));
-        }
-
-        // owner/repo — fetch all skills via Trees API
-        return fetchAllGitHubSkills(normalised, http, cache);
-    }
-
-    private static List<SkillFile> fetchAllGitHubSkills(String ownerRepo, HttpClient http,
-            dev.incusspawn.tool.SkillsCache cache)
-            throws IOException, InterruptedException {
-        // Use GitHub Trees API to find all SKILL.md files
-        for (var branch : List.of("main", "master")) {
-            var treeUrl = "https://api.github.com/repos/" + ownerRepo + "/git/trees/"
-                    + branch + "?recursive=1";
-            var token = Environment.strippedEnv("GITHUB_TOKEN");
-            var reqBuilder = HttpRequest.newBuilder(URI.create(treeUrl))
-                    .timeout(Duration.ofSeconds(15))
-                    .header("Accept", "application/vnd.github+json");
-            if (!token.isBlank()) {
-                reqBuilder.header("Authorization", "Bearer " + token);
-            }
-            var response = http.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) continue;
-
-            var mapper = new ObjectMapper();
-            var tree = mapper.readTree(response.body()).path("tree");
-            var skills = new ArrayList<SkillFile>();
-            for (var node : tree) {
-                var path = node.path("path").asText();
-                // Match <skill-name>/SKILL.md at the top level only
-                if (path.matches("[^/]+/SKILL\\.md")) {
-                    var skillName = path.substring(0, path.indexOf('/'));
-                    skills.add(new SkillFile(skillName, cache.fetchSkillMd(ownerRepo, skillName, http)));
-                }
-            }
-            if (!skills.isEmpty()) return skills;
-        }
-        throw new IOException("No SKILL.md files found in " + ownerRepo);
-    }
-
-    private static List<SkillFile> fetchLocalSkills(Path localPath) throws IOException {
-        if (!Files.isDirectory(localPath)) {
-            throw new IOException("Local skill path is not a directory: " + localPath);
-        }
-        // If there's a SKILL.md directly in this dir, treat it as a single skill
-        var directSkill = localPath.resolve("SKILL.md");
-        if (Files.exists(directSkill)) {
-            return List.of(new SkillFile(localPath.getFileName().toString(),
-                    Files.readString(directSkill)));
-        }
-        // Otherwise scan subdirectories for SKILL.md files
-        var skills = new ArrayList<SkillFile>();
-        try (var entries = Files.list(localPath)) {
-            for (var entry : entries.toList()) {
-                var skillMd = entry.resolve("SKILL.md");
-                if (Files.isDirectory(entry) && Files.exists(skillMd)) {
-                    skills.add(new SkillFile(entry.getFileName().toString(),
-                            Files.readString(skillMd)));
-                }
-            }
-        }
-        if (skills.isEmpty()) {
-            throw new IOException("No SKILL.md files found in " + localPath);
-        }
-        return skills;
-    }
-
-    /**
-     * Collect skills declared in this image, minus any already declared by ancestor images.
-     */
-    List<String> collectEffectiveSkills(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var skills = new LinkedHashSet<>(imageDef.getSkills().getList());
-        if (skills.isEmpty()) return List.of();
-
-        var ancestorSkills = new LinkedHashSet<String>();
-        for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
-            ancestorSkills.addAll(ancestor.getSkills().getList());
-        }
-        skills.removeAll(ancestorSkills);
-        return new ArrayList<>(skills);
-    }
-
-    /**
-     * Resolve tools for this image, removing any already installed by ancestor images.
-     * If an ancestor declares the same tool with different parameters, that's an error
-     * (the parent's setup already ran and can't be undone).
-     * Returns both the effective tools to install and the resolved ancestor tools.
-     */
+    /** {@link BuildTools#collectEffectiveTools} with this command's tool loader and CDI tools. */
     ToolResolution collectEffectiveTools(ImageDef imageDef, Map<String, ImageDef> defs) {
-        return collectEffectiveTools(imageDef, defs, toolDefLoader, toolSetups);
+        return BuildTools.collectEffectiveTools(imageDef, defs, toolDefLoader, toolSetups);
     }
 
-    static ToolResolution collectEffectiveTools(ImageDef imageDef, Map<String, ImageDef> defs,
-                                                 ToolDefLoader toolDefLoader,
-                                                 Iterable<ToolSetup> cdiTools) {
-        var tools = resolveTools(imageDef, toolDefLoader, cdiTools, false);
-
-        var ancestorToolsMap = new LinkedHashMap<String, ResolvedTool>();
-        var ancestorTemplateNames = new LinkedHashMap<String, String>();
-        for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
-            for (var resolved : resolveTools(ancestor, toolDefLoader, cdiTools, true)) {
-                if (ancestorToolsMap.putIfAbsent(resolved.name(), resolved) == null) {
-                    ancestorTemplateNames.put(resolved.name(), ancestor.getName());
-                }
-            }
-        }
-
-        var ancestorTools = new ArrayList<>(ancestorToolsMap.values());
-        if (tools.isEmpty()) {
-            return new ToolResolution(tools, ancestorTools);
-        }
-
-        var effective = new ArrayList<ResolvedTool>();
-        for (var tool : tools) {
-            var ancestorTool = ancestorToolsMap.get(tool.name());
-            if (ancestorTool == null) {
-                effective.add(tool);
-            } else if (!ancestorTool.parameters().equals(tool.parameters())) {
-                var paramDefs = tool.setup().parameters();
-                var allReconfigurable = true;
-                for (var key : tool.parameters().keySet()) {
-                    var ancestorValue = ancestorTool.parameters().get(key);
-                    var childValue = tool.parameters().get(key);
-                    if (!java.util.Objects.equals(ancestorValue, childValue)) {
-                        var def = paramDefs.get(key);
-                        if (def == null || !def.isReconfigurable()) {
-                            allReconfigurable = false;
-                            break;
-                        }
-                    }
-                }
-                if (allReconfigurable) {
-                    for (var key : ancestorTool.parameters().keySet()) {
-                        if (!tool.parameters().containsKey(key)) {
-                            var def = paramDefs.get(key);
-                            if (def == null || !def.isReconfigurable()) {
-                                allReconfigurable = false;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if (allReconfigurable) {
-                    effective.add(new ResolvedTool(tool.name(), tool.setup(), tool.parameters(), true));
-                } else {
-                    var ancestorTemplateName = ancestorTemplateNames.get(tool.name());
-                    throw new IllegalArgumentException(
-                        "Tool '" + tool.name() + "' is already installed by ancestor template '" +
-                        ancestorTemplateName + "' with different parameters:\n" +
-                        "  Ancestor: " + ancestorTool.parameters() + "\n" +
-                        "  Current:  " + tool.parameters()
-                    );
-                }
-            }
-        }
-        return new ToolResolution(effective, ancestorTools);
-    }
-
-    /**
-     * Resolve a skill entry to a fully-qualified source string.
-     * <ul>
-     *   <li>Contains {@code ://} or starts with {@code .} or {@code /} → local/URL, pass through</li>
-     *   <li>Contains {@code /} → owner/repo or owner/repo@skill, pass through</li>
-     *   <li>Plain name → prepend {@code skillsRepo@}; throws if no skillsRepo set</li>
-     * </ul>
-     */
-    /**
-     * Resolve one skill source, naming the declaring definition if a bare name can't be
-     * resolved — otherwise the error sends you to the image YAML for a tool's typo.
-     */
-    private String resolveSkillOrFail(String entry, String repo, String source) {
-        try {
-            return resolveSkillSource(entry, repo);
-        } catch (IllegalArgumentException e) {
-            System.err.println("Error: " + e.getMessage() + " (declared by " + source + ")");
-            System.err.println("Use the fully qualified form 'owner/repo@skill-name', or set 'skills.repo' in the " + source + ".");
-            throw new BuildFailedException();
-        }
-    }
-
-    static String resolveSkillSource(String skill, String skillsRepo) {
-        if (skill.contains("://") || skill.startsWith(".") || skill.startsWith("/")) {
-            return skill;
-        }
-        if (skill.contains("/")) {
-            return skill;
-        }
-        if (skillsRepo == null || skillsRepo.isBlank()) {
-            throw new IllegalArgumentException(
-                    "Skill '" + skill + "' is a short name but no skills.repo is defined.");
-        }
-        return skillsRepo + "@" + skill;
-    }
-
-    /** A host checkout to clone a repo from: planned up front on the host, attached by the repo's worker. */
-    record RepoReference(String deviceName, String containerPath, String source, String skipReason) {
-        static RepoReference skipped(String reason) { return new RepoReference(null, null, null, reason); }
-        boolean hasDevice() { return deviceName != null; }
-    }
-
-    /** The hotplug slots Incus gives a running VM; each attached reference takes one until detached. */
-    static final int VM_HOTPLUG_SLOTS = 8;
-
-    /**
-     * The references a VM can hold attached at once. {@link #VM_HOTPLUG_SLOTS} is only where the
-     * budget starts: whatever else is hot-plugged takes slots too, so an attach Incus refuses for
-     * want of a slot retires one permit for good and waits for another, and only when the budget
-     * would reach zero does the repo fall back to the network.
-     */
-    static final class HotplugSlots {
-        private final java.util.concurrent.Semaphore permits;
-        private final java.util.concurrent.atomic.AtomicInteger budget;
-
-        HotplugSlots(int budget) {
-            this.permits = new java.util.concurrent.Semaphore(budget);
-            this.budget = new java.util.concurrent.atomic.AtomicInteger(budget);
-        }
-
-        void acquire() { permits.acquireUninterruptibly(); }
-
-        void release() { permits.release(); }
-
-        /** Retire the permit just taken, keeping it from ever being released; false if it is the last one. */
-        boolean retire() {
-            return budget.getAndUpdate(b -> b > 1 ? b - 1 : b) > 1;
-        }
-    }
-
-    /** Attaches and detaches the host references of one {@link #cloneRepos} run. */
-    interface ReferenceMounts {
-        /** Attach {@code ref}, returning it, or a skipped reference saying why the repo clones from the network. */
-        RepoReference attach(int idx, RepoReference ref);
-
-        /** Detach an attached reference; false if it is still mounted. */
-        boolean detach(int idx);
-
-        ReferenceMounts NONE = new ReferenceMounts() {
-            public RepoReference attach(int idx, RepoReference ref) { return ref; }
-            public boolean detach(int idx) { return true; }
-        };
-    }
-
-    /**
-     * Each reference is attached under a hotplug slot, which stays taken until it is detached.
-     * Attaches and detaches share one lock: a removal rewrites the whole device map, and would
-     * drop a device added meanwhile.
-     */
-    private final class DeviceMounts implements ReferenceMounts {
-        private final Container container;
-        private final RepoReference[] refs;
-        private final MachineType machineType;
-        private final HotplugSlots slots;
-        private final java.util.Set<Integer> attached = java.util.concurrent.ConcurrentHashMap.newKeySet();
-
-        DeviceMounts(Container container, RepoReference[] refs, MachineType machineType, int planned) {
-            this.container = container;
-            this.refs = refs;
-            this.machineType = machineType;
-            this.slots = new HotplugSlots(machineType == MachineType.VM
-                    ? Math.min(planned, VM_HOTPLUG_SLOTS) : Integer.MAX_VALUE);
-        }
-
-        public RepoReference attach(int idx, RepoReference ref) {
-            var refArgs = new java.util.ArrayList<>(java.util.List.of(
-                    "source=" + ref.source(), "path=" + ref.containerPath(), "readonly=true"));
-            HostResourceSetup.addShiftIfSupported(refArgs, machineType);
-            while (true) {
-                slots.acquire();
-                try {
-                    synchronized (this) {
-                        incus.deviceAdd(container.name(), ref.deviceName(), "disk", refArgs.toArray(String[]::new));
-                        attached.add(idx);
-                    }
-                    return ref;
-                } catch (Exception e) {
-                    var noSlot = e instanceof IncusClient.NoHotplugSlotException;
-                    if (noSlot && slots.retire()) continue;
-                    slots.release();
-                    return RepoReference.skipped(noSlot ? "no free PCI hotplug slot for the host reference"
-                            : "could not mount the host reference: " + e.getMessage());
-                }
-            }
-        }
-
-        public synchronized boolean detach(int idx) {
-            try {
-                incus.deviceRemove(container.name(), refs[idx].deviceName());
-                attached.remove(idx);
-                return true;
-            } catch (Exception e) {
-                return false;
-            } finally {
-                // Even when the device stays: a permit never released could leave a waiting attach
-                // stuck. The slot it still holds only makes a later attach fail and retire one.
-                slots.release();
-            }
-        }
-
-        /** Remove any reference a worker could not detach. */
-        synchronized void removeLeftovers() {
-            if (attached.isEmpty()) return;
-            try {
-                incus.devicesRemoveAll(container.name(),
-                        attached.stream().map(idx -> refs[idx].deviceName()).toList());
-            } catch (Exception e) {
-                System.err.println("Warning: failed to remove reference device: " + e.getMessage());
-            }
-        }
-    }
-
-    enum StepState { RUNNING, DONE, FAILED }
-
-    /** Progress state for one repo's clone→prime pipeline. {@code activity} is the
-     *  live verb shown while RUNNING (e.g. "Cloning", then "Priming"); {@code note}
-     *  is a dim annotation shown on success; {@code detail} is a concise one-line
-     *  error for the inline display; {@code log} is the full captured command output,
-     *  printed on failure so the diagnostic isn't reduced to the single inline line. */
-    record StepProgress(StepState state, String activity, String note, boolean noteHighlight, String detail, String log) {
-        static StepProgress running(String activity) { return new StepProgress(StepState.RUNNING, activity, null, false, null, null); }
-        static StepProgress running(String activity, String detail) { return new StepProgress(StepState.RUNNING, activity, null, false, detail, null); }
-        static StepProgress done(String note) { return new StepProgress(StepState.DONE, null, note, false, null, null); }
-        static StepProgress doneHighlight(String note) { return new StepProgress(StepState.DONE, null, note, true, null, null); }
-        static StepProgress failed(String detail, String log) {
-            return new StepProgress(StepState.FAILED, null, null, false, detail, log);
-        }
-    }
-
-    /**
-     * Clone git repos declared in the image definition as agentuser.
-     *
-     * <p>Repos are cloned concurrently (bounded to high-performance core count
-     * and, on macOS, a vsock tunnel connection budget) with an animated
-     * per-repo progress display. Each repo's
-     * declared {@code prime} command runs in the same worker once that repo's
-     * clone finishes <em>and</em> every host reference has been detached, so
-     * priming still pipelines with the remaining network clones. A reference is
-     * the host checkout's whole working tree (untracked files, unpushed work),
-     * and a prime command is arbitrary code with network access, so no prime may
-     * run while one is mounted (#765). Which repos have a reference is decided
-     * up front on the host; each worker attaches its own reference just before
-     * its clone and detaches it as soon as the clone is done, so a VM never
-     * holds more references than it has PCI hotplug slots ({@link HotplugSlots},
-     * #826). Attaches and detaches are serialized by a lock, because removing a
-     * device rewrites the whole device map and would drop one added meanwhile.
-     * A failed detach fails the build rather than prime next to it.
-     *
-     * <p>Project-local definitions get no host references at all: their repos
-     * are cloned from the network, since the reference would hand the host
-     * checkout to prime commands the cloned repository itself controls.
-     *
-     * <p>When a matching host-side checkout is available (via SpawnConfig
-     * host-path/repo-paths), the clone runs locally from the mounted reference
-     * ({@code git clone --no-hardlinks}) instead of fetching from the remote.
-     * This copies pack files directly — no repack or dissociation needed.  After
-     * the local clone, the remote URL is fixed to the real origin and a
-     * {@code git fetch} picks up any commits added since the last host refresh.
-     */
+    /** Waits for this run's host repo refresh, then clones the repos ({@link RepoCloner#cloneRepos}). */
     void cloneRepos(Container container, ImageDef imageDef, MachineType machineType) {
         if (hostRepoRefresh != null) {
             if (!hostRepoRefresh.isDone()) {
@@ -3695,555 +2368,10 @@ public class BuildCommand extends BaseCommand {
             }
             hostRepoRefresh = null;
         }
-
-        var repos = imageDef.getRepos();
-        if (repos.isEmpty()) return;
-
-        try (var reposGroup = BuildOutput.group("Repositories", repos.size() + " to prepare")) {
-
-            var config = SpawnConfig.load();
-
-            // Phase 1 (serial, host only): find the host checkout each repo can clone from.
-            var refs = new RepoReference[repos.size()];
-            var projectLocal = imageDef.getProjectRoot() != null;
-            for (int i = 0; i < repos.size(); i++) {
-                refs[i] = projectLocal
-                        ? RepoReference.skipped("project-local template, host checkouts are not shared")
-                        : planReference(repos.get(i).getUrl(), config);
-            }
-            var planned = java.util.Arrays.stream(refs).filter(r -> r != null && r.hasDevice())
-                    .map(RepoReference::containerPath).toArray(String[]::new);
-            if (planned.length > 0) {
-                try {
-                    container.exec(java.util.stream.Stream.concat(java.util.stream.Stream.of("mkdir", "-p"),
-                            java.util.Arrays.stream(planned)).toArray(String[]::new));
-                } catch (Exception e) {
-                    var skipped = RepoReference.skipped("could not mount the host reference: " + e.getMessage());
-                    for (int i = 0; i < refs.length; i++) {
-                        if (refs[i] != null && refs[i].hasDevice()) refs[i] = skipped;
-                    }
-                    planned = new String[0];
-                }
-            }
-            // Counts planned references: each worker counts its own down once its attach
-            // is resolved and anything it attached is detached.
-            var referencesDetached = new java.util.concurrent.CountDownLatch(planned.length);
-            var mounts = new DeviceMounts(container, refs, machineType, planned.length);
-
-            // Phase 2 (parallel, bounded): clone each repo from its reference (local)
-            // or the remote (fallback), restore the fetch refspec, then prime it —
-            // all in one worker so priming starts as soon as that repo's clone
-            // finishes rather than waiting at a barrier for the whole clone batch.
-            var states = new AtomicReferenceArray<StepProgress>(repos.size());
-            for (int i = 0; i < repos.size(); i++) {
-                states.set(i, StepProgress.running("Cloning"));
-            }
-            int concurrency = repoConcurrency(repos.size());
-            // Bounded here rather than by TerminalProgress: a worker waiting for the references to
-            // be detached must not hold a slot, or the clones that detach them could never start.
-            var limiter = new java.util.concurrent.Semaphore(concurrency);
-            var failureSeen = new AtomicBoolean(false);
-            try {
-                TerminalProgress.run(repos.size(), repos.size(),
-                        idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx, failureSeen,
-                                limiter, referencesDetached, mounts),
-                        (idx, frame) -> formatStepLine(repoDisplayName(repos.get(idx)),
-                                repos.get(idx).getUrl(), states.get(idx), frame, "Ready"),
-                        idx -> plainStepLine(repoDisplayName(repos.get(idx)), states.get(idx), "Ready", "prepare"),
-                        System.out::println);
-            } finally {
-                // Phase 3 (serial): remove any reference a worker could not detach.
-                mounts.removeLeftovers();
-            }
-
-            assertNoStepFailures(repos, states, "prepare");
-        }
+        new RepoCloner(incus).cloneRepos(container, imageDef, machineType);
     }
 
-    /** Clone a repo and, on success, immediately prime it — recording progress/failure
-     *  in {@code states[idx]} rather than throwing. {@code failureSeen} is a shared
-     *  best-effort fail-fast flag: once any repo has failed the build will abort, so a
-     *  clone that finishes afterwards skips its (potentially expensive) prime rather
-     *  than doing work that will be thrown away. Primes already in flight run to
-     *  completion — this only gates launching new ones. */
-    void prepareOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
-                    AtomicReferenceArray<StepProgress> states, int idx, AtomicBoolean failureSeen) {
-        prepareOne(container, repo, ref, states, idx, failureSeen,
-                new java.util.concurrent.Semaphore(1), new java.util.concurrent.CountDownLatch(0), ReferenceMounts.NONE);
-    }
-
-    /** As above, with the coordination {@link #cloneRepos} needs: {@code limiter} bounds the
-     *  concurrent clones and primes, {@code mounts} attaches this repo's host reference just before
-     *  its clone and detaches it once the clone is done, and no prime starts before
-     *  {@code referencesDetached} reaches zero. */
-    void prepareOne(Container container, ImageDef.RepoEntry repo, RepoReference planned,
-                    AtomicReferenceArray<StepProgress> states, int idx, AtomicBoolean failureSeen,
-                    java.util.concurrent.Semaphore limiter, java.util.concurrent.CountDownLatch referencesDetached,
-                    ReferenceMounts mounts) {
-        var clone = CloneResult.FAILED;
-        var detachedOk = true;
-        var ref = planned;
-        var hasReference = planned != null && planned.hasDevice();
-        try {
-            limiter.acquireUninterruptibly();
-            try {
-                if (hasReference) ref = mounts.attach(idx, planned);
-                clone = cloneOne(container, repo, ref, states, idx);
-            } finally {
-                limiter.release();
-            }
-        } finally {
-            if (hasReference) {
-                try {
-                    if (ref.hasDevice()) detachedOk = mounts.detach(idx);
-                    // Before the count-down, so a prime woken by it already sees the failure.
-                    if (!detachedOk) failureSeen.set(true);
-                } finally {
-                    referencesDetached.countDown();
-                }
-            }
-        }
-        if (!detachedOk) {
-            states.set(idx, StepProgress.failed("could not detach host reference " + ref.deviceName()
-                    + "; refusing to run prime commands while it is mounted", null));
-            return;
-        }
-        if (!clone.success()) {
-            failureSeen.set(true);
-            return; // failure already recorded in states[idx]
-        }
-
-        String note = clone.usedReference() ? "via host reference" : null;
-        boolean highlight = false;
-        if (!clone.usedReference() && ref != null && ref.skipReason() != null) {
-            note = ref.skipReason();
-            highlight = true;
-        }
-        if (repo.hasPrime()) {
-            if (referencesDetached.getCount() > 0) {
-                states.set(idx, StepProgress.running("Waiting to prime"));
-                awaitUninterruptibly(referencesDetached);
-            }
-            if (failureSeen.get()) {
-                // Another repo already failed; don't start priming a build that's
-                // going to abort. The clone itself succeeded, so say so.
-                var skipNote = note == null ? "priming skipped" : note + "; priming skipped";
-                states.set(idx, highlight ? StepProgress.doneHighlight(skipNote)
-                        : StepProgress.done(skipNote));
-                return;
-            }
-            states.set(idx, StepProgress.running("Priming"));
-            boolean primed;
-            limiter.acquireUninterruptibly();
-            try {
-                primed = primeOne(container, repo, states, idx);
-            } finally {
-                limiter.release();
-            }
-            if (!primed) {
-                failureSeen.set(true);
-                return; // failure recorded
-            }
-        }
-        states.set(idx, highlight ? StepProgress.doneHighlight(note) : StepProgress.done(note));
-    }
-
-    /** How many repos clone or prime at once: high-performance cores, and on macOS the vsock tunnel budget. */
-    int repoConcurrency(int repoCount) {
-        int maxFromTunnel = Platform.isMacOS()
-                ? MACOS_TUNNEL_BUDGET / CONNECTIONS_PER_EXEC
-                : Integer.MAX_VALUE;
-        return Math.min(repoCount, Math.min(CpuInfo.highPerfCores(), maxFromTunnel));
-    }
-
-    private static void awaitUninterruptibly(java.util.concurrent.CountDownLatch latch) {
-        var interrupted = false;
-        while (true) {
-            try {
-                latch.await();
-                break;
-            } catch (InterruptedException e) {
-                interrupted = true;
-            }
-        }
-        if (interrupted) Thread.currentThread().interrupt();
-    }
-
-    private record CloneResult(boolean success, boolean usedReference) {
-        static final CloneResult FAILED = new CloneResult(false, false);
-    }
-
-    /** Clone a single repo. On failure records it in {@code states[idx]} and returns
-     *  {@link CloneResult#FAILED}; on success returns without setting a terminal state
-     *  (the caller finalizes it once priming, if any, is done). */
-    private CloneResult cloneOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
-                                 AtomicReferenceArray<StepProgress> states, int idx) {
-        try {
-            boolean usedReference = false;
-
-            if (ref != null && ref.hasDevice()) {
-                var expandedPath = expandHome(repo.getPath());
-                var clone = container.shAsUser("agentuser", buildCloneCommand(repo, ref.containerPath()));
-                if (clone.success()) {
-                    // Point origin at the real remote, fetch current refs, and
-                    // detect the remote's default branch.  Objects are already
-                    // local (copied from the reference's pack files), so only ref
-                    // advertisements travel the network.  set-head --auto is needed
-                    // because the local clone inherits HEAD from the host checkout,
-                    // which may be on a different branch than the remote's default.
-                    var clonePath = shellQuote(expandedPath);
-                    var fixup = container.shAsUser("agentuser",
-                            "git -C " + clonePath + " remote set-url origin " + shellQuote(repo.getUrl())
-                                    + " && git -C " + clonePath + " fetch --quiet origin"
-                                    + " && git -C " + clonePath + " remote set-head origin --auto");
-                    if (fixup.success()) {
-                        String resolveExpr;
-                        if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
-                            resolveExpr = "b=" + shellQuote(repo.getBranch());
-                        } else {
-                            resolveExpr = "b=$(git -C " + clonePath
-                                    + " for-each-ref --format='%(symref:lstrip=3)' refs/remotes/origin/HEAD)";
-                        }
-                        var checkout = container.shAsUser("agentuser",
-                                resolveExpr + " && git -C " + clonePath
-                                        + " checkout -B \"$b\" --track \"origin/$b\"");
-                        usedReference = checkout.success();
-                    }
-                }
-                if (!usedReference) {
-                    container.shAsUser("agentuser", "rm -rf " + shellQuote(expandedPath));
-                }
-            }
-
-            if (!usedReference) {
-                var clone = container.shAsUser("agentuser", buildCloneCommand(repo, null));
-                if (!clone.success()) {
-                    states.set(idx, StepProgress.failed(gitError(clone), combinedOutput(clone)));
-                    return CloneResult.FAILED;
-                }
-
-                // Widen the fetch refspec that --single-branch narrowed, so the
-                // clone behaves like a regular one.  The local-clone path doesn't
-                // use --single-branch, so it skips this.
-                var repoPath = shellQuote(expandHome(repo.getPath()));
-                var restore = container.shAsUser("agentuser",
-                        "git -C " + repoPath + " remote set-branches origin '*'");
-                if (!restore.success()) {
-                    states.set(idx, StepProgress.failed(gitError(restore), combinedOutput(restore)));
-                    return CloneResult.FAILED;
-                }
-            }
-
-            return new CloneResult(true, usedReference);
-        } catch (Exception e) {
-            states.set(idx, StepProgress.failed(e.getMessage(), null));
-            return CloneResult.FAILED;
-        }
-    }
-
-    /** Run a repo's prime command. Returns true on success; on failure records it in
-     *  {@code states[idx]} and returns false. */
-    private boolean primeOne(Container container, ImageDef.RepoEntry repo,
-                             AtomicReferenceArray<StepProgress> states, int idx) {
-        try {
-            var expanded = expandHome(repo.getPath());
-            var result = container.shAsUser("agentuser",
-                    "cd " + shellQuote(expanded) + " && " + repo.getPrime());
-            if (result.success()) return true;
-            // Prime output is not git, so use the last meaningful line for the
-            // concise inline label; the full log is preserved and printed on failure.
-            var combined = combinedOutput(result);
-            states.set(idx, StepProgress.failed(lastNonEmptyLine(combined), combined));
-            return false;
-        } catch (Exception e) {
-            states.set(idx, StepProgress.failed(e.getMessage(), null));
-            return false;
-        }
-    }
-
-    private static void assertNoStepFailures(List<ImageDef.RepoEntry> repos,
-                                             AtomicReferenceArray<StepProgress> states, String verb) {
-        var errors = new ArrayList<String>();
-        for (int i = 0; i < repos.size(); i++) {
-            var progress = states.get(i);
-            // Require an explicit DONE: a step left RUNNING or unset (e.g. a task that
-            // returned without recording a result) is a failure, not a silent success.
-            if (progress != null && progress.state() == StepState.DONE) continue;
-
-            var name = repoDisplayName(repos.get(i));
-            var detail = progress == null || progress.detail() == null || progress.detail().isEmpty()
-                    ? verb + " failed" : progress.detail();
-            errors.add(name + ": " + detail);
-
-            // Print the full captured output so the diagnostic isn't reduced to the
-            // concise inline line. Done here, after the animated batch, to avoid
-            // interleaving multi-line logs with the live progress display.
-            if (progress != null && progress.log() != null && !progress.log().isBlank()) {
-                System.err.println(styled(BOLD, "─── " + verb + " output: " + name + " ───"));
-                System.err.println(progress.log().strip());
-                System.err.println(styled(BOLD, "─── end " + verb + " output: " + name + " ───"));
-            }
-        }
-        if (!errors.isEmpty()) {
-            throw new IncusException("Failed to " + verb + " " + errors.size()
-                    + " repo(s):\n  " + String.join("\n  ", errors));
-        }
-    }
-
-    private static String repoDisplayName(ImageDef.RepoEntry repo) {
-        var name = GitRemoteUtils.repoNameFromUrl(repo.getUrl());
-        return name.isEmpty() ? repo.getUrl() : name;
-    }
-
-    /** Render one animated progress line, aligned across running/done/failed states.
-     *  The running verb comes from the live state ({@code activity}) so a task can
-     *  advance through phases (e.g. Cloning → Priming) within one line. */
-    static String formatStepLine(String label, String dimContext, StepProgress progress, int frame,
-                                 String doneWord) {
-        var runningWord = progress.activity() != null ? progress.activity() : "Working";
-        var sb = new StringBuilder(BuildOutput.indent());
-        switch (progress.state()) {
-            case RUNNING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
-                    .append(" \033[2m").append(padStatus(runningWord)).append("\033[0m "); // raw ANSI: animated line
-            case DONE    -> sb.append("\033[32m✓\033[0m \033[2m").append(padStatus(doneWord)).append("\033[0m "); // raw ANSI: animated line
-            case FAILED  -> sb.append("\033[31m✗ ").append(padStatus("Failed")).append("\033[0m "); // raw ANSI: animated line
-        }
-        sb.append(label);
-        if (dimContext != null && !dimContext.isEmpty()) {
-            sb.append(" \033[2m(").append(dimContext).append(")\033[0m"); // raw ANSI: animated line
-        }
-        if (progress.state() == StepState.DONE && progress.note() != null && !progress.note().isEmpty()) {
-            if (progress.noteHighlight()) {
-                sb.append(" \033[1m").append(progress.note()).append("\033[0m"); // raw ANSI: animated line
-            } else {
-                sb.append(" \033[2m").append(progress.note()).append("\033[0m"); // raw ANSI: animated line
-            }
-        }
-        if (progress.state() == StepState.FAILED && progress.detail() != null && !progress.detail().isEmpty()) {
-            sb.append("  \033[31m").append(progress.detail()).append("\033[0m"); // raw ANSI: animated line
-        }
-        return sb.toString();
-    }
-
-    private static String plainStepLine(String label, StepProgress progress, String doneWord, String verb) {
-        if (progress.state() == StepState.DONE) {
-            var line = BuildOutput.indent() + doneWord + " " + label;
-            if (progress.note() != null && !progress.note().isEmpty()) line += " (" + progress.note() + ")";
-            return line;
-        }
-        var msg = BuildOutput.indent() + "Warning: " + verb + " failed for " + label;
-        if (progress.detail() != null && !progress.detail().isEmpty()) msg += ": " + progress.detail();
-        return msg;
-    }
-
-    private static String padStatus(String word) {
-        return word.length() >= 8 ? word : word + " ".repeat(8 - word.length());
-    }
-
-    /** Extract a concise error line from a failed git exec (stderr first, then stdout). */
-    private static String gitError(IncusClient.ExecResult result) {
-        var err = firstGitError(result.stderr());
-        return !err.isEmpty() ? err : firstGitError(result.stdout());
-    }
-
-    /** Full captured output (stdout + stderr) of an exec, for surfacing on failure. */
-    private static String combinedOutput(IncusClient.ExecResult result) {
-        var out = result.stdout() == null ? "" : result.stdout().strip();
-        var err = result.stderr() == null ? "" : result.stderr().strip();
-        if (out.isEmpty()) return err;
-        if (err.isEmpty()) return out;
-        return out + "\n" + err;
-    }
-
-    /** Last non-empty line of some text, or "" if none. */
-    static String lastNonEmptyLine(String text) {
-        if (text == null || text.isEmpty()) return "";
-        String last = "";
-        for (var line : text.split("\n")) {
-            var trimmed = line.strip();
-            if (!trimmed.isEmpty()) last = trimmed;
-        }
-        return last;
-    }
-
-    /** First fatal:/error: line from git output, else the last non-empty line. */
-    static String firstGitError(String text) {
-        if (text == null || text.isEmpty()) return "";
-        String lastNonEmpty = "";
-        for (var line : text.split("\n")) {
-            var trimmed = line.strip();
-            if (trimmed.isEmpty()) continue;
-            if (trimmed.startsWith("fatal:") || trimmed.startsWith("error:")) return trimmed;
-            lastNonEmpty = trimmed;
-        }
-        return lastNonEmpty;
-    }
-
-    private static String buildCloneCommand(ImageDef.RepoEntry repo, String referencePath) {
-        var cmd = new StringBuilder("git clone");
-        if (referencePath != null) {
-            // Local clone from mounted host reference — copies pack files
-            // directly.  Branch checkout is handled separately after the
-            // remote URL is fixed up and a fetch supplies current refs.
-            cmd.append(" --no-hardlinks");
-        } else {
-            cmd.append(" --single-branch");
-            if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
-                cmd.append(" --branch ").append(shellQuote(repo.getBranch()));
-            }
-        }
-        cmd.append(" -- ").append(shellQuote(referencePath != null ? referencePath : repo.getUrl()));
-        cmd.append(" ").append(shellQuote(expandHome(repo.getPath())));
-        return cmd.toString();
-    }
-
-    /** The host checkout {@code cloneUrl} can clone from, decided on the host alone: a planned
-     *  reference, a skipped one saying why there is none, or null where none is configured. */
-    RepoReference planReference(String cloneUrl, SpawnConfig config) {
-        try {
-            var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
-            if (repoName.isEmpty()) return null;
-
-            var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
-            if (hostPath == null) return null;
-            if (!Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath)
-                    || !GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl)) {
-                return RepoReference.skipped("no local reference found to speedup cloning");
-            }
-
-            return new RepoReference(GitRemoteUtils.referenceDeviceName(repoName, cloneUrl),
-                    GitRemoteUtils.referenceContainerPath(repoName, cloneUrl),
-                    HostResourceSetup.translateForVm(hostPath.toString()), null);
-        } catch (Exception e) {
-            System.err.println("Warning: could not set up repo reference: " + e.getMessage());
-            return null;
-        }
-    }
-
-    private static final String CODEX_CONFIG_PATH = CodexSetup.CONFIG_PATH;
-
-    void updateCodexTrust(Container container, ImageDef imageDef) {
-        if (imageDef.getRepos().isEmpty()) return;
-
-        var checkResult = container.exec("test", "-f", CODEX_CONFIG_PATH);
-        if (!checkResult.success()) return;
-
-        var catResult = container.exec("cat", CODEX_CONFIG_PATH);
-        if (!catResult.success()) return;
-
-        var existing = catResult.stdout();
-        var sb = new StringBuilder();
-
-        for (var repo : imageDef.getRepos()) {
-            var expandedPath = expandHome(repo.getPath());
-            var section = "[projects.\"" + expandedPath + "\"]";
-            if (!existing.contains(section) && !sb.toString().contains(section)) {
-                sb.append("\n").append(section).append("\n");
-                sb.append("trust_level = \"trusted\"\n");
-            }
-        }
-
-        if (sb.isEmpty()) return;
-
-        container.writeFile(CODEX_CONFIG_PATH, existing + sb);
-        container.chown(CODEX_CONFIG_PATH, "agentuser:agentuser");
-    }
-
-    private static final String CLAUDE_JSON_PATH = "/home/agentuser/.claude.json";
-    private static final String AGENTUSER_HOME = "/home/agentuser";
     private static final ObjectMapper JSON = new ObjectMapper();
-
-    /**
-     * Update .claude.json to pre-trust cloned repo directories and register GitHub repo paths.
-     */
-    void updateClaudeJsonTrust(Container container, ImageDef imageDef) {
-        if (imageDef.getRepos().isEmpty()) return;
-
-        var checkResult = container.exec("test", "-f", CLAUDE_JSON_PATH);
-        if (!checkResult.success()) return;
-
-        var catResult = container.exec("cat", CLAUDE_JSON_PATH);
-        if (!catResult.success()) {
-            System.err.println("Warning: could not read " + CLAUDE_JSON_PATH);
-            return;
-        }
-
-        try {
-            var root = (ObjectNode) JSON.readTree(catResult.stdout());
-
-            var projects = root.has("projects")
-                    ? (ObjectNode) root.get("projects")
-                    : root.putObject("projects");
-
-            var githubRepoPaths = root.has("githubRepoPaths")
-                    ? (ObjectNode) root.get("githubRepoPaths")
-                    : root.putObject("githubRepoPaths");
-
-            for (var repo : imageDef.getRepos()) {
-                var expandedPath = expandHome(repo.getPath());
-
-                if (!projects.has(expandedPath)) {
-                    var projectEntry = projects.putObject(expandedPath);
-                    projectEntry.putArray("allowedTools");
-                    projectEntry.put("hasTrustDialogAccepted", true);
-                }
-
-                var ownerRepo = parseGitHubOwnerRepo(repo.getUrl());
-                if (ownerRepo != null) {
-                    ArrayNode paths;
-                    if (githubRepoPaths.has(ownerRepo)) {
-                        paths = (ArrayNode) githubRepoPaths.get(ownerRepo);
-                    } else {
-                        paths = githubRepoPaths.putArray(ownerRepo);
-                    }
-                    boolean found = false;
-                    for (var node : paths) {
-                        if (node.asText().equals(expandedPath)) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        paths.add(expandedPath);
-                    }
-                }
-            }
-
-            var updatedJson = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(root);
-            container.writeFile(CLAUDE_JSON_PATH, updatedJson);
-            container.chown(CLAUDE_JSON_PATH, "agentuser:agentuser");
-        } catch (Exception e) {
-            System.err.println("Warning: failed to update " + CLAUDE_JSON_PATH + ": " + e.getMessage());
-        }
-    }
-
-    static String expandHome(String path) {
-        if (path.startsWith("~/")) {
-            return AGENTUSER_HOME + path.substring(1);
-        }
-        if (path.equals("~")) {
-            return AGENTUSER_HOME;
-        }
-        return path;
-    }
-
-    static String parseGitHubOwnerRepo(String url) {
-        if (url == null) return null;
-        var prefix = "https://github.com/";
-        if (!url.startsWith(prefix)) return null;
-        var rest = url.substring(prefix.length());
-        if (rest.endsWith(".git")) {
-            rest = rest.substring(0, rest.length() - 4);
-        }
-        if (rest.endsWith("/")) {
-            rest = rest.substring(0, rest.length() - 1);
-        }
-        var parts = rest.split("/");
-        if (parts.length != 2 || parts[0].isEmpty() || parts[1].isEmpty()) {
-            return null;
-        }
-        return parts[0] + "/" + parts[1];
-    }
 
     enum InstanceType {
         container,

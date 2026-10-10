@@ -101,9 +101,9 @@ class InstanceSecretRotationTest {
 
     @Test
     void theBranchSetupScriptDeliversTheSecret() {
-        var script = InstanceLifecycle.buildSetupScript(null, null, NetworkMode.FULL, List.of(), true);
+        var script = RuntimeSetup.buildSetupScript(null, null, NetworkMode.FULL, List.of(), true);
         assertTrue(script.contains(InstanceSecret.GUEST_SCRIPT), script);
-        assertFalse(InstanceLifecycle.buildSetupScript(null, null, NetworkMode.FULL, List.of())
+        assertFalse(RuntimeSetup.buildSetupScript(null, null, NetworkMode.FULL, List.of())
                 .contains(InstanceSecret.GUEST_PATH), "no secret, no delivery");
     }
 

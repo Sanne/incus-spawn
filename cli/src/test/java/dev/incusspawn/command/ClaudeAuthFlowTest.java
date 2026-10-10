@@ -41,7 +41,7 @@ class ClaudeAuthFlowTest {
             """;
 
     /** Answers verification and environment lookups from tables, built up by chaining. */
-    static class FakeInit extends InitCommand {
+    static class FakeInit extends CredentialSetup {
         private final Map<String, String> env = new HashMap<>();
         private final Set<String> validKeys = new HashSet<>();
         private final Set<String> validOauth = new HashSet<>();

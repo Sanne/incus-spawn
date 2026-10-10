@@ -170,10 +170,10 @@ class ArtifactCacheProxyTest {
 
         proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1",
                 new ProxyCredentials("", "", false, "", "", java.util.List.of()));
-        proxy.upstreamTrustAll = true;
-        proxy.probeReadIdleSeconds = 1;
+        proxy.upstream.upstreamTrustAll = true;
+        proxy.upstream.probeReadIdleSeconds = 1;
         // Tests read the hit counts themselves; a summary logged meanwhile would drain them
-        proxy.cacheStatsIntervalMs = TimeUnit.HOURS.toMillis(1);
+        proxy.artifactCache.cacheStatsIntervalMs = TimeUnit.HOURS.toMillis(1);
         ContainerTls.startInBackground(proxy);
         mitmPort = proxy.mitmPort();
         // Only once every listener of the class is up, and never one of their ports: a listener
@@ -321,12 +321,12 @@ class ArtifactCacheProxyTest {
         cutBeforeBody = false;
         cutPauseMs = 0;
         rangesToRefuse.set(0);
-        proxy.downloadIdleSeconds = 20;
-        proxy.clientSilenceBudgetSeconds = 110;
-        proxy.maxBackgroundConfirmations = 16;
+        proxy.artifactCache.downloadIdleSeconds = 20;
+        proxy.upstream.clientSilenceBudgetSeconds = 110;
+        proxy.artifactCache.maxBackgroundConfirmations = 16;
         // Most tests are about confirming a hit; the tiers that skip it have tests of their own
-        proxy.artifactCacheTiers = ArtifactCacheTiers.CONFIRM_EVERY_HIT;
-        proxy.logCacheStats();
+        proxy.artifactCache.artifactCacheTiers = ArtifactCacheTiers.CONFIRM_EVERY_HIT;
+        proxy.artifactCache.logCacheStats();
         online();
         for (var dir : new Path[] {Environment.mavenCacheDir(), Environment.gradleCacheDir(),
                 Environment.m2Repository()}) {
@@ -360,7 +360,7 @@ class ArtifactCacheProxyTest {
 
     /** Every repository host goes to the mock, through the same hook the benchmark uses. */
     static void online() {
-        proxy.clearUnreachable();
+        proxy.upstream.clearUnreachable();
         for (var host : REPOSITORY_HOSTS) {
             online(host);
         }
@@ -590,7 +590,7 @@ class ArtifactCacheProxyTest {
      * request would. Returns the stored checksum, whose mtime is the confirmation time.
      */
     static Path cacheJar(String host, String path, String content) throws Exception {
-        proxy.artifactCacheTiers = ArtifactCacheTiers.DEFAULT;
+        proxy.artifactCache.artifactCacheTiers = ArtifactCacheTiers.DEFAULT;
         publishJar(host, path, content);
         get(host, path);
         awaitFile(cached(host, path), content);
@@ -617,24 +617,24 @@ class ArtifactCacheProxyTest {
                 "the stored checksum goes out, so Maven skips its .sha1 request");
         assertEquals(0, headsOn(CENTRAL, JAR));
         assertEquals(0, hitsOn(CENTRAL, JAR));
-        assertTrue(proxy.cacheStats.drain().contains("(1 served on a fresh confirmation)"));
+        assertTrue(proxy.artifactCache.cacheStats.drain().contains("(1 served on a fresh confirmation)"));
     }
 
     @Test
     void hitSummaryIsLoggedOnceTheIntervalPasses() throws Exception {
         cacheJar(CENTRAL, JAR, "v1");
-        var interval = proxy.cacheStatsIntervalMs;
-        proxy.cacheStatsIntervalMs = 200;
+        var interval = proxy.artifactCache.cacheStatsIntervalMs;
+        proxy.artifactCache.cacheStatsIntervalMs = 200;
         try {
             // Nothing is pending after reset(), so this hit schedules the summary
             get(CENTRAL, JAR);
-            assertEquals(1, proxy.cacheStats.pending());
-            await("the summary to drain the counts", () -> proxy.cacheStats.pending() == 0);
+            assertEquals(1, proxy.artifactCache.cacheStats.pending());
+            await("the summary to drain the counts", () -> proxy.artifactCache.cacheStats.pending() == 0);
             // And the next hit schedules another one
             get(CENTRAL, JAR);
-            await("the next summary", () -> proxy.cacheStats.pending() == 0);
+            await("the next summary", () -> proxy.artifactCache.cacheStats.pending() == 0);
         } finally {
-            proxy.cacheStatsIntervalMs = interval;
+            proxy.artifactCache.cacheStatsIntervalMs = interval;
         }
     }
 
@@ -662,7 +662,7 @@ class ArtifactCacheProxyTest {
         var hit = get(CENTRAL, JAR);
         assertEquals("v1", hit.text());
         assertEquals(0, headsAnswered.get(), "served before its HEAD was answered");
-        assertTrue(proxy.cacheStats.drain().contains("(1 served while confirming again)"));
+        assertTrue(proxy.artifactCache.cacheStats.drain().contains("(1 served while confirming again)"));
 
         await("the confirmation to be renewed", () -> Duration.between(
                 Files.getLastModifiedTime(stored).toInstant(), Instant.now()).toMinutes() < 1);
@@ -693,7 +693,7 @@ class ArtifactCacheProxyTest {
         hits.clear();
         assertEquals("v2", get(CENTRAL, JAR).text(), "past max-stale the change is seen first");
         assertEquals(1, headsOn(CENTRAL, JAR));
-        assertNull(proxy.cacheStats.drain(), "an evicted hit is a download, not a cache hit");
+        assertNull(proxy.artifactCache.cacheStats.drain(), "an evicted hit is a download, not a cache hit");
     }
 
     @Test
@@ -704,12 +704,12 @@ class ArtifactCacheProxyTest {
         hits.clear();
         assertEquals("p1", get(PORTAL, PLUGIN_JAR).text());
         assertEquals(1, hitsOn(PORTAL, PLUGIN_JAR + ".sha1"));
-        assertTrue(proxy.cacheStats.drain().contains("(1 confirmed first)"));
+        assertTrue(proxy.artifactCache.cacheStats.drain().contains("(1 confirmed first)"));
     }
 
     /** Cache the Gradle distribution under the default tiers; returns its stored checksum. */
     static Path cacheDist() throws Exception {
-        proxy.artifactCacheTiers = ArtifactCacheTiers.DEFAULT;
+        proxy.artifactCache.artifactCacheTiers = ArtifactCacheTiers.DEFAULT;
         var zip = "gradle-zip".getBytes();
         routes.put(GRADLE + " " + DIST, new Reply(200, zip, null));
         var downloads = "https://" + GRADLE_DOWNLOADS + DIST + ".sha256";
@@ -759,7 +759,7 @@ class ArtifactCacheProxyTest {
 
     @Test
     void backgroundConfirmationsPastTheLimitWaitTheirTurn() throws Exception {
-        proxy.maxBackgroundConfirmations = 1;
+        proxy.artifactCache.maxBackgroundConfirmations = 1;
         var jars = List.of(JAR, "/maven2/org/example/b/1.0/b-1.0.jar", "/maven2/org/example/c/1.0/c-1.0.jar");
         for (var jar : jars) confirmedAgo(cacheJar(CENTRAL, jar, jar), Duration.ofHours(3));
 
@@ -787,7 +787,7 @@ class ArtifactCacheProxyTest {
     void offlineIsRefusedOnEveryPlatform() throws Exception {
         offline();
         for (var host : REPOSITORY_HOSTS) {
-            var target = proxy.upstreamOverride(host);
+            var target = proxy.upstream.upstreamOverride(host);
             var address = new InetSocketAddress(target.host(), target.port());
             assertNotNull(NetworkInterface.getByInetAddress(address.getAddress()), host
                     + ": an address no interface holds is refused on Linux but hangs until the timeout on macOS");
@@ -817,8 +817,8 @@ class ArtifactCacheProxyTest {
         var pooled = lastHeadConnection;
 
         offline();
-        assertEquals(MitmProxy.SidecarAnswer.UNREACHABLE, confirm());
-        assertTrue(proxy.inBackoff(CENTRAL), "a refused connect starts the backoff");
+        assertEquals(ArtifactCacheHandler.SidecarAnswer.UNREACHABLE, confirm());
+        assertTrue(proxy.artifactCache.inBackoff(CENTRAL), "a refused connect starts the backoff");
 
         // Back to the address the pooled connection was made to: acquiring it needs no network I/O.
         // The read-idle timeout closes the stalled connection and the HEAD is retried on a new one,
@@ -829,24 +829,24 @@ class ArtifactCacheProxyTest {
         var stalled = confirmAsync();
         await("the HEAD to arrive", () -> stalledConnection != null);
         assertSame(pooled, stalledConnection, "the HEAD went out on the pooled connection");
-        assertTrue(proxy.inBackoff(CENTRAL), "a pooled connection proves nothing until it answers");
-        assertEquals(MitmProxy.SidecarAnswer.UNREACHABLE,
+        assertTrue(proxy.artifactCache.inBackoff(CENTRAL), "a pooled connection proves nothing until it answers");
+        assertEquals(ArtifactCacheHandler.SidecarAnswer.UNREACHABLE,
                 stalled.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS));
         assertEquals(0, headsToStall.get(), "the HEAD was retried");
         assertNotSame(pooled, lastHeadConnection, "on another connection");
-        assertTrue(proxy.inBackoff(CENTRAL), "nor does the retry's connection, until it answers");
+        assertTrue(proxy.artifactCache.inBackoff(CENTRAL), "nor does the retry's connection, until it answers");
 
-        assertNotEquals(MitmProxy.SidecarAnswer.UNREACHABLE, confirm());
-        assertFalse(proxy.inBackoff(CENTRAL), "an answer ends the backoff");
+        assertNotEquals(ArtifactCacheHandler.SidecarAnswer.UNREACHABLE, confirm());
+        assertFalse(proxy.artifactCache.inBackoff(CENTRAL), "an answer ends the backoff");
     }
 
     /** Confirm the cached JAR with Central's checksum header, as a hit does. */
-    static MitmProxy.SidecarAnswer confirm() throws Exception {
+    static ArtifactCacheHandler.SidecarAnswer confirm() throws Exception {
         return confirmAsync().toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
     }
 
-    static Future<MitmProxy.SidecarAnswer> confirmAsync() {
-        return onClientContext(() -> proxy.fetchChecksumHeader(CENTRAL, JAR, Revalidation.forDomain(CENTRAL)));
+    static Future<ArtifactCacheHandler.SidecarAnswer> confirmAsync() {
+        return onClientContext(() -> proxy.artifactCache.fetchChecksumHeader(CENTRAL, JAR, Revalidation.forDomain(CENTRAL)));
     }
 
     static <T> Future<T> onClientContext(java.util.function.Supplier<Future<T>> action) {
@@ -926,7 +926,7 @@ class ArtifactCacheProxyTest {
         etag = ETAG;
         getsToCut.set(1);
         cutByClosing = byClosing;
-        proxy.downloadIdleSeconds = 1;
+        proxy.artifactCache.downloadIdleSeconds = 1;
         return content;
     }
 
@@ -1065,7 +1065,7 @@ class ArtifactCacheProxyTest {
         routes.put(CENTRAL + " " + cdnPath, new Reply(200, bytes, null, hex("SHA-1", bytes)));
         etag = ETAG;
         getsToCut.set(1);
-        proxy.downloadIdleSeconds = 1;
+        proxy.artifactCache.downloadIdleSeconds = 1;
 
         assertEquals(content, get(CENTRAL, JAR).text());
         assertEquals(1, hitsOn(CENTRAL, JAR), "the redirect is not followed again");
@@ -1084,7 +1084,7 @@ class ArtifactCacheProxyTest {
         routes.put(CENTRAL + " " + cdnPath, new Reply(200, bytes, null, hex("SHA-1", bytes)));
         etag = ETAG;
         getsToCut.set(1);
-        proxy.downloadIdleSeconds = 1;
+        proxy.artifactCache.downloadIdleSeconds = 1;
 
         assertEquals(content, get(CENTRAL, JAR).text());
         assertEquals(1, hitsOn(CENTRAL, JAR));
@@ -1137,8 +1137,8 @@ class ArtifactCacheProxyTest {
         // A stall it never recovers from ends with a line, not a silent drop at 120s
         publishCutJar(false);
         etag = null;
-        proxy.downloadIdleSeconds = 20;
-        proxy.clientSilenceBudgetSeconds = 2;
+        proxy.artifactCache.downloadIdleSeconds = 20;
+        proxy.upstream.clientSilenceBudgetSeconds = 2;
 
         // A reset (bytes were sent) long before a stall check would come
         assertDownloadFails(8);
@@ -1152,7 +1152,7 @@ class ArtifactCacheProxyTest {
     void relayThatStallsMidBodyIsCutAtTheClientsBudget() throws Exception {
         // Not left to the MITM server's idle timeout, which drops the client silently at 120s (#929)
         publishCutJar(false);
-        proxy.clientSilenceBudgetSeconds = 2;
+        proxy.upstream.clientSilenceBudgetSeconds = 2;
 
         try {
             var response = getAsync(CENTRAL, RELAYED_JAR).toCompletionStage().toCompletableFuture()
@@ -1168,7 +1168,7 @@ class ArtifactCacheProxyTest {
     void relayWithNoAnswerIsA502AtTheClientsBudget() throws Exception {
         publishJar(CENTRAL, JAR, "v1");
         getsToIgnore.set(1);
-        proxy.clientSilenceBudgetSeconds = 2;
+        proxy.upstream.clientSilenceBudgetSeconds = 2;
 
         assertEquals(502, getAsync(CENTRAL, RELAYED_JAR).toCompletionStage().toCompletableFuture()
                 .get(8, TimeUnit.SECONDS).status());
@@ -1185,7 +1185,7 @@ class ArtifactCacheProxyTest {
             first.connect(blackHole.getLocalSocketAddress());
             second.connect(blackHole.getLocalSocketAddress());
             proxy.overrideUpstream(CENTRAL, "127.0.0.1", blackHole.getLocalPort());
-            proxy.clientSilenceBudgetSeconds = 2;
+            proxy.upstream.clientSilenceBudgetSeconds = 2;
 
             assertEquals(502, getAsync(CENTRAL, RELAYED_JAR).toCompletionStage().toCompletableFuture()
                     .get(8, TimeUnit.SECONDS).status());
@@ -1193,7 +1193,7 @@ class ArtifactCacheProxyTest {
         // The relay's connect is still pending (its timeout is 30 s), and the closed black hole
         // refuses it: that backs Central off. Let it land here, where reset() clears it, rather
         // than in the middle of the next test, whose hits it would serve unconfirmed (#1066)
-        await("the connect the relay left behind to be refused", () -> proxy.inBackoff(CENTRAL));
+        await("the connect the relay left behind to be refused", () -> proxy.artifactCache.inBackoff(CENTRAL));
     }
 
     @Test
@@ -1202,7 +1202,7 @@ class ArtifactCacheProxyTest {
         var content = publishCutJar(false);
         nextGetDelayMs = 2_000;
         cutPauseMs = 2_000;
-        proxy.clientSilenceBudgetSeconds = 3;
+        proxy.upstream.clientSilenceBudgetSeconds = 3;
 
         assertEquals(content, get(CENTRAL, RELAYED_JAR).text());
     }
@@ -1214,7 +1214,7 @@ class ArtifactCacheProxyTest {
         cutBeforeBody = true;
         // The head gets 1.5s of slack; after it, less of the budget is left than a resume needs
         nextGetDelayMs = 2_500;
-        proxy.clientSilenceBudgetSeconds = 4;
+        proxy.upstream.clientSilenceBudgetSeconds = 4;
 
         requestAsync(CENTRAL, JAR, req -> {
             req.send();
@@ -1239,10 +1239,10 @@ class ArtifactCacheProxyTest {
             first.connect(blackHole.getLocalSocketAddress());
             second.connect(blackHole.getLocalSocketAddress());
             proxy.overrideUpstream(CENTRAL, "127.0.0.1", blackHole.getLocalPort());
-            proxy.clientSilenceBudgetSeconds = 2;
+            proxy.upstream.clientSilenceBudgetSeconds = 2;
 
             assertEquals(502, get(CENTRAL, JAR).status());
-            assertFalse(proxy.inBackoff(CENTRAL), "our own short timeout says nothing about the domain");
+            assertFalse(proxy.artifactCache.inBackoff(CENTRAL), "our own short timeout says nothing about the domain");
         }
     }
 
@@ -1253,7 +1253,7 @@ class ArtifactCacheProxyTest {
         publishJar(CENTRAL, JAR, content);
         etag = ETAG;
         // Not 1s: a pause of the whole JVM that long on a loaded runner would look like a stall
-        proxy.downloadIdleSeconds = 2;
+        proxy.artifactCache.downloadIdleSeconds = 2;
         var rangesWhilePaused = new CompletableFuture<List<String>>();
         var rangesJustAfter = new CompletableFuture<List<String>>();
 
@@ -1290,7 +1290,7 @@ class ArtifactCacheProxyTest {
         // Otherwise the MITM server's idle timeout drops the client, silently (#925)
         publishJar(CENTRAL, JAR, "v1");
         getsToIgnore.set(1);
-        proxy.clientSilenceBudgetSeconds = 1;
+        proxy.upstream.clientSilenceBudgetSeconds = 1;
 
         assertEquals(502, get(CENTRAL, JAR).status());
     }
@@ -1305,9 +1305,9 @@ class ArtifactCacheProxyTest {
         // The check lands where the budget leaves too little to resume, or a resume is refused:
         // a 502 either way, not a timing race between the two
         honourRange = false;
-        proxy.downloadIdleSeconds = 20;
+        proxy.artifactCache.downloadIdleSeconds = 20;
         nextGetDelayMs = 2_000;
-        proxy.clientSilenceBudgetSeconds = 4;
+        proxy.upstream.clientSilenceBudgetSeconds = 4;
 
         // What is under test is the timeout: the proxy answers before the MITM server would
         // drop the client (10s past the budget in production), not a stall check 20s away
@@ -1556,14 +1556,14 @@ class ArtifactCacheProxyTest {
     @Test
     void redirectTargetsKeepTheRawUri() {
         assertEquals("https://h.example/a%20b/x.sha1?q=1",
-                MitmProxy.redirectTarget("h.example", 443, "/a%20b/x", "x.sha1?q=1").toString());
-        assertEquals("https://other.example/y", MitmProxy.redirectTarget("h.example", 443, "/a", "https://other.example/y").toString());
-        assertEquals("https://h.example:8443/p/z", MitmProxy.redirectTarget("h.example", 8443, "/p/q", "z").toString());
-        assertEquals("https://h.example/a", MitmProxy.redirectTarget("h.example", 443, "/a", "http://h.example/a").toString(),
+                ArtifactCacheHandler.redirectTarget("h.example", 443, "/a%20b/x", "x.sha1?q=1").toString());
+        assertEquals("https://other.example/y", ArtifactCacheHandler.redirectTarget("h.example", 443, "/a", "https://other.example/y").toString());
+        assertEquals("https://h.example:8443/p/z", ArtifactCacheHandler.redirectTarget("h.example", 8443, "/p/q", "z").toString());
+        assertEquals("https://h.example/a", ArtifactCacheHandler.redirectTarget("h.example", 443, "/a", "http://h.example/a").toString(),
                 "upstream connections are TLS, so http is followed over https");
-        assertNull(MitmProxy.redirectTarget("h.example", 443, "/a", "ftp://h.example/a"));
-        assertNull(MitmProxy.redirectTarget("h.example", 443, "/a", "ht tp://bad"));
-        assertEquals("https://cdn.example/b", MitmProxy.redirectTarget("h.example", 443, "/a|b{c}", "https://cdn.example/b").toString(),
+        assertNull(ArtifactCacheHandler.redirectTarget("h.example", 443, "/a", "ftp://h.example/a"));
+        assertNull(ArtifactCacheHandler.redirectTarget("h.example", 443, "/a", "ht tp://bad"));
+        assertEquals("https://cdn.example/b", ArtifactCacheHandler.redirectTarget("h.example", 443, "/a|b{c}", "https://cdn.example/b").toString(),
                 "an absolute Location does not depend on parsing the request URI");
     }
 

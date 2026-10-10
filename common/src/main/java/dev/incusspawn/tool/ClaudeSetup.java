@@ -375,7 +375,7 @@ public class ClaudeSetup implements ToolSetup {
     static final String MANAGED_SETTINGS_PATH = "/etc/claude-code/managed-settings.json";
     /**
      * Claude Code's managed-policy memory layer. Written once per build by
-     * {@code BuildCommand.writeAgentContext} (it needs the fully resolved image, which a
+     * {@code GuestProvisioning.writeAgentContext} (it needs the fully resolved image, which a
      * per-tool install step cannot see), but the path belongs here beside the rest of
      * {@code /etc/claude-code}.
      */

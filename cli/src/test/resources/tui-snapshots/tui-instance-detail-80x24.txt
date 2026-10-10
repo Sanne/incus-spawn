@@ -1,0 +1,24 @@
+ isx   <version>  ● 1 container running
+╭ Templates ───╔ work-1 ═══════════════════════════════════════╗───────────────╮
+│  NAME        ║ Status:         Running                       ║  ON           │
+│  tpl-minimal ║ Type:           container                     ║  edora        │
+│  tpl-dev     ║ KVM:            disabled                      ║  nt tools     │
+╰──────────────║ Architecture:   x86_64                        ║  ─────────────╯
+╭ Instances ───║ Parent:         tpl-minimal                   ║  ─────────────╮
+│  NAME        ║ Created:        YYYY-MM-DDThh:mm:ss  (3h ago) ║         DISK  │
+│▸ work-1      ║                                               ║  go     -     │
+│  vm-1        ║ Network:        proxy                         ║  ys ago -     │
+│              ║ IP address:     -                             ║               │
+│              ║                                               ║               │
+│              ║ Resource limits:                              ║               │
+│              ║   CPU:          -                             ║               │
+│              ║   Memory:       -                             ║               │
+│              ║   Disk limit:   -                             ║               │
+│              ║                                               ║               │
+│              ║ Project:        -                             ║               │
+│              ║ Profile:        tpl-minimal                   ║               │
+│              ║                                               ║               │
+│              ║  F2 Shell   a Accounts   F3/Esc Close         ║               │
+╰──────────────╚═══════════════════════════════════════════════╝  ─────────────╯
+ work-1  from tpl
+│F1Info │F2Shell│F3Detai│F4Branc│F5Build│F6Renam│F7Stop │F8Destr│F9Actio│F10Quit

@@ -65,7 +65,7 @@ class RunningInstanceSubnetMigrationTest {
         var warnings = new ArrayList<String>();
         var output = new StaticIpAllocator.Output(msg -> {}, warnings::add);
 
-        assertEquals(1, InstanceLifecycle.migrateAllInstancesToNewSubnet(answering(daemon), output));
+        assertEquals(1, InstanceNetwork.migrateAllInstancesToNewSubnet(answering(daemon), output));
 
         var box = daemon.instance("box");
         assertEquals("10.166.11.2", box.path("config").path(Metadata.STATIC_IP).asText());
@@ -80,7 +80,7 @@ class RunningInstanceSubnetMigrationTest {
         var daemon = running("virtual-machine").ignoreShutdown("box");
         var warnings = new ArrayList<String>();
 
-        assertEquals(0, InstanceLifecycle.migrateAllInstancesToNewSubnet(answering(daemon),
+        assertEquals(0, InstanceNetwork.migrateAllInstancesToNewSubnet(answering(daemon),
                 new StaticIpAllocator.Output(msg -> {}, warnings::add)));
 
         var box = daemon.instance("box");
@@ -95,7 +95,7 @@ class RunningInstanceSubnetMigrationTest {
         var daemon = box("container", "Stopped");
         var warnings = new ArrayList<String>();
 
-        assertEquals(1, InstanceLifecycle.migrateAllInstancesToNewSubnet(daemon.client(),
+        assertEquals(1, InstanceNetwork.migrateAllInstancesToNewSubnet(daemon.client(),
                 new StaticIpAllocator.Output(msg -> {}, warnings::add)));
 
         assertEquals(List.of(), daemon.stateActions());
@@ -108,7 +108,7 @@ class RunningInstanceSubnetMigrationTest {
         var daemon = box("container", "Frozen");
         var warnings = new ArrayList<String>();
 
-        assertEquals(0, InstanceLifecycle.migrateAllInstancesToNewSubnet(daemon.client(),
+        assertEquals(0, InstanceNetwork.migrateAllInstancesToNewSubnet(daemon.client(),
                 new StaticIpAllocator.Output(msg -> {}, warnings::add)));
 
         assertEquals(List.of(), daemon.stateActions());

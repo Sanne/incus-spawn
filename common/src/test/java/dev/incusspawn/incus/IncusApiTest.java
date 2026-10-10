@@ -369,7 +369,7 @@ class IncusApiTest {
     // Regression guard: a reachable daemon returns a successful (empty) list on a fresh
     // install. "has pools" must key off list size, not merely a successful response —
     // otherwise 'incus admin init' is skipped on every clean box (no default profile,
-    // no incusbr0). See InitCommand.initializeIncus.
+    // no incusbr0). See HostSetup.initializeIncus.
 
     @Test
     void hasStoragePoolTrueWhenPoolsPresent() throws Exception {

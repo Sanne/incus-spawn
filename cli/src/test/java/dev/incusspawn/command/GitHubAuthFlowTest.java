@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * assertion reads the file back from disk rather than trusting the in-memory config. Every
  * write produces the accounts layout (#773): a first credential becomes {@code accounts.default}. The
  * network, the host's {@code gh} login and the browser are the overridable seams on
- * {@link InitCommand}.
+ * {@link CredentialSetup}.
  */
 @ExtendWith(IsolatedHome.class)
 class GitHubAuthFlowTest {
@@ -39,7 +39,7 @@ class GitHubAuthFlowTest {
             """;
 
     /** Answers verification from a table instead of api.github.com. */
-    static class FakeInit extends InitCommand {
+    static class FakeInit extends CredentialSetup {
         final Map<String, GitHubVerifyResult> valid = new HashMap<>();
         final List<String> verified = new ArrayList<>();
         final List<String> opened = new ArrayList<>();
@@ -162,7 +162,7 @@ class GitHubAuthFlowTest {
         var init = new FakeInit();
         run(init, new ScriptedPrompts().line("").secret(""));
 
-        assertEquals(List.of(InitCommand.GH_PAT_NEW_URL), init.opened);
+        assertEquals(List.of(CredentialSetup.GH_PAT_NEW_URL), init.opened);
         assertNothingSaved();
     }
 
@@ -172,7 +172,7 @@ class GitHubAuthFlowTest {
      */
     @Test
     void theTokenPageIsPrefilledWithTheNeededPermissions() {
-        var url = URI.create(InitCommand.GH_PAT_NEW_URL);
+        var url = URI.create(CredentialSetup.GH_PAT_NEW_URL);
         assertEquals("/settings/personal-access-tokens/new", url.getPath());
         var params = List.of(url.getQuery().split("&"));
         for (var expected : List.of("emails=read", "contents=write", "issues=write", "pull_requests=write")) {
@@ -282,20 +282,20 @@ class GitHubAuthFlowTest {
     @Test
     void knownTokenPrefixesPassTheShapeCheck() {
         for (var token : List.of(AGENT_PAT, "ghp_classic", PERSONAL_GH_TOKEN)) {
-            assertEquals(Optional.empty(), InitCommand.githubTokenShapeWarning(token), token);
+            assertEquals(Optional.empty(), CredentialSetup.githubTokenShapeWarning(token), token);
         }
     }
 
     /** Input is hidden, so a keystroke before the paste is invisible until it is named. */
     @Test
     void aStrayKeystrokeBeforeThePasteIsNamed() {
-        var warning = InitCommand.githubTokenShapeWarning("1" + AGENT_PAT).orElseThrow();
+        var warning = CredentialSetup.githubTokenShapeWarning("1" + AGENT_PAT).orElseThrow();
         assertTrue(warning.contains("1 character comes before 'github_pat_'"), warning);
     }
 
     @Test
     void somethingThatIsNotATokenIsFlagged() {
-        var warning = InitCommand.githubTokenShapeWarning("hunter2").orElseThrow();
+        var warning = CredentialSetup.githubTokenShapeWarning("hunter2").orElseThrow();
         assertTrue(warning.contains("does not start with 'github_pat_'"), warning);
     }
 
@@ -420,7 +420,7 @@ class GitHubAuthFlowTest {
 
     private static String chooseEmail(String json, String... input) {
         var prompts = ScriptedPrompts.lines(input);
-        var email = InitCommand.chooseEmail(InitCommand.parseGitHubEmails(json), prompts);
+        var email = CredentialSetup.chooseEmail(CredentialSetup.parseGitHubEmails(json), prompts);
         prompts.assertFullyConsumed();
         return email;
     }
@@ -433,7 +433,7 @@ class GitHubAuthFlowTest {
 
     @Test
     void closedStdinPicksTheNoreplyAddress() {
-        var email = InitCommand.chooseEmail(InitCommand.parseGitHubEmails(SEVERAL_EMAILS), new ScriptedPrompts());
+        var email = CredentialSetup.chooseEmail(CredentialSetup.parseGitHubEmails(SEVERAL_EMAILS), new ScriptedPrompts());
         assertEquals("1234+me@users.noreply.github.com", email);
     }
 

@@ -162,7 +162,7 @@ class InstanceLifecycleRequestBudgetTest {
     @Test
     void checkingAHealthyStaticIpBeforeStart() {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(Metadata.STATIC_IP, "10.166.11.20"));
-        InstanceLifecycle.fixStaticIpIfNeeded(daemon.client(), NAME);
+        InstanceNetwork.fixStaticIpIfNeeded(daemon.client(), NAME);
         assertBudget(2, daemon, "fixStaticIpIfNeeded (IP already on the bridge subnet)");
     }
 
@@ -174,7 +174,7 @@ class InstanceLifecycleRequestBudgetTest {
                 Metadata.SHELL_COMMAND, "zsh",
                 "user.incus-spawn.ssh-setup", "done",
                 Metadata.STATIC_IP, "10.166.11.20"));
-        var config = InstanceLifecycle.prefetchRuntimeConfig(daemon.client(), NAME);
+        var config = RuntimeSetup.prefetchRuntimeConfig(daemon.client(), NAME);
         assertBudget(2, daemon, "prefetchRuntimeConfig");
 
         assertEquals("/home/agentuser/project", config.workdir());
@@ -282,7 +282,7 @@ class InstanceLifecycleRequestBudgetTest {
     void prefetchingRuntimeConfigOfAMissingInstanceFails() {
         var daemon = new FakeIncusDaemon();
         assertThrows(IncusException.class,
-                () -> InstanceLifecycle.prefetchRuntimeConfig(daemon.client(), NAME));
+                () -> RuntimeSetup.prefetchRuntimeConfig(daemon.client(), NAME));
     }
 
     @Test
@@ -290,7 +290,7 @@ class InstanceLifecycleRequestBudgetTest {
         // Incus stops its forkfile file server on start, and one still finishing a push makes
         // the start wait a full second. The config read, the bridge lookup, then the start.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
-        InstanceLifecycle.prefetchAndStart(daemon.client(), NAME, dev.incusspawn.incus.MachineType.CONTAINER);
+        RuntimeSetup.prefetchAndStart(daemon.client(), NAME, dev.incusspawn.incus.MachineType.CONTAINER);
         assertBudget(4, daemon, "prefetchAndStart");
 
         var requests = daemon.requests();
@@ -675,7 +675,7 @@ class InstanceLifecycleRequestBudgetTest {
             for (int i = 0; i < n; i++) {
                 daemon.container("dev-" + i, Map.of(Metadata.STATIC_IP, "10.166.11." + (20 + i)));
             }
-            InstanceLifecycle.findStaleSubnetInstances(daemon.client());
+            InstanceNetwork.findStaleSubnetInstances(daemon.client());
             assertBudget(2, daemon, "findStaleSubnetInstances with " + n + " instance(s)");
         }
     }

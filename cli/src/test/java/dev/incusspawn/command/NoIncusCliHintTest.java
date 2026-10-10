@@ -33,7 +33,7 @@ class NoIncusCliHintTest {
     /** Linux-only hints, by file. */
     private static final Map<String, Set<String>> ALLOWED = Map.of(
             // isx init's Linux setup, before any pool or profile is isx's to manage
-            "InitCommand.java", Set.of(
+            "HostSetup.java", Set.of(
                     "\"  Warning: Incus initialization may have failed. Check 'incus storage list'.\"",
                     "\"    incus profile device add default root disk path=/ pool=\"",
                     "\"    incus profile device add default eth0 nic network=incusbr0\"",

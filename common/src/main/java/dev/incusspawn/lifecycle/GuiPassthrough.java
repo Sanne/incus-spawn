@@ -16,7 +16,7 @@ import java.util.regex.Pattern;
  * Static helpers for Wayland GUI passthrough on Incus containers.
  * <p>
  * These were previously private statics on {@code BranchCommand}; they are
- * shared by {@code BranchCommand}, {@code ListCommand}, and {@code ShellCommand}
+ * shared by {@code BranchCommand}, {@code Tui}, and {@code ShellCommand}
  * so they belong in the lifecycle layer.
  */
 public final class GuiPassthrough {

@@ -1,0 +1,24 @@
+
+
+
+
+
+
+
+
+             ╔ Destroy 'dev-1' ═══════════════════════════════════╗
+             ║                                                    ║
+             ║ This action cannot be undone. Space reclaimed      ║
+             ║ may be less than 1.2 GiB.                          ║
+             ║                                                    ║
+             ║  y Confirm   any key Cancel                        ║
+             ║                                                    ║
+             ╚════════════════════════════════════════════════════╝
+
+
+
+
+
+
+
+

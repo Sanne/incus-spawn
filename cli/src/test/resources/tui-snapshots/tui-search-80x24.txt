@@ -1,0 +1,24 @@
+ isx   <version>  ● 1 container running
+╭ Templates ───────────────────────────────────────────────────────────────────╮
+│  No template definitions found.                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭ Instances ───────────────────────────────────────────────────────────────────╮
+│  NAME        STATUS      IP          PARENT      RUNTIME    AGE        DISK  │
+│  work-1      Running                 tpl-minimal container  3h ago     -     │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ / work
+│F1Info │F2Shell│F3Detai│F4Branc│F5Build│F6Renam│F7Stop │F8Destr│F9Actio│F10Quit

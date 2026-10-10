@@ -1,0 +1,24 @@
+
+  ╔ dev-1 ═══════════════════════════════════════════════════════════════════╗
+  ║ Status:         Running                                                █ ║
+  ║ Type:           container                                              █ ║
+  ║ KVM:            disabled                                               █ ║
+  ║ Architecture:   x86_64                                                 █ ║
+  ║ Parent:         tpl-dev                                                █ ║
+  ║                                                                        █ ║
+  ║ Network:        Full internet                                          █ ║
+  ║ IP address:     10.0.0.5                                               █ ║
+  ║                                                                        █ ║
+  ║ Resource limits:                                                       █ ║
+  ║   CPU:          4                                                      █ ║
+  ║   Memory:       8GiB                                                   █ ║
+  ║   Disk limit:   20GiB                                                  █ ║
+  ║                                                                        █ ║
+  ║ Credential accounts:  (a to change)                                    █ ║
+  ║   github  work                                                         █ ║
+  ║     Not pinned: follows the global default (github.default in config.ya█ ║
+  ║                                                                        █ ║
+  ║ Project:        default                                                █ ║
+  ║  F2 Shell   a Accounts   F3/Esc Close                                    ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+

@@ -19,7 +19,7 @@ class ArtifactCacheStatsTest {
         stats.record(TRUSTED, 1024);
         stats.record(TRUSTED_CHECKING, 2048);
         stats.record(CONFIRMED, 0);
-        assertEquals("Maven/Gradle cache: 4 hits, " + MitmProxy.formatSize(4096) + " (2 served on a fresh confirmation, "
+        assertEquals("Maven/Gradle cache: 4 hits, " + ArtifactCacheHandler.formatSize(4096) + " (2 served on a fresh confirmation, "
                 + "1 served while confirming again, 1 confirmed first)", stats.drain());
         assertNull(stats.drain(), "counts start over after each summary");
 

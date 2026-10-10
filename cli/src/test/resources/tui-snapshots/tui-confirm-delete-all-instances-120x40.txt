@@ -1,0 +1,40 @@
+ isx   <version>  ● 1 container running
+╭ Templates ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  NAME                                        BUILT                DISK     DESCRIPTION                               │
+│  tpl-minimal                                 3 days ago           -        Minimal Fedora                            │
+│  tpl-dev                                     not built            -        Development tools                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ Instances ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  NAME                STATUS              IP                  PARENT              RUNTIME    AGE                DISK  │
+│▸ work-1              Running                                 tpl-minimal         container  3h ago             -     │
+│  vm-1                Stopped                                 tpl-minimal         virtual-ma 2 days ago         -     │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                ╔ Destroy all instances ═════════════════════════════╗                                │
+│                                ║                                                    ║                                │
+│                                ║ This will destroy all instances.                   ║                                │
+│                                ║                                                    ║                                │
+│                                ║  y Confirm   any key Cancel                        ║                                │
+│                                ║                                                    ║                                │
+│                                ╚════════════════════════════════════════════════════╝                                │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ work-1  from tpl-minimal  [proxy]
+│F1Info     │F2Shell    │F3Details  │F4Branch…  │F5Build…   │F6Rename…  │F7Stop     │F8Destroy… │F9Actions  │F10Quit

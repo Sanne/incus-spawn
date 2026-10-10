@@ -1,0 +1,24 @@
+
+
+
+
+
+
+             ╔ Branch from 'tpl-dev' ═════════════════════════════╗
+             ║ Name:                                              ║
+             ║ dev-1                                              ║
+             ║                                                    ║
+             ║   CPU (all)   RAM         Disk                     ║
+             ║                                                    ║
+             ║    [ ] GUI passthrough                             ║
+             ║    [ ] KVM passthrough                             ║
+             ║    Network < Full internet >                       ║
+             ║    [ ] Inbox /path/to/dir                          ║
+             ║  Enter Confirm   Esc Cancel   ↑↓/Tab Navigate   Sp ║
+             ╚════════════════════════════════════════════════════╝
+
+
+
+
+
+

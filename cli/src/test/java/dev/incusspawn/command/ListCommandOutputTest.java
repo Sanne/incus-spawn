@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.tui.InstanceDetailView;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.incus.FakeIncusDaemon;
@@ -159,10 +160,10 @@ class ListCommandOutputTest {
         // IncusException as "Error: ..." on stderr with exit 1, and the TUI shows it.
         for (var listing : new String[] {"<html>bad gateway</html>", "{\"instances\": []}", ""}) {
             var e = assertThrows(IncusException.class,
-                    () -> ListCommand.collectEntries(listing), listing);
+                    () -> InstanceListing.collectEntries(listing), listing);
             assertTrue(e.getMessage().startsWith("Cannot read the instance listing"), e.getMessage());
         }
-        assertEquals(List.of(), ListCommand.collectEntries("[]"), "an empty array is no instances");
+        assertEquals(List.of(), InstanceListing.collectEntries("[]"), "an empty array is no instances");
     }
 
     @Test
@@ -271,8 +272,8 @@ class ListCommandOutputTest {
         var table = list(cmd(null), daemon);
         assertFalse(table.contains("\u009b"), table);
         assertTrue(table.contains("held:  [2J 2Jhi"), table);
-        var entry = ListCommand.collectEntries(daemon.client().listJson()).getFirst();
-        assertEquals("  Purpose:| [2J 2Jhi", rows(ListCommand.mcpDetailRows(entry.mcp())).getLast());
+        var entry = InstanceListing.collectEntries(daemon.client().listJson()).getFirst();
+        assertEquals("  Purpose:| [2J 2Jhi", rows(InstanceDetailView.mcpDetailRows(entry.mcp())).getLast());
         var json = list(cmd("json"), daemon);
         assertFalse(json.contains("\u001b") || json.contains("\u009b"), json);
         List<LinkedHashMap<String, Object>> parsed = new ObjectMapper().readValue(json, new TypeReference<>() {});
@@ -281,13 +282,13 @@ class ListCommandOutputTest {
 
     @Test
     void theDetailPaneSaysWhoHoldsItWhatForAndWhatHappensToAnOrphan() {
-        assertEquals(List.of(), ListCommand.mcpDetailRows(null));
-        var held = ListCommand.collectEntries(mcpDaemon().client().listJson());
+        assertEquals(List.of(), InstanceDetailView.mcpDetailRows(null));
+        var held = InstanceListing.collectEntries(mcpDaemon().client().listJson());
         var rows = held.stream().filter(i -> i.name().equals("worker")).findFirst().orElseThrow();
         assertEquals(List.of("MCP:|held by isx instance coord", "  Purpose:|#870 implement"),
-                rows(ListCommand.mcpDetailRows(rows.mcp())));
+                rows(InstanceDetailView.mcpDetailRows(rows.mcp())));
         var released = held.stream().filter(i -> i.name().equals("released")).findFirst().orElseThrow();
-        var text = rows(ListCommand.mcpDetailRows(released.mcp()));
+        var text = rows(InstanceDetailView.mcpDetailRows(released.mcp()));
         assertEquals("MCP:|orphaned since 2026-10-05T08:00:00Z", text.get(0));
         assertTrue(text.stream().anyMatch(r -> r.contains("mcp.orphan-grace-hours")), text.toString());
         assertEquals("  Purpose:|review #12", text.getLast());
@@ -301,14 +302,14 @@ class ListCommandOutputTest {
                 Metadata.MCP_OWNER, "alice", Metadata.MCP_SESSION, dead,
                 Metadata.MCP_ORPHANED, "2026-10-04T08:00:00Z " + dead,
                 Metadata.MCP_DORMANT, "2026-10-05T09:00:00Z " + dead));
-        var idle = ListCommand.collectEntries(daemon.client().listJson()).getFirst();
-        var text = rows(ListCommand.mcpDetailRows(idle.mcp()));
+        var idle = InstanceListing.collectEntries(daemon.client().listJson()).getFirst();
+        var text = rows(InstanceDetailView.mcpDetailRows(idle.mcp()));
         assertEquals("MCP:|orphaned since 2026-10-04T08:00:00Z, stopped as dormant since 2026-10-05T09:00:00Z", text.get(0));
         assertTrue(text.stream().anyMatch(r -> r.contains("mcp.dormant-grace-hours")), text.toString());
         assertTrue(text.stream().noneMatch(r -> r.contains("mcp.orphan-grace-hours")), "its orphan grace is over: " + text);
     }
 
-    private static List<String> rows(List<ListCommand.DetailRow> rows) {
+    private static List<String> rows(List<InstanceDetailView.DetailRow> rows) {
         return rows.stream().map(r -> r.label() + "|" + r.value()).toList();
     }
 

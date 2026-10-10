@@ -70,7 +70,7 @@ class ApiActivityProxyTest {
 
         proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1",
                 new ProxyCredentials("sk-ant-api03-real", "", false, "", "", List.of()));
-        proxy.upstreamTrustAll = true;
+        proxy.upstream.upstreamTrustAll = true;
         ContainerTls.startInBackground(proxy);
         mitmPort = proxy.mitmPort();
         healthPort = proxy.healthPort();

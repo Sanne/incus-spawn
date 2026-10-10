@@ -1,0 +1,24 @@
+
+          ╔ About incus-spawn ═══════════════════════════════════════╗
+          ║ incus-spawn (isx) 1.2.3                                █ ║
+          ║ Commit 0000000                                         █ ║
+          ║ Incus  client REST API, server 6.0                     █ ║
+          ║ Java 25                                                █ ║
+          ║ Host   Linux 6.1                                       █ ║
+          ║                                                        █ ║
+          ║ Copyright 2026 Sanne Grinovero                         █ ║
+          ║ Licensed under the Apache License 2.0                  █ ║
+          ║ github.com/Sanne/incus-spawn                           █ ║
+          ║                                                        █ ║
+          ║ Manage isolated Incus development environments.        █ ║
+          ║ Templates define base images; Instances are            │ ║
+          ║ lightweight copy-on-write branches of them.            │ ║
+          ║                                                        │ ║
+          ║ Keyboard shortcuts:                                    │ ║
+          ║                                                        │ ║
+          ║   Enter   Default instance action                      │ ║
+          ║   ?       AI Help — ask a question                     │ ║
+          ║   Tab     Switch panels     ⇧Tab     Reverse           │ ║
+          ║  F1/Esc Close   ? AI-assisted help                       ║
+          ╚══════════════════════════════════════════════════════════╝
+

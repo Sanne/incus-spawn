@@ -1,0 +1,24 @@
+
+
+
+
+
+
+             ╔ Pool cleanup ══════════════════════════════════════╗
+             ║                                                    ║
+             ║ 10G used / 100G (10%)                              ║
+             ║                                                    ║
+             ║  ▸ [x] Failed builds (1)                           ║
+             ║    [x] Unused images (1, ~2.0 GB)                  ║
+             ║        Cached base images — none downloaded        ║
+             ║        DNF build cache — no cache volume           ║
+             ║  Space Toggle   Enter Clean   Esc Cancel           ║
+             ║                                                    ║
+             ╚════════════════════════════════════════════════════╝
+
+
+
+
+
+
+

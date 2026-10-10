@@ -1,0 +1,24 @@
+ isx   <version>  ● 1 container running
+╭ Templates ───────────────────────────────────────────────────────────────────╮
+│  NAME                    BUILT                DISK     DESCRIPTION           │
+│  tpl-minimal             3 days ago           -        Minimal Fedora        │
+│  tpl-dev                 not built            -        Development tools     │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭ Instances ───────────────────────────────────────────────────────────────────╮
+│  NAME        STATUS      IP          PARENT      RUNTIME    AGE        DISK  │
+│▸ work-1      Running                 tpl-minimal container  3h ago     -     │
+│  vm-1        Stopped                 tpl-minimal virtual-ma 2 days ago -     │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ No actions available for work-1
+ work-1  from tpl-minimal  [proxy]
+│F1Info │F2Shell│F3Detai│F4Branc│F5Build│F6Renam│F7Stop │F8Destr│F9Actio│F10Quit

@@ -138,7 +138,7 @@ class TemplatesStalenessTest {
                 .container("dev-1", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE, Metadata.PARENT, "tpl-minimal"))
                 .container("not-ours", Map.of());
         daemon.clearRequests();
-        var built = ListCommand.builtTemplates(daemon.client().listJsonConfig());
+        var built = InstanceListing.builtTemplates(daemon.client().listJsonConfig());
         assertEquals(List.of("GET /1.0/instances?recursion=1"), daemon.requests());
         assertEquals(List.of(new TemplateStaleness.Built("tpl-minimal", "2026-10-05T10:00:00", CURRENT, "", MachineType.CONTAINER)), built);
     }

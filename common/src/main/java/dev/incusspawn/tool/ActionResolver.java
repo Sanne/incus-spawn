@@ -17,7 +17,7 @@ import java.util.function.Supplier;
 
 /**
  * Resolves tool actions for instances, including default actions and named action references.
- * Shared logic between ListCommand (TUI) and RunCommand (CLI).
+ * Shared logic between Tui and RunCommand (CLI).
  */
 public class ActionResolver {
 

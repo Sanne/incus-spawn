@@ -14,9 +14,10 @@ import dev.incusspawn.incus.BtrfsUsage;
 import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusDiagnostics;
 import dev.incusspawn.incus.InstanceSubvolumes;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.proxy.BridgeDns;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.InstanceRegistry;
@@ -860,11 +861,11 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding findDnfCache(IncusClient incus, String pool) {
         try {
-            if (incus.storageVolumeExists(pool, BuildCommand.DNF_CACHE_VOLUME)) {
+            if (incus.storageVolumeExists(pool, GuestProvisioning.DNF_CACHE_VOLUME)) {
                 return Finding.warn("DNF build cache volume exists",
                         "can be deleted to reclaim space (will be recreated on next build)",
                         new Remediation("Delete DNF cache volume", false,
-                                () -> incus.deleteStorageVolume(pool, BuildCommand.DNF_CACHE_VOLUME)));
+                                () -> incus.deleteStorageVolume(pool, GuestProvisioning.DNF_CACHE_VOLUME)));
             }
         } catch (Exception ignored) {}
         return null;
@@ -893,7 +894,7 @@ public class DoctorCommand extends BaseCommand {
     private Finding checkInotifyBudget() {
         try {
             var incus = RuntimeServices.incus();
-            int limit = incus.getInotifyMaxInstances();
+            int limit = new IncusDiagnostics(incus).getInotifyMaxInstances();
             if (limit < 0) return Finding.ok("Inotify budget", "(could not read)");
 
             var instances = incus.list();
@@ -1386,7 +1387,7 @@ public class DoctorCommand extends BaseCommand {
     private Finding checkInstanceSubnets() {
         try {
             var incus = RuntimeServices.incus();
-            var stale = InstanceLifecycle.findStaleSubnetInstances(incus);
+            var stale = InstanceNetwork.findStaleSubnetInstances(incus);
             if (stale.isEmpty()) {
                 return Finding.ok("Instance network config", "(all on current subnet)");
             }
@@ -1400,11 +1401,11 @@ public class DoctorCommand extends BaseCommand {
                             false,
                             () -> {
                                 var incusClient = RuntimeServices.incus();
-                                var migrated = InstanceLifecycle.migrateAllInstancesToNewSubnet(
+                                var migrated = InstanceNetwork.migrateAllInstancesToNewSubnet(
                                         incusClient);
                                 System.out.println("Migrated " + migrated + " instance"
                                         + (migrated == 1 ? "" : "s") + ".");
-                                var remaining = InstanceLifecycle.findStaleSubnetInstances(
+                                var remaining = InstanceNetwork.findStaleSubnetInstances(
                                         incusClient);
                                 if (!remaining.isEmpty()) {
                                     System.err.println("Warning: " + remaining.size()

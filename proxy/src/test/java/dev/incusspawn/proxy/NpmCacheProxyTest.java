@@ -310,12 +310,12 @@ class NpmCacheProxyTest {
         var path = publish("slow");
         unavailable.put("/slow/1.0.0", new AtomicInteger(1));
         unavailableDelayMillis = 1200;
-        var budget = proxy.clientSilenceBudgetSeconds;
-        proxy.clientSilenceBudgetSeconds = 2;
+        var budget = proxy.upstream.clientSilenceBudgetSeconds;
+        proxy.upstream.clientSilenceBudgetSeconds = 2;
         try {
             assertEquals(new Response(200, "tarball of slow"), get(path, 10));
         } finally {
-            proxy.clientSilenceBudgetSeconds = budget;
+            proxy.upstream.clientSilenceBudgetSeconds = budget;
         }
 
         assertEquals(1, hits.get("/slow/1.0.0").get());
