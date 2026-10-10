@@ -2,7 +2,10 @@
 paths:
   - "cli/src/main/java/dev/incusspawn/command/BuildCommand.java"
   - "cli/src/main/java/dev/incusspawn/command/BuildProgress.java"
+  - "cli/src/main/java/dev/incusspawn/command/BuildTools.java"
+  - "cli/src/main/java/dev/incusspawn/command/GuestProvisioning.java"
   - "cli/src/main/java/dev/incusspawn/command/RepoCloner.java"
+  - "cli/src/main/java/dev/incusspawn/command/SkillInstaller.java"
   - "cli/src/main/java/dev/incusspawn/command/CleanCommand.java"
   - "cli/src/main/java/dev/incusspawn/command/BranchCommand.java"
   - "cli/src/main/java/dev/incusspawn/command/ProjectCommand.java"
@@ -85,7 +88,7 @@ The check is per-instance and that is sufficient: another build attaching the vo
 
 # Agent Context File
 
-Every build regenerates `/etc/claude-code/CLAUDE.md` via `BuildCommand.writeAgentContext()`, called once in **both** build paths, in each case after all layer work (tools, skills, repo clones) is done.
+Every build regenerates `/etc/claude-code/CLAUDE.md` via `GuestProvisioning.writeAgentContext()`, called once in **both** build paths, in each case after all layer work (tools, skills, repo clones) is done.
 So it sees the fully resolved image rather than one layer at a time, and the repos it lists have actually been cloned.
 Content comes from `AgentContextGenerator` (`common/config/`), a pure renderer that takes a template name, tool names, repos and notes, which is what makes the format unit-testable without Incus.
 The path constant lives in `ClaudeSetup.MANAGED_MEMORY_PATH` beside the rest of `/etc/claude-code`, since the generator itself is vendor-neutral.

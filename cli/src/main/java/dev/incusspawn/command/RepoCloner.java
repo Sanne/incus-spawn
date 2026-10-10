@@ -21,11 +21,11 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
-import static dev.incusspawn.command.BuildCommand.expandHome;
 import static dev.incusspawn.command.BuildProgress.combinedOutput;
 import static dev.incusspawn.command.BuildProgress.formatStepLine;
 import static dev.incusspawn.command.BuildProgress.lastNonEmptyLine;
 import static dev.incusspawn.command.BuildProgress.plainStepLine;
+import static dev.incusspawn.command.GuestProvisioning.expandHome;
 import static dev.incusspawn.incus.Container.shellQuote;
 import static dev.incusspawn.util.BuildOutput.BOLD;
 import static dev.incusspawn.util.BuildOutput.styled;

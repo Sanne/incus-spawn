@@ -144,7 +144,7 @@ public class UpdateAllCommand extends BaseCommand {
         for (var repo : repos) {
             if (!repo.hasPrime()) continue;
             if (prime) {
-                var expanded = BuildCommand.expandHome(repo.getPath());
+                var expanded = GuestProvisioning.expandHome(repo.getPath());
                 BuildOutput.stepStart("Priming " + repo.getPath() + "...");
                 var result = incus.execInContainer(name, "agentuser",
                         "cd " + shellQuote(expanded) + " && " + repo.getPrime());

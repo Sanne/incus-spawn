@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Tests that verify parameter handling in tool deduplication scenarios.
  * Tool references are parsed from YAML, but deduplication and validation
- * happens in BuildCommand.resolveWithDeps() during the build process.
+ * happens in BuildTools.resolveWithDeps() during the build process.
  */
 
 class ParameterDeduplicationTest {
@@ -27,7 +27,7 @@ class ParameterDeduplicationTest {
         var imageDef = ImageDef.parseYaml(yaml);
 
         // Verify both tool references are in the YAML
-        // Note: During build, BuildCommand.resolveWithDeps() will throw
+        // Note: During build, BuildTools.resolveWithDeps() will throw
         // IllegalArgumentException when it detects the parameter conflict
         assertEquals(2, imageDef.getTools().size());
         assertEquals("example-tool", imageDef.getTools().get(0).getName());

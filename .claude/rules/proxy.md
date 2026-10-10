@@ -89,7 +89,7 @@ Key design:
 - **Guest tools read their placeholder when they run (#1108)**, because it becomes a per-start proof (#1106) the proxy checks (#1107).
   Nothing a build writes may hold one: `ClaudeSetup` and `CodexSetup` each write an `/etc/profile.d/isx-zz-*-auth.sh` login script (sorted after every `isx-*.sh`) that adapts the exported value to what the tool reads -- Claude Code's `customApiKeyResponses.approved` (last 20 characters of `ANTHROPIC_API_KEY`, else an interactive prompt defaulting to no), `ANTHROPIC_CUSTOM_HEADERS` from `ISX_VERTEX_ACCESS_TOKEN` (under `CLAUDE_CODE_SKIP_VERTEX_AUTH` Claude Code sends no Authorization header of its own), and Codex's `~/.codex/auth.json` (Codex never reads `OPENAI_API_KEY`).
   The `gcloud` stub prints `$ISX_VERTEX_ACCESS_TOKEN`; `GhSetup`'s host-driven `gh api` calls take `GH_TOKEN` from the guest's `/etc/profile` (`GhSetup.LOGIN_TOKEN`). gh, Copilot, Pi and Bob read the variable already.
-  A child build refreshes these files for a tool it only inherits (`ToolSetup.refreshInherited`, from `BuildCommand.refreshInheritedTools`), so an older parent's files do not reach it.
+  A child build refreshes these files for a tool it only inherits (`ToolSetup.refreshInherited`, from `GuestProvisioning.refreshInheritedTools`), so an older parent's files do not reach it.
   A YAML tool whose `files:` or build steps hold the value of one of its own credential-named env entries is warned about by the loader (`ToolDefValidator.embeddedTokens`).
   Per-tool evidence: DESIGN.md "A placeholder is read when the tool runs".
 - **Proof tokens (#1106, toward #1100).**

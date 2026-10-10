@@ -860,11 +860,11 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding findDnfCache(IncusClient incus, String pool) {
         try {
-            if (incus.storageVolumeExists(pool, BuildCommand.DNF_CACHE_VOLUME)) {
+            if (incus.storageVolumeExists(pool, GuestProvisioning.DNF_CACHE_VOLUME)) {
                 return Finding.warn("DNF build cache volume exists",
                         "can be deleted to reclaim space (will be recreated on next build)",
                         new Remediation("Delete DNF cache volume", false,
-                                () -> incus.deleteStorageVolume(pool, BuildCommand.DNF_CACHE_VOLUME)));
+                                () -> incus.deleteStorageVolume(pool, GuestProvisioning.DNF_CACHE_VOLUME)));
             }
         } catch (Exception ignored) {}
         return null;

@@ -12,7 +12,7 @@ paths:
   Download entries may set `extract`, `destination_file`, or both; `~/` destinations resolve under `/home/agentuser`.
   Execution order: packages -> downloads -> run -> run_as_user -> files, then `ToolVerifier` runs each `verify` after `writeEnvFile()` -- as `agentuser` in a login shell unless the tool sets `verify_as_root: true` (root-only checks such as `sshd -t`), which then run in root's own environment (`env -i`, `HOME=/root`, root's default `PATH`) **without** `isx-env.sh`, so nothing they do lands in agentuser's home.
   There is no ownership repair afterwards; do not add one back (#931).
-  Environment variables are declared via `env:` entries and collected centrally by `BuildCommand.writeEnvFile()`.
+  Environment variables are declared via `env:` entries and collected centrally by `GuestProvisioning.writeEnvFile()`.
 - **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `CodexSetup`, `CopilotSetup`, `GhSetup`, `PiSetup`, `BobSetup`).
   Declare env vars via `envEntries(Map<String,String>)` method.
   Tools can declare a `feature()` to gate themselves behind an opt-in feature flag in `SpawnConfig.features` (no built-in tool does today -- `codex` graduated out of the `openai` flag).
@@ -104,7 +104,7 @@ When adding a built-in image or tool, you must update the corresponding `BUILTIN
 `EnvEntry` (`config/EnvEntry.java`) models a declarative env var with four strategies: `SET`, `SET_IF_UNSET`, `PREPEND`, `APPEND`.
 YAML is parsed by a custom `ListDeserializer` that accepts only structured maps and rejects shell strings (`- export FOO=bar`) with the structured equivalent in the error.
 There is no raw/verbatim entry: built-in code declares env vars through the same factories, so everything is conflict-checked.
-For a value the shell must expand at login (`$HOME` in `ClaudeSetup`'s PATH prepend, `$HOSTNAME` for `ISX_CONTAINER` in `BuildCommand.writeEnvFile()`), call `.expandingAtLogin()` -- code-only (no setter, not parsed from YAML).
+For a value the shell must expand at login (`$HOME` in `ClaudeSetup`'s PATH prepend, `$HOSTNAME` for `ISX_CONTAINER` in `GuestProvisioning.writeEnvFile()`), call `.expandingAtLogin()` -- code-only (no setter, not parsed from YAML).
 Only plain `$NAME`/`${NAME}` references stay live.
 Any other `$`, quotes, backslashes and backticks are still escaped.
 Both `ToolDef.env` and `ImageDef.env` use this model.
@@ -116,7 +116,7 @@ Built-in Java tools whose CLI reads a file instead write an `/etc/profile.d/isx-
 
 `EnvResolver` (`config/EnvResolver.java`) collects sourced entries from the template parent chain and all tools, validates consistency (set+set with different values -> `EnvConflictException` naming both sources), and generates the shell script for `/etc/profile.d/isx-env.sh`.
 
-`BuildCommand.writeEnvFile()` orchestrates collection: built-in entries (`ISX_CONTAINER`, `ISX_TEMPLATE`) -> template chain env -> tool `envEntries()`.
+`GuestProvisioning.writeEnvFile()` orchestrates collection: built-in entries (`ISX_CONTAINER`, `ISX_TEMPLATE`) -> template chain env -> tool `envEntries()`.
 Called after `runToolSetup()` in both `buildFromScratch` and `buildFromParent`.
 `writeAgentContext()` runs later in both paths, after all layer work (see `.claude/rules/build.md`); note that env vars are deliberately *not* repeated in the agent context file, precisely because this one already puts them in every login shell.
 `linkJavaTrustStores()` runs after `writeEnvFile()` and symlinks any JDK `cacerts` under `/usr/lib/jvm` or `/opt` to the system trust store (`/etc/pki/java/cacerts`), so non-Fedora JDKs (GraalVM, labsjdk, etc.) trust the MITM CA without needing `JAVA_TOOL_OPTIONS`.

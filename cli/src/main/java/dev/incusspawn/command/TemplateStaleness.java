@@ -24,7 +24,7 @@ import java.util.function.Supplier;
  * {@link #parentRebuilt}, read from the instance's config) all apply these rules, so a rule
  * cannot change for one of them only. All three make a template out of sync (#1130).
  * The tool fingerprints a definition is compared with are each caller's input: the build
- * computes them per chain ({@code BuildCommand.computeToolFingerprints}), the others with
+ * computes them per chain ({@code BuildTools.computeToolFingerprints}), the others with
  * {@link #toolFingerprints}. It reads only what it is handed -- the built templates' stamps from one
  * Incus listing, the definitions, and the tool fingerprints, asked for only when a definition is
  * compared -- so the CLI pays for none of the TUI's reload.

@@ -193,7 +193,7 @@ public class CleanCommand extends BaseCommand {
             var incus = RuntimeServices.incus();
             var pool = incus.findCowPool();
             if (pool == null) return;
-            var volume = BuildCommand.DNF_CACHE_VOLUME;
+            var volume = GuestProvisioning.DNF_CACHE_VOLUME;
             if (dryRun) {
                 System.out.println("Would delete DNF cache volume (" + volume + ") from pool " + pool);
                 return;
@@ -462,7 +462,7 @@ public class CleanCommand extends BaseCommand {
         var images = scanImages(incus);
         boolean dnfExists = false;
         try {
-            dnfExists = incus.storageVolumeExists(pool, BuildCommand.DNF_CACHE_VOLUME);
+            dnfExists = incus.storageVolumeExists(pool, GuestProvisioning.DNF_CACHE_VOLUME);
         } catch (Exception ignored) {}
         return new CleanScan(pool, usage, failedBuilds, images.unused(), images.base(), dnfExists);
     }
@@ -496,8 +496,8 @@ public class CleanCommand extends BaseCommand {
         boolean dnfDeleted = false;
         if (deleteDnfCache) {
             try {
-                if (incus.storageVolumeExists(pool, BuildCommand.DNF_CACHE_VOLUME)) {
-                    if (incus.deleteStorageVolume(pool, BuildCommand.DNF_CACHE_VOLUME)) {
+                if (incus.storageVolumeExists(pool, GuestProvisioning.DNF_CACHE_VOLUME)) {
+                    if (incus.deleteStorageVolume(pool, GuestProvisioning.DNF_CACHE_VOLUME)) {
                         dnfDeleted = true;
                     }
                 }
@@ -653,7 +653,7 @@ public class CleanCommand extends BaseCommand {
 
         private boolean cleanDnfCacheFromPool(IncusClient incus, String pool, boolean dryRun) {
             try {
-                if (!incus.storageVolumeExists(pool, BuildCommand.DNF_CACHE_VOLUME)) {
+                if (!incus.storageVolumeExists(pool, GuestProvisioning.DNF_CACHE_VOLUME)) {
                     return false;
                 }
             } catch (Exception e) {
@@ -661,7 +661,7 @@ public class CleanCommand extends BaseCommand {
             }
 
             if (dryRun) {
-                System.out.println("Would delete DNF cache volume (" + BuildCommand.DNF_CACHE_VOLUME + ") from pool " + pool);
+                System.out.println("Would delete DNF cache volume (" + GuestProvisioning.DNF_CACHE_VOLUME + ") from pool " + pool);
                 return true;
             }
 

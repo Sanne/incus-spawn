@@ -1,6 +1,6 @@
 package dev.incusspawn.tui;
 
-import dev.incusspawn.command.BuildCommand;
+import dev.incusspawn.command.BuildTools;
 import dev.incusspawn.command.InstanceListing.InstanceInfo;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Metadata;
@@ -208,10 +208,10 @@ final class InstanceActions {
         var config = SpawnConfig.load();
         tools.removeIf(name -> {
             var setup = toolDefLoader.get().find(name);
-            if (setup != null) return BuildCommand.isFeatureGated(setup, config);
+            if (setup != null) return BuildTools.isFeatureGated(setup, config);
             if (cdiTools.get() != null) {
                 for (var t : cdiTools.get()) {
-                    if (t.name().equals(name)) return BuildCommand.isFeatureGated(t, config);
+                    if (t.name().equals(name)) return BuildTools.isFeatureGated(t, config);
                 }
             }
             return false;
@@ -238,10 +238,10 @@ final class InstanceActions {
         var config = SpawnConfig.load();
         tools.removeIf(name -> {
             var setup = toolDefLoader.get().find(name);
-            if (setup != null) return BuildCommand.isFeatureGated(setup, config);
+            if (setup != null) return BuildTools.isFeatureGated(setup, config);
             if (cdiTools.get() != null) {
                 for (var t : cdiTools.get()) {
-                    if (t.name().equals(name)) return BuildCommand.isFeatureGated(t, config);
+                    if (t.name().equals(name)) return BuildTools.isFeatureGated(t, config);
                 }
             }
             return false;

@@ -278,7 +278,7 @@ One did, until #931, and it walked the whole home, cloned repos included, on eve
 A verify often depends on another tool: Maven's `mvn --version` needs the `JAVA_HOME` a JDK tool declares, and verifying it right after its own install (before the JDK, without the env file) failed in an image where Maven works.
 A failed verify's warning keeps every line of the reason, joined and capped, since messages such as Maven's wrap mid-sentence.
 
-**Environment variable system** (`EnvEntry` + `EnvResolver`): Env entries from the full template parent chain and all tools are collected by `BuildCommand.writeEnvFile()` into a single `/etc/profile.d/isx-env.sh`.
+**Environment variable system** (`EnvEntry` + `EnvResolver`): Env entries from the full template parent chain and all tools are collected by `GuestProvisioning.writeEnvFile()` into a single `/etc/profile.d/isx-env.sh`.
 Four strategies: `set` (unconditional), `set-if-unset` (conditional default), `prepend`/`append` (additive with separator).
 Conflict detection: two `set` entries for the same variable with different values fail the build with both sources named.
 Templates (`ImageDef`) can also declare env entries.
@@ -425,7 +425,7 @@ Every build regenerates `/etc/claude-code/CLAUDE.md`, a short always-loaded prim
 Generation happens once per build, in both `buildFromScratch` and `buildFromParent`, and in each path after all layer work is finished.
 So it sees the fully resolved image (every ancestor's tools and repos) rather than one layer at a time, and the repos it lists have actually been cloned by the time it is written.
 Do not move the call earlier to sit beside `writeEnvFile`: in `buildFromParent` that is before `cloneRepos`.
-Content comes from `AgentContextGenerator` (module `common`), a pure function that `BuildCommand.writeAgentContext()` feeds and writes — the same split as `EnvResolver`/`writeEnvFile`, and the reason the whole format is unit-testable without Incus.
+Content comes from `AgentContextGenerator` (module `common`), a pure function that `GuestProvisioning.writeAgentContext()` feeds and writes — the same split as `EnvResolver`/`writeEnvFile`, and the reason the whole format is unit-testable without Incus.
 
 **Why the managed-policy layer.**
 That path is Claude Code's *managed policy* memory location on Linux: it loads ahead of the user layer (`~/.claude/CLAUDE.md`) and the project layer (`./CLAUDE.md`), all layers concatenate rather than override, and it cannot be suppressed via `claudeMdExcludes`.
@@ -1771,7 +1771,7 @@ They are removed from stopped templates to avoid host-path dependencies and re-a
 
 #### Devices are attached before start
 
-Every disk device a build or branch attaches from the host is added while the instance is still **stopped**: the `readonly` mounts, the `overlay` lower layers and the DNF cache volume (`HostResourceSetup.attachBuildDevices` and `BuildCommand.attachDnfCache`, both in the create→start window of `buildFromScratch` and `buildFromParent`), the host resources re-attached at branch time (`integrateWithHost`, already before `prefetchAndStart`), and the `--inbox` directory (`InstanceLifecycle.attachInbox`).
+Every disk device a build or branch attaches from the host is added while the instance is still **stopped**: the `readonly` mounts, the `overlay` lower layers and the DNF cache volume (`HostResourceSetup.attachBuildDevices` and `GuestProvisioning.attachDnfCache`, both in the create→start window of `buildFromScratch` and `buildFromParent`), the host resources re-attached at branch time (`integrateWithHost`, already before `prefetchAndStart`), and the `--inbox` directory (`InstanceLifecycle.attachInbox`).
 Only the in-guest work waits for start: `copy` pushes, the `mount -t overlay` over the attached lower layer, and `installOverlayService`, all in `HostResourceSetup.applyForBuild` (#828).
 The reasons:
 

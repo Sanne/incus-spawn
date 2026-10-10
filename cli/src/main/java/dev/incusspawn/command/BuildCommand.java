@@ -3,15 +3,10 @@ package dev.incusspawn.command;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.baseimage.BaseImageReleases;
-import dev.incusspawn.config.AgentContextGenerator;
 import dev.incusspawn.config.BuildSource;
-import dev.incusspawn.config.EnvEntry;
-import dev.incusspawn.config.EnvResolver;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
@@ -34,27 +29,22 @@ import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
 
-import dev.incusspawn.tool.ClaudeSetup;
-import dev.incusspawn.tool.CodexSetup;
 import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
-import dev.incusspawn.tool.ToolVerifier;
 import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.command.BuildProgress.StepProgress;
 import dev.incusspawn.command.BuildProgress.TransferProgress;
+import dev.incusspawn.command.BuildTools.ResolvedTool;
+import dev.incusspawn.command.BuildTools.ToolResolution;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Arguments;
 import org.aesh.command.option.Option;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -68,18 +58,35 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+import static dev.incusspawn.command.BuildTools.computeToolFingerprints;
 import static dev.incusspawn.command.BuildProgress.dnfCommand;
 import static dev.incusspawn.command.BuildProgress.formatDuration;
 import static dev.incusspawn.command.BuildProgress.runDnf;
 import static dev.incusspawn.command.BuildProgress.runLiveStep;
 import static dev.incusspawn.command.BuildProgress.runWithSpinner;
 import static dev.incusspawn.command.BuildProgress.stepFrom;
+import static dev.incusspawn.command.GuestProvisioning.assertGuestSelinuxNotEnforcing;
+import static dev.incusspawn.command.GuestProvisioning.disableGuestSelinux;
+import static dev.incusspawn.command.GuestProvisioning.enablePackageRepos;
+import static dev.incusspawn.command.GuestProvisioning.expandHome;
+import static dev.incusspawn.command.GuestProvisioning.installAllPackages;
+import static dev.incusspawn.command.GuestProvisioning.linkJavaTrustStores;
+import static dev.incusspawn.command.GuestProvisioning.maskServices;
+import static dev.incusspawn.command.GuestProvisioning.refreshInheritedTools;
+import static dev.incusspawn.command.GuestProvisioning.removePackages;
+import static dev.incusspawn.command.GuestProvisioning.runToolSetup;
+import static dev.incusspawn.command.GuestProvisioning.updateClaudeJsonTrust;
+import static dev.incusspawn.command.GuestProvisioning.updateCodexTrust;
+import static dev.incusspawn.command.GuestProvisioning.verifyTools;
+import static dev.incusspawn.command.GuestProvisioning.warnDnfCacheUnavailable;
+import static dev.incusspawn.command.GuestProvisioning.writeAgentContext;
+import static dev.incusspawn.command.GuestProvisioning.writeEnvFile;
+import static dev.incusspawn.command.SkillInstaller.installSkills;
 import static dev.incusspawn.util.BuildOutput.BOLD;
 import static dev.incusspawn.util.BuildOutput.RED;
 import static dev.incusspawn.util.BuildOutput.YELLOW;
@@ -146,7 +153,6 @@ public class BuildCommand extends BaseCommand {
         return Prompts.console();
     }
 
-    private static final String DNF_CACHE_DEVICE = "dnf-cache";
     public static final String REBUILDING_SUFFIX = "-rebuilding";
 
     /** The longest template name that can be rebuilt: it is built as {@code <name>-rebuilding} first. */
@@ -1060,7 +1066,7 @@ public class BuildCommand extends BaseCommand {
         var promotedName = canonicalName + "-failed-build";
         try {
             incus.deleteIfExists(promotedName);
-            try { unmountDnfCache(buildName, machineType); } catch (Exception ignored) {}
+            try { new GuestProvisioning(incus).unmountDnfCache(buildName, machineType); } catch (Exception ignored) {}
             if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(buildName))) {
                 incus.forceStop(buildName);
             }
@@ -1242,9 +1248,9 @@ public class BuildCommand extends BaseCommand {
         }
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
-        unmountDnfCache(buildName, machineType);
+        new GuestProvisioning(incus).unmountDnfCache(buildName, machineType);
 
-        cleanCaches(buildName);
+        new GuestProvisioning(incus).cleanCaches(buildName);
 
         tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs,
                 identityStamps);
@@ -1488,9 +1494,9 @@ public class BuildCommand extends BaseCommand {
         }
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
-        unmountDnfCache(buildName, machineType);
+        new GuestProvisioning(incus).unmountDnfCache(buildName, machineType);
 
-        cleanCaches(buildName);
+        new GuestProvisioning(incus).cleanCaches(buildName);
 
         var parentCanonical = imageDef.isRoot() ? null : imageDef.getParent();
         tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs,
@@ -1865,325 +1871,16 @@ public class BuildCommand extends BaseCommand {
         };
     }
 
-    /**
-     * Resolve all tools referenced by the image definition, including
-     * transitive dependencies declared via {@code requires}.
-     */
-    record ResolvedTool(
-        String name,
-        ToolSetup setup,
-        Map<String, String> parameters,
-        boolean reconfigureOnly
-    ) {
-        ResolvedTool(String name, ToolSetup setup, Map<String, String> parameters) {
-            this(name, setup, parameters, false);
-        }
-    }
-
-    record ToolResolution(
-        List<ResolvedTool> effective,
-        List<ResolvedTool> ancestors
-    ) {}
-
     private List<ResolvedTool> resolveTools(ImageDef imageDef) {
-        return resolveTools(imageDef, toolDefLoader, toolSetups, false);
-    }
-
-    static List<ResolvedTool> resolveTools(ImageDef imageDef, ToolDefLoader toolDefLoader, boolean quiet) {
-        return resolveTools(imageDef, toolDefLoader, List.of(), quiet);
-    }
-
-    static List<ResolvedTool> resolveTools(ImageDef imageDef, ToolDefLoader toolDefLoader,
-                                                      Iterable<ToolSetup> cdiTools, boolean quiet) {
-        var explicit = new LinkedHashSet<String>();
-        for (var toolRef : imageDef.getTools()) {
-            explicit.add(toolRef.getName());
-        }
-        var resolved = new LinkedHashMap<String, ResolvedTool>();
-        var explicitlyResolved = new HashSet<String>();
-
-        for (var toolRef : imageDef.getTools()) {
-            resolveWithDeps(toolRef.getName(), toolRef.getParams(), resolved,
-                new LinkedHashSet<>(), explicit, explicitlyResolved, true,
-                toolDefLoader, cdiTools, quiet);
-        }
-        return new ArrayList<>(resolved.values());
+        return BuildTools.resolveTools(imageDef, toolDefLoader, toolSetups, false);
     }
 
     private void resolveWithDeps(String name, Map<String, String> params,
                                   LinkedHashMap<String, ResolvedTool> resolved,
                                   LinkedHashSet<String> visiting, Set<String> explicit,
                                   Set<String> explicitlyResolved, boolean isExplicit) {
-        resolveWithDeps(name, params, resolved, visiting, explicit, explicitlyResolved, isExplicit,
+        BuildTools.resolveWithDeps(name, params, resolved, visiting, explicit, explicitlyResolved, isExplicit,
             toolDefLoader, toolSetups, false);
-    }
-
-    private static void resolveWithDeps(String name, Map<String, String> params,
-                                  LinkedHashMap<String, ResolvedTool> resolved,
-                                  LinkedHashSet<String> visiting, Set<String> explicit,
-                                  Set<String> explicitlyResolved, boolean isExplicit,
-                                  ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools, boolean quiet) {
-        if (!visiting.add(name)) {
-            if (!quiet) {
-                System.err.println("Warning: dependency cycle detected: " +
-                        String.join(" -> ", visiting) + " -> " + name + ", skipping.");
-            }
-            return;
-        }
-        var tool = findTool(name, toolDefLoader, cdiTools);
-        if (tool == null) {
-            if (!quiet) {
-                var ungated = findToolUngated(name, toolDefLoader, cdiTools);
-                if (ungated != null) {
-                    System.err.println("Warning: tool '" + name + "' requires feature '"
-                            + ungated.feature() + "' — add it to the features list in config.yaml to enable.");
-                } else {
-                    System.err.println("Warning: unknown tool '" + name + "', skipping.");
-                }
-            }
-            visiting.remove(name);
-            return;
-        }
-
-        // Resolve parameters and validate
-        Map<String, String> resolvedParams = params != null ? params : Map.of();
-        var parameterDefs = tool.parameters();
-        if (!parameterDefs.isEmpty()) {
-            var validation = dev.incusspawn.tool.ParameterResolver.resolve(
-                parameterDefs, resolvedParams);
-            if (validation.hasErrors()) {
-                throw new IllegalArgumentException(
-                    "Error in tool '" + name + "' parameters:\n" +
-                    String.join("\n", validation.errors().stream().map(e -> "  " + e).toList())
-                );
-            }
-            resolvedParams = validation.resolvedValues();
-        } else if (!resolvedParams.isEmpty()) {
-            throw new IllegalArgumentException(
-                "Tool '" + name + "' does not accept parameters, but received: " + resolvedParams.keySet()
-            );
-        }
-
-        // Check if tool already resolved - if parameters differ, explicit config wins over transitive deps
-        if (resolved.containsKey(name)) {
-            var existing = resolved.get(name);
-            if (!existing.parameters().equals(resolvedParams)) {
-                if (!isExplicit && explicit.contains(name)) {
-                    // Transitive dep for a tool the user explicitly configured — skip
-                    if (!quiet && params != null && !params.isEmpty()) {
-                        System.err.println("Warning: tool '" + name +
-                            "' is explicitly configured, overriding parameters from a transitive dependency.");
-                    }
-                } else if (isExplicit && !explicitlyResolved.contains(name)) {
-                    // Explicit config replaces a prior transitive-dep resolution
-                    if (!quiet) {
-                        var defaultOnly = dev.incusspawn.tool.ParameterResolver.resolve(
-                            tool.parameters(), Map.of());
-                        if (defaultOnly.hasErrors() ||
-                                !defaultOnly.resolvedValues().equals(existing.parameters())) {
-                            System.err.println("Warning: tool '" + name +
-                                "' is explicitly configured, overriding parameters from a transitive dependency.");
-                        }
-                    }
-                    resolved.put(name, new ResolvedTool(name, tool, resolvedParams));
-                    explicitlyResolved.add(name);
-                } else {
-                    throw new IllegalArgumentException(
-                        "Tool '" + name + "' specified multiple times with different parameters:\n" +
-                        "  First:  " + existing.parameters() + "\n" +
-                        "  Second: " + resolvedParams
-                    );
-                }
-            }
-            visiting.remove(name);
-            return;
-        }
-
-        // Recursively resolve dependencies with their parameters
-        if (tool instanceof dev.incusspawn.tool.YamlToolSetup yts) {
-            for (var depRef : yts.toolDef().getRequires()) {
-                if (!quiet && !explicit.contains(depRef.getName())) {
-                    BuildOutput.note("Auto-adding dependency: " + depRef.getName() + " (required by " + name + ")");
-                }
-                resolveWithDeps(depRef.getName(), depRef.getParams(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, quiet);
-            }
-        } else {
-            for (var dep : tool.requires()) {
-                if (!quiet && !explicit.contains(dep)) {
-                    BuildOutput.note("Auto-adding dependency: " + dep + " (required by " + name + ")");
-                }
-                resolveWithDeps(dep, Map.of(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, quiet);
-            }
-        }
-
-        resolved.put(name, new ResolvedTool(name, tool, resolvedParams));
-        if (isExplicit) {
-            explicitlyResolved.add(name);
-        }
-        visiting.remove(name);
-    }
-
-    private void removePackages(Container container, ImageDef imageDef) {
-        var pkgs = imageDef.getRemovePackages();
-        if (pkgs.isEmpty()) return;
-        BuildOutput.step("Removing unnecessary packages...");
-        container.sh(
-                "dnf remove -y --setopt=clean_requirements_on_remove=True " +
-                String.join(" ", pkgs) + " 2>/dev/null; true");
-    }
-
-    static final String SELINUX_CONFIG = "/etc/selinux/config";
-
-    /**
-     * Pins a VM guest's SELinux to {@code disabled} before any package is installed (#842).
-     * The base image ships no policy and a filesystem nothing ever labelled, but a package
-     * like {@code perl} pulls in {@code selinux-policy-targeted}, whose {@code %post} writes
-     * {@code SELINUX=enforcing}: the next boot then denies the incus-agent's vsock
-     * {@code listen} and the instance is unreachable. Relabelling cannot fix that -- the
-     * targeted policy has no rule for the agent at all. The {@code %post} only writes the
-     * file when it is missing or empty, so a non-empty file seeded here also survives every
-     * later install, in the template and in its branches. An existing file is rewritten, not
-     * skipped. That cannot rescue a parent whose file already says {@code enforcing}: its copy
-     * boots enforcing and the agent is gone before this runs. Such a parent was built by an
-     * older isx, so {@code isImageOutdated} has {@code buildChain} rebuild it first.
-     */
-    void disableGuestSelinux(Container container) {
-        container.sh(disableSelinuxScript(SELINUX_CONFIG))
-                .assertSuccess("Failed to disable SELinux in the VM guest");
-    }
-
-    static String disableSelinuxScript(String config) {
-        return "if grep -q '^[[:space:]]*SELINUX=' " + config + " 2>/dev/null; then "
-                + "sed -i 's/^[[:space:]]*SELINUX=.*/SELINUX=disabled/' " + config + "; "
-                + "else mkdir -p \"$(dirname " + config + ")\" && "
-                + "printf '%s\\n' '# Set by incus-spawn: the guest filesystem is not labelled (issue #842).' "
-                + "SELINUX=disabled SELINUXTYPE=targeted >> " + config + "; fi";
-    }
-
-    /**
-     * Fails the build if the VM guest would boot SELinux enforcing, which kills the
-     * incus-agent on the next boot. The build itself runs on the boot before the policy
-     * takes effect, so without this the breakage only shows up later, on {@code isx shell}.
-     */
-    void assertGuestSelinuxNotEnforcing(Container container) {
-        if (!container.sh(selinuxNotEnforcingScript(SELINUX_CONFIG)).success()) {
-            throw new IllegalStateException("The VM guest would boot SELinux enforcing: "
-                    + SELINUX_CONFIG + " was set to 'enforcing' during the build (a package or "
-                    + "tool setup rewrote it). The guest filesystem is not labelled and the "
-                    + "policy denies the incus-agent, so the instance would be unreachable.");
-        }
-    }
-
-    static String selinuxNotEnforcingScript(String config) {
-        return "! grep -qiE '^[[:space:]]*SELINUX=[[:space:]]*\"?enforcing' " + config + " 2>/dev/null";
-    }
-
-    private void maskServices(Container container, ImageDef imageDef) {
-        var services = imageDef.getMaskServices();
-        if (services.isEmpty()) return;
-        BuildOutput.step("Masking unnecessary services...");
-        container.sh(
-                "systemctl mask " + String.join(" ", services) + " 2>/dev/null; true");
-    }
-
-    /**
-     * Collect all packages from the image definition and its tools,
-     * subtract those already installed by ancestor images, and install
-     * only the remaining packages. Accepts pre-resolved ancestor tools
-     * to avoid redundant resolution.
-     */
-    private void installAllPackages(Container container, ImageDef imageDef,
-                                    List<ResolvedTool> tools,
-                                    List<ResolvedTool> ancestorTools,
-                                    Map<String, ImageDef> defs) {
-        var allPackages = new LinkedHashSet<>(imageDef.getPackages());
-        for (var tool : tools) {
-            allPackages.addAll(tool.setup().packages());
-        }
-        if (allPackages.isEmpty()) return;
-
-        // Collect packages already installed by ancestor images
-        var ancestorPackages = new LinkedHashSet<String>();
-        for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
-            ancestorPackages.addAll(ancestor.getPackages());
-        }
-        for (var tool : ancestorTools) {
-            ancestorPackages.addAll(tool.setup().packages());
-        }
-
-        var totalCount = allPackages.size();
-        allPackages.removeAll(ancestorPackages);
-
-        if (allPackages.isEmpty()) {
-            BuildOutput.ok("All " + totalCount + " packages already installed");
-            return;
-        }
-
-        var alreadyInstalled = totalCount - allPackages.size();
-        var pkgDetail = allPackages.size() + " to install"
-                + (alreadyInstalled > 0 ? " (" + alreadyInstalled + " already installed)" : "");
-        try (var group = BuildOutput.group("Packages", pkgDetail)) {
-            BuildOutput.list(allPackages);
-            var rest = new ArrayList<String>(List.of("install", "-y"));
-            rest.addAll(allPackages);
-            // Label carries no count: the group header states the requested packages, while
-            // dnf's own N/M in the spinner detail counts the fully-resolved transaction
-            // (requested packages + their dependencies, one step per action phase), so a count
-            // here would look like it should match dnf's much larger N when it never will.
-            runDnf(container, "Installing packages and dependencies", "Failed to install packages",
-                    dnfCommand(rest.toArray(String[]::new)));
-        }
-    }
-
-    /**
-     * Enable package repositories (e.g. COPR) from the image and its tools,
-     * skipping any already enabled by ancestor images. Must be called before
-     * {@link #installAllPackages}.
-     */
-    private record RepoKey(String type, String name) {
-        RepoKey(ImageDef.PackageRepo repo) { this(repo.getType(), repo.getName()); }
-    }
-
-    private void enablePackageRepos(Container container, ImageDef imageDef,
-                                    List<ResolvedTool> tools,
-                                    List<ResolvedTool> ancestorTools,
-                                    Map<String, ImageDef> defs) {
-        var allRepos = new LinkedHashSet<RepoKey>();
-        for (var repo : imageDef.getPackageRepos()) {
-            allRepos.add(new RepoKey(repo));
-        }
-        for (var tool : tools) {
-            for (var repo : tool.setup().packageRepos()) {
-                allRepos.add(new RepoKey(repo));
-            }
-        }
-        if (allRepos.isEmpty()) return;
-
-        var ancestorRepos = new LinkedHashSet<RepoKey>();
-        for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
-            for (var repo : ancestor.getPackageRepos()) {
-                ancestorRepos.add(new RepoKey(repo));
-            }
-        }
-        for (var tool : ancestorTools) {
-            for (var repo : tool.setup().packageRepos()) {
-                ancestorRepos.add(new RepoKey(repo));
-            }
-        }
-
-        allRepos.removeAll(ancestorRepos);
-        if (allRepos.isEmpty()) return;
-
-        for (var key : allRepos) {
-            switch (key.type()) {
-                case "copr" -> runWithSpinner("Enabling", "COPR repo " + key.name(),
-                        "Failed to enable COPR repo " + key.name(),
-                        state -> state.set(0, stepFrom(
-                                container.exec("dnf", "copr", "enable", "-y", key.name()))));
-                default -> System.err.println("Warning: unknown package_repos type '" + key.type()
-                        + "' for '" + key.name() + "', skipping.");
-            }
-        }
     }
 
     /**
@@ -2217,169 +1914,6 @@ public class BuildCommand extends BaseCommand {
         return BuildAccounts.settleIdentities(container, config, setups, ImageDef.resolveAccounts(imageDef, defs),
                 AccountSelection.rederivableNamespaces(imageDef, defs, toolDefLoader.allToolSetups(), setups),
                 inherited, BuildOutput::step, BuildOutput::warn);
-    }
-
-    /**
-     * Run the non-package setup steps for each tool (scripts, files, env, verify).
-     */
-    private void runToolSetup(Container container, List<ResolvedTool> tools,
-                              Map<String, String> accountSelection) {
-        if (tools.isEmpty()) return;
-        var names = tools.stream().map(ResolvedTool::name).toList();
-        try (var group = BuildOutput.group("Tools", String.join(", ", names))) {
-            for (var resolved : tools) {
-                if (resolved.reconfigureOnly()) {
-                    resolved.setup().reconfigure(container, resolved.parameters());
-                } else {
-                    resolved.setup().install(container, resolved.parameters(), accountSelection);
-                }
-            }
-        }
-    }
-
-    /**
-     * Verify the tools this build installed, after {@link #writeEnvFile}: a verify runs in the
-     * environment the image will have, so one tool may rely on another's (Maven on the JDK's
-     * {@code JAVA_HOME}) -- except a {@code verify_as_root} check, which gets root's own
-     * environment (see {@link ToolVerifier}). A reconfigure-only tool was verified when its
-     * ancestor installed it.
-     */
-    private static void verifyTools(Container container, List<ResolvedTool> tools) {
-        var checks = tools.stream()
-                .filter(t -> !t.reconfigureOnly())
-                .map(t -> new ToolVerifier.Check(t.name(), t.setup().verifyCommand(t.parameters()),
-                        t.setup().verifyAsRoot()))
-                .filter(check -> check.command() != null)
-                .toList();
-        ToolVerifier.verifyAll(container, checks);
-    }
-
-    /** Refreshes what isx owns of each tool this layer inherits without setting it up again. */
-    static void refreshInheritedTools(Container container, ToolResolution toolResolution) {
-        var effectiveNames = toolResolution.effective().stream()
-                .map(ResolvedTool::name).collect(java.util.stream.Collectors.toSet());
-        for (var tool : toolResolution.ancestors()) {
-            if (!effectiveNames.contains(tool.name())) {
-                tool.setup().refreshInherited(container);
-            }
-        }
-    }
-
-    private void writeEnvFile(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
-                               List<ResolvedTool> allTools, String canonicalName) {
-        var resolver = new EnvResolver();
-
-        resolver.add(EnvEntry.set("ISX_CONTAINER", "${HOSTNAME}").expandingAtLogin(), "built-in");
-        resolver.add(EnvEntry.set("ISX_TEMPLATE", canonicalName), "built-in");
-        resolver.add(EnvEntry.set("ISX_VERSION", BuildInfo.instance().version()), "built-in");
-        for (var layer : ImageDef.chain(imageDef, defs)) {
-            resolver.addAll(layer.getEnv(), "template " + layer.getName());
-        }
-
-        // The account the template selected decides which auth mode gets baked, so it has to
-        // reach envEntries -- resolving the default here would ignore the template's choice.
-        var accountSelection = ImageDef.resolveAccounts(imageDef, defs);
-        for (var resolved : allTools) {
-            var entries = resolved.setup().envEntries(resolved.parameters(), accountSelection);
-            resolver.addAll(entries, "tool " + resolved.name());
-        }
-
-        var script = resolver.resolve();
-        container.writeFile("/etc/profile.d/isx-env.sh", script);
-    }
-
-    /**
-     * Write the managed-policy CLAUDE.md that tells an agent what this box already
-     * provides. Runs once per build, after the chain loop, so it sees the fully
-     * resolved image rather than one layer at a time.
-     *
-     * <p>Written to {@code /etc/claude-code/CLAUDE.md} — Claude Code's managed policy
-     * layer, beside the managed-settings.json that {@code ClaudeSetup} already owns.
-     * That layer loads ahead of, and concatenates with, {@code ~/.claude/CLAUDE.md} and
-     * any project CLAUDE.md, so isx never merges with or overwrites a file someone else
-     * owns. Root ownership is correct here; no chown.
-     */
-    void writeAgentContext(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
-                           List<ResolvedTool> allTools, String canonicalName) {
-        var chain = ImageDef.chain(imageDef, defs);
-
-        // generate() drops blanks and repeats, so collect freely here.
-        var notes = new ArrayList<String>();
-        var repos = new ArrayList<AgentContextGenerator.Repo>();
-        var seenRepoPaths = new HashSet<String>();
-        for (var layer : chain) {
-            notes.add(layer.getAgentNote());
-            // Ancestor repos are in the final image too: buildFromScratch clones them
-            // per-layer in the chain loop, buildFromParent inherits them with the copy.
-            for (var repo : layer.getRepos()) {
-                // getPath() derives ~/<name> from the url, but yields null for an entry
-                // with neither — nothing was cloned for it, so there is nothing to list.
-                var path = repo.getPath();
-                if (path == null || path.isBlank()) continue;
-                // Dedupe on the resolved path: ~/jdk and /home/agentuser/jdk are one clone.
-                if (seenRepoPaths.add(expandHome(path))) {
-                    repos.add(new AgentContextGenerator.Repo(path, repo.getUrl()));
-                }
-            }
-        }
-
-        var toolNames = new ArrayList<String>(allTools.size());
-        for (var resolved : allTools) {
-            toolNames.add(resolved.name());
-            notes.add(resolved.setup().agentNote());
-        }
-
-        var content = AgentContextGenerator.generate(canonicalName, toolNames, repos, notes);
-        container.writeFile(ClaudeSetup.MANAGED_MEMORY_PATH, content);
-    }
-
-    private static void linkJavaTrustStores(Container container) {
-        container.sh(
-                "find /usr/lib/jvm /opt -name cacerts -path '*/lib/security/cacerts' 2>/dev/null | while IFS= read -r f; do " +
-                "t=$(readlink -f \"$f\" 2>/dev/null); " +
-                "if [ \"$t\" != /etc/pki/java/cacerts ]; then " +
-                "ln -sf /etc/pki/java/cacerts \"$f\"; " +
-                "fi; done");
-    }
-
-    private static ToolSetup findTool(String name, ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools) {
-        var tool = toolDefLoader.find(name);
-        if (tool != null) return isFeatureGated(tool) ? null : tool;
-        for (var t : cdiTools) {
-            if (t.name().equals(name)) return isFeatureGated(t) ? null : t;
-        }
-        return null;
-    }
-
-    static boolean isFeatureGated(ToolSetup tool) {
-        var feature = tool.feature();
-        return feature != null && !SpawnConfig.load().isFeatureEnabled(feature);
-    }
-
-    public static boolean isFeatureGated(ToolSetup tool, SpawnConfig config) {
-        var feature = tool.feature();
-        return feature != null && !config.isFeatureEnabled(feature);
-    }
-
-    private static ToolSetup findToolUngated(String name, ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools) {
-        var tool = toolDefLoader.find(name);
-        if (tool != null && tool.feature() != null) return tool;
-        for (var t : cdiTools) {
-            if (t.name().equals(name) && t.feature() != null) return t;
-        }
-        return null;
-    }
-
-    void cleanCaches(String container) {
-        BuildOutput.stepStart("Cleaning up caches...");
-        // If the shared cache volume is somehow still mounted, dnf clean / rm -rf would
-        // wipe it for every later build, not just this image: clean only /tmp then.
-        incus.shellExec(container, "sh", "-c",
-                "if mountpoint -q " + DNF_CACHE_PATH + "; then "
-                        + "echo 'Warning: DNF cache volume still mounted, not cleaning it' >&2; "
-                        + "else dnf clean all; rm -rf " + DNF_CACHE_PATH + "; fi; "
-                        + "rm -rf /tmp/* /var/tmp/*; true");
-        BuildOutput.stepDone();
     }
 
     /** Containers only: their NIC is eth0, a VM's is not (see InstanceLifecycle.addressUpCheck). */
@@ -2539,26 +2073,6 @@ public class BuildCommand extends BaseCommand {
      */
     private void stampAccountIdentities(String container, Map<String, String> identityStamps) {
         if (!identityStamps.isEmpty()) incus.configSetAll(container, identityStamps);
-    }
-
-    private static Map<String, String> computeToolFingerprints(
-            dev.incusspawn.config.ImageDef imageDef,
-            ToolDefLoader toolDefLoader,
-            Map<String, ImageDef> defs) {
-        var rawFps = new TreeMap<String, String>();
-        var depMap = new TreeMap<String, List<String>>();
-        // Always quiet: this method only fingerprints YAML tools and doesn't have
-        // CDI tools, so non-YAML tools would produce spurious "unknown tool" warnings.
-        for (var resolvedTool : resolveTools(imageDef, toolDefLoader, true)) {
-            if (resolvedTool.setup() instanceof YamlToolSetup yts) {
-                rawFps.put(yts.toolDef().getName(), yts.toolDef().contentFingerprint());
-                var depNames = yts.toolDef().getRequires().stream()
-                    .map(dev.incusspawn.tool.ToolDef.ToolRef::getName)
-                    .toList();
-                depMap.put(yts.toolDef().getName(), depNames);
-            }
-        }
-        return dev.incusspawn.tool.ToolDef.compositeFingerprints(rawFps, depMap);
     }
 
     private BuildSource collectBuildSource(ImageDef imageDef, Map<String, ImageDef> defs) {
@@ -2804,15 +2318,6 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * Mount a shared DNF cache volume into the container. This shares
-     * metadata and downloaded packages across builds, avoiding redundant
-     * downloads when building a parent→child image chain.
-     */
-    static final String DNF_CACHE_VOLUME = "dnf-cache";
-
-    static final String DNF_CACHE_PATH = "/var/cache/libdnf5";
-
-    /**
      * Give agentuser its home when {@code useradd -m} created it, and when it did not: host
      * resources are attached before start (#828), so a mount under {@code /home/agentuser} already
      * made the directory as root. {@code useradd} then succeeds but skips {@code /etc/skel}, and a
@@ -2829,31 +2334,6 @@ public class BuildCommand extends BaseCommand {
             + "-o -exec chown -h agentuser:agentuser {} +";
 
     /**
-     * Attach the DNF cache volume to a stopped build instance. Returns why it could not be
-     * attached, or null: the caller is inside a progress line and reports it after the step.
-     */
-    String attachDnfCache(String container) {
-        try {
-            var pool = incus.findCowPool();
-            if (pool == null) return null;
-            incus.ensureStorageVolume(pool, DNF_CACHE_VOLUME);
-            incus.deviceAdd(container, DNF_CACHE_DEVICE, "disk",
-                    "pool=" + pool,
-                    "source=" + DNF_CACHE_VOLUME,
-                    "path=" + DNF_CACHE_PATH);
-            return null;
-        } catch (Exception e) {
-            return e.getMessage();
-        }
-    }
-
-    private static void warnDnfCacheUnavailable(String reason) {
-        if (reason != null) {
-            System.err.println("Warning: could not mount DNF cache (builds will be slower): " + reason);
-        }
-    }
-
-    /**
      * Attach every disk device the build needs while the instance is still stopped (#828). On a VM
      * a device present at start gets its own PCIe root port, while a hot-plug takes one of only 8
      * spare slots, which repo references need; and incus-agent mounts boot-time devices before it
@@ -2861,319 +2341,14 @@ public class BuildCommand extends BaseCommand {
      */
     private String attachBootDevices(String buildName, List<ImageDef.HostResource> hostResources,
                                      MachineType machineType) {
-        var dnfCacheWarning = attachDnfCache(buildName);
+        var dnfCacheWarning = new GuestProvisioning(incus).attachDnfCache(buildName);
         HostResourceSetup.attachBuildDevices(incus, buildName, hostResources, machineType);
         return dnfCacheWarning;
     }
 
-    void unmountDnfCache(String container, MachineType machineType) {
-        // A VM's virtiofs mount is owned by incus-agent and goes away asynchronously after
-        // deviceRemove; unmount it in the guest first so cleanCaches can't run against it.
-        if (machineType == MachineType.VM) {
-            incus.shellExec(container, "sh", "-c",
-                    "mountpoint -q " + DNF_CACHE_PATH + " && umount " + DNF_CACHE_PATH + "; true");
-        }
-        // Safe even if mountDnfCache was skipped: deviceRemove is a read-modify-write
-        // that filters the device map — a missing device is a no-op, not an error.
-        incus.deviceRemove(container, DNF_CACHE_DEVICE);
-    }
-
-    /** Agent home directory inside the container, shared across agents. */
-    private static final String AGENTS_DIR = "/home/agentuser/.agents";
-
-    /** Global skills directory inside the container, shared across agents. */
-    private static final String SKILLS_DIR = AGENTS_DIR + "/skills";
-
-    /**
-     * Install agent skills declared in the image definition.
-     * Fetches SKILL.md files on the host and writes them directly into the container.
-     * Deduplicates against skills already declared by ancestor images.
-     */
-    void installSkills(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
-                       List<ResolvedTool> tools) {
-        // A skill can be declared by the image or by a tool it installs. Tools carry the
-        // procedures that drive them, so the skill travels with the tool into every
-        // template using it. Dedupe: two sources can name the same skill.
-        var resolvedSet = new LinkedHashSet<String>();
-        for (var entry : collectEffectiveSkills(imageDef, defs)) {
-            resolvedSet.add(resolveSkillOrFail(entry, imageDef.getSkills().getRepo(),
-                    "image definition"));
-        }
-        for (var tool : tools) {
-            // A reconfigureOnly tool was installed by an ancestor, so its skills came with
-            // it: in buildFromParent they arrived with the CoW copy, in buildFromScratch
-            // the ancestor's own installSkills ran earlier in the chain loop. Re-fetching
-            // would make a parameter-only rebuild depend on the skill source still being
-            // reachable. This mirrors collectEffectiveSkills subtracting ancestor skills.
-            if (tool.reconfigureOnly()) continue;
-            var toolSkills = tool.setup().skills();
-            for (var entry : toolSkills.getList()) {
-                resolvedSet.add(resolveSkillOrFail(entry, toolSkills.getRepo(),
-                        "tool '" + tool.name() + "'"));
-            }
-        }
-        if (resolvedSet.isEmpty()) return;
-        var resolvedNames = new ArrayList<>(resolvedSet);
-
-        try (var skillsGroup = BuildOutput.group("Skills", resolvedNames.size() + " to install")) {
-
-            var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
-                    .followRedirects(HttpClient.Redirect.NORMAL).build();
-            var cache = new dev.incusspawn.tool.SkillsCache();
-
-            container.exec("mkdir", "-p", SKILLS_DIR);
-
-            for (var resolved : resolvedNames) {
-                BuildOutput.stepStart(resolved + "...");
-                try {
-                    var skills = fetchSkills(resolved, http, cache);
-                    for (var skill : skills) {
-                        var skillDir = SKILLS_DIR + "/" + skill.name();
-                        container.exec("mkdir", "-p", skillDir);
-                        container.writeFile(skillDir + "/SKILL.md", skill.content());
-                    }
-                    BuildOutput.stepDone();
-                } catch (IOException | InterruptedException e) {
-                    BuildOutput.stepBreak();
-                    System.err.println("Error: Failed to fetch skill '" + resolved + "': " + e.getMessage());
-                    throw new BuildFailedException();
-                }
-            }
-        }
-        // Fix ownership so agentuser owns the agents / skills directories
-        container.exec("chown", "-R", "agentuser:agentuser", AGENTS_DIR);
-        // Ensure .claude/skills points to the shared location if Claude Code is installed
-        // (handles inherited-claude case where ClaudeSetup.linkSkillsDir didn't run)
-        container.sh("[ ! -d /home/agentuser/.claude ] || [ -L /home/agentuser/.claude/skills ]"
-                + " || { rm -rf /home/agentuser/.claude/skills"
-                + " && ln -sfn " + SKILLS_DIR + " /home/agentuser/.claude/skills; }");
-    }
-
-    /** A fetched skill ready to be written into the container. */
-    record SkillFile(String name, String content) {}
-
-    /**
-     * Fetch one or more SKILL.md files for the given resolved source.
-     * GitHub skills are cached on the host at {@code ~/.cache/incus-spawn/skills/}.
-     * Supports:
-     * <ul>
-     *   <li>{@code owner/repo@skill-name} — single skill from a GitHub repo</li>
-     *   <li>{@code owner/repo} — all skills from a GitHub repo (via Trees API)</li>
-     *   <li>{@code https://github.com/owner/repo} — same as owner/repo</li>
-     *   <li>{@code ./local/path} or {@code /absolute/path} — local directory</li>
-     * </ul>
-     */
-    static List<SkillFile> fetchSkills(String source, HttpClient http,
-            dev.incusspawn.tool.SkillsCache cache)
-            throws IOException, InterruptedException {
-        // Local path
-        if (source.startsWith("./") || source.startsWith("/")) {
-            return fetchLocalSkills(Path.of(source));
-        }
-
-        // Normalise GitHub URL to owner/repo[@skill]
-        var normalised = source;
-        if (normalised.startsWith("https://github.com/")) {
-            normalised = normalised.substring("https://github.com/".length()).replaceAll("\\.git$", "");
-        }
-
-        // owner/repo@skill-name
-        var atIdx = normalised.indexOf('@');
-        if (atIdx >= 0) {
-            var ownerRepo = normalised.substring(0, atIdx);
-            var skillName = normalised.substring(atIdx + 1);
-            return List.of(new SkillFile(skillName, cache.fetchSkillMd(ownerRepo, skillName, http)));
-        }
-
-        // owner/repo — fetch all skills via Trees API
-        return fetchAllGitHubSkills(normalised, http, cache);
-    }
-
-    private static List<SkillFile> fetchAllGitHubSkills(String ownerRepo, HttpClient http,
-            dev.incusspawn.tool.SkillsCache cache)
-            throws IOException, InterruptedException {
-        // Use GitHub Trees API to find all SKILL.md files
-        for (var branch : List.of("main", "master")) {
-            var treeUrl = "https://api.github.com/repos/" + ownerRepo + "/git/trees/"
-                    + branch + "?recursive=1";
-            var token = Environment.strippedEnv("GITHUB_TOKEN");
-            var reqBuilder = HttpRequest.newBuilder(URI.create(treeUrl))
-                    .timeout(Duration.ofSeconds(15))
-                    .header("Accept", "application/vnd.github+json");
-            if (!token.isBlank()) {
-                reqBuilder.header("Authorization", "Bearer " + token);
-            }
-            var response = http.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) continue;
-
-            var mapper = new ObjectMapper();
-            var tree = mapper.readTree(response.body()).path("tree");
-            var skills = new ArrayList<SkillFile>();
-            for (var node : tree) {
-                var path = node.path("path").asText();
-                // Match <skill-name>/SKILL.md at the top level only
-                if (path.matches("[^/]+/SKILL\\.md")) {
-                    var skillName = path.substring(0, path.indexOf('/'));
-                    skills.add(new SkillFile(skillName, cache.fetchSkillMd(ownerRepo, skillName, http)));
-                }
-            }
-            if (!skills.isEmpty()) return skills;
-        }
-        throw new IOException("No SKILL.md files found in " + ownerRepo);
-    }
-
-    private static List<SkillFile> fetchLocalSkills(Path localPath) throws IOException {
-        if (!Files.isDirectory(localPath)) {
-            throw new IOException("Local skill path is not a directory: " + localPath);
-        }
-        // If there's a SKILL.md directly in this dir, treat it as a single skill
-        var directSkill = localPath.resolve("SKILL.md");
-        if (Files.exists(directSkill)) {
-            return List.of(new SkillFile(localPath.getFileName().toString(),
-                    Files.readString(directSkill)));
-        }
-        // Otherwise scan subdirectories for SKILL.md files
-        var skills = new ArrayList<SkillFile>();
-        try (var entries = Files.list(localPath)) {
-            for (var entry : entries.toList()) {
-                var skillMd = entry.resolve("SKILL.md");
-                if (Files.isDirectory(entry) && Files.exists(skillMd)) {
-                    skills.add(new SkillFile(entry.getFileName().toString(),
-                            Files.readString(skillMd)));
-                }
-            }
-        }
-        if (skills.isEmpty()) {
-            throw new IOException("No SKILL.md files found in " + localPath);
-        }
-        return skills;
-    }
-
-    /**
-     * Collect skills declared in this image, minus any already declared by ancestor images.
-     */
-    List<String> collectEffectiveSkills(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var skills = new LinkedHashSet<>(imageDef.getSkills().getList());
-        if (skills.isEmpty()) return List.of();
-
-        var ancestorSkills = new LinkedHashSet<String>();
-        for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
-            ancestorSkills.addAll(ancestor.getSkills().getList());
-        }
-        skills.removeAll(ancestorSkills);
-        return new ArrayList<>(skills);
-    }
-
-    /**
-     * Resolve tools for this image, removing any already installed by ancestor images.
-     * If an ancestor declares the same tool with different parameters, that's an error
-     * (the parent's setup already ran and can't be undone).
-     * Returns both the effective tools to install and the resolved ancestor tools.
-     */
+    /** {@link BuildTools#collectEffectiveTools} with this command's tool loader and CDI tools. */
     ToolResolution collectEffectiveTools(ImageDef imageDef, Map<String, ImageDef> defs) {
-        return collectEffectiveTools(imageDef, defs, toolDefLoader, toolSetups);
-    }
-
-    static ToolResolution collectEffectiveTools(ImageDef imageDef, Map<String, ImageDef> defs,
-                                                 ToolDefLoader toolDefLoader,
-                                                 Iterable<ToolSetup> cdiTools) {
-        var tools = resolveTools(imageDef, toolDefLoader, cdiTools, false);
-
-        var ancestorToolsMap = new LinkedHashMap<String, ResolvedTool>();
-        var ancestorTemplateNames = new LinkedHashMap<String, String>();
-        for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
-            for (var resolved : resolveTools(ancestor, toolDefLoader, cdiTools, true)) {
-                if (ancestorToolsMap.putIfAbsent(resolved.name(), resolved) == null) {
-                    ancestorTemplateNames.put(resolved.name(), ancestor.getName());
-                }
-            }
-        }
-
-        var ancestorTools = new ArrayList<>(ancestorToolsMap.values());
-        if (tools.isEmpty()) {
-            return new ToolResolution(tools, ancestorTools);
-        }
-
-        var effective = new ArrayList<ResolvedTool>();
-        for (var tool : tools) {
-            var ancestorTool = ancestorToolsMap.get(tool.name());
-            if (ancestorTool == null) {
-                effective.add(tool);
-            } else if (!ancestorTool.parameters().equals(tool.parameters())) {
-                var paramDefs = tool.setup().parameters();
-                var allReconfigurable = true;
-                for (var key : tool.parameters().keySet()) {
-                    var ancestorValue = ancestorTool.parameters().get(key);
-                    var childValue = tool.parameters().get(key);
-                    if (!java.util.Objects.equals(ancestorValue, childValue)) {
-                        var def = paramDefs.get(key);
-                        if (def == null || !def.isReconfigurable()) {
-                            allReconfigurable = false;
-                            break;
-                        }
-                    }
-                }
-                if (allReconfigurable) {
-                    for (var key : ancestorTool.parameters().keySet()) {
-                        if (!tool.parameters().containsKey(key)) {
-                            var def = paramDefs.get(key);
-                            if (def == null || !def.isReconfigurable()) {
-                                allReconfigurable = false;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if (allReconfigurable) {
-                    effective.add(new ResolvedTool(tool.name(), tool.setup(), tool.parameters(), true));
-                } else {
-                    var ancestorTemplateName = ancestorTemplateNames.get(tool.name());
-                    throw new IllegalArgumentException(
-                        "Tool '" + tool.name() + "' is already installed by ancestor template '" +
-                        ancestorTemplateName + "' with different parameters:\n" +
-                        "  Ancestor: " + ancestorTool.parameters() + "\n" +
-                        "  Current:  " + tool.parameters()
-                    );
-                }
-            }
-        }
-        return new ToolResolution(effective, ancestorTools);
-    }
-
-    /**
-     * Resolve a skill entry to a fully-qualified source string.
-     * <ul>
-     *   <li>Contains {@code ://} or starts with {@code .} or {@code /} → local/URL, pass through</li>
-     *   <li>Contains {@code /} → owner/repo or owner/repo@skill, pass through</li>
-     *   <li>Plain name → prepend {@code skillsRepo@}; throws if no skillsRepo set</li>
-     * </ul>
-     */
-    /**
-     * Resolve one skill source, naming the declaring definition if a bare name can't be
-     * resolved — otherwise the error sends you to the image YAML for a tool's typo.
-     */
-    private String resolveSkillOrFail(String entry, String repo, String source) {
-        try {
-            return resolveSkillSource(entry, repo);
-        } catch (IllegalArgumentException e) {
-            System.err.println("Error: " + e.getMessage() + " (declared by " + source + ")");
-            System.err.println("Use the fully qualified form 'owner/repo@skill-name', or set 'skills.repo' in the " + source + ".");
-            throw new BuildFailedException();
-        }
-    }
-
-    static String resolveSkillSource(String skill, String skillsRepo) {
-        if (skill.contains("://") || skill.startsWith(".") || skill.startsWith("/")) {
-            return skill;
-        }
-        if (skill.contains("/")) {
-            return skill;
-        }
-        if (skillsRepo == null || skillsRepo.isBlank()) {
-            throw new IllegalArgumentException(
-                    "Skill '" + skill + "' is a short name but no skills.repo is defined.");
-        }
-        return skillsRepo + "@" + skill;
+        return BuildTools.collectEffectiveTools(imageDef, defs, toolDefLoader, toolSetups);
     }
 
     /** Waits for this run's host repo refresh, then clones the repos ({@link RepoCloner#cloneRepos}). */
@@ -3194,130 +2369,7 @@ public class BuildCommand extends BaseCommand {
         new RepoCloner(incus).cloneRepos(container, imageDef, machineType);
     }
 
-    private static final String CODEX_CONFIG_PATH = CodexSetup.CONFIG_PATH;
-
-    void updateCodexTrust(Container container, ImageDef imageDef) {
-        if (imageDef.getRepos().isEmpty()) return;
-
-        var checkResult = container.exec("test", "-f", CODEX_CONFIG_PATH);
-        if (!checkResult.success()) return;
-
-        var catResult = container.exec("cat", CODEX_CONFIG_PATH);
-        if (!catResult.success()) return;
-
-        var existing = catResult.stdout();
-        var sb = new StringBuilder();
-
-        for (var repo : imageDef.getRepos()) {
-            var expandedPath = expandHome(repo.getPath());
-            var section = "[projects.\"" + expandedPath + "\"]";
-            if (!existing.contains(section) && !sb.toString().contains(section)) {
-                sb.append("\n").append(section).append("\n");
-                sb.append("trust_level = \"trusted\"\n");
-            }
-        }
-
-        if (sb.isEmpty()) return;
-
-        container.writeFile(CODEX_CONFIG_PATH, existing + sb);
-        container.chown(CODEX_CONFIG_PATH, "agentuser:agentuser");
-    }
-
-    private static final String CLAUDE_JSON_PATH = "/home/agentuser/.claude.json";
-    private static final String AGENTUSER_HOME = "/home/agentuser";
     private static final ObjectMapper JSON = new ObjectMapper();
-
-    /**
-     * Update .claude.json to pre-trust cloned repo directories and register GitHub repo paths.
-     */
-    void updateClaudeJsonTrust(Container container, ImageDef imageDef) {
-        if (imageDef.getRepos().isEmpty()) return;
-
-        var checkResult = container.exec("test", "-f", CLAUDE_JSON_PATH);
-        if (!checkResult.success()) return;
-
-        var catResult = container.exec("cat", CLAUDE_JSON_PATH);
-        if (!catResult.success()) {
-            System.err.println("Warning: could not read " + CLAUDE_JSON_PATH);
-            return;
-        }
-
-        try {
-            var root = (ObjectNode) JSON.readTree(catResult.stdout());
-
-            var projects = root.has("projects")
-                    ? (ObjectNode) root.get("projects")
-                    : root.putObject("projects");
-
-            var githubRepoPaths = root.has("githubRepoPaths")
-                    ? (ObjectNode) root.get("githubRepoPaths")
-                    : root.putObject("githubRepoPaths");
-
-            for (var repo : imageDef.getRepos()) {
-                var expandedPath = expandHome(repo.getPath());
-
-                if (!projects.has(expandedPath)) {
-                    var projectEntry = projects.putObject(expandedPath);
-                    projectEntry.putArray("allowedTools");
-                    projectEntry.put("hasTrustDialogAccepted", true);
-                }
-
-                var ownerRepo = parseGitHubOwnerRepo(repo.getUrl());
-                if (ownerRepo != null) {
-                    ArrayNode paths;
-                    if (githubRepoPaths.has(ownerRepo)) {
-                        paths = (ArrayNode) githubRepoPaths.get(ownerRepo);
-                    } else {
-                        paths = githubRepoPaths.putArray(ownerRepo);
-                    }
-                    boolean found = false;
-                    for (var node : paths) {
-                        if (node.asText().equals(expandedPath)) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        paths.add(expandedPath);
-                    }
-                }
-            }
-
-            var updatedJson = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(root);
-            container.writeFile(CLAUDE_JSON_PATH, updatedJson);
-            container.chown(CLAUDE_JSON_PATH, "agentuser:agentuser");
-        } catch (Exception e) {
-            System.err.println("Warning: failed to update " + CLAUDE_JSON_PATH + ": " + e.getMessage());
-        }
-    }
-
-    static String expandHome(String path) {
-        if (path.startsWith("~/")) {
-            return AGENTUSER_HOME + path.substring(1);
-        }
-        if (path.equals("~")) {
-            return AGENTUSER_HOME;
-        }
-        return path;
-    }
-
-    static String parseGitHubOwnerRepo(String url) {
-        if (url == null) return null;
-        var prefix = "https://github.com/";
-        if (!url.startsWith(prefix)) return null;
-        var rest = url.substring(prefix.length());
-        if (rest.endsWith(".git")) {
-            rest = rest.substring(0, rest.length() - 4);
-        }
-        if (rest.endsWith("/")) {
-            rest = rest.substring(0, rest.length() - 1);
-        }
-        var parts = rest.split("/");
-        if (parts.length != 2 || parts[0].isEmpty() || parts[1].isEmpty()) {
-            return null;
-        }
-        return parts[0] + "/" + parts[1];
-    }
 
     enum InstanceType {
         container,
