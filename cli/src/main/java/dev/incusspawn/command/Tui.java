@@ -29,7 +29,6 @@ import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyLog;
 import dev.incusspawn.lifecycle.ZmxSocketForward;
-import dev.incusspawn.mcp.McpStanding;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tool.ActionResolver;
@@ -96,7 +95,6 @@ import static dev.incusspawn.command.DiskUsageModel.restampFromLive;
 import static dev.incusspawn.command.DiskUsageModel.sharedBaseBytes;
 import static dev.incusspawn.command.UsageFormat.bar;
 import static dev.incusspawn.command.UsageFormat.diskCell;
-import static dev.incusspawn.command.UsageFormat.gib;
 import static dev.incusspawn.command.UsageFormat.gibShort;
 import static dev.incusspawn.command.UsageFormat.runningSummary;
 
@@ -149,6 +147,8 @@ public class Tui {
                 @Override public String builtFrom(String template) { return Tui.this.builtFrom(template); }
                 @Override public String currentVersion() { return BuildInfo.instance().version(); }
             }, java.time.LocalDateTime::now);
+
+    private final InstanceDetailView instanceDetail = new InstanceDetailView(modal, theme);
 
     private final InstanceActions instanceActions =
             new InstanceActions(() -> this.imageDefs, () -> this.toolDefLoader, () -> this.cdiTools);
@@ -237,9 +237,6 @@ public class Tui {
     private TextInputState searchInput;
     private List<TemplateInfo> allTemplateEntries;
     private List<InstanceInfo> allEntries;
-    // Template detail modal state
-    // Instance detail modal state
-    private int instanceDetailScrollOffset;
     // Info modal state
     private int infoScrollOffset;
     // AI Help modal state
@@ -1356,7 +1353,7 @@ public class Tui {
 
         // F3: Show instance details (always accessible, even during operations)
         if (key.isKey(KeyCode.F3)) {
-            instanceDetailScrollOffset = 0;
+            instanceDetail.open();
             detailInstanceName = selected.name();
             detailAccountUses = accountUsesFor(selected);
             mode = Mode.INSTANCE_DETAIL;
@@ -2603,7 +2600,10 @@ public class Tui {
                 var template = selectedTemplate();
                 if (template != null) templateDetail.render(frame, screen, template);
             }
-            case INSTANCE_DETAIL -> renderInstanceDetailModal(frame, screen);
+            case INSTANCE_DETAIL -> {
+                var selected = selectedEntry(instanceTableState);
+                if (selected != null) instanceDetail.render(frame, screen, selected, detailAccountUses);
+            }
             case ACCOUNTS -> accountsModal.render(frame, screen);
             case INFO -> renderInfoModal(frame, screen);
             case WARNINGS -> warningsModal.render(frame, screen);
@@ -2646,60 +2646,47 @@ public class Tui {
     // --- Instance detail modal ---
 
     private boolean handleInstanceDetailEvent(KeyEvent key, TuiRunner tui) {
-        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC() || key.isKey(KeyCode.F3)) {
-            mode = Mode.BROWSE;
-            return true;
-        }
-        if (key.isChar('a')) {
-            var selected = selectedEntry(instanceTableState);
-            if (selected == null || vanished(selected.name())) return true;
-            if (hasPendingOp(selected) || backgroundTasks.hasRunningTask(selected.name())) {
-                statusMessage = "Operation in progress for " + selected.name();
-                return true;
-            }
-            openAccountsModal(selected.name(), Mode.INSTANCE_DETAIL);
-            return true;
-        }
-        if (key.isKey(KeyCode.F2)) {
-            var selected = selectedEntry(instanceTableState);
-            if (selected != null) {
-                if (vanished(selected.name())) return true;
-                var target = new ActionContext(selected.name(), selected.machineType());
-                if (showProxyErrorIfNeeded(target)) return true;
-                pendingAction = PendingAction.SHELL;
-                pendingActionTarget = target;
+        return switch (instanceDetail.handleKey(key)) {
+            case HANDLED -> true;
+            case UNHANDLED -> false;
+            case CLOSE -> {
                 mode = Mode.BROWSE;
-                tui.quit();
+                yield true;
             }
-            return true;
-        }
-        if (key.isKey(KeyCode.ENTER)) {
-            var selected = selectedEntry(instanceTableState);
-            if (selected != null) {
-                if (vanished(selected.name())) return true;
-                if (showProxyErrorIfNeeded(new ActionContext(selected.name(), selected.machineType()))) return true;
-                mode = Mode.BROWSE;
-                if (dispatchDefaultAction(selected)) tui.quit();
+            case ACCOUNTS -> {
+                var selected = selectedEntry(instanceTableState);
+                if (selected == null || vanished(selected.name())) yield true;
+                if (hasPendingOp(selected) || backgroundTasks.hasRunningTask(selected.name())) {
+                    statusMessage = "Operation in progress for " + selected.name();
+                    yield true;
+                }
+                openAccountsModal(selected.name(), Mode.INSTANCE_DETAIL);
+                yield true;
             }
-            return true;
-        }
-        if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
-            instanceDetailScrollOffset++;
-            return true;
-        }
-        if (key.isKey(KeyCode.UP) || key.isChar('k')) {
-            if (instanceDetailScrollOffset > 0) instanceDetailScrollOffset--;
-            return true;
-        }
-        if (key.isKey(KeyCode.HOME) || key.isChar('g')) {
-            instanceDetailScrollOffset = 0;
-            return true;
-        }
-        if (key.isKey(KeyCode.END) || key.isChar('G')) {
-            instanceDetailScrollOffset = Integer.MAX_VALUE; // capped during render
-            return true;
-        }
-        return false;
+            case SHELL -> {
+                var selected = selectedEntry(instanceTableState);
+                if (selected != null) {
+                    if (vanished(selected.name())) yield true;
+                    var target = new ActionContext(selected.name(), selected.machineType());
+                    if (showProxyErrorIfNeeded(target)) yield true;
+                    pendingAction = PendingAction.SHELL;
+                    pendingActionTarget = target;
+                    mode = Mode.BROWSE;
+                    tui.quit();
+                }
+                yield true;
+            }
+            case DEFAULT_ACTION -> {
+                var selected = selectedEntry(instanceTableState);
+                if (selected != null) {
+                    if (vanished(selected.name())) yield true;
+                    if (showProxyErrorIfNeeded(new ActionContext(selected.name(), selected.machineType()))) yield true;
+                    mode = Mode.BROWSE;
+                    if (dispatchDefaultAction(selected)) tui.quit();
+                }
+                yield true;
+            }
+        };
     }
 
     private boolean handleInfoEvent(KeyEvent key) {
@@ -3058,218 +3045,6 @@ public class Tui {
         return String.join(", ", parts);
     }
 
-    private void renderInstanceDetailModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        var selected = selectedEntry(instanceTableState);
-        if (selected == null) return;
-
-        var contentLines = buildInstanceDetailLines(selected);
-
-        int maxLineWidth = 0;
-        for (var line : contentLines) {
-            int w = line.spans().stream().mapToInt(s -> s.content().length()).sum();
-            if (w > maxLineWidth) maxLineWidth = w;
-        }
-        int modalWidth = Math.min(maxLineWidth + 4, screen.width() - 4);
-        int maxHeight = screen.height() - 2;
-        int modalHeight = Math.min(contentLines.size() + 4, maxHeight);
-
-        var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
-        var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
-                .title(modal.styledTitle(" " + selected.name() + " ", modal.border()))
-                .borderStyle(Style.EMPTY.fg(modal.border()))
-                .style(Style.EMPTY.bg(modal.bg()))
-                .padding(dev.tamboui.layout.Padding.horizontal(1))
-                .build();
-        modal.renderBlock(frame, block, modalArea);
-        var inner = block.inner(modalArea);
-
-        var rows = Layout.vertical()
-                .constraints(Constraint.fill(), Constraint.length(1))
-                .split(inner);
-
-        instanceDetailScrollOffset = modal.renderScrollableContent(frame, rows.get(0), contentLines, instanceDetailScrollOffset);
-
-        var hintSpans = new ArrayList<Span>();
-        modal.addKey(hintSpans, "F2", "Shell");
-        modal.addKey(hintSpans, "a", "Accounts");
-        modal.addKey(hintSpans, "F3/Esc", "Close");
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
-    }
-
-    /** A row of the detail pane; a null label explains the row above. */
-    record DetailRow(String label, String value) {}
-
-    /** The detail pane's rows for an instance an isx mcp session made; none for any other. */
-    static List<DetailRow> mcpDetailRows(McpStanding mcp) {
-        var rows = new ArrayList<DetailRow>();
-        if (mcp == null) return rows;
-        switch (mcp.state()) {
-            case HELD -> rows.add(new DetailRow("MCP:",
-                    "held by " + (mcp.holder() == null ? "an isx mcp session" : mcp.holder())
-                            + (mcp.client() == null ? "" : " (" + OutputFormat.oneLine(mcp.client()) + ")")));
-            case ORPHANED -> {
-                rows.add(new DetailRow("MCP:", "orphaned"
-                        + (mcp.orphanedSince() == null ? "" : " since " + mcp.orphanedSince())
-                        + (mcp.dormantSince() == null ? "" : ", stopped as dormant since " + mcp.dormantSince())));
-                if (mcp.dormantSince() == null) {
-                    rows.add(new DetailRow(null, "its session ended: another may adopt it, and one destroys it"));
-                    rows.add(new DetailRow(null, "after mcp.orphan-grace-hours unless someone is working in it"));
-                } else {
-                    rows.add(new DetailRow(null, "its delegate never finished and stopped moving: another session"));
-                    rows.add(new DetailRow(null, "may adopt it, or destroys it after mcp.dormant-grace-hours"));
-                }
-            }
-            case KEPT -> {
-                rows.add(new DetailRow("MCP:", "kept"));
-                rows.add(new DetailRow(null, "an agent handed it to you: no session adopts or destroys it"));
-            }
-        }
-        if (mcp.purpose() != null) rows.add(new DetailRow("  Purpose:", OutputFormat.oneLine(mcp.purpose())));
-        if (mcp.cwd() != null) rows.add(new DetailRow("  Session cwd:", OutputFormat.oneLine(mcp.cwd())));
-        return rows;
-    }
-
-    private List<Line> buildInstanceDetailLines(InstanceInfo info) {
-        var lines = new ArrayList<Line>();
-        var lineStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
-        var labelStyle = Style.EMPTY.fg(modal.accent()).bg(modal.bg());
-        var dimStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
-
-        var statusColor = isRunning(info) ? theme.statusRunning() : theme.statusStopped();
-        lines.add(Line.from(List.of(
-                Span.styled("Status:         ", labelStyle),
-                Span.styled(info.status(), Style.EMPTY.fg(statusColor).bg(modal.bg())))));
-
-        lines.add(Line.from(List.of(
-                Span.styled("Type:           ", labelStyle),
-                Span.styled(info.runtime(), lineStyle))));
-
-        if (!"virtual-machine".equals(info.runtime())) {
-            lines.add(Line.from(List.of(
-                    Span.styled("KVM:            ", labelStyle),
-                    Span.styled(info.kvmEnabled() ? "enabled (/dev/kvm passed through)" : "disabled", lineStyle))));
-        }
-
-        if (!info.architecture().isEmpty()) {
-            lines.add(Line.from(List.of(
-                    Span.styled("Architecture:   ", labelStyle),
-                    Span.styled(info.architecture(), lineStyle))));
-        }
-
-        lines.add(Line.from(List.of(
-                Span.styled("Parent:         ", labelStyle),
-                Span.styled(info.parent().isEmpty() ? "-" : OutputFormat.oneLine(info.parent()), lineStyle))));
-
-        if (!info.created().isEmpty()) {
-            var age = Metadata.ageDescription(info.created());
-            lines.add(Line.from(List.of(
-                    Span.styled("Created:        ", labelStyle),
-                    Span.styled(OutputFormat.oneLine(info.created()), lineStyle),
-                    Span.styled("  (" + age + ")", dimStyle))));
-        }
-
-        // #1053: no column for it in the instance table, which has no width to spare.
-        for (var row : mcpDetailRows(info.mcp())) {
-            lines.add(row.label() == null
-                    ? Line.from(List.of(Span.styled(" ".repeat(16) + row.value(), dimStyle)))
-                    : Line.from(List.of(Span.styled(String.format("%-16s", row.label()), labelStyle),
-                            Span.styled(row.value(), lineStyle))));
-        }
-
-        lines.add(Line.styled("", lineStyle));
-
-        var networkLabel = info.networkMode().isEmpty() ? "Full internet"
-                : formatNetworkMode(info.networkMode());
-        lines.add(Line.from(List.of(
-                Span.styled("Network:        ", labelStyle),
-                Span.styled(networkLabel, lineStyle))));
-
-        lines.add(Line.from(List.of(
-                Span.styled("IP address:     ", labelStyle),
-                Span.styled(info.ipv4().isEmpty() ? "-" : info.ipv4(), lineStyle))));
-
-        lines.add(Line.styled("", lineStyle));
-        lines.add(Line.from(List.of(Span.styled("Resource limits:", labelStyle))));
-
-        lines.add(Line.from(List.of(
-                Span.styled("  CPU:          ", labelStyle),
-                Span.styled(info.limitsCpu().isEmpty() ? "-" : info.limitsCpu(), lineStyle))));
-
-        lines.add(Line.from(List.of(
-                Span.styled("  Memory:       ", labelStyle),
-                Span.styled(info.limitsMemory().isEmpty() ? "-" : info.limitsMemory(), lineStyle))));
-
-        lines.add(Line.from(List.of(
-                Span.styled("  Disk limit:   ", labelStyle),
-                Span.styled(info.rootSize().isEmpty() ? "-" : info.rootSize(), lineStyle))));
-
-        if (info.diskUsage() >= 0) {
-            lines.add(Line.from(List.of(
-                    Span.styled("  Disk used:    ", labelStyle),
-                    Span.styled(gib(info.diskUsage()), lineStyle),
-                    Span.styled("  (approx)", dimStyle))));
-            var hasParent = !info.parent().isEmpty() && !"-".equals(info.parent());
-            lines.add(Line.from(List.of(Span.styled(
-                    hasParent
-                        ? "    thin-provisioned; shares blocks with " + OutputFormat.oneLine(info.parent())
-                        : "    thin-provisioned; copy-on-write",
-                    dimStyle))));
-        }
-
-        lines.add(Line.styled("", lineStyle));
-
-        if (!detailAccountUses.isEmpty()) {
-            lines.add(Line.from(List.of(Span.styled("Credential accounts:", labelStyle),
-                    Span.styled("  (a to change)", dimStyle))));
-            int nsWidth = detailAccountUses.stream().mapToInt(u -> u.namespace().length()).max().orElse(0);
-            for (var use : detailAccountUses) {
-                var ns = use.namespace() + " ".repeat(nsWidth - use.namespace().length());
-                var spans = new ArrayList<Span>();
-                spans.add(Span.styled("  " + ns + "  ", labelStyle));
-                spans.add(Span.styled(use.account().isEmpty() ? "(none)" : use.account(),
-                        use.problem().isEmpty() ? lineStyle : Style.EMPTY.fg(theme.modalWarn()).bg(modal.bg())));
-                if (!use.description().isEmpty()) spans.add(Span.styled(" -- " + use.description(), dimStyle));
-                lines.add(Line.from(spans));
-                var template = InstanceActions.resolveTemplateName(info);
-                lines.add(Line.from(List.of(Span.styled("    " + dev.incusspawn.config.AccountUsage.explainSource(
-                        use, template == null ? "-" : template, info.name().equals(template)), dimStyle))));
-                if (!use.problem().isEmpty()) {
-                    lines.add(Line.from(List.of(Span.styled("    not configured: requests fail until it is,"
-                            + " or it is changed", Style.EMPTY.fg(theme.modalWarn()).bg(modal.bg())))));
-                } else if (!use.refusal().isEmpty()) {
-                    lines.add(Line.from(List.of(Span.styled("    refused: built for another auth mode;"
-                            + " press a to pin one it can use", Style.EMPTY.fg(theme.modalWarn()).bg(modal.bg())))));
-                } else if (!use.templateProblem().isEmpty()) {
-                    lines.add(Line.from(List.of(Span.styled("    the template names '" + use.templateAccount()
-                            + "', which is not configured", dimStyle))));
-                } else if (use.differsFromTemplate()) {
-                    lines.add(Line.from(List.of(Span.styled("    the template now names '"
-                            + use.templateAccount() + "'", dimStyle))));
-                }
-            }
-            lines.add(Line.styled("", lineStyle));
-        }
-
-        lines.add(Line.from(List.of(
-                Span.styled("Project:        ", labelStyle),
-                Span.styled(info.project(), lineStyle))));
-
-        lines.add(Line.from(List.of(
-                Span.styled("Profile:        ", labelStyle),
-                Span.styled(info.profile(), lineStyle))));
-
-        return lines;
-    }
-
-    private static String formatNetworkMode(String mode) {
-        try {
-            return NetworkMode.valueOf(mode).label();
-        } catch (IllegalArgumentException e) {
-            return mode;
-        }
-    }
-
     private static java.nio.file.Path resolveHostRepoMatch(String cloneUrl, SpawnConfig config) {
         try {
             var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
@@ -3498,7 +3273,7 @@ public class Tui {
 
     // --- Helpers ---
 
-    private static boolean isRunning(InstanceInfo entry) {
+    static boolean isRunning(InstanceInfo entry) {
         return "RUNNING".equalsIgnoreCase(entry.status());
     }
 

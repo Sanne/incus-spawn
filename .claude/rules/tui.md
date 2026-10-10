@@ -17,6 +17,7 @@ paths:
   - "cli/src/main/java/dev/incusspawn/command/UsageFormat.java"
   - "cli/src/main/java/dev/incusspawn/command/TemplateDetails.java"
   - "cli/src/main/java/dev/incusspawn/command/TemplateDetailView.java"
+  - "cli/src/main/java/dev/incusspawn/command/InstanceDetailView.java"
   - "cli/src/test/java/dev/incusspawn/tui/**"
   - "common/src/main/java/dev/incusspawn/incus/BtrfsUsage.java"
   - "common/src/main/java/dev/incusspawn/incus/BtrfsSysfs.java"
@@ -80,8 +81,9 @@ A failed existence check lets the action proceed rather than blocking the UI.
 A pin to an account that is gone stays selectable as "(not configured)" so opening and applying unchanged never re-points anything.
 `changes()` holds only the rows the user changed (null = follow the default).
 `Tui` checks them on the event thread with `InstanceLifecycle.checkAccountChange` so a refusal (e.g. a Claude auth mode the build did not bake) is shown in the dialog while the user is still choosing, then applies them with `InstanceLifecycle.changeAccounts` in a background task, with sinks, not stdout -- the same path as `isx account set/unset`.
+The F3 instance details are `InstanceDetailView` (`InstanceDetailViewTest`): it owns its scrolling and rendering, and hands F2, `a`, Enter and Esc back to `Tui`, which also resolves the accounts it shows.
 The F3 instance details show the same resolution as `isx account show` (`AccountUsage`), re-read when a background change finishes (`detailAccountsStale`).
-They also say how an instance an `isx mcp` session made stands (`Tui.mcpDetailRows`, from the `McpStanding` that `collectEntries` reads off the listing: held by whom, orphaned since when -- and, for one a sweep stopped as dormant (#1028), since when and that `mcp.dormant-grace-hours` comes next, as `list_instances` gives `dormant_since` only while it is stopped -- or kept; its purpose and the session's cwd) -- and only there: Sanne ruled out an instance-table column for it (#1053), since the table has no width to spare.
+They also say how an instance an `isx mcp` session made stands (`InstanceDetailView.mcpDetailRows`, from the `McpStanding` that `collectEntries` reads off the listing: held by whom, orphaned since when -- and, for one a sweep stopped as dormant (#1028), since when and that `mcp.dormant-grace-hours` comes next, as `list_instances` gives `dormant_since` only while it is stopped -- or kept; its purpose and the session's cwd) -- and only there: Sanne ruled out an instance-table column for it (#1053), since the table has no width to spare.
 Tool setups come from the TUI's own `toolDefLoader` (`AccountSelection.namespaceSetups(config, loader)`), not a fresh loader.
 
 The F5 build menu is `BuildMenu` (`BuildMenuTest`): it builds its options from the template definitions, rows and out-of-sync set `Tui` passes in, owns their keys and its rendering, and hands the chosen option back, so `Tui` leaves the build pending and quits the runner.
