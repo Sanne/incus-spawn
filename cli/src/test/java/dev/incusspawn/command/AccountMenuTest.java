@@ -48,10 +48,10 @@ class AccountMenuTest {
             """;
 
     /**
-     * InitCommand with its Incus and template lookups replaced: what is pinned where, which
+     * CredentialSetup with its Incus and template lookups replaced: what is pinned where, which
      * templates name which account, and a record of the renames it would push to instances.
      */
-    static final class StubbedInit extends InitCommand {
+    static final class StubbedInit extends CredentialSetup {
         final java.util.Map<String, java.util.Map<String, String>> pins = new java.util.LinkedHashMap<>();
         /** Instances that pin nothing, and whether each is running. */
         final java.util.Map<String, Boolean> unpinned = new java.util.LinkedHashMap<>();
@@ -105,17 +105,17 @@ class AccountMenuTest {
     }
 
     /** Drives the menu with canned keystrokes; account names come from the same queue. */
-    private static InitCommand.AccountTarget choose(SpawnConfig config, String... input) {
+    private static CredentialSetup.AccountTarget choose(SpawnConfig config, String... input) {
         return choose(new StubbedInit(), config, input);
     }
 
-    private static InitCommand.AccountTarget choose(InitCommand init, SpawnConfig config, String... input) {
+    private static CredentialSetup.AccountTarget choose(CredentialSetup init, SpawnConfig config, String... input) {
         return init.chooseAccountTarget(config, "github", "GitHub",
                 ScriptedPrompts.lines(input)).orElse(null);
     }
 
-    private static InitCommand.AccountTarget target(String name, boolean replaceOthers) {
-        return new InitCommand.AccountTarget(name, replaceOthers);
+    private static CredentialSetup.AccountTarget target(String name, boolean replaceOthers) {
+        return new CredentialSetup.AccountTarget(name, replaceOthers);
     }
 
     private static String value(SpawnConfig config, String path) {
@@ -213,7 +213,7 @@ class AccountMenuTest {
         assertEquals(target("default", true), choose(config, "r"));
         assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
 
-        InitCommand.saveAccount(config, "github", GITHUB, target("default", true),
+        CredentialSetup.saveAccount(config, "github", GITHUB, target("default", true),
                 java.util.Map.of("token", "ghp_new"));
         assertEquals(List.of("default"), NamespaceAccounts.names(config, "github"));
         assertEquals("default", value(config, "github.default"));
@@ -223,7 +223,7 @@ class AccountMenuTest {
     @Test
     void savingNothingReplacesNothing() throws Exception {
         var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
-        assertFalse(InitCommand.saveAccount(config, "github", GITHUB, target("default", true), java.util.Map.of()));
+        assertFalse(CredentialSetup.saveAccount(config, "github", GITHUB, target("default", true), java.util.Map.of()));
         assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
     }
 
@@ -231,7 +231,7 @@ class AccountMenuTest {
     @Test
     void savingWithoutTheCredentialReplacesNothing() throws Exception {
         var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
-        assertFalse(InitCommand.saveAccount(config, "github", GITHUB, target("default", true),
+        assertFalse(CredentialSetup.saveAccount(config, "github", GITHUB, target("default", true),
                 java.util.Map.of("email", "me@example.com")));
         assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
     }
@@ -240,7 +240,7 @@ class AccountMenuTest {
     @Test
     void anExistingAccountMayBeEditedWithoutItsCredential() throws Exception {
         var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
-        assertTrue(InitCommand.saveAccount(config, "github", GITHUB, target("acme", false),
+        assertTrue(CredentialSetup.saveAccount(config, "github", GITHUB, target("acme", false),
                 java.util.Map.of("email", "bot@example.com")));
         assertEquals("ghp_acme", value(config, "github.accounts.acme.token"));
         assertEquals("bot@example.com", value(config, "github.accounts.acme.email"));
@@ -264,7 +264,7 @@ class AccountMenuTest {
     @Test
     void anUnconfiguredNamespaceTargetsAFreshDefaultAccount() throws Exception {
         var config = YAML.readValue("github: {}\n", SpawnConfig.class);
-        assertEquals(InitCommand.AccountTarget.FRESH, choose(config));
+        assertEquals(CredentialSetup.AccountTarget.FRESH, choose(config));
     }
 
     /**
@@ -285,9 +285,9 @@ class AccountMenuTest {
                 """, SpawnConfig.class);
         assertEquals("", AccountResolver.defaultValue(config, "github", "token"),
                 "the trap: the default account alone looks unconfigured");
-        assertTrue(InitCommand.hasAccountsToPreserve(config, "github"));
+        assertTrue(CredentialSetup.hasAccountsToPreserve(config, "github"));
 
-        assertFalse(InitCommand.hasAccountsToPreserve(
+        assertFalse(CredentialSetup.hasAccountsToPreserve(
                 YAML.readValue("github:\n  email: \"x@example.com\"\n", SpawnConfig.class), "github"),
                 "a leftover email is not an account, so a first credential needs no menu");
     }

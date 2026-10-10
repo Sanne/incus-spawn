@@ -28,7 +28,7 @@ class PathListPromptsTest {
     }
 
     private static void edit(SpawnConfig config, ScriptedPrompts prompts) {
-        new InitCommand().setupPathList(SpawnConfig::getHostPaths, SpawnConfig::setHostPaths,
+        new CredentialSetup().setupPathList(SpawnConfig::getHostPaths, SpawnConfig::setHostPaths,
                 "  (skipped)", config, prompts);
         prompts.assertFullyConsumed();
     }
@@ -127,7 +127,7 @@ class PathListPromptsTest {
     void closedStdinKeepsWhatWasAlreadyEntered() throws Exception {
         var code = dir("code");
         var prompts = ScriptedPrompts.lines(code.toString());
-        new InitCommand().setupPathList(SpawnConfig::getHostPaths, SpawnConfig::setHostPaths,
+        new CredentialSetup().setupPathList(SpawnConfig::getHostPaths, SpawnConfig::setHostPaths,
                 "  (skipped)", new SpawnConfig(), prompts);
         assertEquals(List.of(code.toString()), savedPaths());
     }
@@ -136,7 +136,7 @@ class PathListPromptsTest {
     void searchPathsUseTheSameListAndSaveToTheirOwnField() throws Exception {
         var templates = dir("templates");
         var prompts = ScriptedPrompts.lines(templates.toString(), "");
-        new InitCommand().setupPathList(SpawnConfig::getSearchPaths, SpawnConfig::setSearchPaths,
+        new CredentialSetup().setupPathList(SpawnConfig::getSearchPaths, SpawnConfig::setSearchPaths,
                 "  (skipped)", new SpawnConfig(), prompts);
         prompts.assertFullyConsumed();
 

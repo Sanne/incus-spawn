@@ -19,7 +19,7 @@ Key design:
 - `getVertexAccessToken()` is bounded at `GCLOUD_TIMEOUT_SECONDS` and rejects an empty token instead of caching it.
   Both matter because `/health` reaches this with no traffic to reveal a wedged `gcloud` or a blank credential.
 - The proxy authenticates to Vertex with `gcloud auth print-access-token`, which reads the **gcloud user credential** -- so the remediation is `gcloud auth login`, not `gcloud auth application-default login`.
-  `InitCommand.verifyVertexConfig()` uses the same command and must give the same hint.
+  `CredentialSetup.verifyVertexConfig()` uses the same command and must give the same hint.
 - Per-domain certs signed by a custom CA (installed in templates during build).
   The CA lives at `~/.config/incus-spawn/ca.{crt,key}`; leaf certs are persisted by `CertStore` under `~/.config/incus-spawn/certs/` (`<domain>.crt`/`.key`, wildcards as `_wildcard.<domain>`) and reused across proxy restarts, re-minting only on miss/CA-rotation/near-expiry.
   Persisting is what keeps each leaf's `notBefore` stable.

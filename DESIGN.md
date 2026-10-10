@@ -1583,7 +1583,7 @@ Tamboui has no dropdown, only the inline `< >` select, so `BranchAccountChoices`
 **Changing the global default.**
 An unpinned instance follows the default as it changes -- deliberately, since switching accounts later is what makes per-instance accounts useful, and pinning everything at branch time would take that away.
 The cost is that a one-line edit moves every unpinned instance's principal at once, so the change is made visible and made safe rather than prevented.
-*Visible*: `isx init`'s "change the default" (`InitCommand.changeDefaultAccount`) lists the instances that follow it (`InstanceRegistry.accountStates`, which, unlike `accountsByInstance`, includes unpinned instances) and offers switch -- the default, since that is what following means -- keep, or cancel.
+*Visible*: `isx init`'s "change the default" (`CredentialSetup.changeDefaultAccount`) lists the instances that follow it (`InstanceRegistry.accountStates`, which, unlike `accountsByInstance`, includes unpinned instances) and offers switch -- the default, since that is what following means -- keep, or cancel.
 Keep pins them to the account they use now as an explicit choice, before the default moves, so none is ever served the new one; end of input cancels, never switches.
 Removing the default account names its followers the same way.
 For a hand edit nothing can ask, so the proxy's `reload()` logs which instances a changed default moved (`logDefaultChanges`), and `isx account list` shows who follows each default.
@@ -1607,7 +1607,7 @@ Rename is offered for the same reason: the alternative, remove and re-add, orpha
 `AccountSelection.renameInInstances` re-points the pins in one list request plus one PATCH per affected instance -- and, for a tool whose baked identity names the account (GitHub; `ToolSetup.renameBakedIdentity()`), the identity stamp too, so a rename is not mistaken for a change of identity.
 GitHub's fingerprint carries over unchanged: it describes the same token, and recomputing it would hide a token replaced before the rename.
 Template YAML is the user's file and is reported, never rewritten.
-The instance and template lookups are overridable seams on `InitCommand`, so `AccountMenuTest` covers these flows without Incus.
+The instance and template lookups are overridable seams on `CredentialSetup`, so `AccountMenuTest` covers these flows without Incus.
 
 **What a build derives from an account, and what happens when it changes.**
 Credentials never enter a container, so re-pointing an instance between two accounts that the image cannot tell apart takes effect on its next request with nothing inside restarting.

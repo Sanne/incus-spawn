@@ -110,7 +110,7 @@ class CredentialPromptsTest {
             """;
 
     private static void configure(SpawnConfig config, ScriptedPrompts prompts) {
-        new InitCommand().setupGenericToolCredentials("acme", acme(), config, prompts);
+        new CredentialSetup().setupGenericToolCredentials("acme", acme(), config, prompts);
         prompts.assertFullyConsumed();
     }
 
@@ -144,7 +144,7 @@ class CredentialPromptsTest {
 
     @Test
     void closedStdinSavesNoCredential() {
-        new InitCommand().setupGenericToolCredentials("acme", acme(), new SpawnConfig(), new ScriptedPrompts());
+        new CredentialSetup().setupGenericToolCredentials("acme", acme(), new SpawnConfig(), new ScriptedPrompts());
         assertEquals("", saved("acme.accounts.default.apiKey"));
         assertEquals("", saved("acme.region"));
     }
@@ -159,7 +159,7 @@ class CredentialPromptsTest {
     /** EOF at "keep current?" keeps it: running out of input must never clear a credential. */
     @Test
     void closedStdinKeepsExistingValues() throws Exception {
-        new InitCommand().setupGenericToolCredentials("acme", acme(), seed(KEY_AND_REGION), new ScriptedPrompts());
+        new CredentialSetup().setupGenericToolCredentials("acme", acme(), seed(KEY_AND_REGION), new ScriptedPrompts());
         assertUnchanged(KEY_AND_REGION);
     }
 
@@ -240,7 +240,7 @@ class CredentialPromptsTest {
         tools.put("acme", tokenTool("acme"));
         tools.put("bob", tokenTool("bob"));
         var prompts = ScriptedPrompts.lines(input);
-        var selected = new InitCommand().selectCredentials(tools, new SpawnConfig(), prompts);
+        var selected = new CredentialSetup().selectCredentials(tools, new SpawnConfig(), prompts);
         prompts.assertFullyConsumed();
         return selected;
     }
@@ -268,7 +268,7 @@ class CredentialPromptsTest {
     @Test
     void closedStdinSelectsNothing() {
         var tools = Map.of("acme", tokenTool("acme"));
-        assertEquals(List.of(), new InitCommand().selectCredentials(tools, new SpawnConfig(), new ScriptedPrompts()));
+        assertEquals(List.of(), new CredentialSetup().selectCredentials(tools, new SpawnConfig(), new ScriptedPrompts()));
     }
 
     // ── where to clone the templates repo ────────────────────────────────────────
