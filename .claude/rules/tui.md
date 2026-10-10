@@ -7,6 +7,7 @@ paths:
   - "cli/src/main/java/dev/incusspawn/command/AccountsModal.java"
   - "cli/src/main/java/dev/incusspawn/command/BranchAccountChoices.java"
   - "cli/src/main/java/dev/incusspawn/command/BranchModal.java"
+  - "cli/src/main/java/dev/incusspawn/command/CleanModal.java"
   - "cli/src/main/java/dev/incusspawn/command/InstanceActions.java"
   - "cli/src/main/java/dev/incusspawn/command/DiskUsageModel.java"
   - "cli/src/main/java/dev/incusspawn/command/UsageFormat.java"
@@ -172,6 +173,7 @@ Focus navigation skips disabled categories.
 When nothing is reclaimable, the modal shows "Pool is clean." with only an Esc/Close hint.
 On macOS, a dim `isx vm resize` tip appears when pool usage exceeds `STORAGE_WARN_PERCENT`.
 Space toggles, Enter executes the selected categories via `CleanCommand.cleanPool(incus, builds, images, baseImages, dnf)`, and the `CLEAN_RESULT` modal shows what was freed.
+Both modals are `CleanModal` (`CleanModalTest`): it owns the checkboxes, their keys and the rendering, and hands Enter back, so `Tui` scans the pool to open it and runs the clean with its progress overlay.
 
 **Growing the appliance disk (`isx vm resize`, macOS)**: `VmManager.resizeDataDisk()` grows the sparse raw data-disk image (`Environment.vmDataImage()`, the guest's `/dev/vdc` btrfs volume mounted at `/var/lib/incus` that backs the `cow` pool) via `RandomAccessFile.setLength` -- grow-only, VM must be stopped.
 The guest expands btrfs to fill the larger device on the next boot (appliance `rcS` runs `btrfs filesystem resize max /var/lib/incus`, mirroring the existing root-disk resize).
