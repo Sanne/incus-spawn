@@ -1998,10 +1998,13 @@ The build-source snapshots a build borrows for a template whose YAML is gone are
 Hooking each skip branch instead (a parent `buildChain` leaves alone, the untouched templates of `--out-of-sync`) was tried first: it missed `--missing`, the type-change path and templates outside the chain built, and cost a round trip per template.
 Folding `default-action` into the fingerprint was rejected: a whole rebuild to change one metadata key.
 
-**Staleness detection**: The TUI uses `build-version`, `definition-sha` and `created` to display staleness indicators next to template names, and `isx templates --format=plain|json` reports the same three as fields; both come from `TemplateStaleness` (`cli/.../command/`), whose `versionOutdated`, `definitionChanged` and `parentRebuilt` are also what `isx build --out-of-sync` rebuilds on (`BuildCommand.isImageOutdated`, which reads the template's instance in one request and its parent's in a second, only when the rest are current; a parent that is not built is not rebuilt, but Incus failing to answer is thrown, never read as current).
+**Staleness detection**: The TUI uses `build-version`, `definition-sha` and `created` to display staleness indicators next to template names, and `isx templates --format=plain|json` reports the same three as fields.
+Both come from `TemplateStaleness` (`cli/.../command/`), whose `versionOutdated`, `definitionChanged` and `parentRebuilt` are also what `isx build --out-of-sync` rebuilds on (`BuildCommand.isImageOutdated`, which reads the template's instance in one request and its parent's in a second, only when the rest are current; a parent that is not built is not rebuilt, but Incus failing to answer is thrown, never read as current).
 Any one of the three makes a template out of sync (`Staleness.outOfSync()`), which is also the TUI's count for "Rebuild out of sync templates".
 `↑` counts since #1130: a child copied from its parent's previous build does not have what the parent has now, and before, nothing short of rebuilding the parent again repaired it.
-It applies only to a template copied from its parent, which is one of the same machine type as Incus reports it (`TemplateStaleness.Built.machineType`, so a `--type` override counts): a VM over a container parent (`tpl-isx-vm` over `tpl-isx`) is built from the definitions alone (`buildChain` skips its parent for the same reason), so its parent's builds are nothing to it, and a change to the parent's definition already reaches it through the descendant cascade.
+It applies only to a template copied from its parent, which is one of the same machine type as Incus reports it (`TemplateStaleness.Built.machineType`, so a `--type` override counts).
+A VM over a container parent (`tpl-isx-vm` over `tpl-isx`) is built from the definitions alone (`buildChain` skips its parent for the same reason), so its parent's builds are nothing to it.
+A change to the parent's definition already reaches it through the descendant cascade.
 Counting it would rebuild the VM, for minutes, after every rebuild of its parent.
 It stays its own mark so the detail view can say why.
 Only `build` acts on it; branch, start and the proxy do not:
@@ -2048,63 +2051,87 @@ The figure that *does* answer "how big is this template" is btrfs **referenced**
 
 So `isx` reads rfer itself, and caches it.
 Because a built template is immutable and its rfer is stable (referenced bytes don't change when a parent is later deleted — the child still references those extents), `BuildCommand` measures rfer **once at build time** and stamps it as `user.incus-spawn.disk-referenced` metadata (excluded from the content fingerprint, so it never triggers a rebuild).
-The TUI then reads that stamp for free on every reload and shows each template as a **delta from its parent**: the root template's delta is its own rfer — i.e. the base-image weight — and each derived template shows only what its layer added (packages, a tools install), which is exactly the intuitive "cost of this template".
+The TUI then reads that stamp for free on every reload and shows each template as a **delta from its parent**.
+The root template's delta is its own rfer — i.e. the base-image weight — and each derived template shows only what its layer added (packages, a tools install), which is exactly the intuitive "cost of this template".
 Instances keep their exclusive usage: a branch with no descendants has `exclusive ≈ rfer − rfer(parent)`, so exclusive already *is* its delta, and it comes free from the API.
-This replaces the older `foldBaseWeightIntoRootTemplate`, which — lacking rfer — could only dump the *entire* pool remainder onto the root template, so on a real inheritance chain the base template ballooned to include every layer's shared blocks while the intermediate templates read ~0.
+This replaces the older `foldBaseWeightIntoRootTemplate`, which — lacking rfer — could only dump the *entire* pool remainder onto the root template.
+So on a real inheritance chain the base template ballooned to include every layer's shared blocks while the intermediate templates read ~0.
 The fold survives only as a fallback: when a template predates the stamp (cache-only, no backfill — rebuild to populate it) or the pool isn't btrfs, the display falls back to exclusive-plus-fold.
 
 Instances (unlike templates) are mutable, so they are never stamped — each instance row always shows its **live exclusive** usage from the Incus API, recomputed every reload.
-The reading is "space reclaimed by deleting just this row": an instance branched from another instance shares its inherited blocks with the source, so those blocks are exclusive to neither and float in the pool total (visible in the gauge, attributed to no row) exactly like template-shared blocks.
-This makes instance→instance branching safe by construction: because nothing is cached, deleting the branched-from instance needs no invalidation — on the next reload the surviving branch's exclusive usage simply grows to absorb the blocks that were shared, since they are now unique to it.
-The delete-confirmation note closes the loop in the other direction: before the shared-with-parent caveat it checks whether anything was branched or derived from the target (`hasDescendant`, using the parent each row already records for free) and, if so, warns that deleting it reclaims little while its descendants remain — the instance analog of the base-template note.
+The reading is "space reclaimed by deleting just this row".
+An instance branched from another instance shares its inherited blocks with the source, so those blocks are exclusive to neither and float in the pool total (visible in the gauge, attributed to no row) exactly like template-shared blocks.
+This makes instance→instance branching safe by construction.
+Because nothing is cached, deleting the branched-from instance needs no invalidation.
+On the next reload the surviving branch's exclusive usage simply grows to absorb the blocks that were shared, since they are now unique to it.
+The delete-confirmation note closes the loop in the other direction.
+Before the shared-with-parent caveat it checks whether anything was branched or derived from the target (`hasDescendant`, using the parent each row already records for free) and, if so, warns that deleting it reclaims little while its descendants remain — the instance analog of the base-template note.
 
 Deleting a template is safe: rfer is a property of the *extents a subvolume references*, so a child's stamped rfer stays accurate after its parent is deleted (the child still references — and keeps alive — those blocks).
-Only the delta arithmetic has to cope with a missing parent, and it does: the row's parent is resolved by climbing the *definitional* chain (the on-disk YAML, which outlives the deleted instance) to the nearest ancestor that still exists and is stamped (`nearestStampedAncestorRfer`).
+Only the delta arithmetic has to cope with a missing parent, and it does.
+The row's parent is resolved by climbing the *definitional* chain (the on-disk YAML, which outlives the deleted instance) to the nearest ancestor that still exists and is stamped (`nearestStampedAncestorRfer`).
 So deleting an intermediate template just makes the next survivor down the chain subtract the next survivor up — no phantom subtraction, no crash — and if the entire chain above a row is gone, its parent resolves to `null` and it shows full rfer, correctly re-absorbing the base weight that no other row now claims.
 The rows keep reconciling with the gauge; the only residual imprecision is that blocks shared *between siblings* of a deleted fork point get counted in each sibling — bounded, and already flagged by the `~` marker.
 The delete-confirmation dialog restates the caveat at the moment it matters — for a clone, "blocks shared with `<parent>` stay until the parent is removed"; for the base template, that most of its size is the shared base image and won't be reclaimed while derivatives exist.
 
 Reading rfer needs root (the qgroup ioctls need `CAP_SYS_ADMIN` and the pool directory is `0700 root`), and `isx` normally runs as an unprivileged user.
-Rather than prompt for sudo on every TUI refresh, the privileged read is split by platform (`BtrfsUsage`): on **Linux** the pool is on the host, so `isx init` installs a tightly-scoped NOPASSWD sudoers rule (`/etc/sudoers.d/incus-spawn-btrfs`, validated with `visudo -cf`) permitting *only* read-only `btrfs qgroup show -re --raw [--sync]`/`subvolume list` against the pool mount (both the plain and `--sync` command forms are listed, since sudo matches argv exactly); on **macOS** the pool lives inside the appliance VM, where the in-VM control agent already runs as root, so it gains a `btrfs-usage` verb (still an allowlisted one-verb dispatcher, not a general guest-exec channel).
+Rather than prompt for sudo on every TUI refresh, the privileged read is split by platform (`BtrfsUsage`).
+On **Linux** the pool is on the host, so `isx init` installs a tightly-scoped NOPASSWD sudoers rule (`/etc/sudoers.d/incus-spawn-btrfs`, validated with `visudo -cf`) permitting *only* read-only `btrfs qgroup show -re --raw [--sync]`/`subvolume list` against the pool mount (both the plain and `--sync` command forms are listed, since sudo matches argv exactly).
+On **macOS** the pool lives inside the appliance VM, where the in-VM control agent already runs as root, so it gains a `btrfs-usage` verb (still an allowlisted one-verb dispatcher, not a general guest-exec channel).
 Both paths feed one unit-tested parser (`BtrfsUsage.parse`, joining qgroup rfer to subvolume paths).
 Since rfer is read only at build time (plus the fallback), the privileged surface is exercised rarely, not on every refresh.
 
 Two btrfs quirks make the stamp-time read fragile, both handled in `BuildCommand.probeReferencedSize` (which measures) / `stampReferencedSize` (which records) and `BtrfsUsage`: (1) qgroup accounting only reflects *committed* transactions, so a read right after a build can miss its final writes; (2) deleting a subvolume can mark the pool's qgroup accounting inconsistent, and a rebuild does exactly that (`deleteIfExists` of the previous template) immediately before stamping.
 For (2), `probeReferencedSize` measures rfer against the freshly-built *temp* subvolume **before** the delete/rename, not after — rfer is per-subvolume, so the temp name reports the same value the canonical name will.
-For (1), the read comes in two flavours (`BtrfsUsage.probe(pool, sync)`): the stamp-time read passes `--sync` to force a commit first, while the plain read (the default, and the intended path for periodic sampling) skips it, because forcing a whole-filesystem commit on every sampling tick would be wasteful.
+For (1), the read comes in two flavours (`BtrfsUsage.probe(pool, sync)`).
+The stamp-time read passes `--sync` to force a commit first, while the plain read (the default, and the intended path for periodic sampling) skips it, because forcing a whole-filesystem commit on every sampling tick would be wasteful.
 The `--sync` flavour must stay in step across three layers — the Java command, the `isx-agent`'s `btrfs-usage <pool> [sync]` verb (an allowlisted second token), and the sudoers rule (which lists both command forms) — or the privileged read is denied.
 
 Getting a stamp wrong no longer collapses the whole display.
-`canUseReferencedModel` gates the delta model on every built **root** template being stamped (the root carries the base-image weight, so without its rfer the shared-base fold is the better model); a built *derived* template missing its stamp is tolerated — `applyReferencedTemplateDeltas` leaves that one row on its exclusive usage instead of dropping every template to ~0.
+`canUseReferencedModel` gates the delta model on every built **root** template being stamped (the root carries the base-image weight, so without its rfer the shared-base fold is the better model).
+A built *derived* template missing its stamp is tolerated — `applyReferencedTemplateDeltas` leaves that one row on its exclusive usage instead of dropping every template to ~0.
 So a transient read failure at build time degrades a single row, not the entire panel.
 
 A missing stamp also self-heals on reload without a rebuild: `fillMissingReferencedSizes` backfills it with a single live probe — using the light (non-sync) flavour, and *only* when there's an actual gap (an unstamped built template).
-This keeps the privileged read out of the healthy per-refresh path (a fully-stamped install never probes on reload) while recovering pre-feature templates and the rare failed stamp; the backfill is in-memory (a rebuild re-stamps permanently) and never overwrites an existing stamp, which is authoritative and free.
+This keeps the privileged read out of the healthy per-refresh path (a fully-stamped install never probes on reload) while recovering pre-feature templates and the rare failed stamp.
+The backfill is in-memory (a rebuild re-stamps permanently) and never overwrites an existing stamp, which is authoritative and free.
 
 **The accounting itself can be silently wrong, so it is checked and repaired.**
 Ordering the read before the delete addresses a *transient* effect; the real failure is persistent and filesystem-wide.
 The kernel flags a pool's qgroup accounting `inconsistent` — and from then on freezes every counter at its last value — when quotas are enabled on a pool that already holds data, or when dropping a subvolume would require walking a shared subtree deeper than `drop_subtree_threshold`.
-Both are routine for isx: Incus enables quotas lazily, when the first instance size limit is applied (by which time the image and every template already exist), and the appliance kernel runs with the threshold at 3, so template rebuilds keep re-tripping it.
+Both are routine for isx.
+Incus enables quotas lazily, when the first instance size limit is applied (by which time the image and every template already exist), and the appliance kernel runs with the threshold at 3, so template rebuilds keep re-tripping it.
 Nothing clears the flag except a completed `btrfs quota rescan`.
-The frozen values are not zeros but plausible numbers (each snapshot inherits its source's rfer, so every subvolume reports the base image's ~113 MiB with 16 KiB exclusive), which is why this went unnoticed: they pass the `<= 0` stamp guard, get recorded, and the delta model subtracts identical stamps to exactly `~0B` per layer; the exclusive fallback and Incus's own `state.disk` usage read the same frozen qgroups, so there is no untainted fallback — only the statfs-based gauge stays right.
+The frozen values are not zeros but plausible numbers (each snapshot inherits its source's rfer, so every subvolume reports the base image's ~113 MiB with 16 KiB exclusive), which is why this went unnoticed.
+They pass the `<= 0` stamp guard, get recorded, and the delta model subtracts identical stamps to exactly `~0B` per layer.
+The exclusive fallback and Incus's own `state.disk` usage read the same frozen qgroups, so there is no untainted fallback — only the statfs-based gauge stays right.
 The fix is a trust gate plus an automatic repair, both in `BtrfsUsage`.
-The kernel exposes the flags world-readable in sysfs (`/sys/fs/btrfs/<fsid>/qgroups/{enabled,inconsistent,mode,drop_subtree_threshold}`), so *detection* needs no privilege at all: `BtrfsSysfs` resolves the pool's fsid on Linux (via the containing btrfs mount's *source device* in `/proc/self/mountinfo` — btrfs `st_dev` numbers are per-subvolume, so neither `stat` nor mountinfo's `major:minor` identify the block device), and the agent's `btrfs-status` verb does the same lookup inside the VM; one `parseStatus` serves both.
+The kernel exposes the flags world-readable in sysfs (`/sys/fs/btrfs/<fsid>/qgroups/{enabled,inconsistent,mode,drop_subtree_threshold}`), so *detection* needs no privilege at all.
+`BtrfsSysfs` resolves the pool's fsid on Linux (via the containing btrfs mount's *source device* in `/proc/self/mountinfo` — btrfs `st_dev` numbers are per-subvolume, so neither `stat` nor mountinfo's `major:minor` identify the block device), and the agent's `btrfs-status` verb does the same lookup inside the VM.
+One `parseStatus` serves both.
 `repairIfInconsistent` reads the status and, if the accounting is inconsistent, starts the rescan asynchronously — the kernel rebuilds the counters in the background and clears the flag when done, seconds on a developer-sized pool — throttled to one trigger per minute and five per process (on Linux via a `btrfs quota rescan <pool>` entry added to the sudoers rule at `INIT_VERSION` 6; on macOS via the agent's `btrfs-rescan` verb).
 Consumers act on `untrusted()` only — a status that *can't be read* (older agent, pre-6.1 kernel, quotas off) keeps the pre-check behaviour rather than blanking the display.
-`IncusClient.delete()` — the single method every subvolume delete funnels through, `deleteIfExists` included — calls it right after the delete succeeds (best-effort, never failing a delete that already worked): a delete is exactly the operation that can cause the inconsistency, so this catches it immediately instead of waiting for the next reload or build.
-Deletes arrive in bursts (`isx clean` sweeping failed builds, destroying a set of branches), so that path uses `repairIfInconsistentThrottled`, which collapses a burst to one check (5s minimum spacing) and defers the caller's pool lookup behind the same gate — otherwise N deletes would mean N status reads, each an agent round trip on macOS.
+`IncusClient.delete()` — the single method every subvolume delete funnels through, `deleteIfExists` included — calls it right after the delete succeeds (best-effort, never failing a delete that already worked).
+A delete is exactly the operation that can cause the inconsistency, so this catches it immediately instead of waiting for the next reload or build.
+Deletes arrive in bursts (`isx clean` sweeping failed builds, destroying a set of branches).
+So that path uses `repairIfInconsistentThrottled`, which collapses a burst to one check (5s minimum spacing) and defers the caller's pool lookup behind the same gate.
+Otherwise N deletes would mean N status reads, each an agent round trip on macOS.
 Nothing is missed by collapsing: only the deletes in the burst could have set the flag, the first check already caught that and started the rescan, and the TUI cadence and next build re-check regardless.
 The rescan-trigger budget (`MAX_RESCAN_TRIGGERS`) counts *consecutive* attempts and resets the moment accounting reads consistent, so it bounds a stuck repair rather than capping how many times a long-lived session may legitimately self-heal.
-The TUI also calls it every reload (cadence-limited: 30s normally, 2s while a repair is pending, so an agent round trip on macOS isn't on the hot path): while untrusted it keeps showing existing stamps (a stamp taken from consistent accounting stays valid, templates being immutable), reads nothing live (no backfill, no shared-base fold) and shows a one-shot "repairing" hint; the reload that first sees the flag clear re-validates the stamps with one live probe and re-stamps whatever differs — the one path that overwrites a stamp, which also fires once per session on the poisoned-stamp signature (a derived template stamped with exactly its parent's value) so pools broken before the check existed heal without a rebuild.
+The TUI also calls it every reload (cadence-limited: 30s normally, 2s while a repair is pending, so an agent round trip on macOS isn't on the hot path).
+While untrusted it keeps showing existing stamps (a stamp taken from consistent accounting stays valid, templates being immutable), reads nothing live (no backfill, no shared-base fold) and shows a one-shot "repairing" hint.
+The reload that first sees the flag clear re-validates the stamps with one live probe and re-stamps whatever differs — the one path that overwrites a stamp, which also fires once per session on the poisoned-stamp signature (a derived template stamped with exactly its parent's value) so pools broken before the check existed heal without a rebuild.
 `BuildCommand.probeReferencedSize` runs the same detect-and-repair before stamping, with a bounded wait (`awaitConsistent`, 20s) so the usual case still gets an immediate, correct stamp.
 `isx doctor` reports the state and offers the rescan for when the automatic one couldn't run.
 The `C` key reclaims space via `isx clean pool` (failed builds, unused images, build caches).
-Downloaded base images, the container one and the `-vm` disk image, are a category of their own and opt-in, like the DNF cache: they are not unused, only re-downloadable, and on a slow connection a VM base image is the most expensive thing to lose.
+Downloaded base images, the container one and the `-vm` disk image, are a category of their own and opt-in, like the DNF cache.
+They are not unused, only re-downloadable, and on a slow connection a VM base image is the most expensive thing to lose.
 Labelled "Storage" rather than "pool" to avoid leaking the Incus term, and the gauge/column degrade gracefully to hidden/`-` on `dir` pools that report no per-volume usage.
 
 Reclaiming isn't always enough: on the macOS appliance the pool is capped by the VM's data disk, so once real usage approaches the ceiling the fix is to *grow the disk*, not delete work.
 `isx vm resize <size>` does this (macOS only — on native Linux the pool grows with the host filesystem, so the command isn't registered there at all).
-The data disk is a sparse raw image on the host; resizing extends the file (`RandomAccessFile.setLength`, grow-only) while the VM is stopped, then the guest expands the btrfs filesystem to fill the larger device on the next boot — a one-line `btrfs filesystem resize max /var/lib/incus` in the appliance init that mirrors the root disk's existing auto-resize.
+The data disk is a sparse raw image on the host.
+Resizing extends the file (`RandomAccessFile.setLength`, grow-only) while the VM is stopped, then the guest expands the btrfs filesystem to fill the larger device on the next boot — a one-line `btrfs filesystem resize max /var/lib/incus` in the appliance init that mirrors the root disk's existing auto-resize.
 The data disk is deliberately separate from the root disk and survives root-disk upgrades, so growth persists across appliance version bumps.
 The resize verifies the pool total actually grew after reboot and warns if the running appliance predates the auto-resize step (the image grew but the filesystem didn't).
 The critical-fill TUI warning names both remedies — `C` to reclaim, `isx vm resize` to expand.
@@ -2133,13 +2160,17 @@ Four consumers use it, and each **fails open** when the pool cannot be listed (n
 - `BuildCommand.buildSingleImage` refuses up front when either `<name>` or `<name>-rebuilding` is an orphan or a dangling record, since its swap would otherwise fail only after the whole build.
 - `isx doctor` reports orphans (FAIL when the name is a template's or its `-rebuilding` name, since that build cannot succeed; WARN otherwise, with referenced sizes when qgroups have them) and dangling records (WARN).
   On Linux it prints the `sudo btrfs subvolume delete -R` command instead of widening the read-only sudoers rule — removal stays manual there.
-  On macOS it offers a real remediation, one orphan at a time, through the `btrfs-orphan-delete` agent verb (#874): wiping the whole pool with `isx vm reset` was the only option before, which is disproportionate for a handful of stray subvolumes and loses every instance, not just the orphaned ones.
+  On macOS it offers a real remediation, one orphan at a time, through the `btrfs-orphan-delete` agent verb (#874).
+  Wiping the whole pool with `isx vm reset` was the only option before, which is disproportionate for a handful of stray subvolumes and loses every instance, not just the orphaned ones.
   The agent re-checks, from inside the VM and across every Incus project, that nothing still references the name before it deletes anything — a separate trust boundary from `isx doctor`'s own scan, which runs on the host and can be stale by the time a user confirms the remediation (another branch could finish, or fail and get cleaned up, in between).
   It also confirms the path is still a *subvolume*, not "exists": Incus 6.23 recreates a plain directory with `backup.yaml` at a dangling record's path whenever it rewrites that record, and that directory is not the orphan's data.
-  `subvolumeFindings` stays pure (no agent call) so it is unit-testable without a VM; `DoctorCommand.checkSubvolumes` is where the live action is wired in, replacing the finding's description and remediation only on macOS and only when there are orphans and `VmAgentClient.supportsOrphanDelete` confirms the appliance has the verb.
-  That probe sends a name no real subvolume has, so a supported appliance answers `error: not a subvolume` — never reaching the Incus re-check or a delete — while one built before the verb existed answers `error: unknown verb`; either way nothing is touched.
+  `subvolumeFindings` stays pure (no agent call) so it is unit-testable without a VM.
+  `DoctorCommand.checkSubvolumes` is where the live action is wired in, replacing the finding's description and remediation only on macOS and only when there are orphans and `VmAgentClient.supportsOrphanDelete` confirms the appliance has the verb.
+  That probe sends a name no real subvolume has, so a supported appliance answers `error: not a subvolume` — never reaching the Incus re-check or a delete — while one built before the verb existed answers `error: unknown verb`.
+  Either way nothing is touched.
   Probing before offering, rather than discovering it after the user confirms, is what lets the remediation keep pointing at `isx vm reset` on an older appliance instead of a destructive action reporting, too late, that it cannot do what it just offered.
-  `DoctorCommand.deleteOrphans` draws the same distinction on the delete calls themselves: a timeout (`VmAgentClient.send`'s own 5s watchdog, same as an unreachable agent) answers `Optional.empty()`, which is not the literal `error: unknown verb` string — the only reply that actually means "unsupported" — so a slow-but-working verb on a later orphan is not told its appliance is too old while its delete finishes inside the VM regardless.
+  `DoctorCommand.deleteOrphans` draws the same distinction on the delete calls themselves.
+  A timeout (`VmAgentClient.send`'s own 5s watchdog, same as an unreachable agent) answers `Optional.empty()`, which is not the literal `error: unknown verb` string — the only reply that actually means "unsupported" — so a slow-but-working verb on a later orphan is not told its appliance is too old while its delete finishes inside the VM regardless.
 
 `isx vm reset` (`VmManager.resetDataDisk`) is the macOS last resort for a pool with nothing worth keeping.
 It lists what will be lost, booting a stopped VM to ask Incus, because the host keeps per-instance state (SSH config, git remotes) that only instance names can find.
@@ -2147,17 +2178,22 @@ Then, holding the VM lifecycle lock, it stops the VM and waits for the hyperviso
 It replaces the data disk with a blank sparse one **of the same size**, so a disk grown with `isx vm resize` stays grown, and boots.
 The appliance's `rcS` formats the blank disk and `incus-spawn-vm-init` recreates the bridge, the `cow` pool and the default profile.
 The command then removes the host integration of every instance it listed, signals the proxy, and checks that Incus answers with an empty CoW pool.
-Like every command that deletes data, it refuses to run without a terminal to confirm on unless given its skip flag (`BaseCommand.confirmDestructive`): the older `confirm()` proceeds there, which is how `echo n | isx vm reset` once wiped a pool during testing.
-`resetDataDisk` returns a `ResetResult` rather than a boolean because the cleanup hinges on it: `NOT_RESET` (lock held, the VM would not exit, the disk could not be deleted) leaves every instance in place and must not touch their host state, while `VM_DOWN` means the disk is gone even though the VM did not come back.
+Like every command that deletes data, it refuses to run without a terminal to confirm on unless given its skip flag (`BaseCommand.confirmDestructive`).
+The older `confirm()` proceeds there, which is how `echo n | isx vm reset` once wiped a pool during testing.
+`resetDataDisk` returns a `ResetResult` rather than a boolean because the cleanup hinges on it.
+`NOT_RESET` (lock held, the VM would not exit, the disk could not be deleted) leaves every instance in place and must not touch their host state, while `VM_DOWN` means the disk is gone even though the VM did not come back.
 
 **Tidying "state" keeps the data disk (#1155).**
-The data disk lives in `~/.local/state/incus-spawn/` beside pid files, sockets, logs and the root disk, so anything that tidies that directory took every instance with it: `isx clean state` and `isx clean all` deleted it as "state" (and `clean all` claimed the pool was untouched), and `uninstall.sh` listed it as "remove disk image".
+The data disk lives in `~/.local/state/incus-spawn/` beside pid files, sockets, logs and the root disk, so anything that tidies that directory took every instance with it.
+`isx clean state` and `isx clean all` deleted it as "state" (and `clean all` claimed the pool was untouched), and `uninstall.sh` listed it as "remove disk image".
 `uninstall.sh` is also the natural step when moving from a source build to Homebrew, which is how a whole pool was lost to a confirmed prompt.
 All three now delete everything in the directory *except* `data.img` unless given `--delete-instances`, and say what they keep and what it holds (the script counts instances and built templates with the isx being uninstalled when the VM is up; with it down nothing can tell, and it says so).
 Keeping only that file is enough: it is mounted at `/var/lib/incus`, so it carries the Incus database as well as the pool, and the appliance boots on it as it does after a root-disk upgrade.
 That makes how the VM stops matter: before, a disk about to be deleted could be killed mid-write, but one that is kept is stopped through the isx being uninstalled (`isx vm stop`) first.
-That asks the guest to shut down through its agent (`shutdown`: `poweroff`, so init runs `rcK`, which stops Incus and its instances and syncs) and waits up to 30 s for the hypervisor to exit by itself; only then does `VmManager.stopLocked` fall back to vfkit's stop request and its own signals.
-Before #881 there was no such verb, and vfkit's request is a power button nothing in the guest listens for, so every `isx vm stop` on a Mac ended in the signal: the next boot replayed the data disk's btrfs tree log, and with the disks mounted `commit=300` an instance deleted seconds before the stop came back as an orphaned subvolume (see appliance/DESIGN.md, "Stop sequence").
+That asks the guest to shut down through its agent (`shutdown`: `poweroff`, so init runs `rcK`, which stops Incus and its instances and syncs) and waits up to 30 s for the hypervisor to exit by itself.
+Only then does `VmManager.stopLocked` fall back to vfkit's stop request and its own signals.
+Before #881 there was no such verb, and vfkit's request is a power button nothing in the guest listens for.
+So every `isx vm stop` on a Mac ended in the signal: the next boot replayed the data disk's btrfs tree log, and with the disks mounted `commit=300` an instance deleted seconds before the stop came back as an orphaned subvolume (see appliance/DESIGN.md, "Stop sequence").
 An appliance from before the verb is still stopped that way, until a restart applies a newer one.
 Because the VM is gone by the time the script looks, it cannot see a cut-off itself, so `stopLocked` reports how the VM stopped (`VmManager.StopResult`: `SHUT_DOWN` or `SIGNALLED`).
 `stopLocked` warns on `SIGNALLED` whenever the disks are kept (`isx vm stop`, `restart`, `resize`, doctor's restart); `isx reset` and `isx vm reset`, which delete them next, stop quietly (`VmManager.stopToDelete`).
@@ -2166,11 +2202,14 @@ The script passes that flag and, on 4 or when the VM outlives isx (then it signa
 With an appliance from before #881 that warning appears on every Mac uninstall with a running VM: "kept" means "as intact as after `isx vm stop`", which there is a tree-log replay.
 The exit status is opt-in so that `isx vm stop && ...` keeps working where every stop is still a signalled one.
 An isx from before the flag rejects it with 2; the script then runs a plain `isx vm stop` and, since that isx cannot say how it went, warns that it cannot tell.
-`isx` is asked for the counts through a temporary file rather than a pipe, so `$(...)` does not wait for a child isx left holding its output, and `bounded` runs the command in a process group of its own under a watchdog that SIGKILLs the group, since a bare `alarm` does nothing to a command that ignores SIGALRM (an ignored disposition survives `exec`) and reaches nothing the command started.
+`isx` is asked for the counts through a temporary file rather than a pipe, so `$(...)` does not wait for a child isx left holding its output.
+`bounded` runs the command in a process group of its own under a watchdog that SIGKILLs the group, since a bare `alarm` does nothing to a command that ignores SIGALRM (an ignored disposition survives `exec`) and reaches nothing the command started.
 The 20 s is a hard bound.
 `uninstall.sh --binaries-only` removes just the binaries and install.sh's Homebrew override, for switching install channel.
 On Linux the proxy service needs no change there, since the next isx command rewrites a start script that names another `isx-proxy` (`ProxyService.reinstallIfChanged`).
-On macOS that is not enough, as a Mac showed: the launch agents name the binaries by path, `reinstallIfChanged` rewrites only the proxy's, and only once it sees a proxy of another version answering, so with the same version in both channels nothing was repaired and the proxy lived on only as the old process; the VM agent was left naming a removed `isx` in every case, to fail at the next login.
+On macOS that is not enough, as a Mac showed.
+The launch agents name the binaries by path, `reinstallIfChanged` rewrites only the proxy's, and only once it sees a proxy of another version answering, so with the same version in both channels nothing was repaired and the proxy lived on only as the old process.
+The VM agent was left naming a removed `isx` in every case, to fail at the next login.
 So when a plist names the directory the binaries were removed from, the script runs `isx proxy stop` and then `isx proxy install` with the isx that remains on `PATH`.
 The stop is needed: `isx proxy install` writes both agents only for a service that is not loaded (`installMacOs`), and on a loaded one rewrites the proxy's alone.
 The VM keeps running throughout; the proxy is down for the second or two between the two commands.
@@ -2189,15 +2228,20 @@ After cloning, `git remote set-branches origin '*'` immediately widens the fetch
 Other branches populate lazily on first `git fetch` or `git checkout`.
 
 **Parallel cloning**: when a template declares multiple repos they are cloned concurrently, bounded to the host's high-performance ("P") core count (`CpuInfo.highPerfCores()` — `sysctl hw.perflevel0.logicalcpu` on macOS, on Linux the top tier of the sysfs scan described in "VM boot: where the wait goes" (the hybrid PMU's `cpu_core` list, else `cpu_capacity`, else `cpufreq`), falling back to all logical processors).
-`CpuInfo` is the shared home for CPU-topology detection: it also backs the appliance VM's vCPU default (`VmManager.detectCpus()` → `performanceCores()`) and the native-image-safe host processor count (`ResourceLimits.hostProcessorCount()` → `logicalCores()`, which reads `/proc/cpuinfo`/`sysctl` rather than `Runtime.availableProcessors()` since the CLI native image pins the latter via `-R:ActiveProcessorCount`).
-Cloning runs entirely with captured (non-streamed) exec so the many parallel clones don't garble the terminal; progress is rendered by the shared `TerminalProgress` helper as one animated braille-spinner line per repo (green ✓ / red ✗ on completion), falling back to plain per-repo log lines on a non-ANSI terminal.
+`CpuInfo` is the shared home for CPU-topology detection.
+It also backs the appliance VM's vCPU default (`VmManager.detectCpus()` → `performanceCores()`) and the native-image-safe host processor count (`ResourceLimits.hostProcessorCount()` → `logicalCores()`, which reads `/proc/cpuinfo`/`sysctl` rather than `Runtime.availableProcessors()` since the CLI native image pins the latter via `-R:ActiveProcessorCount`).
+Cloning runs entirely with captured (non-streamed) exec so the many parallel clones don't garble the terminal.
+Progress is rendered by the shared `TerminalProgress` helper as one animated braille-spinner line per repo (green ✓ / red ✗ on completion), falling back to plain per-repo log lines on a non-ANSI terminal.
 Any clone failure is surfaced after the batch and aborts the build.
 Which repos have a host reference is decided on the host before the parallel section; each worker attaches its own reference just before its clone and detaches it as soon as the clone is done (#826).
 Attaches and detaches share a lock, because a device removal is a read-modify-write of the whole device map and would drop an attach that landed in between.
 Attaching lazily is what keeps a VM within its 8 PCI hotplug slots (see "Devices are attached before start"): mounting every reference up front lost the 9th one to the network, silently.
 The slots are a budget (`HotplugSlots`) that starts at `min(references, 8)` on a VM and is unbounded for a container.
-It is a hint, not a count: an attach Incus refuses for want of a slot retires one permit for good and waits for another, so a device nobody counted shrinks the budget instead of reintroducing the bug, and only when the budget would reach zero does a repo clone from the network, with a note saying why on its line.
-The latch the primes wait on counts *planned* references, each counted down once, in a `finally`, after its attach is resolved and anything attached is detached, so a failed or re-queued attach can neither hang the primes nor land after them.
+It is a hint, not a count.
+An attach Incus refuses for want of a slot retires one permit for good and waits for another, so a device nobody counted shrinks the budget instead of reintroducing the bug.
+Only when the budget would reach zero does a repo clone from the network, with a note saying why on its line.
+The latch the primes wait on counts *planned* references, each counted down once, in a `finally`, after its attach is resolved and anything attached is detached.
+So a failed or re-queued attach can neither hang the primes nor land after them.
 Each repo's declared `prime` command (also captured, no PTY) runs in the same worker once that repo's clone is done **and every reference has been detached**, so priming still pipelines with the network clones in flight.
 The reason is that a reference mount is the host checkout's whole working tree: untracked `.env` files, stashes, unpushed branches, and credentials in `.git/config` URLs.
 A prime command is arbitrary code with network access, and the old "remove all references after everything" order let any repo's prime read every mounted checkout (#765).
@@ -2210,11 +2254,13 @@ Failures are aggregated and abort the build; as a best-effort fail-fast, once an
 **Local-clone optimization**: When `host-paths` or `repo-paths` is configured in `~/.config/incus-spawn/config.yaml`, the build checks whether a matching host-side checkout exists before cloning.
 The lookup first checks direct children of each configured base directory, then recursively scans subdirectories up to 4 levels deep (skipping known non-project directories like `.git`, `node_modules`, `target`, `build`, `vendor`, etc.) to handle repos organized in nested folder structures (e.g. `~/Code/java/repo-a`).
 When a repo subdirectory exists in more than one location, the build fails with an error instructing the user to add an explicit `repo-paths` entry to disambiguate.
-Matching uses URL normalization (strips scheme, `user@`, SSH colon separator, trailing `.git`, `www.`, then lowercases) and checks **all** git remotes, not just `origin` — this handles the common case where the user's fork is `origin` and the canonical upstream is `upstream`.
+Matching uses URL normalization (strips scheme, `user@`, SSH colon separator, trailing `.git`, `www.`, then lowercases) and checks **all** git remotes, not just `origin`.
+This handles the common case where the user's fork is `origin` and the canonical upstream is `upstream`.
 If a match is found, the host directory is temporarily mounted into the container as a read-only Incus disk device (`readonly=true shift=true`) at a fixed path under `/var/lib/incus-spawn/repo-ref/` and cloned locally via `git clone --no-hardlinks`.
 This copies pack files directly — no network transfer and, critically, no `git repack` or dissociation step.
 The old approach used `git clone --reference` and then ran `git repack -a -d` to make the clone self-contained before unmounting the reference; for large repos this repack was the dominant cost (re-reading, re-deltifying, and rewriting every object).
-The local-clone approach avoids it entirely: pack files are copied as-is, then the remote URL is fixed to the real origin and a `git fetch` picks up any commits added since the last host refresh (usually nothing — `HostRepoRefresh` just ran — so only ref advertisements travel the network).
+The local-clone approach avoids it entirely.
+Pack files are copied as-is, then the remote URL is fixed to the real origin and a `git fetch` picks up any commits added since the last host refresh (usually nothing — `HostRepoRefresh` just ran — so only ref advertisements travel the network).
 If a specific branch was requested, it is checked out after the fetch supplies the ref.
 The clone includes objects reachable from all branches in the reference (pack files can't be efficiently subsetted), but only the needed refs are set up; extra objects are harmless dead weight cleaned by a future `git gc`.
 Only committed history is copied, but the whole checkout (working tree, untracked files, `.git/config`) is *visible* inside the build container while the reference is mounted.
@@ -2283,13 +2329,15 @@ The host agent plans and reviews; instances do the work, with the same isolation
 
 **Hand-rolled protocol, measured.**
 The Quarkus MCP extension was tried first, initialized only on demand (`quarkus.mcp.server.stdio.initialization-enabled=false`, started explicitly by the command).
-It still cost every isx command: native `isx --help` went from 3.2 to 4.9 ms (+55%; Vert.x alone was +0.7 ms), the binary grew 11% and RSS 5 MB, because the extension's config mappings and metadata are built at runtime init whether or not MCP is served.
+It still cost every isx command.
+Native `isx --help` went from 3.2 to 4.9 ms (+55%; Vert.x alone was +0.7 ms), the binary grew 11% and RSS 5 MB, because the extension's config mappings and metadata are built at runtime init whether or not MCP is served.
 What isx needs of the protocol is small -- `initialize`, `ping`, `tools/list`, `tools/call`, cancellation, progress -- so `cli/.../mcp/` implements it over Jackson trees (no reflection registration), and startup is unchanged.
 `McpTransport` is the seam for a later HTTP transport.
 
 **Stdout is the protocol.**
 Much of isx prints progress to `System.out`.
-Rather than teach every helper about MCP, `StdioGuard` hands the raw fd 0/1 to the transport, points `System.out` at stderr (which the client logs) and empties `System.in`; the `Headless` flag makes `TerminalProgress` stop animating and `Prompts.console()` return nothing, so no prompt can consume protocol bytes.
+Rather than teach every helper about MCP, `StdioGuard` hands the raw fd 0/1 to the transport, points `System.out` at stderr (which the client logs) and empties `System.in`.
+The `Headless` flag makes `TerminalProgress` stop animating and `Prompts.console()` return nothing, so no prompt can consume protocol bytes.
 The MCP path never calls `requireInit()` or anything that `System.exit`s: each becomes a tool error telling the agent what to ask the user.
 
 **Who is calling.**
@@ -2300,33 +2348,44 @@ The client's self-reported name, its pid and working directory are stamped too, 
 
 **Owned by the user, held by a session (#898).**
 The first version tied an instance to the process that created it: destroyed when that process ended, unreachable through MCP once kept, reaped on sight by the next session.
-That fits one agent using isx from its shell, and fails the consumer it was built for -- a coordinating agent that dispatches issues to workers and restarts (its context fills, it crashes, the machine reboots) while those workers wait on CI or a person's reply; every restart stranded or destroyed them.
+That fits one agent using isx from its shell, and fails the consumer it was built for -- a coordinating agent that dispatches issues to workers and restarts (its context fills, it crashes, the machine reboots) while those workers wait on CI or a person's reply.
+Every restart stranded or destroyed them.
 Keeping everything was no way out: kept instances were unreachable and nothing cleaned them up.
 So an instance now *belongs* to the host user (`mcp-owner`) and carries a free-text `mcp-purpose`; `mcp-session` says which session *holds* it, and that session's liveness is all it is read for.
-`adopt_instance` lets any session of the same user take over an instance whose holder is dead (or, with `force`, a stuck live one): it re-stamps the holder in one write and reads it back, so of two sessions adopting at once only the last writer passes, and the loser's next `requireOwned` fails.
-The task state was always in the instance (`~/.isx-mcp/tasks/<id>/`, now with each task's physical `cwd`), so adoption rebuilds the task registry from it and the ids keep working; task ids carry a random per-session tag rather than the pid, so they cannot collide with the adopting session's.
+`adopt_instance` lets any session of the same user take over an instance whose holder is dead (or, with `force`, a stuck live one).
+It re-stamps the holder in one write and reads it back, so of two sessions adopting at once only the last writer passes, and the loser's next `requireOwned` fails.
+The task state was always in the instance (`~/.isx-mcp/tasks/<id>/`, now with each task's physical `cwd`), so adoption rebuilds the task registry from it and the ids keep working.
+Task ids carry a random per-session tag rather than the pid, so they cannot collide with the adopting session's.
 `max-instances` counts per user across sessions -- one listing per create -- including orphans, which are still using the machine; kept instances are the user's and never count.
-`max-concurrent-tasks` counts per user the same way (#1015), and for the same reason: the machine runs every task whichever process holds it, and a controller is one session running ten tasks, which a per-session cap sized for an editor stopped at once.
-The truth about a task is in its instance (its files and systemd unit), so a reservation asks each running instance of the user's that another session holds or that is orphaned, with one exec in parallel (`TaskScripts.busy()`), and asks nothing when there is none.
+`max-concurrent-tasks` counts per user the same way (#1015), and for the same reason.
+The machine runs every task whichever process holds it, and a controller is one session running ten tasks, which a per-session cap sized for an editor stopped at once.
+The truth about a task is in its instance (its files and systemd unit).
+So a reservation asks each running instance of the user's that another session holds or that is orphaned, with one exec in parallel (`TaskScripts.busy()`), and asks nothing when there is none.
 A kept instance counts while a live session still holds it (that session can go on starting tasks there) and stops counting with it, as for `max-instances`.
 The count is taken again after a delegate's instance is branched, since other sessions may have started tasks meanwhile.
 A host-side ledger lost: each session's own belief goes stale-high as soon as its tasks finish unobserved, and would block the others for nothing.
 An instance that cannot be asked counts nothing, so it cannot block every later task; `max-instances` still bounds it.
 Nor can one that never answers hold up every task start or pile up processes.
-The probe runs isx's script as agentuser's uid without a login shell (`IncusClient.execProbe`), so a profile that hangs `su -` -- which an agent in the instance can arrange -- never runs; and it is a bounded exec (`execStreamWithin`, killed at ten seconds and given up on shortly after), so even a guest whose own binaries hang releases the host.
+The probe runs isx's script as agentuser's uid without a login shell (`IncusClient.execProbe`), so a profile that hangs `su -` -- which an agent in the instance can arrange -- never runs.
+It is a bounded exec (`execStreamWithin`, killed at ten seconds and given up on shortly after), so even a guest whose own binaries hang releases the host.
 There is never more than one probe per instance.
 One that did not answer in time, or answered but took more than half of it (a FIFO a loop feeds just in time would otherwise cost every task start nearly ten seconds), is not asked for ten minutes and counts nothing meanwhile.
-Counting its last answer instead was tried and lost: a count frozen for ten minutes goes stale-high and blocks starts for nothing, which is what asking the guest exists to avoid; the undercount is the same one the timeout path accepts, and `max-instances` bounds it.
+Counting its last answer instead was tried and lost.
+A count frozen for ten minutes goes stale-high and blocks starts for nothing, which is what asking the guest exists to avoid.
+The undercount is the same one the timeout path accepts, and `max-instances` bounds it.
 Every script the host waits on reads only regular task files (`TaskScripts.ifFile`), so a FIFO in place of a task file holds neither these probes nor an `adopt_instance`, `task_status` or `task_result` (#1035).
-Checking the path before opening it is not enough, as a FIFO can be swapped in between (#1080): the file is opened read-write, which never waits on a FIFO, and the type of what was opened is checked (`[ -f /dev/fd/3 ]`).
+Checking the path before opening it is not enough, as a FIFO can be swapped in between (#1080).
+The file is opened read-write, which never waits on a FIFO, and the type of what was opened is checked (`[ -f /dev/fd/3 ]`).
 The path is still checked first, since a read-write open creates a missing file.
 Writes never open the file they write: `launch`, `cancel`, every exit record and `exec`'s pid file write into a file `mktemp` creates in the same directory and rename it into place, which replaces a FIFO without opening it (#1074).
 Bounding these execs instead was the alternative, and it would turn a stalled read into a slow one rather than none.
-`task_diff` (and `ask` on a diff) is the exception that gets a bound as well (#1105): its own reads go through the same helper, `base.txt` and the copy of the index included, but git then opens the repository's files, and anyone in the instance can replace one of those with a FIFO.
+`task_diff` (and `ask` on a diff) is the exception that gets a bound as well (#1105).
+Its own reads go through the same helper, `base.txt` and the copy of the index included, but git then opens the repository's files, and anyone in the instance can replace one of those with a FIFO.
 So the diff runs under the guest's `timeout` (five minutes, which a diff against a copied index never needs), and one that does not finish fails as `unavailable` rather than holding the call.
 The orphan sweep asks whether an orphan is in use the same way, and takes no answer as in use.
 What the guest reports is counted once per task id, and the refusal names the instances the count came from, so a controller can see which one to look at.
-Between one session's count (up to ten seconds old by its check) and another's launch, both can take the last slot, as with `max-instances`: both limits are a net against runaway creation, not a budget, and a host lock held across a guest exec is not worth closing that.
+Between one session's count (up to ten seconds old by its check) and another's launch, both can take the last slot, as with `max-instances`.
+Both limits are a net against runaway creation, not a budget, and a host lock held across a guest exec is not worth closing that.
 The defaults (8 and 8) are sized for that net, not for one editor's task or two; the only cost of a high number is host memory.
 
 **Ownership is stamped by the copy.**
@@ -2337,7 +2396,8 @@ Every tool that names an instance checks the session's registry *and* the stamp 
 **A person sees what the agent sees (#1053).**
 `isx list` and the TUI's instance details say which instances a session made, what for, and whether they are `held`, `orphaned` or `kept`, so a person can tell an agent's worker from their own instance before destroying or entering it.
 `McpStanding` decides the state with `list_instances`' rules (`Orphans.othersOf`, kept first), and a test holds the two together.
-It reads nothing beyond the listing it is given: a process session's liveness is a local `/proc` read, and a coordinator instance's is whether that instance is in the same listing with the same grant, so `isx list` still costs one request.
+It reads nothing beyond the listing it is given.
+A process session's liveness is a local `/proc` read, and a coordinator instance's is whether that instance is in the same listing with the same grant, so `isx list` still costs one request.
 The TUI has no column for it, because the instance table has no width to spare, only rows in the detail pane.
 An orphan a sweep stopped as dormant (#1028) is still `orphaned` there, as in `list_instances`; the detail pane says when it was stopped and that `mcp.dormant-grace-hours`, not the orphan grace, comes next.
 `isx list --format=plain|json` gains `mcp_state` and `mcp_purpose` at the end, and its table gains an `MCP` column only when some instance has those stamps.
@@ -2346,18 +2406,24 @@ Human output flattens control characters in these stamps: `isx mcp` refuses them
 **Orphans are quarantined, not reaped.**
 A name is registered before its copy starts, so a session ending mid-create still covers it.
 On end of input or SIGTERM a session destroys nothing: it stamps `mcp-orphaned` with the time on what it holds.
-After a SIGKILL nobody stamps that, so the first later session to see the dead holder stamps it then; either way, the grace period starts when the orphan is first known, without a per-call heartbeat write (each instance write costs Incus a backup-file rewrite).
+After a SIGKILL nobody stamps that, so the first later session to see the dead holder stamps it then.
+Either way, the grace period starts when the orphan is first known, without a per-call heartbeat write (each instance write costs Incus a backup-file rewrite).
 Each new session sweeps this user's orphans and destroys those past `mcp.orphan-grace-hours` (default 24: long enough to outlast a night's CI wait, short enough that forgotten instances do not pile up) -- never kept ones, never ones in a pending operation, never one being adopted, never one a person is working in, and never one whose delegated agent is still running.
 That check is one exec: a probe (`Presence`) reading `/proc` for a process on a pseudo-terminal (an `isx shell`, including a tmux or zmx session left detached) or a Claude Code that does not carry the `ISX_MCP_TASK` marker of a task's own processes, and `TaskScripts.unfinished()`, which asks systemd about every agent task whose current run has no exit file.
 Background commands do not count: a dev server never finishes, and would keep its orphan forever.
-`Presence` deliberately ignores a task's own processes, so without the second half a delegate still working when its coordinator's grace period ran out was destroyed with its unpushed work; a coordinator that never comes back leaves such an instance until the task ends, and the next sweep after that reaps it.
+`Presence` deliberately ignores a task's own processes, so without the second half a delegate still working when its coordinator's grace period ran out was destroyed with its unpushed work.
+A coordinator that never comes back leaves such an instance until the task ends, and the next sweep after that reaps it.
 A running instance the probe cannot reach, or whose systemd cannot answer, counts as in use: what cannot be looked into is left for the user.
 A *stopped* one is not probed at all: nobody can be in it and no task can be running, and counting it as in use leaked every orphan a session stopped before it died -- which `stop_instance` made routine (#1013).
 Its status comes from the listing the sweep already makes, so the delete re-checks under its mark that it is still stopped: one started since (an `isx shell`) was never looked into.
 An instance adopted while stopped cannot have its task records read; `start_instance` reads them, so their ids work again.
-"Still running" means what systemd says: a run cut off by an instance restart left no exit file, but its unit is gone, so it reads as over -- like a finished run, whose uncommitted work the sweep does not protect either; a coordinator that wants that work adopts the instance within the grace period.
+"Still running" means what systemd says.
+A run cut off by an instance restart left no exit file, but its unit is gone, so it reads as over -- like a finished run, whose uncommitted work the sweep does not protect either.
+A coordinator that wants that work adopts the instance within the grace period.
 Adoption and the sweep can meet: the sweep runs as a session starts, which is when a restarted coordinator adopts.
-So each writes its own mark before reading the other's: the sweep, holding the instance's delete lock, stamps `pending-op: deleting` and then re-reads `mcp-session` (`InstanceDestroyer.deleteHeldIf`), backing off (and taking the mark back) if it changed; `adopt_instance` stamps `mcp-session` and then reads `pending-op`.
+So each writes its own mark before reading the other's.
+The sweep, holding the instance's delete lock, stamps `pending-op: deleting` and then re-reads `mcp-session` (`InstanceDestroyer.deleteHeldIf`), backing off (and taking the mark back) if it changed.
+`adopt_instance` stamps `mcp-session` and then reads `pending-op`.
 Incus orders the two writes, so at least one side sees the other.
 A mark after the stamp does not say which way the sweep went, so adoption waits (up to 30 s) for it to go and answers from what is left: gone, taken by another session, or held -- never reported adopted while being deleted, and never left stamped as this session's without being held.
 A failed re-read under the mark takes the mark back, and taking it back is strict, since a mark left behind would leave the orphan busy for good.
@@ -2366,16 +2432,20 @@ The `mcp-orphaned` stamp names the session it was written for (`<time> <session>
 **Dormant orphans are stopped, not kept forever (#1028).**
 The rules above leave one case open-ended: an orphan "in use" with nobody coming back -- a delegate hung on a dead API call, or one waiting longer than anyone will.
 It cannot be destroyed (the sweep cannot tell hung from waiting, and its unpushed work is on the disk), but keeping it running holds its memory forever.
-So a third outcome sits between keep and destroy: an orphan past its grace period that the sweep would keep *only* because a delegated agent has not finished (or systemd cannot say) -- never one a person is in -- is **stopped** once nothing in it has moved for `mcp.dormant-after-hours` (default 24), and stamped `mcp-dormant: <time> <session>`, in the shape of `mcp-orphaned`.
+So a third outcome sits between keep and destroy.
+An orphan past its grace period that the sweep would keep *only* because a delegated agent has not finished (or systemd cannot say) -- never one a person is in -- is **stopped** once nothing in it has moved for `mcp.dormant-after-hours` (default 24), and stamped `mcp-dormant: <time> <session>`, in the shape of `mcp-orphaned`.
 "Nothing moved" needs two quiet signals, both free of new machinery: the newest mtime among delegated agents' task files (`TaskScripts.agentIdle()`, in the same probe exec, as seconds by the guest's own clock), and the CPU time in the instance's Incus state (`IncusClient.cpuUsage`, one GET, no exec) compared with the sample the previous sweep recorded on the instance (`mcp-cpu-sample: <time> <cpu-nanos> <quiet-since>`).
-The CPU counts as quiet while it grows by under 1% of one CPU between two samples (`Orphans.QUIET_CPU_SHARE`), taken at least an hour apart (`MIN_SAMPLE_GAP`, or the window if shorter): sessions starting seconds apart would otherwise hold the probes' own CPU against an allowance of milliseconds and keep a hung delegate forever, so a sweep that close to the last sample neither compares nor records.
+The CPU counts as quiet while it grows by under 1% of one CPU between two samples (`Orphans.QUIET_CPU_SHARE`), taken at least an hour apart (`MIN_SAMPLE_GAP`, or the window if shorter).
+Sessions starting seconds apart would otherwise hold the probes' own CPU against an allowance of milliseconds and keep a hung delegate forever, so a sweep that close to the last sample neither compares nor records.
 More starts the window again, and so does a first look, a counter that went back (a restart) or a state Incus cannot give -- so a stop always needs two sweeps at least `dormant-after-hours` apart.
 A delegate polling CI writes no events but burns CPU; one hung on a dead call does neither.
 The stop goes through `InstanceBackend.stopIfHeldBy`, the guard the delete uses: mark `pending-op: stopping`, re-read the holder, then stamp and stop -- stamped first, since a stopped orphan without the stamp is destroyed by the next sweep, and taken back if the stop fails and the instance still runs, so a later stop by anything else is not given the dormant clock.
-A dormant orphan is then destroyed without being looked into once `mcp.dormant-grace-hours` (default 168) have passed since its stop; a stopped orphan without the stamp, or with one naming an earlier holder, is destroyed past its orphan grace period as before -- the dormant clock only ever adds time.
+A dormant orphan is then destroyed without being looked into once `mcp.dormant-grace-hours` (default 168) have passed since its stop.
+A stopped orphan without the stamp, or with one naming an earlier holder, is destroyed past its orphan grace period as before -- the dormant clock only ever adds time.
 Stop rather than freeze: a frozen instance returns no memory, the resource that matters on the appliance VM, and a frozen Claude Code loses its in-flight API call on thaw anyway, so stopping is no worse and reuses `stop_instance`'s machinery.
 `adopt_instance` starts a dormant instance again (`McpSession.wakeIfDormant`, with a progress notification and an audit line) before `Tasks.adopt` reads its tasks: any instance it holds and finds stopped with an `mcp-dormant` stamp -- its own, or one a sweep wrote for the previous holder just after the adoption's stamp -- and clears the stamp only once started.
-Adoption itself clears `mcp-cpu-sample` but leaves that stamp, so a repeated `adopt_instance` on an instance the session already holds still does the start: a start that fails is `unavailable`, with the instance held, and the retry `unavailable` promises is the same call.
+Adoption itself clears `mcp-cpu-sample` but leaves that stamp, so a repeated `adopt_instance` on an instance the session already holds still does the start.
+A start that fails is `unavailable`, with the instance held, and the retry `unavailable` promises is the same call.
 `start_instance` and `stop_instance` clear a stamp left that way: once the holder has started or stopped the instance itself, a later adoption must not start what an agent stopped on purpose.
 The delegate's run was cut off, so it reads as over, and `send_message` resumes its conversation from the recorded `session_id`.
 The sweep's stop can outlast adoption's 30 s wait for its mark (the stop alone may take Incus's 30 s graceful timeout): reported adopted then, the instance would be stopped under its new holder with nothing saying so.
@@ -2385,101 +2455,137 @@ Nothing an agent can call changed: the stop is the sweep's, an instance write li
 
 **A person in the box is a task state.**
 Taking over a worker's conversation (`isx shell`, then `claude --resume`) is how a person steers a design, so it must not race the coordinator's `send_message`, which runs `claude -p --resume` on the same session.
-The task status script runs the same probe and reports the Claude Code that resumes the task's `session_id`, or works in its recorded `cwd` (where `--continue` or the resume picker would find the conversation), excluding processes that carry a task's `ISX_MCP_TASK` marker; `task_status` then says `attached`, and `send_message` refuses.
+The task status script runs the same probe and reports the Claude Code that resumes the task's `session_id`, or works in its recorded `cwd` (where `--continue` or the resume picker would find the conversation), excluding processes that carry a task's `ISX_MCP_TASK` marker.
+`task_status` then says `attached`, and `send_message` refuses.
 The check is made when a message is sent, so a person joining in the following seconds is not seen; the alternative was every client racing its own `pgrep` before each wake.
 
 **Results stay small.**
 The coordinator's context is the scarce resource.
-`task_result` returns the report capped (`max_bytes`, default 16 KB) and the event tail only on request; `get_diff(stat)` is `git diff --numstat` plus `--shortstat` per repository, small and exact, which is what a coordinator needs to keep new dispatches from overlapping work in flight.
-`ask` on `exec`, `task_result` and `get_diff` goes further: the text is produced in the instance and piped, there, into `claude -p --model <summary-model> --tools '' --no-session-persistence` in an empty directory with the question, and only the answer (plus what was read: lines and bytes) comes back.
+`task_result` returns the report capped (`max_bytes`, default 16 KB) and the event tail only on request.
+`get_diff(stat)` is `git diff --numstat` plus `--shortstat` per repository, small and exact, which is what a coordinator needs to keep new dispatches from overlapping work in flight.
+`ask` on `exec`, `task_result` and `get_diff` goes further.
+The text is produced in the instance and piped, there, into `claude -p --model <summary-model> --tools '' --no-session-persistence` in an empty directory with the question, and only the answer (plus what was read: lines and bytes) comes back.
 A fresh one-shot rather than the worker's session, which would spend the worker's context and inherit its framing; no tools, because the text is untrusted and may carry instructions; the default model is the alias `haiku`, so a template whose Claude Code maps models elsewhere (Vertex, Bedrock) is followed.
 The answer is as untrusted as any output and lossy besides, so the tool descriptions say never to gate a merge on it.
 
 **Fewer calls per tick.**
 `wait_any` blocks until any of several tasks finishes, probing each instance once per two seconds, instead of the coordinator polling N tasks in turn.
 `delegate(skill, args)` runs `/<skill> <args>` so that the brief lives in the instance, versioned with the template, and the coordinator sends a name.
-The delegate's permission mode is always passed explicitly (`--permission-mode`, from `mcp.delegate-permission-mode` or its per-template override, default `bypassPermissions` as isx's managed settings already set): a headless agent that meets a permission prompt has nobody to answer it, and the refusals it does meet are surfaced from the result event's `permission_denials` in `task_status` and `task_result` instead of failing silently.
+The delegate's permission mode is always passed explicitly (`--permission-mode`, from `mcp.delegate-permission-mode` or its per-template override, default `bypassPermissions` as isx's managed settings already set).
+A headless agent that meets a permission prompt has nobody to answer it.
+The refusals it does meet are surfaced from the result event's `permission_denials` in `task_status` and `task_result` instead of failing silently.
 
 **Activity from the proxy (#898).**
 "Working", "stuck" and "finished but never reported" look alike from outside: a task is `running` in all three.
-Asking the instance costs an exec and reads what the agent says about itself; the proxy already sees every model call and knows which instance made it, so `instance_activity` asks the proxy instead -- VISION.md's "the proxy is the control plane" applied to its first consumer.
+Asking the instance costs an exec and reads what the agent says about itself.
+The proxy already sees every model call and knows which instance made it, so `instance_activity` asks the proxy instead -- VISION.md's "the proxy is the control plane" applied to its first consumer.
 `MitmProxy` counts, per instance, the Messages API creates (`/v1/messages`, and Vertex `:rawPredict`/`:streamRawPredict`; not `count_tokens`, batches, settings or telemetry, which an idle Claude Code keeps sending): requests made and in flight, when the last one started and ended, and the tokens their 2xx responses report in `usage`.
-The usage is read off the relayed stream (`ApiActivity.UsageTap`, one SSE line held at a time, a plain JSON body up to 4 MB): a stream reports it in `message_start` and, cumulatively, in `message_delta`, so each field keeps its largest value rather than summing.
+The usage is read off the relayed stream (`ApiActivity.UsageTap`, one SSE line held at a time, a plain JSON body up to 4 MB).
+A stream reports it in `message_start` and, cumulatively, in `message_delta`, so each field keeps its largest value rather than summing.
 Those calls are sent upstream with `Accept-Encoding: identity`, since a compressed answer would hide its usage; a response compressed anyway is relayed and not counted.
 A call ends once, on the client response's end or close, so a failed or abandoned call never stays in flight.
 The proxy serves the counts as `/activity` on the health port, to host callers only (`isHostCaller`, as `/health`'s pid), a container getting a 404: what its neighbours do is not its business.
 Counts live in memory, so every way they can start over must be visible to a client subtracting two reads.
-`counting_since` is therefore per instance -- when the proxy created that instance's counters, at the first read or call after it learned of the instance -- not the proxy's start: a read drops the counters of an instance the registry no longer lists, so those of destroyed instances do not pile up, and the registry can also miss a live one for a moment (an address two instances claim, a listing entry that failed to parse).
+`counting_since` is therefore per instance -- when the proxy created that instance's counters, at the first read or call after it learned of the instance -- not the proxy's start.
+A read drops the counters of an instance the registry no longer lists, so those of destroyed instances do not pile up, and the registry can also miss a live one for a moment (an address two instances claim, a listing entry that failed to parse).
 A proxy-wide `counting_since` would let a dropped instance's counts start again from zero under an unchanged stamp, and a before/after subtraction would read a wrong or negative spend (found in review of #1052).
-With it per instance, counters made again carry a later stamp; and since only idle counters are dropped -- atomically per key with `begin`, so a call never lands on counters the map no longer holds -- `requests_in_flight` is never undercounted.
+With it per instance, counters made again carry a later stamp.
+Since only idle counters are dropped -- atomically per key with `begin`, so a call never lands on counters the map no longer holds -- `requests_in_flight` is never undercounted.
 A task's spend is the difference of two reads with the same `counting_since`, and nothing else: a read creates counters for every instance the registry knows, so a known instance always carries one.
 An earlier rule that also let a first read without one count as zero was unsafe -- counters created after it could be dropped and made again before the second read, and the subtraction would undercount without a sign.
 Dropping on a read is also not enough on its own: a hand-named instance destroyed and branched again before anything reads `/activity` would carry on from the old one's counts under its stamp (#1063).
-So counters also belong to one incarnation of a name, the instance's Incus `created_at`, which the registry already reads in its listing and keeps beside the address (not in `InstanceAccounts`, which the proxy caches by value); a call or read naming another incarnation starts fresh counters (and `requests_in_flight` counts that incarnation's calls only).
+So counters also belong to one incarnation of a name, the instance's Incus `created_at`, which the registry already reads in its listing and keeps beside the address (not in `InstanceAccounts`, which the proxy caches by value).
+A call or read naming another incarnation starts fresh counters (and `requests_in_flight` counts that incarnation's calls only).
 A call's incarnation is read in the same registry lookup that names its instance (`InstanceRegistry.resolve`, carried in `RequestContext`), so a call is never paired with another instance's `created_at`.
-A call and an `/activity` read can still see different snapshots, so each listing the registry parses gets a higher *view*, and counters never go back to an earlier view: a call identified before the name changed hands is counted nowhere, and a read from an older listing neither replaces nor prunes counters a newer one made, or the two would reset them in turn.
+A call and an `/activity` read can still see different snapshots, so each listing the registry parses gets a higher *view*, and counters never go back to an earlier view.
+A call identified before the name changed hands is counted nowhere, and a read from an older listing neither replaces nor prunes counters a newer one made, or the two would reset them in turn.
 Views, not `created_at`, order them: a rename keeps the instance's own `created_at`, so a name can pass to an instance created before the one that had it.
 Per-task baselines kept by the session were rejected: they would not survive the adoption that #898 exists for, and the subtraction is the client's to do.
 The contract can grow additively (a `task_id`, other domains) without changing what is there.
 
 **Structured results for programs (#1010).**
 A daemon driving `isx mcp` is a client that is not a model, and it should not have to parse a sentence to find a task id or a state: the wording of those sentences changes in nearly every follow-up.
-So every tool declares an `outputSchema` in `tools/list` and returns a matching `structuredContent` object (MCP 2025-06-18), while the text the model reads stays as it was -- the five tools that already answered in JSON print the structure itself, followed by guidance that is not part of it.
+So every tool declares an `outputSchema` in `tools/list` and returns a matching `structuredContent` object (MCP 2025-06-18), while the text the model reads stays as it was.
+The five tools that already answered in JSON print the structure itself, followed by guidance that is not part of it.
 Field names are shared across tools (`instance`, `template`, `task_id`, `state`, `exit_code`, `run`, matching the `isx/task_changed` notification).
-One word means one thing everywhere: a task's `state` is always from `OutputSchemas.TASK_STATES` (the notification adds `released` and never says `unknown`; `McpOutputSchemaTest` pins both), including a task entry in `list_instances`, which gives the state as the session last saw it -- `unknown` when nothing read how it ended, as after a `cancel` (a boolean `running` there would have been frozen at release: once the session knew more, saying it would take a second field for the same fact), a no-op lifecycle call says `already: true` (`stop`, `start`, `destroy`), `max_turns` is the budget the run actually gets (the ceiling applied) in every tool, and a field isx cannot fill truthfully is left out rather than given a placeholder; every schema object is closed, and the schemas live in `OutputSchemas`, built only when `isx mcp` lists its tools.
-They are a contract, so `McpOutputSchemaTest` keeps a golden copy (a change is a deliberate diff), compiles each one against the 2020-12 metaschema with networknt's validator -- the one the official MCP Java SDK uses -- and refuses a `$schema` naming another dialect, since clients dispatch on it; `StructuredResults` validates every result the tool tests produce, and one test drives every tool.
-A refusal carries **no** `structuredContent` at all: its `{code, message, instance?, task_id?}` goes in the result's `_meta` under `dev.incusspawn/error`, with `code` from a small `ToolError.Code` set (`invalid_argument`, `not_approved`, `not_found`, `not_held`, `wrong_state`, `busy`, `limit`, `unavailable`, `task_failed`, `refused`, `internal`), which every throw site names -- there is no default, so a new refusal cannot go unclassified -- and an `IncusException` escaping a tool is `unavailable`, not `internal`.
+One word means one thing everywhere: a task's `state` is always from `OutputSchemas.TASK_STATES` (the notification adds `released` and never says `unknown`; `McpOutputSchemaTest` pins both), including a task entry in `list_instances`, which gives the state as the session last saw it -- `unknown` when nothing read how it ended, as after a `cancel` (a boolean `running` there would have been frozen at release: once the session knew more, saying it would take a second field for the same fact), a no-op lifecycle call says `already: true` (`stop`, `start`, `destroy`), `max_turns` is the budget the run actually gets (the ceiling applied) in every tool, and a field isx cannot fill truthfully is left out rather than given a placeholder.
+Every schema object is closed, and the schemas live in `OutputSchemas`, built only when `isx mcp` lists its tools.
+They are a contract, so `McpOutputSchemaTest` keeps a golden copy (a change is a deliberate diff), compiles each one against the 2020-12 metaschema with networknt's validator -- the one the official MCP Java SDK uses -- and refuses a `$schema` naming another dialect, since clients dispatch on it.
+`StructuredResults` validates every result the tool tests produce, and one test drives every tool.
+A refusal carries **no** `structuredContent` at all.
+Its `{code, message, instance?, task_id?}` goes in the result's `_meta` under `dev.incusspawn/error`, with `code` from a small `ToolError.Code` set (`invalid_argument`, `not_approved`, `not_found`, `not_held`, `wrong_state`, `busy`, `limit`, `unavailable`, `task_failed`, `refused`, `internal`), which every throw site names -- there is no default, so a new refusal cannot go unclassified -- and an `IncusException` escaping a tool is `unavailable`, not `internal`.
 `busy` also answers a call repeating one with the same `idempotency_key` that is still under way, `not_held` one whose instance another live session holds or is still making, and `invalid_argument` a key repeated for something other than what it made (#1011).
-`unavailable` also answers an `adopt_instance` that took a dormant instance but could not start it again, and `busy` one that took an instance the orphan sweep is still stopping (#1028): the instance is held then, either way, and the retry is the same call, which starts it.
-`unavailable` and `busy` are the codes that may succeed on a retry as is (not every `unavailable` does: an instance that cannot do what was asked fails the same way again); a `create_instance` refused by `BranchFlow.preflight` (a missing credential, a template built with a different CA, the name in use, the proxy down) is `refused`, since the user has to act first, as is an `instance_activity` asked of a proxy older than `/activity` (`ProxyActivity.Outdated`), which answers the same until restarted.
-Do not move it into `structuredContent`: the 1.x TypeScript SDKs validate `structuredContent` against the tool's output schema even on an error result (2.x and the Python SDK do not), and Claude Code ships both generations, so an error object there would turn every refusal into a client-side failure.
-`get_diff` reads `git diff --numstat -z --no-renames`, so no file name can forge a record and a rename reports both paths it touched; its text is rendered from the parsed structure, with a path holding a control character C-quoted as git quotes it (the structure keeps it verbatim), and `ask` hands the in-guest model git's own quoted, line-based `--numstat`, so no name forges a line in either.
+`unavailable` also answers an `adopt_instance` that took a dormant instance but could not start it again, and `busy` one that took an instance the orphan sweep is still stopping (#1028).
+The instance is held then, either way, and the retry is the same call, which starts it.
+`unavailable` and `busy` are the codes that may succeed on a retry as is (not every `unavailable` does: an instance that cannot do what was asked fails the same way again).
+A `create_instance` refused by `BranchFlow.preflight` (a missing credential, a template built with a different CA, the name in use, the proxy down) is `refused`, since the user has to act first, as is an `instance_activity` asked of a proxy older than `/activity` (`ProxyActivity.Outdated`), which answers the same until restarted.
+Do not move it into `structuredContent`.
+The 1.x TypeScript SDKs validate `structuredContent` against the tool's output schema even on an error result (2.x and the Python SDK do not), and Claude Code ships both generations, so an error object there would turn every refusal into a client-side failure.
+`get_diff` reads `git diff --numstat -z --no-renames`, so no file name can forge a record and a rename reports both paths it touched.
+Its text is rendered from the parsed structure, with a path holding a control character C-quoted as git quotes it (the structure keeps it verbatim), and `ask` hands the in-guest model git's own quoted, line-based `--numstat`, so no name forges a line in either.
 `task_status` adds when the run started and last wrote output, from the mtimes of its `current` and output files in the same exec.
 
 **Told, for a client that asks (#1014).**
 A daemon driving `isx mcp` would rather be told than hold a `wait_any`: `notifications/isx/task_changed` (`{task_id, instance, run, state, exit_code?}`, state `running`, `finished`, `lost`, `attached` or `released`) is sent on every transition.
 Server and client both list `isx/task_changed` under `capabilities.experimental` to switch it on; it starts only once the `initialize` response is out.
-A client that does not ask -- Claude Code -- gets nothing and costs nothing: the server only learns task states when asked, so notifying means polling, and an always-on poller would spend an exec per instance every two seconds on messages that are dropped.
+A client that does not ask -- Claude Code -- gets nothing and costs nothing.
+The server only learns task states when asked, so notifying means polling, and an always-on poller would spend an exec per instance every two seconds on messages that are dropped.
 `TaskWatcher` keeps the last state it reported per task and the paths that learn one for free feed it (launch, `task_status`, forgetting an instance), so a transition is reported once whichever path saw it first.
 The poller fills in the rest, including a task never reported (adopted) or last reported running (cancelled since): an extra exec in adoption would only say it two seconds sooner.
-A cancel must not read as a loss on the way: it stops the unit, sweeps the task's processes for two seconds and only then records exit 143, and a unit that is inactive with no exit file is otherwise `lost`.
-So `cancel` stamps `cancelling-<n>` before the stop, and every state read calls the run `running` while that stamp is under five minutes old -- still true, its processes are being killed, and the stop alone may wait systemd's 90 s -- so a poll landing in the sweep reports nothing and the client hears one `finished 143`; a stamp older than that (or from the future) is a cancel that died midway, and the run is lost after all -- once the exit file has been looked at again, since a cancel records its exit before removing its stamp and may finish between a reader's two checks.
+A cancel must not read as a loss on the way.
+It stops the unit, sweeps the task's processes for two seconds and only then records exit 143, and a unit that is inactive with no exit file is otherwise `lost`.
+So `cancel` stamps `cancelling-<n>` before the stop.
+Every state read calls the run `running` while that stamp is under five minutes old -- still true, its processes are being killed, and the stop alone may wait systemd's 90 s -- so a poll landing in the sweep reports nothing and the client hears one `finished 143`.
+A stamp older than that (or from the future) is a cancel that died midway, and the run is lost after all -- once the exit file has been looked at again, since a cancel records its exit before removing its stamp and may finish between a reader's two checks.
 Every state read means `status()` too: it now prints the guest's own `RUN_STATE` rather than the raw unit state for Java to interpret, so the rules are written once.
 A cancel is also the one path that reports at once, and costs nothing: the watch script rides the cancel's own exec, because `stop_instance(force)` stops the instance straight after and a stopped instance cannot be asked.
 An instance the poller cannot exec into (stopped behind the session's back, unreachable) is left until the next slow round rather than costing a failed exec every two seconds with `TaskScripts.watch()` (one exec per instance, re-reading the exit file after asking systemd so a run that just ended is never called lost, and one `Presence` scan only when a finished agent is among the tasks): tasks last reported running every two seconds, as `wait_any` does; every fifth round, finished agents (a person may join or leave) and whether the session still holds each instance, so a set of idle tasks does not become a steady stream of execs and Incus reads.
 `unknown` is never reported, as it never changes a recorded state.
-A task whose instance is gone is `lost` if it was running (a finished task lost nothing); one whose instance another session adopted is `released`, whatever its state, because its id no longer works here and calling it lost would claim the run died.
-Which of the two is not asked of Incus when the session has already let go: every place that drops an instance knows why (`destroy_instance` and a 404 mean gone, another session's stamp means adopted) and the session remembers it, since by the time a poll round asks, an instance destroyed a moment earlier would read as merely not held.
+A task whose instance is gone is `lost` if it was running (a finished task lost nothing).
+One whose instance another session adopted is `released`, whatever its state, because its id no longer works here and calling it lost would claim the run died.
+Which of the two is not asked of Incus when the session has already let go.
+Every place that drops an instance knows why (`destroy_instance` and a 404 mean gone, another session's stamp means adopted) and the session remembers it, since by the time a poll round asks, an instance destroyed a moment earlier would read as merely not held.
 Either is the last word for the task: the watcher tombstones its id, so a `task_status` or poll that read the task just before and reports just after cannot tell the client the session still has it.
 
 **The agent gets `isx branch`, not options.**
 Instances are created through `BranchFlow` with `Request.defaults()`: the template's network mode, account pins, KVM and resource defaults, no GUI, no inbox.
 Template approval lives in the `mcp:` section of `config.yaml`, read on every call; a template must be listed, not built from a project-local definition (`BuildSource.usedProjectLocal()`), and built.
-Definitions come from `ImageDef.loadTrusted()`, which leaves out the working directory's `.incus-spawn/`: `isx mcp` runs in whatever repository the agent was started in, and a definition there must not reach an agent's instance even by overriding a parent of an approved template (which would decide, among other things, which credential accounts it gets).
+Definitions come from `ImageDef.loadTrusted()`, which leaves out the working directory's `.incus-spawn/`.
+`isx mcp` runs in whatever repository the agent was started in, and a definition there must not reach an agent's instance even by overriding a parent of an approved template (which would decide, among other things, which credential accounts it gets).
 Nothing in the package can write config or definitions; `McpNoWritePathTest` pins that at the source level, so widening it means deleting a line of that test.
 
 **Forks: prepare once, try N things (#1013).**
 A review that builds a PR once and then runs several specialist reviewers wants each in an identical, warm environment -- the built checkout, the primed `~/.m2`, the compiled `target/` -- without rebuilding per specialist or sharing one `target/` and one failure domain.
 `create_instance(from_instance)` is `isx branch --from <instance>` through the same `BranchFlow`, which already resolves a branch of a branch: the leaf template from `PROFILE`, the source's account pins on top of the template's, credentials checked against the source's recorded build.
 So the trust boundary does not move: the source must be held by this session, its lineage must still be approved and trusted (`TemplatePolicy.requireLineage`, which, like adoption, does not need the template built: a fork copies the instance, not the image), and network mode and accounts are still never arguments.
-The source must be **stopped**: a running container can be copied, but only crash-consistently (a half-written `target/`, a live lock in `.m2`), and a running VM not at all; so `stop_instance` and `start_instance` exist, and `stop_instance` is refused while a task runs unless `force`, which cancels the tasks first so none stays recorded as running in an instance nobody can ask.
+The source must be **stopped**.
+A running container can be copied, but only crash-consistently (a half-written `target/`, a live lock in `.m2`), and a running VM not at all.
+So `stop_instance` and `start_instance` exist, and `stop_instance` is refused while a task runs unless `force`, which cancels the tasks first so none stays recorded as running in an instance nobody can ask.
 Having the fork stop and restart the source by itself would pay a restart per fork and hide a state change from the client.
 A fork is stamped, counted against `max-instances`, orphaned and reaped like any instance; `configureBranch` drops the `mcp-*` keys it copied, so a fork of a kept instance is not kept.
 Two things a copy carries had to be undone: the guest's `~/.isx-mcp/tasks/`, which would let adopting the fork claim the source's task ids, is cleared with one exec after the start (a fork whose tasks cannot be cleared is removed); and the template of an MCP instance is read from `PROFILE`, not `PARENT`, which for a fork names the source instance and made forks impossible to adopt.
 
 **Idempotency keys: repeating a call is safe by construction (#1011).**
-A controller recovers from a crash by re-running every intent with no recorded result, so it needs "did my `create_instance` happen before I died?" answered by the thing it drives, not by a lookup by `purpose` whose race and convention it owns.
-`create_instance`, `delegate` and `exec(background)` take an optional `idempotency_key`; a call whose key already made something gets it back -- the original result shape, rebuilt from what Incus and the task's files hold, plus `replayed: true` -- instead of a second one.
+A controller recovers from a crash by re-running every intent with no recorded result.
+So it needs "did my `create_instance` happen before I died?" answered by the thing it drives, not by a lookup by `purpose` whose race and convention it owns.
+`create_instance`, `delegate` and `exec(background)` take an optional `idempotency_key`.
+A call whose key already made something gets it back -- the original result shape, rebuilt from what Incus and the task's files hold, plus `replayed: true` -- instead of a second one.
 - *The key lives exactly as long as what it made.*
   On the instance it is `user.incus-spawn.mcp-idempotency-key`, stamped by the copy request with the other ownership stamps: host-side config the guest cannot change, and no request of its own.
   On a task it is `~/.isx-mcp/tasks/<id>/key`, which `TaskScripts.list()` reads back, so it survives a server restart, a session replacement and an adoption.
-  A host-side ledger would also remember keys past a destroy, but the only thing it could add is "that key made an instance that is now gone", to which a controller's right answer is to create again -- which a forgotten key does; it would be host state that `McpNoWritePathTest` forbids and that would need reconciling with Incus, and every destroy is deliberate (the controller, a person, or the orphan sweep, which already defines an abandoned instance as gone with all it held).
+  A host-side ledger would also remember keys past a destroy.
+  But the only thing it could add is "that key made an instance that is now gone", to which a controller's right answer is to create again -- which a forgotten key does.
+  It would be host state that `McpNoWritePathTest` forbids and that would need reconciling with Incus.
+  Every destroy is deliberate (the controller, a person, or the orphan sweep, which already defines an abandoned instance as gone with all it held).
 - *Scope.*
   An instance key is matched among the host user's instances (`mcp-owner`).
-  A task key is matched only among the session's tasks, and a guest-written key only answers for a call naming its own instance: the call that starts a task names the instance anyway, and a user-wide match would let one instance's agent plant a key and capture a keyed `delegate` meant for another.
+  A task key is matched only among the session's tasks, and a guest-written key only answers for a call naming its own instance.
+  The call that starts a task names the instance anyway, and a user-wide match would let one instance's agent plant a key and capture a keyed `delegate` meant for another.
   `delegate(template)` gets user-wide scope through the instance stamp.
   A replay is decided before the call is compared with what the key made (`McpSession.replayable`): one still being made -- this session's create under way (`busy`), or a live session's (`not_held`, pointing at `adopt_instance`) -- cannot be compared yet, because a copy carries its source's config, its parent included, until it is configured, and a mismatch's advice to use a new key would make a second instance.
-  One this session holds is returned as it is; an orphan, or one its holder released, is adopted with all of `adopt()`'s checks, tasks included (a running instance whose tasks cannot be read is let go of again and the call refused as `unavailable`: a repeated `delegate` would not find its task and would start a second agent); a kept one is refused.
+  One this session holds is returned as it is.
+  An orphan, or one its holder released, is adopted with all of `adopt()`'s checks, tasks included (a running instance whose tasks cannot be read is let go of again and the call refused as `unavailable`: a repeated `delegate` would not find its task and would start a second agent).
+  A kept one is refused.
 - *The same key asking for something else is refused, not redirected:* another template or source, another instance, a command where an agent was started.
   `name_hint` and `purpose` only describe, so a retry that rewords them still replays -- the reason not to hash every parameter, Stripe-style.
 - *Two calls in one session* cannot both make one: the key is registered with the reservation, under its lock, and a second call while the first is under way is `busy` ("call again"), never a duplicate.
@@ -2489,7 +2595,8 @@ A controller recovers from a crash by re-running every intent with no recorded r
   Measured against Incus 6.23: a copy is listed, with the config its request stamped, from the moment its record exists -- while its files are still being copied -- and `created_at` is set then and never changes.
   So if only one of two racing creates sees the other, it was made after the other looked, it is the later of the two, and it gives way: exactly one of them destroys its copy.
   `user.incus-spawn.created` cannot serve: a copy carries its source's until `configureBranch` writes its own, and that value is taken before the write that a reader would see.
-  A copy whose session died before `configureBranch` (no `static-ip`, which a copy never carries from its source -- the copy request unsets it -- and which only `configureBranch` gives; never started) is not what a create promises, so it never answers for its key, and the orphan sweep removes it.
+  A copy whose session died before `configureBranch` (no `static-ip`, which a copy never carries from its source -- the copy request unsets it -- and which only `configureBranch` gives; never started) is not what a create promises.
+  So it never answers for its key, and the orphan sweep removes it.
 - *Partial intent.*
   `delegate(template)` whose keyed instance exists without its task (the call was cut off between the two) starts the task there, finishing the intent instead of making a second box.
 - *Forks.*
@@ -2533,13 +2640,16 @@ Three bounds:
   It runs once the task's slot is reserved (a refusal gives the slot back), so a call refused anyway -- a busy task, a full session -- spends no request, and under `timeout`, since Claude Code retries an overloaded API for minutes while the call waits.
   A fresh instance's pin is the one its branch stamped (`CreatedInstance.accounts`), not read back from Incus.
   On `delegate(template=...)` the fresh instance is destroyed with the refusal, as for any failed start.
-  The cache is per template, not per instance: instances of one template share its Claude Code, except one branched before the template was rebuilt with another version, which could resolve an alias differently -- a pass on the newer one then spares the older one its check, and a model it cannot use fails in its task.
+  The cache is per template, not per instance.
+  Instances of one template share its Claude Code, except one branched before the template was rebuilt with another version, which could resolve an alias differently.
+  A pass on the newer one then spares the older one its check, and a model it cannot use fails in its task.
   Keying on the instance would re-check every fresh `delegate(template=...)` instead, the case the cache exists for.
   A chosen model stays chosen for the task's later turns: Claude Code has no flag meaning "the template's own", so going back to it is naming it or a new task.
 - *The permission mode is not part of it* (#858): what a delegate may do stays the template's.
 
 The model passes `McpConfig.isModelName()` (also what `summary-model` must match; it starts with a letter or digit, so it cannot read as an option) and is shell-quoted.
-A task's profile is recorded with the task, in `~/.isx-mcp/tasks/<id>/model` and `max-turns`, where all its state lives, and `TaskScripts.list()` reports it, so an adopting session keeps it; read back from the instance, it is taken only if it is still a model name and a positive number.
+A task's profile is recorded with the task, in `~/.isx-mcp/tasks/<id>/model` and `max-turns`, where all its state lives, and `TaskScripts.list()` reports it, so an adopting session keeps it.
+Read back from the instance, it is taken only if it is still a model name and a positive number.
 Once adopted, the recorded profile is advisory: the delegate could have rewritten those files, so a later turn that names no model may run on one the coordinator did not choose, shown by `task_status` as the task's.
 A turn that names one is always checked, even when it names the recorded one (the account may have changed too); the cache makes the repeat free.
 That is no escalation -- the ceiling still clamps every run, and the guest can run `claude --model` itself through the same account.
@@ -2556,7 +2666,8 @@ The pieces, and why each is the way it is:
   Like account pins it is the user's act, never an agent's: a guest can read its own `user.*` keys, never write them.
 - *How a caller is known: address and secret.*
   The proxy already identifies instances by source address (`security.ipv4_filtering` makes that trustworthy), and #934 added the per-start secret for exactly this kind of host-side service.
-  `InstanceRegistry.identifyMcpCaller()` passes only when the address, the secret in `X-Isx-Instance-Secret` and the stamp all name one instance, read from the listing the proxy makes anyway; a refusal is decided before the body is read, and a refusal right after a start is worth one throttled refresh, as for `identify()`.
+  `InstanceRegistry.identifyMcpCaller()` passes only when the address, the secret in `X-Isx-Instance-Secret` and the stamp all name one instance, read from the listing the proxy makes anyway.
+  A refusal is decided before the body is read, and a refusal right after a start is worth one throttled refresh, as for `identify()`.
   A bearer token issued to the box (#859's sketch) was rejected: it is a secret the box would hold for good, where the start secret is useless from any other address and dies with the start.
 - *Where it is served: by the proxy, as a name.*
   `mcp.isx.internal` is a built-in intercepted domain, so bridge DNS sends it to the gateway, the 443 redirect to the proxy, and it works in proxy-only mode, whose rules allow only the gateway.
@@ -2564,7 +2675,8 @@ The pieces, and why each is the way it is:
   `.internal` is reserved for private use, so no real host answers to it; the proxy answers it itself and never relays it.
 - *What serves it: a host `isx mcp` per instance.*
   The MCP server lives in the CLI, which the proxy (a separate binary, the only one with Vert.x) cannot run in process; moving it would move most of `cli` into `common`.
-  So `McpBridge` speaks MCP's Streamable HTTP and runs `isx mcp --caller-instance <name>` per session, bridging each POSTed message to a line on its stdin and each line back to the POST that asked, by JSON-RPC id; anything else (notifications) goes to the GET stream.
+  So `McpBridge` speaks MCP's Streamable HTTP and runs `isx mcp --caller-instance <name>` per session, bridging each POSTed message to a line on its stdin and each line back to the POST that asked, by JSON-RPC id.
+  Anything else (notifications) goes to the GET stream.
   The `isx` is the one beside `isx-proxy`, else `~/.local/bin/isx`, else PATH.
   The child re-checks the stamp before serving.
   A request is answered as an event stream with a comment every 30 s, below the MITM server's 120 s idle timeout, because `exec` has no time limit.
@@ -2577,12 +2689,15 @@ The pieces, and why each is the way it is:
   Incus's own `volatile.uuid` would do as well but is not among the `user.*` keys every read here already carries; the grant costs nothing.
   It is not a secret (the guest can read it), since who calls is settled by address and per-start secret.
   The session is alive while the instance exists and carries that grant (`CallerLiveness`: one read per instance, remembered 5 s; a failed read counts as alive, so it never orphans anything) -- running or stopped, because a coordinator box being restarted has not let go of its workers.
-  So nothing is released when a connection ends (`release()` does nothing for it), and a new connection takes back what the instance holds (`McpSession.resume()`, one listing before the first tool call so the cap counts them, then the running ones' tasks in the background) -- only what `adopt` would take: an instance whose template is no longer approved is released instead, its `mcp-orphaned` stamp naming the session (`Orphans.releasedByHolder`), which every session counts as an orphan though the holder lives on, so withdrawing approval reaches a coordinator as it does a host session that ends.
+  So nothing is released when a connection ends (`release()` does nothing for it), and a new connection takes back what the instance holds (`McpSession.resume()`, one listing before the first tool call so the cap counts them, then the running ones' tasks in the background) -- only what `adopt` would take.
+  An instance whose template is no longer approved is released instead, its `mcp-orphaned` stamp naming the session (`Orphans.releasedByHolder`), which every session counts as an orphan though the holder lives on.
+  So withdrawing approval reaches a coordinator as it does a host session that ends.
   Once the coordinator is destroyed or its stamp removed, its workers are orphans like a dead process's, and the proxy ends its session at the next keepalive tick.
   Older isx versions read an `instance:` stamp as unparseable, which they treat as held.
 - *How its Claude Code finds the server: registered from the stamp on every start (#1182).*
   Branching with `--mcp-client` is the only per-instance act.
-  The exec that delivers each start's secret (`InstanceSecret.GUEST_SCRIPT`, root in the guest) also gets `ISX_MCP_CLIENT` (`InstanceSecret.guestEnv(secret, mcpCaller)`), which every start path reads from the instance it already holds, so it costs no request; `McpClientRegistration` compares it with a root-owned marker in the rootfs (`/var/lib/isx/mcp-client-registered`, holding a digest of the entry it registered, `ENTRY_VERSION`, so an isx that changes the entry re-registers existing coordinators on their next start), and checks that Claude Code's own config still holds the entry (`CONFIG_HAS_ENTRY`, so an entry the agent removed comes back; root reads that agent-owned file through `timeout -k 1 2 head -c 16MiB`, since the agent may swap in a FIFO or a vast sparse file and the readiness exec has no time limit of its own -- a read cut short answers "no entry", which costs a re-registration, never a hang).
+  The exec that delivers each start's secret (`InstanceSecret.GUEST_SCRIPT`, root in the guest) also gets `ISX_MCP_CLIENT` (`InstanceSecret.guestEnv(secret, mcpCaller)`), which every start path reads from the instance it already holds, so it costs no request.
+  `McpClientRegistration` compares it with a root-owned marker in the rootfs (`/var/lib/isx/mcp-client-registered`, holding a digest of the entry it registered, `ENTRY_VERSION`, so an isx that changes the entry re-registers existing coordinators on their next start), and checks that Claude Code's own config still holds the entry (`CONFIG_HAS_ENTRY`, so an entry the agent removed comes back; root reads that agent-owned file through `timeout -k 1 2 head -c 16MiB`, since the agent may swap in a FIFO or a vast sparse file and the readiness exec has no time limit of its own -- a read cut short answers "no entry", which costs a re-registration, never a hang).
   A copy gets one removal attempt, whatever it answers: an entry it cannot remove reaches nothing without the stamp, and retrying it would cost every later start; only when either says otherwise, runs Claude Code's own `claude mcp add-json --scope user isx` or `claude mcp remove --scope user isx` and updates the marker.
   So the registration is the standard one (`claude mcp list` and `/mcp` show it, and every way of launching Claude Code finds it), a steady-state start runs no Claude Code at all, and a reboot isx did not do changes nothing.
   Nothing is inherited for good: a copy of a coordinator carries the registration until its first isx start, which a branch always is, removes it.
@@ -2595,7 +2710,8 @@ The pieces, and why each is the way it is:
   A skill file in the rootfs was rejected: copies would inherit it, and it would drift from the server it describes, where a prompt exists only where the server is reachable and changes with it.
   `McpPromptTest` fails if it names a tool the server does not have.
 - *The branch checks the result.*
-  After the start, `isx branch --mcp-client` runs one `initialize` and one `tools/list` from inside the guest against `mcp.isx.internal` (`McpClientCheck`: curl, with the secret in a root-only header file, never on a command line), ends that session, and prints the server's version and tool count or why it was not reached -- and whether Claude Code's own user config (`~/.claude.json`) holds an entry for the endpoint, by the same `CONFIG_HAS_ENTRY` test the reconcile makes, read as a file because `claude mcp get` connects to the server and can hang; a reachable endpoint with no registration is the very failure #1182 was filed for.
+  After the start, `isx branch --mcp-client` runs one `initialize` and one `tools/list` from inside the guest against `mcp.isx.internal` (`McpClientCheck`: curl, with the secret in a root-only header file, never on a command line), ends that session, and prints the server's version and tool count or why it was not reached -- and whether Claude Code's own user config (`~/.claude.json`) holds an entry for the endpoint, by the same `CONFIG_HAS_ENTRY` test the reconcile makes, read as a file because `claude mcp get` connects to the server and can hang.
+  A reachable endpoint with no registration is the very failure #1182 was filed for.
   What the guest returns (curl's errors, the server's version) passes through `OutputFormat.oneLine` before it is printed.
   It is a warning, never a failure: the branch is made either way, and the user sees a coordinator that cannot work while still there to fix it.
   One exec, only for `--mcp-client` branches.
