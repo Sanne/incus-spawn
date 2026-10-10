@@ -41,6 +41,15 @@ Pin the result in a request-budget test (such as `InstanceLifecycleRequestBudget
 CLAUDE.md is the quick-reference for contributors; DESIGN.md is the full rationale.
 Both must stay current.
 
+**Markdown source: one sentence per line, and short sentences** (#1243).
+This applies to this file and `.claude/rules/`, and to DESIGN.md once it is converted (#1243), so that a diff shows exactly which sentence changed.
+A sentence never wraps, and a line never holds two sentences.
+In a list item, each sentence after the first goes on its own line, indented to the item's text; in a block quote, each line starts with `> `.
+Headings, tables (a row stays on one line), code, HTML and front matter are exempt.
+`DocsOneSentencePerLineTest` enforces this in `mvn test`.
+Split a sentence of more than about 40 words where it splits cleanly; `.claude/rules/writing.md` "Splitting a sentence" lists the only word changes a split may make.
+`scripts/prose-diff.sh <base>..<head> <file>...` shows a change's words and rendered HTML with line breaks ignored, so a reflow prints nothing.
+
 ## Build and Test Commands
 
 ```shell

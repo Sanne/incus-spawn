@@ -29,3 +29,14 @@ Introduce "branch" (what `isx branch` makes) before using it as a noun; the same
 **"Instant", not a time.**
 Branching is sub-second and the project is proud of it; "in seconds" undersells it and invites a comparison.
 The value is creating a new machine, never disposing of one.
+
+**Splitting a sentence** (#1243) changes its form, never its meaning.
+These are the only word changes a split may make:
+- the joining `;`, `,`, `:` or `—` becomes a full stop, and the next word takes a capital letter;
+- a plain "and" at the join is dropped;
+- a relative "which" or "who" becomes "This", "It" or "They", naming the same thing.
+
+A connective that claims a relation ("so", "but", "because", "which means", "therefore") stays, as the first word of the new sentence.
+A name written in lower case (`dnf`, `vfkit`) keeps its case, so a split before one is a line break only, or not made.
+If the sentence does not split within these changes, it stays long.
+Never start a new line with `#`, `-`, `+`, `>`, `|`, `<` or a number followed by `.` or `)` and a space, which would turn the sentence into a block of its own.
