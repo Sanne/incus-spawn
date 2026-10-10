@@ -14,6 +14,7 @@ import dev.incusspawn.incus.BtrfsUsage;
 import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusDiagnostics;
 import dev.incusspawn.incus.InstanceSubvolumes;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceNetwork;
@@ -893,7 +894,7 @@ public class DoctorCommand extends BaseCommand {
     private Finding checkInotifyBudget() {
         try {
             var incus = RuntimeServices.incus();
-            int limit = incus.getInotifyMaxInstances();
+            int limit = new IncusDiagnostics(incus).getInotifyMaxInstances();
             if (limit < 0) return Finding.ok("Inotify budget", "(could not read)");
 
             var instances = incus.list();

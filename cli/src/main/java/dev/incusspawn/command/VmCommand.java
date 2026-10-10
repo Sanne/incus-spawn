@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.Environment;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusDiagnostics;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
@@ -148,7 +149,7 @@ public class VmCommand extends BaseCommand {
             }
             var pool = incus.findCowPool();
             out.println();
-            out.println(incus.getSystemDiagnostics(pool));
+            out.println(new IncusDiagnostics(incus).getSystemDiagnostics(pool));
             out.println("  (full VM log at " + Environment.vmLogFile() + ")");
             return exitCode(connError);
         }

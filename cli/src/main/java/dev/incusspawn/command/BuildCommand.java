@@ -16,6 +16,7 @@ import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusDiagnostics;
 import dev.incusspawn.Platform;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
@@ -996,7 +997,7 @@ public class BuildCommand extends BaseCommand {
                 }
             }
 
-            var mem = incus.getServerMemoryUsage();
+            var mem = new IncusDiagnostics(incus).getServerMemoryUsage();
             if (!mem.isEmpty()) {
                 appendDiag(diag, "  " + mem);
             }
@@ -1007,7 +1008,7 @@ public class BuildCommand extends BaseCommand {
                     appendDiag(diag, "  Cause: " + cause);
                 }
                 if ("Error".equals(status)) {
-                    var dmesg = incus.queryDmesgForContainer(buildName);
+                    var dmesg = new IncusDiagnostics(incus).queryDmesgForContainer(buildName);
                     if (!dmesg.isEmpty()) {
                         var dmesgCause = diagnoseCrashCause(dmesg);
                         if (dmesgCause != null && cause == null) {
@@ -1045,7 +1046,7 @@ public class BuildCommand extends BaseCommand {
 
     static String diagnoseInotifyExhaustion(IncusClient incus) {
         try {
-            int limit = incus.getInotifyMaxInstances();
+            int limit = new IncusDiagnostics(incus).getInotifyMaxInstances();
             if (limit < 0) return null;
             var instances = incus.list();
             long running = instances.stream()
