@@ -50,6 +50,7 @@ The reference format is `tool-name` (single action) or `tool-name:action-id` (mu
 Its metadata stamp (`user.incus-spawn.default-action`, the fallback when the YAML is gone) is instead reconciled onto every up-to-date template at the end of each `isx build` by `BuildCommand.syncDefaultActions()` (see DESIGN.md "Metadata outside the fingerprint").
 
 Action resolution logic is centralized in `ActionResolver`, shared by both `Tui` and `RunCommand` (CLI).
+The TUI resolves what F9 offers and what Enter runs in `InstanceActions`, which still keeps its own copy of the installed-tools rule (#1158 would merge it into `ActionResolver`).
 `ActionResolver` handles discovering actions from installed tools, resolving default actions from template inheritance chains, finding specific actions by reference, and building `ActionContext` for execution.
 For instances (clones), the installed-tools set comes from `BUILD_SOURCE` metadata (baked at build time) so that action resolution reflects what is actually installed — the current YAML chain may reference tools added after the instance was branched.
 For templates, the YAML chain is authoritative -- unless it is gone (the YAML deleted after the build), when the template's own `BUILD_SOURCE` snapshot stands in, as the `default-action` stamp does for the ref.

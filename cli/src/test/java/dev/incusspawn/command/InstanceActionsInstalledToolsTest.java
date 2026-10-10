@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * with stand in (#868).
  */
 @ExtendWith(IsolatedHome.class)
-class ListCommandInstalledToolsTest {
+class InstanceActionsInstalledToolsTest {
 
     private static final String TEMPLATE = "tpl-agent";
 
@@ -58,10 +58,10 @@ class ListCommandInstalledToolsTest {
                         Map.of(), Map.of(), Map.of()).toJson()));
         var instance = InstanceListing.collectEntries(daemon.client().listJson()).getFirst();
 
-        var list = new Tui();
-        list.useDefinitions(defs, new ToolDefLoader(List.of()),
-                List.of(new Tool("test-agent-868"), new Tool("test-other-868")));
-        return list.resolveActionsForInstance(instance).stream().map(ToolAction::toolName).toList();
+        var loader = new ToolDefLoader(List.of());
+        List<ToolSetup> cdiTools = List.of(new Tool("test-agent-868"), new Tool("test-other-868"));
+        var actions = new InstanceActions(() -> defs, () -> loader, () -> cdiTools);
+        return actions.resolveActionsForInstance(instance).stream().map(ToolAction::toolName).toList();
     }
 
     @Test
