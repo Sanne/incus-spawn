@@ -63,18 +63,18 @@ class TuiBuiltFromTest {
     @Test
     void aRebuildThatReStampsTheFileIsReadAgain() {
         var list = list();
-        list.mergeInstances(listing(OLD));
-        assertEquals(OLD, list.builtFrom(TEMPLATE));
-        list.mergeInstances(listing(OLD));
-        assertEquals(OLD, list.builtFrom(TEMPLATE));
-        list.mergeInstances(listing(CURRENT));
-        assertEquals(CURRENT, list.builtFrom(TEMPLATE));
+        list.loader.mergeInstances(listing(OLD));
+        assertEquals(OLD, list.loader.builtFrom(TEMPLATE));
+        list.loader.mergeInstances(listing(OLD));
+        assertEquals(OLD, list.loader.builtFrom(TEMPLATE));
+        list.loader.mergeInstances(listing(CURRENT));
+        assertEquals(CURRENT, list.loader.builtFrom(TEMPLATE));
     }
 
     @Test
     void theContextLineNamesTheOtherFileByItsNameOnly() {
         var list = list();
-        list.mergeInstances(listing(OLD));
+        list.loader.mergeInstances(listing(OLD));
         var line = contextLine(list);
         assertTrue(line.contains("△ definition changed since last build (built from a-rather-long-old-tpl-app-definition.yaml)"), line);
         assertFalse(line.contains("/home/me/.config"), line);
@@ -83,7 +83,7 @@ class TuiBuiltFromTest {
     @Test
     void theBuiltInPlaceholderIsSaidInWords() {
         var list = list();
-        list.mergeInstances(listing("built-in"));
+        list.loader.mergeInstances(listing("built-in"));
         var line = contextLine(list);
         assertTrue(line.contains("(built from the built-in definition)"), line);
     }
@@ -91,7 +91,7 @@ class TuiBuiltFromTest {
     @Test
     void theSameFileAddsNothing() {
         var list = list();
-        list.mergeInstances(listing(CURRENT));
+        list.loader.mergeInstances(listing(CURRENT));
         var line = contextLine(list);
         assertTrue(line.contains("△ definition changed since last build"), line);
         assertFalse(line.contains("built from"), line);
@@ -100,7 +100,7 @@ class TuiBuiltFromTest {
     @Test
     void aFileOfTheSameNameElsewhereIsCalledAnother() {
         var list = list();
-        list.mergeInstances(listing("/home/me/.config/incus-spawn/images/tpl-app.yaml"));
+        list.loader.mergeInstances(listing("/home/me/.config/incus-spawn/images/tpl-app.yaml"));
         var line = contextLine(list);
         assertTrue(line.contains("(built from another tpl-app.yaml)"), line);
     }
@@ -108,7 +108,7 @@ class TuiBuiltFromTest {
     @Test
     void aBuildFromStoredMetadataStaysShortOnTheBar() {
         var list = list();
-        list.mergeInstances(listing("stored"));
+        list.loader.mergeInstances(listing("stored"));
         var line = contextLine(list);
         assertTrue(line.contains("(built from stored definition)"), line);
     }

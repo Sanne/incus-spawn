@@ -6,7 +6,6 @@ import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.Warnings;
-import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.AutoRemoteService;
@@ -40,7 +39,6 @@ import dev.incusspawn.tui.TerminalThemeDetector;
 import dev.incusspawn.tui.TuiTheme;
 import dev.incusspawn.tui.WarningLog;
 import dev.tamboui.backend.panama.PanamaBackend;
-import dev.incusspawn.vm.VmManager;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.style.Style;
@@ -67,14 +65,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import static dev.incusspawn.command.DiskUsageModel.fillMissingReferenced;
 import static dev.incusspawn.command.DiskUsageModel.hasDescendant;
-import static dev.incusspawn.command.DiskUsageModel.hasSuspiciousStamps;
-import static dev.incusspawn.command.DiskUsageModel.hasUnstampedBuiltTemplate;
-import static dev.incusspawn.command.DiskUsageModel.nearestStampedAncestorRfer;
-import static dev.incusspawn.command.DiskUsageModel.referencedDelta;
-import static dev.incusspawn.command.DiskUsageModel.restampFromLive;
-import static dev.incusspawn.command.DiskUsageModel.sharedBaseBytes;
 import static dev.incusspawn.command.UsageFormat.bar;
 import static dev.incusspawn.command.UsageFormat.diskCell;
 
@@ -98,7 +89,7 @@ public class Tui {
 
     BackgroundTaskManager backgroundTasks;
 
-    private InstanceLockManager lockManager;
+    InstanceLockManager lockManager;
 
     final TuiTheme theme = TerminalThemeDetector.detect();
     private final ModalRenderer modal = new ModalRenderer(theme);
@@ -124,7 +115,7 @@ public class Tui {
                 @Override public boolean definitionChanged(String template) { return templatesDefChanged.contains(template); }
                 @Override public boolean parentRebuilt(String template) { return templatesParentRebuilt.contains(template); }
                 @Override public String overriddenSource(String template) { return imageLayers.overriddenSource(template); }
-                @Override public String builtFrom(String template) { return Tui.this.builtFrom(template); }
+                @Override public String builtFrom(String template) { return Tui.this.loader.builtFrom(template); }
                 @Override public String currentVersion() { return BuildInfo.instance().version(); }
             }, java.time.LocalDateTime::now);
 
@@ -144,7 +135,8 @@ public class Tui {
 
     private final MainScreen mainScreen = new MainScreen(this);
     private final ShellLaunch shellLaunch = new ShellLaunch(this);
-    private final InstanceActions instanceActions =
+    final ListingLoader loader = new ListingLoader(this);
+    final InstanceActions instanceActions =
             new InstanceActions(() -> this.imageDefs, () -> this.toolDefLoader, () -> this.cdiTools);
 
     // Background operation state
@@ -166,7 +158,7 @@ public class Tui {
     // `tui-live-refresh: false` in config.yaml: no subscription and no polling -- only the
     // manual `r` and the reloads the TUI already did (re-entry, its own background tasks).
     private boolean liveRefreshEnabled;
-    private final AtomicBoolean liveRefreshRequested = new AtomicBoolean(false);
+    final AtomicBoolean liveRefreshRequested = new AtomicBoolean(false);
     private final AtomicBoolean liveRefreshInFlight = new AtomicBoolean(false);
     private final AtomicReference<LiveSnapshot> pendingLiveSnapshot = new AtomicReference<>();
     // Due times (epoch ms) of follow-up refreshes scheduled after a start: the instance's IPv4
@@ -175,20 +167,17 @@ public class Tui {
             new java.util.concurrent.ConcurrentSkipListSet<>();
     private static final long[] START_FOLLOW_UP_DELAYS_MS = {3_000, 10_000};
     // Bumped by every full reload, so a light fetch that started before it can't overwrite it.
-    private long dataGeneration;
+    long dataGeneration;
     private long lastLiveRefreshMs;
-    private long lastDataLoadMs;
+    long lastDataLoadMs;
     // Only while the event feed is down (older daemon, flaky appliance): poll slowly instead.
     private static final long FALLBACK_POLL_MS = 60_000;
     private boolean liveRefreshErrorShown;
-    // Live rfer values backfilled in memory by the last full reload; re-applied by light
-    // refreshes, which don't probe, so an unstamped template keeps its figure between them.
-    private java.util.Map<String, Long> backfilledReferenced = java.util.Map.of();
     // The minute the age column ("3h ago") was last rendered for -- see Metadata.ageRefreshKey.
     private java.time.LocalDateTime rowsAgeKey;
     // Every instance name in the last listing (templates included): what "still exists" means
     // for the action guards and for closing a dialog whose target was deleted elsewhere.
-    private java.util.Set<String> liveInstanceNames = java.util.Set.of();
+    java.util.Set<String> liveInstanceNames = java.util.Set.of();
     // The instance the F3 detail dialog was opened on (it renders the current selection).
     private String detailInstanceName;
     /** The credential account dialog; null while it is closed. */
@@ -235,9 +224,9 @@ public class Tui {
     /** Kept after closing, so reopening preselects the account used last. */
     private volatile HelpChatModal helpChat;
     // Actions cache (computed once per data refresh, not per render)
-    private java.util.Map<String, java.util.List<ToolAction>> actionsCache = new java.util.HashMap<>();
+    java.util.Map<String, java.util.List<ToolAction>> actionsCache = new java.util.HashMap<>();
     // Default action reference per instance (from ImageDef default-action field)
-    private java.util.Map<String, String> defaultActionRef = new java.util.HashMap<>();
+    java.util.Map<String, String> defaultActionRef = new java.util.HashMap<>();
 
     private boolean deferredBuildForBranch;
 
@@ -265,15 +254,11 @@ public class Tui {
     boolean anyParentRebuilt;
     java.util.Set<String> templatesDefChanged = java.util.Set.of();
     /** Where each image definition came from, for what it overrides. */
-    private dev.incusspawn.config.LayeredDefinitions<dev.incusspawn.config.ImageDef> imageLayers =
+    dev.incusspawn.config.LayeredDefinitions<dev.incusspawn.config.ImageDef> imageLayers =
             new dev.incusspawn.config.LayeredDefinitions<>("image");
-    /** Per built template, the file its build stamped, and the stamp it was read from. */
-    private Map<String, StampedFile> templatesBuiltFrom = Map.of();
-
-    private record StampedFile(String stamp, String file) {}
     java.util.Set<String> templatesParentRebuilt = java.util.Set.of();
     private java.util.Set<String> templatesOutOfSync = java.util.Set.of();
-    private java.util.Set<String> storedSourceTemplates = java.util.Set.of();
+    java.util.Set<String> storedSourceTemplates = java.util.Set.of();
     TableState templateTableState;
 
     // Instance panel data (bottom)
@@ -285,60 +270,14 @@ public class Tui {
     // Storage-pool usage for the top gauge; refreshed in reloadData (not per-frame,
     // since it costs an API call). Null when no pool usage is available.
     IncusClient.PoolUsage poolUsage;
-    // Resolved once and cached: the pool name is constant for a TUI session, so we
-    // avoid re-probing the storage-pool list (an extra HTTP call) on every reload.
-    private String usagePoolName;
-    // Whether the resolved pool is the CoW (btrfs/zfs) pool. Only then do per-row usage
-    // figures mean "exclusive bytes" and the shared base fold below make sense.
-    private boolean usagePoolIsCow;
-    // Whether the resolved pool is specifically btrfs. Only btrfs exposes per-subvolume referenced
-    // (rfer) accounting, so the referenced-delta model is gated on this (see canUseReferencedModel).
-    private boolean usagePoolIsBtrfs;
     // The root template that owns the base-image weight this reload — either folded into it
     // (foldBaseWeightIntoRootTemplate) or attributed via its own rfer (applyReferencedTemplateDeltas),
     // or null when it couldn't be attributed. Drives the CoW delete note and the ~ marker.
-    private String baseTemplateName;
-    // The kernel's view of the btrfs pool's qgroup accounting, refreshed each reload (cheap: a sysfs
-    // read, or one agent round trip on macOS). While it reads `untrusted()` every size the pool
-    // reports — stamped or live, rfer or exclusive — is frozen at some stale value, so no stamp is
-    // backfilled and no base weight folded from it; refreshAccountingStatus() also kicks off the
-    // background repair. Null only when there is no btrfs pool to ask about (non-btrfs pool, or the
-    // pool name isn't resolved yet); a status that simply couldn't be read is a non-null UNAVAILABLE.
-    // Both cases are treated as trusted, so sizes are taken at face value as before the check existed.
-    private dev.incusspawn.incus.BtrfsUsage.QgroupStatus qgroupStatus;
-    // True from the moment inconsistent accounting is seen until it reads consistent again — the
-    // transition is what triggers a one-off re-validation of the stamps (revalidateStampsIfNeeded),
-    // since any stamp recorded while the counters were frozen is wrong. Deliberately latched across
-    // a spell of unreadable status (a flaky agent): we still don't know the repair landed, so the
-    // eventual consistent read must still trigger revalidation. It does NOT keep driving the fast
-    // poll cadence though — see refreshAccountingStatus.
-    private boolean accountingRepairPending;
-    private boolean stampsSuspect;
-    // The "a derived template's stamp equals its parent's" heuristic runs at most once per session:
-    // it's how a pool poisoned before this check existed gets healed, but a live probe that comes
-    // back identical must not be repeated every refresh.
-    private boolean poisonHeuristicSpent;
-    private boolean accountingWarningShown;
-    // Reloads can come ~1/s during activity, and on macOS the status read is an agent round trip
-    // (up to the client's 5s watchdog if the agent is wedged) — so re-read it on a cadence, not
-    // per reload: quickly while a repair is pending (to notice the flag clearing), rarely otherwise.
-    private long accountingCheckMs;
-    private static final long ACCOUNTING_CHECK_INTERVAL_MS = 30_000;
-    private static final long ACCOUNTING_REPAIR_POLL_MS = 2_000;
+    String baseTemplateName;
     // Amber threshold for the storage gauge (percent of pool used).
     static final int STORAGE_WARN_PERCENT = 75;
-    // Set true once we've shown the low-space warning for the current session,
-    // so the reminder doesn't clobber every other status message on each refresh.
-    private boolean storageWarningShown;
     volatile ProxyHealthCheck.ProxyInfo proxyInfo;
     volatile String applianceSkewMessage;
-    private boolean applianceSkewFirstLoad = true;
-    // Defer the first proxy health check so the TUI renders immediately instead of
-    // stalling up to 500ms on the connect timeout when the proxy isn't running.
-    private static final long PROXY_AUTH_INITIAL_DEFER_MS = 500;
-    private long proxyAuthCheckMs = System.currentTimeMillis()
-            - PROXY_AUTH_CHECK_INTERVAL_MS + PROXY_AUTH_INITIAL_DEFER_MS;
-
     /** Bare {@code isx}: takes over the terminal until the user quits. */
     public void run(PreTuiOutput preTui) {
         this.preTui = preTui;
@@ -433,7 +372,7 @@ public class Tui {
             // goes to the warning log, like everything raised while the runner below draws, but
             // not while the terminal is released to a build or a shell, which print their own.
             try (var ignored = Warnings.redirect(warningChannel)) {
-                reloadData();
+                loader.reloadData();
             } catch (IncusException e) {
                 reloadError = e.getMessage();
                 templateEntries = List.of();
@@ -604,475 +543,13 @@ public class Tui {
         } catch (java.io.IOException ignored) {}
     }
 
-    /**
-     * Reload all data from Incus and image definitions. Populates both the
-     * template panel (from ImageDef + Incus state) and the instance panel
-     * (non-template instances only).
-     */
-    private void reloadData() {
-        // This reload reads everything, so it satisfies every request raised before it. Requests
-        // raised while it runs (events arriving mid-reload) set the flag again and still get served.
-        // Start follow-ups stay scheduled: they exist for an IPv4 that appears after this read.
-        liveRefreshRequested.set(false);
-        dataGeneration++;
-        lastDataLoadMs = System.currentTimeMillis();
-        // The instance listing (GET /1.0/instances?recursion=2) is the heaviest single call.
-        // Run it in the background while the main thread does filesystem I/O and pool probes.
-        var instancesFuture = java.util.concurrent.CompletableFuture.supplyAsync(this::collectEntries);
-
-        // Re-read tool defs from disk alongside the image defs below, so edited tool YAML
-        // is reflected in the "△ definition changed" flag. Must precede addFallbacks(),
-        // which re-populates the freshly cleared cache. Its warnings reach the log itself.
-        toolDefLoader.reload();
-        // Through Warnings rather than straight into the log: each reload finds the same
-        // problems again, and Warnings reports a message once until the user presses 'r'.
-        imageLayers = dev.incusspawn.config.ImageDef.loadLayers(Warnings::warn);
-        imageDefs = imageLayers.defs();
-        // Tool conflicts don't flow through image loadAll; surface them here too so
-        // the TUI warns about duplicate tool names instead of only failing at build.
-        for (var conflict : toolDefLoader.conflicts()) {
-            Warnings.warn(conflict.shortMessage());
-        }
-
-        // Pool usage runs here (before the merge) so the base-image weight can be attributed
-        // to the root template before the row lists are snapshotted for rendering.
-        refreshPoolUsage();
-
-        List<InstanceInfo> allInstances;
-        try {
-            allInstances = instancesFuture.join();
-        } catch (java.util.concurrent.CompletionException e) {
-            var cause = e.getCause();
-            if (cause instanceof Error err) throw err;
-            if (cause instanceof RuntimeException re) throw re;
-            throw new RuntimeException(cause);
-        }
-
-        allInstances = clearStalePendingOps(allInstances);
-        mergeInstances(allInstances);
-
-        refreshProxyAuthError();
-        refreshApplianceSkew();
-        refreshAccountingStatus();
-        applyDiskModel(true);
-        publishRows();
-    }
-
-    /**
-     * Swap in the instance listing from a light refresh (see {@link #startLiveRefresh}). Unlike
-     * {@link #reloadData()} it re-reads nothing from disk and runs no probes: the definitions
-     * can't have changed because an instance did, and the accounting reads keep their cadence.
-     */
-    private void applyLiveInstances(List<InstanceInfo> allInstances, IncusClient.PoolUsage usage) {
-        lastDataLoadMs = System.currentTimeMillis();
-        if (usage != null) applyPoolUsage(usage);
-        mergeInstances(allInstances);
-        applyDiskModel(false);
-        publishRows();
-    }
-
-    /**
-     * Clear a pending-op marker no process holds the lock for: the process that set it crashed.
-     * Returns the listing with those markers blanked, so the UI doesn't render stale indicators
-     * until the next reload. Safe off the UI thread (lock files and Incus calls only).
-     */
-    private List<InstanceInfo> clearStalePendingOps(List<InstanceInfo> allInstances) {
-        var clearedInstances = new java.util.HashSet<String>();
-        for (var inst : allInstances) {
-            if (!inst.pendingOp().isEmpty()
-                    && !backgroundTasks.hasRunningTask(inst.name())
-                    && !lockManager.isHeldByOther(inst.name())) {
-                try {
-                    var cleanupLock = lockManager.tryAcquire(inst.name(), "cleanup");
-                    if (cleanupLock.isPresent()) {
-                        try (var lock = cleanupLock.get()) {
-                            incus.clearPendingOperation(inst.name());
-                            clearedInstances.add(inst.name());
-                        }
-                    }
-                } catch (java.io.UncheckedIOException ignored) {}
-            }
-        }
-        // Override pendingOp in allInstances for entries we just cleared,
-        // so the UI doesn't render stale indicators until the next reload.
-        if (!clearedInstances.isEmpty()) {
-            allInstances = allInstances.stream()
-                    .map(inst -> clearedInstances.contains(inst.name())
-                            ? new InstanceInfo(inst.name(), inst.status(), inst.project(), inst.profile(),
-                                    inst.created(), inst.runtime(), inst.parent(), inst.limitsCpu(),
-                                    inst.limitsMemory(), inst.rootSize(), inst.ipv4(), inst.networkMode(),
-                                    inst.architecture(), inst.buildVersion(), inst.definitionSha(),
-                                    inst.type(), inst.buildSourceJson(), "", inst.defaultAction(),
-                                    inst.diskUsage(), inst.referencedBytes(), inst.instanceMode(),
-                                    inst.kvmEnabled(), inst.mcp(), inst.mcpCaller())
-                            : inst)
-                    .toList();
-        }
-
-        return allInstances;
-    }
-
-    /** The file a built template's build stamped, or null. */
-    String builtFrom(String template) {
-        var stamped = templatesBuiltFrom.get(template);
-        return stamped == null ? null : stamped.file();
-    }
-
-    /** Merge the Incus listing with the image definitions into the two panels' entry lists. */
-    // Package-private, with buildTemplateRowData and buildContextLine, for the wiring tests
-    void mergeInstances(List<InstanceInfo> allInstances) {
-        // Build template panel data by merging ImageDef definitions with Incus state
-        templateEntries = new ArrayList<>();
-        var templateNames = new java.util.HashSet<String>();
-        var builtFrom = new java.util.HashMap<String, StampedFile>();
-        for (var def : imageDefs.values()) {
-            var name = def.getName();
-            // Find matching Incus instance
-            InstanceInfo match = null;
-            for (var inst : allInstances) {
-                if (inst.name().equals(name)) {
-                    match = inst;
-                    break;
-                }
-            }
-            if (match != null) {
-                templateEntries.add(new TemplateInfo(name, def.getDescription(),
-                        match.created().isEmpty() ? "built" : match.created(), match.runtime(),
-                        match.buildVersion(), match.definitionSha(), match.pendingOp(),
-                        match.parent(), match.diskUsage(), match.referencedBytes(), match.instanceMode()));
-                templateNames.add(name);
-                // A live refresh brings the same stamp again: parse it only when it changed
-                var json = match.buildSourceJson();
-                var previous = templatesBuiltFrom.get(name);
-                builtFrom.put(name, previous != null && java.util.Objects.equals(json, previous.stamp())
-                        ? previous : new StampedFile(json, BuildSource.sourceOf(json, name)));
-            } else {
-                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", "", "", "", "", -1, -1, ""));
-            }
-        }
-        // Add out-of-scope templates (built but not in current definition scope)
-        var storedNames = new java.util.HashSet<String>();
-        for (var inst : allInstances) {
-            if (templateNames.contains(inst.name())) continue;
-            if (inst.name().endsWith(BuildCommand.REBUILDING_SUFFIX)) continue;
-            if (!Metadata.TYPE_BASE.equals(inst.type())) continue;
-
-            var buildSource = BuildSource.fromJson(inst.buildSourceJson());
-            if (buildSource == null) continue;
-
-            for (var entry : buildSource.getDefinitions().entrySet()) {
-                imageDefs.putIfAbsent(entry.getKey(), entry.getValue());
-            }
-            toolDefLoader.addFallbacks(buildSource.getTools());
-
-            templateEntries.add(new TemplateInfo(inst.name(), buildSource.descriptionFor(inst.name()),
-                    inst.created().isEmpty() ? "built" : inst.created(), inst.runtime(),
-                    inst.buildVersion(), inst.definitionSha(), inst.pendingOp(), inst.parent(), inst.diskUsage(),
-                    inst.referencedBytes(), inst.instanceMode()));
-            templateNames.add(inst.name());
-            storedNames.add(inst.name());
-        }
-        storedSourceTemplates = storedNames;
-        templatesBuiltFrom = builtFrom;
-
-        // Instance panel: exclude template instances (they're shown in the template panel)
-        entries = new ArrayList<>();
-        actionsCache = new java.util.HashMap<>();
-        defaultActionRef = new java.util.HashMap<>();
-        for (var inst : allInstances) {
-            if (!templateNames.contains(inst.name())) {
-                entries.add(inst);
-                actionsCache.put(inst.name(), instanceActions.resolveActionsForInstance(inst));
-                var defAction = instanceActions.resolveDefaultActionRef(inst);
-                if (defAction != null) {
-                    defaultActionRef.put(inst.name(), defAction);
-                }
-            }
-        }
-
-        liveInstanceNames = allInstances.stream().map(InstanceInfo::name)
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
-    }
-
-    /**
-     * Attribute disk weight to the rows. {@code probe} allows the live reads (stamp revalidation,
-     * rfer backfill); a light refresh passes false and reuses the last backfill instead.
-     */
-    private void applyDiskModel(boolean probe) {
-        // Stamps taken from consistent accounting stay valid whatever the flag says now (templates
-        // are immutable), so the delta model keeps running through a repair. What must wait for the
-        // counters to be trustworthy is anything *read live*: backfilling a missing stamp, healing a
-        // suspect one, or folding the pool's shared remainder onto the root.
-        boolean accountingTrusted = qgroupStatus == null || !qgroupStatus.untrusted();
-        if (probe) {
-            backfilledReferenced = java.util.Map.of();
-            if (accountingTrusted) {
-                revalidateStampsIfNeeded();
-                fillMissingReferencedSizes();
-            }
-        } else if (accountingTrusted && !backfilledReferenced.isEmpty()) {
-            templateEntries = fillMissingReferenced(templateEntries, backfilledReferenced);
-        }
-        if (canUseReferencedModel()) {
-            applyReferencedTemplateDeltas();
-        } else if (accountingTrusted) {
-            foldBaseWeightIntoRootTemplate();
-        } else {
-            baseTemplateName = null;
-        }
-    }
-
-    private void publishRows() {
+    void publishRows() {
         allTemplateEntries = new ArrayList<>(templateEntries);
         allEntries = new ArrayList<>(entries);
         rebuildRowData();
     }
 
-    /**
-     * Refresh the cached storage-pool usage for the gauge, and raise a one-shot
-     * status warning when the pool crosses the critical threshold. Prefers a CoW
-     * pool but falls back to any usable pool so the gauge also works on dir pools.
-     */
-    private void refreshPoolUsage() {
-        try {
-            if (usagePoolName == null) {
-                var probe = incus.probeCowPool();
-                var cow = probe.poolName();
-                usagePoolName = cow != null ? cow : incus.findUsablePool();
-                usagePoolIsCow = cow != null;
-                usagePoolIsBtrfs = probe.isBtrfs();
-            }
-            applyPoolUsage(usagePoolName == null ? null : incus.getPoolUsageBytes(usagePoolName));
-        } catch (Exception e) {
-            applyPoolUsage(null);
-        }
-    }
-
-    private void applyPoolUsage(IncusClient.PoolUsage usage) {
-        poolUsage = usage;
-        if (poolUsage == null || poolUsage.totalBytes() == 0) {
-            storageWarningShown = false;
-            return;
-        }
-        if (poolUsage.percent() >= IncusClient.PoolUsage.CRIT_PERCENT) {
-            if (!storageWarningShown && statusMessage == null) {
-                statusMessage = "⚠ Storage " + poolUsage.percent()
-                        + "% full — press C to reclaim space (stale templates, unused images, caches)"
-                        + (Platform.isMacOS() ? ", or grow it with 'isx vm resize'" : "");
-                storageWarningShown = true;
-            }
-        } else {
-            storageWarningShown = false;
-        }
-    }
-
     static final long PROXY_AUTH_CHECK_INTERVAL_MS = 30_000;
-
-    private void refreshProxyAuthError() {
-        long now = System.currentTimeMillis();
-        if (now - proxyAuthCheckMs < PROXY_AUTH_CHECK_INTERVAL_MS) return;
-        proxyAuthCheckMs = now;
-        try {
-            proxyInfo = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus), 500);
-        } catch (Exception e) {
-            proxyInfo = null;
-        }
-    }
-
-    private void refreshApplianceSkew() {
-        if (!Platform.isMacOS()) { applianceSkewMessage = null; return; }
-        if (applianceSkewFirstLoad) { applianceSkewFirstLoad = false; return; }
-        try {
-            var skew = VmManager.applianceSkew();
-            applianceSkewMessage = skew == null ? null
-                    : "Appliance " + skew.running() + " — restart VM for " + skew.installed();
-        } catch (Exception e) {
-            applianceSkewMessage = null;
-        }
-    }
-
-    /**
-     * Attribute the pool's shared base weight to the root template. btrfs reports each row's usage
-     * as <em>exclusive</em> (blocks unique to that one subvolume), so the imported base image and
-     * every block shared down a CoW chain belong to no row — they surface only in the pool total.
-     * We fold that remainder ({@code pool.used} minus the sum of every row's unique usage) into the
-     * single root template (the built template with no parent), so the base reads at its real weight
-     * and the rows roughly reconcile with the gauge. Only for CoW pools; skipped when usage is
-     * unknown or the root is ambiguous (zero or several templates with no parent), rather than
-     * misattributing the bytes to the wrong row.
-     */
-    private void foldBaseWeightIntoRootTemplate() {
-        baseTemplateName = null;
-        if (!usagePoolIsCow || poolUsage == null || poolUsage.usedBytes() <= 0) return;
-
-        long unique = 0;
-        for (var t : templateEntries) if (t.diskUsage() > 0) unique += t.diskUsage();
-        for (var e : entries) if (e.diskUsage() > 0) unique += e.diskUsage();
-        long base = sharedBaseBytes(poolUsage.usedBytes(), unique);
-        if (base <= 0) return;
-
-        int rootIdx = -1;
-        for (int i = 0; i < templateEntries.size(); i++) {
-            var t = templateEntries.get(i);
-            if (t.diskUsage() < 0) continue;                            // not built — no subvolume yet
-            if (!t.isRoot()) continue;                                  // derived — not a root
-            if (rootIdx >= 0) return;                                   // ambiguous: >1 root, don't guess
-            rootIdx = i;
-        }
-        if (rootIdx < 0) return;
-
-        var r = templateEntries.get(rootIdx);
-        long folded = (r.diskUsage() < 0 ? 0 : r.diskUsage()) + base;
-        templateEntries.set(rootIdx, r.withDiskUsage(folded));
-        baseTemplateName = r.name();
-    }
-
-    /**
-     * Attribute disk weight using each template's stamped btrfs <em>referenced</em> size (rfer),
-     * shown as a delta from its parent: {@code delta = rfer(node) − rfer(parent)}, and for the root
-     * template (no template parent) the delta is its own rfer — which is the base-image weight, so
-     * the base reads at its real size and derived templates show only what they added (e.g. a tools
-     * layer). Unlike {@link #foldBaseWeightIntoRootTemplate}, no shared remainder is dumped onto the
-     * root: rfer already distributes it correctly down the chain. Instances are left on their
-     * exclusive usage — for a branch with no descendants that already equals its delta from the
-     * template, and it comes free from the Incus API.
-     *
-     * <p>Only used when every built template carries the {@link Metadata#DISK_REFERENCED} stamp (see
-     * {@link #canUseReferencedModel}); otherwise the fold fallback runs. Sets {@link #baseTemplateName}
-     * to the root template so the CoW delete note and {@code ~} marker still apply.
-     */
-    private void applyReferencedTemplateDeltas() {
-        baseTemplateName = null;
-        var rferOf = new java.util.HashMap<String, Long>();
-        for (var t : templateEntries) if (t.referencedBytes() >= 0) rferOf.put(t.name(), t.referencedBytes());
-
-        // Definitional parent links (from on-disk YAML) survive template deletion, unlike the built
-        // rows: if an intermediate template is deleted, its immediate parent row is gone but the chain
-        // is still walkable, so we can subtract the nearest *surviving* ancestor instead of over-
-        // subtracting a phantom parent. See nearestStampedAncestorRfer.
-        var defParentOf = new java.util.HashMap<String, String>();
-        if (imageDefs != null) {
-            for (var e : imageDefs.entrySet()) defParentOf.put(e.getKey(), e.getValue().getParent());
-        }
-
-        String rootName = null;
-        boolean rootAmbiguous = false;
-        for (int i = 0; i < templateEntries.size(); i++) {
-            var t = templateEntries.get(i);
-            // Unstamped: either not built, or a built derived template whose stamp is missing (e.g. a
-            // transient btrfs read failure at build time). Leave its diskUsage on the exclusive value
-            // set at load — a per-row fallback, rather than dropping the whole model to the fold.
-            if (t.referencedBytes() < 0) continue;
-            var p = t.parent();
-            boolean isRoot = t.isRoot();
-            if (isRoot) {
-                if (rootName != null) rootAmbiguous = true;
-                rootName = t.name();
-            }
-            Long parentRfer = isRoot ? null : nearestStampedAncestorRfer(p, rferOf, defParentOf);
-            long delta = referencedDelta(t.referencedBytes(), parentRfer, isRoot);
-            templateEntries.set(i, t.withDiskUsage(delta));
-        }
-        if (!rootAmbiguous) baseTemplateName = rootName;
-    }
-
-    private boolean canUseReferencedModel() {
-        // usagePoolIsBtrfs already implies a named CoW pool (it's set from probe.isBtrfs()).
-        return DiskUsageModel.canUseReferencedModel(usagePoolIsBtrfs, templateEntries);
-    }
-
-    /**
-     * Backfill any built template that's missing its {@link Metadata#DISK_REFERENCED} stamp with a
-     * single <em>live</em> btrfs read, so the referenced-delta model still applies to that row (and,
-     * if the missing one is the root, to the whole panel) instead of falling back to the shared-base
-     * fold. This heals both pre-feature templates (built before rfer stamping) and the rare build
-     * whose stamp failed to record — with no rebuild required.
-     *
-     * <p>Deliberately lazy and light, to honour the "privileged read is rare, not per-refresh"
-     * posture: it runs the probe <em>only</em> when there is an actual gap (an unstamped built
-     * template), and uses the non-sync flavour ({@link dev.incusspawn.incus.BtrfsUsage#probe(String,
-     * boolean)} with {@code sync=false}) — no forced filesystem commit, cheap enough for a refresh
-     * cadence. An existing stamp is never overwritten (templates are immutable, so the stamp is
-     * authoritative and free), and the overlay is in-memory only (a rebuild re-stamps permanently).
-     * If the read is unavailable (dir pool, no sudoers rule, agent down) the gap stays and the fold
-     * fallback handles it.
-     */
-    private void fillMissingReferencedSizes() {
-        if (!usagePoolIsBtrfs || usagePoolName == null) return;
-        if (!hasUnstampedBuiltTemplate(templateEntries)) return;       // no gap — skip the probe entirely
-        var live = dev.incusspawn.incus.BtrfsUsage.probe(usagePoolName, false);   // non-sync: light enough for refresh
-        if (live.isEmpty()) return;
-        backfilledReferenced = live;
-        templateEntries = fillMissingReferenced(templateEntries, live);
-    }
-
-    /**
-     * Read the pool's qgroup accounting status and, if it's inconsistent, start the repair — a
-     * background {@code btrfs quota rescan}, throttled inside {@code BtrfsUsage} so calling this on
-     * every reload is fine. The kernel clears the flag when the rescan completes (seconds on a
-     * developer-sized pool); the reload that first sees it consistent again marks the stamps
-     * suspect, because any recorded while the counters were frozen are wrong.
-     */
-    private void refreshAccountingStatus() {
-        if (!usagePoolIsBtrfs || usagePoolName == null) {
-            qgroupStatus = null;
-            return;
-        }
-        long now = System.currentTimeMillis();
-        // Poll fast only while a repair is pending AND the last read actually told us something.
-        // If the status has become unreadable (a wedged agent on macOS, each read costing up to its
-        // 5s watchdog), polling every 2s buys nothing and just hammers a failing channel — so back
-        // off to the normal cadence until it answers again.
-        boolean canObserveRepair = accountingRepairPending && qgroupStatus != null && qgroupStatus.available();
-        long interval = canObserveRepair ? ACCOUNTING_REPAIR_POLL_MS : ACCOUNTING_CHECK_INTERVAL_MS;
-        if (qgroupStatus != null && now - accountingCheckMs < interval) return;
-        accountingCheckMs = now;
-        qgroupStatus = dev.incusspawn.incus.BtrfsUsage.repairIfInconsistent(usagePoolName);
-        if (qgroupStatus.untrusted()) {
-            accountingRepairPending = true;
-            if (!accountingWarningShown && statusMessage == null) {
-                statusMessage = "Repairing disk accounting (btrfs quota rescan) — sizes may be stale for a moment";
-                accountingWarningShown = true;
-            }
-        } else if (accountingRepairPending && qgroupStatus.available()) {
-            accountingRepairPending = false;
-            stampsSuspect = true;
-        }
-    }
-
-    /**
-     * Re-validate stamped referenced sizes against one live read and re-stamp any that differ.
-     * Runs only when there's reason to doubt them: right after a repair observed this session
-     * (the stamps may have been recorded from frozen counters), or — at most once per session —
-     * when they <em>look</em> poisoned: a built derived template stamped with exactly its parent's
-     * value (see {@link #hasSuspiciousStamps}). That second trigger is what heals a pool that went
-     * inconsistent before this check existed, without a rebuild. Corrected stamps are persisted so
-     * the next launch doesn't probe again; the privileged read stays out of the healthy path.
-     */
-    private void revalidateStampsIfNeeded() {
-        if (!usagePoolIsBtrfs || usagePoolName == null) return;
-        boolean run = stampsSuspect;
-        if (!run && !poisonHeuristicSpent && hasSuspiciousStamps(templateEntries)) {
-            run = true;
-            poisonHeuristicSpent = true;
-        }
-        if (!run) return;
-        stampsSuspect = false;
-        var live = dev.incusspawn.incus.BtrfsUsage.probe(usagePoolName, false);
-        if (live.isEmpty()) return;
-        var corrected = restampFromLive(templateEntries, live);
-        for (int i = 0; i < corrected.size(); i++) {
-            var before = templateEntries.get(i);
-            var after = corrected.get(i);
-            if (after.referencedBytes() == before.referencedBytes()) continue;
-            try {
-                incus.configSet(after.name(), Metadata.DISK_REFERENCED, String.valueOf(after.referencedBytes()));
-            } catch (Exception ignored) {
-                // Best-effort persistence: the corrected value is used for this session regardless.
-            }
-        }
-        templateEntries = corrected;
-    }
 
     // --- Event handling ---
 
@@ -2375,7 +1852,7 @@ public class Tui {
         this.incus = incus;
         this.backgroundTasks = backgroundTasks;
         this.lockManager = lockManager;
-        mergeInstances(instances);
+        loader.mergeInstances(instances);
         publishRows();
         mode = Mode.BROWSE;
         pendingAction = PendingAction.NONE;
@@ -2692,7 +2169,7 @@ public class Tui {
 
     private void refreshData(TableState tableState) {
         try {
-            preservingSelection(tableState, this::reloadData);
+            preservingSelection(tableState, loader::reloadData);
         } catch (IncusException e) {
             errorMessage = e.getMessage();
             mode = Mode.ERROR;
@@ -2783,11 +2260,11 @@ public class Tui {
     private void startLiveRefresh() {
         liveRefreshInFlight.set(true);
         long generation = dataGeneration;
-        var pool = usagePoolName;
+        var pool = loader.usagePoolName;
         Thread.ofVirtual().name("tui-live-refresh").start(() -> {
             LiveSnapshot snapshot;
             try {
-                var instances = clearStalePendingOps(collectEntries());
+                var instances = loader.clearStalePendingOps(loader.collectEntries());
                 IncusClient.PoolUsage usage = null;
                 if (pool != null) {
                     try { usage = incus.getPoolUsageBytes(pool); } catch (Exception ignored) {}
@@ -2816,7 +2293,7 @@ public class Tui {
             return;
         }
         liveRefreshErrorShown = false;
-        preservingSelection(tableState, () -> applyLiveInstances(snapshot.instances(), snapshot.poolUsage()));
+        preservingSelection(tableState, () -> loader.applyLiveInstances(snapshot.instances(), snapshot.poolUsage()));
         closeDialogIfTargetVanished();
     }
 
@@ -3108,10 +2585,6 @@ public class Tui {
             }
         } catch (Exception ignored) {
         }
-    }
-
-    private List<InstanceInfo> collectEntries() {
-        return InstanceListing.collectEntries(incus.listJson());
     }
 
 }

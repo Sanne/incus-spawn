@@ -17,6 +17,7 @@ paths:
   - "cli/src/main/java/dev/incusspawn/command/UsageFormat.java"
   - "cli/src/main/java/dev/incusspawn/command/MainScreen.java"
   - "cli/src/main/java/dev/incusspawn/command/ShellLaunch.java"
+  - "cli/src/main/java/dev/incusspawn/command/ListingLoader.java"
   - "cli/src/main/java/dev/incusspawn/command/TemplateDetails.java"
   - "cli/src/main/java/dev/incusspawn/command/TemplateDetailView.java"
   - "cli/src/main/java/dev/incusspawn/command/InstanceDetailView.java"
@@ -50,6 +51,7 @@ A notice meant for the TUI belongs on `Warnings`, so it costs no keypress.
 `Tui` is the TUI implementation using Tamboui widgets.
 `MainScreen` draws the screen below the dialogs (header, both tables, legend, search bar, context line and key bar) from what `Tui` holds, and changes none of it.
 `ShellLaunch` opens a shell from the TUI: the repairs an instance may owe first, the start, the shell with its auth-error title, and a branch made from the branch dialog before its shell.
+`ListingLoader` loads what the TUI shows (`reloadData`, `mergeInstances`, the disk model and its accounting checks, the pool gauge, the proxy and appliance status) and writes the rows into `Tui`, which keeps the selection and the live refresh.
 `isx list` is `ListCommand`, which prints the listing and never opens the TUI; both parse the Incus listing through `InstanceListing`.
 Two-panel layout (Templates + Instances) with modal dialogs for branching, renaming, and building.
 

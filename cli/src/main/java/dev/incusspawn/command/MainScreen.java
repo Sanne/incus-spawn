@@ -466,7 +466,7 @@ final class MainScreen {
                 if (tui.templatesDefChanged.contains(template.name())) {
                     // The file name only: a full path could push the warnings after it off the bar
                     var def = tui.imageDefs.get(template.name());
-                    var builtFrom = TemplateDetailView.otherBuildFile(tui.builtFrom(template.name()), def);
+                    var builtFrom = TemplateDetailView.otherBuildFile(tui.loader.builtFrom(template.name()), def);
                     spans.add(Span.styled("  △ definition changed since last build"
                             + (builtFrom != null ? " (built from "
                                     + TemplateDetailView.shortSourceLabel(builtFrom, def.getSource())
