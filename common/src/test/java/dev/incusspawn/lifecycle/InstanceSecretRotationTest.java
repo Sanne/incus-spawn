@@ -187,9 +187,10 @@ class InstanceSecretRotationTest {
     private static void assertProofsFor(String secret, List<ProofToken.Placeholder> declared, String exports) {
         assertNotNull(exports, "the probe that delivers the secret delivers its proofs");
         for (var placeholder : declared) {
-            var line = "if [ -n \"${" + placeholder.env() + "+x}\" ]; then export " + placeholder.env() + "='"
-                    + placeholder.prefix() + ProofToken.MARKER + ProofToken.derive(secret, placeholder.namespace()) + "'; fi";
-            assertTrue(exports.lines().anyMatch(line::equals), () -> "no proof for " + placeholder + " in:\n" + exports);
+            var export = "export " + placeholder.env() + "='"
+                    + placeholder.prefix() + ProofToken.MARKER + ProofToken.derive(secret, placeholder.namespace()) + "'";
+            assertTrue(exports.lines().anyMatch(l -> l.startsWith("case \"${" + placeholder.env() + "-}\" in ")
+                    && l.contains(export)), () -> "no proof for " + placeholder + " in:\n" + exports);
         }
         assertEquals(declared.size(), exports.lines().count(), exports);
         assertFalse(exports.contains(secret), "never the secret itself");

@@ -41,6 +41,12 @@ import java.util.regex.Pattern;
  */
 public final class ProofToken {
 
+    /**
+     * After the prefix in every static placeholder a build exports ({@code gho_placeholder},
+     * {@code ya29.placeholder-for-proxy}): a start replaces only a value that starts so, or an
+     * earlier proof, never one somebody else put in the variable.
+     */
+    public static final String STATIC_MARKER = "placeholder";
     /** Between a placeholder's prefix and its digest, so a proof is recognisably isx's. */
     public static final String MARKER = "isx_";
     /** 128 bits: as long as a guess has to be right, and short enough for any token field. */
@@ -57,7 +63,27 @@ public final class ProofToken {
      * An environment variable that carries {@code namespace}'s credential, and the prefix its
      * tool expects the value to start with.
      */
-    public record Placeholder(String env, String prefix, String namespace) {
+    public record Placeholder(String env, String prefix, String namespace, String guard) {
+
+        /** A placeholder every image can take a proof in. */
+        public Placeholder(String env, String prefix, String namespace) {
+            this(env, prefix, namespace, "");
+        }
+
+        /**
+         * This placeholder, filled only where the shell condition {@code guard} holds in the
+         * guest's login -- for a variable whose tool cannot take a new value on every start in an
+         * image built before it could (Claude Code's approved keys, before #1108's login script).
+         * Code only, never from YAML: it is shell, run in every login.
+         */
+        public Placeholder onlyWhen(String guard) {
+            return new Placeholder(env, prefix, namespace, guard);
+        }
+
+        /** What the build exports in the variable until a start fills it: the prefix, then this. */
+        public String staticValuePrefix() {
+            return prefix + STATIC_MARKER;
+        }
 
         /** This start's value for the variable, from the instance's {@code secret}. */
         public String tokenFor(String secret) {
@@ -104,6 +130,8 @@ public final class ProofToken {
      * written safely is dropped, and so is a variable two tools declare differently: guessing
      * which one the image's tool reads would hand it a proof for the wrong namespace. Dropping
      * leaves the build's static placeholder, which proves nothing -- the safe way to be wrong.
+     * Declarations that differ only in their guard are one credential: it is filled where every
+     * guard holds.
      */
     public static List<Placeholder> declaredBy(Collection<? extends ToolSetup> tools) {
         var byEnv = new LinkedHashMap<String, Placeholder>();
@@ -116,7 +144,13 @@ public final class ProofToken {
                     continue;
                 }
                 var earlier = byEnv.putIfAbsent(placeholder.env(), placeholder);
-                if (earlier != null && !earlier.equals(placeholder)) conflicting.add(placeholder.env());
+                if (earlier == null || earlier.equals(placeholder)) continue;
+                if (earlier.prefix().equals(placeholder.prefix()) && earlier.namespace().equals(placeholder.namespace())) {
+                    // The same credential, guarded by one tool and not another: what any tool needs holds
+                    byEnv.put(placeholder.env(), earlier.onlyWhen(bothGuards(earlier.guard(), placeholder.guard())));
+                } else {
+                    conflicting.add(placeholder.env());
+                }
             }
         }
         for (var env : conflicting) {
@@ -125,6 +159,12 @@ public final class ProofToken {
             byEnv.remove(env);
         }
         return List.copyOf(byEnv.values());
+    }
+
+    private static String bothGuards(String first, String second) {
+        if (first.isEmpty() || first.equals(second)) return second;
+        if (second.isEmpty()) return first;
+        return "{ " + first + "; } && { " + second + "; }";
     }
 
     /**
@@ -154,16 +194,22 @@ public final class ProofToken {
 
     /**
      * The shell the login profile sources to export this start's proofs: for each placeholder,
-     * its token -- only when the variable is already set, by {@code isx-env.sh}, so a variable
-     * the build did not give this instance stays unset.
+     * its token -- only when the variable holds the build's static placeholder or an earlier
+     * proof, so a variable the build did not give this instance stays unset, and a value
+     * somebody else put there (a template's own {@code env:}, a user's) stays theirs -- and only
+     * where its guard holds.
      */
     static String profile(String secret, List<Placeholder> placeholders) {
         var sb = new StringBuilder();
         for (var placeholder : placeholders) {
             if (!placeholder.problem().isEmpty()) continue;
             var env = placeholder.env();
-            sb.append("if [ -n \"${").append(env).append("+x}\" ]; then export ").append(env).append('=')
-              .append(Container.shellQuote(placeholder.tokenFor(secret))).append("; fi\n");
+            var export = "export " + env + "=" + Container.shellQuote(placeholder.tokenFor(secret));
+            // The prefix is [A-Za-z0-9._-]: nothing in it is special to a case pattern
+            sb.append("case \"${").append(env).append("-}\" in ")
+              .append(placeholder.staticValuePrefix()).append("*|").append(placeholder.prefix()).append(MARKER).append("*) ")
+              .append(placeholder.guard().isEmpty() ? export : "if " + placeholder.guard() + "; then " + export + "; fi")
+              .append(" ;; esac\n");
         }
         return sb.toString();
     }

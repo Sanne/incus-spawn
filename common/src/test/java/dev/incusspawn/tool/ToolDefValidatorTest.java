@@ -421,4 +421,33 @@ class ToolDefValidatorTest {
         var errors = ToolDefValidator.validate(file).errors();
         assertTrue(errors.stream().anyMatch(e -> e.contains("ACME_TOKN") && e.contains("env:")), errors.toString());
     }
+
+    @Test
+    void aPlaceholderWhoseStaticValueIsNotOneIsAnError(@TempDir Path dir) throws Exception {
+        // A start replaces only a value starting with the prefix and "placeholder": any other
+        // static value would never get a proof
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: my-tool
+                env:
+                  - name: ACME_TOKEN
+                    value: acme_dummy
+                proxy:
+                  config-namespace: acme
+                  placeholders:
+                    - env: ACME_TOKEN
+                      prefix: acme_
+                  configuration:
+                    token:
+                      config-path: token
+                      description: Acme token
+                      secret: true
+                  auth:
+                    - domains: [api.acme.example]
+                      type: bearer
+                      token: "${token}"
+                """);
+        var errors = ToolDefValidator.validate(file).errors();
+        assertTrue(errors.stream().anyMatch(e -> e.contains("acme_placeholder")), errors.toString());
+    }
 }

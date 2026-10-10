@@ -173,6 +173,11 @@ public class ToolDefValidator {
                 } else if (!exported.contains(placeholder.env())) {
                     errors.add("placeholder " + placeholder.env() + " in proxy for '" + def.getName()
                             + "' is not a variable its env: entries set -- a start only fills one the tool sets outright");
+                } else if (def.getEnv().stream().anyMatch(e -> placeholder.env().equals(e.getName())
+                        && (e.getValue() == null || !e.getValue().startsWith(placeholder.staticValuePrefix())))) {
+                    errors.add("placeholder " + placeholder.env() + " in proxy for '" + def.getName()
+                            + "' must be set to a value starting with '" + placeholder.staticValuePrefix()
+                            + "' -- a start replaces only the build's own placeholder");
                 }
             }
         }

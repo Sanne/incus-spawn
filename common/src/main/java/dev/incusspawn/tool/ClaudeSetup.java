@@ -3,6 +3,7 @@ package dev.incusspawn.tool;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.util.BuildOutput;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -51,6 +52,22 @@ public class ClaudeSetup implements ToolSetup {
     static String missingAccount(SpawnConfig config, Map<String, String> selection) {
         var account = config.getClaude().accountNamed(selection.get(SpawnConfig.ClaudeConfig.NAMESPACE));
         return account != null && account.isComplete() ? "" : "Anthropic API key, OAuth token, or Vertex AI";
+    }
+
+    /**
+     * {@code ANTHROPIC_API_KEY} gets a proof only where Claude Code can take a key that changes
+     * on every start: an image whose {@link #LOGIN_AUTH_PATH} approves each login's key, or one
+     * with no {@code ~/.claude.json} to approve it in (pi without Claude Code). An image built
+     * before that script approves only the static placeholder, and would ask about every new
+     * key, defaulting to no: it keeps the placeholder until it is rebuilt.
+     */
+    @Override
+    public List<ProofToken.Placeholder> placeholders() {
+        return ToolSetup.super.placeholders().stream()
+                .map(p -> p.env().equals("ANTHROPIC_API_KEY")
+                        ? p.onlyWhen("[ -e " + LOGIN_AUTH_PATH + " ] || ! [ -e \"$HOME/.claude.json\" ]")
+                        : p)
+                .toList();
     }
 
     @Override
@@ -452,7 +469,7 @@ public class ClaudeSetup implements ToolSetup {
      * Sorts after every other {@code isx-*.sh} in {@code /etc/profile.d}, so it sees the tokens
      * a start exports (#1106) rather than the build-time placeholders.
      */
-    static final String LOGIN_AUTH_PATH = "/etc/profile.d/isx-zz-claude-auth.sh";
+    public static final String LOGIN_AUTH_PATH = "/etc/profile.d/isx-zz-claude-auth.sh";
 
     /**
      * Adapts the instance's Claude tokens, as exported at login, to what Claude Code reads (#1108).
