@@ -35,7 +35,8 @@ Other sandboxes for coding agents make it differently, and the README's "Compare
   Init completion is tracked by a versioned sentinel (`~/.config/incus-spawn/.init-complete` containing `INIT_VERSION`).
   When `INIT_VERSION` is bumped (new infrastructure step added), existing installations automatically re-run init on the next command.
   On Linux, init writes sysctl overrides (`/etc/sysctl.d/99-incus-spawn.conf`) to raise per-UID inotify limits (`max_user_instances=8192`, `max_user_watches=524288`), preventing inotify exhaustion when running many containers.
-  Files init places under `/etc` are installed with `sudo install -m 0644`, not `sudo cp` from a `0600` temp file, so a re-run can read them back to check whether they changed; a file it cannot read counts as needing a rewrite, which repairs the `0600` files older releases wrote (#821).
+  Files init places under `/etc` are installed with `sudo install -m 0644`, not `sudo cp` from a `0600` temp file, so a re-run can read them back to check whether they changed.
+  A file it cannot read counts as needing a rewrite, which repairs the `0600` files older releases wrote (#821).
   The Template Search Paths step uses `gh` to auto-detect the user's GitHub identity and offer to fork/clone `incus-spawn-templates` — every failure path (no gh, no auth, API error) degrades gracefully to the existing manual flow
 
 ## Tech Stack
@@ -76,12 +77,14 @@ These things keep it fixed:
   `JbangCatalogTest` fails if an alias ever names an asset `gh release create` does not upload — the build step alone does not satisfy it, because a jar that is built and not uploaded is exactly this bug.
 - The unit and the launchd plist exec `isx-proxy` directly; there is no `isx proxy start` fallback, and `install()` refuses to write service files without a proxy binary rather than installing something that cannot work.
 - `ProxyStartCommand` resolves the proxy binary *before* any service management, so a missing binary produces an `EXIT_CONFIG` failure instead of a restart that cannot possibly help.
-- On macOS that exit code is not enough. launchd has no `RestartPreventExitStatus`, so a `KeepAlive` job that exits 78 is started again every `ThrottleInterval` — the error is reprinted every ten seconds and nothing changes — and `RunAtLoad` would bring a merely booted-out job back at the next login.
+- On macOS that exit code is not enough.
+  launchd has no `RestartPreventExitStatus`, so a `KeepAlive` job that exits 78 is started again every `ThrottleInterval` — the error is reprinted every ten seconds and nothing changes — and `RunAtLoad` would bring a merely booted-out job back at the next login.
   `haltUnusableMacOsService()` therefore boots the job out *and* removes the plist, which `isx init` rewrites once `isx-proxy` is present.
   It declines when the proxy is answering on 127.0.0.1, so a resolution quirk can never take down a working install.
 - `ProxyService.isSupervisedInvocation()` makes `isx proxy start` skip service management when it *is* the service: on Linux by matching systemd's `INVOCATION_ID` against the proxy unit's own invocation, on macOS by matching this process's own pid against what `launchctl print` reports for the job (#977 — restarting the job from inside it can end this very process via `bootout` before it reloads, which is worse than Linux's loop).
   It exists only for a unit/plist written by an older build — this build's execs `isx-proxy`, which never re-enters the CLI — and converts such a unit's loop into a single `EXIT_CONFIG` failure that `RestartPreventExitStatus` halts (or, once `isx-proxy` is installed, into a working proxy), and turns macOS's `bootout` race into this process just running the proxy in the foreground instead.
-  Running in the foreground never calls `restartLocked()`, so the supervised invocation would otherwise never rewrite its own stale plist either; `ProxyService.migrateMacOsPlistIfSupervised()` does that one job — no bootout or bootstrap, since either would end this very process — so the next login execs `isx-proxy` directly instead of finding the legacy plist stale again.
+  Running in the foreground never calls `restartLocked()`, so the supervised invocation would otherwise never rewrite its own stale plist either.
+  `ProxyService.migrateMacOsPlistIfSupervised()` does that one job — no bootout or bootstrap, since either would end this very process — so the next login execs `isx-proxy` directly instead of finding the legacy plist stale again.
 
 `isx init` marks itself complete *before* its last step touches the service.
 `isx-proxy` exits `EXIT_CONFIG` until that marker exists, so a service installed ahead of it failed its first start on every first-time install: launchd retried only after the ten-second `ThrottleInterval`, by which time init had given up waiting and reported "proxy is not responding" about a proxy that came up by itself moments later (#938), and systemd, told not to restart that exit code, did not retry at all.
@@ -91,43 +94,57 @@ Dropping the proxy's check was rejected too: it is what turns a proxy started on
 The price is that an install which fails after the marker leaves init recorded as complete, and nothing offers the service again; it is optional, its failure is printed, and `isx proxy install` remains.
 
 That fixed one reason for a failed first start, not the waiting: any other (the VM-facing bridge not discoverable yet, say) still reached a five-second wait for health that ended before launchd's second start.
-On macOS the waits after the proxy job is started or restarted therefore outlast `ThrottleInterval` (`ProxyService.awaitStarted`, whose `startWaitSeconds` shares `LAUNCHD_THROTTLE_SECONDS` with the plist), and a wait that still times out prints what `launchctl print` says of the job (`state`, `runs`, and `last exit code` or the `last terminating signal`), so "not responding" tells a job launchd is about to retry from one that keeps exiting (#969).
+On macOS the waits after the proxy job is started or restarted therefore outlast `ThrottleInterval` (`ProxyService.awaitStarted`, whose `startWaitSeconds` shares `LAUNCHD_THROTTLE_SECONDS` with the plist).
+A wait that still times out prints what `launchctl print` says of the job (`state`, `runs`, and `last exit code` or the `last terminating signal`), so "not responding" tells a job launchd is about to retry from one that keeps exiting (#969).
 Unlike making init wait out the throttle, this costs a healthy start nothing: the wait ends at the first answer from `/health`.
-The price falls on the failures: a proxy that never comes up, one that exits on a configuration error at every retry included, is reported after fifteen seconds on macOS instead of five to ten, and the `launchd:` line under the message is what says the time went to retries.
+The price falls on the failures.
+A proxy that never comes up, one that exits on a configuration error at every retry included, is reported after fifteen seconds on macOS instead of five to ten.
+The `launchd:` line under the message is what says the time went to retries.
 
-Outside init, the same marker gates `isx proxy install` itself (`ProxyService.initComplete()`, in `install()` for every caller and at the top of the command): before init, or after an upgrade that raised `INIT_VERSION`, it refuses with "run `isx init` first" instead of writing a service that can only report a proxy that is not responding (#968).
+Outside init, the same marker gates `isx proxy install` itself (`ProxyService.initComplete()`, in `install()` for every caller and at the top of the command).
+Before init, or after an upgrade that raised `INIT_VERSION`, it refuses with "run `isx init` first" instead of writing a service that can only report a proxy that is not responding (#968).
 The command checks before its running-service path too, because `install.sh` runs it after every upgrade: a restart there would replace a working proxy with one that refuses to start, while refusing leaves the old one serving until init runs.
 
 Every other path that starts or restarts the service refuses the same way (#1048): `restartLocked()` (so `isx proxy restart`, `isx doctor`'s remediations and the auto-restart), `startService()`, and `reinstallIfChanged()`/`upgradeIfNeeded()`, which fire on exactly the version drift an upgrade causes.
 Those two refuse before rewriting the service files, which would otherwise compare equal on the run of `isx init` that could restart onto them, but after the macOS halt of a service whose binary has gone.
 `restartLocked()` checks under the lock, after `restartIfUnhealthy()` has found the proxy unhealthy, so a healthy proxy is never refused.
-`isx init` restarts the proxy in its firewall step, before the marker exists; on a re-run after an `INIT_VERSION` bump that restart waits for the last step, which restarts a running service it found with a stale marker once the marker is written (unless the upgrade there did).
+`isx init` restarts the proxy in its firewall step, before the marker exists.
+On a re-run after an `INIT_VERSION` bump that restart waits for the last step, which restarts a running service it found with a stale marker once the marker is written (unless the upgrade there did).
 It reads the marker rather than a flag the firewall step set, so a run that stopped between the two still has the restart made by the next.
 
 On macOS a restart of the service is `launchctl kickstart -k`, not `bootout` followed by `bootstrap`.
 `bootout` returns before launchd has removed the job: a proxy that does not exit on SIGTERM is killed about five seconds later, and until then `bootstrap` fails with `5: Input/output error` while `launchctl print` still finds the job.
-The old sequence took that `print` for success, reported "Proxy service restarted", and five seconds later nothing was loaded at all, so the automatic restart never recovered a hung proxy while a later `isx proxy start`, finding no job, simply loaded one (#916).
+The old sequence took that `print` for success, reported "Proxy service restarted", and five seconds later nothing was loaded at all.
+So the automatic restart never recovered a hung proxy while a later `isx proxy start`, finding no job, simply loaded one (#916).
 `kickstart -k` is launchd's own restart: the job stays loaded, so there is no teardown to race.
 Only a changed plist has to be unloaded and loaded again, and then the restart waits until `print` no longer finds the job.
 In both cases the restart has worked when `launchctl` returned 0 and the job is running.
 Sleeping between `bootout` and `bootstrap` was rejected as timing-dependent and still blind to a failed `bootstrap`; retrying `bootstrap` on error 5 was rejected because 5 is also what a rejected plist returns.
 
 Two gaps surfaced once `kickstart -k` restarted a loaded job in place rather than always reloading it.
-First, comparing the plist on disk to what this build would generate (`needsMacOsPlistUpdate`) cannot see every reason to reload: a drift restart assessed from a health signal (a stale cert, a wrong bridge address) has nothing to do with the plist file, so `reinstallIfChanged` and `upgradeIfNeeded` now force a reload explicitly instead of asking that comparison, which would otherwise answer "nothing changed" and leave `kickstart -k` running the old job in place.
-Second, several `isx` commands can find the proxy unhealthy within the same window — two terminals running `isx branch` at once is the common case — and each one restarting in turn would `kickstart -k` a proxy the first one had just brought up, cutting every instance's connection a second time for no reason; `ProxyHealthCheck.tryAutoRestart` now re-checks `/health` under `proxy.lock` (`ProxyService.restartIfUnhealthy`) immediately before restarting, the same recheck `reinstallIfChanged` already did for drift, so the second command finds the proxy healthy and does nothing.
+First, comparing the plist on disk to what this build would generate (`needsMacOsPlistUpdate`) cannot see every reason to reload.
+A drift restart assessed from a health signal (a stale cert, a wrong bridge address) has nothing to do with the plist file.
+So `reinstallIfChanged` and `upgradeIfNeeded` now force a reload explicitly instead of asking that comparison, which would otherwise answer "nothing changed" and leave `kickstart -k` running the old job in place.
+Second, several `isx` commands can find the proxy unhealthy within the same window — two terminals running `isx branch` at once is the common case — and each one restarting in turn would `kickstart -k` a proxy the first one had just brought up, cutting every instance's connection a second time for no reason.
+`ProxyHealthCheck.tryAutoRestart` now re-checks `/health` under `proxy.lock` (`ProxyService.restartIfUnhealthy`) immediately before restarting, the same recheck `reinstallIfChanged` already did for drift.
+So the second command finds the proxy healthy and does nothing.
 
-`installMacOs`'s failure message depends on *why* the reinstall's restart failed, which `isActive()` alone cannot say: a job still being unloaded when the install's own teardown timed out, and a job that loaded fine but is failing to come up (bad config, VM unreachable), both leave the job loaded.
-`LaunchdJob.start`/`restart` therefore return an `Outcome` (`RUNNING`/`STILL_UNLOADING`/`FAILED`/`EXITED`) instead of a boolean, so `installMacOs` can report "the previous job had not finished unloading" only for the first case and fall through to the ordinary "not responding" message, which points at logs, for the second.
+`installMacOs`'s failure message depends on *why* the reinstall's restart failed, which `isActive()` alone cannot say.
+A job still being unloaded when the install's own teardown timed out, and a job that loaded fine but is failing to come up (bad config, VM unreachable), both leave the job loaded.
+`LaunchdJob.start`/`restart` therefore return an `Outcome` (`RUNNING`/`STILL_UNLOADING`/`FAILED`/`EXITED`) instead of a boolean.
+So `installMacOs` can report "the previous job had not finished unloading" only for the first case and fall through to the ordinary "not responding" message, which points at logs, for the second.
 
 `Outcome` also keeps "launchctl refused" (`FAILED`) apart from "launchctl did it and the job did not stay up" (`EXITED`).
 Only `RUNNING` is success, for `restart` as before (#916).
-But `isx proxy start` on a stopped service used to print "failed to start" for both, at once, although after `EXITED` the job is loaded and launchd runs it again after `ThrottleInterval`: with a cause that clears by itself the proxy was healthy ten seconds after being reported dead, #969's symptom on the one path that never reached a wait.
+But `isx proxy start` on a stopped service used to print "failed to start" for both, at once, although after `EXITED` the job is loaded and launchd runs it again after `ThrottleInterval`.
+With a cause that clears by itself the proxy was healthy ten seconds after being reported dead, #969's symptom on the one path that never reached a wait.
 `startService()` therefore answers with `Outcome.launched()`, as it does on Linux with "the unit is active", and the command goes on to `awaitStarted`, which outlasts the throttle and prints the `launchd:` line when the proxy still does not answer (#1098).
 Changing only the message ("launchd will retry in ten seconds") was rejected: it keeps a non-zero exit for a start that succeeds, and tells the user to wait where the command can.
 The price is the same as #969's: a proxy that exits at every start is reported after about fifteen seconds instead of two, as "started but is not responding" with launchd's count of runs and last exit code.
 
 In the foreground, `isx proxy start` runs `isx-proxy` as a child sharing the terminal, and a shutdown hook stops that child when the CLI is terminated: SIGTERM, then SIGKILL after 15 seconds, longer than the proxy's own 10-second forced exit.
-Ctrl+C reaches both through the process group, but a signal to the CLI alone (`kill`, a supervisor, a cancelled CI step) used to leave the proxy orphaned, holding its ports, and possibly serving an older build than the one being tested (#882).
+Ctrl+C reaches both through the process group.
+But a signal to the CLI alone (`kill`, a supervisor, a cancelled CI step) used to leave the proxy orphaned, holding its ports, and possibly serving an older build than the one being tested (#882).
 Exec'ing the proxy in place of the CLI would avoid the child entirely, but Java cannot exec.
 A CLI that runs no hook (SIGKILL, the OOM killer, a JVM crash) is covered from the other side (#923).
 The CLI passes the child `--exit-with-pid <its own pid>`.
@@ -185,17 +202,25 @@ Each image definition specifies:
 
 Building an image automatically builds missing parents recursively.
 `isx build --all` rebuilds every defined image from scratch.
-`isx build` takes several templates (#1130); `--with-parents` and `--with-descendants` turn them into one batch, the union of their chains (or subtrees) with every template once and parents before children, so leaves that share a customization layer rebuild it once and are both derived from that one build.
-Running `--with-parents` once per leaf instead rebuilt the shared parents each time and left the first leaf copied from a build that no longer existed; that is also why a template whose parent was rebuilt after it now counts as out of sync (below).
-Plain `isx build a b` and `--missing` build their targets one after the other, and like a batch (`rebuildAll`) a failure does not stop the run: a target inheriting from a template that failed in this run is skipped, since its build would copy the old image, the others are built, and the run exits 1 with a single summary naming every template it left unbuilt, a parent a target's chain failed on included (the chain's own summary is held back for it).
+`isx build` takes several templates (#1130).
+`--with-parents` and `--with-descendants` turn them into one batch, the union of their chains (or subtrees) with every template once and parents before children.
+So leaves that share a customization layer rebuild it once and are both derived from that one build.
+Running `--with-parents` once per leaf instead rebuilt the shared parents each time and left the first leaf copied from a build that no longer existed.
+That is also why a template whose parent was rebuilt after it now counts as out of sync (below).
+Plain `isx build a b` and `--missing` build their targets one after the other, and like a batch (`rebuildAll`) a failure does not stop the run.
+A target inheriting from a template that failed in this run is skipped, since its build would copy the old image, the others are built, and the run exits 1 with a single summary naming every template it left unbuilt, a parent a target's chain failed on included (the chain's own summary is held back for it).
 One named target behaves as it always did.
 
 **Base image**: The root image (`tpl-minimal`) uses a custom Fedora base image from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images) instead of linuxcontainers.org.
 This image is a pre-baked systemd rootfs with agentuser, systemd-networkd, a connectivity watchdog, container-specific service masking, and a tmpfiles override for device node permissions — all the static setup that `buildFromScratch` would otherwise perform on every build.
 A separate VM base image (`vm_image_url`) is also available — a stock Incus Fedora VM image customized with the same base configuration via `virt-customize`.
-A base image tag and SHA256 checksums are baked into `src/main/resources/images/minimal.yaml`, but they are only an **offline fallback**: when the base image is unpinned, `BuildCommand.resolveTrackedBaseImage()` fetches the newest release from the GitHub API at build time (via the shared `baseimage/BaseImageReleases`, whose owning repo is parsed from the definition's `image_url` — the YAML is the single source of truth, and a non-GitHub URL is simply not tracked) and swaps in its tag + per-arch container/VM checksums, so a plain `isx build tpl-minimal` always installs the latest base image.
+A base image tag and SHA256 checksums are baked into `src/main/resources/images/minimal.yaml`, but they are only an **offline fallback**.
+When the base image is unpinned, `BuildCommand.resolveTrackedBaseImage()` fetches the newest release from the GitHub API at build time (via the shared `baseimage/BaseImageReleases`, whose owning repo is parsed from the definition's `image_url` — the YAML is the single source of truth, and a non-GitHub URL is simply not tracked) and swaps in its tag + per-arch container/VM checksums.
+So a plain `isx build tpl-minimal` always installs the latest base image.
 Any failure to reach or read the release list leaves the built-in tag in place and the build proceeds.
-An event-driven CI job (`.github/workflows/update-base-image.yml`) keeps that built-in fallback from drifting by opening a PR to bump it whenever the images repo publishes a newer release: `Sanne/incus-spawn-images` fires a `base-image-released` `repository_dispatch` (carrying the new tag and the container/VM checksums it just computed), so this repo neither polls nor re-parses `SHA256SUMS`.
+An event-driven CI job (`.github/workflows/update-base-image.yml`) keeps that built-in fallback from drifting by opening a PR to bump it whenever the images repo publishes a newer release.
+`Sanne/incus-spawn-images` fires a `base-image-released` `repository_dispatch` (carrying the new tag and the container/VM checksums it just computed).
+So this repo neither polls nor re-parses `SHA256SUMS`.
 A manual `workflow_dispatch` re-derives the newest release from the images repo's release list as a backstop if a dispatch is ever missed.
 
 `isx update-base` manages the pin: it fetches the release list from the GitHub API, retrieves per-architecture container **and VM** SHA256 checksums, and writes a user-level override to `~/.config/incus-spawn/images/minimal.yaml` (`pinned: true`) when pinning a specific version.
@@ -210,7 +235,10 @@ But two files declaring the same `name:` *within the same directory* is always a
 `isx build` refuses to build while any conflict exists and names the offending files; the TUI degrades to a status warning but still renders; `isx doctor` surfaces both (conflicts as warnings, overrides as informational notes).
 Both `ImageDef` and `ToolDefLoader` feed the same `LayeredDefinitions<T>` collector (`config/LayeredDefinitions.java`), which owns the per-directory collision/override bookkeeping and the `NameConflict`/`LayerOverride` record types — so the policy is defined once and applies identically to images and tools.
 The collector also records files that failed to parse (`parseFailures()`).
-Loading skips them with a warning, but `isx build` refuses while any exist: an unparsable file's `name:` is unknown, so it may have been the target, a parent, or an override, and building anyway would silently use whatever it was meant to replace — a lower layer's definition, or the stale build-source snapshot of an existing template.
+Loading skips them with a warning, but `isx build` refuses while any exist.
+An unparsable file's `name:` is unknown.
+So it may have been the target, a parent, or an override.
+Building anyway would silently use whatever it was meant to replace — a lower layer's definition, or the stale build-source snapshot of an existing template.
 Read-only commands keep warning and carry on.
 
 ### Tool System
@@ -244,8 +272,10 @@ Schema fields (all optional except `name`):
 Execution order: packages → downloads → run → run_as_user → files.
 Environment variables are collected centrally after all tools run, and only then does `ToolVerifier` run each installed tool's `verify` (`ToolSetup.verifyCommand()`), for agentuser checks with `/etc/profile.d/isx-env.sh` loaded.
 It runs **as `agentuser`** through a login shell (`Container.shAsUser`, the same path as `run_as_user`), unless the tool sets `verify_as_root`: that is what the image's user gets, and a root run can leave root-owned state in their home when the env points there (0.3.9: zmx's `ZMX_DIR`, then `error: AccessDenied` on every `zmx` run).
-A `verify_as_root` check runs in root's own environment instead, `env -i HOME=/root PATH=<root's default> sh -c <verify>`: without `isx-env.sh`, and without whatever the exec itself carries (an instance's `environment.*` keys, such as the agentuser `XDG_RUNTIME_DIR` GUI passthrough sets), so it cannot rely on another tool's env entries (`sshd -t`, the one there is, never needed them).
-No ownership repair runs afterwards: one did, until #931, and it walked the whole home, cloned repos included, on every build with a root check, while each hardening in review (busybox's `grep`, walk errors, newline paths) added shell for a case root's own environment prevents outright.
+A `verify_as_root` check runs in root's own environment instead, `env -i HOME=/root PATH=<root's default> sh -c <verify>`: without `isx-env.sh`, and without whatever the exec itself carries (an instance's `environment.*` keys, such as the agentuser `XDG_RUNTIME_DIR` GUI passthrough sets).
+So it cannot rely on another tool's env entries (`sshd -t`, the one there is, never needed them).
+No ownership repair runs afterwards.
+One did, until #931, and it walked the whole home, cloned repos included, on every build with a root check, while each hardening in review (busybox's `grep`, walk errors, newline paths) added shell for a case root's own environment prevents outright.
 A verify often depends on another tool: Maven's `mvn --version` needs the `JAVA_HOME` a JDK tool declares, and verifying it right after its own install (before the JDK, without the env file) failed in an image where Maven works.
 A failed verify's warning keeps every line of the reason, joined and capped, since messages such as Maven's wrap mid-sentence.
 
@@ -256,7 +286,8 @@ Templates (`ImageDef`) can also declare env entries.
 Java tools participate via `ToolSetup.envEntries()`.
 Definitions accept only the structured form: a shell string (`- export FOO=bar`) is rejected at load, with the structured equivalent in the error, because it would bypass conflict detection.
 There is no verbatim-line escape hatch, not even for built-in code: every entry has a name and a strategy, so every entry is conflict-checked.
-Values are escaped so they are taken literally; built-in Java code that needs the shell to expand a value at login (`$HOME` in Claude's `PATH` prepend, `$HOSTNAME` for `ISX_CONTAINER`) marks the entry `expandingAtLogin()`, which leaves plain `$NAME`/`${NAME}` references live but still escapes every other `$` (no `$(...)`), quotes, backslashes and backticks.
+Values are escaped so they are taken literally.
+Built-in Java code that needs the shell to expand a value at login (`$HOME` in Claude's `PATH` prepend, `$HOSTNAME` for `ISX_CONTAINER`) marks the entry `expandingAtLogin()`, which leaves plain `$NAME`/`${NAME}` references live but still escapes every other `$` (no `$(...)`), quotes, backslashes and backticks.
 YAML cannot set that flag, and an expanded `$HOME` and a literal `$HOME` count as different values.
 
 **Transitive dependency resolution** (`requires`): Tools can declare dependencies on other tools.
@@ -269,8 +300,10 @@ Dependencies are installed before the tools that require them.
 - Implement `ToolSetup` interface (`name()` + `install(Container, Map<String, String>)` + `envEntries(Map<String, String>)`)
 - Discovered via CDI (`@Dependent`)
 - Currently used by: `claude` (binary install + settings), `codex` (npm install + settings), `copilot` (npm install + settings), `gh` (dnf install), `pi` (npm install + settings), `bob` (npm install)
-- npm-distributed CLIs whose real binary is an *optional* per-platform package (`codex`, `copilot`) install through `NpmGlobalInstall`. npm treats a failed optional dependency as skippable and still exits 0 -- at any log level below `http` it does not even mention it -- so a transient download failure leaves only the JS launcher and the template is stamped as built anyway (#808).
-  After `npm install -g`, and after the `npm update -g` of `isx update-all` / `isx project update`, a node one-liner run as root resolves the platform package the way the launcher does; a missing one is reinstalled once, then fails the step with the failure lines from npm's verbose log.
+- npm-distributed CLIs whose real binary is an *optional* per-platform package (`codex`, `copilot`) install through `NpmGlobalInstall`.
+  npm treats a failed optional dependency as skippable and still exits 0 -- at any log level below `http` it does not even mention it -- so a transient download failure leaves only the JS launcher and the template is stamped as built anyway (#808).
+  After `npm install -g`, and after the `npm update -g` of `isx update-all` / `isx project update`, a node one-liner run as root resolves the platform package the way the launcher does.
+  A missing one is reinstalled once, then fails the step with the failure lines from npm's verbose log.
   The check deliberately does not run the CLI: `copilot --version` unpacks ~165 MB into agentuser's cache and `codex --version` leaves lock files, all of which would be baked into the template.
 
 **Resolution order** (later overrides earlier): built-in YAML (`resources/tools/`) → user-defined YAML (`~/.config/incus-spawn/tools/`) → search paths → project-local (`.incus-spawn/tools/`).
@@ -313,7 +346,9 @@ Optionally, missing repos can be cloned — the first prompt accepts `y`/`n`/`al
 
 **VM-specific build behavior:**
 
-When `type` is `vm` (set in the definition or via `--type`), `buildFromScratch` applies the entire ancestor tool/package chain from YAML definitions alone — parent Incus instances are not needed, so container parent rebuilds are skipped when a type change is detected in `buildChain`.
+When `type` is `vm` (set in the definition or via `--type`), `buildFromScratch` applies the entire ancestor tool/package chain from YAML definitions alone.
+Parent Incus instances are not needed.
+So container parent rebuilds are skipped when a type change is detected in `buildChain`.
 Additional differences:
 
 - **Base image**: uses `vm_image_url` (pre-baked VM qcow2) when available, falls back to a stock Incus VM image otherwise
@@ -331,7 +366,9 @@ Additional differences:
 - **Waiting for the agent** (#844, #953): `IncusClient.waitForReady` is the one wait for "the instance answers exec", for builds and branches alike.
   A VM gets 120s rather than a container's 30s, since firmware, kernel, systemd and on a first boot cloud-init all come before its incus-agent.
   Every caller passes the known `MachineType`: builds pass `activeBuild.machineType()`, branches and VM-only code pass `MachineType.VM`, and callers on existing instances pass `incus.machineType(name)`.
-  A fallback no-arg overload still learns the type from the status GET that follows a failed probe, but callers should not rely on it: Incus may return a non-exception failure (`exit 0` with an error on stdout, as observed for VMs whose agent is booting) that bypasses the detection and applies the 30s container timeout.
+  A fallback no-arg overload still learns the type from the status GET that follows a failed probe.
+  But callers should not rely on it.
+  Incus may return a non-exception failure (`exit 0` with an error on stdout, as observed for VMs whose agent is booting) that bypasses the detection and applies the 30s container timeout.
   Both timeouts are configurable via `ready-timeouts:` in config.yaml (see `ReadyTimeoutsConfig`), loaded eagerly at `IncusClient` construction:
   ```yaml
   ready-timeouts:
@@ -345,16 +382,21 @@ Additional differences:
   Incus rotates that file to `.old` on every start, so an earlier boot's agent failure cannot cut a later wait short.
   A failure names the VM and its agent, never "Container", and always points at `incus console <n> --show-log`.
   The wait prints nothing itself: its callers already show a step line for it, and the TUI calls it too.
-  A VM is probed with exec far less often while its state reports the agent disconnected (#954): each iteration first reads `GET /1.0/instances/<n>/state`, whose `processes` Incus reports as -1 until the agent connects -- the moment exec starts working -- and the exec probe, a POST plus WebSockets that almost always fails until then (and leaves `broken pipe` lines in the guest journal), runs on every poll only once `processes >= 0`, and otherwise only at the safety interval below.
+  A VM is probed with exec far less often while its state reports the agent disconnected (#954).
+  Each iteration first reads `GET /1.0/instances/<n>/state`, whose `processes` Incus reports as -1 until the agent connects -- the moment exec starts working -- and the exec probe, a POST plus WebSockets that almost always fails until then (and leaves `broken pipe` lines in the guest journal), runs on every poll only once `processes >= 0`, and otherwise only at the safety interval below.
   The same read's `status` catches a VM that died.
-  Exec stays the authority: `processes` says the daemon reached the agent, and every caller needs exec next, so the wait still ends only on a probe that ran -- exit 0 *and* `ready` on stdout, because exit 0 alone has been seen from a probe that never reached the agent.
+  Exec stays the authority.
+  `processes` says the daemon reached the agent, and every caller needs exec next.
+  So the wait still ends only on a probe that ran -- exit 0 *and* `ready` on stdout, because exit 0 alone has been seen from a probe that never reached the agent.
   The gate opens once and stays open, so an agent that restarts later is handled exactly as before, and a state without `processes` opens it at once, degrading to plain exec probing rather than waiting out the budget.
   `processes` is not proof the other way either: Incus also reports -1 when its own state query to a connected agent fails, so while the gate is shut exec still gets one probe every 5s (`ReadyTimeouts.gatedProbeInterval`).
   A wrong -1 then costs at most that much, rather than a healthy VM timing out, and a boot still makes a handful of probes instead of one per poll.
   Containers are never gated: their first probe usually answers, and a state read would be a round trip added to the branch path.
   The budget, the console fail-fast and the messages are the same either way; the gate changes only what is polled inside them.
 - **Recovering an unresponsive agent** (#843): when `isx shell`, `isx run` or the TUI find a running VM whose agent does not answer, `VmAgentRecovery.restartForAgent` decides whether to restart it.
-  A restart recovers an agent that merely wedged, but it is a cold boot that kills the guest's work, and it cannot help an agent that fails to start on this image: that boot fails identically, and restarting unconditionally cycled such a VM on every attempt.
+  A restart recovers an agent that merely wedged.
+  But it is a cold boot that kills the guest's work, and it cannot help an agent that fails to start on this image.
+  That boot fails identically, and restarting unconditionally cycled such a VM on every attempt.
   So it restarts only when nothing says that is futile, and at most once per boot.
   The agent is probed through a caught exec, since Incus refuses the exec outright when the agent is down.
   If this boot's console log holds a `VmAgentFailure` line that systemd has not since followed with `Started incus-agent` (`VmAgentFailure.unrecoveredLines`, which `waitForReady` uses too, so a failure the agent recovered from never cuts a wait short), the agent gets `waitForReady`'s restart grace and then those lines are reported instead of restarting (the log is rotated at every start, so they belong to this boot; systemd prints unit status there only during boot, so the two kinds of line are ordered comparably).
@@ -381,7 +423,8 @@ A device node can only be handed to a container, which is why `kvm` is a contain
 ### Agent Context File
 
 Every build regenerates `/etc/claude-code/CLAUDE.md`, a short always-loaded primer for agents running inside the box.
-Generation happens once per build, in both `buildFromScratch` and `buildFromParent`, and in each path after all layer work is finished — so it sees the fully resolved image (every ancestor's tools and repos) rather than one layer at a time, and the repos it lists have actually been cloned by the time it is written.
+Generation happens once per build, in both `buildFromScratch` and `buildFromParent`, and in each path after all layer work is finished.
+So it sees the fully resolved image (every ancestor's tools and repos) rather than one layer at a time, and the repos it lists have actually been cloned by the time it is written.
 Do not move the call earlier to sit beside `writeEnvFile`: in `buildFromParent` that is before `cloneRepos`.
 Content comes from `AgentContextGenerator` (module `common`), a pure function that `BuildCommand.writeAgentContext()` feeds and writes — the same split as `EnvResolver`/`writeEnvFile`, and the reason the whole format is unit-testable without Incus.
 
@@ -402,7 +445,9 @@ It excludes anything the agent would treat identically whether or not it was tol
 
 **`agent_note` vs `skills`.**
 Notes are for always-true constraints and traps that must be known *before* the first relevant action; procedures belong in `skills`, which load on demand when the model recognizes a matching task.
-Both are declarable on a tool as well as an image, so they travel with the tool into every template that installs it — `mvnd` is the worked example: the note is what gets it reached for at all (the name alone says nothing), and a skill would carry the procedure without spending context in sessions that never build anything.
+Both are declarable on a tool as well as an image, so they travel with the tool into every template that installs it.
+`mvnd` is the worked example.
+The note is what gets it reached for at all (the name alone says nothing), and a skill would carry the procedure without spending context in sessions that never build anything.
 Tool skills are installed by `installSkills` alongside the image's, deduplicated against them, and bare names resolve against the *tool's* `skills.repo`, since the tool reaches templates that have never heard of its catalog.
 Most tools declare neither.
 
@@ -415,20 +460,25 @@ On every platform the cache is a custom Incus storage volume (`dnf-cache`) on th
 VMs are included because each VM build otherwise re-downloads the full repo metadata on its first dnf run (~20s).
 The volume is attached before the build instance starts (`attachDnfCache`; see "Devices are attached before start"), which keeps it out of a VM's 8 hotplug slots.
 It also means incus-agent has mounted it before the first exec, so no dnf run can race an asynchronous hot-plug mount and fill the image's own cache dir.
-The package **install/upgrade** paths (and the VM rootfs dependency install, which runs only when `growpart`/`resize2fs`/`xfs_growfs` are missing: the prebaked VM image ships them, and a no-op dnf install still costs seconds of metadata loading) use `--setopt=keepcache=true` so downloaded RPMs persist, `--setopt=metadata_expire=3600` (1 hour) so repeated builds within that window skip metadata downloads, and `--setopt=max_parallel_downloads` (scaled to `CpuInfo.logicalCores()`, capped at dnf's practical max of 20) to parallelize the download phase — the rpm transaction itself is serial.
+The package **install/upgrade** paths (and the VM rootfs dependency install, which runs only when `growpart`/`resize2fs`/`xfs_growfs` are missing: the prebaked VM image ships them, and a no-op dnf install still costs seconds of metadata loading) use `--setopt=keepcache=true` so downloaded RPMs persist, `--setopt=metadata_expire=3600` (1 hour) so repeated builds within that window skip metadata downloads, and `--setopt=max_parallel_downloads` (scaled to `CpuInfo.logicalCores()`, capped at dnf's practical max of 20) to parallelize the download phase.
+The rpm transaction itself is serial.
 These shared flags are centralized in `BuildCommand.DNF_BASE_OPTS` and spliced on by `dnfCommand(...)`.
 Repo-management calls that download nothing (`dnf copr enable`, `dnf clean`) run plain `dnf` — the cache/download flags don't apply to them.
 The cache device is unmounted before the final cleanup step so the image stays small.
-For VMs, `unmountDnfCache` unmounts inside the guest before removing the device (the agent would otherwise tear the mount down asynchronously), and `cleanCaches` skips `dnf clean`/`rm -rf` of the cache dir while it is still a mount point, since cleaning through a live mount would wipe the shared volume for every later build.
+For VMs, `unmountDnfCache` unmounts inside the guest before removing the device (the agent would otherwise tear the mount down asynchronously).
+`cleanCaches` skips `dnf clean`/`rm -rf` of the cache dir while it is still a mount point, since cleaning through a live mount would wipe the shared volume for every later build.
 `isx clean cache` wipes the cache by deleting the storage volume (via `IncusClient.deleteStorageVolume`).
 The volume is automatically recreated by the next build.
 
-**DNF failure recovery**: All DNF install/upgrade commands are wrapped in `runDnf()`, which retries once on any failure: it runs `dnf clean metadata` to clear potentially stale repo data, then retries with `--refresh` to force fresh metadata from a (potentially different) mirror.
+**DNF failure recovery**: All DNF install/upgrade commands are wrapped in `runDnf()`, which retries once on any failure.
+It runs `dnf clean metadata` to clear potentially stale repo data, then retries with `--refresh` to force fresh metadata from a (potentially different) mirror.
 This handles transient mirror issues like packages appearing in metadata before their signatures are available, without requiring manual intervention.
 
 **DNF output**: dnf steps render a single animated `TerminalProgress` spinner line — the same braille-spinner helper used for parallel repo cloning — rather than streaming dnf's verbose per-package output to the terminal, keeping isx's own warnings and caveats visible instead of scrolling off in a flood.
-Install/upgrade (`runDnf`) stream dnf's output through a parser instead of echoing it: dnf5's non-TTY output emits one `[N/M] <action> <package>` line per completed step in both the download and transaction phases, so the spinner shows live "N/M — current package" feedback parsed from dnf's own progress lines.
-(dnf has no dedicated single-line progress mode; `--quiet` would suppress exactly those lines, so parsing the native output is the only way to get live feedback.) dnf's non-TTY column truncates each NEVRA's version/arch tail and the width can't be raised (`COLUMNS`/`terminal_width` are ignored without a TTY; a PTY widens it but replaces the tidy per-line output with concurrent ANSI progress-bar redraws), so `shortenNevra` reduces each `name-epoch:ver-rel.arch` to its bare package name for the live label.
+Install/upgrade (`runDnf`) stream dnf's output through a parser instead of echoing it: dnf5's non-TTY output emits one `[N/M] <action> <package>` line per completed step in both the download and transaction phases.
+So the spinner shows live "N/M — current package" feedback parsed from dnf's own progress lines.
+(dnf has no dedicated single-line progress mode; `--quiet` would suppress exactly those lines, so parsing the native output is the only way to get live feedback.) dnf's non-TTY column truncates each NEVRA's version/arch tail and the width can't be raised (`COLUMNS`/`terminal_width` are ignored without a TTY; a PTY widens it but replaces the tidy per-line output with concurrent ANSI progress-bar redraws).
+So `shortenNevra` reduces each `name-epoch:ver-rel.arch` to its bare package name for the live label.
 The streaming-without-echo path is `Container.execLines` → `IncusClient.shellExecStreaming` → `util/LineOutputStream`.
 COPR-enable and VM rootfs-expansion use `runWithSpinner` with captured exec (single/short operations that don't warrant a parser).
 On failure, the full output is printed to stderr after the animated line (so it doesn't interleave with the live display); the `--refresh` retry is surfaced as a live "retrying with --refresh" sub-line.
@@ -449,39 +499,60 @@ The listing fails closed: one that cannot be read must not make every address lo
 Everything that does not depend on the address is read before the claim, so concurrent branches wait on each other only for one listing, the `.network` push and the write.
 That includes the bridge, read once as a `BridgeAddress` (gateway, subnet, prefix length): branching used to read it three times, for the gateway, the allocation and the prefix.
 The lock is per user, since it lives under `$HOME`.
-Where it cannot be taken at all -- a home on NFS without lockd -- the claim warns once and goes on with only the in-process lock (`HostLock.acquireOrDegrade`) rather than failing every branch: Incus's check below turns a collision into a failed branch, not a shared address, which is what `main` did before the lock existed.
+Where it cannot be taken at all -- a home on NFS without lockd -- the claim warns once and goes on with only the in-process lock (`HostLock.acquireOrDegrade`) rather than failing every branch.
+Incus's check below turns a collision into a failed branch, not a shared address, which is what `main` did before the lock existed.
 A holder that never lets go still times out; only an unusable file degrades.
 The claim and the stale-subnet repair report through a `StaticIpAllocator.Output` (step, warn), so the TUI -- which runs that repair on its own screen before a shell -- captures them into its warning log instead of printing over itself (see "Warnings while the TUI owns the terminal").
-Writers it cannot see -- `sudo isx`, another host user's isx on the same daemon, a manual `incus config device set` -- are mostly caught by Incus itself, which refuses a second NIC with the same `ipv4.address` on the bridge (409) and so fails the branch rather than sharing an address.
+Writers it cannot see -- `sudo isx`, another host user's isx on the same daemon, a manual `incus config device set` -- are mostly caught by Incus itself.
+It refuses a second NIC with the same `ipv4.address` on the bridge (409) and so fails the branch rather than sharing an address.
 Mostly, because Incus validates before it commits and two concurrent writes can both pass; only the lock closes that window.
-Nor does that check cover copies: Incus deliberately creates a copy whose NIC conflicts with another and only logs it, so a branch of a branch used to start with its source's NIC address and `static-ip` metadata -- the proxy then mapped the address to whichever of the two it listed last, and a copy left behind by an interrupted branch kept it for good.
+Nor does that check cover copies.
+Incus deliberately creates a copy whose NIC conflicts with another and only logs it.
+So a branch of a branch used to start with its source's NIC address and `static-ip` metadata.
+The proxy then mapped the address to whichever of the two it listed last, and a copy left behind by an interrupted branch kept it for good.
 `IncusClient.copy()` now drops both in the copy request itself (a device in the request replaces the source's whole; an empty config value unsets), from the source read `planCopy` already makes.
 An address only ever enters an instance through `claim()`.
-Duplicates made before this, or by a manual `incus copy`, can still exist, so the proxy's `InstanceRegistry` no longer lets listing order pick the owner of a shared `static-ip`: Incus will not start an instance whose NIC address another NIC holds, so the one running claimant owns it, and with none or several running the address maps to nobody (with a warning) rather than to whoever was listed last.
+Duplicates made before this, or by a manual `incus copy`, can still exist.
+So the proxy's `InstanceRegistry` no longer lets listing order pick the owner of a shared `static-ip`.
+Incus will not start an instance whose NIC address another NIC holds, so the one running claimant owns it, and with none or several running the address maps to nobody (with a warning) rather than to whoever was listed last.
 The lock is on the host rather than in the proxy: the address must be claimed in the branch's one write (#804), full-internet branches need no proxy, and the proxy only rebuilds its view from Incus anyway.
 Templates do not have baked-in addresses — all CoW branches share the template filesystem, so a static address in the template would collide.
-A build container whose template pins an account holds a claimed address only while it builds, so the proxy can serve it its template's accounts, and keeps DHCP in the guest; its claim also skips every address the bridge's DHCP server has leased (see "Builds are served their template's accounts").
+A build container whose template pins an account holds a claimed address only while it builds, so the proxy can serve it its template's accounts, and keeps DHCP in the guest.
+Its claim also skips every address the bridge's DHCP server has leased (see "Builds are served their template's accounts").
 The base image (from `Sanne/incus-spawn-images`) provides `systemd-networkd` and bakes in a connectivity watchdog (30s systemd timer) that detects IP loss after host sleep/wake and restarts `systemd-networkd` to recover; `isx` only supplies the per-branch address.
 
 **VM deferred file pushes**: File push to a stopped VM is not possible (it requires the running `incus-agent` inside the VM).
 For VMs, `BranchFlow` (behind both `isx branch` and the TUI) skips pre-start file pushes (network config, SSH keys, terminfo) and instead call `InstanceLifecycle.pushDeferredVmFiles()` after starting the VM and waiting for the agent to become ready.
 The network config (IP, gateway and the NIC's MAC address) is read from one instance GET at push time.
-A VM's file matches its NIC by `PermanentMACAddress=` (the device's `hwaddr`, else `volatile.<nic>.hwaddr`), never by name -- the permanent address, so a VLAN or bridge built on the NIC, which takes over its MAC, does not match too: Incus renames a container's NIC to the device's `name` (`eth0`), but a VM guest keeps its kernel's predictable name (`enp5s0` on Incus's PCIe layout), so the `Name=eth0` file a VM used to get matched nothing and the VM ran on the base image's own DHCP config (#997).
+A VM's file matches its NIC by `PermanentMACAddress=` (the device's `hwaddr`, else `volatile.<nic>.hwaddr`), never by name -- the permanent address, so a VLAN or bridge built on the NIC, which takes over its MAC, does not match too.
+Incus renames a container's NIC to the device's `name` (`eth0`).
+But a VM guest keeps its kernel's predictable name (`enp5s0` on Incus's PCIe layout).
+So the `Name=eth0` file a VM used to get matched nothing and the VM ran on the base image's own DHCP config (#997).
 That DHCP config still covers the first boot -- Incus's DHCP server hands out the NIC's `ipv4.address`, so the address is the same -- and the pushed file takes over from the next one.
 A VM whose MAC cannot be read keeps DHCP rather than get a file matching no link or every link (a nested `docker0` included).
 Because the file now applies, a stale-subnet repair must reach the guest too, or the VM would come up on its old address, which IP filtering drops.
 The repair marks the VM `network-push-pending` in the same config write.
-`isx init` and `isx doctor` (`migrateAllInstancesToNewSubnet`) cannot repair a running instance in place: Incus validates a running instance's NIC update against the address it holds now, which the subnet change left off the bridge's subnet, so it refuses the very update that would move it (#1009).
+`isx init` and `isx doctor` (`migrateAllInstancesToNewSubnet`) cannot repair a running instance in place.
+Incus validates a running instance's NIC update against the address it holds now, which the subnet change left off the bridge's subnet.
+So it refuses the very update that would move it (#1009).
 They stop it, warning that they do, move it, and start it again through `startForUse` (new secret, host devices); a container boots its new file, and a VM gets its file once its agent answers.
-A guest that ignores the shutdown is never forced, and a frozen instance is not stopped (a stop waits on a guest that cannot answer): both are left as they were, with a warning to repair them again once stopped or resumed.
-Any other VM gets it at its next `isx shell` or TUI shell: `ensureReady` reads the mark from the same instance GET that gives it the status, and pushes whatever the status, since a VM started outside isx after the repair (`incus start`, autostart after a host reboot) is already running and has booted its old file.
-A VM branched with `--no-start` owes its file the same way, since the push after start never ran: `configureBranch` marks it (`BranchSettings.startsNow` false) in its one write, the one that claims its address, so the mark costs no request, and its first start through `ensureReady` -- `isx shell`, `isx run`, the TUI's shell, or MCP `start_instance` (`InstancePrep.prepare`) -- delivers the file, as for a repair (a start that does not go through it, such as `isx project update`'s bare `incus.start` or a plain `incus start`, boots it on DHCP with the same address until the next one that does) -- without it such a VM stayed on DHCP for good, with the lease-expiry-over-sleep/wake problem static addresses exist to avoid (#1004).
+A guest that ignores the shutdown is never forced, and a frozen instance is not stopped (a stop waits on a guest that cannot answer).
+Both are left as they were, with a warning to repair them again once stopped or resumed.
+Any other VM gets it at its next `isx shell` or TUI shell.
+`ensureReady` reads the mark from the same instance GET that gives it the status, and pushes whatever the status, since a VM started outside isx after the repair (`incus start`, autostart after a host reboot) is already running and has booted its old file.
+A VM branched with `--no-start` owes its file the same way, since the push after start never ran.
+`configureBranch` marks it (`BranchSettings.startsNow` false) in its one write, the one that claims its address.
+So the mark costs no request.
+Its first start through `ensureReady` -- `isx shell`, `isx run`, the TUI's shell, or MCP `start_instance` (`InstancePrep.prepare`) -- delivers the file, as for a repair (a start that does not go through it, such as `isx project update`'s bare `incus.start` or a plain `incus start`, boots it on DHCP with the same address until the next one that does).
+Without it such a VM stayed on DHCP for good, with the lease-expiry-over-sleep/wake problem static addresses exist to avoid (#1004).
 A started branch is not marked: it gets its file right after the start, and marking it would cost a write to clear.
 The mark is not a reassignment, so it does not bring back the "Static IP mismatch" banner, which only `fixStaticIpIfNeeded`'s actual reassignment shows.
 The mark clears once the file is pushed and `networkctl reload` succeeded -- a failed reload leaves the guest on its dropped address, so it stays owed and the user is told -- or when there is no file to push (no readable MAC: DHCP covers the VM).
 A copy drops it with `static-ip`, since it is owed to the source's guest.
 The reload needs no interface name either: it re-reads the files and reconfigures every link whose file changed.
-For the same reason the post-start setup script waits for the instance's assigned address on any link (`InstanceLifecycle.addressUpCheck`) rather than for an address on `eth0` (with no recorded address, for a default route, which a nested `docker0` does not add): on a VM that wait never succeeded, and every VM branch spent both of `pollUntilReady`'s runs (~35 s) on it before warning that setup may not be complete.
+For the same reason the post-start setup script waits for the instance's assigned address on any link (`InstanceLifecycle.addressUpCheck`) rather than for an address on `eth0` (with no recorded address, for a default route, which a nested `docker0` does not add).
+On a VM that wait never succeeded.
+Every VM branch spent both of `pollUntilReady`'s runs (~35 s) on it before warning that setup may not be complete.
 Waiting for the assigned address rather than any address also keeps a nested bridge that comes up first from passing for the instance's network.
 
 The TUI branch modal supports:
@@ -491,15 +562,20 @@ The TUI branch modal supports:
 - Inbox mount (read-only host directory for sharing files into the container)
 - VM resource limits (CPU, memory, disk)
 
-The modal only collects inputs: the branch itself is made by `BranchFlow`, the same `preflight()`/`create()` as `isx branch`, so a TUI branch gets the template's and source's account selection, the proxy refresh before start, and the CA, `resolv.conf` and identity repairs after it.
+The modal only collects inputs.
+The branch itself is made by `BranchFlow`, the same `preflight()`/`create()` as `isx branch`.
+So a TUI branch gets the template's and source's account selection, the proxy refresh before start, and the CA, `resolv.conf` and identity repairs after it.
 It used to be a hand-kept copy of the flow that skipped all of those, so a branch reusing a destroyed instance's static IP could be served that instance's credential account (#800).
 Its initial values come from `BranchFlow.defaultsFor()` too -- the one rule `create()` applies to whatever a request leaves null: GUI and KVM on when the source's definition sets `gui: true` / `type: kvm` or the source itself has GUI or KVM (GUI only for a container, since passthrough's GPU device would keep a VM from starting; only from a Wayland session, by the checks `configureGui` makes; and never from a project-local definition or a source built with one, since GUI hands over the host's GPU and whole `XDG_RUNTIME_DIR`.
 Where the source asks for GUI but does not get it by default, a note says why -- printed by `create()` with the branch's progress, for the dialog too, which leaves an untouched GUI box to the default -- rather than errors; `Request.defaults()`, `isx mcp`'s request, pins GUI off whatever the template says, which `BranchDefaultsTest` holds), and the adaptive CPU, memory and disk limits for its machine type, worked out only when asked for (on macOS the memory default forks `sysctl`).
 The dialog used to compute its own, and its KVM rule already differed from the CLI's, which ignored the definition (#869).
 For KVM, "the source itself" means a template's (built or project) `instance-mode: kvm`, but any other source's own `kvm-enabled` stamp: a branch inherits its template's `instance-mode` even when made with `--no-kvm`, which would otherwise hand `/dev/kvm` back to that branch's own branches (#1034).
 `create()` takes those defaults, its machine type and the copy plan from the source read `preflight()` already made (`Preflight.sourceInstance`), and the dialog reads the source once for its defaults and account rows.
-The action the new branch's shell opens with is shared the same way, `ActionResolver.defaultCommandForBranch` from that same read (#868): the dialog used to resolve it by hand, without feature gates, transitive dependencies or `expand: repos`, and with three reads of its own.
-Its reference comes from the current YAML, so changing it needs no rebuild, but it is matched against the tools the source was built with (`BUILD_SOURCE`), which fails safe: a tool added to the YAML and not yet built gives a plain shell rather than a launch of a binary that is not there.
+The action the new branch's shell opens with is shared the same way, `ActionResolver.defaultCommandForBranch` from that same read (#868).
+The dialog used to resolve it by hand, without feature gates, transitive dependencies or `expand: repos`, and with three reads of its own.
+Its reference comes from the current YAML, so changing it needs no rebuild.
+But it is matched against the tools the source was built with (`BUILD_SOURCE`), which fails safe.
+A tool added to the YAML and not yet built gives a plain shell rather than a launch of a binary that is not there.
 
 ### Terminal Output Visual Language
 
@@ -569,21 +645,27 @@ So query commands take `--format` (#1036), through one shared helper, `OutputFor
 - **`table`** is the human output and the default.
   It may change in any release.
 - **`plain`** is one record per line, tab-separated, `-` for an empty field, with no header, padding, colour or glyph, and no output at all for no results.
-- **`json`** is an array of objects (one object for a single-item command); an absent value is `null`, times are ISO-8601 with their offset (`+02:00`, or `Z` on a UTC host; a legacy date-only stamp is an ISO-8601 date, an unreadable one `null`), sizes are bytes.
+- **`json`** is an array of objects (one object for a single-item command).
+  An absent value is `null`, times are ISO-8601 with their offset (`+02:00`, or `Z` on a UTC host; a legacy date-only stamp is an ISO-8601 date, an unreadable one `null`), sizes are bytes.
   A response isx cannot read is an error (exit 1), never an empty result, which a script would take for "nothing there".
-- **Exit codes**: 0 success (an empty listing included), 1 when the command fails or rejects a value it checks itself (`--format=yaml`), 2 when aesh cannot parse the command line (unknown option, missing value, stray argument; the usage goes to stderr). 2 is aesh's, for every command, so the contract documents it rather than remapping it; `ExitCodeTest` pins both.
+- **Exit codes**: 0 success (an empty listing included), 1 when the command fails or rejects a value it checks itself (`--format=yaml`), 2 when aesh cannot parse the command line (unknown option, missing value, stray argument; the usage goes to stderr).
+  2 is aesh's, for every command, so the contract documents it rather than remapping it; `ExitCodeTest` pins both.
 - **The contract**: `plain` and `json` fields may be added at the end, never renamed, removed or reordered.
   Results go to stdout and only results: errors and diagnostics go to stderr.
 - **Control characters** (#1118): both formats are read on terminals too, and a value can be a stamp someone set by hand, so neither writes a control character in a value raw.
   `plain` is lossy: every C0 control (tab and line breaks included), DEL, C1 control and U+2028/U+2029 becomes a space (`OutputFormat.oneLine`), which keeps a record one safe line, and so does every bidi embedding, override and isolate (U+202A-U+202E, U+2066-U+2069), which would make a terminal draw the rest of the line, the following fields included, out of order.
   The marks (U+200E, U+200F, U+061C) stay: they reorder nothing beyond their neighbours.
-  `json` is exact: Jackson escapes C0 as JSON requires (tab, line feed, carriage return, backspace and form feed as `\t` `\n` `\r` `\b` `\f`, the rest as `\uXXXX`), and `OutputFormat` also escapes DEL, C1, U+2028/U+2029 and the bidi controls as `\uXXXX`, which JSON allows and every parser reverses.
+  `json` is exact: Jackson escapes C0 as JSON requires (tab, line feed, carriage return, backspace and form feed as `\t` `\n` `\r` `\b` `\f`, the rest as `\uXXXX`).
+  `OutputFormat` also escapes DEL, C1, U+2028/U+2029 and the bidi controls as `\uXXXX`, which JSON allows and every parser reverses.
   Both formats test one predicate, `OutputFormat.isControl`, so they cannot disagree on the set.
   A script that needs a value exactly reads `json`.
   Escaping in `plain` instead (`\e`, `\\`) was rejected: it would make every reader decode, and change the many values with a backslash for the rare one with a control character.
   The `isx list` table and the TUI show an instance stamp (parent, created, the MCP fields) through the same `oneLine`, so they cannot disagree; `\p{Cntrl}`, which the MCP column used before, is ASCII-only and let U+009B (8-bit CSI) through.
-  The `isx templates` and `isx tools` tables (`list -v`, `tools show`) and `isx templates edit`'s validation findings do the same for definition text (#1133): a project-local definition ships with whatever repository was cloned, so its name, source and description are as untrusted as a stamp.
-  A validation error keeps the line breaks of the advice isx writes into it, so the definition text it quotes goes through `oneLine` where the message is built (`HostResourceSetup`'s refusals, `YamlErrors.friendly`): once a message is assembled, a forged line break cannot be told from isx's own.
+  The `isx templates` and `isx tools` tables (`list -v`, `tools show`) and `isx templates edit`'s validation findings do the same for definition text (#1133).
+  A project-local definition ships with whatever repository was cloned, so its name, source and description are as untrusted as a stamp.
+  A validation error keeps the line breaks of the advice isx writes into it.
+  So the definition text it quotes goes through `oneLine` where the message is built (`HostResourceSetup`'s refusals, `YamlErrors.friendly`).
+  Once a message is assembled, a forged line break cannot be told from isx's own.
   Each line is made safe again when it is printed.
 
 A command parses its `--format` with `OutputFormat.parse` (`isx list`, which also has `--plain`, with `OutputFormat.resolve`), builds each record once, as an ordered map of field name to value, and hands the list to `format.print` (or one record to `format.printOne`, an object in `json`).
@@ -595,13 +677,18 @@ Every query command takes it (#1038): `templates`, `tools list`/`show`, `account
 The bare group commands (`isx templates`, `isx tools`, `isx account`) run their `list` and take its `--format`.
 A command whose work prints progress on the way (`doctor`'s checks, `branch`'s flow) runs it under `BaseCommand.withStdoutOnStderr`, so stdout holds only the result whatever the code underneath prints.
 The machine formats never prompt: `doctor` offers no remediation and `branch` opens no shell.
-Exit codes are those of the table output, so a script reads the same state from either: `proxy status` prints its record in every state and exits 0/1/2/3 (when it cannot check at all, on Linux with Incus unreachable, the record says `status: "unknown"` with a `check_error`: it exits 1 like `not_running`, as the table always has, but no longer reads like it), `doctor` exits 1 when a check fails, and `vm status` exits 1 when Incus is unreachable (#1037 made the table do so).
+Exit codes are those of the table output, so a script reads the same state from either.
+`proxy status` prints its record in every state and exits 0/1/2/3 (when it cannot check at all, on Linux with Incus unreachable, the record says `status: "unknown"` with a `check_error`: it exits 1 like `not_running`, as the table always has, but no longer reads like it), `doctor` exits 1 when a check fails, and `vm status` exits 1 when Incus is unreachable (#1037 made the table do so).
 Each command with more than one failing state keeps its codes in one `exitCode` method that every format returns, so they cannot drift.
 `account list` prints `null` for `pinned_by`/`following` when Incus could not be asked, never an empty list, which would read as "nobody".
 `isx templates` adds each definition's build state and staleness at the end of its record (#1115): `built`, `built_at`, and the TUI's three marks as `version_outdated`, `definition_changed`, `parent_rebuilt`.
-Both read one judgement, `TemplateStaleness`, which takes only what it is handed, so the CLI pays for one `GET /1.0/instances?recursion=1` (the table output still asks Incus nothing) and fingerprints tools only when a built template's definition is compared, never the TUI's reload.
+Both read one judgement, `TemplateStaleness`, which takes only what it is handed.
+So the CLI pays for one `GET /1.0/instances?recursion=1` (the table output still asks Incus nothing) and fingerprints tools only when a built template's definition is compared, never the TUI's reload.
 As for `account list`, a listing that cannot be read makes those fields `null` rather than "not built".
-Nothing the table tells a person about state is left out of the record: problems a template's choice causes (`account show`'s `template_problem`), whether a proxy restart can clear drift (`restart_helps`), a leaking vsock forwarder (`vsock_connections_high`) and a pinned base image (`pinned`) are fields, and `update-base --list` gives the current base image a record of its own (`listed: false`, last, no date) when it is not among the releases fetched -- older than all of them, unpublished or deleted, so not a statement about its age -- and a script always finds it; only descriptive detail (a tool's parameter types, the system diagnostics under `vm status`) stays table-only.
+Nothing the table tells a person about state is left out of the record.
+Problems a template's choice causes (`account show`'s `template_problem`), whether a proxy restart can clear drift (`restart_helps`), a leaking vsock forwarder (`vsock_connections_high`) and a pinned base image (`pinned`) are fields.
+`update-base --list` gives the current base image a record of its own (`listed: false`, last, no date) when it is not among the releases fetched -- older than all of them, unpublished or deleted, so not a statement about its age -- and a script always finds it.
+Only descriptive detail (a tool's parameter types, the system diagnostics under `vm status`) stays table-only.
 `doctor`'s `detail` and `remediation` are text for people, not values a script should parse; the table's wrapping parentheses are dropped from `detail`.
 `QueryCommandFormatTest` pins the JSON of each, and `ExitCodeTest` that each rejects `--format=yaml` alike.
 
@@ -611,7 +698,9 @@ Outside the TUI it reads the instance listing once (`GET /1.0/instances?recursio
 `ListCommandOutputTest` pins both requests.
 The `created` time comes from `Metadata.createdIso`, next to `Metadata.now()` which writes the stamp, so every command that prints one prints the same instant.
 It tells templates apart by the `base` type every build stamps on them, so it needs no definitions, and never by the `tpl-` name prefix: a branch may be called `tpl-anything`.
-A copy carries its template's `base` type, so `BranchFlow` stamps `clone` in the copy request itself, as it does the instance secret: a branch interrupted before `configureBranch` (Ctrl-C, a failed write) is still listed, never mistaken for a template and leaked (`InterruptedBranchTest`).
+A copy carries its template's `base` type.
+So `BranchFlow` stamps `clone` in the copy request itself, as it does the instance secret.
+A branch interrupted before `configureBranch` (Ctrl-C, a failed write) is still listed, never mistaken for a template and leaked (`InterruptedBranchTest`).
 Incus instances isx did not create (no isx metadata) are not listed.
 `-q`/`--quiet` prints names only, and `--status=running|stopped` filters.
 
@@ -629,7 +718,8 @@ The README says so rather than promising more.
 The blank line that closes a warning goes to stdout, because it separates the warning from stdout's own flow.
 A following header then neither repeats it on a terminal nor loses it in `>out.log`.
 So a line that is the command's result, such as `clean --dry-run`'s "Would delete ...", is a step, not a note.
-A status command's report is its result whatever it says: `isx proxy status` prints it on stdout in every state and tells them apart by exit code (1 not running, 2 stale DNS overrides, 3 stale bridge address), and `isx vm status` exits 1, the reason on stderr, when Incus is unreachable.
+A status command's report is its result whatever it says.
+`isx proxy status` prints it on stdout in every state and tells them apart by exit code (1 not running, 2 stale DNS overrides, 3 stale bridge address), and `isx vm status` exits 1, the reason on stderr, when Incus is unreachable.
 Every other styled line (`isx init`, the proxy banners, build failure reports) goes through the same `BuildOutput.styled()` (#1082); only what is drawn on a terminal alone (live steps, `TerminalProgress` formatters, window titles behind `hasTerminal()`) writes escapes directly.
 `AnsiEscapeGateTest` fails on any raw CSI or OSC literal unless its line carries a `// raw ANSI: <why>` comment (on that line, so a marker never covers another).
 Only the two gates, `TerminalProgress` and the shell status bar are exempt as whole files, so a new escape on an ordinary path in `BuildCommand` still fails.
@@ -693,7 +783,8 @@ Claude Code's built-in terminal title override is also suppressed so the contain
 
 **Interactive shells need a terminal, and only a lost session is retried.**
 The PTY session reads keystrokes from `/dev/tty` and writes to stdout, so with no terminal there is no session to have.
-`IncusClient.interactiveShell()` refuses up front (`hasTerminal()`: stdin and stdout a terminal, `Console.isTerminal()`) with a `NoTerminalForShellException`, and `execPty` opens `/dev/tty` before it posts the exec, so a missing controlling terminal is refused the same way rather than after a process was started in the guest.
+`IncusClient.interactiveShell()` refuses up front (`hasTerminal()`: stdin and stdout a terminal, `Console.isTerminal()`) with a `NoTerminalForShellException`.
+`execPty` opens `/dev/tty` before it posts the exec, so a missing controlling terminal is refused the same way rather than after a process was started in the guest.
 The reconnect loop retries only an I/O failure of a session that could run; it never retries `NoTerminalForShellException`.
 Before #1027 a script or agent running `isx branch` hit the failed `/dev/tty` open after the exec, which read as a lost connection: ten reconnects and ~76 s, each starting another exec, then `PTY exec failed`.
 Since the branch itself had succeeded, `isx branch` now reports it, says how to connect, and exits 0 without a shell; `isx shell` refuses before starting the instance, with exit status 1.
@@ -701,20 +792,33 @@ Requiring stdout too means `isx shell <name> | tee log` is refused, where it use
 
 **Shell status bar** (feature-flagged as `shell-status-bar`): `ShellStatusBar` pins a two-line bar at the bottom of the terminal during `isx shell` sessions, showing instance name, template, IP and network mode.
 F12 opens a quick-action menu populated from tool actions with `shell_menu: true` and a `shortcut` -- only `url` actions, because the menu runs them while the session owns the terminal in raw mode, and a `command` action's process would share that tty with the shell (fighting it for keystrokes and writing past the bar).
-Actions run on a virtual thread, so a slow URL launcher never holds up keystrokes, and through `ToolAction.executeWithoutPrompting`, which returns an error where `execute` would ask the user something (VS Code's missing Remote-SSH extension) and by default refuses, so a new action is safe until it says it never prompts -- a prompt would be drawn over the session and its Enter would go to the shell.
+Actions run on a virtual thread, so a slow URL launcher never holds up keystrokes, and through `ToolAction.executeWithoutPrompting`, which returns an error where `execute` would ask the user something (VS Code's missing Remote-SSH extension) and by default refuses, so a new action is safe until it says it never prompts.
+A prompt would be drawn over the session and its Enter would go to the shell.
 The TUI's F9 menu runs its in-process actions (url, clipboard) through it too, since the TUI still owns the terminal there (#982); only `isx run` and a `command` action deferred until the TUI has quit call `execute`, and may prompt.
 A bar with an empty menu does not intercept F12 at all, so programs that bind it keep it.
-The menu is a `ShellMenu` (actions plus the `ActionContext` they run against, whose `parent` is also the bar's template label), resolved by `ActionResolver.shellMenu` from a single context, which `buildActionContext` builds from one instance read, plus `/state` for the address of a running or frozen guest (#979, pinned in `ActionResolverRequestBudgetTest`); an `expand: repos` action is offered once, for the repo the session's workdir is in (or below).
-Each entry needs its own one-key shortcut (printable ASCII, case-insensitively unique): `ShellMenu.of` drops, with a `Warnings.warn`, an action the menu could not dispatch or one whose key an earlier action already takes, so what the menu shows, what a key runs and whether F12 is intercepted all agree.
+The menu is a `ShellMenu` (actions plus the `ActionContext` they run against, whose `parent` is also the bar's template label), resolved by `ActionResolver.shellMenu` from a single context, which `buildActionContext` builds from one instance read, plus `/state` for the address of a running or frozen guest (#979, pinned in `ActionResolverRequestBudgetTest`).
+An `expand: repos` action is offered once, for the repo the session's workdir is in (or below).
+Each entry needs its own one-key shortcut (printable ASCII, case-insensitively unique).
+`ShellMenu.of` drops, with a `Warnings.warn`, an action the menu could not dispatch or one whose key an earlier action already takes.
+So what the menu shows, what a key runs and whether F12 is intercepted all agree.
 With the flag off every caller passes `ShellMenu.NONE` and makes no extra Incus request -- the bar is opt-in, so its cost must be too (pinned in `ShellMenuTest`).
 The bar uses a scroll region (`\e[1;{h-2}r`) to confine child output above it, and reports `effectiveHeight()` (real height minus bar lines) as the PTY height so the child never draws into the bar area.
-Every paint -- after a child write, and for the menu, a flash or a resize alike -- goes through one method that draws only where the child's output stands between escape sequences and characters: a frame can end inside a CSI, an OSC or a UTF-8 character, and writing there would cut it short, so `OutputBoundary` tracks just enough of the stream to know, and a paint asked for mid-sequence happens after the next frame that ends on a boundary -- except that a paint the user is waiting for (the menu, a hint, an action's result) is drawn anyway after 150 ms, since a child gone quiet inside a sequence sends no next frame and the parser is already swallowing keys for the menu; a resize arriving mid-sequence drops its clear, which would land after the child's SIGWINCH redraw and blank it.
-`OutputBoundary` follows the terminal on CAN/SUB (abort) and on an ESC that restarts a sequence, and bar text is cut to display columns (wide characters take two), so a row never wraps; all output goes through a `BufferedOutputStream` so child data, scroll region fixup and bar repaint reach the terminal in one `write()` syscall (one rendering frame), avoiding visible intermediate states.
-Cursor position is preserved across the fixup with a single DECSC/DECRC pair wrapping the scroll region and bar rendering -- `emitLine` does not save/restore the cursor itself, since DECSC is a single slot and a nested save would clobber the outer one.
-`cleanup()` (on exit and in the SIGTERM shutdown hook) closes the bar: it erases both bar rows and resets the scroll region between a cursor save and restore (after a CAN if the child left a sequence open), so the host prompt follows the session's last output, and from then on nothing draws until the next `setup()` -- not a frame still in flight when SIGTERM's hook runs, not a flash timer, not an action that finishes after the session, which in the TUI path would draw over the TUI.
+Every paint -- after a child write, and for the menu, a flash or a resize alike -- goes through one method that draws only where the child's output stands between escape sequences and characters.
+A frame can end inside a CSI, an OSC or a UTF-8 character, and writing there would cut it short.
+So `OutputBoundary` tracks just enough of the stream to know, and a paint asked for mid-sequence happens after the next frame that ends on a boundary -- except that a paint the user is waiting for (the menu, a hint, an action's result) is drawn anyway after 150 ms, since a child gone quiet inside a sequence sends no next frame and the parser is already swallowing keys for the menu.
+A resize arriving mid-sequence drops its clear, which would land after the child's SIGWINCH redraw and blank it.
+`OutputBoundary` follows the terminal on CAN/SUB (abort) and on an ESC that restarts a sequence, and bar text is cut to display columns (wide characters take two), so a row never wraps.
+All output goes through a `BufferedOutputStream` so child data, scroll region fixup and bar repaint reach the terminal in one `write()` syscall (one rendering frame), avoiding visible intermediate states.
+Cursor position is preserved across the fixup with a single DECSC/DECRC pair wrapping the scroll region and bar rendering.
+`emitLine` does not save/restore the cursor itself, since DECSC is a single slot and a nested save would clobber the outer one.
+`cleanup()` (on exit and in the SIGTERM shutdown hook) closes the bar.
+It erases both bar rows and resets the scroll region between a cursor save and restore (after a CAN if the child left a sequence open), so the host prompt follows the session's last output.
+From then on nothing draws until the next `setup()` -- not a frame still in flight when SIGTERM's hook runs, not a flash timer, not an action that finishes after the session, which in the TUI path would draw over the TUI.
 Known limits of the scroll-region approach: the repaint restores the bar's own scroll region over any a child program set (vim splits, less, tmux), its DECSC overwrites the child's one saved cursor, and setup and resize clear the screen.
 The bar stays on the main screen rather than the alternate screen, which would cost the session its scrollback and erase its output on exit (measured in #888).
-`EscapeSequenceParser` handles F12 key detection (`\e[24~`) on the input side: normal mode passes non-F12 bytes through -- a bare Esc at the end of a read immediately, since terminals write a key sequence whole and holding it back would delay vim's Esc by a keystroke, and a CSI too long to be F12 (a mouse report) untouched; menu mode returns shortcut keys and swallows CSI and SS3 (`\eOA`) sequences whole.
+`EscapeSequenceParser` handles F12 key detection (`\e[24~`) on the input side.
+Normal mode passes non-F12 bytes through -- a bare Esc at the end of a read immediately, since terminals write a key sequence whole and holding it back would delay vim's Esc by a keystroke, and a CSI too long to be F12 (a mouse report) untouched.
+Menu mode returns shortcut keys and swallows CSI and SS3 (`\eOA`) sequences whole.
 An Esc in menu mode consumes only itself, so a key typed right after it (or Alt+key) reaches the shell once the menu closes.
 `OutputBoundary` lets BEL end only an OSC: DCS, APC, PM and SOS end at ST.
 Each result reports how many bytes it consumed, and the caller feeds the rest of the read again.
