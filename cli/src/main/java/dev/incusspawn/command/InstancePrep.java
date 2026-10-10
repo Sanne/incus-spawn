@@ -11,6 +11,7 @@ import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -108,7 +109,7 @@ public class InstancePrep {
     private static void fixStaticIpMismatch(IncusClient incus, String name, MachineType machineType) {
         if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
         try {
-            if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name, StaticIpAllocator.Output.TERMINAL, machineType)) {
+            if (InstanceNetwork.fixStaticIpIfNeeded(incus, name, StaticIpAllocator.Output.TERMINAL, machineType)) {
                 BuildOutput.warnBanner("Static IP mismatch",
                         "Reassigned to current bridge subnet.");
             }

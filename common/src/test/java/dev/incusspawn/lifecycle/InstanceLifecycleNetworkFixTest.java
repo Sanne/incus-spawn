@@ -21,7 +21,7 @@ class InstanceLifecycleNetworkFixTest {
         var incus = mock(IncusClient.class);
         when(incus.configGet("test", Metadata.STATIC_IP)).thenReturn("");
 
-        assertFalse(InstanceLifecycle.fixStaticIpIfNeeded(incus, "test"));
+        assertFalse(InstanceNetwork.fixStaticIpIfNeeded(incus, "test"));
         verify(incus, never()).deviceConfigSet(any(), any(), any(), any());
     }
 
@@ -31,7 +31,7 @@ class InstanceLifecycleNetworkFixTest {
         when(incus.configGet("test", Metadata.STATIC_IP)).thenReturn("172.20.0.5");
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.20.0.1/24");
 
-        assertFalse(InstanceLifecycle.fixStaticIpIfNeeded(incus, "test"));
+        assertFalse(InstanceNetwork.fixStaticIpIfNeeded(incus, "test"));
         verify(incus, never()).deviceConfigSet(any(), any(), any(), any());
     }
 
@@ -47,7 +47,7 @@ class InstanceLifecycleNetworkFixTest {
         when(incus.configGet("test", Metadata.PROXY_GATEWAY)).thenReturn("");
         when(incus.machineType("test")).thenReturn(MachineType.CONTAINER);
 
-        assertTrue(InstanceLifecycle.fixStaticIpIfNeeded(incus, "test"));
+        assertTrue(InstanceNetwork.fixStaticIpIfNeeded(incus, "test"));
 
         verify(incus).deviceConfigSet(eq("test"), eq("eth0"), eq("ipv4.address"),
                 argThat(ip -> ip.startsWith("172.21.0.")));
@@ -68,7 +68,7 @@ class InstanceLifecycleNetworkFixTest {
         when(incus.configGet("test", Metadata.PROXY_GATEWAY)).thenReturn("172.20.0.1");
         when(incus.machineType("test")).thenReturn(MachineType.CONTAINER);
 
-        assertTrue(InstanceLifecycle.fixStaticIpIfNeeded(incus, "test"));
+        assertTrue(InstanceNetwork.fixStaticIpIfNeeded(incus, "test"));
 
         verify(incus).configSetAll(eq("test"), argThat(map ->
                 map.containsKey(Metadata.PROXY_GATEWAY)
@@ -85,7 +85,7 @@ class InstanceLifecycleNetworkFixTest {
         when(incus.configGet("test", Metadata.PROXY_GATEWAY)).thenReturn("");
         when(incus.machineType("test")).thenReturn(MachineType.VM);
 
-        assertTrue(InstanceLifecycle.fixStaticIpIfNeeded(incus, "test"));
+        assertTrue(InstanceNetwork.fixStaticIpIfNeeded(incus, "test"));
 
         verify(incus, never()).filePush(any(), eq("test"), any());
         // ...so the file is pushed once the VM runs (#997)
@@ -103,7 +103,7 @@ class InstanceLifecycleNetworkFixTest {
                  {"name": "airgap", "config": {}}]
                 """.formatted(Metadata.STATIC_IP));
 
-        var stale = InstanceLifecycle.findStaleSubnetInstances(incus);
+        var stale = InstanceNetwork.findStaleSubnetInstances(incus);
         assertEquals(List.of("stale"), stale);
     }
 
@@ -123,7 +123,7 @@ class InstanceLifecycleNetworkFixTest {
         when(incus.configGet("stale-instance", Metadata.PROXY_GATEWAY)).thenReturn("");
         when(incus.machineType("stale-instance")).thenReturn(MachineType.CONTAINER);
 
-        assertEquals(1, InstanceLifecycle.migrateAllInstancesToNewSubnet(incus),
+        assertEquals(1, InstanceNetwork.migrateAllInstancesToNewSubnet(incus),
                 "a failure on one instance must not stop the others");
         verify(incus).deviceConfigSet("stale-instance", "eth0", "ipv4.address", "172.21.0.2");
         verify(incus, never()).configGet(anyString(), eq(Metadata.STATIC_IP));

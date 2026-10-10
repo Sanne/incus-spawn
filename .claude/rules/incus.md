@@ -119,12 +119,12 @@ Every isx of this user queues on this lock, so read everything that does not dep
 The listing fails closed; an unusable lock file does not: `HostLock.acquireOrDegrade` warns once and keeps only the in-process lock, since Incus's 409 still refuses the collision.
 Anything the claim or the stale-subnet repair reports goes through a `StaticIpAllocator.Output` (step, warn), never straight to stdout/stderr: the TUI runs that repair on its own screen.
 The static `.network` is pushed root `0644` explicitly (`systemd-networkd` cannot read `0600`).
-**Never assume the guest NIC is `eth0`**: Incus names a container's NIC after the device, but a VM keeps its kernel's predictable name (`enp5s0`), so a VM's `.network` matches `PermanentMACAddress=` (device `hwaddr`, else `volatile.<nic>.hwaddr`; `InstanceLifecycle.pushVmNetworkConfig`), a deferred re-push uses `networkctl reload` (no interface name), a VM's subnet repair, and a VM branched `--no-start` (in `configureBranch`'s one write, #1004), set `Metadata.NETWORK_PUSH_PENDING` until its file is pushed (by `ensureReady`, running or stopped), `migrateAllInstancesToNewSubnet` stops a running instance, with a warning, and starts it again, since Incus refuses to change a running NIC whose current address is off the new subnet (#1009; `FakeIncusDaemon` refuses it too), and the setup script waits for the assigned address on any link (`addressUpCheck`), never on a named interface (#997).
+**Never assume the guest NIC is `eth0`**: Incus names a container's NIC after the device, but a VM keeps its kernel's predictable name (`enp5s0`), so a VM's `.network` matches `PermanentMACAddress=` (device `hwaddr`, else `volatile.<nic>.hwaddr`; `InstanceNetwork.pushVmNetworkConfig`), a deferred re-push uses `networkctl reload` (no interface name), a VM's subnet repair, and a VM branched `--no-start` (in `configureBranch`'s one write, #1004), set `Metadata.NETWORK_PUSH_PENDING` until its file is pushed (by `ensureReady`, running or stopped), `migrateAllInstancesToNewSubnet` stops a running instance, with a warning, and starts it again, since Incus refuses to change a running NIC whose current address is off the new subnet (#1009; `FakeIncusDaemon` refuses it too), and the setup script waits for the assigned address on any link (`addressUpCheck`), never on a named interface (#997).
 `eth0` stays only in container-only code (`BuildCommand.waitForIpv4`).
 Incus's own 409 on a duplicate address covers writers outside the lock.
-Build containers that pin an account claim one too, for the length of the build (`lifecycle/BuildAccounts.start`, `InstanceLifecycle.assignBuildAddress`/`releaseBuildAddress`, #903), so the proxy serves them their template's accounts.
+Build containers that pin an account claim one too, for the length of the build (`lifecycle/BuildAccounts.start`, `InstanceNetwork.assignBuildAddress`/`releaseBuildAddress`, #903), so the proxy serves them their template's accounts.
 Their guest keeps DHCP, so their claim also skips the bridge's DHCP leases (`StaticIpAllocator.claim(..., alsoTaken, ...)`): dnsmasq will not hand out a reservation another MAC still has leased, typically the parent build's just-released address.
-`InstanceLifecycle.requireBuildAddress` fails the build plainly if the guest got another address anyway.
+`InstanceNetwork.requireBuildAddress` fails the build plainly if the guest got another address anyway.
 Tests that reach `claim()` through `configureBranch` or `assignBuildAddress` run under `@ExtendWith(TempHome.class)` so they never take the developer's real lock.
 See DESIGN.md "Static IP assignment".
 
@@ -202,6 +202,6 @@ Failed builds hold a static IP and pins too (#903), so `isx clean`, `isx clean p
 
 **No file push right before a start**: Incus's forkfile (which serves file pushes to a stopped container) must exit before the instance starts, and re-checks only once a second while a push is still flushing.
 So a push immediately before `start` costs a full second.
-Put anything the instance needs after start into `buildSetupScript` (one exec, heredocs via `Container.heredoc`), and keep `InstanceLifecycle.prefetchAndStart()` push-free.
+Put anything the instance needs after start into `buildSetupScript` (one exec, heredocs via `Container.heredoc`), and keep `RuntimeSetup.prefetchAndStart()` push-free.
 A file that must exist at boot (the static `.network`, GUI passthrough files) is pushed early in the branch flow, never as its last pre-start step.
 See DESIGN.md "Why nothing is pushed into an instance just before it starts".

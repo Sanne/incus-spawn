@@ -520,7 +520,7 @@ Its claim also skips every address the bridge's DHCP server has leased (see "Bui
 The base image (from `Sanne/incus-spawn-images`) provides `systemd-networkd` and bakes in a connectivity watchdog (30s systemd timer) that detects IP loss after host sleep/wake and restarts `systemd-networkd` to recover; `isx` only supplies the per-branch address.
 
 **VM deferred file pushes**: File push to a stopped VM is not possible (it requires the running `incus-agent` inside the VM).
-For VMs, `BranchFlow` (behind both `isx branch` and the TUI) skips pre-start file pushes (network config, SSH keys, terminfo) and instead call `InstanceLifecycle.pushDeferredVmFiles()` after starting the VM and waiting for the agent to become ready.
+For VMs, `BranchFlow` (behind both `isx branch` and the TUI) skips pre-start file pushes (network config, SSH keys, terminfo) and instead call `InstanceNetwork.pushDeferredVmFiles()` after starting the VM and waiting for the agent to become ready.
 The network config (IP, gateway and the NIC's MAC address) is read from one instance GET at push time.
 A VM's file matches its NIC by `PermanentMACAddress=` (the device's `hwaddr`, else `volatile.<nic>.hwaddr`), never by name -- the permanent address, so a VLAN or bridge built on the NIC, which takes over its MAC, does not match too.
 Incus renames a container's NIC to the device's `name` (`eth0`).
@@ -548,7 +548,7 @@ The mark is not a reassignment, so it does not bring back the "Static IP mismatc
 The mark clears once the file is pushed and `networkctl reload` succeeded -- a failed reload leaves the guest on its dropped address, so it stays owed and the user is told -- or when there is no file to push (no readable MAC: DHCP covers the VM).
 A copy drops it with `static-ip`, since it is owed to the source's guest.
 The reload needs no interface name either: it re-reads the files and reconfigures every link whose file changed.
-For the same reason the post-start setup script waits for the instance's assigned address on any link (`InstanceLifecycle.addressUpCheck`) rather than for an address on `eth0` (with no recorded address, for a default route, which a nested `docker0` does not add).
+For the same reason the post-start setup script waits for the instance's assigned address on any link (`RuntimeSetup.addressUpCheck`) rather than for an address on `eth0` (with no recorded address, for a default route, which a nested `docker0` does not add).
 On a VM that wait never succeeded.
 Every VM branch spent both of `pollUntilReady`'s runs (~35 s) on it before warning that setup may not be complete.
 Waiting for the assigned address rather than any address also keeps a nested bridge that comes up first from passing for the instance's network.
@@ -837,7 +837,7 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
 
 1. **`isx init`** generates the ed25519 key pair (via `ssh-keygen`) and prepends an `Include ~/.config/incus-spawn/ssh/config` directive to `~/.ssh/config` (idempotent, resolves symlinks for dotfile managers).
    The key pair is also created lazily at first branch for users upgrading from older versions.
-2. **`isx branch`** (via `InstanceLifecycle.injectSshKeyIfAvailable`): injects both the managed public key and any personal `~/.ssh/*.pub` key into the container's `authorized_keys`.
+2. **`isx branch`** (via `RuntimeSetup.injectSshKeyIfAvailable`): injects both the managed public key and any personal `~/.ssh/*.pub` key into the container's `authorized_keys`.
    Then regenerates the container's SSH host keys (`ssh-keygen -A` + sshd restart) so CoW-branched instances get unique keys, harvests the new host public key into the managed `known_hosts`, and writes a `Host <instance-name>` block to the managed config with `HostName`, `User agentuser`, `IdentityFile`, `IdentitiesOnly yes`, `UserKnownHostsFile`, and `StrictHostKeyChecking yes`.
    After this, `ssh <instance-name>` just works.
 3. **`isx destroy`** (and TUI delete): removes the Host block from the managed config and the host key entry from the managed known_hosts.
@@ -1385,7 +1385,7 @@ An instance that pins nothing gets the same.
 **Builds are served their template's accounts (#903).**
 A build container used to get a DHCP address, so the proxy could not tell it from host traffic and served every namespace's default, whatever the template's `accounts:` chose.
 `repos:` were cloned and `prime` ran with the user's default token -- for a project-local template, handing that identity to code the cloned repository controls -- and `GhSetup` baked the default account's name next to the template account's email, stamped as the template account so nothing ever repaired it.
-Before its first start, a build container now gets what a branch gets: an address from `StaticIpAllocator` with `security.ipv4_filtering`, and the template's pins (origin `template:<name>`), in one write (`InstanceLifecycle.assignBuildAddress`), then a SIGUSR1 so the proxy knows it before anything inside asks (`lifecycle/BuildAccounts.start`).
+Before its first start, a build container now gets what a branch gets: an address from `StaticIpAllocator` with `security.ipv4_filtering`, and the template's pins (origin `template:<name>`), in one write (`InstanceNetwork.assignBuildAddress`), then a SIGUSR1 so the proxy knows it before anything inside asks (`lifecycle/BuildAccounts.start`).
 Only a build that pins something does: one pinning nothing -- neither its template nor what it was copied with -- is served the defaults either way, so it keeps plain DHCP and skips the round trips.
 The `account-identity` stamps a copy carries from its parent are cleared in the same write, all of them and not only the pinned namespaces'.
 They describe the parent's build.
@@ -1399,7 +1399,7 @@ The allocator hands out the lowest free address, so a child's build is offered t
 Incus clears only IPv6 leases when a NIC's `ipv4.address` changes, and a force-stopped guest never releases its own.
 dnsmasq would then give the child a dynamic address that filtering drops, and the build would fail minutes later as a DNS error.
 So a build's claim also skips every address in the bridge's leases (`IncusClient.networkLeaseAddresses`, read before the allocation lock).
-Once the guest is up `InstanceLifecycle.requireBuildAddress` fails the build, saying why, if it holds another address on the bridge's subnet anyway -- only that subnet, since a parent's docker0 or podman bridge also shows up in the instance's state.
+Once the guest is up `InstanceNetwork.requireBuildAddress` fails the build, saying why, if it holds another address on the bridge's subnet anyway -- only that subnet, since a parent's docker0 or podman bridge also shows up in the instance's state.
 Incus lists leases per project, so an instance of another Incus project on the same bridge stays invisible to the allocator, as its static reservations always were; the check turns that collision into a clear failure.
 The build prints the accounts it is served.
 Once stopped, the template gives the address back (`releaseBuildAddress`), returning the bridge NIC it was claimed on -- and no other -- to the profile's, since a template makes no requests and its copies never keep an address.
@@ -2999,7 +2999,7 @@ A transfer still counts as open until forkfile has finished `syncfs` on the root
 So a start issued immediately after a push races that flush, and losing costs exactly one second (measured: 1149 ms against 142 ms with a 200 ms pause, same host).
 isx pushed terminfo, and for SSH-capable templates the authorized keys, 1 ms before every branch start.
 
-Both now travel inside the post-start setup script as heredocs (`buildSetupScript`), which costs no extra request, and `InstanceLifecycle.prefetchAndStart()` -- shared by `isx branch` and the TUI -- pushes nothing between reading the config and starting.
+Both now travel inside the post-start setup script as heredocs (`buildSetupScript`), which costs no extra request, and `RuntimeSetup.prefetchAndStart()` -- shared by `isx branch` and the TUI -- pushes nothing between reading the config and starting.
 Two related savings on the same path: `GuiPassthrough.removeGui()` returns after one read when the instance has no GUI state (it used to rewrite devices and config and push two empty files on every branch), and the setup script polls for the network address every 50 ms rather than every 0.5 s, which was ~400 ms of idle time per branch.
 
 Two kinds of file still go in before the start, because they must be in place at boot: the static `.network` file, and the Wayland profile.d/tmpfiles.d files of a `--gui` branch (or the empty files that clear them, when a branch drops GUI state it inherited).

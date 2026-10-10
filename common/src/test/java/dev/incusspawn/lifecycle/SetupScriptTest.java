@@ -28,8 +28,8 @@ class SetupScriptTest {
             INCUS_EOF
             \tuse=$HOME,""";
 
-    private static InstanceLifecycle.RuntimeConfig prefetched(String terminfo) {
-        return new InstanceLifecycle.RuntimeConfig(null, true, null, null, null, terminfo, "10.0.0.2", null, null);
+    private static RuntimeSetup.RuntimeConfig prefetched(String terminfo) {
+        return new RuntimeSetup.RuntimeConfig(null, true, null, null, null, terminfo, "10.0.0.2", null, null);
     }
 
     private static int syntaxCheck(String script) throws Exception {
@@ -41,7 +41,7 @@ class SetupScriptTest {
     @Test
     void carriesKeysAndTerminfoInline() throws Exception {
         var keys = List.of("ssh-ed25519 AAAAC3Nza managed@isx", "ssh-rsa AAAAB3Nza it's me");
-        var script = InstanceLifecycle.buildSetupScript(prefetched(TERMINFO), null, NetworkMode.FULL, keys);
+        var script = RuntimeSetup.buildSetupScript(prefetched(TERMINFO), null, NetworkMode.FULL, keys);
 
         assertEquals(0, syntaxCheck(script), script);
         assertTrue(script.contains(keys.get(0) + "\n" + keys.get(1) + "\n"));
@@ -54,7 +54,7 @@ class SetupScriptTest {
 
     @Test
     void omitsWhatIsNotNeeded() throws Exception {
-        var script = InstanceLifecycle.buildSetupScript(prefetched(null), null, NetworkMode.FULL, List.of());
+        var script = RuntimeSetup.buildSetupScript(prefetched(null), null, NetworkMode.FULL, List.of());
 
         assertEquals(0, syntaxCheck(script), script);
         assertFalse(script.contains("authorized_keys"));
@@ -64,7 +64,7 @@ class SetupScriptTest {
 
     @Test
     void pollsForTheNetworkEvery50ms() {
-        var script = InstanceLifecycle.buildSetupScript(prefetched(null), null, NetworkMode.FULL, List.of());
+        var script = RuntimeSetup.buildSetupScript(prefetched(null), null, NetworkMode.FULL, List.of());
         // 300 x 50 ms keeps the old 15 s ceiling; a 0.5 s interval was paid in full by every branch.
         assertTrue(script.contains("seq 1 300") && script.contains("sleep 0.05"), script);
     }
@@ -76,7 +76,7 @@ class SetupScriptTest {
         stub(stubs, "chown", "exit 1");
         stub(stubs, "systemctl", "exit 0");
         stub(stubs, "ip", "echo '2: eth0    inet 10.0.0.2/24'");
-        var script = InstanceLifecycle.buildSetupScript(prefetched(null), null, NetworkMode.FULL, List.of());
+        var script = RuntimeSetup.buildSetupScript(prefetched(null), null, NetworkMode.FULL, List.of());
         assertEquals(0, run(script, stubs), script);
 
         // ...while a readiness check that fails still fails it.
@@ -94,8 +94,8 @@ class SetupScriptTest {
     void findsTheAddressOnAVmNicThatIsNotEth0(@TempDir Path stubs) throws Exception {
         var daemon = new FakeIncusDaemon().instance("vm", "virtual-machine", "Stopped",
                 Map.of(Metadata.STATIC_IP, "10.166.11.7"));
-        var prefetched = InstanceLifecycle.prefetchRuntimeConfig(daemon.client(), "vm");
-        var script = InstanceLifecycle.buildSetupScript(prefetched, null, NetworkMode.FULL, List.of());
+        var prefetched = RuntimeSetup.prefetchRuntimeConfig(daemon.client(), "vm");
+        var script = RuntimeSetup.buildSetupScript(prefetched, null, NetworkMode.FULL, List.of());
         stub(stubs, "chown", "exit 0");
         stub(stubs, "systemctl", "exit 0");
         stub(stubs, "seq", "echo 1");
@@ -114,11 +114,11 @@ class SetupScriptTest {
     @Test
     void onlyAnAddressReachesTheShell() {
         assertEquals("ip -4 -o addr show | grep -qF ' inet 10.166.11.7/'",
-                InstanceLifecycle.addressUpCheck("10.166.11.7"));
+                RuntimeSetup.addressUpCheck("10.166.11.7"));
         var fallback = "ip -4 route show default | grep -q .";
-        assertEquals(fallback, InstanceLifecycle.addressUpCheck(""));
-        assertEquals(fallback, InstanceLifecycle.addressUpCheck(null));
-        assertEquals(fallback, InstanceLifecycle.addressUpCheck("10.0.0.2'; reboot; '"));
+        assertEquals(fallback, RuntimeSetup.addressUpCheck(""));
+        assertEquals(fallback, RuntimeSetup.addressUpCheck(null));
+        assertEquals(fallback, RuntimeSetup.addressUpCheck("10.0.0.2'; reboot; '"));
     }
 
     private static void stub(Path dir, String command, String body) throws Exception {
@@ -137,7 +137,7 @@ class SetupScriptTest {
 
     @Test
     void airgapSkipsTheNetworkWait() {
-        var script = InstanceLifecycle.buildSetupScript(prefetched(null), null, NetworkMode.AIRGAP, List.of());
+        var script = RuntimeSetup.buildSetupScript(prefetched(null), null, NetworkMode.AIRGAP, List.of());
         assertFalse(script.contains("ip -4"), script);
     }
 }

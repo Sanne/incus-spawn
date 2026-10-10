@@ -16,7 +16,7 @@ import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.InstanceSubvolumes;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.proxy.BridgeDns;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.InstanceRegistry;
@@ -1386,7 +1386,7 @@ public class DoctorCommand extends BaseCommand {
     private Finding checkInstanceSubnets() {
         try {
             var incus = RuntimeServices.incus();
-            var stale = InstanceLifecycle.findStaleSubnetInstances(incus);
+            var stale = InstanceNetwork.findStaleSubnetInstances(incus);
             if (stale.isEmpty()) {
                 return Finding.ok("Instance network config", "(all on current subnet)");
             }
@@ -1400,11 +1400,11 @@ public class DoctorCommand extends BaseCommand {
                             false,
                             () -> {
                                 var incusClient = RuntimeServices.incus();
-                                var migrated = InstanceLifecycle.migrateAllInstancesToNewSubnet(
+                                var migrated = InstanceNetwork.migrateAllInstancesToNewSubnet(
                                         incusClient);
                                 System.out.println("Migrated " + migrated + " instance"
                                         + (migrated == 1 ? "" : "s") + ".");
-                                var remaining = InstanceLifecycle.findStaleSubnetInstances(
+                                var remaining = InstanceNetwork.findStaleSubnetInstances(
                                         incusClient);
                                 if (!remaining.isEmpty()) {
                                     System.err.println("Warning: " + remaining.size()

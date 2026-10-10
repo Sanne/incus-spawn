@@ -6,7 +6,7 @@ import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
-import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.RuntimeSetup;
 import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.proxy.McpClientCheck;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -94,7 +94,7 @@ public class BranchCommand extends BaseCommand {
 
     /** A branch {@link #create} made, and what opening its shell needs. */
     private record Created(String source, BranchFlow.Preflight preflight,
-                           InstanceLifecycle.RuntimeConfig prefetched) {}
+                           RuntimeSetup.RuntimeConfig prefetched) {}
 
     @Override
     protected CommandResult doExecute() throws Exception {
@@ -182,7 +182,7 @@ public class BranchCommand extends BaseCommand {
                 mcpClient ? Map.of(Metadata.MCP_CALLER, Metadata.newMcpCallerGrant()) : Map.of());
 
         BranchFlow.Preflight preflight;
-        InstanceLifecycle.RuntimeConfig prefetched;
+        RuntimeSetup.RuntimeConfig prefetched;
         try {
             preflight = BranchFlow.preflight(incus, request);
             prefetched = BranchFlow.create(incus, preflight);

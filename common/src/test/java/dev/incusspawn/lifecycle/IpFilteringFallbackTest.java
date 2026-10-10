@@ -115,17 +115,17 @@ class IpFilteringFallbackTest {
 
     @Test
     void recognisesTheFilteringFailureAndOnlyThat() {
-        assertTrue(InstanceLifecycle.looksLikeIpFilteringFailure(
+        assertTrue(InstanceNetwork.looksLikeIpFilteringFailure(
                 new IncusException(EBTABLES_FAILURE)));
-        assertTrue(InstanceLifecycle.looksLikeIpFilteringFailure(
+        assertTrue(InstanceNetwork.looksLikeIpFilteringFailure(
                 new IncusException(NFT_BRIDGE_FAILURE)));
         // Nested, as Incus exceptions often arrive.
-        assertTrue(InstanceLifecycle.looksLikeIpFilteringFailure(
+        assertTrue(InstanceNetwork.looksLikeIpFilteringFailure(
                 new RuntimeException("wrapped", new IncusException(EBTABLES_FAILURE))));
-        assertFalse(InstanceLifecycle.looksLikeIpFilteringFailure(
+        assertFalse(InstanceNetwork.looksLikeIpFilteringFailure(
                 new IncusException("Failed to start device \"root\": disk full")));
-        assertFalse(InstanceLifecycle.looksLikeIpFilteringFailure(
+        assertFalse(InstanceNetwork.looksLikeIpFilteringFailure(
                 new IncusException("ebtables is unhappy but no device is named")));
-        assertFalse(InstanceLifecycle.looksLikeIpFilteringFailure(new IncusException(null)));
+        assertFalse(InstanceNetwork.looksLikeIpFilteringFailure(new IncusException(null)));
     }
 }

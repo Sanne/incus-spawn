@@ -260,7 +260,7 @@ public final class BranchFlow {
      * Copy, configure and (unless the request says otherwise) start the branch. Returns the
      * runtime config prefetched for the start, or null when the request asked not to start it.
      */
-    public static InstanceLifecycle.RuntimeConfig create(IncusClient incus, Preflight preflight) {
+    public static RuntimeSetup.RuntimeConfig create(IncusClient incus, Preflight preflight) {
         var req = preflight.request();
         var name = req.name();
         var source = req.source();
@@ -341,17 +341,17 @@ public final class BranchFlow {
 
         // Pre-fetch config while instance is stopped — the Incus daemon blocks
         // API calls after start due to seccomp_notify lock contention.
-        var prefetched = InstanceLifecycle.prefetchAndStart(incus, name, machineType);
+        var prefetched = RuntimeSetup.prefetchAndStart(incus, name, machineType);
 
         if (machineType == MachineType.VM) {
             BuildOutput.stepStart("Waiting for VM agent...");
             incus.waitForReady(name, MachineType.VM);
             BuildOutput.stepDone();
-            InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode);
+            InstanceNetwork.pushDeferredVmFiles(incus, name, networkMode);
         }
 
         // The grant is the request's own: a copy never carries its source's (configureBranch)
-        InstanceLifecycle.setupRuntime(incus, name, networkMode, prefetched, secret,
+        RuntimeSetup.setupRuntime(incus, name, networkMode, prefetched, secret,
                 Metadata.isMcpCaller(req.extraConfig()), placeholders.join());
         // Or the first shell would take this boot for one isx did not start, and replace its secret
         var booted = InstanceLifecycle.recordSecretBoot(incus, name, machineType);

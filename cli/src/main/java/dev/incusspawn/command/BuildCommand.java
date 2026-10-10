@@ -23,6 +23,8 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.lifecycle.BuildAccounts;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.RuntimeSetup;
+import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -1916,7 +1918,7 @@ public class BuildCommand extends BaseCommand {
                 inherited, BuildOutput::step, BuildOutput::warn);
     }
 
-    /** Containers only: their NIC is eth0, a VM's is not (see InstanceLifecycle.addressUpCheck). */
+    /** Containers only: their NIC is eth0, a VM's is not (see RuntimeSetup.addressUpCheck). */
     private void waitForIpv4(Container container) {
         BuildOutput.stepStart("Waiting for network...");
         var result = container.sh(
@@ -2027,7 +2029,7 @@ public class BuildCommand extends BaseCommand {
     /** Fail the build if its guest did not take the address {@link #startBuild} gave it. */
     void requireBuildAddress(String buildName, BuildAccounts.Started started) {
         if (started.address() != null) {
-            InstanceLifecycle.requireBuildAddress(incus, buildName, started.address());
+            InstanceNetwork.requireBuildAddress(incus, buildName, started.address());
         }
     }
 
@@ -2046,7 +2048,7 @@ public class BuildCommand extends BaseCommand {
      */
     private void releaseBuildAddress(String buildName) {
         try {
-            InstanceLifecycle.releaseBuildAddress(incus, buildName);
+            InstanceNetwork.releaseBuildAddress(incus, buildName);
         } catch (RuntimeException e) {
             BuildOutput.warn("Could not release the build's static IP: " + e.getMessage()
                     + ". The template keeps it until it is rebuilt or removed.");

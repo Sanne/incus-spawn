@@ -27,7 +27,7 @@ class BuildAddressTest {
     private static final String PIN = Metadata.accountKey("github");
 
     private static String assign(IncusClient incus, String name, Map<String, String> config) {
-        return InstanceLifecycle.assignBuildAddress(incus, name, incus.instanceMetadata(name), config);
+        return InstanceNetwork.assignBuildAddress(incus, name, incus.instanceMetadata(name), config);
     }
 
     @Test
@@ -59,7 +59,7 @@ class BuildAddressTest {
         var incus = daemon.client();
         var ip = assign(incus, "tpl-rebuilding", Map.of(PIN, "bot"));
 
-        InstanceLifecycle.releaseBuildAddress(incus, "tpl-rebuilding");
+        InstanceNetwork.releaseBuildAddress(incus, "tpl-rebuilding");
 
         var instance = daemon.instance("tpl-rebuilding");
         assertEquals(0, instance.path("devices").size(), "the NIC is the profile's again");
@@ -84,7 +84,7 @@ class BuildAddressTest {
         var incus = daemon.client();
         assign(incus, "tpl-rebuilding", Map.of());
 
-        InstanceLifecycle.releaseBuildAddress(incus, "tpl-rebuilding");
+        InstanceNetwork.releaseBuildAddress(incus, "tpl-rebuilding");
 
         var nic = daemon.instance("tpl-rebuilding").path("devices").path("eth0");
         assertEquals("1400", nic.path("mtu").asText());
@@ -109,7 +109,7 @@ class BuildAddressTest {
         var ip = assign(incus, "tpl-rebuilding", Map.of());
         incus.start("tpl-rebuilding");
 
-        InstanceLifecycle.requireBuildAddress(incus, "tpl-rebuilding", ip, Duration.ZERO);
+        InstanceNetwork.requireBuildAddress(incus, "tpl-rebuilding", ip, Duration.ZERO);
     }
 
     @Test
@@ -121,7 +121,7 @@ class BuildAddressTest {
         incus.start("tpl-rebuilding");
 
         var e = assertThrows(IncusException.class,
-                () -> InstanceLifecycle.requireBuildAddress(incus, "tpl-rebuilding", ip, Duration.ZERO));
+                () -> InstanceNetwork.requireBuildAddress(incus, "tpl-rebuilding", ip, Duration.ZERO));
         assertTrue(e.getMessage().contains(ip) && e.getMessage().contains("10.166.11.87"), e.getMessage());
         assertTrue(e.getMessage().contains("lease"), e.getMessage());
     }
@@ -135,7 +135,7 @@ class BuildAddressTest {
         var ip = assign(incus, "tpl-rebuilding", Map.of());
         incus.start("tpl-rebuilding");
 
-        InstanceLifecycle.requireBuildAddress(incus, "tpl-rebuilding", ip, Duration.ZERO);
+        InstanceNetwork.requireBuildAddress(incus, "tpl-rebuilding", ip, Duration.ZERO);
     }
 
     @Test
@@ -147,7 +147,7 @@ class BuildAddressTest {
         var ip = assign(incus, "tpl-rebuilding", Map.of());
         incus.start("tpl-rebuilding");
 
-        InstanceLifecycle.requireBuildAddress(incus, "tpl-rebuilding", ip, Duration.ZERO);
+        InstanceNetwork.requireBuildAddress(incus, "tpl-rebuilding", ip, Duration.ZERO);
     }
 
     @Test
@@ -159,7 +159,7 @@ class BuildAddressTest {
         var incus = daemon.client();
         assign(incus, "tpl-rebuilding", Map.of());
 
-        InstanceLifecycle.releaseBuildAddress(incus, "tpl-rebuilding");
+        InstanceNetwork.releaseBuildAddress(incus, "tpl-rebuilding");
 
         var devices = daemon.instance("tpl-rebuilding").path("devices");
         assertFalse(devices.has("eth0"), "the claimed NIC is the profile's again");

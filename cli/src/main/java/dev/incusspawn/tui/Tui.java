@@ -23,6 +23,7 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.RuntimeSetup;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -1056,7 +1057,7 @@ public class Tui {
                         incus.configGet(newName, Metadata.BUILD_SOURCE))) {
                     ZmxSocketForward.configure(incus, newName);
                 }
-                if (InstanceLifecycle.hasSshCapability(incus, newName)) {
+                if (RuntimeSetup.hasSshCapability(incus, newName)) {
                     SshKeyManager.addHostEntry(newName);
                 }
             } catch (Exception ignore) {

@@ -13,6 +13,7 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.RuntimeSetup;
 import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.proxy.ProxyActivity;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -134,7 +135,7 @@ final class IncusInstanceBackend implements InstanceBackend {
             // act before this can succeed, so it is not a failure worth retrying as is.
             throw new ToolError(ToolError.Code.REFUSED, "cannot create an instance from " + template + ": " + e.getMessage());
         }
-        InstanceLifecycle.RuntimeConfig runtime;
+        RuntimeSetup.RuntimeConfig runtime;
         try {
             runtime = BranchFlow.create(incus, preflight);
         } catch (RuntimeException e) {

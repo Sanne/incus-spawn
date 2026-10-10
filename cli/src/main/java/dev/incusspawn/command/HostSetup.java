@@ -9,7 +9,7 @@ import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.FirewallDetector.DetectionResult;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.UfwCheck;
-import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyService;
@@ -1023,7 +1023,7 @@ class HostSetup {
                 if (result.newSubnet() != null) {
                     System.out.println("  Reconfigured bridge to " + result.newSubnet()
                             + " to avoid conflict.");
-                    var migrated = InstanceLifecycle.migrateAllInstancesToNewSubnet(init.incus);
+                    var migrated = InstanceNetwork.migrateAllInstancesToNewSubnet(init.incus);
                     if (migrated > 0) {
                         System.out.println("  Migrated network config for " + migrated
                                 + " instance" + (migrated == 1 ? "" : "s") + ".");

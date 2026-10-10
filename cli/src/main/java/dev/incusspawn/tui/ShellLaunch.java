@@ -6,6 +6,8 @@ import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.RuntimeSetup;
+import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -85,7 +87,7 @@ final class ShellLaunch {
         var source = request.source();
 
         BranchFlow.Preflight preflight;
-        InstanceLifecycle.RuntimeConfig prefetched;
+        RuntimeSetup.RuntimeConfig prefetched;
         // Held through the branch's start, so a rebuild cannot swap the template away meanwhile (#1212).
         // Plain stdout: the TUI has released the terminal for the branch and the shell after it.
         try (var held = TemplateLock.reading(source, System.out::println)) {
@@ -111,7 +113,7 @@ final class ShellLaunch {
         // does not, since nothing can render until this returns.
         var output = new StaticIpAllocator.Output(msg -> {}, tui.warningLog::add);
         try {
-            if (InstanceLifecycle.fixStaticIpIfNeeded(tui.incus, name, output, machineType)) {
+            if (InstanceNetwork.fixStaticIpIfNeeded(tui.incus, name, output, machineType)) {
                 tui.statusMessage = "Static IP reassigned to current bridge subnet";
             }
         } catch (Exception ignored) {

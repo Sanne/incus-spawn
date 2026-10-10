@@ -33,13 +33,13 @@ public final class BuildAccounts {
     /**
      * Start the stopped build container, first making it known to the proxy as its template
      * when anything is pinned: a static address the proxy identifies it by
-     * ({@link InstanceLifecycle#assignBuildAddress}) and the template's pins, in one write, then
+     * ({@link InstanceNetwork#assignBuildAddress}) and the template's pins, in one write, then
      * {@code proxyRefresh} so the proxy reads them before anything inside can make a request.
      *
      * <p>A build that pins nothing -- neither its template nor what it was copied with -- is
      * served the defaults either way, so it keeps DHCP and skips the address's round trips. The
      * pins travel to every branch through the CoW copy. A successful build gives the address
-     * back once it has stopped ({@link InstanceLifecycle#releaseBuildAddress}). A failed one
+     * back once it has stopped ({@link InstanceNetwork#releaseBuildAddress}). A failed one
      * keeps it, and its pins, as {@code <template>-failed-build}: started for inspection, it is
      * served its template's accounts rather than the defaults. Deleting it frees the address.
      *
@@ -53,7 +53,7 @@ public final class BuildAccounts {
         var config = instance.path("config");
         String address = null;
         if (!selection.isEmpty() || !AccountSelection.fromConfig(config).isEmpty()) {
-            address = InstanceLifecycle.assignBuildAddress(incus, buildName, instance,
+            address = InstanceNetwork.assignBuildAddress(incus, buildName, instance,
                     startConfig(config, selection, template));
             // Before the start, so the first request from inside already sees the pins
             proxyRefresh.run();
