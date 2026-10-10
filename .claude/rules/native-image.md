@@ -29,7 +29,8 @@ On Linux the builder is **root inside the GraalVM builder container** (`install.
 Anywhere else: call the `Environment` method, never store its result.
 
 **Deferring the class that resolves the path is not enough.**
-GraalVM does not reject a build-time initializer that touches a run-time-initialized class — it initializes it early and folds the value, silently (this is what `Environment`'s header comment warns about, and it was measured here: listing `RuntimeConstants` while leaving the tool-setup list in `ToolDefLoader`'s static initializer still baked `/root/.cache/incus-spawn/downloads`).
+GraalVM does not reject a build-time initializer that touches a run-time-initialized class.
+It initializes it early and folds the value, silently (this is what `Environment`'s header comment warns about, and it was measured here: listing `RuntimeConstants` while leaving the tool-setup list in `ToolDefLoader`'s static initializer still baked `/root/.cache/incus-spawn/downloads`).
 The *holder* has to be deferred too, which is why `CDI_TOOLS` lives in `RuntimeConstants` rather than in `ToolDefLoader`.
 That regression was commit 08a8ea0 (2026-08-26), which moved the tool-setup list out of the already-deferred `RuntimeServices` and into `ToolDefLoader`'s static initializer.
 
@@ -60,6 +61,7 @@ Registered via `--features=` in both modules' `application.properties`, comma-es
 - **`SyscallReachabilityFeature`** — meant to keep reachable GraalVM lazy system-property resolvers (`user.dir`/`user.home`/`os.name`) off the startup path of short-lived commands.
   **It cannot currently fail**: it resolves `userHomeValue`/`userDirValue`/… on the abstract `com.oracle.svm.core.jdk.SystemPropertiesSupport`, while the analysis reaches the concrete `PosixSystemPropertiesSupport`/`LinuxSystemPropertiesSupport` overrides, so `isReachable` answers `false` for every target regardless.
   It now prints `??  INCONCLUSIVE` per target rather than a reassuring `ok`.
-  Fixing it means targeting the concrete subclasses *and* adding the allowed list its javadoc promises — the CLI legitimately reads `user.home` and `user.name` at runtime, so a working version fails the build on correct code until those are allowed with a rationale.
+  Fixing it means targeting the concrete subclasses *and* adding the allowed list its javadoc promises.
+  The CLI legitimately reads `user.home` and `user.name` at runtime, so a working version fails the build on correct code until those are allowed with a rationale.
 
 Both print a `[isx-…-guard]` report to stderr during the build; check it when touching either.

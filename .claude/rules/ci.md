@@ -23,12 +23,14 @@ Key jobs:
 - **Test JVM flags**: the root pom's `argLine` property keeps `com.sun.crypto.provider.AESCrypt::makeSessionKey` out of the JIT, a GraalVM 25 JIT bug that made the proxy tests flake with `bad_record_mac` (#940, upstream: [oracle/graal#14599](https://github.com/oracle/graal/issues/14599), DESIGN.md "Testing").
   Add to that property and never set surefire's `<argLine>`, which would drop both the flag and the arguments the Quarkus plugin adds; `-DargLine=` on the command line replaces it too.
   The JVM launchers carry the same options (`install.sh`'s `jvm_options()` on a Graal-JIT JDK, `java-options` on the JBang aliases); `LauncherJitWorkaroundTest` keeps them equal to the `argLine`'s `-XX:CompileCommand` options, so change those in all three together.
-  `JitWorkaroundTest` checks it in the proxy module, where the TLS tests are; that the excluded method still exists is checked only on a Graal-JIT JVM (`UseJVMCICompiler`), since other JDKs need no exclude and JDK 27 has no `AESCrypt` at all (#1050)
+  `JitWorkaroundTest` checks it in the proxy module, where the TLS tests are.
+  That the excluded method still exists is checked only on a Graal-JIT JVM (`UseJVMCICompiler`), since other JDKs need no exclude and JDK 27 has no `AESCrypt` at all (#1050)
 - **`uber-jar-smoke`**: builds `-Prelease` and runs both uber-jars on a JVM -- what JBang users get.
   Nothing else in CI executes them, which is how the JBang channel broke unnoticed (issue #701); it also asserts that `proxy start` without an `isx-proxy` sibling exits 78 with install instructions rather than looping
 - **`build-native-cli`**: builds the CLI native image, uploads artifact
 - **`build-native-proxy`**: builds the proxy native image, uploads artifact
-- **`integration-tests (x86_64)`, `integration-tests (aarch64)`**: a matrix; each boots its arch's appliance VM image under QEMU with a `vhost-vsock-pci` device, checks it reaches `ISX READY` and passes the in-guest Incus smoke test, then bridges the guest's vsock ports to Unix sockets with host `socat` (standing in for vfkit) and runs `appliance/test-tunnel.sh` and the real native `isx` through them -- see below
+- **`integration-tests (x86_64)`, `integration-tests (aarch64)`**: a matrix.
+  Each boots its arch's appliance VM image under QEMU with a `vhost-vsock-pci` device, checks it reaches `ISX READY` and passes the in-guest Incus smoke test, then bridges the guest's vsock ports to Unix sockets with host `socat` (standing in for vfkit) and runs `appliance/test-tunnel.sh` and the real native `isx` through them -- see below
 - **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-podman-rootless`, `tpl-test-vm`, `tpl-test-codex`, `tpl-test-mcp`), then runs test scripts inside branched instances
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
 
@@ -52,10 +54,13 @@ Both arches boot under QEMU; this is worth stating precisely, because the runner
 
 **macOS runner labels are pinned, and retired ones are caught by a test.**
 Workflows name a versioned label (`macos-15`, `macos-15-intel`), never `macos-latest`.
-The binaries' minimum macOS no longer follows the runner: it is the root pom's `macos.deployment.target` (15.0, Sequoia, #1086), linked in by a macOS-activated profile, and the release job's "Check macOS binaries' minimum macOS" step (`scripts/check-macos-minos.py`) fails unless every macOS artifact the release uploads records exactly that `minos` (see DESIGN.md "The minimum macOS is set by the build").
+The binaries' minimum macOS no longer follows the runner.
+It is the root pom's `macos.deployment.target` (15.0, Sequoia, #1086), linked in by a macOS-activated profile.
+The release job's "Check macOS binaries' minimum macOS" step (`scripts/check-macos-minos.py`) fails unless every macOS artifact the release uploads records exactly that `minos` (see DESIGN.md "The minimum macOS is set by the build").
 The Homebrew formulas declare it as `depends_on macos: :sequoia`, which `release.yml`'s tap step writes from `MACOS_MIN` on every release; README and `docs/HOMEBREW.md` state it.
 GitHub retires old images (`macos-14` with its `-large`/`-xlarge` variants, #1000), and a job on a removed label waits for a runner that never comes.
-Because `release.yml` runs only on `v*` tags, nothing but the next release would notice, so `WorkflowRunnerLabelsTest` fails on `macos-14` or older and on `macos-latest` in any workflow; it also fails when `MACOS_MIN` is not Homebrew's name for the deployment target, when a release runner is older than the target, and when the release job no longer runs the check over `artifacts/native-macos-*/*`.
+Because `release.yml` runs only on `v*` tags, nothing but the next release would notice, so `WorkflowRunnerLabelsTest` fails on `macos-14` or older and on `macos-latest` in any workflow.
+It also fails when `MACOS_MIN` is not Homebrew's name for the deployment target, when a release runner is older than the target, and when the release job no longer runs the check over `artifacts/native-macos-*/*`.
 When GitHub announces the next retirement, raise its bound and move the labels together; a newer runner does not move the minimum.
 
 **vfkit cannot run on GitHub-hosted macOS runners, and this is structural.**
@@ -73,7 +78,8 @@ The job runs in parallel with `isx-integration-tests-native`, which is longer, s
 
 Findings this surfaced, each fixed or documented where it lives: the forwarder's socat listen backlog (default 5) refused concurrent connects (3/16, 12/32), and one exec opens about five; incusd's local listener stalls every new connection behind one that has sent nothing (see `incus.md`); incusd closes idle keep-alive connections after 30s.
 
-The host half is covered in `unit-tests`: the Java compensations for vfkit's behaviour (exec completion via `/wait`, the adaptive drain, per-fd keepalive pings, the watchdogs, stale-connection recycling, the fast `tryConnect` probe) run against `LossyIncusServer`, a fake daemon on a Unix socket that misbehaves the way the tunnel does -- see `incus.md`.
+The host half is covered in `unit-tests`.
+The Java compensations for vfkit's behaviour (exec completion via `/wait`, the adaptive drain, per-fd keepalive pings, the watchdogs, stale-connection recycling, the fast `tryConnect` probe) run against `LossyIncusServer`, a fake daemon on a Unix socket that misbehaves the way the tunnel does -- see `incus.md`.
 Still uncovered: vfkit itself, and boots under vfkit's hvc0 console and devices.
 So anything touching the kernel config, the console, or the boot path still needs a boot on a Mac before it ships (#791).
 A green CI is not evidence that vfkit behaves.
@@ -83,11 +89,13 @@ Anything `build.sh` copies into the image (`root/`, `config.sh`, the kernel) mus
 
 The kernel-source cache (`/tmp/kernel-cache/`) is keyed `kernel-source-<version>-<sha256>`, both read from `appliance/kernel/build-kernel.sh`.
 That script downloads only from kernel.org and checks `KERNEL_SHA256` on every run, a cache hit included (#1128).
-The save step runs only after a verified build, but `actions/cache` never overwrites a key: with a version-only key, an entry saved before the check existed (possibly the GitHub `.tar.gz`) or under a since-corrected pin would be restored, and fail or be re-downloaded, on every build at that version.
+The save step runs only after a verified build, but `actions/cache` never overwrites a key.
+With a version-only key, an entry saved before the check existed (possibly the GitHub `.tar.gz`) or under a since-corrected pin would be restored, and fail or be re-downloaded, on every build at that version.
 
 **Release asset names are a contract with the CLI.**
 `release.yml` publishes the appliance kernel as `vmlinuz-<arch>.gz` (gzipped there, not by `build-kernel.sh`, which still emits a plain `vmlinuz` for local QEMU/vfkit runs) and `VmManager.downloadKernel` gunzips it on the way into `~/.isx`.
-Renaming an asset on one side breaks the other, with the twist that a dev build resolves its appliance version to the *latest* release rather than its own -- which is why the download falls back to the pre-`.gz` name instead of failing.
+Renaming an asset on one side breaks the other, with the twist that a dev build resolves its appliance version to the *latest* release rather than its own.
+This is why the download falls back to the pre-`.gz` name instead of failing.
 Change both sides together, and keep the fallback until no reachable release predates the rename.
 
 `fresh-daemon-init` exists because `isx-integration-tests` runs `incus admin init --minimal` *before* `isx init`, which populates the default profile -- so it cannot catch `isx init` failing to populate it itself.
@@ -95,18 +103,23 @@ It installs Incus and creates only the storage pool, with no `admin init`, repro
 It asserts the profile has a root disk and a NIC, then launches a real instance -- a profile that merely looks right can still name a bad pool.
 
 Note that `isx init` is not run against the QEMU appliance VM: on Linux it provisions a *native* Incus, and the appliance has its own provisioning.
-The vsock-bridged boot in `integration-tests` exercises the client path to the appliance instead (`isx` over `vm.incus.sock`), which needs no `init`; `appliance/test-with-isx.sh` stays macOS-only because it has isx *boot* the VM, and isx's QEMU backend deliberately wires no vsock (Linux users run native Incus).
+The vsock-bridged boot in `integration-tests` exercises the client path to the appliance instead (`isx` over `vm.incus.sock`), which needs no `init`.
+`appliance/test-with-isx.sh` stays macOS-only because it has isx *boot* the VM, and isx's QEMU backend deliberately wires no vsock (Linux users run native Incus).
 The appliance also provisions Incus with its own shell script and never calls `isx init` -- the "ensure default profile has a root disk and NIC" invariant is implemented twice, in `incus-spawn-vm-init` (shell, in-VM) and `IncusClient.ensureDefaultProfileDevices` (Java, host).
 Keep the two in sync.
 
-The `isx-integration-tests` job exercises five environments: a container (from `tpl-minimal`), a podman container with the default rootful socket (from `tpl-test-podman`), one with every non-default `podman` parameter (from `tpl-test-podman-rootless`), a codex container (from `tpl-test-codex`), and a VM (from `tpl-test-vm`); the accounts scripts below branch two further instances of their own.
+The `isx-integration-tests` job exercises five environments: a container (from `tpl-minimal`), a podman container with the default rootful socket (from `tpl-test-podman`), one with every non-default `podman` parameter (from `tpl-test-podman-rootless`), a codex container (from `tpl-test-codex`), and a VM (from `tpl-test-vm`).
+The accounts scripts below branch two further instances of their own.
 Test scripts live in `.github/scripts/`:
 
 - **`test-instance.sh`**: pushed into containers and VMs, tests proxy interception (Maven/GitHub HTTPS), git clone, passwordless sudo, systemd lifecycle, DNS interception (A to the gateway, no `::` or real AAAA answer, #814), login shell env vars, TLS certificate quality, and tool-contributed proxy credential injection (section 9 verifies bearer token injection via a test fixture tool `.github/test-fixtures/tools/test-proxy-tool.yaml` and a local HTTPS echo server at `echo.incus-spawn.test`).
   Uses `assert()` / `assert_eq()` shell helpers.
 - **`test-airgap.sh`**: runs on the host.
-  Branches `tpl-minimal` with `--airgap` and asserts on the *expanded* devices (no `nic` at all), the `network-mode` stamp, and from inside that the started branch has no interface but loopback and cannot reach the internet; then branches it again without `--airgap` and asserts the NIC and an address come back.
-  It needs a real Incus because the bug it guards (#813) was Incus semantics: removing an instance device that overrides a profile device only drops the override, so the NIC must be masked with `type: none` instead -- a fake that drops removed devices from `expanded_devices` passes either way.
+  Branches `tpl-minimal` with `--airgap` and asserts on the *expanded* devices (no `nic` at all), the `network-mode` stamp, and from inside that the started branch has no interface but loopback and cannot reach the internet.
+  Then branches it again without `--airgap` and asserts the NIC and an address come back.
+  It needs a real Incus because the bug it guards (#813) was Incus semantics.
+  Removing an instance device that overrides a profile device only drops the override, so the NIC must be masked with `type: none` instead.
+  A fake that drops removed devices from `expanded_devices` passes either way.
 - **`test-podman.sh`**: pushed into the podman container, tests rootless podman (pull, run, build).
 - **`test-podman-rootless.sh`**: pushed into the `tpl-test-podman-rootless` container (`mode: rootless`, `short-names: permissive`, `compose: true`), tests that `/run/docker.sock` and `/var/run/docker.sock` point at agentuser's socket with the system `podman.socket` left disabled, that an unqualified name pulls from docker.io without a prompt, that `podman-compose` is installed, and a PostgreSQL container run as agentuser.
   The short-name check pulls `testcontainers/ryuk`, which has no alias in Fedora's `shortnames.conf`; `alpine` and `postgres` do, so pulling them would pass under `enforcing` too.
@@ -118,24 +131,31 @@ Test scripts live in `.github/scripts/`:
   Asserts the branch reached the endpoint through the real proxy bridge and host `isx mcp` (`McpClientCheck`), that `claude mcp remove`/`add-json` ran once each as the agent, root's marker, that the next start (`isx run --action=no-such-action`, no terminal) runs no Claude Code, and that `isx branch --from` the stopped coordinator removes entry and marker while an ordinary branch calls nothing.
 - **`test-accounts.sh`** + **`test-account-switching.sh`**: per-instance credential accounts.
   Two instances are branched from one template differing only in `--account`, so the assertion is the claim: one shared proxy, different real credentials, decided by who asked.
-  The first runs inside each instance (its token names its own account, and no real token is anywhere in the container); the second runs on the host and drives `isx account set` against running instances -- a re-point takes effect on the next request with nothing restarted, and an instance pinned to a deleted account is refused rather than served the default, and `isx account unset` returns an instance to the default live.
+  The first runs inside each instance (its token names its own account, and no real token is anywhere in the container).
+  The second runs on the host and drives `isx account set` against running instances.
+  A re-point takes effect on the next request with nothing restarted, and an instance pinned to a deleted account is refused rather than served the default, and `isx account unset` returns an instance to the default live.
   Step [5] moves the Claude default to a Pro/Max account and asserts the proxy refuses the API-key-built instances' Claude requests (with the `isx account set` fix in the body) while their other credentials keep working, then restores the config.
   Both lean on the fixture tool `.github/test-fixtures/tools/test-account-tool.yaml` (namespace `testAccountTool`, domain `echo-accounts.incus-spawn.test`), kept separate from `test-proxy-tool.yaml` because that one pins the flat pre-accounts layout and both shapes must keep working.
   **No real credential is involved**: `echo-server.py` answers GitHub's `/user` and `/user/emails` as whichever account a `ghp-acct-<name>` token names, so it can play two identities at once -- which one real token never could.
   **`test-git-identity.sh`** uses that: an instance pinned to `github=agent` must *commit* as that account, not merely push with its token.
   It runs twice against `acct-gh` -- once before `isx account set ... github=agent` (asserting the template's baked `ci-user` identity) and once after -- so a pass means the re-point actually changed the identity rather than finding one that was already right.
   Its argument is the *login* the echo server answers as, not the account name, which is why the pre-swap call passes `ci-user` rather than `ci`; the script's title-casing mirrors Python's `str.title()` so a hyphenated login matches.
-  The step drives `isx account set` rather than `isx branch --account` because a branch that starts also attaches a shell, which CI has no terminal for (without one, `isx branch` skips the shell and exits 0, #1027) -- the branch-time reconcile is the same call, from `BranchCommand`.
-  **`test-token-rotation.sh`** (host-side, after it) covers #281: with `agent` made the default -- build containers are served the default -- it builds `tpl-test-rotation-base` (gh) while `agent` holds `ghp-acct-agent`, gives `agent` `ghp-acct-rotated`, builds the child `tpl-test-rotation-leaf`, and asserts a `--no-start` branch of each commits as `agent` and `rotated` respectively (no branch-time reconcile runs, so the identity is the template's own); then that the base's branch, still `agent`, commits as `rotated` after `isx run <it> --action=no-such-action` drives the next-use reconcile without a terminal; and that a child of `tpl-minimal` adding gh, whose inherited stamp is by then out of date, still gets gh's git defaults (`push.default`) -- the identity refresh runs after tool setup so it cannot create the `.gitconfig` gh's setup checks for.
+  The step drives `isx account set` rather than `isx branch --account` because a branch that starts also attaches a shell, which CI has no terminal for (without one, `isx branch` skips the shell and exits 0, #1027).
+  The branch-time reconcile is the same call, from `BranchCommand`.
+  **`test-token-rotation.sh`** (host-side, after it) covers #281: with `agent` made the default -- build containers are served the default -- it builds `tpl-test-rotation-base` (gh) while `agent` holds `ghp-acct-agent`, gives `agent` `ghp-acct-rotated`, builds the child `tpl-test-rotation-leaf`, and asserts a `--no-start` branch of each commits as `agent` and `rotated` respectively (no branch-time reconcile runs, so the identity is the template's own); then that the base's branch, still `agent`, commits as `rotated` after `isx run <it> --action=no-such-action` drives the next-use reconcile without a terminal; and that a child of `tpl-minimal` adding gh, whose inherited stamp is by then out of date, still gets gh's git defaults (`push.default`).
+  The identity refresh runs after tool setup so it cannot create the `.gitconfig` gh's setup checks for.
   It backs up config.yaml and restores it on exit.
   The real CI token stays the `ci` account and remains the default, so the authenticated `git clone` and the existing github assertions are untouched.
   `test-vm` is branched with an account too, so the VM path -- metadata and file pushes over the incus-agent -- is covered rather than only containers.
-  The `isx init` account menu is **not** exercised here: CI runs `isx init </dev/null`, so every credential prompt hits EOF and is skipped; its decisions are unit-tested in `AccountMenuTest`, and the credential flows around it in `GitHubAuthFlowTest` / `ClaudeAuthFlowTest` / `CredentialPromptsTest`, which is possible because they read from `Prompts` rather than a `Console` (see `commands.md`).
+  The `isx init` account menu is **not** exercised here.
+  CI runs `isx init </dev/null`, so every credential prompt hits EOF and is skipped.
+  Its decisions are unit-tested in `AccountMenuTest`, and the credential flows around it in `GitHubAuthFlowTest` / `ClaudeAuthFlowTest` / `CredentialPromptsTest`, which is possible because they read from `Prompts` rather than a `Console` (see `commands.md`).
 - **`test-previous-release-config.sh <release>`**: runs on the host after the VM step, once per release users are on (currently v0.3.7 and v0.3.8; v0.3.7 differs only in also writing the old `host-path` key).
   It swaps in the committed `common/src/test/resources/config-compat/<release>-full.yaml` -- generated by that release's own serializer, so every namespace is flat, with `""` values and a stray `oauthMode` -- substituting only CI's gateway and echo-reportable placeholder credentials (line edits, not a YAML round trip, which would normalise away the shape under test).
   It checks that `isx account list` shows each configured namespace as `default  (default)` (on the release before #773 only `claude` was listed), that an unpinned instance and one pinned `<ns>=default` in every namespace are both served each flat credential, and that pinning a name the flat credential does not have is still refused.
   It restores the original config and SIGHUPs the proxy on exit, whatever happens.
-  The write side -- the first save moving credentials into `accounts.default` -- cannot be driven here (CI's `isx init` never saves a credential) and is covered by `PreviousReleaseConfigCompatTest`, which runs in `unit-tests` with no Incus: it is deliberately not an `*IT`, which would only run under `-DskipITs=false`.
+  The write side -- the first save moving credentials into `accounts.default` -- cannot be driven here (CI's `isx init` never saves a credential) and is covered by `PreviousReleaseConfigCompatTest`, which runs in `unit-tests` with no Incus.
+  It is deliberately not an `*IT`, which would only run under `-DskipITs=false`.
 
 When adding a new end-to-end test, add an `assert` call in the appropriate script under a new numbered section.
 The test runs as root inside the container; use `su -l agentuser -c "..."` to test user-level behavior.
@@ -156,16 +176,21 @@ So a credential committed before this workflow existed, or in any range it did n
   `GITLEAKS_VERSION` is pinned to `8.27.0` to match the version leaktk generated the ruleset for.
 
 gitleaks' `[extend]` table is mutually exclusive between `path` and `useDefault` (one config file can only pick one base ruleset to extend), which is why these are two separate config files and two separate scan passes rather than one merged ruleset.
-They must be two **jobs**, not two steps in one job: `gitleaks-action` installs the gitleaks binary to a fixed `/tmp` path, so a second invocation in the same job fails with "Destination file path /tmp/gitleaks.tmp already exists" -- this shipped once and failed on the very first PR.
+They must be two **jobs**, not two steps in one job.
+`gitleaks-action` installs the gitleaks binary to a fixed `/tmp` path, so a second invocation in the same job fails with "Destination file path /tmp/gitleaks.tmp already exists".
+This shipped once and failed on the very first PR.
 
 Both configs carry the same `[allowlist]` (kept in sync manually, not shared via a common file): known-fake credentials in config/proxy unit tests that legitimately need key-shaped strings to exercise parsing and redaction logic (`ClaudeLegacyConfigCompatTest`, `ClaudeAccountsTest`, `ProxyCredentialsAccountsTest`, `SecretRedactorTest`, `SupportBundleTest`, `HelpContextTest`, and the previous-release fixtures under `common/src/test/resources/config-compat/`), plus `^\.gitleaks/` -- the vendored leaktk ruleset's own rule definitions and example regex fragments look like credentials to a scanner.
 Path-based allowlist entries apply across all historical commits gitleaks scans, since matching is on file path, not commit content -- so this also covers commits that predate the allowlist.
 A new test fixture with a fake credential needs its path added to **both** `.toml` files, or it (rightly) fails the PR check the first time.
 
 Both configs also carry two custom `[[rules]]` (`anthropic-api-key`, `anthropic-oauth-token`) for `sk-ant-api03-`/`sk-ant-oat01-` keys -- neither gitleaks' defaults nor leaktk/patterns have an Anthropic-specific rule.
-They're gated on a 40+ char suffix rather than matching the prefix alone: real keys run 90+ chars past the prefix, while every fake fixture in this repo tops out at 28, so the length gate catches a real leak without re-flagging the test placeholders above -- no allowlist entry needed for these two rules specifically.
+They're gated on a 40+ char suffix rather than matching the prefix alone.
+Real keys run 90+ chars past the prefix, while every fake fixture in this repo tops out at 28, so the length gate catches a real leak without re-flagging the test placeholders above -- no allowlist entry needed for these two rules specifically.
 
-This is a separate GitHub Action from a Red Hat-internal tool called rh-gitleaks (a wrapper around gitleaks with patterns from an internal Pattern Server) that may also flag this repo out-of-band -- rh-gitleaks can't run from a public-repo GitHub Actions runner, so it isn't wired into CI here. leaktk/patterns is the closest public equivalent: its README states it backs an (unreleased) internal pattern server, so its ruleset is the nearest available proxy for what that tool would flag.
+This is a separate GitHub Action from a Red Hat-internal tool called rh-gitleaks (a wrapper around gitleaks with patterns from an internal Pattern Server) that may also flag this repo out-of-band -- rh-gitleaks can't run from a public-repo GitHub Actions runner, so it isn't wired into CI here.
+leaktk/patterns is the closest public equivalent.
+Its README states it backs an (unreleased) internal pattern server, so its ruleset is the nearest available proxy for what that tool would flag.
 
 # Benchmarking
 

@@ -45,7 +45,8 @@ Before anything is created, `reportStrandedStorage` refuses (in `isx project cre
 The swap's `IncusClient.rename` checks that the record and the subvolume both moved, and a failure there goes through the build's failure handling (report, promote to `-failed-build`).
 
 **Swapping a template others copy from** (#1212): the swap is a delete and a rename (Incus cannot rename onto an existing name), so between the two the template does not exist.
-`TemplateLock.replace` does it holding the template's `HostLock` exclusively (`~/.cache/incus-spawn/locks/templates/<name>.lock`), and everything that copies from a template holds it shared (`TemplateLock.reading`) from looking the template up until the copy is made, through the start for a branch: `isx branch`, the TUI's branch, `isx mcp`'s `create_instance(template)` and `delegate(template)` (`InstanceBackend.holdTemplate`), `buildFromParent`, `isx build`'s missing-or-outdated check of a parent and of the parent's own parent (`parentNeedsBuild`), its rebuild confirmation's lookup of the chain and `isx project create` from its parent lookup to the copy.
+`TemplateLock.replace` does it holding the template's `HostLock` exclusively (`~/.cache/incus-spawn/locks/templates/<name>.lock`).
+Everything that copies from a template holds it shared (`TemplateLock.reading`) from looking the template up until the copy is made, through the start for a branch: `isx branch`, the TUI's branch, `isx mcp`'s `create_instance(template)` and `delegate(template)` (`InstanceBackend.holdTemplate`), `buildFromParent`, `isx build`'s missing-or-outdated check of a parent and of the parent's own parent (`parentNeedsBuild`), its rebuild confirmation's lookup of the chain and `isx project create` from its parent lookup to the copy.
 A new path that copies a template takes `TemplateLock.reading` the same way.
 `isx project create` builds under `<name>-rebuilding` too and swaps through the same call, so a failed re-create keeps the previous template (a failed swap keeps the build).
 Only names Incus accepts get a lock file (a project-local `name:` or an agent's argument is untrusted), and `isx mcp` takes the hold only after `TemplatePolicy.requireListed`.
@@ -54,16 +55,21 @@ Package deduplication: `BuildCommand` collects all ancestor packages and subtrac
 
 **Base image version tracking**: The root template (`tpl-minimal`) downloads a pre-baked base image from `Sanne/incus-spawn-images`, whose tag/checksums are baked into `minimal.yaml`.
 That built-in tag is only an **offline fallback**.
-When the root def is unpinned (`pinned: false`), `BuildCommand.resolveTrackedBaseImage()` (called at the top of `buildFromScratch` on the root def) fetches the newest release at build time via `baseimage/BaseImageReleases` and swaps in its tag + per-arch container/VM checksums, so a plain build always tracks the latest base image; any network/API failure falls back to the built-in tag with a `note()`.
+When the root def is unpinned (`pinned: false`), `BuildCommand.resolveTrackedBaseImage()` (called at the top of `buildFromScratch` on the root def) fetches the newest release at build time via `baseimage/BaseImageReleases` and swaps in its tag + per-arch container/VM checksums, so a plain build always tracks the latest base image.
+Any network/API failure falls back to the built-in tag with a `note()`.
 `isx update-base` only manages the *pin* -- pinning writes a `pinned: true` user override (`~/.config/incus-spawn/images/minimal.yaml`) with the selected tag and both `image_sha256`+`vm_image_sha256`; `--latest`/menu option 1 just deletes that override to resume build-time tracking (it downloads nothing).
 `BaseImageReleases.parseSha256Sums()` keys checksums by arch and distinguishes `-vm.tar.xz` from `.tar.xz`.
-An event-driven CI job (`.github/workflows/update-base-image.yml`) opens a PR to bump the built-in fallback when the images repo publishes a newer release: the images repo (`Sanne/incus-spawn-images`) fires a `base-image-released` `repository_dispatch` carrying the tag + container/VM checksums, so the consumer neither polls nor re-derives them (a manual `workflow_dispatch` backstop re-derives from the release list if a dispatch is missed).
+An event-driven CI job (`.github/workflows/update-base-image.yml`) opens a PR to bump the built-in fallback when the images repo publishes a newer release.
+The images repo (`Sanne/incus-spawn-images`) fires a `base-image-released` `repository_dispatch` carrying the tag + container/VM checksums, so the consumer neither polls nor re-derives them (a manual `workflow_dispatch` backstop re-derives from the release list if a dispatch is missed).
 This tracking behavior is unrelated to `INIT_VERSION`.
 
 **DNF output and parallelism**: dnf steps render a single animated `TerminalProgress` spinner line instead of flooding the terminal -- so isx's own warnings stay visible.
-Install/upgrade go through `runDnf`, which **streams** dnf's output through a parser (`onDnfLine` + the `DNF_STEP` regex) rather than echoing it: dnf5's non-TTY output prints one `[N/M] <action> <package>` line per completed step (both the download and transaction phases), so the spinner shows live "N/M -- current package" feedback (`formatDnfLine`). dnf's non-TTY column truncates the version/arch tail off each NEVRA (and it can't be widened -- `COLUMNS`/`terminal_width` are ignored without a TTY, and a PTY only trades the clean per-line format for concurrent ANSI progress-bar redraws), so `shortenNevra` reduces each `name-epoch:ver-rel.arch` to its bare package name for the display detail.
+Install/upgrade go through `runDnf`, which **streams** dnf's output through a parser (`onDnfLine` + the `DNF_STEP` regex) rather than echoing it: dnf5's non-TTY output prints one `[N/M] <action> <package>` line per completed step (both the download and transaction phases), so the spinner shows live "N/M -- current package" feedback (`formatDnfLine`).
+dnf's non-TTY column truncates the version/arch tail off each NEVRA (and it can't be widened -- `COLUMNS`/`terminal_width` are ignored without a TTY, and a PTY only trades the clean per-line format for concurrent ANSI progress-bar redraws), so `shortenNevra` reduces each `name-epoch:ver-rel.arch` to its bare package name for the display detail.
 Streaming without terminal echo is provided by `Container.execLines` -> `IncusClient.shellExecStreaming` -> `util/LineOutputStream` (UTF-8 line splitter).
-COPR-enable and VM rootfs-expansion use `runWithSpinner` (captured exec, no live detail -- they're single/short ops); its `runSpinnerWork` wrapper (and `dnfWork`) convert a thrown exception into a recorded `failed` state, because `TerminalProgress` swallows task exceptions -- otherwise the step would stay RUNNING and `finishSpinner` would throw a generic message with no cause.
+COPR-enable and VM rootfs-expansion use `runWithSpinner` (captured exec, no live detail -- they're single/short ops).
+Its `runSpinnerWork` wrapper (and `dnfWork`) convert a thrown exception into a recorded `failed` state, because `TerminalProgress` swallows task exceptions.
+Otherwise the step would stay RUNNING and `finishSpinner` would throw a generic message with no cause.
 The VM rootfs dependency install goes through `dnfCommand(...)` too, and is skipped when the resize tools are already present (the prebaked VM image ships them); `dnf copr enable`/`dnf clean` run plain `dnf` (the download/cache flags don't apply).
 Full dnf output is printed to stderr only on failure, after the animated line, via the shared `finishSpinner`.
 `runDnf` still retries once with `--refresh` on failure (the spinner shows "retrying with --refresh"). dnf has no built-in single-line progress mode -- `-q` would suppress the very lines we parse -- so consuming its native `[N/M]` output is the approach.
@@ -77,7 +83,8 @@ The check is per-instance and that is sufficient: another build attaching the vo
 
 # Agent Context File
 
-Every build regenerates `/etc/claude-code/CLAUDE.md` via `BuildCommand.writeAgentContext()`, called once in **both** build paths, in each case after all layer work (tools, skills, repo clones) is done -- so it sees the fully resolved image rather than one layer at a time, and the repos it lists have actually been cloned.
+Every build regenerates `/etc/claude-code/CLAUDE.md` via `BuildCommand.writeAgentContext()`, called once in **both** build paths, in each case after all layer work (tools, skills, repo clones) is done.
+So it sees the fully resolved image rather than one layer at a time, and the repos it lists have actually been cloned.
 Content comes from `AgentContextGenerator` (`common/config/`), a pure renderer that takes a template name, tool names, repos and notes, which is what makes the format unit-testable without Incus.
 The path constant lives in `ClaudeSetup.MANAGED_MEMORY_PATH` beside the rest of `/etc/claude-code`, since the generator itself is vendor-neutral.
 
@@ -111,7 +118,8 @@ Optionally clones missing repos (persisted via `auto-clone-repos` config).
 `CpuInfo` is the single source of CPU-topology counts: `logicalCores()` (real host count, bypassing the native image's `-R:ActiveProcessorCount` cap; `ResourceLimits.hostProcessorCount()` delegates to it), `performanceCores()` (P/big cores, or 0 when indistinguishable; `VmManager.detectCpus()` uses it), `highPerfCores()`, and `hybridTopTierCores()` (on a hybrid host, the top tier's physical cores, SMT threads once; 0 on a host with one tier or unknown tiers; read once per process).
 `ResourceLimits.defaultVmCpus()` gives a VM branch `max(1, min(8, host CPUs - 2))`, and on a hybrid host also at most `hybridTopTierCores()` (#1238, Sanne's choice).
 Its Linux counts come from one sysfs scan of the online CPUs, whose top tier is taken from the hybrid PMU's `/sys/devices/cpu_core/cpus` where it exists (Intel hybrids with Hyper-Threading report equal `cpu_capacity`), else from `cpu_capacity` where it differs (ARM, Intel hybrids without SMT), else from `cpufreq/cpuinfo_max_freq` where it differs (AMD Zen 5 + Zen 5c hybrids), the top tier being every CPU within 80% of the highest, else all of them.
-A physical core is its `core_cpus_list` (`thread_siblings_list` before 5.3), never package and core id, which repeat across clusters on device-tree Arm; whatever leaves the tier in doubt (an unreadable capacity, a capacity on some CPUs only, a missing core list) makes it unknown, which the VM default treats as one tier.
+A physical core is its `core_cpus_list` (`thread_siblings_list` before 5.3), never package and core id, which repeat across clusters on device-tree Arm.
+Whatever leaves the tier in doubt (an unreadable capacity, a capacity on some CPUs only, a missing core list) makes it unknown, which the VM default treats as one tier.
 The scan of the real sysfs is made once per process.
 `CpuInfoTest` pins each source with sysfs fixtures (an i7-12700H, a Ryzen AI 300, an X3D, a three-tier ARM SoC, an RK3588 device-tree layout).
 When a host-side checkout is available, the clone runs locally from the mounted reference (`git clone --no-hardlinks`) -- this copies pack files directly, avoiding the expensive `git repack` that the old `--reference`/dissociate approach required.
@@ -121,8 +129,10 @@ On any failure the local-clone path is discarded and a normal remote clone runs 
 Clones and `prime` commands use captured (non-streamed) exec so parallel output doesn't garble; progress renders via `util/TerminalProgress.java`, the shared animated braille-spinner display also used by `HostRepoRefresh`'s parallel fetch and by `BuildCommand`'s dnf operations.
 Each repo's `prime` command runs in the same worker once that repo's clone finishes **and every host reference is detached** (Cloning -> Waiting to prime -> Priming within one progress line).
 A reference mount is the host checkout's whole working tree, so no prime may run next to one (#765).
-Which repos have a reference is decided on the host up front (`planReference`); each worker attaches its own just before its clone and detaches it right after (`DeviceMounts`, #826), both under one lock, because a device removal rewrites the whole device map and would drop an attach that landed meanwhile.
-A VM has only 8 PCI hotplug slots, so attaches go through `HotplugSlots`: a budget starting at `min(references, 8)` (unbounded for containers), where an attach Incus refuses for want of a slot (`IncusClient.NoHotplugSlotException`) retires a permit for good and waits for another, and only when the budget would reach zero does the repo clone from the network, with a `RepoReference.skipped` note on its line.
+Which repos have a reference is decided on the host up front (`planReference`).
+Each worker attaches its own just before its clone and detaches it right after (`DeviceMounts`, #826), both under one lock, because a device removal rewrites the whole device map and would drop an attach that landed meanwhile.
+A VM has only 8 PCI hotplug slots, so attaches go through `HotplugSlots`: a budget starting at `min(references, 8)` (unbounded for containers), where an attach Incus refuses for want of a slot (`IncusClient.NoHotplugSlotException`) retires a permit for good and waits for another.
+Only when the budget would reach zero does the repo clone from the network, with a `RepoReference.skipped` note on its line.
 The `referencesDetached` latch counts *planned* references, each counted down once in a `finally` after its attach is resolved and anything attached is detached.
 A failed detach fails the build, before the count-down.
 Concurrency is bounded by a semaphore in `prepareOne` held around clone and prime separately, never while waiting (`repoConcurrency()`).
@@ -154,7 +164,9 @@ A 429/500/502/503/504 or a failed or broken connection is retried twice from the
 `Listener.retrying()` lets `TransferProgress` reset its rate and show the retry.
 Errors name the failing hop's host.
 `file://` goes only through `downloadAllowingLocalFile()`, which only base images use; see DESIGN.md "Host-side downloads reach only remote hosts".
-A `DownloadCache.Listener` observes a download (cache verification, bytes against `Content-Length`, checksum); base images pass `BuildCommand.TransferProgress`, which the `runLiveStep` spinner formats on each frame into percentage, size, rate and time left, and the Incus import that follows is a separate spinner showing elapsed time.
+A `DownloadCache.Listener` observes a download (cache verification, bytes against `Content-Length`, checksum).
+Base images pass `BuildCommand.TransferProgress`, which the `runLiveStep` spinner formats on each frame into percentage, size, rate and time left.
+The Incus import that follows is a separate spinner showing elapsed time.
 YAML tool downloads may be exposed as a file via `destination_file`, extracted, or both.
 Containers receive files directly and host-extracted archive contents recursively; VMs use temporary read-only mounts and copy locally to avoid slow incus-agent file transfers over vsock.
 This avoids needing curl inside containers, while `extract_in_container` remains available when extraction must happen there.

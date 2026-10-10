@@ -19,12 +19,17 @@ paths:
 Only code running after the runner has closed (the `pendingAction` switch, e.g. `shellInto`) may print, with a comment saying so.
 
 **Warnings go to the `WarningLog`, not the status line** (#872).
-`runTuiSessions()` redirects `Warnings` (`common`) to its own `warningChannel` around each `reloadData()` and the runner, but **not** while the terminal is released (`pendingAction`: a build, a template edit, a shell), so those print their own warnings -- even ones the TUI has already logged, since each channel remembers what it reported separately. and TUI code passes `warningLog::add` as the warn sink of shared code (`prepareHostDevicesForStart`, `StaticIpAllocator.Output`).
+`runTuiSessions()` redirects `Warnings` (`common`) to its own `warningChannel` around each `reloadData()` and the runner, but **not** while the terminal is released (`pendingAction`: a build, a template edit, a shell), so those print their own warnings -- even ones the TUI has already logged, since each channel remembers what it reported separately.
+and TUI code passes `warningLog::add` as the warn sink of shared code (`prepareHostDevicesForStart`, `StaticIpAllocator.Output`).
 The log keeps every warning, from any thread, deduplicated (a repeat moves to the end with a new time) and capped at 100.
-`render()` announces what arrived since the last frame on the status line, but only when the line is empty or holds an older announcement (`canAnnounceWarnings()`): an action's result such as "Build failed" is never replaced, the warnings wait for the next key (`WarningLog.statusLine`: the latest, led by the count when several arrived, since a long line is cut off at the terminal width), the header shows "⚠ N warnings (w)" while any are unread, ahead of the running badge, and `w` opens `WarningsModal` (extracted and snapshot-tested like `HelpChatModal`): every warning, newest first, in full with its lines kept; `c` clears the log and calls `warningChannel.forgetReported()`, so any that are still true come back on the next reload.
+`render()` announces what arrived since the last frame on the status line, but only when the line is empty or holds an older announcement (`canAnnounceWarnings()`).
+An action's result such as "Build failed" is never replaced, the warnings wait for the next key (`WarningLog.statusLine`: the latest, led by the count when several arrived, since a long line is cut off at the terminal width), the header shows "⚠ N warnings (w)" while any are unread, ahead of the running badge, and `w` opens `WarningsModal` (extracted and snapshot-tested like `HelpChatModal`): every warning, newest first, in full with its lines kept.
+`c` clears the log and calls `warningChannel.forgetReported()`, so any that are still true come back on the next reload.
 `reloadData()` sends definition warnings through `Warnings.warn` rather than straight to the log, so the reloads that run on every background-task completion do not re-announce them; `r` calls `warningChannel.forgetReported()` first, so an explicit reload does.
 Warnings still unread when the TUI exits are printed to stderr once the terminal is released.
-**Before the TUI opens** (#1154), bare `isx` runs inside a `PreTuiOutput` window (`IncusSpawn.launchTui()` opens it, `doExecute()` hands it over first thing, before the first reload, so a pause leaves no stale listing): `Warnings` raised meanwhile (the macOS VM's stale-appliance notice, `VmManager.warnOfSkew`) go into the `WarningLog` through `warningChannel`, so the TUI does not announce them a second time; anything printed to stdout/stderr still shows, and makes isx print the held warnings too and wait for Enter (`PreTuiOutput.waitForEnter`, only at a terminal, discarding an Enter typed while it got ready) before the TUI covers it.
+**Before the TUI opens** (#1154), bare `isx` runs inside a `PreTuiOutput` window (`IncusSpawn.launchTui()` opens it, `doExecute()` hands it over first thing, before the first reload, so a pause leaves no stale listing).
+`Warnings` raised meanwhile (the macOS VM's stale-appliance notice, `VmManager.warnOfSkew`) go into the `WarningLog` through `warningChannel`, so the TUI does not announce them a second time.
+Anything printed to stdout/stderr still shows, and makes isx print the held warnings too and wait for Enter (`PreTuiOutput.waitForEnter`, only at a terminal, discarding an Enter typed while it got ready) before the TUI covers it.
 A notice meant for the TUI belongs on `Warnings`, so it costs no keypress.
 `TuiLaunchHandOverTest` drives `IncusSpawn.launchTui(ready, tui)` with a `StandInTui` (test scope, overriding `runTuiLoop`/`waitForUser`, reading `warningMessages()`) and fails if either end of the window is unwired.
 
@@ -37,24 +42,32 @@ The TUI is often left open for days, so it follows Incus rather than waiting for
 Relevant instance actions (`RELEVANT_ACTIONS`: created/deleted/renamed/updated/started/stopped/...; deliberately *not* `instance-exec`, `-console`, `-file-*`, which shells and proxy probes emit constantly) set `liveRefreshRequested`; start-type actions also schedule follow-ups at +3s/+10s (`START_FOLLOW_UP_DELAYS_MS`) because the IPv4 arrives after the start event and nothing announces it.
 Every successful (re)connect fires a resync request -- events while unsubscribed are lost, and that includes the window before the first connect.
 Reconnects back off from 2s, doubling; while `isConnected()` is false the TUI polls every `FALLBACK_POLL_MS` (60s) instead.
-**The watcher gives up rather than keep knocking**: after `MAX_CONSECUTIVE_FAILURES` (3) failures in a row -- a connect that fails, or a subscription that drops within `HEALTHY_SESSION_MS` (60s) -- it stops for the session (`hasGivenUp()`), the TUI says "Live updates unavailable" once and stays on 60s polling.
+**The watcher gives up rather than keep knocking**.
+After `MAX_CONSECUTIVE_FAILURES` (3) failures in a row -- a connect that fails, or a subscription that drops within `HEALTHY_SESSION_MS` (60s) -- it stops for the session (`hasGivenUp()`), the TUI says "Live updates unavailable" once and stays on 60s polling.
 A session that lasted past 60s resets the budget, so a daemon restart gets ~14s of retries.
 Each attempt is a new connection (a vsock stream through the macOS forwarder, where closed streams can linger until `socat -T` reaps them), so a reconnect loop must be bounded.
 `tui-live-refresh: false` in `config.yaml` (`SpawnConfig.tuiLiveRefreshEnabled()`, null = on and never written back) turns all of it off: no subscription, no polling, no light refreshes; a vanished-target hit requests a full refresh instead.
 Ages still re-render (no Incus involved).
 
-A request is served by a **light refresh**, not `reloadData()`: `tickLiveRefresh()` (called from the `TickEvent` handler, debounced by `REFRESH_DEBOUNCE_MS`) starts `startLiveRefresh()`, which runs `collectEntries()` + `clearStalePendingOps()` + the pool-usage read on a virtual thread and parks a `LiveSnapshot`; the next tick applies it on the UI thread via `applyLiveInstances()` -> `mergeInstances()` / `applyDiskModel(false)` / `publishRows()`, with `preservingSelection()` keeping both panels on the same names.
+A request is served by a **light refresh**, not `reloadData()`.
+`tickLiveRefresh()` (called from the `TickEvent` handler, debounced by `REFRESH_DEBOUNCE_MS`) starts `startLiveRefresh()`, which runs `collectEntries()` + `clearStalePendingOps()` + the pool-usage read on a virtual thread and parks a `LiveSnapshot`.
+The next tick applies it on the UI thread via `applyLiveInstances()` -> `mergeInstances()` / `applyDiskModel(false)` / `publishRows()`, with `preservingSelection()` keeping both panels on the same names.
 The light path never re-reads YAML, never probes btrfs (`applyDiskModel(false)` re-applies the last full reload's in-memory backfill, `backfilledReferenced`, instead of probing), and never checks proxy/appliance health -- those stay on `reloadData()` (`r`, TUI re-entry, background-task completion) and their own cadences.
 A full reload clears `liveRefreshRequested` (it satisfies every earlier request; start follow-ups stay scheduled) and bumps `dataGeneration`; a snapshot from an older generation is dropped so it can't overwrite newer data.
 Light-refresh failures never open the error modal: they show one status line (`liveRefreshErrorShown`) until a refresh succeeds.
 
 Vanished targets are handled at two points.
-After any reload, `closeDialogIfTargetVanished()` closes a dialog whose instance (`dialogTarget()`: delete confirm, rename, branch source, F3 details via `detailInstanceName`, F9 actions) is no longer in `liveInstanceNames`, saying "`<name>` no longer exists" -- the detail/actions dialogs follow the table selection, so without this they would silently switch to another row.
-And right before acting, `vanished(name)` checks (instance action keys via `isInstanceActionKey`, template branch/delete, the confirm/rename/branch/actions dialogs' Enter): while `listIsCurrent()` -- subscribed, and no refresh requested, in flight or waiting to be applied -- it answers from `liveInstanceNames` with no Incus call, so a wedged daemon can't freeze the UI on a keypress; otherwise it does one `incus.exists()`.
+After any reload, `closeDialogIfTargetVanished()` closes a dialog whose instance (`dialogTarget()`: delete confirm, rename, branch source, F3 details via `detailInstanceName`, F9 actions) is no longer in `liveInstanceNames`, saying "`<name>` no longer exists".
+The detail/actions dialogs follow the table selection, so without this they would silently switch to another row.
+And right before acting, `vanished(name)` checks (instance action keys via `isInstanceActionKey`, template branch/delete, the confirm/rename/branch/actions dialogs' Enter).
+While `listIsCurrent()` -- subscribed, and no refresh requested, in flight or waiting to be applied -- it answers from `liveInstanceNames` with no Incus call, so a wedged daemon can't freeze the UI on a keypress.
+Otherwise it does one `incus.exists()`.
 `shellInto()` re-checks the status itself, covering an event still in transit.
 A failed existence check lets the action proceed rather than blocking the UI.
 
-**Credential accounts** (`a` on an instance, in the list or its F3 details): `AccountsModal`, extracted like `HelpChatModal` and snapshot-tested in `AccountsModalTest`, offers per namespace "default (<current default>)" then every usable account; a pin to an account that is gone stays selectable as "(not configured)" so opening and applying unchanged never re-points anything.
+**Credential accounts** (`a` on an instance, in the list or its F3 details).
+`AccountsModal`, extracted like `HelpChatModal` and snapshot-tested in `AccountsModalTest`, offers per namespace "default (<current default>)" then every usable account.
+A pin to an account that is gone stays selectable as "(not configured)" so opening and applying unchanged never re-points anything.
 `changes()` holds only the rows the user changed (null = follow the default).
 `ListCommand` checks them on the event thread with `InstanceLifecycle.checkAccountChange` so a refusal (e.g. a Claude auth mode the build did not bake) is shown in the dialog while the user is still choosing, then applies them with `InstanceLifecycle.changeAccounts` in a background task, with sinks, not stdout -- the same path as `isx account set/unset`.
 The F3 instance details show the same resolution as `isx account show` (`AccountUsage`), re-read when a background change finishes (`detailAccountsStale`).
@@ -68,11 +81,15 @@ Space opens, ←→ cycles, Enter confirms the branch; while open it takes every
 Tool lookups use `toolDefLoader.allToolSetups()`, not `find()`, which knows only YAML tools.
 The dialog's height counts its hint line (it used to be 11, which gave the hints zero height).
 
-**F3 template details** (`TemplateDetailView`, extracted like `HelpChatModal` and snapshot-tested in `TemplateDetailViewTest`) open full screen, not as a dialog: the compact view shows the template's *effective* settings (type, GUI, workdir, shell command, default action, build state, base image, then packages/tools/repos/host resources and -- only when set -- accounts, env, skills, package repos, removed packages, masked services, agent notes); the tree view shows each setting on the layer that declares it.
+**F3 template details** (`TemplateDetailView`, extracted like `HelpChatModal` and snapshot-tested in `TemplateDetailViewTest`) open full screen, not as a dialog.
+The compact view shows the template's *effective* settings (type, GUI, workdir, shell command, default action, build state, base image, then packages/tools/repos/host resources and -- only when set -- accounts, env, skills, package repos, removed packages, masked services, agent notes).
+The tree view shows each setting on the layer that declares it.
 `TemplateDetails.resolve()` does the chain resolution and must call the build's own resolvers (`ImageDef.resolveType`/`resolveAccounts`, `BuildCommand.resolveEffectiveWorkdir`/`resolveEffectiveDefaultAction`/`resolveImageUrl`) rather than re-derive them, or the view drifts from what a build produces.
 The type a template was *built* as comes from its `instance-mode` stamp (`TemplateInfo.instanceMode`); when it differs from the definition the view says a rebuild is needed.
-Under `Source:` it names the definition this one overrides from an earlier search layer (`LayeredDefinitions.overriddenSource()`, from the load the TUI already does) and, when the build stamped another file (`BuildSource.sourceOf()` on the `build-source` stamp the listing already carries, re-parsed only when the stamp changes), "built from <path>" (`TemplateDetailView.sourceLabel` says the `built-in` placeholder in words); the list's △ context line names that file by its file name only, so the warnings after it stay on the bar (#1099, `ListCommandBuiltFromTest`).
-A directory scanned twice (a search path naming the user directory, or reaching one through a symlink) records no override of a file by itself: the later layer's path and definition are recorded as for any layer, since project-local confinement is read from them (`ToolDefLoader.projectLocalToolNames()` from the path, images from the definition's `projectRoot`), and the override the earlier spelling recorded is carried over to the later one so `Overrides:` survives (`LayeredDefinitionsTest`, `ToolDefLoaderTest#aProjectToolAlsoReachedThroughASymlinkedSearchPathStaysProjectLocal`).
+Under `Source:` it names the definition this one overrides from an earlier search layer (`LayeredDefinitions.overriddenSource()`, from the load the TUI already does) and, when the build stamped another file (`BuildSource.sourceOf()` on the `build-source` stamp the listing already carries, re-parsed only when the stamp changes), "built from <path>" (`TemplateDetailView.sourceLabel` says the `built-in` placeholder in words).
+The list's △ context line names that file by its file name only, so the warnings after it stay on the bar (#1099, `ListCommandBuiltFromTest`).
+A directory scanned twice (a search path naming the user directory, or reaching one through a symlink) records no override of a file by itself.
+The later layer's path and definition are recorded as for any layer, since project-local confinement is read from them (`ToolDefLoader.projectLocalToolNames()` from the path, images from the definition's `projectRoot`), and the override the earlier spelling recorded is carried over to the later one so `Overrides:` survives (`LayeredDefinitionsTest`, `ToolDefLoaderTest#aProjectToolAlsoReachedThroughASymlinkedSearchPathStaysProjectLocal`).
 A new `ImageDef` field belongs in both views.
 Env values that look secret (`SecretRedactor`) are masked.
 
@@ -80,7 +97,8 @@ Env values that look secret (`SecretRedactor`) are masked.
 `rebuildRowData()` records the key in `rowsAgeKey`, and `tickLiveRefresh()` rebuilds the rows when the minute moves on; no Incus call is involved.
 Legacy date-only stamps use calendar days ("today", "yesterday").
 
-**Disk-space metrics**: An always-present **header band** (`renderHeader`) sits above the panels: a bold accent "brand chip" (` isx ` reverse-video, plus dim version) anchors app identity on the left, and a compact **storage gauge** is right-aligned on the same row when pool usage is available (fed by `IncusClient.getPoolUsageBytes(findUsablePool())`, cached in `poolUsage`, refreshed by each `reloadData()` and each light live refresh -- never per frame).
+**Disk-space metrics**: An always-present **header band** (`renderHeader`) sits above the panels.
+A bold accent "brand chip" (` isx ` reverse-video, plus dim version) anchors app identity on the left, and a compact **storage gauge** is right-aligned on the same row when pool usage is available (fed by `IncusClient.getPoolUsageBytes(findUsablePool())`, cached in `poolUsage`, refreshed by each `reloadData()` and each light live refresh -- never per frame).
 Gauge fill colour is green/amber/red at the `STORAGE_WARN_PERCENT`/`STORAGE_CRIT_PERCENT` thresholds; at critical it also raises a one-shot status warning.
 The gauge bar grows with the terminal (`HEADER_BAR_MIN`..`HEADER_BAR_MAX`, ~width/5).
 Between the two, a quiet **"N running" badge** (`runningSummary`, split by kind -- e.g. `* 2 containers, 1 VM running`, counted across `allEntries` by `runningCounts`) fills the gap; it is lower priority than the gauge and is shown only when it fits the leftover space, so it never evicts the gauge.
@@ -88,7 +106,8 @@ On narrow terminals the badge drops first, then the gauge (then its bar), so the
 Both panels carry a **DISK** column showing per-instance/per-template used bytes.
 
 Per-row disk weight has two models.
-The Incus API only ever exposes each btrfs subvolume's *exclusive* bytes (`state.disk.<dev>.usage` in the existing `recursion=2` listing, summed by `sumDiskUsage`), and exclusive collapses to ~0 for any subvolume that has a CoW descendant -- so it can't show a template's real weight.
+The Incus API only ever exposes each btrfs subvolume's *exclusive* bytes (`state.disk.<dev>.usage` in the existing `recursion=2` listing, summed by `sumDiskUsage`), and exclusive collapses to ~0 for any subvolume that has a CoW descendant.
+So it can't show a template's real weight.
 The accurate figure is btrfs *referenced* (rfer) bytes (a subvolume's full logical size including blocks shared with ancestors), which Incus does not expose.
 So `BuildCommand.probeReferencedSize()` measures rfer once at build time (templates are immutable and rfer is stable) via `BtrfsUsage.probe()` and `stampReferencedSize()` records it as `user.incus-spawn.disk-referenced` metadata (excluded from `contentFingerprint()`, so it never triggers a rebuild).
 The TUI reads that metadata for free each reload and, when **every** built template carries the stamp on a btrfs pool (`canUseReferencedModel`), shows each template as a delta from its parent (`applyReferencedTemplateDeltas` -> `referencedDelta`): the root template's delta is its own rfer (the base-image weight), derived templates show only what their layer added (e.g. the GraalVM/Maven tools), and instances keep their exclusive usage -- for a branch with no descendants that already equals its delta from the template, and it's free from the API.
@@ -97,10 +116,14 @@ Either way `baseTemplateName` tracks the template that owns the base weight, dri
 
 Instances are mutable, so they are never stamped -- an instance row is always live exclusive usage, meaning "space reclaimed by deleting just this row".
 This makes instance->instance branching (F4 on an instance) safe with no extra bookkeeping: nothing is cached, so deleting a branched-from instance needs no invalidation -- the surviving branch's exclusive usage grows to absorb the now-unshared blocks on the next reload.
-In the pre-deletion state the source's exclusive reads ~0 (its blocks are shared with the descendant, floating in the gauge like any CoW-shared blocks); `cowDeleteNote` warns about this via `hasDescendant(name, rowParentNames())` -- if anything was branched/derived from the target (detected from the `Metadata.PARENT` each row records), it flags that deletion frees little while descendants remain.
+In the pre-deletion state the source's exclusive reads ~0 (its blocks are shared with the descendant, floating in the gauge like any CoW-shared blocks).
+`cowDeleteNote` warns about this via `hasDescendant(name, rowParentNames())`.
+If anything was branched/derived from the target (detected from the `Metadata.PARENT` each row records), it flags that deletion frees little while descendants remain.
 Delta-model parent lookup for *templates* climbs the definitional (YAML) chain via `nearestStampedAncestorRfer` so a deleted intermediate template doesn't corrupt the surviving rows' deltas.
 
-`BtrfsUsage` (in `common`) reads rfer without an Incus API: on **Linux** it runs `sudo -n btrfs qgroup show -re --raw [--sync]`/`subvolume list` against the pool mount (a scoped NOPASSWD sudoers rule is installed by `isx init`); on **macOS** the pool lives in the appliance VM, so it asks the in-VM control agent's `btrfs-usage` verb (the agent runs as root and can read `/var/lib/incus/storage-pools`).
+`BtrfsUsage` (in `common`) reads rfer without an Incus API.
+On **Linux** it runs `sudo -n btrfs qgroup show -re --raw [--sync]`/`subvolume list` against the pool mount (a scoped NOPASSWD sudoers rule is installed by `isx init`).
+On **macOS** the pool lives in the appliance VM, so it asks the in-VM control agent's `btrfs-usage` verb (the agent runs as root and can read `/var/lib/incus/storage-pools`).
 Both feed the same `BtrfsUsage.parse()` join (qgroup rfer join subvolume paths -> instance name), which is unit-tested without btrfs.
 Any failure yields an empty map and the exclusive/fold fallback.
 `diskCell` renders values as `~3.1G` (or `-` when unknown).
@@ -109,27 +132,36 @@ Any failure yields an empty map and the exclusive/fold fallback.
 The plain read (`sync=false`, the default `probe(pool)`) reports committed accounting as-is -- cheap, for a future periodic-sampling cadence where a whole-filesystem commit per tick would be wasteful.
 The `--sync` read (`sync=true`) forces a commit first, so rfer reflects still-uncommitted writes; it's the rare accuracy-critical read, currently only `BuildCommand.probeReferencedSize()` right after a build.
 Keep the flag/option in step across the three layers or the read breaks: the Java command (`BtrfsUsage`), the `isx-agent` verb (`btrfs-usage <pool> [sync]`, allowlisted second token), and the sudoers rule (which lists **both** command forms).
-`probeReferencedSize()` measures rfer against the *temp* build name **before** the rebuild's `deleteIfExists`/rename (and `stampReferencedSize()` records it after the rename): deleting a btrfs subvolume can mark qgroup accounting inconsistent, so a read taken after the delete (i.e. on every rebuild) returns stale/zero rfer.
-A missing/zero rfer drops that template's stamp; the delta model tolerates a missing stamp on a *derived* template (`canUseReferencedModel` gates only on every built **root** being stamped -- an unstamped derived row falls back to its own exclusive usage, `applyReferencedTemplateDeltas`), but an unstamped root sends the whole display to the shared-base fold (`foldBaseWeightIntoRootTemplate`).
+`probeReferencedSize()` measures rfer against the *temp* build name **before** the rebuild's `deleteIfExists`/rename (and `stampReferencedSize()` records it after the rename).
+Deleting a btrfs subvolume can mark qgroup accounting inconsistent, so a read taken after the delete (i.e. on every rebuild) returns stale/zero rfer.
+A missing/zero rfer drops that template's stamp.
+The delta model tolerates a missing stamp on a *derived* template (`canUseReferencedModel` gates only on every built **root** being stamped -- an unstamped derived row falls back to its own exclusive usage, `applyReferencedTemplateDeltas`), but an unstamped root sends the whole display to the shared-base fold (`foldBaseWeightIntoRootTemplate`).
 To self-heal a missing stamp (pre-feature template, or a build whose stamp failed) without a rebuild, `fillMissingReferencedSizes()` backfills it on reload with a single **live, non-sync** probe -- but *only* when there's an actual gap (`hasUnstampedBuiltTemplate`), never overwriting an existing stamp and never forcing a commit, so the "privileged read is rare, not per-refresh" posture holds for a healthy install.
 
 **Accounting trust and auto-repair.**
 None of the above helps when btrfs itself has stopped counting.
 The kernel flags a pool's qgroup accounting `inconsistent` (and freezes every counter at its last value) when quotas are enabled on an already-populated pool -- which is how Incus enables them, lazily on the first instance size limit -- or when a subvolume delete exceeds `drop_subtree_threshold` (3 on the appliance kernel; every template rebuild deletes one).
-The frozen values are plausible non-zero numbers (typically the base image's rfer inherited at snapshot time), so they pass the `<= 0` stamp guard, get recorded, and the delta model subtracts identical stamps to exactly `~0B` per layer -- while the exclusive fallback and Incus's own `state.disk` usage read the same frozen qgroups, so there is no clean fallback; only the statfs-based gauge stays right.
+The frozen values are plausible non-zero numbers (typically the base image's rfer inherited at snapshot time), so they pass the `<= 0` stamp guard, get recorded, and the delta model subtracts identical stamps to exactly `~0B` per layer -- while the exclusive fallback and Incus's own `state.disk` usage read the same frozen qgroups, so there is no clean fallback.
+Only the statfs-based gauge stays right.
 Nothing clears the flag on its own.
-`IncusClient.delete()` — the one method every subvolume deletion funnels through (branch/template removal, `isx clean`, a rebuild's `deleteIfExists`, ...) — calls `BtrfsUsage.repairIfInconsistentThrottled` right after the delete succeeds, since a delete is exactly the operation that can cause this; that catches it at the moment of poisoning rather than waiting for the next reload.
-The throttled variant collapses a burst of deletes (`isx clean`, destroying several branches) into one check on a 5s minimum spacing, and defers the caller's pool lookup behind the same gate — N deletes must not mean N status reads, each an agent round trip on macOS.
+`IncusClient.delete()` — the one method every subvolume deletion funnels through (branch/template removal, `isx clean`, a rebuild's `deleteIfExists`, ...) — calls `BtrfsUsage.repairIfInconsistentThrottled` right after the delete succeeds, since a delete is exactly the operation that can cause this.
+That catches it at the moment of poisoning rather than waiting for the next reload.
+The throttled variant collapses a burst of deletes (`isx clean`, destroying several branches) into one check on a 5s minimum spacing, and defers the caller's pool lookup behind the same gate.
+N deletes must not mean N status reads, each an agent round trip on macOS.
 `MAX_RESCAN_TRIGGERS` bounds *consecutive* failed repairs and resets once accounting reads consistent, so a long TUI session never runs out of self-healing budget.
-The TUI also calls it every reload (`refreshAccountingStatus()`, cadence-limited to 30s normally / 2s while a repair is pending, to bound the macOS agent round trip): it reads the kernel's flags from sysfs (`/sys/fs/btrfs/<fsid>/qgroups/{enabled,inconsistent,mode,drop_subtree_threshold}` -- world-readable, no sudo; `BtrfsSysfs` on Linux, the agent's `btrfs-status` verb on macOS, one shared `parseStatus`) and, when inconsistent, starts a background `btrfs quota rescan` (throttled: at most one trigger per 60s and five per process).
+The TUI also calls it every reload (`refreshAccountingStatus()`, cadence-limited to 30s normally / 2s while a repair is pending, to bound the macOS agent round trip).
+It reads the kernel's flags from sysfs (`/sys/fs/btrfs/<fsid>/qgroups/{enabled,inconsistent,mode,drop_subtree_threshold}` -- world-readable, no sudo; `BtrfsSysfs` on Linux, the agent's `btrfs-status` verb on macOS, one shared `parseStatus`) and, when inconsistent, starts a background `btrfs quota rescan` (throttled: at most one trigger per 60s and five per process).
 While `QgroupStatus.untrusted()` the delta model keeps using existing stamps (a stamp from consistent accounting stays valid -- templates are immutable), but nothing is *read live*: no backfill, no shared-base fold (`baseTemplateName` cleared), and a one-shot status hint says a repair is underway.
-The reload that first sees the flag clear marks the stamps suspect, and `revalidateStampsIfNeeded()` does one live probe and re-stamps (persisting via `configSet`) any template whose stamp differs -- that's the only path that overwrites an existing stamp, and it also fires at most once per session on the poisoned-stamp heuristic `hasSuspiciousStamps` (a built derived template stamped with exactly its parent's value), which heals a pool that broke before the check existed.
+The reload that first sees the flag clear marks the stamps suspect, and `revalidateStampsIfNeeded()` does one live probe and re-stamps (persisting via `configSet`) any template whose stamp differs.
+That's the only path that overwrites an existing stamp, and it also fires at most once per session on the poisoned-stamp heuristic `hasSuspiciousStamps` (a built derived template stamped with exactly its parent's value), which heals a pool that broke before the check existed.
 A status that can't be read (old agent answering `error: unknown verb`, pre-6.1 kernel without the sysfs attributes, quota off) is `available=false`, never "trusted": the display simply behaves as it did before the check.
 `BuildCommand.probeReferencedSize()` runs the same detect-and-repair before stamping, with a bounded `awaitConsistent` wait (20s, `Repairing disk accounting...` step) so a developer-sized pool gets a correct stamp immediately and a huge one leaves the template unstamped for the backfill.
 `isx doctor` reports the state and offers the rescan as a remediation for when the automatic one couldn't run (e.g. a Linux sudoers rule from before `INIT_VERSION` 6 added `btrfs quota rescan`).
 The `C` key reclaims space via a two-phase flow: `CleanCommand.scanPool(incus)` discovers reclaimable items (with a "Scanning pool..." progress overlay), then a `CLEAN_CONFIRM` modal always opens showing all four categories (failed builds, unused images, cached base images, DNF build cache).
 Actionable categories are checkboxes with counts/sizes (failed builds and unused images pre-checked; cached base images and DNF cache unchecked, since removing them only costs the next build a re-download).
-`CleanCommand.classifyImages` decides the split: an image behind a template's `image_url`/`vm_image_url` alias (`BuildCommand.vmImageAlias` for the latter) is a cached base image, never "unused"; empty categories are shown as disabled dim lines with a short reason (e.g. "none", "all match a template", "no cache volume").
+`CleanCommand.classifyImages` decides the split.
+An image behind a template's `image_url`/`vm_image_url` alias (`BuildCommand.vmImageAlias` for the latter) is a cached base image, never "unused".
+Empty categories are shown as disabled dim lines with a short reason (e.g. "none", "all match a template", "no cache volume").
 Focus navigation skips disabled categories.
 When nothing is reclaimable, the modal shows "Pool is clean." with only an Esc/Close hint.
 On macOS, a dim `isx vm resize` tip appears when pool usage exceeds `STORAGE_WARN_PERCENT`.

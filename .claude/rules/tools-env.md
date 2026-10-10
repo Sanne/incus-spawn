@@ -27,9 +27,11 @@ It is an always-true fact that must be known *before* the first relevant action,
 It travels with the tool, so every template installing it inherits the note.
 Unlike `description` it **is** part of `contentFingerprint()`, so editing one rebuilds -- and mind the blast radius: a tool note marks **every template installing that tool** out of sync, not just one.
 A note costs tokens in every session and the agent follows it in every session, including tasks it wasn't written for, so add one only when leaving it out would cause a wrong action.
-Procedural how-to content belongs in a skill, which loads on demand rather than in every session -- and tools can declare `skills:` themselves (same `SkillsDef` shape as images, exposed via `ToolSetup.skills()`, installed by `installSkills` alongside the image's and deduped against them).
+Procedural how-to content belongs in a skill, which loads on demand rather than in every session.
+Tools can declare `skills:` themselves (same `SkillsDef` shape as images, exposed via `ToolSetup.skills()`, installed by `installSkills` alongside the image's and deduped against them).
 Bare skill names in a tool resolve against the **tool's** `skills.repo`, not the image's.
-Tools the layer only *reconfigures* are skipped: an ancestor installed them, so their skills are already in the image, and re-fetching would make a parameter-only rebuild depend on the skill source still being reachable -- the same reason `collectEffectiveSkills` subtracts ancestor skills.
+Tools the layer only *reconfigures* are skipped.
+An ancestor installed them, so their skills are already in the image, and re-fetching would make a parameter-only rebuild depend on the skill source still being reachable -- the same reason `collectEffectiveSkills` subtracts ancestor skills.
 Both fields are opt-in and most built-ins declare neither; `mvnd` carries a note because the bare name gives an agent no reason to prefer it over `mvn`, while `zmx`/`starship` need nothing.
 Don't restate the tool's `description`, and don't list what's installed -- the generated file already does that.
 Notes are best written reactively, after observing an agent get something wrong; speculative ones tend to spend context on advice nobody needed.
@@ -51,8 +53,10 @@ Action resolution logic is centralized in `ActionResolver`, shared by both `List
 `ActionResolver` handles discovering actions from installed tools, resolving default actions from template inheritance chains, finding specific actions by reference, and building `ActionContext` for execution.
 For instances (clones), the installed-tools set comes from `BUILD_SOURCE` metadata (baked at build time) so that action resolution reflects what is actually installed — the current YAML chain may reference tools added after the instance was branched.
 For templates, the YAML chain is authoritative -- unless it is gone (the YAML deleted after the build), when the template's own `BUILD_SOURCE` snapshot stands in, as the `default-action` stamp does for the ref.
-The `default-action` ref itself still comes from YAML (YAML-first, metadata fallback) so users can switch between already-installed tools without rebuilding; switching to a tool not yet installed produces a "tool not found" error instead of trying to execute a missing binary.
-The action a new branch opens with is `ActionResolver.defaultCommandForBranch`, the one rule for `isx branch` and the TUI's branch dialog (#868): it takes the source and its leaf template as `BranchFlow.preflight` read them (`Preflight.sourceInstance`, `Preflight.template`), so it makes no Incus request, and falls back to a plain shell where the ref names a tool the source was not built with.
+The `default-action` ref itself still comes from YAML (YAML-first, metadata fallback) so users can switch between already-installed tools without rebuilding.
+Switching to a tool not yet installed produces a "tool not found" error instead of trying to execute a missing binary.
+The action a new branch opens with is `ActionResolver.defaultCommandForBranch`, the one rule for `isx branch` and the TUI's branch dialog (#868).
+It takes the source and its leaf template as `BranchFlow.preflight` read them (`Preflight.sourceInstance`, `Preflight.template`), so it makes no Incus request, and falls back to a plain shell where the ref names a tool the source was not built with.
 
 **Tool-contributed proxy definitions**: Tools declare proxy entries via a `proxy:` block (YAML `ProxyDef` or `ToolSetup.proxy()` for CDI tools) that registers domains with the MITM proxy for credential injection.
 A `ProxyDef` has shared `configuration:` (a map of `ConfigEntry` entries) and a list of `auth:` entries (`AuthDef`), each with a `domains:` list and an auth type (`basic`, `bearer`, `header`, or `anthropic`).
@@ -63,13 +67,15 @@ Auth fields use `${configKey}` template references resolved against the shared c
 Built-in proxy tools are CDI tools declaring `proxy()` directly: `ClaudeSetup` (1 auth entry: `api.anthropic.com` with `type: anthropic`), `GhSetup` (2 auth entries: `github.com` Basic with literal username `"x-access-token"`, `*.github.com`+`*.githubusercontent.com` Bearer), `BobSetup` (1 auth entry for `bob.ibm.com` and regional domains, Header type), `CodexSetup` (1 auth entry: `api.openai.com` Bearer), and `CopilotSetup` (1 auth entry: `*.githubcopilot.com`+`api.individual.githubcopilot.com`+`api.business.githubcopilot.com`+`api.enterprise.githubcopilot.com` Bearer -- the last three are exact domains, not folded into the `*.githubcopilot.com` wildcard, because TLS wildcard certs only match one label and each has two ahead of `githubcopilot.com`; its `token` config entry points at `github.token`, not its own namespace, so it reuses the `gh` tool's PAT instead of prompting separately -- installed independently of `gh` via `npm install -g @github/copilot` since newer `gh` versions ship a `copilot` built-in that only offers an interactive-only downloader).
 `type: anthropic` means the domain is handled by MitmProxy's hardcoded Anthropic auth logic (three-way routing: Vertex, OAuth, API key) -- the generic tool proxy injection path does not apply.
 Anthropic entries use relaxed resolution (at least one credential present, matching `ClaudeConfig.hasAuth()` semantics) and are excluded from MitmProxy's domain maps; a change to their credentials is still config drift, since it changes `config.yaml`.
-A `ProxyDef` also declares `placeholders:` (`PlaceholderDef`: `env`, `prefix`), the variables its credential's placeholder travels in, which every start fills with a proof token (`ToolSetup.placeholders()`, `ProofToken`; see `proxy.md`): a tool that exports a static credential placeholder declares it there -- `ProofTokenTest` fails for a built-in that does not.
+A `ProxyDef` also declares `placeholders:` (`PlaceholderDef`: `env`, `prefix`), the variables its credential's placeholder travels in, which every start fills with a proof token (`ToolSetup.placeholders()`, `ProofToken`; see `proxy.md`).
+A tool that exports a static credential placeholder declares it there -- `ProofTokenTest` fails for a built-in that does not.
 A YAML tool's placeholder must name a variable its own `env:` entries set, to a value starting with its prefix and `placeholder` (`ToolDefValidator` errors; `YamlToolSetup.placeholders()` drops the former, and a start never replaces another value).
 `ToolDefValidator.embeddedTokens` checks exactly a tool's declared placeholders, and guesses from names only for a tool that declares none.
 `ToolProxyResolver` (in `common`) handles configuration resolution.
 Its `fingerprint(List<ResolvedToolProxy>)` (a SHA-256 of the resolved proxy config) is used only by tests -- nothing in production compares it, so it does not drive restarts.
 `findUnresolved()` returns configuration entries that could not be resolved (excluding `type: anthropic`); `ProxyMain` displays a warning for these at startup.
-`missingSecrets()` is the account-aware counterpart for one instance, used by `CredentialCheck` at branch time: judged as `resolve()` judges it, a tool is missing credentials only when none of its auth entries would be served for the selection, and the unresolved keys those entries reference are reported.
+`missingSecrets()` is the account-aware counterpart for one instance, used by `CredentialCheck` at branch time.
+Judged as `resolve()` judges it, a tool is missing credentials only when none of its auth entries would be served for the selection, and the unresolved keys those entries reference are reported.
 Config drift detection uses file stamps: `MitmProxy.hasConfigChangedSinceLoad()` compares a fresh `ConfigFingerprint` (mtime and size of `config.yaml` and each tool definition in `tools/` and in every search path's `tools/`, #890) against the one `ConfigFingerprint.load()` took before reading the config, avoiding re-parsing on every `/health` poll.
 Read the proxy's config through `ConfigFingerprint.load()`, never `SpawnConfig.load()` alone.
 `ToolProxyResolver.proxyToolSetups(config)` reads tools from that config's search paths, never a second `config.yaml` read, and `ConfigWatcher` watches the same tool directories.
@@ -97,11 +103,15 @@ When adding a built-in image or tool, you must update the corresponding `BUILTIN
 `EnvEntry` (`config/EnvEntry.java`) models a declarative env var with four strategies: `SET`, `SET_IF_UNSET`, `PREPEND`, `APPEND`.
 YAML is parsed by a custom `ListDeserializer` that accepts only structured maps and rejects shell strings (`- export FOO=bar`) with the structured equivalent in the error.
 There is no raw/verbatim entry: built-in code declares env vars through the same factories, so everything is conflict-checked.
-For a value the shell must expand at login (`$HOME` in `ClaudeSetup`'s PATH prepend, `$HOSTNAME` for `ISX_CONTAINER` in `BuildCommand.writeEnvFile()`), call `.expandingAtLogin()` -- code-only (no setter, not parsed from YAML); only plain `$NAME`/`${NAME}` references stay live; any other `$`, quotes, backslashes and backticks are still escaped.
+For a value the shell must expand at login (`$HOME` in `ClaudeSetup`'s PATH prepend, `$HOSTNAME` for `ISX_CONTAINER` in `BuildCommand.writeEnvFile()`), call `.expandingAtLogin()` -- code-only (no setter, not parsed from YAML).
+Only plain `$NAME`/`${NAME}` references stay live.
+Any other `$`, quotes, backslashes and backticks are still escaped.
 Both `ToolDef.env` and `ImageDef.env` use this model.
 
 A tool's credential placeholder (an env value the proxy will check, #1108) must be read by the tool when it runs.
-`ToolDefLoader` warns, through `ToolDefValidator.embeddedTokens`, when a tool with a `proxy:` entry copies the value of one of its own env entries into a `files:` entry or a build step, counting the tool's declared `placeholders:` (#1106) or, for a tool that declares none, an entry named as a credential (`SecretRedactor.looksSecret`) whose value is no path, URL or phrase, so those are not taken for tokens; the loader is the check's only caller, so each finding is reported once per load; built-in Java tools whose CLI reads a file instead write an `/etc/profile.d/isx-zz-*` login script that rewrites it from the variable (see `.claude/rules/proxy.md`).
+`ToolDefLoader` warns, through `ToolDefValidator.embeddedTokens`, when a tool with a `proxy:` entry copies the value of one of its own env entries into a `files:` entry or a build step, counting the tool's declared `placeholders:` (#1106) or, for a tool that declares none, an entry named as a credential (`SecretRedactor.looksSecret`) whose value is no path, URL or phrase, so those are not taken for tokens.
+The loader is the check's only caller, so each finding is reported once per load.
+Built-in Java tools whose CLI reads a file instead write an `/etc/profile.d/isx-zz-*` login script that rewrites it from the variable (see `.claude/rules/proxy.md`).
 
 `EnvResolver` (`config/EnvResolver.java`) collects sourced entries from the template parent chain and all tools, validates consistency (set+set with different values -> `EnvConflictException` naming both sources), and generates the shell script for `/etc/profile.d/isx-env.sh`.
 

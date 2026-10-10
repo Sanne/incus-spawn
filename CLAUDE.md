@@ -12,8 +12,10 @@ See README.md for user-facing docs, DESIGN.md for architecture rationale, and [d
 
 **The project spans several repositories, and the technical work is delegated.**
 `isx` is only part of it: the base images live in [`incus-spawn-images`](https://github.com/Sanne/incus-spawn-images), the template definitions in [`incus-spawn-templates`](https://github.com/Sanne/incus-spawn-templates), and the install channels in [`homebrew-tap`](https://github.com/Sanne/homebrew-tap) and [`isx-apt-releases`](https://github.com/Sanne/isx-apt-releases).
-When a fix belongs in one of them, open the companion PR *there* and cross-link it with the issue here -- a change that only lands in this repo will not reach users whose breakage came from an image or a template (#842 / incus-spawn-images#15 is the worked example: the symptom was `isx shell` timing out, the fix was one line in a base image).
-The investigation and the code belong to an agent running in an isx instance, not to the session holding the conversation: branch one (`isx branch --from tpl-isx <name>`) and drive it headless with `incus exec <name> -- su - agentuser -c 'claude -p "<brief>" --permission-mode bypassPermissions'`, then keep only its conclusion.
+When a fix belongs in one of them, open the companion PR *there* and cross-link it with the issue here.
+A change that only lands in this repo will not reach users whose breakage came from an image or a template (#842 / incus-spawn-images#15 is the worked example: the symptom was `isx shell` timing out, the fix was one line in a base image).
+The investigation and the code belong to an agent running in an isx instance, not to the session holding the conversation.
+Branch one (`isx branch --from tpl-isx <name>`) and drive it headless with `incus exec <name> -- su - agentuser -c 'claude -p "<brief>" --permission-mode bypassPermissions'`, then keep only its conclusion.
 Probing instances, running package managers and reading build output by hand fills the conversation with detail that belongs inside the instance.
 
 **Base-image checksums are verified against the release, never trusted.**
@@ -22,7 +24,8 @@ They have been wrong on `main` more than once -- most recently `fedora-44-202610
 The cause is structural: `update-base-image.yml` has two paths, and only the manual backstop derives the sums from the release's own `SHA256SUMS`.
 The `repository_dispatch` path -- the one that actually runs -- takes the payload the images repo sent and comments "trust the payload".
 **Never merge a base-image bump on the payload alone.**
-Check all four against the authoritative asset, and mind that the pairing is as easy to get wrong as the digits (`-vm` is the VM disk, the bare name is the container rootfs, and each has an x86_64 and an aarch64):
+Check all four against the authoritative asset.
+Mind that the pairing is as easy to get wrong as the digits (`-vm` is the VM disk, the bare name is the container rootfs, and each has an x86_64 and an aarch64):
 
 ```shell
 gh release download <tag> -R Sanne/incus-spawn-images -p SHA256SUMS -O -
@@ -92,14 +95,19 @@ Three Maven modules under a parent POM:
 - **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`).
   Depends on common.
   Native image: G1 GC on Linux and serial GC on macOS (measured: G1 buys nothing on Apple Silicon, see `docs/PERFORMANCE-NOTES.md`), `-O3` (throughput-optimized, enables ML-inferred PGO), on x86_64 `-march=haswell`, on aarch64 `-march=armv8.1-a+aes`.
-  The `-march` value is set by arch-gated Maven profiles in `proxy/pom.xml` (one per arch: an x86 `-march` fails an aarch64 build and vice versa). x86_64: GraalVM's default `-march=x86-64-v3` omits AES and CLMUL, so the image cannot use AES-NI/GHASH intrinsics and TLS falls back to software AES -- measured 73 MB/s vs 960 MB/s serving a cached Maven artifact (~13x).
+  The `-march` value is set by arch-gated Maven profiles in `proxy/pom.xml` (one per arch: an x86 `-march` fails an aarch64 build and vice versa).
+  x86_64: GraalVM's default `-march=x86-64-v3` omits AES and CLMUL, so the image cannot use AES-NI/GHASH intrinsics and TLS falls back to software AES -- measured 73 MB/s vs 960 MB/s serving a cached Maven artifact (~13x).
   `haswell` costs no hardware support: AES-NI predates the v3 baseline by three years.
   `skylake` (+ADX) measures indistinguishably, so its narrowing is not worth taking.
-  Do not "upgrade" this to `x86-64-v4`: the numbered levels never include AES, so v4 measures identically to v3 while dropping non-AVX-512 hardware. aarch64, measured separately: GraalVM's default `armv8.1-a` has no AES/PMULL either (proxy, cached Maven artifact on Apple Silicon: 74 vs 627 MB/s, #1144); `+aes` enables AES and PMULL, and GraalVM has no runtime CPU dispatch on aarch64, so it is a build-time choice.
+  Do not "upgrade" this to `x86-64-v4`: the numbered levels never include AES, so v4 measures identically to v3 while dropping non-AVX-512 hardware.
+  aarch64, measured separately: GraalVM's default `armv8.1-a` has no AES/PMULL either (proxy, cached Maven artifact on Apple Silicon: 74 vs 627 MB/s, #1144).
+  `+aes` enables AES and PMULL, and GraalVM has no runtime CPU dispatch on aarch64, so it is a build-time choice.
   It drops no hardware the default ran on in practice: ARMv8.0 cores (Raspberry Pi 3/4) already fail `armv8.1-a`'s LSE check.
 
 Both `cli` and `proxy` are independent Quarkus applications that produce separate native binaries.
-The CLI has no Vert.x dependency, so it **cannot** run the proxy in-process: every install channel must ship both binaries, and `isx proxy start` exits `EXIT_CONFIG` (78) with install instructions when `isx-proxy` is missing -- before touching the service, since restarting a service whose binary is absent cannot help.
+The CLI has no Vert.x dependency, so it **cannot** run the proxy in-process.
+Every install channel must ship both binaries.
+`isx proxy start` exits `EXIT_CONFIG` (78) with install instructions when `isx-proxy` is missing -- before touching the service, since restarting a service whose binary is absent cannot help.
 On macOS that exit code is not enough (launchd has no `RestartPreventExitStatus`), so `haltUnusableMacOsService()` boots the job out and removes the plist unless the proxy is still answering.
 The unit and macOS plist exec `isx-proxy` directly; for units written by older builds, which exec `isx proxy start`, `ProxyService.isSupervisedInvocation()` matches systemd's `INVOCATION_ID` against the proxy unit's own so the command never manages the service it is itself running under.
 Both exist because a unit exec'ing `isx proxy start` restarts itself forever (issue #701).
@@ -114,9 +122,13 @@ Resolution **fails closed**: a pin to a missing account errors rather than servi
 Every namespace, Claude included, follows one model (#773): a flat, pre-accounts credential *presents as the account `default`*, and writes always produce the accounts layout.
 What differs between namespaces is declared as an `AccountShape` (`ToolSetup.accountShape()`), never branched on by name.
 The proxy identifies the caller by source address (static IP + `security.ipv4_filtering`, which is load-bearing, not optional hardening).
-A per-start secret (`InstanceSecret`, #934) adds a second check for host-side services: `InstanceRegistry.identify()` wants address *and* secret; only its hash is recorded on the host, and every isx start rotates it, for one PATCH on a stopped start and none on a branch (`InstanceLifecycle.startForUse`).
-A container start, a branch's included, then records its boot (`last_used_at`, read once the guest answers and handed on to the CA check, so the stamp's write is the one request it adds), so `ensureReady` replaces a secret lost to a reboot isx did not do at no cost on the shell path; a VM's agent probe asks the guest instead (#1024).
-Each start also turns the credential placeholders into proof tokens, an HMAC of that start's secret per namespace (`ProofToken`, #1106): which variables carry them is declared on the tool's `proxy:` entry (`placeholders:`), they are written beside the secret in `/run/isx` by the same exec, and the raw secret never enters the environment.
+A per-start secret (`InstanceSecret`, #934) adds a second check for host-side services: `InstanceRegistry.identify()` wants address *and* secret.
+Only its hash is recorded on the host, and every isx start rotates it, for one PATCH on a stopped start and none on a branch (`InstanceLifecycle.startForUse`).
+A container start, a branch's included, then records its boot (`last_used_at`, read once the guest answers and handed on to the CA check, so the stamp's write is the one request it adds), so `ensureReady` replaces a secret lost to a reboot isx did not do at no cost on the shell path.
+A VM's agent probe asks the guest instead (#1024).
+Each start also turns the credential placeholders into proof tokens, an HMAC of that start's secret per namespace (`ProofToken`, #1106).
+Which variables carry them is declared on the tool's `proxy:` entry (`placeholders:`).
+They are written beside the secret in `/run/isx` by the same exec, and the raw secret never enters the environment.
 A placeholder token in the guest is read when the tool runs, never fixed by a build (#1108): where a tool reads a file instead of its variable, a login script in `/etc/profile.d/isx-zz-*` rewrites the file from the variable.
 See `.claude/rules/proxy.md` and DESIGN.md.
 
@@ -130,17 +142,24 @@ See `.claude/rules/commands.md` and DESIGN.md "Testing".
 
 **Never print straight to stdout/stderr from code the TUI can reach.**
 While the TUI renders it owns the terminal: a `System.out`/`System.err` line is drawn over and lost, and scrambles the screen.
-Shared code (`common`, especially `lifecycle/` and `incus/`) that reports progress or warnings takes a sink instead -- a `Consumer<String>` (`InstanceLifecycle.prepareHostDevicesForStart(..., warn)`, `ensureReady(..., say)`) or `StaticIpAllocator.Output` -- and each caller routes it: the CLI to `System.out::println`, the TUI to its warning log.
+Shared code (`common`, especially `lifecycle/` and `incus/`) that reports progress or warnings takes a sink instead -- a `Consumer<String>` (`InstanceLifecycle.prepareHostDevicesForStart(..., warn)`, `ensureReady(..., say)`) or `StaticIpAllocator.Output`.
+Each caller routes it: the CLI to `System.out::println`, the TUI to its warning log.
 Pass plain stdout from the TUI only where it has provably released the terminal (e.g. `shellInto`, after the runner closes), and say so in a comment.
 Code with no caller to take a sink from -- e.g. a definition loader built several layers down, as `ToolProxyResolver` builds `ToolDefLoader`s -- reports through `Warnings.warn()` (`common`): each distinct message once per channel (a long-running process that re-reads definitions calls `Warnings.forgetReported()`, as the proxy does on each reload), to stderr by default, and into the TUI's `WarningLog` while the TUI draws or reloads (#872).
 In the TUI, a warning sink is `warningLog::add`, never the status line directly: the status line holds one message until the next key, so warnings from several operations would overwrite each other.
-The same holds before the TUI opens: bare `isx` holds `Warnings` raised while it gets ready (VM start, init) for the TUI's log, and waits for Enter before opening the TUI if anything else was printed (`PreTuiOutput`, #1154) -- so a pre-TUI notice is a `Warnings.warn`, not a bare print.
+The same holds before the TUI opens.
+Bare `isx` holds `Warnings` raised while it gets ready (VM start, init) for the TUI's log, and waits for Enter before opening the TUI if anything else was printed (`PreTuiOutput`, #1154).
+So a pre-TUI notice is a `Warnings.warn`, not a bare print.
 
 **Output a script reads is a contract.**
-`--format=plain|json` (on `isx list` and every other query command, and `isx branch`) goes through `OutputFormat` (`common/util`): one ordered map per record feeds both formats; fields are added, never renamed, removed or reordered; stdout holds only results, never colour, glyphs, progress or prose; no value writes a control character raw (`plain` spaces them through `OutputFormat.oneLine`, `json` escapes them, #1118).
+`--format=plain|json` (on `isx list` and every other query command, and `isx branch`) goes through `OutputFormat` (`common/util`): one ordered map per record feeds both formats.
+Fields are added, never renamed, removed or reordered.
+Stdout holds only results, never colour, glyphs, progress or prose.
+No value writes a control character raw (`plain` spaces them through `OutputFormat.oneLine`, `json` escapes them, #1118).
 `table` is for people and may change.
 `isx list` from the CLI costs one Incus request and loads no definitions; `isx instances` is a deprecated alias for `isx list -q`.
-Commands that act need only clean stdout: `BuildOutput.ansi()` is the one gate for colour and hyperlinks (nothing off an ANSI terminal or under `NO_COLOR`; it follows stdout, not stderr), and its warnings and notes go to stderr; a status report goes to stdout in every state, its exit code saying which (#1037).
+Commands that act need only clean stdout: `BuildOutput.ansi()` is the one gate for colour and hyperlinks (nothing off an ANSI terminal or under `NO_COLOR`; it follows stdout, not stderr), and its warnings and notes go to stderr.
+A status report goes to stdout in every state, its exit code saying which (#1037).
 See `.claude/rules/commands.md` and DESIGN.md "Output for scripts".
 
 **YAML tool downloads:** `ToolDef` download entries may set `extract`, `destination_file`, or both.
@@ -148,7 +167,8 @@ Downloads are cached on the host, then either extracted into the target, copied 
 VM builds use mount-and-copy rather than slow incus-agent file pushes over vsock.
 
 **Secrets are declared, not listed.**
-`SecretRegistry` (`common/config/`) answers "where do secrets live in `config.yaml`" by collecting every tool's `ToolDef.ConfigEntry` that sets `secret: true` with a `config-path` -- so a new credential becomes known to every secret-aware consumer by being declared on the tool (`ToolSetup.proxy()` or tool YAML), never by editing a list.
+`SecretRegistry` (`common/config/`) answers "where do secrets live in `config.yaml`" by collecting every tool's `ToolDef.ConfigEntry` that sets `secret: true` with a `config-path`.
+So a new credential becomes known to every secret-aware consumer by being declared on the tool (`ToolSetup.proxy()` or tool YAML), never by editing a list.
 A declared leaf also holds anywhere under its namespace, which is what covers `claude.accounts.<name>.apiKey`.
 `SecretRedactor` owns the other half -- what a credential *looks like*: the whole-word key-name backstop for undeclared keys in `SpawnConfig.extras`, the token-shape patterns, and the `<isx:redacted:<path>>` marker.
 `isx doctor --bundle` (`SupportBundle`) is the first consumer: the config is redacted structurally, every other file is scrubbed, and `SupportBundle.add()` is the only way into the archive so a new collector cannot leak by forgetting.
@@ -167,21 +187,32 @@ See DESIGN.md "Project-local templates are confined to their project" and `.clau
 **`isx mcp` gives a local agent a narrow slice of isx.**
 It serves MCP over stdio (hand-rolled JSON-RPC in `cli/.../mcp/`: the Quarkus MCP extension cost every isx command ~1.7 ms at startup).
 An agent may branch only templates listed in `config.yaml`'s `mcp:` section (read per call, never written by the package -- `McpNoWritePathTest`), never project-local ones, always with template defaults via `BranchFlow` -- or fork a stopped instance it holds (`create_instance(from_instance)`, #1013), which is `isx branch --from <instance>` with that instance's lineage re-checked.
-An `idempotency_key` on `create_instance`, `delegate` and `exec(background)` (#1011) makes repeating a call safe: it is stamped on the instance by the copy request (`mcp-idempotency-key`) and written to the task's directory, so it lives as long as what it made, with no host ledger.
-Instances belong to the host user and are held by one session (`<pid>-<start>`), stamped by the copy request itself and checked on every tool call; a session ending releases them as orphans, which a later session can `adopt_instance` (tasks included) and which are destroyed only after `mcp.orphan-grace-hours` with nobody in them (#898); one kept only for a delegate that shows no activity is stopped instead, and destroyed after `mcp.dormant-grace-hours` unless adopted (#1028).
+An `idempotency_key` on `create_instance`, `delegate` and `exec(background)` (#1011) makes repeating a call safe.
+It is stamped on the instance by the copy request (`mcp-idempotency-key`) and written to the task's directory, so it lives as long as what it made, with no host ledger.
+Instances belong to the host user and are held by one session (`<pid>-<start>`), stamped by the copy request itself and checked on every tool call.
+A session ending releases them as orphans, which a later session can `adopt_instance` (tasks included) and which are destroyed only after `mcp.orphan-grace-hours` with nobody in them (#898).
+One kept only for a delegate that shows no activity is stopped instead, and destroyed after `mcp.dormant-grace-hours` unless adopted (#1028).
 A person sees the same: `isx list` (`mcp_state`, `mcp_purpose`) and the TUI's instance details say which instances a session made, what for, and whether they are held, orphaned or kept (`McpStanding`, from the listing alone, #1053).
-`exec` has no default time limit (cancel kills the process tree); background commands and `delegate` (the Claude Code inside the instance) run as systemd units in the guest; a client that lists `isx/task_changed` under `capabilities.experimental` is notified of every task state change (`TaskWatcher`, #1014), and only then are tasks polled.
+`exec` has no default time limit (cancel kills the process tree).
+Background commands and `delegate` (the Claude Code inside the instance) run as systemd units in the guest.
+A client that lists `isx/task_changed` under `capabilities.experimental` is notified of every task state change (`TaskWatcher`, #1014), and only then are tasks polled.
 `instance_activity` reads what the proxy counted of an instance's model calls (its host-only `/activity`), so a coordinator tells working from stuck without touching the instance.
 Every tool declares an `outputSchema` and returns matching `structuredContent` for programs, while the text stays for the model; a refusal carries no `structuredContent`, only a code in `_meta["dev.incusspawn/error"]` (#1010).
 Stdout is the protocol: `StdioGuard` redirects `System.out` to stderr and `Headless` disables prompts.
-An agent may also run in an instance branched with `--mcp-client` (#915): the proxy serves it `https://mcp.isx.internal/mcp` (`McpBridge`, Streamable HTTP) after checking address, per-start secret and the `mcp-caller` stamp, bridged to a host `isx mcp --caller-instance <name>` whose session is the instance itself; no copy inherits the stamp and the MCP path refuses it.
+An agent may also run in an instance branched with `--mcp-client` (#915).
+The proxy serves it `https://mcp.isx.internal/mcp` (`McpBridge`, Streamable HTTP) after checking address, per-start secret and the `mcp-caller` stamp, bridged to a host `isx mcp --caller-instance <name>` whose session is the instance itself.
+No copy inherits the stamp and the MCP path refuses it.
 Every start registers the server in that instance's Claude Code, or removes it from one without the stamp, inside the exec that delivers the secret (`McpClientRegistration`, #1182), so a copy loses it on its first start.
 See `.claude/rules/mcp.md` and DESIGN.md "MCP server".
 
 **Native image: host paths belong in the run-time-initialized classes.**
-Quarkus initializes application classes at image-build time unless they are listed in `--initialize-at-run-time`, and Linux native builds run as **root inside the GraalVM builder container** — so a field holding an `Environment` path bakes the builder's `/root/...` into the binary (that regression shipped: see DESIGN.md "Build-time initialization must not capture host paths").
+Quarkus initializes application classes at image-build time unless they are listed in `--initialize-at-run-time`, and Linux native builds run as **root inside the GraalVM builder container**.
+So a field holding an `Environment` path bakes the builder's `/root/...` into the binary (that regression shipped: see DESIGN.md "Build-time initialization must not capture host paths").
 Eagerly resolved host state goes in `RuntimeConstants` (`common`) or `RuntimeServices` (`cli`), both on the flag; everywhere else call the `Environment` method instead of storing its result.
-The flag is declared once per module, in its `resources-filtered/application.properties`; pom profiles add platform arguments through placeholders the list includes and never redefine the list itself (#489); `macos.min.args` is how every macOS build gets its minimum macOS (DESIGN.md "The minimum macOS is set by the build") -- `NativeImageInitializationTest` fails if a list stops deferring a class or registering a guard, or a pom redefines it, and `graal/BakedHostStateFeature` fails the native build if such a path reaches the image heap.
+The flag is declared once per module, in its `resources-filtered/application.properties`.
+Pom profiles add platform arguments through placeholders the list includes and never redefine the list itself (#489).
+`macos.min.args` is how every macOS build gets its minimum macOS (DESIGN.md "The minimum macOS is set by the build").
+`NativeImageInitializationTest` fails if a list stops deferring a class or registering a guard, or a pom redefines it, and `graal/BakedHostStateFeature` fails the native build if such a path reaches the image heap.
 
 Detailed architecture docs are in `.claude/rules/` and load automatically when you work on related files.
 Each rule file declares `paths:` globs that trigger it.

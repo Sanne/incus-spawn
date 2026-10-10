@@ -30,20 +30,26 @@ The completion scripts in `CompletionCommand` must be kept in sync manually (rem
 When hiding a new command: add it to `HIDDEN_COMMANDS`, remove it from all three completion scripts, update `stripVmCommand()` if it changes `vm`'s neighbors, and run both tests.
 
 **Output for scripts goes through `OutputFormat`.**
-A query command offers `--format=table|plain|json` (#1036) by parsing `--format` with `OutputFormat.parse` (`OutputFormat.resolve` where there is also a `--plain`), building each result once as an ordered `Map<String, Object>` (a `LinkedHashMap`; maps need no native reflection registration) in a package-private `record(s)` method, and handing it to `format.print`/`printOne`; `table` stays the command's own human output.
+A query command offers `--format=table|plain|json` (#1036) by parsing `--format` with `OutputFormat.parse` (`OutputFormat.resolve` where there is also a `--plain`), building each result once as an ordered `Map<String, Object>` (a `LinkedHashMap`; maps need no native reflection registration) in a package-private `record(s)` method, and handing it to `format.print`/`printOne`.
+`table` stays the command's own human output.
 `plain`/`json` are a contract: fields are added at the end, never renamed, removed or reordered, so a field change needs a golden test update that says so (`ListCommandOutputTest`).
 They carry no header, padding, colour, glyph or prose, no results is empty output (or `[]`), and diagnostics go to stderr.
 Times are ISO-8601 with offset (`Metadata.createdIso` for a `created` stamp: a legacy date-only stamp stays a date, an unreadable one is `null`), an unreadable Incus listing is an `IncusException` (exit 1), never an empty list, a command line aesh cannot parse exits 2 (README's exit-code table; `ExitCodeTest`), sizes bytes, absent values `null`/`-`.
 No value reaches the terminal with a control character raw (#1118): `plain` turns each into a space, bidi embeddings, overrides and isolates too (`OutputFormat.oneLine`, lossy), `json` escapes the same set, `OutputFormat.isControl` (exact: `\t` `\n` `\r` `\b` `\f` for tab, line feed, carriage return, backspace and form feed, `\uXXXX` for every other one), and the `isx list` table and TUI show an instance stamp through the same `oneLine`, as the `isx templates` and `isx tools` tables and `isx templates edit`'s validation findings show definition text (#1133: project-local definitions are untrusted).
-`isx list` outside the TUI (`ListCommand.printListing`) reads the instance listing once (`-q` at `recursion=1`, since completion runs it on every TAB) and never loads definitions: templates are excluded by the `base` type, never by the `tpl-` prefix (which is why `BranchFlow` stamps `clone` in the copy request: a half-made branch must not pass for a template); its request count is pinned.
+`isx list` outside the TUI (`ListCommand.printListing`) reads the instance listing once (`-q` at `recursion=1`, since completion runs it on every TAB) and never loads definitions.
+Templates are excluded by the `base` type, never by the `tpl-` prefix (which is why `BranchFlow` stamps `clone` in the copy request: a half-made branch must not pass for a template).
+Its request count is pinned.
 Its fields are `name`, `status`, `ipv4`, `parent`, `runtime`, `created`, `mcp_state`, `mcp_purpose` (#1053: `McpStanding`, `null` for an instance no `isx mcp` session made); README's "Scripting isx" lists them.
-Every query command has it, plus `isx branch` (the new name alone); `isx templates` adds build state and staleness from `TemplateStaleness`, the same judgement as the TUI's `! △ ↑` marks and `isx build --out-of-sync` (`BuildCommand.isImageOutdated` calls its `versionOutdated`/`definitionChanged`/`parentRebuilt`, and `Staleness.outOfSync()` says which count), so a change to what counts as stale goes there, never into one caller; `QueryCommandFormatTest` pins each JSON shape and `ExitCodeTest` the shared rejection.
+Every query command has it, plus `isx branch` (the new name alone).
+`isx templates` adds build state and staleness from `TemplateStaleness`, the same judgement as the TUI's `! △ ↑` marks and `isx build --out-of-sync` (`BuildCommand.isImageOutdated` calls its `versionOutdated`/`definitionChanged`/`parentRebuilt`, and `Staleness.outOfSync()` says which count), so a change to what counts as stale goes there, never into one caller.
+`QueryCommandFormatTest` pins each JSON shape and `ExitCodeTest` the shared rejection.
 Work that prints progress runs under `BaseCommand.withStdoutOnStderr`, the machine formats never prompt, and the exit code is the table's.
 See DESIGN.md "Output for scripts".
 
 **Confirmations that delete data fail closed.**
 `BaseCommand.confirm()` proceeds when there is no terminal (and never reads stdin), so `echo n | isx ...` answers yes.
-Anything that deletes data -- `destroy --all-*`, `clean`, `reset`, `vm reset` -- uses `confirmDestructive(prompt, skip, skipFlag)` instead: without a terminal (`System.console()` null or `!isTerminal()`) it throws `NoTerminalException`, which `BaseCommand.execute` reports as an error with exit status 1, naming the flag that skips the question.
+Anything that deletes data -- `destroy --all-*`, `clean`, `reset`, `vm reset` -- uses `confirmDestructive(prompt, skip, skipFlag)` instead.
+Without a terminal (`System.console()` null or `!isTerminal()`) it throws `NoTerminalException`, which `BaseCommand.execute` reports as an error with exit status 1, naming the flag that skips the question.
 Declining at the prompt is still a successful exit.
 `confirm()` stays for disruptive but recoverable actions (`vm restart`, `vm resize`); `BuildCommand` keeps its own proceed-without-a-terminal confirm, which CI relies on.
 
@@ -51,7 +57,9 @@ Declining at the prompt is still a successful exit.
 On macOS `Environment.vmDataImage()` sits in the state directory but is the whole Incus pool and database.
 `isx clean state`/`all` and `uninstall.sh` delete the rest of the directory and keep it unless `--delete-instances` is given (`CleanCommand.cleanDirs`), and say so.
 A new command that deletes `vmStateDir()` does the same; `isx reset` and `isx vm reset` are the commands that wipe it on purpose.
-A kept disk is only as intact as the VM's stop: `VmManager.stop()` returns a `StopResult`, and `isx vm stop --require-clean` exits 4 when the VM was `SIGNALLED` rather than shut down (every stop of an appliance from before #881), which `uninstall.sh` turns into its warning; a caller about to delete the disks stops with `stopToDelete()`, which does not warn and does not ask the guest.
+A kept disk is only as intact as the VM's stop.
+`VmManager.stop()` returns a `StopResult`, and `isx vm stop --require-clean` exits 4 when the VM was `SIGNALLED` rather than shut down (every stop of an appliance from before #881), which `uninstall.sh` turns into its warning.
+A caller about to delete the disks stops with `stopToDelete()`, which does not warn and does not ask the guest.
 `stopLocked` asks the guest first, through the agent's `shutdown` verb (`VmAgentClient.shutdown()`), and waits up to 30 s for the hypervisor to exit by itself: vfkit's own stop request does nothing in this guest, so without the verb every stop is a hard power-off that loses up to five minutes of btrfs changes (`commit=300`; appliance/DESIGN.md "Stop sequence").
 The exit status is opt-in so `isx vm stop && ...` keeps working.
 
@@ -62,7 +70,9 @@ A destructive step on a trust gate still asks, at a terminal, via `Prompts`.
 See DESIGN.md "Doctor and build remediations act through isx".
 
 **A shell without a terminal is skipped or refused, never retried.**
-`isx branch` with no terminal (`IncusClient.hasTerminal()` false: stdin or stdout redirected) reports the branch, says how to connect, and exits 0 without a shell; `isx shell` refuses with `NoTerminalForShellException` before starting the instance; `isx run`'s shell paths get the same exception from `interactiveShell()`.
+`isx branch` with no terminal (`IncusClient.hasTerminal()` false: stdin or stdout redirected) reports the branch, says how to connect, and exits 0 without a shell.
+`isx shell` refuses with `NoTerminalForShellException` before starting the instance.
+`isx run`'s shell paths get the same exception from `interactiveShell()`.
 Either way exit status 1 comes from `BaseCommand.execute` (#1027).
 
 # Init and Versioned Completion
@@ -72,7 +82,8 @@ On Linux it also installs a tightly-scoped NOPASSWD sudoers rule (`configureBtrf
 Commands that need a working environment call `InitCommand.requireInit()`, which auto-launches init if it hasn't completed.
 Completion is tracked by a sentinel file `~/.config/incus-spawn/.init-complete` containing `INIT_VERSION` -- a version integer defined in `Environment` (in `common`, so `isx-proxy` reads it too).
 Every init step is idempotent, so re-running is safe.
-**The sentinel is written before the last step installs, upgrades or restarts the proxy service** (`completeWithMacOsServices` / `completeWithProxyService`: ask, mark, then act), never after it: `isx-proxy` exits `EXIT_CONFIG` without the sentinel, so a service installed first fails its first start, and init reports a proxy that is not responding (#938; launchd retries only after its 10 s `ThrottleInterval`, systemd not at all).
+**The sentinel is written before the last step installs, upgrades or restarts the proxy service** (`completeWithMacOsServices` / `completeWithProxyService`: ask, mark, then act), never after it.
+`isx-proxy` exits `EXIT_CONFIG` without the sentinel, so a service installed first fails its first start, and init reports a proxy that is not responding (#938; launchd retries only after its 10 s `ThrottleInterval`, systemd not at all).
 A step added to init goes above that one.
 `InitServiceStepTest` pins the order.
 
@@ -81,15 +92,19 @@ A step added to init goes above that one.
 Each interactive step is split in two: a thin entry (`setupGitHubAuth()`, `setupClaudeAuth()`, `setupGenericToolCredentials(name, tool)`, `selectCredentials(tools)`, `setupPathList(...)`) that prints the step header, loads the config and gets `Prompts.console()`, and a package-private overload taking `(SpawnConfig, Prompts)` that holds all the logic.
 Effects outside the process are package-private overridable seams on `InitCommand` -- `verifyGitHubToken`, `verifyAnthropicApiKey`/`verifyOauthToken`/`verifyVertexConfig`, `ghCliLoggedIn`/`readGhAuthToken`, `openUrl`, `env`, `hostHasCommand`, `runClaudeSetupToken`, `proxyServiceActive`, `macOsServicesInstalled`, `upgradeProxyService`, `installProxyService` -- which the flow tests override.
 Flow tests: `GitHubAuthFlowTest` (incl. the commit-email choice, `chooseEmail`), `ClaudeAuthFlowTest` (incl. credentials detected in the environment), `CredentialPromptsTest`, `PathListPromptsTest`, `AccountMenuTest`, `InitServiceStepTest`.
-Tests drive flows with `ScriptedPrompts`, which fails if a value scripted as a secret is read through an echoing `readLine()` (or vice versa) and answers `null` (EOF) once exhausted, like `isx init </dev/null`; `@ExtendWith(IsolatedHome.class)` is required for anything that can reach `config.save()`, which otherwise writes the developer's real `~/.config/incus-spawn/config.yaml`.
-Secrets are read with `askSecret(prompts)`, never a bare `readPassword()`: nothing is echoed, so it prints a dimmed `✓ Received N characters (<maskSecret>)` line confirming a paste landed -- length and masked form only, which `GitHubAuthFlowTest` checks by asserting the raw token never reaches stdout.
+Tests drive flows with `ScriptedPrompts`, which fails if a value scripted as a secret is read through an echoing `readLine()` (or vice versa) and answers `null` (EOF) once exhausted, like `isx init </dev/null`.
+`@ExtendWith(IsolatedHome.class)` is required for anything that can reach `config.save()`, which otherwise writes the developer's real `~/.config/incus-spawn/config.yaml`.
+Secrets are read with `askSecret(prompts)`, never a bare `readPassword()`.
+Nothing is echoed, so it prints a dimmed `✓ Received N characters (<maskSecret>)` line confirming a paste landed -- length and masked form only, which `GitHubAuthFlowTest` checks by asserting the raw token never reaches stdout.
 New prompts in init follow the same shape: take `Prompts`, route any network or host call through an overridable method, and add a flow test asserting what reaches the file on disk.
 The host-setup confirmations (Incus install, subid, CoW pool) still use `System.console()` directly; they touch no credentials.
 
 **Init output** (#906).
 Init keeps its own frame -- the boxed, numbered step headers and the `┃` hint bar -- but the lines under a header follow these rules.
-*The step counter is derived, never written down*: `runSteps(setup, finish)` counts its lists, Credential Setup and the credentials chosen there, so `[n/N]` adds up on every path (credentials or none, Linux or macOS) and the last step reads `[N/N]`; each `Step` shows exactly one header, so a new step goes into a list, never a bare `startStep` call between them.
-*Report outcomes, not attempts*: a success line ("Configured X") prints only once every command of that step succeeded; when a file is in place but applying it failed, say it applies after a reboot, as the sysctl, NetworkManager and KSM steps do.
+*The step counter is derived, never written down*: `runSteps(setup, finish)` counts its lists, Credential Setup and the credentials chosen there, so `[n/N]` adds up on every path (credentials or none, Linux or macOS) and the last step reads `[N/N]`.
+Each `Step` shows exactly one header, so a new step goes into a list, never a bare `startStep` call between them.
+*Report outcomes, not attempts*: a success line ("Configured X") prints only once every command of that step succeeded.
+When a file is in place but applying it failed, say it applies after a reboot, as the sysctl, NetworkManager and KSM steps do.
 A step that runs several commands runs each through `ran()`, which names the one that failed, and combines the results (`ok &= ran(...)`, never short-circuiting, so the remaining rules are still applied) before choosing between its success line and a warning (#1102: the firewall and PREROUTING steps).
 *Host commands are captured*: `runHostQuiet` shows a command's output only when it fails (as `Container.runQuiet()` does in build), so firewall-cmd's `NOT_ENABLED`/`ALREADY_ENABLED` chatter on success never reaches the step.
 `InitStepOutputTest` pins all three; `InitFirewallOutputTest` pins the firewall steps.

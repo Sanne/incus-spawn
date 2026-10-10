@@ -15,27 +15,36 @@ paths:
 
 `IncusClient` communicates with the Incus daemon via its REST API.
 On Linux, requests go over a Unix domain socket (`UnixSocketTransport`); on macOS, over a vsock tunnel exposed as a Unix socket (same `UnixSocketTransport`).
-`IncusApi.tryConnect()` selects Linux Unix sockets -> vsock Unix socket; there is no HTTPS fallback (the old HTTPS-over-TCP path was removed -- it hit macOS Local Network prompts and VPN socket filters, and two transports made field issues undiagnosable; `HttpsTransport` remains in the tree but is unwired).
+`IncusApi.tryConnect()` selects Linux Unix sockets -> vsock Unix socket.
+There is no HTTPS fallback (the old HTTPS-over-TCP path was removed -- it hit macOS Local Network prompts and VPN socket filters, and two transports made field issues undiagnosable; `HttpsTransport` remains in the tree but is unwired).
 `IncusApi` handles request serialization, async operation waiting, and WebSocket-based exec (capture, stream, PTY).
 An operation `/wait` that times out answers 200 with the operation still `Running`, so `waitForOperation` re-polls while it is `Running`/`Pending`/`Cancelling`, up to a 4-hour ceiling, then throws (a `Cancelled` one throws too) -- never treats a timed-out poll as done (#1089; `OperationWaitTest`).
 `Container` is a helper for running commands inside a specific container (`exec`, `runAsUser`, `runInteractive`).
 The `incus` CLI binary is not required at runtime.
 
 **The macOS VM runs in a session of its own** (`VmManager.inOwnSession`, #971): vfkit is started through a perl `setsid(); exec`, so it is the leader of a new session under the pid the caller recorded.
-As a plain child it stayed in the starting command's process group and on its terminal, and died with them: closing the terminal hangs up everything on it, Ctrl+C reaches the foreground group, and launchd kills what is left in a job's process group when the job exits, which is how the login agent's `isx vm start` took its own VM down a few seconds after starting it.
+As a plain child it stayed in the starting command's process group and on its terminal, and died with them.
+Closing the terminal hangs up everything on it, Ctrl+C reaches the foreground group, and launchd kills what is left in a job's process group when the job exits, which is how the login agent's `isx vm start` took its own VM down a few seconds after starting it.
 Anything else that has to outlive the command starting it needs the same.
 QEMU (the Linux/CI path) is started the same way (#993); its console is its own stdout to `vm.log`, so perl's errors go there too.
 Without `/usr/bin/perl` the command is left as it is. vfkit's own stdout/stderr go to `Environment.vfkitLogFile()`, not `vm.log`: vfkit opens `vm.log` itself, non-append, for the VM's virtio-serial console, and a second append-mode writer on the same file corrupts both.
 
-**vfkit's REST API is on a Unix socket** (`Environment.vmRestSocket()`, `vm.rest.sock`; #1189), never a TCP port: a port must be chosen before vfkit binds it, and vfkit exits fatally when its REST address is in use, so a port taken in between meant no VM.
-`VmManager.vfkitCommand` builds the command line, `startVfkit` removes a socket file a killed vfkit left (vfkit does not start on a path that exists), and `VfkitRest.post` sends the request through `UnixSocketHttp`, the public door to `UnixSocketTransport` for a peer that is not Incus, because `java.net.http.HttpClient` cannot connect to a Unix socket; do not write a second HTTP-over-Unix-socket client, the transport's watchdog and its strict response parser are the tested ones. vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so a state directory whose path contains `#`, `?` or `%xx` would give the two different paths (the vsock `socketURL=` arguments have the same exposure).
+**vfkit's REST API is on a Unix socket** (`Environment.vmRestSocket()`, `vm.rest.sock`; #1189), never a TCP port.
+A port must be chosen before vfkit binds it, and vfkit exits fatally when its REST address is in use, so a port taken in between meant no VM.
+`VmManager.vfkitCommand` builds the command line, `startVfkit` removes a socket file a killed vfkit left (vfkit does not start on a path that exists), and `VfkitRest.post` sends the request through `UnixSocketHttp`, the public door to `UnixSocketTransport` for a peer that is not Incus, because `java.net.http.HttpClient` cannot connect to a Unix socket.
+Do not write a second HTTP-over-Unix-socket client, the transport's watchdog and its strict response parser are the tested ones.
+vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so a state directory whose path contains `#`, `?` or `%xx` would give the two different paths (the vsock `socketURL=` arguments have the same exposure).
 `vm.rest-uri` holds `unix://<path>`; `VfkitRest` still understands the `http://localhost:<port>` an older isx wrote, so a VM started before an upgrade is still asked to shut down rather than signalled.
 
 **macOS vsock robustness**: the vfkit vsock tunnel does not reliably propagate connection close/EOF, which drives several design choices (see DESIGN.md "Transport" and appliance/DESIGN.md):
 - **Exec completion via `/wait`, not close frames.**
   `IncusApi.execWebSocket` unifies capture/stream/bidirectional exec and takes the operation `/wait` endpoint (daemon operation state over HTTP) as the authoritative completion + exit-code signal, then drains and force-closes the data sockets -- so a lost close frame can't hang exec.
-  Every exec fd is keepalive-pinged; the drain is adaptive (`OutputDrain`), and counts idle only while it was watching: a gap between polls counts for at most half the idle window, and a late poll ends the drain only after an idle poll before it, since a pause of the host process is no sign the output stopped (#1062, #1084) -- but polls late again and again must not hold it to its ceiling (#1122); and bytes waiting unread in a data socket count as output arriving now, since the force-close would discard them and a reader late to take them is no sign the output stopped either (#1208, `WsConnection.hasUnread`).
-  `execStreamWithin` (`IncusClient.execProbe`: a uid, no `su -`, so no login profile) bounds an exec in a guest that may never answer: at the limit it sends `signalMessage(9)` on the control fd, then gives up `KILL_GRACE_SECONDS` later whether or not the operation ended (a child holding the output can keep it open), throwing; any other exit before the command finished (a `/wait` overrunning its slack, a lost op, an interrupt) sends the kill too, from `waitForExecOp`'s `finally`.
+  Every exec fd is keepalive-pinged.
+  The drain is adaptive (`OutputDrain`), and counts idle only while it was watching: a gap between polls counts for at most half the idle window, and a late poll ends the drain only after an idle poll before it, since a pause of the host process is no sign the output stopped (#1062, #1084) -- but polls late again and again must not hold it to its ceiling (#1122).
+  Bytes waiting unread in a data socket count as output arriving now, since the force-close would discard them and a reader late to take them is no sign the output stopped either (#1208, `WsConnection.hasUnread`).
+  `execStreamWithin` (`IncusClient.execProbe`: a uid, no `su -`, so no login profile) bounds an exec in a guest that may never answer.
+  At the limit it sends `signalMessage(9)` on the control fd, then gives up `KILL_GRACE_SECONDS` later whether or not the operation ended (a child holding the output can keep it open), throwing.
+  Any other exit before the command finished (a `/wait` overrunning its slack, a lost op, an interrupt) sends the kill too, from `waitForExecOp`'s `finally`.
   `IncusApiLossyTunnelTest` pins all three.
 - **Long-lived event subscription.**
   `IncusApi.openEvents(types)` (public via `IncusClient.openLifecycleEvents()`, returning `IncusEventStream`) is the one WebSocket meant to stay open indefinitely (the TUI's `InstanceEventWatcher`).
@@ -59,7 +68,9 @@ Without `/usr/bin/perl` the command is left as it is. vfkit's own stdout/stderr 
 - **Tested without a Mac.**
   `LossyIncusServer` (test scope) is a fake Incus on a real Unix socket that misbehaves like the vfkit tunnel (no close frames/EOF, output after exit, accept-then-silent, stalls, dropped idle connections, truncated bodies).
   `IncusApiLossyTunnelTest`, `UnixSocketTransportTest`, `ConnectionPoolTest` and `KeepAliveConnectionTest` run against it in `unit-tests`.
-  A change to any compensation above needs a test there; tests that shorten production intervals use the package-private seams (`IncusApi(transport, pingIntervalMs)`, `ConnectionPool(idleTtlNanos)`, `IncusApi.tryConnect(List)`) rather than sleeping, and output that must arrive within the drain's window is timed by the drain's own polls (`IncusApi(transport, pingIntervalMs, DrainClock)`), never by a sleep in the fake: a late wakeup of the fake's sender stretched a gap past the window on a macOS runner (#1208).
+  A change to any compensation above needs a test there.
+  Tests that shorten production intervals use the package-private seams (`IncusApi(transport, pingIntervalMs)`, `ConnectionPool(idleTtlNanos)`, `IncusApi.tryConnect(List)`) rather than sleeping, and output that must arrive within the drain's window is timed by the drain's own polls (`IncusApi(transport, pingIntervalMs, DrainClock)`), never by a sleep in the fake.
+  A late wakeup of the fake's sender stretched a gap past the window on a macOS runner (#1208).
   Every test asserts `UnixSocketTransport.openConnectionCount()` returns to its baseline, so a leaked permit on a failure path fails the build.
   The guest half (the in-VM forwarder, `isx-agent`, the `-T` backstop, recovery) runs in `integration-tests` against the real appliance over a vsock-bridged QEMU boot (`appliance/test-tunnel.sh`, see `ci.md`).
   Only vfkit itself is untested, and cannot be on hosted runners (#774).
@@ -69,13 +80,17 @@ Without `/usr/bin/perl` the command is left as it is. vfkit's own stdout/stderr 
   Upstream: LXD fixed the same code (canonical/lxd#18705); incus had not as of 7.5.1. incusd also closes idle keep-alive connections after 30s (`IdleTimeout`), which is why `ConnectionPool`'s 5s TTL must stay well under it.
 - **Forwarder leak + recovery.**
   The same close-propagation gap makes the in-VM `socat` forwarder leak connections.
-  A `socat -T` inactivity backstop reaps them (the forwarder and agent listeners also set `backlog=128`: socat's default of 5 refused concurrent connects, and one exec opens about five); `isx doctor` diagnoses it (host-side connection gauge in `UnixSocketTransport` / `vm status` vs the in-VM `isx-agent`'s socat count, localizing vfkit vs forwarder) and can restart the forwarder via the agent **without rebooting the VM**.
+  A `socat -T` inactivity backstop reaps them (the forwarder and agent listeners also set `backlog=128`: socat's default of 5 refused concurrent connects, and one exec opens about five).
+  `isx doctor` diagnoses it (host-side connection gauge in `UnixSocketTransport` / `vm status` vs the in-VM `isx-agent`'s socat count, localizing vfkit vs forwarder) and can restart the forwarder via the agent **without rebooting the VM**.
   `ClientLog` is a file-only (TUI-safe) diagnostic log for expected-but-noisy events like stale-connection recycling.
   The agent (`appliance/root/usr/local/sbin/isx-agent`, host side `VmAgentClient`) is an allowlisted one-verb-per-connection dispatcher -- `ping`, `version` (returns the appliance version from `/etc/isx-version`, cached by `VmAgentClient.applianceVersion()`; used to detect CLI↔appliance version skew in `ensureRunning`, `isx doctor`, `isx vm status`, and the TUI, all through `VmManager.applianceSkew()`, which reports skew only when a restart would re-extract the root disk -- i.e. `disk.version` differs from the installed version -- so a locally built `0.0.0-SNAPSHOT` appliance is not told to restart for a release it would not get), `socat-count`, `sshd-status`, `forwarder-restart`, `btrfs-usage <pool> [sync]` (returns the pool's `btrfs qgroup show`/`subvolume list` output for disk accounting, since only the in-VM root agent can read the pool; the allowlisted `sync` second token forces a commit first), `btrfs-status <pool>` (the kernel's qgroup accounting flags from sysfs as `key=value` lines -- `enabled`, `inconsistent`, `mode`, `drop_subtree_threshold` -- resolved via the same mountinfo-source-device lookup as `BtrfsSysfs.java`; keep the two in step), `btrfs-rescan <pool>` (starts a background `btrfs quota rescan`, replying `started`/`running`/`error: ...`) and `btrfs-orphan-delete <pool> <kind> <name>` (deletes one orphaned top-level subvolume -- `kind` is `containers` or `virtual-machines` -- after re-checking, from inside the VM and in every Incus project, that nothing still references it; a separate trust boundary from the host's own scan, since that scan can be stale by the time a user confirms `isx doctor`'s remediation.
-  `name` rejects a leading `.` or `-` as well as any character outside `A-Za-z0-9._-`: `.` and `..` are themselves valid under that charset alone, and `..` resolved against the pool root -- itself a btrfs subvolume -- would recursively delete the whole pool (review, #874).
-  On-disk names outside the default project are `<project>_<name>`, so the agent lists each project's bare instance and volume names and joins them back before comparing; the project listing strips the ` (current)` suffix `incus project list -f csv` still appends to the active project, or the unquoted word-split loop below it iterates that as a project of its own (review, #874).
+  `name` rejects a leading `.` or `-` as well as any character outside `A-Za-z0-9._-`.
+  `.` and `..` are themselves valid under that charset alone, and `..` resolved against the pool root -- itself a btrfs subvolume -- would recursively delete the whole pool (review, #874).
+  On-disk names outside the default project are `<project>_<name>`, so the agent lists each project's bare instance and volume names and joins them back before comparing.
+  The project listing strips the ` (current)` suffix `incus project list -f csv` still appends to the active project, or the unquoted word-split loop below it iterates that as a project of its own (review, #874).
   The volume listing's type filter is positional (`type=$itype` before `--project`), not a `--type` flag -- Incus 6.23 has no such flag (same review).
-  Replies `deleted` or `error: ...`; `VmAgentClient.supportsOrphanDelete` probes with a name no subvolume has (expecting `error: not a subvolume`) so `isx doctor` offers this remediation only where the verb exists, keeping `isx vm reset` as the fallback on an older appliance -- `DoctorCommand.checkSubvolumes` wires the probe in, `DoctorCommand.deleteOrphans` does the deletes and tells a timeout (`Optional.empty()`, no answer at all) apart from the literal `error: unknown verb` the agent itself replies with) -- intentionally NOT a general guest-exec channel.
+  Replies `deleted` or `error: ...`.
+  `VmAgentClient.supportsOrphanDelete` probes with a name no subvolume has (expecting `error: not a subvolume`) so `isx doctor` offers this remediation only where the verb exists, keeping `isx vm reset` as the fallback on an older appliance -- `DoctorCommand.checkSubvolumes` wires the probe in, `DoctorCommand.deleteOrphans` does the deletes and tells a timeout (`Optional.empty()`, no answer at all) apart from the literal `error: unknown verb` the agent itself replies with) -- intentionally NOT a general guest-exec channel.
   Pool-name validation is shared by the four `btrfs-*` verbs (`valid_pool`).
 
 **VM lifecycle locking**: `VmManager` guards mutating operations (`start`, `stop`, `restart`, `ensureRunning`) with a `HostLock` (`vm.lock` in `vmStateDir()`).
@@ -117,10 +132,14 @@ The `ALREADY_RUNNING` path does not probe Incus — that is `ensureRunning()`'s 
 Containers default to 30s, VMs to 120s; both are configurable via `ready-timeouts:` in config.yaml (`ReadyTimeoutsConfig`), loaded eagerly at `IncusClient` construction.
 Every caller passes the known `MachineType` (#953): builds pass `activeBuild.machineType()`, VM-only code passes `MachineType.VM`, and callers on existing instances pass `incus.machineType(name)`.
 The no-arg overload still learns the type dynamically, but callers should not rely on it -- Incus can return a non-exception failure for a VM whose agent is booting, bypassing the detection.
-For a VM it polls the console log for `VmAgentFailure` signatures and fails fast (after a 20s restart grace) with the matched lines (`VmAgentFailure`, reusable by a future `isx doctor` check); every VM failure names the agent and `incus console <n> --show-log` (#844).
-A VM is exec-probed only once `GET /state` reports `processes >= 0` (its agent connected; #954), and a probe counts only if it printed `ready`, not on exit 0 alone; while the gate is shut exec still gets one probe per `gatedProbeInterval` (5s), since Incus also reports -1 when its query to a connected agent fails; a state without `processes` falls back to plain probing, and containers never read `/state`.
+For a VM it polls the console log for `VmAgentFailure` signatures and fails fast (after a 20s restart grace) with the matched lines (`VmAgentFailure`, reusable by a future `isx doctor` check).
+Every VM failure names the agent and `incus console <n> --show-log` (#844).
+A VM is exec-probed only once `GET /state` reports `processes >= 0` (its agent connected; #954), and a probe counts only if it printed `ready`, not on exit 0 alone.
+While the gate is shut exec still gets one probe per `gatedProbeInterval` (5s), since Incus also reports -1 when its query to a connected agent fails.
+A state without `processes` falls back to plain probing, and containers never read `/state`.
 Timings are a `ReadyTimeouts` record that `WaitForReadyTest` shortens through the package-private setter.
-A running VM whose agent does not answer on `isx shell`/`isx run`/the TUI goes through `InstanceLifecycle.ensureReady` -> `lifecycle/VmAgentRecovery.restartForAgent` -- never a bare `forceStop` + start: it refuses when the console log shows a `VmAgentFailure` the agent has not since recovered from (`unrecoveredLines`, after `waitForReady`'s grace), restarts at most once per boot (the restarted boot's `IncusClient.pid` is stamped as `Metadata.AGENT_RESTART_BOOT`), and stops gracefully before forcing (#843).
+A running VM whose agent does not answer on `isx shell`/`isx run`/the TUI goes through `InstanceLifecycle.ensureReady` -> `lifecycle/VmAgentRecovery.restartForAgent` -- never a bare `forceStop` + start.
+It refuses when the console log shows a `VmAgentFailure` the agent has not since recovered from (`unrecoveredLines`, after `waitForReady`'s grace), restarts at most once per boot (the restarted boot's `IncusClient.pid` is stamped as `Metadata.AGENT_RESTART_BOOT`), and stops gracefully before forcing (#843).
 
 **Storage pool awareness**: On a CoW-capable pool (btrfs/zfs/lvm), Incus implements a same-pool `type: copy` as a native snapshot (e.g. `btrfs subvolume snapshot`) -- no explicit snapshot API call is needed.
 Full copies only happen when (1) there is no CoW pool (the `dir` driver rsyncs), or (2) the source's root disk is on a different pool than the copy target (cross-pool migration).
@@ -145,11 +164,14 @@ Do not reuse `BtrfsUsage.parse` for this: it drops subvolumes without a qgroup r
 See DESIGN.md "Orphaned subvolumes and dangling records".
 
 **Request budgets**: each Incus round trip on the start/shell/branch path adds latency the user waits through.
-`InstanceLifecycleRequestBudgetTest` (and `ActionResolverRequestBudgetTest` for action contexts) pins exact request counts using `FakeIncusDaemon` (test scope, an in-memory `IncusTransport`, reachable from `cli` tests through common's test-jar); a change that adds requests to a covered flow fails it, and one that removes requests must lower the budget.
+`InstanceLifecycleRequestBudgetTest` (and `ActionResolverRequestBudgetTest` for action contexts) pins exact request counts using `FakeIncusDaemon` (test scope, an in-memory `IncusTransport`, reachable from `cli` tests through common's test-jar).
+A change that adds requests to a covered flow fails it, and one that removes requests must lower the budget.
 Give a new user-facing flow in `common` a budget, and prefer one `instanceMetadata`/`configByPrefix` read over several `configGet` calls.
 See DESIGN.md "Request budgets".
 
-**Shell status bar** (`shell-status-bar` feature, `ShellStatusBar` + `EscapeSequenceParser`): with the flag off a shell must make no Incus request it did not make without the feature, so callers pass `ShellMenu.NONE` and resolve the F12 menu (`ActionResolver.shellMenu`, which itself returns `NONE` without a request when the flag is off) only when `ShellMenu.enabled()`; `ShellMenuTest` pins both.
+**Shell status bar** (`shell-status-bar` feature, `ShellStatusBar` + `EscapeSequenceParser`).
+With the flag off a shell must make no Incus request it did not make without the feature, so callers pass `ShellMenu.NONE` and resolve the F12 menu (`ActionResolver.shellMenu`, which itself returns `NONE` without a request when the flag is off) only when `ShellMenu.enabled()`.
+`ShellMenuTest` pins both.
 Everything the bar writes goes through its one buffered stream inside the render lock, each fixup wrapped in a single DECSC/DECRC pair (never nested: DECSC has one slot), and only where `OutputBoundary` says the child's output is between sequences and characters -- frame fixups, menu, flashes and resizes alike, except that a user-awaited paint is forced after `FORCED_PAINT_DELAY_MS` (a quiet child sends no next frame) and a mid-sequence resize skips its clear.
 Timers act only if still current, under the lock.
 The menu offers only `url` actions, run off the stdin thread.
@@ -159,18 +181,22 @@ The TUI resolves its menu fresh (`ActionResolver.shellMenu`), not from its list 
 The input parser forwards everything that is not F12, a bare Esc at the end of a read immediately, swallows CSI and SS3 keys whole while the menu is open, and reports `consumed` so no byte after an event is lost.
 See DESIGN.md "Shell status bar".
 
-**Batch instance writes**: every instance PATCH/PUT costs Incus a backup-file rewrite (~11-13 ms on btrfs), so a flow making several changes collects them in an `InstanceUpdate` and sends one `IncusClient.update()` against a single `instanceMetadata` read -- a PATCH, or one PUT only when a device the instance declares must be removed.
+**Batch instance writes**: every instance PATCH/PUT costs Incus a backup-file rewrite (~11-13 ms on btrfs).
+So a flow making several changes collects them in an `InstanceUpdate` and sends one `IncusClient.update()` against a single `instanceMetadata` read -- a PATCH, or one PUT only when a device the instance declares must be removed.
 `InstanceLifecycle.configureBranch` configures every new branch (CLI and TUI) this way in one write; add new pre-start branch settings there rather than as another write.
 See DESIGN.md "Why a branch is configured in one write".
-Every branch, from `isx branch` or the TUI, goes through `lifecycle/BranchFlow` (`preflight()` refuses before anything exists, `create()` copies, configures and starts); a front end supplies only its inputs and what follows (the shell), never its own copy of the steps -- the TUI's used to be one, and skipped the account selection and proxy refresh (#800).
+Every branch, from `isx branch` or the TUI, goes through `lifecycle/BranchFlow` (`preflight()` refuses before anything exists, `create()` copies, configures and starts).
+A front end supplies only its inputs and what follows (the shell), never its own copy of the steps -- the TUI's used to be one, and skipped the account selection and proxy refresh (#800).
 Defaults likewise: a null `Request` field means `BranchFlow.defaultsFor()`, which also fills the TUI dialog (#869); `Request.defaults()` (`isx mcp`) pins GUI off.
 The credential check runs on the selection the branch will be stamped with (template, source pins, `--account`) against the source's leaf template; the TUI's branch dialog asks the same question through `BranchFlow.credentialProblem()` before releasing the terminal (#793, `config/CredentialCheck`).
 Metadata a caller must stamp on its branch goes in `BranchFlow.Request.extraConfig`, which rides both the copy request (`IncusClient.copy(..., configOverrides)`: Incus lays the request's `config` over the source's, so the instance never exists unstamped) and `BranchSettings.extraConfig` in the one write.
-`isx mcp` branches through it too, stamping its session this way, and both the copy request (an empty value unsets) and `configureBranch` clear copied `mcp-*` keys a caller did not re-stamp, so a user's branch of an agent's instance is never taken for that session's orphan, and a fork is never listed with its source's idempotency key, even before it is configured (#1011).
+`isx mcp` branches through it too, stamping its session this way, and both the copy request (an empty value unsets) and `configureBranch` clear copied `mcp-*` keys a caller did not re-stamp.
+So a user's branch of an agent's instance is never taken for that session's orphan, and a fork is never listed with its source's idempotency key, even before it is configured (#1011).
 Deletion goes through `lifecycle/InstanceDestroyer.deleteHeld()` with the caller holding the instance lock (or `deleteHeldIf()`, which re-reads the instance under its `pending-op` mark and deletes only if a predicate still holds -- the `isx mcp` orphan sweep racing an adoption), then one `refreshProxy()` per batch (the TUI, which refreshes its view mid-delete, does the steps itself and calls `refreshProxy()` after).
 Failed builds hold a static IP and pins too (#903), so `isx clean`, `isx clean pool` and the `isx doctor` remediation delete them through `CleanCommand.deleteFailedBuilds`/`deleteFailedBuild`, which signal the proxy the same way.
 
-**No file push right before a start**: Incus's forkfile (which serves file pushes to a stopped container) must exit before the instance starts, and re-checks only once a second while a push is still flushing -- so a push immediately before `start` costs a full second.
+**No file push right before a start**: Incus's forkfile (which serves file pushes to a stopped container) must exit before the instance starts, and re-checks only once a second while a push is still flushing.
+So a push immediately before `start` costs a full second.
 Put anything the instance needs after start into `buildSetupScript` (one exec, heredocs via `Container.heredoc`), and keep `InstanceLifecycle.prefetchAndStart()` push-free.
 A file that must exist at boot (the static `.network`, GUI passthrough files) is pushed early in the branch flow, never as its last pre-start step.
 See DESIGN.md "Why nothing is pushed into an instance just before it starts".
