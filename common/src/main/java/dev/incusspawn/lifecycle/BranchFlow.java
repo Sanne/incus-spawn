@@ -99,7 +99,7 @@ public final class BranchFlow {
     public record Defaults(MachineType machineType, boolean gui, boolean kvm, String guiNote) {
         /** The CPU limit, or null for a container, which gets none. */
         public Integer cpu() {
-            return machineType == MachineType.VM ? Math.max(1, ResourceLimits.hostProcessorCount() - 2) : null;
+            return machineType == MachineType.VM ? ResourceLimits.defaultVmCpus() : null;
         }
 
         public String memory() {

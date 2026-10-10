@@ -116,7 +116,7 @@ class BranchDefaultsTest {
         assertEquals(ResourceLimits.adaptiveMemoryLimit(), container.memory());
 
         var vm = BranchFlow.defaultsFor("vm", incus.instanceMetadata("vm"), Map.of());
-        assertEquals(Math.max(1, ResourceLimits.hostProcessorCount() - 2), vm.cpu());
+        assertEquals(ResourceLimits.defaultVmCpus(), vm.cpu());
         assertEquals(ResourceLimits.defaultVmMemoryLimit(), vm.memory());
         assertEquals(ResourceLimits.defaultDiskLimit(), vm.disk());
     }

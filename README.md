@@ -1407,7 +1407,7 @@ Create a new instance as a copy-on-write clone from a template or existing insta
 | `--airgap` | Disable all network access |
 | `--proxy-only` | Restrict network to the host proxy only |
 | `--inbox <dir>` | Host directory to mount read-only at ~/inbox inside the instance |
-| `--cpu <N>` | CPU core limit (default: adaptive) |
+| `--cpu <N>` | CPU core limit (default: none for containers; for VMs host CPUs minus 2, at most 8, and on a hybrid host at most its top tier's physical cores) |
 | `--memory <size>` | Memory limit, e.g. `8GB` (default: adaptive) |
 | `--disk <size>` | Disk size limit (default: adaptive) |
 | `--no-start` | Don't start the instance after creation |

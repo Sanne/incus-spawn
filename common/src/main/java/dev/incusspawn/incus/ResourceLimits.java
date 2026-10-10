@@ -22,6 +22,31 @@ public final class ResourceLimits {
         return CpuInfo.logicalCores();
     }
 
+    /** The most vCPUs a VM gets by default (#1238, decided by Sanne); {@code --cpu} sets more. */
+    static final int VM_CPU_CAP = 8;
+
+    /**
+     * Default vCPUs for a VM (#1238, decided by Sanne): every host CPU but two, at most
+     * {@value #VM_CPU_CAP}, and on a hybrid host at most its top tier's physical cores; at least
+     * 1. A default, not a ceiling: {@code --cpu} sets any count.
+     *
+     * <p>Firmware and kernel boot time grow with the vCPU count, and a VM gains little from
+     * efficiency cores next to its performance ones.
+     */
+    public static int defaultVmCpus() {
+        return vmCpusFor(hostProcessorCount(), CpuInfo.hybridTopTierCores());
+    }
+
+    /**
+     * {@link #defaultVmCpus()} for a host with {@code logical} CPUs; {@code hybridTopTier} is the
+     * top tier's physical cores on a hybrid host, 0 on any other (or one whose tiers are unknown).
+     */
+    static int vmCpusFor(int logical, int hybridTopTier) {
+        int vcpus = Math.min(VM_CPU_CAP, logical - 2);
+        if (hybridTopTier > 0) vcpus = Math.min(vcpus, hybridTopTier);
+        return Math.max(1, vcpus);
+    }
+
     public static String adaptiveMemoryLimit() {
         long totalBytes = totalMemoryBytes();
         if (totalBytes <= 0) {

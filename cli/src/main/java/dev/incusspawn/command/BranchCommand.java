@@ -60,7 +60,7 @@ public class BranchCommand extends BaseCommand {
     @Option(name = "inbox", description = "Host directory to mount read-only at /home/agentuser/inbox")
     Path inbox;
 
-    @Option(name = "cpu", description = "CPU core limit (default: adaptive)")
+    @Option(name = "cpu", description = "CPU core limit (default: none for containers; for VMs host CPUs minus 2, at most 8, and on a hybrid host at most its top tier's physical cores)")
     Integer cpuLimit;
 
     @Option(name = "memory", description = "Memory limit, e.g. '8GB' (default: 60% of host RAM for containers, 25% up to 16GiB for VMs)")
