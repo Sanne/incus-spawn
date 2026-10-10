@@ -150,6 +150,8 @@ public class Tui {
 
     private final InstanceDetailView instanceDetail = new InstanceDetailView(modal, theme);
 
+    private final ActionsMenu actionsMenu = new ActionsMenu(modal, theme);
+
     private final AboutModal about = new AboutModal(modal, theme, new AboutModal.Source() {
         @Override public String version() { return BuildInfo.instance().version(); }
         @Override public String gitSha() { return BuildInfo.instance().gitSha(); }
@@ -250,11 +252,6 @@ public class Tui {
     // AI Help modal state
     /** Kept after closing, so reopening preselects the account used last. */
     private volatile HelpChatModal helpChat;
-    // Actions modal state
-    private java.util.List<ToolAction> actionsList;
-    private int actionsSelectedIndex;
-    private int actionsScrollOffset;
-    private ActionContext actionsContext;
     // Actions cache (computed once per data refresh, not per render)
     private java.util.Map<String, java.util.List<ToolAction>> actionsCache = new java.util.HashMap<>();
     // Default action reference per instance (from ImageDef default-action field)
@@ -1447,10 +1444,7 @@ public class Tui {
                 statusMessage = "No actions available for " + selected.name();
                 return true;
             }
-            actionsList = actions;
-            actionsSelectedIndex = 0;
-            actionsScrollOffset = 0;
-            actionsContext = instanceActions.buildActionContext(selected);
+            actionsMenu.open(actions, instanceActions.buildActionContext(selected));
             mode = Mode.ACTIONS;
             return true;
         }
@@ -2616,7 +2610,7 @@ public class Tui {
             case INFO -> about.render(frame, screen);
             case WARNINGS -> warningsModal.render(frame, screen);
             case HELP_CHAT -> helpChat.render(frame, screen);
-            case ACTIONS -> renderActionsModal(frame, screen);
+            case ACTIONS -> actionsMenu.render(frame, screen);
             case ERROR -> modal.renderErrorModal(frame, screen, errorMessage);
             case CLEAN_CONFIRM -> clean.renderCleanConfirmModal(frame, screen);
             case CLEAN_RESULT -> clean.renderCleanResultModal(frame, screen);
@@ -2734,38 +2728,22 @@ public class Tui {
     }
 
     private boolean handleActionsEvent(KeyEvent key, TuiRunner tui) {
-        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC() || key.isKey(KeyCode.F9)) {
-            mode = Mode.BROWSE;
-            return true;
-        }
-        if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
-            if (actionsSelectedIndex < actionsList.size() - 1) {
-                actionsSelectedIndex++;
+        return switch (actionsMenu.handleKey(key)) {
+            case HANDLED -> true;
+            case UNHANDLED -> false;
+            case CLOSE -> {
+                mode = Mode.BROWSE;
+                yield true;
             }
-            return true;
-        }
-        if (key.isKey(KeyCode.UP) || key.isChar('k')) {
-            if (actionsSelectedIndex > 0) {
-                actionsSelectedIndex--;
+            case RUN -> {
+                var actionsContext = actionsMenu.context();
+                if (vanished(actionsContext.instanceName())) yield true;
+                var action = actionsMenu.selectedAction();
+                mode = Mode.BROWSE;
+                if (dispatchAction(action, actionsContext)) tui.quit();
+                yield true;
             }
-            return true;
-        }
-        if (key.isKey(KeyCode.HOME) || key.isChar('g')) {
-            actionsSelectedIndex = 0;
-            return true;
-        }
-        if (key.isKey(KeyCode.END) || key.isChar('G')) {
-            actionsSelectedIndex = actionsList.size() - 1;
-            return true;
-        }
-        if (key.isKey(KeyCode.ENTER)) {
-            if (vanished(actionsContext.instanceName())) return true;
-            var action = actionsList.get(actionsSelectedIndex);
-            mode = Mode.BROWSE;
-            if (dispatchAction(action, actionsContext)) tui.quit();
-            return true;
-        }
-        return false;
+        };
     }
 
     static String buildStatusMessage(String[] args, boolean success, java.time.Instant buildStart) {
@@ -3087,65 +3065,6 @@ public class Tui {
             spans.add(Span.styled(label, Style.EMPTY.fg(theme.barLabelFg()).bg(theme.barBg())));
         }
         return new KeyItem(Line.from(spans), 1 + key.length() + label.length());
-    }
-
-    private void renderActionsModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        if (actionsList == null || actionsList.isEmpty()) return;
-
-        var lines = new ArrayList<Line>();
-        for (int i = 0; i < actionsList.size(); i++) {
-            var action = actionsList.get(i);
-            var selected = (i == actionsSelectedIndex);
-            var prefix = selected ? " > " : "   ";
-            var style = selected
-                    ? Style.EMPTY.bold().fg(theme.focusedLabel()).bg(modal.bg())
-                    : Style.EMPTY.fg(modal.fg()).bg(modal.bg());
-            if (action instanceof YamlToolAction ya && ya.isUrl()) {
-                var url = ya.resolveUrl(actionsContext);
-                if (url != null && !url.isBlank()) {
-                    style = style.hyperlink(url);
-                }
-            }
-            var toolStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
-            lines.add(Line.from(List.of(
-                    Span.styled(prefix + action.label(), style),
-                    Span.styled("  (" + action.toolName() + ")", toolStyle))));
-        }
-
-        int modalWidth = Math.min(80, screen.width() - 4);
-        int modalHeight = Math.min(lines.size() + 4, screen.height() - 2);
-
-        var instanceName = actionsContext != null ? actionsContext.instanceName() : "";
-        var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
-        var block = dev.tamboui.widgets.block.Block.builder()
-                .borders(dev.tamboui.widgets.block.Borders.ALL)
-                .borderType(dev.tamboui.widgets.block.BorderType.DOUBLE)
-                .title(modal.styledTitle(" Actions — " + instanceName + " ", modal.border()))
-                .borderStyle(Style.EMPTY.fg(modal.border()))
-                .style(Style.EMPTY.bg(modal.bg()))
-                .padding(dev.tamboui.layout.Padding.horizontal(1))
-                .build();
-        modal.renderBlock(frame, block, modalArea);
-        var inner = block.inner(modalArea);
-
-        var rows = dev.tamboui.layout.Layout.vertical()
-                .constraints(dev.tamboui.layout.Constraint.fill(), dev.tamboui.layout.Constraint.length(1))
-                .split(inner);
-
-        // Keep the selected item visible
-        int contentHeight = rows.get(0).height();
-        if (actionsSelectedIndex < actionsScrollOffset) {
-            actionsScrollOffset = actionsSelectedIndex;
-        } else if (actionsSelectedIndex >= actionsScrollOffset + contentHeight) {
-            actionsScrollOffset = actionsSelectedIndex - contentHeight + 1;
-        }
-
-        actionsScrollOffset = modal.renderScrollableContent(frame, rows.get(0), lines, actionsScrollOffset);
-
-        var hintSpans = new ArrayList<Span>();
-        modal.addKey(hintSpans, "Enter", "Run");
-        modal.addKey(hintSpans, "F9/Esc", "Close");
-        frame.renderWidget(dev.tamboui.widgets.paragraph.Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
 
     private static void fillBackground(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Color bg) {
@@ -3557,7 +3476,7 @@ public class Tui {
             case BRANCH -> branchSourceName;
             case INSTANCE_DETAIL -> detailInstanceName;
             case ACCOUNTS -> accountsModal != null ? accountsModal.instance() : null;
-            case ACTIONS -> actionsContext != null ? actionsContext.instanceName() : null;
+            case ACTIONS -> actionsMenu.context() != null ? actionsMenu.context().instanceName() : null;
             default -> null;
         };
     }
