@@ -363,7 +363,7 @@ final class TemplateDetailView {
             lines.add(row("", "↑ parent " + parentName + " was rebuilt since last build", warnStyle()));
         }
         if (template.diskUsage() >= 0) {
-            lines.add(row("Disk:", Tui.diskCell(template.diskUsage())
+            lines.add(row("Disk:", UsageFormat.diskCell(template.diskUsage())
                     + "  (approx, excludes shared blocks)", lineStyle()));
         }
         lines.add(Line.styled("", lineStyle()));
