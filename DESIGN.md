@@ -131,8 +131,7 @@ So the second command finds the proxy healthy and does nothing.
 
 `installMacOs`'s failure message depends on *why* the reinstall's restart failed, which `isActive()` alone cannot say.
 A job still being unloaded when the install's own teardown timed out, and a job that loaded fine but is failing to come up (bad config, VM unreachable), both leave the job loaded.
-`LaunchdJob.start`/`restart` therefore return an `Outcome` (`RUNNING`/`STILL_UNLOADING`/`FAILED`/`EXITED`) instead of a boolean.
-So `installMacOs` can report "the previous job had not finished unloading" only for the first case and fall through to the ordinary "not responding" message, which points at logs, for the second.
+`LaunchdJob.start`/`restart` therefore return an `Outcome` (`RUNNING`/`STILL_UNLOADING`/`FAILED`/`EXITED`) instead of a boolean, so `installMacOs` can report "the previous job had not finished unloading" only for the first case and fall through to the ordinary "not responding" message, which points at logs, for the second.
 
 `Outcome` also keeps "launchctl refused" (`FAILED`) apart from "launchctl did it and the job did not stay up" (`EXITED`).
 Only `RUNNING` is success, for `restart` as before (#916).
@@ -503,8 +502,7 @@ Where it cannot be taken at all -- a home on NFS without lockd -- the claim warn
 Incus's check below turns a collision into a failed branch, not a shared address, which is what `main` did before the lock existed.
 A holder that never lets go still times out; only an unusable file degrades.
 The claim and the stale-subnet repair report through a `StaticIpAllocator.Output` (step, warn), so the TUI -- which runs that repair on its own screen before a shell -- captures them into its warning log instead of printing over itself (see "Warnings while the TUI owns the terminal").
-Writers it cannot see -- `sudo isx`, another host user's isx on the same daemon, a manual `incus config device set` -- are mostly caught by Incus itself.
-It refuses a second NIC with the same `ipv4.address` on the bridge (409) and so fails the branch rather than sharing an address.
+Writers it cannot see -- `sudo isx`, another host user's isx on the same daemon, a manual `incus config device set` -- are mostly caught by Incus itself, which refuses a second NIC with the same `ipv4.address` on the bridge (409) and so fails the branch rather than sharing an address.
 Mostly, because Incus validates before it commits and two concurrent writes can both pass; only the lock closes that window.
 Nor does that check cover copies.
 Incus deliberately creates a copy whose NIC conflicts with another and only logs it.
@@ -1051,9 +1049,7 @@ The proxy now reports `pid` in `/health`, and `ProxyService.signalAccountRefresh
 `isx proxy stop` finds a proxy started by hand the same way (`ProxyService.stopManualProxy`, #155).
 `fuser` alone has no `port/tcp` form on macOS and is missing where psmisc is not installed, so it left that proxy running and said "Proxy is not running."
 The signal goes to whatever proxy runs on the machine, so unit tests must never send it.
-The one seam is in `signalAccountRefresh()` itself.
-The test home extensions (`TempHome`, `IsolatedHome`) replace it with a counter for the classes that use them.
-So one opt-in covers every caller a test reaches, rather than each caller needing a hook of its own (#871).
+The one seam is in `signalAccountRefresh()` itself, and the test home extensions (`TempHome`, `IsolatedHome`) replace it with a counter for the classes that use them -- so one opt-in covers every caller a test reaches, rather than each caller needing a hook of its own (#871).
 Containers reach `/health` too, so the PID goes only to host callers (`MitmProxy.isHostCaller`: loopback, or a source equal to the bridge address the endpoint listens on -- a container's source is its own address, which `security.ipv4_filtering` stops it spoofing).
 
 **Version drift detection**: The proxy health check (run before builds, branches, and shell access) compares the running proxy's version against the CLI version.
@@ -1807,8 +1803,7 @@ The reasons:
   The log announces them on the status line when the shell returns to the TUI, and keeps them for the `w` dialog.
   A plain `incus start` still fails on such a device; isx cannot intercept it.
   The zmx device is the exception.
-  Its source sits on the `XDG_RUNTIME_DIR` tmpfs, so every reboot would leave it missing.
-  It is added with `required=false`.
+  Its source sits on the `XDG_RUNTIME_DIR` tmpfs, so every reboot would leave it missing, and it is added with `required=false`.
   A start that bypasses isx (`incus start`, `boot.autostart`) skips it, and the guest has no host-visible zmx sockets until isx itself starts the stopped instance and repairs the device first (#1044).
   An instance already running, such as one `boot.autostart` brought up after a reboot, keeps running without the mount until it is stopped and started through isx.
   The pre-start repair also re-adds a device from before that change, which costs no request when the device is already optional.
@@ -2102,8 +2097,7 @@ The kernel flags a pool's qgroup accounting `inconsistent` — and from then on 
 Both are routine for isx.
 Incus enables quotas lazily, when the first instance size limit is applied (by which time the image and every template already exist), and the appliance kernel runs with the threshold at 3, so template rebuilds keep re-tripping it.
 Nothing clears the flag except a completed `btrfs quota rescan`.
-The frozen values are not zeros but plausible numbers (each snapshot inherits its source's rfer, so every subvolume reports the base image's ~113 MiB with 16 KiB exclusive), which is why this went unnoticed.
-They pass the `<= 0` stamp guard, get recorded, and the delta model subtracts identical stamps to exactly `~0B` per layer.
+The frozen values are not zeros but plausible numbers (each snapshot inherits its source's rfer, so every subvolume reports the base image's ~113 MiB with 16 KiB exclusive), which is why this went unnoticed: they pass the `<= 0` stamp guard, get recorded, and the delta model subtracts identical stamps to exactly `~0B` per layer.
 The exclusive fallback and Incus's own `state.disk` usage read the same frozen qgroups, so there is no untainted fallback — only the statfs-based gauge stays right.
 The fix is a trust gate plus an automatic repair, both in `BtrfsUsage`.
 The kernel exposes the flags world-readable in sysfs (`/sys/fs/btrfs/<fsid>/qgroups/{enabled,inconsistent,mode,drop_subtree_threshold}`), so *detection* needs no privilege at all.
@@ -2366,8 +2360,7 @@ The count is taken again after a delegate's instance is branched, since other se
 A host-side ledger lost: each session's own belief goes stale-high as soon as its tasks finish unobserved, and would block the others for nothing.
 An instance that cannot be asked counts nothing, so it cannot block every later task; `max-instances` still bounds it.
 Nor can one that never answers hold up every task start or pile up processes.
-The probe runs isx's script as agentuser's uid without a login shell (`IncusClient.execProbe`), so a profile that hangs `su -` -- which an agent in the instance can arrange -- never runs.
-It is a bounded exec (`execStreamWithin`, killed at ten seconds and given up on shortly after), so even a guest whose own binaries hang releases the host.
+The probe runs isx's script as agentuser's uid without a login shell (`IncusClient.execProbe`), so a profile that hangs `su -` -- which an agent in the instance can arrange -- never runs; and it is a bounded exec (`execStreamWithin`, killed at ten seconds and given up on shortly after), so even a guest whose own binaries hang releases the host.
 There is never more than one probe per instance.
 One that did not answer in time, or answered but took more than half of it (a FIFO a loop feeds just in time would otherwise cost every task start nearly ten seconds), is not asked for ten minutes and counts nothing meanwhile.
 Counting its last answer instead was tried and lost.
@@ -3467,8 +3460,7 @@ A lock that only the swap took would not help either, because readers don't ask 
 So the lock is a read-write one.
 `TemplateLock.replace` holds the template's `HostLock` exclusively for the delete and the rename.
 Every path that copies from a template holds it shared, from the lookup until the copy is made: `isx branch`, the TUI's branch, `isx mcp`'s `create_instance(template)` and `delegate(template)`, and a build or project create copying its parent.
-`isx build`'s check of whether a parent is missing or outdated (`parentNeedsBuild`) holds it and its own parent too, or a parent caught mid-swap would read as missing and be rebuilt a second time, racing the first (and a grandparent caught mid-swap would make the parent look current).
-So does the chain's lookup before the rebuild confirmation, or a template in the gap would be replaced without asking.
+`isx build`'s check of whether a parent is missing or outdated (`parentNeedsBuild`) holds it and its own parent too, or a parent caught mid-swap would read as missing and be rebuilt a second time, racing the first (and a grandparent caught mid-swap would make the parent look current); so does the chain's lookup before the rebuild confirmation, or a template in the gap would be replaced without asking.
 A reader that arrives during the gap waits the two requests out and then finds the new template.
 Readers never hold each other off, so concurrent branches of one template, such as a coordinator's fan-out, cost each other nothing; the lock adds a few file syscalls and no Incus request to the branch path.
 The lock file is `~/.cache/incus-spawn/locks/templates/<name>.lock`, one per name and never deleted, since deleting it would let two processes lock different files.
