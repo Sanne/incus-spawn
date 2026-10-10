@@ -217,10 +217,8 @@ public class Tui {
     private String pendingDeleteNote = "";      // computed once when the confirm dialog opens
     /** The pool-cleanup dialog; set when 'c' finds a pool, and kept for the result it shows after the clean. */
     private CleanModal clean;
-    // Build menu state (computed once when F5 opens the menu)
-    private record BuildMenuOption(String label, String description, String badge, String[] buildArgs, boolean enabled) {}
-    private java.util.List<BuildMenuOption> buildMenuOptions;
-    private int buildMenuSelectedIndex;
+    /** The F5 build menu; set when it opens. */
+    private BuildMenu buildMenu;
     private String[] pendingBuildArgs;
     // Branch modal state
     private String branchSourceName;
@@ -1465,90 +1463,6 @@ public class Tui {
                 || key.isKey(KeyCode.F9) || key.isChar('a') || (key.isKey(KeyCode.F7) && isRunning(selected));
     }
 
-    private void openBuildMenu(TemplateInfo template) {
-        var options = new java.util.ArrayList<BuildMenuOption>();
-        var def = imageDefs.get(template.name());
-        boolean isBuilt = !"not built".equals(template.buildStatus());
-
-        // Option 1: Build/Rebuild single template
-        if (isBuilt) {
-            options.add(new BuildMenuOption(
-                    "Rebuild " + template.name(),
-                    "Deletes and rebuilds this template",
-                    null, new String[]{template.name()}, true));
-        } else {
-            options.add(new BuildMenuOption(
-                    "Build " + template.name(),
-                    "Builds this template for the first time",
-                    null, new String[]{template.name()}, true));
-        }
-
-        // Option 2: Rebuild with parents (only for non-root templates)
-        if (def != null && !def.isRoot()) {
-            var chain = new java.util.ArrayList<String>();
-            BuildCommand.collectAllRecursive(def, imageDefs, chain, new java.util.LinkedHashSet<>());
-            var chainStr = String.join(" → ", chain);
-            options.add(new BuildMenuOption(
-                    "Rebuild " + template.name() + " with parents",
-                    "Rebuilds " + chainStr,
-                    null, new String[]{template.name(), "--with-parents"}, true));
-        }
-
-        // Option: Rebuild with descendants (only when template has descendants)
-        if (def != null) {
-            var descChain = new java.util.ArrayList<String>();
-            var descSeen = new java.util.LinkedHashSet<String>();
-            BuildCommand.collectDescendants(template.name(), imageDefs, descChain, descSeen);
-            if (!descChain.isEmpty()) {
-                var fullChain = new java.util.ArrayList<String>();
-                fullChain.add(template.name());
-                fullChain.addAll(descChain);
-                var chainStr = String.join(" → ", fullChain);
-                options.add(new BuildMenuOption(
-                        "Rebuild " + template.name() + " with descendants",
-                        "Rebuilds " + chainStr,
-                        null, new String[]{template.name(), "--with-descendants"}, true));
-            }
-        }
-
-        // Option 3: Build missing templates (only if there are missing ones)
-        long missingCount = templateEntries.stream()
-                .filter(t -> "not built".equals(t.buildStatus())).count();
-        if (missingCount > 0) {
-            options.add(new BuildMenuOption(
-                    "Build templates not yet built",
-                    "Builds all templates that haven't been built yet",
-                    missingCount + (missingCount == 1 ? " template" : " templates"),
-                    new String[]{"--missing"}, true));
-        }
-
-        // Option 4: Rebuild out of sync templates (uses cached data from buildTemplateRowData)
-        if (templatesOutOfSync.isEmpty()) {
-            options.add(new BuildMenuOption(
-                    "Rebuild out of sync templates",
-                    "All templates match their current definitions",
-                    "all in sync", new String[]{"--out-of-sync"}, false));
-        } else {
-            options.add(new BuildMenuOption(
-                    "Rebuild out of sync templates",
-                    "Rebuilds all templates whose definition changed\n"
-                            + "since last build, built with an older version,\n"
-                            + "or whose parent was rebuilt after them",
-                    templatesOutOfSync.size() + (templatesOutOfSync.size() == 1 ? " template" : " templates"),
-                    new String[]{"--out-of-sync"}, true));
-        }
-
-        // Option 5: (Re)build all templates
-        options.add(new BuildMenuOption(
-                "(Re)build all templates",
-                "Deletes and rebuilds every template",
-                null, new String[]{"--all"}, true));
-
-        buildMenuOptions = options;
-        buildMenuSelectedIndex = 0;
-        mode = Mode.BUILD_MENU;
-    }
-
     private void openNewTemplateModal(String parentName) {
         newTemplateNameInput = new TextInputState("");
         newTemplateParentInput = new TextInputState(parentName);
@@ -1898,49 +1812,27 @@ public class Tui {
         return true;
     }
 
-    private boolean handleBuildMenuEvent(KeyEvent key, TuiRunner tui) {
-        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
-            mode = Mode.BROWSE;
-            return true;
-        }
-        if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
-            for (int i = buildMenuSelectedIndex + 1; i < buildMenuOptions.size(); i++) {
-                if (buildMenuOptions.get(i).enabled()) {
-                    buildMenuSelectedIndex = i;
-                    break;
-                }
-            }
-            return true;
-        }
-        if (key.isKey(KeyCode.UP) || key.isChar('k')) {
-            for (int i = buildMenuSelectedIndex - 1; i >= 0; i--) {
-                if (buildMenuOptions.get(i).enabled()) {
-                    buildMenuSelectedIndex = i;
-                    break;
-                }
-            }
-            return true;
-        }
-        if (key.isKey(KeyCode.ENTER)) {
-            var option = buildMenuOptions.get(buildMenuSelectedIndex);
-            if (!option.enabled()) return true;
-            executeBuildOption(option, tui);
-            return true;
-        }
-        if (key.code() == KeyCode.CHAR && key.character() >= '1' && key.character() <= '9') {
-            int index = key.character() - '1';
-            if (index < buildMenuOptions.size()) {
-                var option = buildMenuOptions.get(index);
-                if (!option.enabled()) return true;
-                buildMenuSelectedIndex = index;
-                executeBuildOption(option, tui);
-            }
-            return true;
-        }
-        return false;
+    private void openBuildMenu(TemplateInfo template) {
+        buildMenu = new BuildMenu(modal, theme, template, imageDefs, templateEntries, templatesOutOfSync);
+        mode = Mode.BUILD_MENU;
     }
 
-    private void executeBuildOption(BuildMenuOption option, TuiRunner tui) {
+    private boolean handleBuildMenuEvent(KeyEvent key, TuiRunner tui) {
+        return switch (buildMenu.handleKey(key)) {
+            case HANDLED -> true;
+            case IGNORED -> false;
+            case CLOSE -> {
+                mode = Mode.BROWSE;
+                yield true;
+            }
+            case BUILD -> {
+                executeBuildOption(buildMenu.selected(), tui);
+                yield true;
+            }
+        };
+    }
+
+    private void executeBuildOption(BuildMenu.BuildMenuOption option, TuiRunner tui) {
         pendingAction = PendingAction.BUILD_TEMPLATE;
         pendingBuildArgs = option.buildArgs();
         mode = Mode.BROWSE;
@@ -2751,7 +2643,7 @@ public class Tui {
                         : "This action cannot be undone." + pendingDeleteNote;
                 modal.renderConfirmModal(frame, screen, title, message, modal.warn());
             }
-            case BUILD_MENU -> renderBuildMenu(frame, screen);
+            case BUILD_MENU -> buildMenu.renderBuildMenu(frame, screen);
             case CONFIRM_BUILD_FOR_BRANCH -> {
                 modal.renderConfirmModal(frame, screen,
                         " Branch from '" + branchSourceName + "' ",
@@ -3651,75 +3543,6 @@ public class Tui {
             spans.add(Span.styled(label, Style.EMPTY.fg(theme.barLabelFg()).bg(theme.barBg())));
         }
         return new KeyItem(Line.from(spans), 1 + key.length() + label.length());
-    }
-
-    private void renderBuildMenu(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        if (buildMenuOptions == null || buildMenuOptions.isEmpty()) return;
-
-        var lines = new ArrayList<Line>();
-        for (int i = 0; i < buildMenuOptions.size(); i++) {
-            var opt = buildMenuOptions.get(i);
-            var selected = (i == buildMenuSelectedIndex);
-            var prefix = selected ? " ▶ " : "   ";
-            var numPrefix = "[" + (i + 1) + "] ";
-
-            var labelStyle = !opt.enabled()
-                    ? Style.EMPTY.fg(theme.textDim()).bg(modal.bg())
-                    : selected
-                        ? Style.EMPTY.bold().fg(theme.focusedLabel()).bg(modal.bg())
-                        : Style.EMPTY.fg(modal.fg()).bg(modal.bg());
-            var spans = new ArrayList<Span>();
-            spans.add(Span.styled(prefix + numPrefix + opt.label(), labelStyle));
-            if (opt.badge() != null) {
-                var badgeStyle = Style.EMPTY.fg(opt.enabled() ? modal.accent() : theme.textDim()).bg(modal.bg());
-                spans.add(Span.styled("  " + opt.badge(), badgeStyle));
-            }
-            lines.add(Line.from(spans));
-
-            // Description lines (may be multi-line via \n)
-            var descStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
-            for (var descLine : opt.description().split("\n")) {
-                lines.add(Line.styled("       " + descLine, descStyle));
-            }
-
-            // Blank separator between options
-            if (i < buildMenuOptions.size() - 1) {
-                lines.add(Line.styled("", Style.EMPTY.bg(modal.bg())));
-            }
-        }
-
-        int modalWidth = Math.min(60, screen.width() - 4);
-        int modalHeight = Math.min(lines.size() + 4, screen.height() - 2);
-
-        var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
-        var block = dev.tamboui.widgets.block.Block.builder()
-                .borders(dev.tamboui.widgets.block.Borders.ALL)
-                .borderType(dev.tamboui.widgets.block.BorderType.DOUBLE)
-                .title(modal.styledTitle(" Build Templates ", modal.border()))
-                .borderStyle(Style.EMPTY.fg(modal.border()))
-                .style(Style.EMPTY.bg(modal.bg()))
-                .padding(dev.tamboui.layout.Padding.horizontal(1))
-                .build();
-        modal.renderBlock(frame, block, modalArea);
-        var inner = block.inner(modalArea);
-
-        var rows = dev.tamboui.layout.Layout.vertical()
-                .constraints(dev.tamboui.layout.Constraint.length(1),
-                        dev.tamboui.layout.Constraint.fill(),
-                        dev.tamboui.layout.Constraint.length(1))
-                .split(inner);
-
-        // Top spacing
-        frame.renderWidget(dev.tamboui.widgets.paragraph.Paragraph.from(
-                Line.styled("", Style.EMPTY.bg(modal.bg()))), rows.get(0));
-
-        modal.renderScrollableContent(frame, rows.get(1), lines, 0);
-
-        var hintSpans = new ArrayList<Span>();
-        modal.addKey(hintSpans, "1-" + buildMenuOptions.size(), "Select");
-        modal.addKey(hintSpans, "Enter", "Build");
-        modal.addKey(hintSpans, "Esc", "Cancel");
-        frame.renderWidget(dev.tamboui.widgets.paragraph.Paragraph.from(Line.from(hintSpans)), rows.get(2));
     }
 
     private void renderActionsModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {

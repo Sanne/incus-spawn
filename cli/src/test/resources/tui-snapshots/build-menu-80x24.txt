@@ -1,0 +1,24 @@
+
+
+
+
+          ╔ Build Templates ═════════════════════════════════════════╗
+          ║                                                          ║
+          ║  ▶ [1] Rebuild tpl-dev                                   ║
+          ║        Deletes and rebuilds this template                ║
+          ║                                                          ║
+          ║    [2] Build templates not yet built  1 template         ║
+          ║        Builds all templates that haven't been built yet  ║
+          ║                                                          ║
+          ║    [3] Rebuild out of sync templates  all in sync        ║
+          ║        All templates match their current definitions     ║
+          ║                                                          ║
+          ║    [4] (Re)build all templates                           ║
+          ║        Deletes and rebuilds every template               ║
+          ║  1-4 Select   Enter Build   Esc Cancel                   ║
+          ╚══════════════════════════════════════════════════════════╝
+
+
+
+
+
