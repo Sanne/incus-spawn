@@ -167,6 +167,7 @@ Key design:
   `routeWebSocket` completes the client's handshake (`completeHandshake`, the deprecated `ServerWebSocket.accept()` on purpose) before injecting anything or dialling, because the handler runs before Netty validates the handshake (#972); keep any new rejection (e.g. `reject(502)`) before it.
   Used by Codex CLI for `api.openai.com`
 - Caches OCI blobs by SHA256, Maven/Gradle artifacts by repository path (confirmed with upstream per `ArtifactCacheTiers`, see below), and npm tarballs from `registry.npmjs.org` with ETag-based packument verification.
+  The caching lives in `ArtifactCacheHandler`, built only from `Upstream` (the upstream clients, async DNS, backoff, relay and response helpers it shares with `MitmProxy`) and given no `RequestContext`, so by its types it cannot inject a credential; keep it that way.
   npm's per-version shasum lookups go through `probeClient` (`fetchNpmVersion` → `fetchSmallBody`) like Maven/Gradle checksums.
   A `5xx` is asked once more (while over half the client's budget is left), since a failed lookup relays the tarball uncached and unresumable (#925).
   Never wait on the network inside an ordered `executeBlocking` (the default): every MITM connection shares one context and so one ordered queue, and a raw-socket lookup there ran every cold-install lookup one at a time (#960).

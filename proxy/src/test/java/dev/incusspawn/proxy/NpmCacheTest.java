@@ -25,44 +25,44 @@ class NpmCacheTest {
 
     @Test
     void tarballPatternMatchesScopedPackage() {
-        var m = MitmProxy.NPM_TARBALL_PATTERN.matcher("/@openai/codex/-/codex-0.1.0.tgz");
+        var m = ArtifactCacheHandler.NPM_TARBALL_PATTERN.matcher("/@openai/codex/-/codex-0.1.0.tgz");
         assertTrue(m.matches());
         assertEquals("@openai/codex/-/codex-0.1.0.tgz", m.group(1));
     }
 
     @Test
     void tarballPatternMatchesUnscopedPackage() {
-        var m = MitmProxy.NPM_TARBALL_PATTERN.matcher("/express/-/express-4.18.2.tgz");
+        var m = ArtifactCacheHandler.NPM_TARBALL_PATTERN.matcher("/express/-/express-4.18.2.tgz");
         assertTrue(m.matches());
         assertEquals("express/-/express-4.18.2.tgz", m.group(1));
     }
 
     @Test
     void tarballPatternMatchesPreReleaseVersion() {
-        var m = MitmProxy.NPM_TARBALL_PATTERN.matcher("/@types/node/-/node-20.0.0-beta.1.tgz");
+        var m = ArtifactCacheHandler.NPM_TARBALL_PATTERN.matcher("/@types/node/-/node-20.0.0-beta.1.tgz");
         assertTrue(m.matches());
         assertEquals("@types/node/-/node-20.0.0-beta.1.tgz", m.group(1));
     }
 
     @Test
     void tarballPatternRejectsMetadataPath() {
-        assertFalse(MitmProxy.NPM_TARBALL_PATTERN.matcher("/@openai/codex").matches());
-        assertFalse(MitmProxy.NPM_TARBALL_PATTERN.matcher("/express").matches());
+        assertFalse(ArtifactCacheHandler.NPM_TARBALL_PATTERN.matcher("/@openai/codex").matches());
+        assertFalse(ArtifactCacheHandler.NPM_TARBALL_PATTERN.matcher("/express").matches());
     }
 
     @Test
     void tarballPatternRejectsSearchPath() {
-        assertFalse(MitmProxy.NPM_TARBALL_PATTERN.matcher("/-/v1/search?text=express").matches());
+        assertFalse(ArtifactCacheHandler.NPM_TARBALL_PATTERN.matcher("/-/v1/search?text=express").matches());
     }
 
     @Test
     void tarballPatternRejectsPathWithoutVersionDigit() {
-        assertFalse(MitmProxy.NPM_TARBALL_PATTERN.matcher("/express/-/express-latest.tgz").matches());
+        assertFalse(ArtifactCacheHandler.NPM_TARBALL_PATTERN.matcher("/express/-/express-latest.tgz").matches());
     }
 
     @Test
     void tarballPatternAllowsDotDotButContainmentCheckBlocks() {
-        var m = MitmProxy.NPM_TARBALL_PATTERN.matcher("/../-/..-1.0.tgz");
+        var m = ArtifactCacheHandler.NPM_TARBALL_PATTERN.matcher("/../-/..-1.0.tgz");
         assertTrue(m.matches(), "regex matches (containment check is elsewhere)");
         assertEquals("../-/..-1.0.tgz", m.group(1));
     }
@@ -74,7 +74,7 @@ class NpmCacheTest {
         var origHome = System.getProperty("user.home");
         try {
             System.setProperty("user.home", tmp.toString());
-            MitmProxy.storePackageEtag("../../etc", "\"evil\"");
+            ArtifactCacheHandler.storePackageEtag("../../etc", "\"evil\"");
 
             var escaped = tmp.resolve(".cache/incus-spawn/etc/.etag");
             assertFalse(Files.exists(escaped), "should not write outside npm cache dir");
@@ -91,53 +91,53 @@ class NpmCacheTest {
 
     @Test
     void packumentPatternMatchesUnscopedPackage() {
-        var m = MitmProxy.NPM_PACKUMENT_PATTERN.matcher("/express");
+        var m = ArtifactCacheHandler.NPM_PACKUMENT_PATTERN.matcher("/express");
         assertTrue(m.matches());
         assertEquals("express", m.group(1));
     }
 
     @Test
     void packumentPatternMatchesScopedPackage() {
-        var m = MitmProxy.NPM_PACKUMENT_PATTERN.matcher("/@openai/codex");
+        var m = ArtifactCacheHandler.NPM_PACKUMENT_PATTERN.matcher("/@openai/codex");
         assertTrue(m.matches());
         assertEquals("@openai/codex", m.group(1));
     }
 
     @Test
     void packumentPatternMatchesDottedPackageName() {
-        var m = MitmProxy.NPM_PACKUMENT_PATTERN.matcher("/socket.io");
+        var m = ArtifactCacheHandler.NPM_PACKUMENT_PATTERN.matcher("/socket.io");
         assertTrue(m.matches());
         assertEquals("socket.io", m.group(1));
     }
 
     @Test
     void packumentPatternRejectsTarballPath() {
-        assertFalse(MitmProxy.NPM_PACKUMENT_PATTERN.matcher("/@openai/codex/-/codex-0.1.0.tgz").matches());
-        assertFalse(MitmProxy.NPM_PACKUMENT_PATTERN.matcher("/express/-/express-4.18.2.tgz").matches());
+        assertFalse(ArtifactCacheHandler.NPM_PACKUMENT_PATTERN.matcher("/@openai/codex/-/codex-0.1.0.tgz").matches());
+        assertFalse(ArtifactCacheHandler.NPM_PACKUMENT_PATTERN.matcher("/express/-/express-4.18.2.tgz").matches());
     }
 
     @Test
     void packumentPatternRejectsPerVersionPath() {
-        assertFalse(MitmProxy.NPM_PACKUMENT_PATTERN.matcher("/express/4.18.2").matches());
-        assertFalse(MitmProxy.NPM_PACKUMENT_PATTERN.matcher("/@openai/codex/0.1.0").matches());
+        assertFalse(ArtifactCacheHandler.NPM_PACKUMENT_PATTERN.matcher("/express/4.18.2").matches());
+        assertFalse(ArtifactCacheHandler.NPM_PACKUMENT_PATTERN.matcher("/@openai/codex/0.1.0").matches());
     }
 
     @Test
     void packumentPatternRejectsSpecialPaths() {
-        assertFalse(MitmProxy.NPM_PACKUMENT_PATTERN.matcher("/-/v1/search").matches());
-        assertFalse(MitmProxy.NPM_PACKUMENT_PATTERN.matcher("/-/npm/v1/security/advisories").matches());
+        assertFalse(ArtifactCacheHandler.NPM_PACKUMENT_PATTERN.matcher("/-/v1/search").matches());
+        assertFalse(ArtifactCacheHandler.NPM_PACKUMENT_PATTERN.matcher("/-/npm/v1/security/advisories").matches());
     }
 
     @Test
     void packumentPatternRejectsRootPath() {
-        assertFalse(MitmProxy.NPM_PACKUMENT_PATTERN.matcher("/").matches());
+        assertFalse(ArtifactCacheHandler.NPM_PACKUMENT_PATTERN.matcher("/").matches());
     }
 
     // --- package ref parsing ---
 
     @Test
     void parseScopedPackagePath() {
-        var ref = MitmProxy.parseNpmTarballPath("@openai/codex/-/codex-0.1.0.tgz");
+        var ref = ArtifactCacheHandler.parseNpmTarballPath("@openai/codex/-/codex-0.1.0.tgz");
         assertNotNull(ref);
         assertEquals("@openai/codex", ref.packageName());
         assertEquals("0.1.0", ref.version());
@@ -145,7 +145,7 @@ class NpmCacheTest {
 
     @Test
     void parseUnscopedPackagePath() {
-        var ref = MitmProxy.parseNpmTarballPath("express/-/express-4.18.2.tgz");
+        var ref = ArtifactCacheHandler.parseNpmTarballPath("express/-/express-4.18.2.tgz");
         assertNotNull(ref);
         assertEquals("express", ref.packageName());
         assertEquals("4.18.2", ref.version());
@@ -153,7 +153,7 @@ class NpmCacheTest {
 
     @Test
     void parsePreReleaseVersion() {
-        var ref = MitmProxy.parseNpmTarballPath("@types/node/-/node-20.0.0-beta.1.tgz");
+        var ref = ArtifactCacheHandler.parseNpmTarballPath("@types/node/-/node-20.0.0-beta.1.tgz");
         assertNotNull(ref);
         assertEquals("@types/node", ref.packageName());
         assertEquals("20.0.0-beta.1", ref.version());
@@ -161,7 +161,7 @@ class NpmCacheTest {
 
     @Test
     void parseHyphenatedPackageName() {
-        var ref = MitmProxy.parseNpmTarballPath("es5-ext/-/es5-ext-0.10.62.tgz");
+        var ref = ArtifactCacheHandler.parseNpmTarballPath("es5-ext/-/es5-ext-0.10.62.tgz");
         assertNotNull(ref);
         assertEquals("es5-ext", ref.packageName());
         assertEquals("0.10.62", ref.version());
@@ -169,8 +169,8 @@ class NpmCacheTest {
 
     @Test
     void parseReturnsNullForInvalidPath() {
-        assertNull(MitmProxy.parseNpmTarballPath("express"));
-        assertNull(MitmProxy.parseNpmTarballPath("express/-/e.tgz"));
+        assertNull(ArtifactCacheHandler.parseNpmTarballPath("express"));
+        assertNull(ArtifactCacheHandler.parseNpmTarballPath("express/-/e.tgz"));
     }
 
     // --- digest verification (OCI blobs, npm tarballs) ---
@@ -179,7 +179,7 @@ class NpmCacheTest {
     static boolean commits(Path tmp, String digest) throws Exception {
         var download = tmp.resolve("download");
         Files.writeString(download, "hello");
-        var verification = MitmProxy.Verification.ofDigest(digest);
+        var verification = ArtifactCacheHandler.Verification.ofDigest(digest);
         var expected = verification.expected().apply(null).result();
         return expected != null && VerifiedArtifactStore.verifyAndCommit(
                 download, tmp.resolve("blob"), verification.checksum(), expected, false);
@@ -209,19 +209,19 @@ class NpmCacheTest {
     void readFileOrNullReturnsStrippedContent(@TempDir Path tmp) throws Exception {
         var f = tmp.resolve("data.txt");
         Files.writeString(f, "  hello world  \n");
-        assertEquals("hello world", MitmProxy.readFileOrNull(f));
+        assertEquals("hello world", ArtifactCacheHandler.readFileOrNull(f));
     }
 
     @Test
     void readFileOrNullReturnsNullForMissing(@TempDir Path tmp) {
-        assertNull(MitmProxy.readFileOrNull(tmp.resolve("nope.txt")));
+        assertNull(ArtifactCacheHandler.readFileOrNull(tmp.resolve("nope.txt")));
     }
 
     @Test
     void readFileOrNullReturnsEmptyStringForEmptyFile(@TempDir Path tmp) throws Exception {
         var f = tmp.resolve("empty.txt");
         Files.writeString(f, "");
-        assertEquals("", MitmProxy.readFileOrNull(f));
+        assertEquals("", ArtifactCacheHandler.readFileOrNull(f));
     }
 
     // --- sidecar file writing ---
@@ -229,7 +229,7 @@ class NpmCacheTest {
     @Test
     void writeNpmSidecarFilesCreatesShasumAndEtag(@TempDir Path tmp) throws Exception {
         var cacheFile = tmp.resolve("express/-/express-4.18.2.tgz");
-        MitmProxy.writeNpmSidecarFiles(cacheFile, "abc123def456", "\"etag-value\"");
+        ArtifactCacheHandler.writeNpmSidecarFiles(cacheFile, "abc123def456", "\"etag-value\"");
 
         assertEquals("abc123def456",
                 Files.readString(Path.of(cacheFile + ".shasum")).strip());
@@ -240,7 +240,7 @@ class NpmCacheTest {
     @Test
     void writeNpmSidecarFilesSkipsEtagWhenNull(@TempDir Path tmp) throws Exception {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
-        MitmProxy.writeNpmSidecarFiles(cacheFile, "deadbeef", null);
+        ArtifactCacheHandler.writeNpmSidecarFiles(cacheFile, "deadbeef", null);
 
         assertTrue(Files.isRegularFile(Path.of(cacheFile + ".shasum")));
         assertFalse(Files.exists(Path.of(cacheFile + ".etag")));
@@ -249,8 +249,8 @@ class NpmCacheTest {
     @Test
     void writeNpmSidecarFilesOverwritesExisting(@TempDir Path tmp) throws Exception {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
-        MitmProxy.writeNpmSidecarFiles(cacheFile, "old-shasum", "\"old-etag\"");
-        MitmProxy.writeNpmSidecarFiles(cacheFile, "new-shasum", "\"new-etag\"");
+        ArtifactCacheHandler.writeNpmSidecarFiles(cacheFile, "old-shasum", "\"old-etag\"");
+        ArtifactCacheHandler.writeNpmSidecarFiles(cacheFile, "new-shasum", "\"new-etag\"");
 
         assertEquals("new-shasum",
                 Files.readString(Path.of(cacheFile + ".shasum")).strip());
@@ -261,7 +261,7 @@ class NpmCacheTest {
     @Test
     void writeNpmSidecarFilesCreatesScopedPackageDirs(@TempDir Path tmp) throws Exception {
         var cacheFile = tmp.resolve("@scope/name/-/name-1.0.0.tgz");
-        MitmProxy.writeNpmSidecarFiles(cacheFile, "abc", "\"etag\"");
+        ArtifactCacheHandler.writeNpmSidecarFiles(cacheFile, "abc", "\"etag\"");
 
         assertTrue(Files.isRegularFile(Path.of(cacheFile + ".shasum")));
     }
@@ -273,7 +273,7 @@ class NpmCacheTest {
         var origHome = System.getProperty("user.home");
         try {
             System.setProperty("user.home", tmp.toString());
-            MitmProxy.storePackageEtag("@openai/codex", "\"W/abc123\"");
+            ArtifactCacheHandler.storePackageEtag("@openai/codex", "\"W/abc123\"");
 
             var etagFile = tmp.resolve(".cache/incus-spawn/npm/@openai/codex/.etag");
             assertTrue(Files.isRegularFile(etagFile));
@@ -288,8 +288,8 @@ class NpmCacheTest {
         var origHome = System.getProperty("user.home");
         try {
             System.setProperty("user.home", tmp.toString());
-            MitmProxy.storePackageEtag("express", "\"first\"");
-            MitmProxy.storePackageEtag("express", "\"second\"");
+            ArtifactCacheHandler.storePackageEtag("express", "\"first\"");
+            ArtifactCacheHandler.storePackageEtag("express", "\"second\"");
 
             var etagFile = tmp.resolve(".cache/incus-spawn/npm/express/.etag");
             assertEquals("\"second\"", Files.readString(etagFile).strip());
@@ -308,7 +308,7 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".etag"), "\"abc\"");
         Files.writeString(Path.of(cacheFile + ".shasum"), "someshasum");
 
-        var result = MitmProxy.freshNpmHit(cacheFile, "\"abc\"");
+        var result = ArtifactCacheHandler.freshNpmHit(cacheFile, "\"abc\"");
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -324,8 +324,8 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".etag"), "");
         Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
 
-        assertNull(MitmProxy.freshNpmHit(cacheFile, ""), "an empty ETag vouches for nothing");
-        var result = MitmProxy.checkNpmTarballCache(cacheFile, "", "ref",
+        assertNull(ArtifactCacheHandler.freshNpmHit(cacheFile, ""), "an empty ETag vouches for nothing");
+        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "", "ref",
                 "abc123");
 
         assertNotNull(result);
@@ -342,7 +342,7 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old\"");
         Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
 
-        var result = MitmProxy.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
+        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
                 "abc123");
 
         assertNotNull(result);
@@ -360,7 +360,7 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old\"");
         Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
 
-        var result = MitmProxy.checkNpmTarballCache(cacheFile, null, "ref",
+        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, null, "ref",
                 "abc123");
 
         assertNotNull(result);
@@ -379,7 +379,7 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".shasum"), "old-shasum");
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old-etag\"");
 
-        var result = MitmProxy.checkNpmTarballCache(cacheFile, "\"new-etag\"", "ref",
+        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new-etag\"", "ref",
                 "new-shasum");
 
         assertNotNull(result);
@@ -399,7 +399,7 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old\"");
         // no .shasum file
 
-        var result = MitmProxy.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
+        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
                 "fresh-shasum");
 
         assertNotNull(result);
@@ -416,7 +416,7 @@ class NpmCacheTest {
         Files.writeString(cacheFile, "tarball-content");
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old\"");
 
-        var result = MitmProxy.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
+        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
                 null);
 
         assertNotNull(result);
@@ -434,7 +434,7 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
         // no .etag files at all
 
-        var result = MitmProxy.checkNpmTarballCache(cacheFile, null, "ref",
+        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, null, "ref",
                 "abc123");
 
         assertNotNull(result);
@@ -448,7 +448,7 @@ class NpmCacheTest {
         Files.writeString(cacheFile, "tarball-content");
         Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
 
-        var result = MitmProxy.checkNpmTarballCache(cacheFile, null, "ref",
+        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, null, "ref",
                 "abc123");
 
         assertNotNull(result);
@@ -461,7 +461,7 @@ class NpmCacheTest {
     void cacheMissShasumAvailableReturnsFetchResult(@TempDir Path tmp) throws Exception {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
 
-        var result = MitmProxy.checkNpmTarballCache(cacheFile, "\"etag\"", "ref",
+        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"etag\"", "ref",
                 "abc123");
 
         assertNotNull(result);
@@ -477,7 +477,7 @@ class NpmCacheTest {
     void cacheMissShasumUnavailableReturnsNull(@TempDir Path tmp) throws Exception {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
 
-        var result = MitmProxy.checkNpmTarballCache(cacheFile, "\"etag\"", "ref",
+        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"etag\"", "ref",
                 null);
 
         assertNull(result, "should return null to trigger relay when shasum unavailable");
@@ -487,7 +487,7 @@ class NpmCacheTest {
     void cacheMissNoPackageEtagWritesShasumButNotEtag(@TempDir Path tmp) throws Exception {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
 
-        var result = MitmProxy.checkNpmTarballCache(cacheFile, null, "ref",
+        var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, null, "ref",
                 "abc123");
 
         assertNotNull(result);

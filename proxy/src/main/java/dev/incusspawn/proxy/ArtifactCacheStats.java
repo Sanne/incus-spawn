@@ -55,7 +55,7 @@ final class ArtifactCacheStats {
         for (var c : n) total += c;
         if (total == 0) return null;
         var line = new StringBuilder("Maven/Gradle cache: ").append(total)
-                .append(total == 1 ? " hit, " : " hits, ").append(MitmProxy.formatSize(served)).append(" (");
+                .append(total == 1 ? " hit, " : " hits, ").append(ArtifactCacheHandler.formatSize(served)).append(" (");
         var sep = "";
         for (var hit : Hit.values()) {
             if (n[hit.ordinal()] == 0) continue;
