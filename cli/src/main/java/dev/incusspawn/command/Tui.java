@@ -225,8 +225,10 @@ public class Tui {
     /** The branch dialog; set when it opens, and read once more to create the branch after it closes. */
     private BranchModal branch;
     // Rename modal state
-    private TextInputState renameInput;
+    /** The instance F6 renames, kept through the stop-first confirm and while the dialog is open. */
     private String renameSourceName;
+    /** The rename dialog; set when it opens. */
+    private RenameDialog rename;
     // New template modal state
     private TextInputState newTemplateNameInput;
     private TextInputState newTemplateParentInput;
@@ -1433,7 +1435,7 @@ public class Tui {
             if (isRunning(selected)) {
                 mode = Mode.CONFIRM_STOP_FOR_RENAME;
             } else {
-                renameInput = new TextInputState(selected.name());
+                rename = new RenameDialog(modal, selected.name());
                 mode = Mode.RENAME;
             }
             return true;
@@ -1635,61 +1637,53 @@ public class Tui {
     }
 
     private boolean handleRenameEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
-        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
+        return switch (rename.handleKey(key)) {
+            case HANDLED -> true;
+            case CLOSE -> {
+                mode = Mode.BROWSE;
+                yield true;
+            }
+            case CONFIRM -> confirmRename(tableState);
+        };
+    }
+
+    /** Enter in the rename dialog: check the new name and rename the instance. */
+    private boolean confirmRename(TableState tableState) {
+        var newName = rename.name();
+        if (newName.isEmpty() || newName.equals(renameSourceName)) {
             mode = Mode.BROWSE;
             return true;
         }
-        if (key.isKey(KeyCode.ENTER)) {
-            var newName = renameInput.text().strip();
-            if (newName.isEmpty() || newName.equals(renameSourceName)) {
-                mode = Mode.BROWSE;
-                return true;
-            }
-            var validation = validateInstanceName(newName);
-            if (validation != null) {
-                statusMessage = validation;
-                mode = Mode.BROWSE;
-                return true;
-            }
-            if (vanished(renameSourceName)) return true;
+        var validation = validateInstanceName(newName);
+        if (validation != null) {
+            statusMessage = validation;
+            mode = Mode.BROWSE;
+            return true;
+        }
+        if (vanished(renameSourceName)) return true;
+        try {
+            incus.rename(renameSourceName, newName);
             try {
-                incus.rename(renameSourceName, newName);
-                try {
-                    InstanceLifecycle.removeHostIntegration(renameSourceName);
-                    AutoRemoteService.addRemotes(incus, newName, msg -> {});
-                    // The zmx device still points at the old name's directory,
-                    // which removeHostIntegration just deleted — re-point it.
-                    if (ZmxSocketForward.isZmxInstalled(
-                            incus.configGet(newName, Metadata.BUILD_SOURCE))) {
-                        ZmxSocketForward.configure(incus, newName);
-                    }
-                    if (InstanceLifecycle.hasSshCapability(incus, newName)) {
-                        SshKeyManager.addHostEntry(newName);
-                    }
-                } catch (Exception ignore) {
-                    // best-effort: instance is renamed, host integration may partially fail
+                InstanceLifecycle.removeHostIntegration(renameSourceName);
+                AutoRemoteService.addRemotes(incus, newName, msg -> {});
+                // The zmx device still points at the old name's directory,
+                // which removeHostIntegration just deleted — re-point it.
+                if (ZmxSocketForward.isZmxInstalled(
+                        incus.configGet(newName, Metadata.BUILD_SOURCE))) {
+                    ZmxSocketForward.configure(incus, newName);
                 }
-                statusMessage = "Renamed " + renameSourceName + " to " + newName;
-            } catch (Exception e) {
-                statusMessage = "Failed to rename: " + e.getMessage();
+                if (InstanceLifecycle.hasSshCapability(incus, newName)) {
+                    SshKeyManager.addHostEntry(newName);
+                }
+            } catch (Exception ignore) {
+                // best-effort: instance is renamed, host integration may partially fail
             }
-            refreshData(tableState);
-            mode = Mode.BROWSE;
-            return true;
+            statusMessage = "Renamed " + renameSourceName + " to " + newName;
+        } catch (Exception e) {
+            statusMessage = "Failed to rename: " + e.getMessage();
         }
-        if (key.isKey(KeyCode.BACKSPACE)) { renameInput.deleteBackward(); return true; }
-        if (key.isKey(KeyCode.DELETE))    { renameInput.deleteForward(); return true; }
-        if (key.isKey(KeyCode.LEFT))      { renameInput.moveCursorLeft(); return true; }
-        if (key.isKey(KeyCode.RIGHT))     { renameInput.moveCursorRight(); return true; }
-        if (key.isKey(KeyCode.HOME))      { renameInput.moveCursorToStart(); return true; }
-        if (key.isKey(KeyCode.END))       { renameInput.moveCursorToEnd(); return true; }
-        if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
-            char ch = key.character();
-            if (Character.isLetterOrDigit(ch) || ch == '-') {
-                renameInput.insert(ch);
-            }
-            return true;
-        }
+        refreshData(tableState);
+        mode = Mode.BROWSE;
         return true;
     }
 
@@ -1883,7 +1877,7 @@ public class Tui {
                 incus.stop(renameSourceName);
                 progressMessage = null;
                 refreshData(tableState);
-                renameInput = new TextInputState(renameSourceName);
+                rename = new RenameDialog(modal, renameSourceName);
                 mode = Mode.RENAME;
             } catch (Exception e) {
                 progressMessage = null;
@@ -2657,8 +2651,7 @@ public class Tui {
                         "Stop & rename");
             }
             case BRANCH -> branch.render(frame, screen);
-            case RENAME -> modal.renderInputModal(frame, screen,
-                    "Rename '" + renameSourceName + "'", "New name:", renameSourceName, renameInput);
+            case RENAME -> rename.render(frame, screen);
             case NEW_TEMPLATE -> renderNewTemplateModal(frame, screen);
             case TEMPLATE_DETAIL -> {
                 var template = selectedTemplate();

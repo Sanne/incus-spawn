@@ -9,6 +9,7 @@ paths:
   - "cli/src/main/java/dev/incusspawn/command/BranchModal.java"
   - "cli/src/main/java/dev/incusspawn/command/CleanModal.java"
   - "cli/src/main/java/dev/incusspawn/command/BuildMenu.java"
+  - "cli/src/main/java/dev/incusspawn/command/RenameDialog.java"
   - "cli/src/main/java/dev/incusspawn/command/InstanceActions.java"
   - "cli/src/main/java/dev/incusspawn/command/DiskUsageModel.java"
   - "cli/src/main/java/dev/incusspawn/command/UsageFormat.java"
@@ -83,6 +84,7 @@ Tool setups come from the TUI's own `toolDefLoader` (`AccountSelection.namespace
 
 The F5 build menu is `BuildMenu` (`BuildMenuTest`): it builds its options from the template definitions, rows and out-of-sync set `Tui` passes in, owns their keys and its rendering, and hands the chosen option back, so `Tui` leaves the build pending and quits the runner.
 The branch dialog is `BranchModal` (`BranchModalTest`): it owns its fields, their keys and its rendering, and hands Enter back, so `Tui` runs the proxy, credential and still-exists checks and creates the branch from `BranchModal.request` once the terminal is released.
+The rename dialog is `RenameDialog` (`RenameDialogTest`): it owns the name input, its keys and its rendering, and hands Enter back, so `Tui` keeps `renameSourceName` through the stop-first confirm and runs the checks and the rename.
 **Branch dialog accounts** (`BranchAccountChoices`, snapshot-tested in `BranchAccountChoicesTest`): account rows follow the inbox field (`accountFieldBase()`), one per credential the template's tools use with more than one account.
 Each row is a dropdown the class draws itself (Tamboui has none): entry 0 is *inherit* (`BranchFlow.inheritedAccounts`, what `isx branch` without `--account` does), the rest explicit pins -- the inherited account included, since pinning the default is not following it.
 Space opens, ←→ cycles, Enter confirms the branch; while open it takes every key.
