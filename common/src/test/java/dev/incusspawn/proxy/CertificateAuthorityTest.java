@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
+import java.util.List;
 import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -145,6 +146,117 @@ class CertificateAuthorityTest {
                 "a corrupt CA must surface as an error, not be silently regenerated");
         assertEquals("", CertificateAuthority.supersededCaFingerprint(),
                 "nothing was superseded, so no backup must be left behind");
+    }
+
+    // --- Host anchor propagation ---
+
+    @Test
+    void hostAnchorsExcludesLocalProxyCa() throws Exception {
+        CertificateAuthority.loadOrCreate();
+        var anchorsDir = tempHome.resolve("anchors");
+        Files.createDirectories(anchorsDir);
+
+        var localPem = CertificateAuthority.loadOrCreate().caCertPem();
+        Files.writeString(anchorsDir.resolve("incus-spawn-mitm.crt"), localPem);
+        Files.writeString(anchorsDir.resolve("corporate.crt"), "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----");
+
+        var anchors = CertificateAuthority.hostAnchors(List.of(anchorsDir));
+        assertEquals(1, anchors.size());
+        assertTrue(anchors.containsKey("corporate.crt"));
+        assertFalse(anchors.containsKey("incus-spawn-mitm.crt"));
+    }
+
+    @Test
+    void hostAnchorsIgnoresNonCertFiles() throws Exception {
+        var anchorsDir = tempHome.resolve("anchors");
+        Files.createDirectories(anchorsDir);
+
+        Files.writeString(anchorsDir.resolve("readme.txt"), "not a cert");
+        Files.writeString(anchorsDir.resolve("valid.crt"), "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----");
+        Files.writeString(anchorsDir.resolve("also-valid.pem"), "-----BEGIN CERTIFICATE-----\nFAKE2\n-----END CERTIFICATE-----");
+
+        var anchors = CertificateAuthority.hostAnchors(List.of(anchorsDir));
+        assertEquals(2, anchors.size());
+        assertTrue(anchors.containsKey("valid.crt"));
+        assertTrue(anchors.containsKey("also-valid.pem"));
+    }
+
+    @Test
+    void hostAnchorsReturnsEmptyWhenDirectoryMissing() {
+        var dirs = List.of(tempHome.resolve("nonexistent"));
+        assertTrue(CertificateAuthority.hostAnchors(dirs).isEmpty());
+        assertEquals("", CertificateAuthority.hostAnchorFingerprint(dirs));
+    }
+
+    @Test
+    void hostAnchorsMultipleDirsPrefixesWithDirName() throws Exception {
+        var dir1 = tempHome.resolve("dir-a");
+        var dir2 = tempHome.resolve("dir-b");
+        Files.createDirectories(dir1);
+        Files.createDirectories(dir2);
+
+        Files.writeString(dir1.resolve("same.crt"), "-----BEGIN CERTIFICATE-----\nONE\n-----END CERTIFICATE-----");
+        Files.writeString(dir2.resolve("same.crt"), "-----BEGIN CERTIFICATE-----\nTWO\n-----END CERTIFICATE-----");
+
+        var anchors = CertificateAuthority.hostAnchors(List.of(dir1, dir2));
+        assertEquals(2, anchors.size());
+        assertTrue(anchors.containsKey("dir-a-same.crt"));
+        assertTrue(anchors.containsKey("dir-b-same.crt"));
+    }
+
+    @Test
+    void hostAnchorsSingleDirUsesBareName() throws Exception {
+        var dir1 = tempHome.resolve("dir-a");
+        Files.createDirectories(dir1);
+
+        Files.writeString(dir1.resolve("cert.crt"), "-----BEGIN CERTIFICATE-----\nONE\n-----END CERTIFICATE-----");
+
+        var anchors = CertificateAuthority.hostAnchors(List.of(dir1));
+        assertEquals(1, anchors.size());
+        assertTrue(anchors.containsKey("cert.crt"));
+    }
+
+    @Test
+    void hostAnchorsMultipleDirsWithSameBasenamePrefixesWithIndex() throws Exception {
+        var parent1 = tempHome.resolve("a/anchors");
+        var parent2 = tempHome.resolve("b/anchors");
+        Files.createDirectories(parent1);
+        Files.createDirectories(parent2);
+
+        Files.writeString(parent1.resolve("ca.crt"), "-----BEGIN CERTIFICATE-----\nONE\n-----END CERTIFICATE-----");
+        Files.writeString(parent2.resolve("ca.crt"), "-----BEGIN CERTIFICATE-----\nTWO\n-----END CERTIFICATE-----");
+
+        var anchors = CertificateAuthority.hostAnchors(List.of(parent1, parent2));
+        assertEquals(2, anchors.size());
+        assertTrue(anchors.containsKey("0-anchors-ca.crt"));
+        assertTrue(anchors.containsKey("1-anchors-ca.crt"));
+    }
+
+    @Test
+    void hostAnchorFingerprintFromMapMatchesDirScan() throws Exception {
+        var anchorsDir = tempHome.resolve("anchors");
+        Files.createDirectories(anchorsDir);
+        var dirs = List.of(anchorsDir);
+
+        Files.writeString(anchorsDir.resolve("ca1.crt"), "-----BEGIN CERTIFICATE-----\nONE\n-----END CERTIFICATE-----");
+        var anchors = CertificateAuthority.hostAnchors(dirs);
+        assertEquals(CertificateAuthority.hostAnchorFingerprint(dirs),
+                CertificateAuthority.hostAnchorFingerprint(anchors));
+    }
+
+    @Test
+    void hostAnchorFingerprintChangesWithContent() throws Exception {
+        var anchorsDir = tempHome.resolve("anchors");
+        Files.createDirectories(anchorsDir);
+        var dirs = List.of(anchorsDir);
+
+        Files.writeString(anchorsDir.resolve("ca1.crt"), "-----BEGIN CERTIFICATE-----\nONE\n-----END CERTIFICATE-----");
+        var fp1 = CertificateAuthority.hostAnchorFingerprint(dirs);
+        assertFalse(fp1.isEmpty());
+
+        Files.writeString(anchorsDir.resolve("ca2.crt"), "-----BEGIN CERTIFICATE-----\nTWO\n-----END CERTIFICATE-----");
+        var fp2 = CertificateAuthority.hostAnchorFingerprint(dirs);
+        assertNotEquals(fp1, fp2);
     }
 
     // --- Helpers ---

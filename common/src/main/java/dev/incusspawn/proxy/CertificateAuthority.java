@@ -161,6 +161,112 @@ public class CertificateAuthority {
         return loadOrCreate().caFingerprint();
     }
 
+    /**
+     * Returns the custom CA anchors from the configured host directories that should
+     * be propagated into containers, as a sorted map of filename to PEM content.
+     * Excludes the local proxy's own CA. Returns an empty map when none exist.
+     *
+     * @param dirs the directories to scan (from {@code host-ca.paths} in config)
+     */
+    public static java.util.SortedMap<String, String> hostAnchors(java.util.List<Path> dirs) {
+        var result = new java.util.TreeMap<String, String>();
+        String localPem = null;
+        if (exists()) {
+            try { localPem = loadOrCreate().caCertPem().strip(); } catch (Exception ignored) {}
+        }
+        var prefixes = dirPrefixes(dirs);
+        for (int i = 0; i < dirs.size(); i++) {
+            var dir = dirs.get(i);
+            if (!Files.isDirectory(dir)) continue;
+            try (var stream = Files.list(dir)) {
+                for (var path : stream.toList()) {
+                    var name = path.getFileName().toString();
+                    if (!name.endsWith(".crt") && !name.endsWith(".pem")) continue;
+                    if (!Files.isRegularFile(path)) continue;
+                    try {
+                        var pem = Files.readString(path).strip();
+                        if (pem.isEmpty()) continue;
+                        if (localPem != null && pem.equals(localPem)) continue;
+                        result.put(prefixes[i] + name, pem);
+                    } catch (IOException ignored) {}
+                }
+            } catch (IOException e) {
+                dev.incusspawn.Warnings.warn("host-ca: cannot list " + dir + ": " + e.getMessage());
+            }
+        }
+        return result;
+    }
+
+    private static String[] dirPrefixes(java.util.List<Path> dirs) {
+        var prefixes = new String[dirs.size()];
+        if (dirs.size() <= 1) {
+            java.util.Arrays.fill(prefixes, "");
+            return prefixes;
+        }
+        var names = new String[dirs.size()];
+        var seen = new java.util.HashSet<String>();
+        boolean collision = false;
+        for (int i = 0; i < dirs.size(); i++) {
+            var fn = dirs.get(i).getFileName();
+            names[i] = fn != null ? fn.toString() : String.valueOf(i);
+            if (!seen.add(names[i])) collision = true;
+        }
+        for (int i = 0; i < dirs.size(); i++) {
+            prefixes[i] = collision ? (i + "-" + names[i] + "-") : (names[i] + "-");
+        }
+        return prefixes;
+    }
+
+    /**
+     * A fingerprint of all host anchors that would be propagated.
+     * Changes when anchors are added, removed, or modified.
+     * Returns {@code ""} when there are no anchors to propagate.
+     */
+    public static String hostAnchorFingerprint(java.util.List<Path> dirs) {
+        return hostAnchorFingerprint(hostAnchors(dirs));
+    }
+
+    /**
+     * Fingerprint from an already-read anchor map, so callers that install
+     * and stamp can derive both from the same snapshot.
+     */
+    public static String hostAnchorFingerprint(java.util.SortedMap<String, String> anchors) {
+        if (anchors.isEmpty()) return "";
+        try {
+            var digest = MessageDigest.getInstance("SHA-256");
+            for (var entry : anchors.entrySet()) {
+                digest.update(entry.getKey().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                digest.update(entry.getValue().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            return java.util.HexFormat.of().formatHex(digest.digest());
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * Install a set of CA anchors into a container's trust store, each prefixed
+     * with {@code isx-host-}, and run {@code update-ca-trust}.
+     *
+     * @return true if all anchors were installed and trust was updated successfully
+     */
+    public static boolean installHostAnchors(IncusClient incus, String container,
+                                             java.util.SortedMap<String, String> anchors) {
+        if (incus.shellExec(container, "sh", "-c",
+                "rm -f /etc/pki/ca-trust/source/anchors/isx-host-*").exitCode() != 0) {
+            return false;
+        }
+        for (var entry : anchors.entrySet()) {
+            var name = "isx-host-" + entry.getKey();
+            var result = incus.shellExec(container, "sh", "-c",
+                    "cat > /etc/pki/ca-trust/source/anchors/" + name + " << 'CERTEOF'\n" +
+                    entry.getValue() + "\n" +
+                    "CERTEOF");
+            if (result.exitCode() != 0) return false;
+        }
+        return incus.shellExec(container, "update-ca-trust").exitCode() == 0;
+    }
+
     /** How an image's stored CA fingerprint relates to the CA on this host. */
     public enum CaStatus {
         /** Built against the current CA cert. */
@@ -245,6 +351,56 @@ public class CertificateAuthority {
                 "CERTEOF");
         incus.shellExec(container, "update-ca-trust");
         incus.configSet(container, Metadata.CA_FINGERPRINT, ca.caFingerprint());
+        return true;
+    }
+
+    /**
+     * Propagate host CA anchors into a container when {@code host-ca.propagate}
+     * is enabled. Stamps a fingerprint on the instance and skips when it matches.
+     * Returns true if anchors were installed or revoked, false if skipped or disabled.
+     */
+    public static boolean propagateHostCas(IncusClient incus, String container) {
+        return propagateHostCas(incus, container, null);
+    }
+
+    /**
+     * As above, reading the stored fingerprint from {@code instance} when the caller has just
+     * read it -- as a start does -- rather than reading the instance again; null reads it.
+     */
+    public static boolean propagateHostCas(IncusClient incus, String container, JsonNode instance) {
+        var hostCa = SpawnConfig.load().hostCa();
+        // Read stored fingerprint lazily: free from instance JSON, costly from Incus
+        java.util.function.Supplier<String> storedFp = () -> instance != null
+                ? instance.path("config").path(Metadata.HOST_CA_FINGERPRINT).asText("")
+                : incus.configGet(container, Metadata.HOST_CA_FINGERPRINT);
+
+        if (!hostCa.propagate()) {
+            var stored = storedFp.get();
+            if (stored.isEmpty()) return false;
+            incus.shellExec(container, "sh", "-c",
+                    "rm -f /etc/pki/ca-trust/source/anchors/isx-host-*");
+            incus.shellExec(container, "update-ca-trust");
+            incus.configSet(container, Metadata.HOST_CA_FINGERPRINT, "");
+            return true;
+        }
+
+        var anchors = hostAnchors(hostCa.paths());
+        var fingerprint = hostAnchorFingerprint(anchors);
+        var stored = storedFp.get();
+
+        if (fingerprint.isEmpty()) {
+            if (stored.isEmpty()) return false;
+            incus.shellExec(container, "sh", "-c",
+                    "rm -f /etc/pki/ca-trust/source/anchors/isx-host-*");
+            incus.shellExec(container, "update-ca-trust");
+            incus.configSet(container, Metadata.HOST_CA_FINGERPRINT, "");
+            return true;
+        }
+
+        if (fingerprint.equals(stored)) return false;
+
+        if (!installHostAnchors(incus, container, anchors)) return false;
+        incus.configSet(container, Metadata.HOST_CA_FINGERPRINT, fingerprint);
         return true;
     }
 

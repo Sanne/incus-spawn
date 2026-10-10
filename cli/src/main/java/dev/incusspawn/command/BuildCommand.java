@@ -1203,6 +1203,9 @@ public class BuildCommand extends BaseCommand {
         if (CertificateAuthority.fixContainerCaIfNeeded(incus, buildName)) {
             BuildOutput.step("Refreshed MITM proxy CA certificate.");
         }
+        if (CertificateAuthority.propagateHostCas(incus, buildName)) {
+            BuildOutput.step("Installed host CA certificates (host-ca).");
+        }
 
         requireBuildAddress(buildName, started);
         waitForNetwork(buildName);
@@ -1346,8 +1349,26 @@ public class BuildCommand extends BaseCommand {
                 ca.caCertPem() +
                 "CERTEOF")
                 .assertSuccess("Failed to install MITM CA certificate");
+        var hostCa = SpawnConfig.load().hostCa();
+        java.util.SortedMap<String, String> hostAnchors = null;
+        if (hostCa.propagate()) {
+            hostAnchors = CertificateAuthority.hostAnchors(hostCa.paths());
+            if (!hostAnchors.isEmpty()) {
+                for (var entry : hostAnchors.entrySet()) {
+                    container.writeFile(
+                            "/etc/pki/ca-trust/source/anchors/isx-host-" + entry.getKey(),
+                            entry.getValue());
+                }
+            }
+        }
         container.exec("update-ca-trust")
                 .assertSuccess("Failed to update CA trust");
+        if (hostAnchors != null && !hostAnchors.isEmpty()) {
+            var hostCaFp = CertificateAuthority.hostAnchorFingerprint(hostAnchors);
+            if (!hostCaFp.isEmpty()) {
+                incus.configSet(buildName, Metadata.HOST_CA_FINGERPRINT, hostCaFp);
+            }
+        }
         BuildOutput.stepDone();
 
         // Container-only security tweaks: UID mapping, nesting, capability
