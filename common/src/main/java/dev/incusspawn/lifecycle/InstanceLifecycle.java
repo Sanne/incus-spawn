@@ -17,6 +17,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.InstanceUpdate;
+import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -155,10 +156,13 @@ public final class InstanceLifecycle {
             if (Metadata.isMcpKey(key) && !settings.extraConfig().containsKey(key)) update.unset(key);
         });
         update.config(settings.extraConfig());
-        // Templates built before free page reporting existed don't carry it to their copies
-        if (IncusClient.machineType(instance) == MachineType.VM
-                && instance.path("config").path(RAW_QEMU_CONF).asText("").isBlank()) {
-            update.config(RAW_QEMU_CONF, FREE_PAGE_REPORTING_CONF);
+        if (IncusClient.machineType(instance) == MachineType.VM) {
+            // Templates built before free page reporting existed don't carry it to their copies
+            if (instance.path("config").path(RAW_QEMU_CONF).asText("").isBlank()) {
+                update.config(RAW_QEMU_CONF, FREE_PAGE_REPORTING_CONF);
+            }
+            // Nor do templates built before Secure Boot was turned off (#1238)
+            update.config(SECURE_BOOT, "false");
         }
 
         if (nicDevice == null) incus.update(name, instance, update);
@@ -364,25 +368,49 @@ public final class InstanceLifecycle {
         return view;
     }
 
-    static final String RAW_QEMU_CONF = "raw.qemu.conf";
-    static final String FREE_PAGE_REPORTING_CONF =
-            "[device \"qemu_balloon\"]\nfree-page-reporting = \"on\"\n";
+    /**
+     * Off for every VM (#1238, decided by Sanne). Its firmware, {@code OVMF_CODE.secboot.fd},
+     * needs SMM, which costs per vCPU on every boot -- 20 s at 8 vCPUs under nested KVM, where
+     * isx VMs often run -- and it guards the guest's boot chain against a guest root that an isx
+     * box hands its agent anyway. The isolation isx stands for is the VM boundary and the proxy,
+     * which this does not touch.
+     */
+    static final String SECURE_BOOT = "security.secureboot";
+
+    /** Turn Secure Boot off for a VM about to start, keeping the rest of its config; see {@link #SECURE_BOOT}. */
+    public static void disableSecureBoot(IncusClient incus, String name) {
+        incus.configSet(name, SECURE_BOOT, "false");
+    }
 
     /**
-     * Turn on virtio-balloon free page reporting, so memory the guest frees goes back to the host.
+     * What every VM template build sets before its first start, in one write: the default memory
+     * size, free page reporting unless someone else's {@code raw.qemu.conf} is there, and
+     * Secure Boot off ({@link #SECURE_BOOT}). A build copied from a parent gets it too, since a
+     * parent built by an older isx carries none of it.
+     */
+    public static void prepareVmBuild(IncusClient incus, String name) {
+        var instance = incus.instanceMetadata(name);
+        if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
+        var update = new InstanceUpdate();
+        update.config("limits.memory", ResourceLimits.defaultVmMemoryLimit());
+        if (instance.path("config").path(RAW_QEMU_CONF).asText("").isBlank()) {
+            update.config(RAW_QEMU_CONF, FREE_PAGE_REPORTING_CONF);
+        }
+        update.config(SECURE_BOOT, "false");
+        incus.update(name, instance, update);
+    }
+
+    static final String RAW_QEMU_CONF = "raw.qemu.conf";
+
+    /**
+     * Virtio-balloon free page reporting, so memory the guest frees goes back to the host.
      * Without it QEMU keeps every page the guest ever touched until the VM stops, and a VM's page
      * cache grows until it has touched all of {@code limits.memory}. Incus merges this into its own
-     * balloon device section. Takes effect at the next start.
-     *
-     * <p>A {@code raw.qemu.conf} set by someone else is left alone: merging into another author's
-     * QEMU config is not worth the risk of a VM that no longer starts.
+     * balloon device section. A {@code raw.qemu.conf} set by someone else is left alone: merging
+     * into another author's QEMU config is not worth the risk of a VM that no longer starts.
      */
-    public static void enableFreePageReporting(IncusClient incus, String name) {
-        var current = incus.configGet(name, RAW_QEMU_CONF);
-        if (current.isBlank()) {
-            incus.configSet(name, RAW_QEMU_CONF, FREE_PAGE_REPORTING_CONF);
-        }
-    }
+    static final String FREE_PAGE_REPORTING_CONF =
+            "[device \"qemu_balloon\"]\nfree-page-reporting = \"on\"\n";
 
     /**
      * Re-derive anything the build baked from a credential account the instance is no longer
@@ -689,7 +717,11 @@ public final class InstanceLifecycle {
                                 Consumer<String> warn) {
         var placeholders = ProofToken.declaredInBackground();
         prepareHostDevicesForStart(incus, name, instance, warn);
-        var secret = rotateInstanceSecret(incus, name);
+        // A VM branched or built before #1238 still has Secure Boot on: it goes in the write the
+        // secret makes anyway
+        var secret = rotateInstanceSecret(incus, name, machineType == MachineType.VM
+                && !"false".equals(instance.path("config").path(SECURE_BOOT).asText())
+                ? Map.of(SECURE_BOOT, "false") : Map.of());
         startInstance(incus, name, warn);
         incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
                 InstanceSecret.guestEnv(secret, Metadata.isMcpCaller(instance), placeholders.join()));

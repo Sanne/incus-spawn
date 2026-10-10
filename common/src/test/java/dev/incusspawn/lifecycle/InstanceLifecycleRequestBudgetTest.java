@@ -1,6 +1,7 @@
 package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.config.NetworkMode;
+import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -70,6 +71,24 @@ class InstanceLifecycleRequestBudgetTest {
                 "PUT /1.0/instances/" + NAME + "/state"), beforeProbe.subList(0, 3), String.join("\n", requests));
         assertEquals(4, beforeProbe.size(), () -> "startForUse before its first probe:\n" + String.join("\n", requests)
                 + "\nMore is a latency regression; fewer is an improvement -- lower the budget.");
+    }
+
+    @Test
+    void aVmStartedForUseLosesSecureBootInTheSecretsWrite() {
+        // A VM branched before #1238 still has Secure Boot on: turning it off rides in the write
+        // the secret makes anyway, so its start costs what a VM already without it costs
+        var before = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped",
+                Map.of("security.secureboot", "true"));
+        var after = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped",
+                Map.of("security.secureboot", "false"));
+        for (var daemon : List.of(before, after)) {
+            assertThrows(IncusException.class, () -> InstanceLifecycle.startForUse(
+                    daemon.clientWithShortReadyWait(), NAME, dev.incusspawn.incus.MachineType.VM, msg -> {}));
+        }
+        var probe = "POST /1.0/instances/" + NAME + "/exec";
+        var beforeRequests = before.requests().subList(0, before.requests().indexOf(probe));
+        assertEquals(after.requests().subList(0, after.requests().indexOf(probe)), beforeRequests);
+        assertEquals("false", before.instance(NAME).path("config").path("security.secureboot").asText());
     }
 
     @Test
@@ -358,6 +377,46 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void aVmBranchBootsWithoutSecureBootInTheSameWrite() {
+        // A template built before #1238 still has Secure Boot on; its branches must not pay the
+        // SMM firmware's boot time, and must not pay a request for it either
+        var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped", Map.of());
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        assertBudget(4, daemon, "configureBranch (VM)");
+        assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
+        assertEquals("false", daemon.instance(NAME).path("config").path("security.secureboot").asText());
+    }
+
+    @Test
+    void preparingAVmBuildIsOneReadAndOneWrite() {
+        var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped", Map.of());
+        InstanceLifecycle.prepareVmBuild(daemon.client(), NAME);
+        assertBudget(2, daemon, "prepareVmBuild");
+        assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
+        var config = daemon.instance(NAME).path("config");
+        assertEquals("false", config.path("security.secureboot").asText());
+        assertEquals(ResourceLimits.defaultVmMemoryLimit(), config.path("limits.memory").asText());
+        assertEquals(InstanceLifecycle.FREE_PAGE_REPORTING_CONF, config.path(InstanceLifecycle.RAW_QEMU_CONF).asText());
+    }
+
+    @Test
+    void preparingAVmBuildKeepsSomeoneElsesRawQemuConf() {
+        var custom = "[machine]\nfoo = \"bar\"\n";
+        var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped",
+                Map.of(InstanceLifecycle.RAW_QEMU_CONF, custom));
+        InstanceLifecycle.prepareVmBuild(daemon.client(), NAME);
+        assertEquals(custom, daemon.instance(NAME).path("config").path(InstanceLifecycle.RAW_QEMU_CONF).asText());
+        assertEquals("false", daemon.instance(NAME).path("config").path("security.secureboot").asText());
+    }
+
+    @Test
+    void aContainerBranchGetsNoSecureBootKey() {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of());
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        assertFalse(daemon.instance(NAME).path("config").has("security.secureboot"));
+    }
+
+    @Test
     void aVmBranchKeepsSomeoneElsesRawQemuConf() {
         var custom = "[machine]\nfoo = \"bar\"\n";
         var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped",
@@ -606,29 +665,6 @@ class InstanceLifecycleRequestBudgetTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
         daemon.client().devicesRemoveAll(NAME, List.of("kvm", "vhost-vsock"));
         assertBudget(1, daemon, "devicesRemoveAll of absent devices");
-    }
-
-    @Test
-    void enablingFreePageReportingOnAVmWithoutRawQemuConf() {
-        var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped", Map.of());
-        var incus = daemon.client();
-        InstanceLifecycle.enableFreePageReporting(incus, NAME);
-
-        assertBudget(2, daemon, "enableFreePageReporting (unset)");
-        assertEquals(InstanceLifecycle.FREE_PAGE_REPORTING_CONF,
-                incus.configGet(NAME, InstanceLifecycle.RAW_QEMU_CONF));
-    }
-
-    @Test
-    void freePageReportingLeavesSomeoneElsesRawQemuConfAlone() {
-        var custom = "[machine]\nfoo = \"bar\"\n";
-        var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped",
-                Map.of(InstanceLifecycle.RAW_QEMU_CONF, custom));
-        var incus = daemon.client();
-        InstanceLifecycle.enableFreePageReporting(incus, NAME);
-
-        assertBudget(1, daemon, "enableFreePageReporting (already set)");
-        assertEquals(custom, incus.configGet(NAME, InstanceLifecycle.RAW_QEMU_CONF));
     }
 
     @Test

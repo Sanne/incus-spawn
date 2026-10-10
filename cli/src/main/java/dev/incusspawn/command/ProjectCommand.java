@@ -107,6 +107,8 @@ public class ProjectCommand extends BaseCommand {
                     incus.copy(parent, buildName);
                     // Copied: another isx's rebuild of the parent may go ahead
                     parentHeld.close();
+                    // The parent's own settings are the project template's, but not its Secure Boot
+                    if (machineType == MachineType.VM) InstanceLifecycle.disableSecureBoot(incus, buildName);
                     built = build(incus, buildName, imageName, parent, machineType, projectConfig);
                 } catch (RuntimeException e) {
                     try {

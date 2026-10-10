@@ -1171,9 +1171,9 @@ public class BuildCommand extends BaseCommand {
             incus.deviceAdd(buildName, "tun", "unix-char",
                     "source=/dev/net/tun", "path=/dev/net/tun", "mode=0666");
         } else {
-            // A parent built by an older isx carries a stale memory size and no page reporting
-            incus.configSet(buildName, "limits.memory", ResourceLimits.defaultVmMemoryLimit());
-            InstanceLifecycle.enableFreePageReporting(incus, buildName);
+            // A parent built by an older isx carries a stale memory size, no page reporting and
+            // Secure Boot
+            InstanceLifecycle.prepareVmBuild(incus, buildName);
         }
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         var dnfCacheWarning = attachBootDevices(buildName, hostResources, machineType);
@@ -1325,8 +1325,7 @@ public class BuildCommand extends BaseCommand {
         var launched = launchBuildInstance(image, buildName, machineType, canonicalName, reimportable, () -> {
             if (machineType == MachineType.VM) {
                 incus.deviceConfigSet(buildName, "root", "size", ResourceLimits.defaultDiskLimit());
-                incus.configSet(buildName, "limits.memory", ResourceLimits.defaultVmMemoryLimit());
-                InstanceLifecycle.enableFreePageReporting(incus, buildName);
+                InstanceLifecycle.prepareVmBuild(incus, buildName);
             }
             var dnfWarning = attachBootDevices(buildName, hostResources, machineType);
             return new Launched(startBuild(buildName, imageDef, defs), dnfWarning);
