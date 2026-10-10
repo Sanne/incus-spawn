@@ -115,9 +115,9 @@ class DocsOneSentencePerLineTest {
                 "[ref]: https://x.y \"Title. Two\"")));
     }
 
-    /** DESIGN.md is converted in its own pull request and joins this list there. */
     private static List<Path> documents() throws IOException {
         var files = new ArrayList<Path>();
+        files.add(ROOT.resolve("DESIGN.md"));
         files.add(ROOT.resolve("CLAUDE.md"));
         try (Stream<Path> rules = Files.list(ROOT.resolve(".claude/rules"))) {
             rules.filter(f -> f.toString().endsWith(".md")).sorted().forEach(files::add);

@@ -45,7 +45,7 @@ CLAUDE.md is the quick-reference for contributors; DESIGN.md is the full rationa
 Both must stay current.
 
 **Markdown source: one sentence per line, and short sentences** (#1243).
-This applies to this file and `.claude/rules/`, and to DESIGN.md once it is converted (#1243), so that a diff shows exactly which sentence changed.
+This applies to DESIGN.md, this file and `.claude/rules/`, so that a diff shows exactly which sentence changed.
 A sentence never wraps, and a line never holds two sentences.
 In a list item, each sentence after the first goes on its own line, indented to the item's text; in a block quote, each line starts with `> `.
 Headings, tables (a row stays on one line), code, HTML and front matter are exempt.
