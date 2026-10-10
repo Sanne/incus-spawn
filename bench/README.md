@@ -344,6 +344,30 @@ timeline (`*.timeline.txt`) is saved under `bench/results/trace/` next to the ra
 (`*.events.json`), which carry each event's full detail for when a gap needs a closer look.
 The daemon's events include everything else happening on it, so run it on a quiet host.
 
+## Where a VM's Boot Goes (`vm-boot.sh`)
+
+A VM answers exec seconds after it starts, and almost none of that is isx. `vm-boot.sh`
+copies a stopped VM (copy-on-write, as a branch does), starts the copy with its serial console
+attached, and stamps each console line with the host's clock, so the firmware and GRUB, which
+the guest cannot see, are timed from outside. The guest then reports its kernel's start, when
+`incus-agent` became active and its `systemd-analyze`, on its own clock, which can be a few
+tenths of a second off the host's. On the host's clock again: when Incus's `GET /state` first
+reports the agent connected, the gate isx's `waitForReady` waits for, and the first exec that
+answers after it. One line per run; the copy is timed alone, every other phase from the start
+request:
+
+```shell
+bench/vm-boot.sh tpl-isx-vm                                   # 3 runs
+bench/vm-boot.sh tpl-isx-vm --runs=5 --set limits.cpu=8       # config on each copy only
+bench/vm-boot.sh tpl-isx-vm --set security.secureboot=false
+```
+
+`--set` is how to try a change on real hardware before deciding on it: it applies to the
+copies, never to the VM they are copied from. It is plain `incus`, Linux only, and needs
+`script(1)` (util-linux) for the console's terminal. A start that fails stops the run with its
+output, and so does a copy that has not answered exec after 300 s. What it found under nested KVM is in
+DESIGN.md "VM boot: where the wait goes".
+
 ## File Layout
 
 ```
@@ -352,6 +376,7 @@ bench/
   cli.sh                  # CLI latency benchmark, JVM vs native
   trace-branch.sh         # Daemon-side timeline of one isx branch
   request-cost.sh         # What one Incus request costs, outside isx
+  vm-boot.sh              # Where a VM's boot goes, firmware to exec
   isxbench.py             # Shared helper: run a command to a usable shell prompt
   proxy-health.hf.yaml    # Constant-rate profile (--load=constant, default)
   proxy-saturate.hf.yaml  # Closed-loop /health ladder (--load=saturate)
