@@ -1,0 +1,24 @@
+
+
+
+
+
+
+
+             ╔ New Template ══════════════════════════════════════╗
+             ║ Name:                                              ║
+             ║ my-app                                             ║
+             ║ Parent:                                            ║
+             ║ tpl-dev                                            ║
+             ║    Save to < Project (.incus-spawn/images/) >      ║
+             ║  Enter Confirm   Esc Cancel   ↑↓/Tab Navigate      ║
+             ║                                                    ║
+             ╚════════════════════════════════════════════════════╝
+
+
+
+
+
+
+
+

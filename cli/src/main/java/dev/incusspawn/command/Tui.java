@@ -67,7 +67,6 @@ import dev.tamboui.widgets.block.Borders;
 import dev.tamboui.widgets.input.TextInput;
 import dev.tamboui.widgets.input.TextInputState;
 import dev.tamboui.widgets.paragraph.Paragraph;
-import dev.tamboui.widgets.select.SelectState;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import java.nio.charset.StandardCharsets;
@@ -229,13 +228,8 @@ public class Tui {
     private String renameSourceName;
     /** The rename dialog; set when it opens. */
     private RenameDialog rename;
-    // New template modal state
-    private TextInputState newTemplateNameInput;
-    private TextInputState newTemplateParentInput;
-    private record TemplateLocation(String label, java.nio.file.Path dir) {}
-    private java.util.List<TemplateLocation> newTemplateLocations;
-    private SelectState newTemplateLocationSelect;
-    private int newTemplateFieldIndex;
+    /** The new-template dialog; set when it opens, and read once more to create the template after it closes. */
+    private NewTemplateModal newTemplate;
     String statusMessage;
     private String progressMessage;
     // Search/filter state
@@ -589,8 +583,8 @@ public class Tui {
                 case NEW_TEMPLATE -> {
                     returnToTemplate = pendingActionTarget.name();
                     try {
-                        var parent = newTemplateParentInput.text().strip();
-                        var dir = newTemplateLocations.get(newTemplateLocationSelect.selectedIndex()).dir();
+                        var parent = newTemplate.parent();
+                        var dir = newTemplate.locationDir();
                         var targetPath = TemplatesCommand.createTemplateFile(pendingActionTarget.name(), parent, dir);
                         TemplatesCommand.editLoop(targetPath, pendingActionTarget.name(), false);
                         statusMessage = "Created template " + pendingActionTarget.name();
@@ -1466,21 +1460,17 @@ public class Tui {
     }
 
     private void openNewTemplateModal(String parentName) {
-        newTemplateNameInput = new TextInputState("");
-        newTemplateParentInput = new TextInputState(parentName);
-        var locations = new ArrayList<TemplateLocation>();
+        var locations = new ArrayList<NewTemplateModal.TemplateLocation>();
         for (var sp : SpawnConfig.load().getSearchPaths()) {
             var expanded = dev.incusspawn.config.HostResourceSetup.expandHostTilde(sp);
             var dir = java.nio.file.Path.of(expanded).resolve("images");
-            locations.add(new TemplateLocation(sp + "/images/", dir));
+            locations.add(new NewTemplateModal.TemplateLocation(sp + "/images/", dir));
         }
-        locations.add(new TemplateLocation("Project (.incus-spawn/images/)",
+        locations.add(new NewTemplateModal.TemplateLocation("Project (.incus-spawn/images/)",
                 dev.incusspawn.config.ImageDef.projectImagesDir()));
-        locations.add(new TemplateLocation("User (~/.config/incus-spawn/images/)",
+        locations.add(new NewTemplateModal.TemplateLocation("User (~/.config/incus-spawn/images/)",
                 dev.incusspawn.config.ImageDef.userImagesDir()));
-        newTemplateLocations = locations;
-        newTemplateLocationSelect = new SelectState(locations.stream().map(TemplateLocation::label).toArray(String[]::new));
-        newTemplateFieldIndex = 0;
+        newTemplate = new NewTemplateModal(modal, theme, parentName, locations);
         mode = Mode.NEW_TEMPLATE;
     }
 
@@ -1570,70 +1560,38 @@ public class Tui {
     }
 
     private boolean handleNewTemplateEvent(KeyEvent key, TuiRunner tui) {
-        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
+        return switch (newTemplate.handleKey(key)) {
+            case HANDLED -> true;
+            case UNHANDLED -> false;
+            case CLOSE -> {
+                mode = Mode.BROWSE;
+                yield true;
+            }
+            case CONFIRM -> confirmNewTemplate(tui);
+        };
+    }
+
+    /** Enter in the new-template dialog: check the name and parent, then leave the creation pending. */
+    private boolean confirmNewTemplate(TuiRunner tui) {
+        var rawName = newTemplate.name();
+        if (rawName.isEmpty()) return false;
+        var name = TemplatesCommand.normalizeName(rawName);
+        if (imageDefs.containsKey(name)) {
+            statusMessage = "Template '" + name + "' already exists.";
             mode = Mode.BROWSE;
             return true;
         }
-        if (key.isKey(KeyCode.ENTER)) {
-            var rawName = newTemplateNameInput.text().strip();
-            if (rawName.isEmpty()) return false;
-            var name = TemplatesCommand.normalizeName(rawName);
-            if (imageDefs.containsKey(name)) {
-                statusMessage = "Template '" + name + "' already exists.";
-                mode = Mode.BROWSE;
-                return true;
-            }
-            var parent = newTemplateParentInput.text().strip();
-            if (!parent.isEmpty() && !imageDefs.containsKey(parent)) {
-                statusMessage = "Parent template '" + parent + "' not found.";
-                mode = Mode.BROWSE;
-                return true;
-            }
-            pendingAction = PendingAction.NEW_TEMPLATE;
-            pendingActionTarget = new ActionContext(name, null);
+        var parent = newTemplate.parent();
+        if (!parent.isEmpty() && !imageDefs.containsKey(parent)) {
+            statusMessage = "Parent template '" + parent + "' not found.";
             mode = Mode.BROWSE;
-            tui.quit();
             return true;
         }
-        // Location field: Space/Down/j cycle forward, Up/k cycle backward
-        if (newTemplateFieldIndex == 2) {
-            if (key.isKey(KeyCode.DOWN) || key.isChar('j')
-                    || (key.code() == KeyCode.CHAR && key.character() == ' ')) {
-                newTemplateLocationSelect.selectNext();
-                return true;
-            }
-            if (key.isKey(KeyCode.UP) || key.isChar('k')) {
-                newTemplateLocationSelect.selectPrevious();
-                return true;
-            }
-        }
-        // Tab: next field, Shift+Tab: previous field
-        if (key.isKey(KeyCode.TAB) || (newTemplateFieldIndex < 2 && key.isKey(KeyCode.DOWN))) {
-            newTemplateFieldIndex = (newTemplateFieldIndex + 1) % 3;
-            return true;
-        }
-        if (ShiftTabBindings.isShiftTab(key) || (newTemplateFieldIndex < 2 && key.isKey(KeyCode.UP))) {
-            newTemplateFieldIndex = (newTemplateFieldIndex + 2) % 3;
-            return true;
-        }
-        // Text input for name (field 0) and parent (field 1)
-        if (newTemplateFieldIndex < 2) {
-            var input = newTemplateFieldIndex == 0 ? newTemplateNameInput : newTemplateParentInput;
-            if (key.isKey(KeyCode.BACKSPACE)) { input.deleteBackward(); return true; }
-            if (key.isKey(KeyCode.DELETE))    { input.deleteForward();  return true; }
-            if (key.isKey(KeyCode.LEFT))      { input.moveCursorLeft(); return true; }
-            if (key.isKey(KeyCode.RIGHT))     { input.moveCursorRight(); return true; }
-            if (key.isKey(KeyCode.HOME))       { input.moveCursorToStart(); return true; }
-            if (key.isKey(KeyCode.END))        { input.moveCursorToEnd(); return true; }
-            if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
-                char ch = key.character();
-                if (Character.isLetterOrDigit(ch) || ch == '-') {
-                    input.insert(ch);
-                }
-                return true;
-            }
-        }
-        return false;
+        pendingAction = PendingAction.NEW_TEMPLATE;
+        pendingActionTarget = new ActionContext(name, null);
+        mode = Mode.BROWSE;
+        tui.quit();
+        return true;
     }
 
     private boolean handleRenameEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
@@ -2652,7 +2610,7 @@ public class Tui {
             }
             case BRANCH -> branch.render(frame, screen);
             case RENAME -> rename.render(frame, screen);
-            case NEW_TEMPLATE -> renderNewTemplateModal(frame, screen);
+            case NEW_TEMPLATE -> newTemplate.render(frame, screen);
             case TEMPLATE_DETAIL -> {
                 var template = selectedTemplate();
                 if (template != null) templateDetail.render(frame, screen, template);
@@ -2668,63 +2626,6 @@ public class Tui {
             case CLEAN_RESULT -> clean.renderCleanResultModal(frame, screen);
             default -> {}
         }
-    }
-
-    // --- New template modal ---
-
-    private void renderLabeledTextField(dev.tamboui.terminal.Frame frame,
-            dev.tamboui.layout.Rect labelRow, dev.tamboui.layout.Rect inputRow,
-            String label, String placeholder, TextInputState inputState, boolean focused) {
-        frame.renderWidget(Paragraph.from(Line.styled(
-                label, Style.EMPTY.fg(modal.fg()).bg(modal.bg()))), labelRow);
-        if (focused) {
-            TextInput.builder()
-                    .placeholder(placeholder)
-                    .style(Style.EMPTY.fg(theme.focusedLabel()).bg(modal.inputBg()))
-                    .build()
-                    .renderWithCursor(inputRow, frame.buffer(), inputState, frame);
-        } else {
-            frame.renderWidget(Paragraph.from(Line.styled(
-                    inputState.text(), Style.EMPTY.fg(theme.textDim()).bg(modal.inputBg()))),
-                    inputRow);
-        }
-    }
-
-    private void renderNewTemplateModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        var modalArea = ModalRenderer.centerRect(screen, 54, 9);
-        var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
-                .title(modal.styledTitle(" New Template ", modal.border()))
-                .borderStyle(Style.EMPTY.fg(modal.border()))
-                .style(Style.EMPTY.bg(modal.bg()))
-                .padding(dev.tamboui.layout.Padding.horizontal(1))
-                .build();
-        modal.renderBlock(frame, block, modalArea);
-        var inner = block.inner(modalArea);
-
-        var rows = Layout.vertical()
-                .constraints(
-                        Constraint.length(1), // Name label
-                        Constraint.length(1), // Name input
-                        Constraint.length(1), // Parent label
-                        Constraint.length(1), // Parent input
-                        Constraint.length(1), // Location select
-                        Constraint.fill())     // hint bar
-                .split(inner);
-
-        renderLabeledTextField(frame, rows.get(0), rows.get(1), "Name:", "my-app",
-                newTemplateNameInput, newTemplateFieldIndex == 0);
-        renderLabeledTextField(frame, rows.get(2), rows.get(3), "Parent:", "tpl-dev",
-                newTemplateParentInput, newTemplateFieldIndex == 1);
-
-        modal.renderSelect(frame, rows.get(4), "Save to", newTemplateLocationSelect,
-                newTemplateFieldIndex == 2);
-
-        var hintSpans = new ArrayList<Span>();
-        modal.addKey(hintSpans, "Enter", "Confirm");
-        modal.addKey(hintSpans, "Esc", "Cancel");
-        modal.addKey(hintSpans, "↑↓/Tab", "Navigate");
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(5));
     }
 
     // --- Template detail modal ---
