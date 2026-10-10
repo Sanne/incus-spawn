@@ -386,6 +386,50 @@ class ToolDefLoaderTest {
         }
     }
 
+    /**
+     * A tool that declares its placeholders (#1106) is checked on exactly those: no guessing
+     * from a variable's name, which would miss one named like a setting and flag a copied
+     * setting named like a credential.
+     */
+    @Test
+    void aToolsDeclaredPlaceholdersAreWhatCounts(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("mytool.yaml"), """
+                name: mytool
+                env:
+                  - name: MYTOOL_ID
+                    value: mytool_placeholder
+                  - name: MYTOOL_SECRET_SALT
+                    value: notatoken42
+                files:
+                  - path: ~/.mytool/config
+                    content: |
+                      id = mytool_placeholder
+                      salt = notatoken42
+                proxy:
+                  config-namespace: mytool
+                  placeholders:
+                    - env: MYTOOL_ID
+                      prefix: mytool_
+                  configuration:
+                    token:
+                      config-path: token
+                      secret: true
+                      description: MyTool token
+                  auth:
+                    - domains: [api.mytool.example]
+                      type: bearer
+                      token: "${token}"
+                """);
+        try (var ignored = Warnings.redirect(new Warnings.Channel(msg -> {}))) {
+            var loader = new ToolDefLoader();
+            loader.setProjectToolsDir(tempDir);
+            loader.find("mytool");
+            var warnings = loader.warnings();
+            assertEquals(1, warnings.size(), warnings.toString());
+            assertTrue(warnings.get(0).contains("$MYTOOL_ID"), warnings.get(0));
+        }
+    }
+
     @Test
     void onlyACredentialShapedVariableCountsAsAToken(@TempDir Path tempDir) throws Exception {
         // Paths, endpoints and model names are reused in files all the time, and are no token

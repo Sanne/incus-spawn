@@ -191,8 +191,8 @@ public class ToolDefValidator {
      * a credential ({@link SecretRedactor#looksSecret}), this keeps {@code FOO_HOME=/opt/foo} or
      * an endpoint from being taken for a token, while base64 ({@code /}) and {@code user:secret}
      * values still count. Looser than {@link SecretRedactor#hasSecretShape}, which knows real
-     * issuers' tokens, not placeholders. A guess until a tool declares which variable the proxy
-     * checks (#1106).
+     * issuers' tokens, not placeholders. Only a guess, for a tool that declares no
+     * {@code placeholders:}; one that does is checked on exactly those (#1106).
      */
     private static final Pattern TOKEN_SHAPE = Pattern.compile("(?![/~.$])(?!.*://)\\S+");
 
@@ -211,13 +211,17 @@ public class ToolDefValidator {
         var steps = java.util.stream.Stream.of(def.getRun(), def.getRunAsUser())
                 .filter(java.util.Objects::nonNull).flatMap(List::stream)
                 .filter(java.util.Objects::nonNull).toList();
+        // The variables the proxy checks, where the tool declares them (#1106); else a guess
+        var declared = orEmpty(proxy.getPlaceholders()).stream()
+                .filter(java.util.Objects::nonNull).map(ToolDef.PlaceholderDef::getEnv).toList();
         for (var env : orEmpty(def.getEnv())) {
             if (env == null) continue;
             var value = env.getValue();
             if (env.getName() == null || value == null || value.length() < MIN_TOKEN_LENGTH
-                    || !SecretRedactor.looksSecret(env.getName()) || !TOKEN_SHAPE.matcher(value).matches()
                     || env.getStrategy() == EnvEntry.Strategy.PREPEND
                     || env.getStrategy() == EnvEntry.Strategy.APPEND) continue;
+            if (declared.isEmpty() ? !SecretRedactor.looksSecret(env.getName()) || !TOKEN_SHAPE.matcher(value).matches()
+                    : !declared.contains(env.getName())) continue;
             var where = new ArrayList<String>();
             for (var file : orEmpty(def.getFiles())) {
                 if (file != null && file.getContent() != null && file.getContent().contains(value)) {
