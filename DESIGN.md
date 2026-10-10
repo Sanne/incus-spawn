@@ -1622,6 +1622,71 @@ The request budgets keep their purpose: a count is deterministic where a wall cl
 What changes is one of the reasons given for them. "Far more expensive on macOS" was an
 assumption; measured, it is not so on this hardware and this vfkit.
 
+### VM boot: where the wait goes
+
+A container answers exec in well under a second; a VM from `tpl-isx-agent-vm` took about 11 s
+on Sanne's host (#1238). Almost none of that is isx: it is firmware, the guest's boot, and Incus
+noticing the agent. `bench/vm-boot.sh` splits it, with the host's clock on the serial console
+and on Incus's answers, and the guest's own clock for what happens inside it.
+
+Measured on 2026-10-10 with `bench/vm-boot.sh` inside an isx VM, so **under nested KVM** (AMD
+Ryzen 9 9950X3D2, Incus 6.23, btrfs pool, 8 vCPUs and 4 GiB unless stated), copying a stopped VM
+of base image `fedora-44-20261009`. Nesting inflates every exit to the hypervisor, so these
+figures rank the phases and the effect of each change; they are not what a VM on bare metal
+waits:
+
+| Phase | Nested KVM | Clock |
+|---|---|---|
+| Firmware until shim (OVMF, Secure Boot) | 25 s; 37 s with 30 vCPUs; 5 s with Secure Boot off, at 8 or 30 | host |
+| GRUB loading kernel and initrd | ~3-4 s | host, guest |
+| Guest `systemd-analyze` (kernel, initrd, userspace), image as released | ~19 s | guest |
+| Start request until Incus's `GET /state` reports the agent connected, image as released | 49.4 s | host |
+| That, until an exec answers (probed every 50 ms) | 0.06-0.11 s | host |
+
+The time between `incus-agent` becoming active and Incus reporting it connected is not in the
+table: the first is read from the guest's clock, which was a few tenths of a second off the
+host's, as much as that gap.
+
+What it shows:
+
+- **The Secure Boot firmware is the largest block, and its cost grows with the vCPU count.**
+  With `security.secureboot` on, Incus boots `OVMF_CODE.secboot.fd`, which needs SMM; every
+  SMM entry is expensive under nesting, and OVMF enters it per vCPU. With it off, the firmware
+  takes ~5 s at 8 or 30 vCPUs. On Sanne's host, one level of virtualization, #1238 measured
+  ~4.3 s from the request to the guest kernel starting, copy and QEMU start included, so there
+  Secure Boot costs at most that. Whether to turn it off is a decision, not a tuning: it is a
+  guest protection.
+- **The kernel's console output was the next largest.** The released image boots with
+  `console=tty1 console=ttyS0` at the default log level, ~125 KB per boot through an emulated
+  UART and framebuffer. incus-spawn-images#19 (a draft; it reaches users only with an image
+  release and the `minimal.yaml` bump that follows) proposes `loglevel=5`, set for every kernel in
+  `/etc/kernel/cmdline`. Built locally, it cut start-to-exec from 49.5 s to 41.3 s and
+  `systemd-analyze` from 19.4 s to 12.1 s (three alternating runs each). The console then shows
+  warnings, errors and panics, ~300 bytes on a normal boot, and systemd's status lines, which are
+  not kernel messages, so `VmAgentFailure` still finds `Failed to start incus-agent.service`.
+  `quiet` caps the kernel's console at level 4, which drops its warnings too, and turns systemd's
+  status lines off until a unit fails or stalls; measured against `loglevel=4`, that second part
+  was worth ~0.8 s. The SELinux avc denials `VmAgentFailure` also matches (#842) are notices and
+  no longer reach the console, so a report would quote the failure but not that cause; the image
+  pins SELinux off, which is what keeps that case from happening.
+- **The initrd is not worth trimming.** Dropping `fips`, `tpm2-tss`, `memstrack`, `i18n`,
+  `kernel-modules-extra` and others took it from 34 MB to 28 MB with no measurable change.
+  A host-only initrd is not an option anyway: the image is built in a chroot on a CI runner,
+  whose hardware a host-only dracut would detect.
+- **Memory slows the kernel, vCPUs slow the firmware.** 12 GiB instead of 4 added ~1.7 s of
+  kernel time (memory zone setup); 30 vCPUs instead of 8 added ~12 s of firmware, all of it
+  SMM. The VM in #1238 had 32 vCPUs and 15 GiB (isx's default VM memory is a quarter of host
+  RAM, up to 16 GiB), the slow end of both; smaller defaults would trade boot time against the
+  work the VM is for.
+- **isx's own polling can add at most a quarter of a second, by its code.** Exec answered
+  0.06-0.11 s after Incus reported the agent connected, with the script probing every 50 ms.
+  `waitForReady` reads the same report every 250 ms (`VM_POLL_INTERVAL_MS`) and probes with
+  exec in the pass that sees it, so what it adds is the delay in noticing, up to that interval.
+  This was read from the code, not measured through isx.
+
+Not measured: a VM on bare metal (one level of virtualization, as on Sanne's host) and VMs
+inside the macOS appliance (aarch64 firmware has no SMM, so the Secure Boot finding is x86-only).
+
 ### Why nothing is pushed into an instance just before it starts
 
 `bench/trace-branch.sh` showed a full second of every 2.2 s branch spent idle inside Incus's
