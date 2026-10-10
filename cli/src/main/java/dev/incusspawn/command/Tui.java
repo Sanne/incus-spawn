@@ -212,8 +212,8 @@ public class Tui {
     enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, ACCOUNTS, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT, WARNINGS }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
-    private String pendingDeleteName;
-    private String pendingDeleteNote = "";      // computed once when the confirm dialog opens
+    /** The delete confirmation; set when it opens, and read again by the destroy it confirms. */
+    private DeleteConfirm deleteConfirm;
     /** The pool-cleanup dialog; set when 'c' finds a pool, and kept for the result it shows after the clean. */
     private CleanModal clean;
     /** The F5 build menu; set when it opens. */
@@ -1646,9 +1646,9 @@ public class Tui {
     }
 
     private boolean handleConfirmDeleteEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
-        if (key.isChar('y') || key.isChar('Y')) {
+        if (deleteConfirm.handleKey(key) == DeleteConfirm.Outcome.CONFIRM) {
             mode = Mode.BROWSE;
-            if ("--all".equals(pendingDeleteName)) {
+            if ("--all".equals(deleteConfirm.name())) {
                 var allNames = new java.util.ArrayList<>(imageDefs.keySet());
                 java.util.Collections.reverse(allNames);
                 int count = allNames.size();
@@ -1699,7 +1699,7 @@ public class Tui {
                     if (destroyed > 0 || skipped > 0) setStatusMessage(msg);
                     refreshDataAfterBackground();
                 });
-            } else if ("--all-instances".equals(pendingDeleteName)) {
+            } else if ("--all-instances".equals(deleteConfirm.name())) {
                 var allEntries = new java.util.ArrayList<>(entries);
                 int count = allEntries.size();
                 backgroundTasks.submit("Deleting " + count + " instance(s)",
@@ -1747,15 +1747,15 @@ public class Tui {
                     if (destroyed > 0 || skipped > 0) setStatusMessage(msg);
                     refreshDataAfterBackground();
                 });
-            } else if (!vanished(pendingDeleteName)) {
-                execInBackground("Deleting " + pendingDeleteName,
-                        "Deleted " + pendingDeleteName,
-                        pendingDeleteName,
-                        "Destroyed " + pendingDeleteName,
+            } else if (!vanished(deleteConfirm.name())) {
+                execInBackground("Deleting " + deleteConfirm.name(),
+                        "Deleted " + deleteConfirm.name(),
+                        deleteConfirm.name(),
+                        "Destroyed " + deleteConfirm.name(),
                         Metadata.OP_DELETING,
                         () -> {
-                            incus.delete(pendingDeleteName, true);
-                            InstanceLifecycle.removeHostIntegration(pendingDeleteName);
+                            incus.delete(deleteConfirm.name(), true);
+                            InstanceLifecycle.removeHostIntegration(deleteConfirm.name());
                             InstanceDestroyer.refreshProxy();
                         });
             }
@@ -2100,8 +2100,7 @@ public class Tui {
      * data, both fixed while the dialog is up).
      */
     private void openDeleteConfirm(String name) {
-        pendingDeleteName = name;
-        pendingDeleteNote = cowDeleteNote(name);
+        deleteConfirm = new DeleteConfirm(modal, name, cowDeleteNote(name));
         mode = Mode.CONFIRM_DELETE;
     }
 
@@ -2583,18 +2582,7 @@ public class Tui {
                               TableState tableState) {
         modal.renderScrim(frame, screen);
         switch (mode) {
-            case CONFIRM_DELETE -> {
-                var isAllTemplates = "--all".equals(pendingDeleteName);
-                var isAllInstances = "--all-instances".equals(pendingDeleteName);
-                var isAll = isAllTemplates || isAllInstances;
-                var title = isAllTemplates ? " Destroy all templates "
-                        : isAllInstances ? " Destroy all instances "
-                        : " Destroy '" + pendingDeleteName + "' ";
-                var message = isAllTemplates ? "This will destroy all built templates."
-                        : isAllInstances ? "This will destroy all instances."
-                        : "This action cannot be undone." + pendingDeleteNote;
-                modal.renderConfirmModal(frame, screen, title, message, modal.warn());
-            }
+            case CONFIRM_DELETE -> deleteConfirm.render(frame, screen);
             case BUILD_MENU -> buildMenu.renderBuildMenu(frame, screen);
             case CONFIRM_BUILD_FOR_BRANCH -> {
                 modal.renderConfirmModal(frame, screen,
@@ -3901,8 +3889,8 @@ public class Tui {
      */
     private String dialogTarget() {
         return switch (mode) {
-            case CONFIRM_DELETE -> pendingDeleteName != null && !pendingDeleteName.startsWith("--")
-                    ? pendingDeleteName : null;
+            case CONFIRM_DELETE -> deleteConfirm.name() != null && !deleteConfirm.name().startsWith("--")
+                    ? deleteConfirm.name() : null;
             case CONFIRM_STOP_FOR_RENAME, RENAME -> renameSourceName;
             case BRANCH -> branchSourceName;
             case INSTANCE_DETAIL -> detailInstanceName;
