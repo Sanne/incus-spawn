@@ -461,7 +461,7 @@ The volume is attached before the build instance starts (`attachDnfCache`; see "
 It also means incus-agent has mounted it before the first exec, so no dnf run can race an asynchronous hot-plug mount and fill the image's own cache dir.
 The package **install/upgrade** paths (and the VM rootfs dependency install, which runs only when `growpart`/`resize2fs`/`xfs_growfs` are missing: the prebaked VM image ships them, and a no-op dnf install still costs seconds of metadata loading) use `--setopt=keepcache=true` so downloaded RPMs persist, `--setopt=metadata_expire=3600` (1 hour) so repeated builds within that window skip metadata downloads, and `--setopt=max_parallel_downloads` (scaled to `CpuInfo.logicalCores()`, capped at dnf's practical max of 20) to parallelize the download phase.
 The rpm transaction itself is serial.
-These shared flags are centralized in `BuildCommand.DNF_BASE_OPTS` and spliced on by `dnfCommand(...)`.
+These shared flags are centralized in `BuildProgress.DNF_BASE_OPTS` and spliced on by `dnfCommand(...)`.
 Repo-management calls that download nothing (`dnf copr enable`, `dnf clean`) run plain `dnf` — the cache/download flags don't apply to them.
 The cache device is unmounted before the final cleanup step so the image stays small.
 For VMs, `unmountDnfCache` unmounts inside the guest before removing the device (the agent would otherwise tear the mount down asynchronously).

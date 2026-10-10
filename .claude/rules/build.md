@@ -1,6 +1,8 @@
 ---
 paths:
   - "cli/src/main/java/dev/incusspawn/command/BuildCommand.java"
+  - "cli/src/main/java/dev/incusspawn/command/BuildProgress.java"
+  - "cli/src/main/java/dev/incusspawn/command/RepoCloner.java"
   - "cli/src/main/java/dev/incusspawn/command/CleanCommand.java"
   - "cli/src/main/java/dev/incusspawn/command/BranchCommand.java"
   - "cli/src/main/java/dev/incusspawn/command/ProjectCommand.java"
@@ -114,7 +116,7 @@ Optionally clones missing repos (persisted via `auto-clone-repos` config).
 
 # Parallel Repo Cloning
 
-`BuildCommand.cloneRepos()` clones a template's declared repos concurrently, bounded to `CpuInfo.highPerfCores()` (`util/CpuInfo.java` -- P-core count via macOS `sysctl`/the Linux sysfs scan below, else all logical CPUs).
+`RepoCloner.cloneRepos()` clones a template's declared repos concurrently, bounded to `CpuInfo.highPerfCores()` (`util/CpuInfo.java` -- P-core count via macOS `sysctl`/the Linux sysfs scan below, else all logical CPUs).
 `CpuInfo` is the single source of CPU-topology counts: `logicalCores()` (real host count, bypassing the native image's `-R:ActiveProcessorCount` cap; `ResourceLimits.hostProcessorCount()` delegates to it), `performanceCores()` (P/big cores, or 0 when indistinguishable; `VmManager.detectCpus()` uses it), `highPerfCores()`, and `hybridTopTierCores()` (on a hybrid host, the top tier's physical cores, SMT threads once; 0 on a host with one tier or unknown tiers; read once per process).
 `ResourceLimits.defaultVmCpus()` gives a VM branch `max(1, min(8, host CPUs - 2))`, and on a hybrid host also at most `hybridTopTierCores()` (#1238, Sanne's choice).
 Its Linux counts come from one sysfs scan of the online CPUs, whose top tier is taken from the hybrid PMU's `/sys/devices/cpu_core/cpus` where it exists (Intel hybrids with Hyper-Threading report equal `cpu_capacity`), else from `cpu_capacity` where it differs (ARM, Intel hybrids without SMT), else from `cpufreq/cpuinfo_max_freq` where it differs (AMD Zen 5 + Zen 5c hybrids), the top tier being every CPU within 80% of the highest, else all of them.
@@ -165,7 +167,7 @@ A 429/500/502/503/504 or a failed or broken connection is retried twice from the
 Errors name the failing hop's host.
 `file://` goes only through `downloadAllowingLocalFile()`, which only base images use; see DESIGN.md "Host-side downloads reach only remote hosts".
 A `DownloadCache.Listener` observes a download (cache verification, bytes against `Content-Length`, checksum).
-Base images pass `BuildCommand.TransferProgress`, which the `runLiveStep` spinner formats on each frame into percentage, size, rate and time left.
+Base images pass `BuildProgress.TransferProgress`, which the `runLiveStep` spinner formats on each frame into percentage, size, rate and time left.
 The Incus import that follows is a separate spinner showing elapsed time.
 YAML tool downloads may be exposed as a file via `destination_file`, extracted, or both.
 Containers receive files directly and host-extracted archive contents recursively; VMs use temporary read-only mounts and copy locally to avoid slow incus-agent file transfers over vsock.

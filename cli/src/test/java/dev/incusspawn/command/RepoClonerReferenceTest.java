@@ -29,7 +29,7 @@ import static org.mockito.Mockito.*;
  * from their reference, and no prime may run while any reference is attached (#765).
  */
 @ExtendWith(IsolatedHome.class)
-class BuildCommandRepoReferenceTest {
+class RepoClonerReferenceTest {
 
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
     private static final String VM = "tpl-vm-rebuilding";
@@ -82,8 +82,7 @@ class BuildCommandRepoReferenceTest {
             return OK;
         }).when(incus).execInContainer(eq(VM), eq("agentuser"), anyString());
 
-        var cmd = spy(new BuildCommand());
-        cmd.incus = incus;
+        var cmd = spy(new RepoCloner(incus));
         doReturn(count).when(cmd).repoConcurrency(anyInt()); // every clone at once: the most slot pressure
         var out = new ByteArrayOutputStream();
         var originalOut = System.out;

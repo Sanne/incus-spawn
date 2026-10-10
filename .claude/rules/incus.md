@@ -7,6 +7,8 @@ paths:
   - "common/src/main/java/dev/incusspawn/ClientLog.java"
   - "appliance/**"
   - "cli/src/main/java/dev/incusspawn/command/BuildCommand.java"
+  - "cli/src/main/java/dev/incusspawn/command/BuildProgress.java"
+  - "cli/src/main/java/dev/incusspawn/command/RepoCloner.java"
   - "cli/src/main/java/dev/incusspawn/command/BranchCommand.java"
   - "cli/src/main/java/dev/incusspawn/command/DoctorCommand.java"
 ---
