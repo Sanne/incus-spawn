@@ -2771,7 +2771,8 @@ Three things from GraalVM's own source decide the shape of this:
 
 The crypto extension is optional in ARMv8-A, which is why GraalVM leaves it out of its default.
 Every Apple Silicon Mac has it, as do Graviton, Ampere, the Raspberry Pi 5 and Linux VMs on Apple Silicon.
-The Raspberry Pi 3 and 4 do not, but they were already excluded before #1144: their Cortex-A53/A72 are ARMv8.0 cores without LSE, so they fail the default `armv8.1-a`'s startup check (`CPUTypeAArch64.getDefaultName()` picks `armv8.1-a` whenever the build host has it, and every release builder does).
+The Raspberry Pi 3 and 4 do not, but they were already excluded before #1144.
+Their Cortex-A53/A72 are ARMv8.0 cores without LSE, so they fail the default `armv8.1-a`'s startup check (`CPUTypeAArch64.getDefaultName()` picks `armv8.1-a` whenever the build host has it, and every release builder does).
 What `+aes` drops is only an ARMv8.1+ core built without the optional crypto extension, which none of the platforms above is; an 8.5x cost to everyone else for such a core would be the wrong trade.
 The JVM install channels (`install.sh`, JBang) run anywhere, as HotSpot detects AES at run time.
 One side effect: a native build *on* a Raspberry Pi 4 used to fall back to `compatibility` and run there, and now yields binaries that exit at startup on that same Pi; build with `-Dnative.march.args=` to get GraalVM's default back.
@@ -2805,7 +2806,8 @@ Native Image has supported it there since Oracle GraalVM 25.1, and the Apple Sil
 Three interleaved rounds of `bench/run.sh`, same commit, Oracle GraalVM 25.4.4.1.1: 118 req/s for both collectors on `--load=maven`, and 53,900 (serial) against 53,700 (G1) on `--load=saturate`, a difference inside the noise.
 G1 costs 9.0 MB of binary (+12%), 5.4 MB of idle RSS (+13%) and 6 to 12 MB more after load.
 A larger G1 heap (`MaxRAM=512m`, 128 MB) changes nothing either, so `MaxRAM` stays 256m on every platform.
-G1 on macOS is also an Oracle GraalVM feature: `native-image` from GraalVM Community Edition, which is what Homebrew's `graalvm` formula installs, stops with "'G1' is not an accepted value", so `install.sh --native` would fail on such a Mac. macOS x86_64 has no choice in any case: GraalVM dropped it after 25.0, before G1 reached macOS.
+G1 on macOS is also an Oracle GraalVM feature: `native-image` from GraalVM Community Edition, which is what Homebrew's `graalvm` formula installs, stops with "'G1' is not an accepted value".
+So `install.sh --native` would fail on such a Mac. macOS x86_64 has no choice in any case: GraalVM dropped it after 25.0, before G1 reached macOS.
 
 The figures and their conditions are in `docs/PERFORMANCE-NOTES.md`, "G1 on Apple Silicon".
 
@@ -2813,11 +2815,13 @@ The figures and their conditions are in `docs/PERFORMANCE-NOTES.md`, "G1 on Appl
 
 isx supports **macOS 15 (Sequoia) or later**; macOS 14 and older were dropped by decision (#1086).
 Apple Silicon is supported, and the bot's Apple Silicon Mac (the `mac-runner` agent, not a CI runner) verified this change on it.
-Intel stays among the release artifacts as **best effort**: it is built on GitHub's `macos-15-intel`, linked for the same minimum, smoke-tested there and checked like the rest, but not verified on an Intel Mac (`isx vm`, the proxy service), as no Intel Mac is available to the project.
+Intel stays among the release artifacts as **best effort**.
+It is built on GitHub's `macos-15-intel`, linked for the same minimum, smoke-tested there and checked like the rest, but not verified on an Intel Mac (`isx vm`, the proxy service), as no Intel Mac is available to the project.
 
 The value lives once, as `macos.deployment.target` in the root pom, and a profile activated on any macOS host adds `-H:NativeLinkerOption=-mmacosx-version-min=<it>` to both modules' argument lists (`macos.min.args`), so release builds and local `./install.sh --native` alike link for it.
 
-Before this nothing set it, and clang took the build host's own version: v0.3.9 shipped arm64 binaries recording `minos 14.0` (built on `macos-14`) and Intel ones recording `minos 15.0` (built on `macos-15-intel`), so the minimum was an accident of the runner and differed by architecture.
+Before this nothing set it, and clang took the build host's own version: v0.3.9 shipped arm64 binaries recording `minos 14.0` (built on `macos-14`) and Intel ones recording `minos 15.0` (built on `macos-15-intel`).
+So the minimum was an accident of the runner and differed by architecture.
 Two details decide how it is set:
 
 - **Not `MACOSX_DEPLOYMENT_TARGET`.** clang honours that variable, but `native-image` hands the builder, and so the linker it spawns, only `PATH`, `PWD`, `HOME`, `LANG` and `LC_*`; a workflow-level variable would be dropped without a word.
@@ -2828,7 +2832,8 @@ Two details decide how it is set:
 
 `release.yml` checks it on the very files it uploads: `scripts/check-macos-minos.py` reads each macOS artifact's `LC_BUILD_VERSION` and fails the release unless every `minos` equals the pom's value (or the file is not a thin Mach-O with one).
 It is plain Python so it runs on the Linux job that publishes, after the macOS builds, and it reads the expected value from the pom rather than repeating it.
-The Homebrew formula declares the same minimum (`depends_on macos: :sequoia`, from `MACOS_MIN` in the tap step), and `WorkflowRunnerLabelsTest` fails if `MACOS_MIN` is not the target's Homebrew name, if a release runner is older than the target, or if `release.yml` no longer runs the check over `artifacts/native-macos-*/*`.
+The Homebrew formula declares the same minimum (`depends_on macos: :sequoia`, from `MACOS_MIN` in the tap step).
+`WorkflowRunnerLabelsTest` fails if `MACOS_MIN` is not the target's Homebrew name, if a release runner is older than the target, or if `release.yml` no longer runs the check over `artifacts/native-macos-*/*`.
 That the glob matches what `gh release create` uploads rests on the artifact layout (each macOS artifact is one build's `dist/`), not on the test.
 A runner newer than the target is fine: it builds for the older version.
 
@@ -2946,7 +2951,8 @@ What it shows:
   With it off, the firmware takes ~5 s at 8 or 30 vCPUs.
   On Sanne's host, one level of virtualization, #1238 measured ~4.3 s from the request to the guest kernel starting, copy and QEMU start included, so there Secure Boot costs at most that.
 - **The kernel's console output was the next largest.**
-  The released image boots with `console=tty1 console=ttyS0` at the default log level, ~125 KB per boot through an emulated UART and framebuffer. incus-spawn-images#19 (a draft; it reaches users only with an image release and the `minimal.yaml` bump that follows) proposes `loglevel=5`, set for every kernel in `/etc/kernel/cmdline`.
+  The released image boots with `console=tty1 console=ttyS0` at the default log level, ~125 KB per boot through an emulated UART and framebuffer.
+  incus-spawn-images#19 (a draft; it reaches users only with an image release and the `minimal.yaml` bump that follows) proposes `loglevel=5`, set for every kernel in `/etc/kernel/cmdline`.
   Built locally, it cut start-to-exec from 49.5 s to 41.3 s and `systemd-analyze` from 19.4 s to 12.1 s (three alternating runs each).
   The console then shows warnings, errors and panics, ~300 bytes on a normal boot, and systemd's status lines, which are not kernel messages, so `VmAgentFailure` still finds `Failed to start incus-agent.service`.
   `quiet` caps the kernel's console at level 4, which drops its warnings too, and turns systemd's status lines off until a unit fails or stalls; measured against `loglevel=4`, that second part was worth ~0.8 s.
@@ -2954,7 +2960,8 @@ What it shows:
 - **The initrd is not worth trimming.**
   Dropping `fips`, `tpm2-tss`, `memstrack`, `i18n`, `kernel-modules-extra` and others took it from 34 MB to 28 MB with no measurable change.
   A host-only initrd is not an option anyway: the image is built in a chroot on a CI runner, whose hardware a host-only dracut would detect.
-- **Memory slows the kernel, vCPUs slow the firmware.** 12 GiB instead of 4 added ~1.7 s of kernel time (memory zone setup); 30 vCPUs instead of 8 added ~12 s of firmware, all of it SMM, which turning Secure Boot off removes.
+- **Memory slows the kernel, vCPUs slow the firmware.** 12 GiB instead of 4 added ~1.7 s of kernel time (memory zone setup).
+  30 vCPUs instead of 8 added ~12 s of firmware, all of it SMM, which turning Secure Boot off removes.
   The VM in #1238 had 32 vCPUs and 15 GiB (isx's default VM memory is a quarter of host RAM, up to 16 GiB).
 - **isx's own polling can add at most a quarter of a second, by its code.**
   Exec answered 0.06-0.11 s after Incus reported the agent connected, with the script probing every 50 ms.
@@ -2966,8 +2973,10 @@ Not measured: a VM on bare metal (one level of virtualization, as on Sanne's hos
 What was decided (Sanne, 2026-10-10, on #1240):
 
 - **Secure Boot is off for every VM.**
-  It guards the guest's boot chain against tampering from inside the guest, which is not what an isx VM is for: the agent in it has root anyway, and the isolation isx stands for is the VM boundary and the proxy, which this leaves alone.
-  VM builds set `security.secureboot=false` in the one write `InstanceLifecycle.prepareVmBuild` makes, `InstanceLifecycle.configureBranch` sets it on every VM branch in the write it already makes, and `startForUse` (`isx shell`, `isx run`, the TUI, MCP) on a VM that still has it on, in the write that rotates its secret: none of these adds a request.
+  It guards the guest's boot chain against tampering from inside the guest, which is not what an isx VM is for.
+  The agent in it has root anyway, and the isolation isx stands for is the VM boundary and the proxy, which this leaves alone.
+  VM builds set `security.secureboot=false` in the one write `InstanceLifecycle.prepareVmBuild` makes, `InstanceLifecycle.configureBranch` sets it on every VM branch in the write it already makes, and `startForUse` (`isx shell`, `isx run`, the TUI, MCP) on a VM that still has it on, in the write that rotates its secret.
+  None of these adds a request.
   `isx project create` sets it on its copy of the parent with one write of its own, off the latency path.
   Other starts of an existing VM -- template updates, agent recovery -- leave it as it is: a template built before this keeps Secure Boot until it is rebuilt, though its branches never get it.
 - **A VM's default vCPU count is capped at 8, and on a hybrid host at its top tier** (Sanne's choice "C" on #1240).
@@ -2978,7 +2987,8 @@ What was decided (Sanne, 2026-10-10, on #1240):
   A host is hybrid when its online CPUs fall into more than one tier; the top tier's cores are then counted with a core's SMT threads once.
   On Linux the tier comes from the first source that tells CPUs apart: the hybrid PMU's list of performance CPUs (`/sys/devices/cpu_core/cpus`), which Intel 12th-14th gen hybrids with Hyper-Threading need because intel_pstate leaves every `cpu_capacity` at 1024 there, and Arrow Lake, whose E-cores reach about 80% of its P-cores by every other measure; then `cpu_capacity` where it differs (ARM big.LITTLE, Intel hybrids without SMT); then `cpufreq/cpuinfo_max_freq` where it differs (AMD Zen 5 + Zen 5c hybrids, which have neither).
   With the last two, the top tier is every CPU within 80% of the highest: favoured cores and a dual-CCD X3D's slower CCD stay one tier (so such a host is not hybrid), and a three-tier ARM SoC's top tier is its prime cores.
-  A physical core is the set of CPUs in its `topology/core_cpus_list` (`thread_siblings_list` before 5.3), not its package and core id: on device-tree Arm with Linux 6.x, `core_id` restarts in every cluster and the package is 0 throughout, so an RK3588's four A76 cores would count as two.
+  A physical core is the set of CPUs in its `topology/core_cpus_list` (`thread_siblings_list` before 5.3), not its package and core id.
+  On device-tree Arm with Linux 6.x, `core_id` restarts in every cluster and the package is 0 throughout, so an RK3588's four A76 cores would count as two.
   Anything that leaves the tier in doubt makes it unknown, which choice C maps to the one-tier rule: an unreadable capacity, a capacity on some CPUs but not others, a top-tier CPU without a core list.
   CPU detection stops here for #1238: hardware nobody can test here degrades to the one-tier rule.
   The same scan feeds `performanceCores()`, so clone concurrency on such hybrids now counts only their top tier's threads (an i7-12700H: 12 of 20).
@@ -2993,13 +3003,15 @@ What was decided (Sanne, 2026-10-10, on #1240):
 Forkfile is the helper Incus runs to serve file pushes to a stopped container.
 On start, Incus sends it SIGINT and waits for it to exit; forkfile exits once no transfer is open, but it re-checks only **once a second** (`cmd/incusd/main_forkfile.go`, Incus 6.23).
 A transfer still counts as open until forkfile has finished `syncfs` on the root filesystem, which can outlast the HTTP response to the push.
-So a start issued immediately after a push races that flush, and losing costs exactly one second (measured: 1149 ms against 142 ms with a 200 ms pause, same host). isx pushed terminfo, and for SSH-capable templates the authorized keys, 1 ms before every branch start.
+So a start issued immediately after a push races that flush, and losing costs exactly one second (measured: 1149 ms against 142 ms with a 200 ms pause, same host).
+isx pushed terminfo, and for SSH-capable templates the authorized keys, 1 ms before every branch start.
 
 Both now travel inside the post-start setup script as heredocs (`buildSetupScript`), which costs no extra request, and `InstanceLifecycle.prefetchAndStart()` -- shared by `isx branch` and the TUI -- pushes nothing between reading the config and starting.
 Two related savings on the same path: `GuiPassthrough.removeGui()` returns after one read when the instance has no GUI state (it used to rewrite devices and config and push two empty files on every branch), and the setup script polls for the network address every 50 ms rather than every 0.5 s, which was ~400 ms of idle time per branch.
 
 Two kinds of file still go in before the start, because they must be in place at boot: the static `.network` file, and the Wayland profile.d/tmpfiles.d files of a `--gui` branch (or the empty files that clear them, when a branch drops GUI state it inherited).
-Both are pushed well before the start: GUI setup runs first, right after the copy, and `configureBranch()` pushes the `.network` file just before its combined settings write, leaving that write, host integration and the runtime prefetch between it and the start.
+Both are pushed well before the start.
+GUI setup runs first, right after the copy, and `configureBranch()` pushes the `.network` file just before its combined settings write, leaving that write, host integration and the runtime prefetch between it and the start.
 That has been enough to finish the flush; if a trace ever shows the one-second gap again, the `.network` push is the next candidate.
 
 ### Why a branch is configured in one write
@@ -3009,7 +3021,8 @@ Each step did its own read-modify-write, and each write costs Incus ~11-13 ms on
 The same write costs 6-10 ms inside the macOS appliance; the vsock tunnel adds about a tenth of a millisecond to it (see "CLI latency on macOS").
 
 `InstanceLifecycle.configureBranch()`, shared by `isx branch` and the TUI, reads the instance once and collects every change into an `InstanceUpdate` (config sets and unsets, device properties, device removals), which `IncusClient.update()` sends as **one PATCH**.
-PATCH cannot remove a device, so when the copy inherited KVM devices the write is **one PUT** of the whole instance carrying all the other changes as well; a removal of a device the instance does not declare is dropped rather than forcing that PUT (which also makes `devicesRemoveAll` of absent devices a read only).
+PATCH cannot remove a device, so when the copy inherited KVM devices the write is **one PUT** of the whole instance carrying all the other changes as well.
+A removal of a device the instance does not declare is dropped rather than forcing that PUT (which also makes `devicesRemoveAll` of absent devices a read only).
 Devices are sent complete -- their expanded config with the new properties merged in -- so a profile device such as `root` or `eth0` is overridden, not replaced by a fragment Incus rejects.
 `InstanceLifecycleRequestBudgetTest` pins the one write.
 
@@ -3034,26 +3047,32 @@ Everywhere else, call the `Environment` method rather than storing its result.
 
 Deferring the class that *resolves* the path is not sufficient on its own — the **holder** must be deferred too, which is why `CDI_TOOLS` lives in `RuntimeConstants`.
 GraalVM does not reject a build-time initializer that touches a run-time-initialized class; it initializes it early and folds the value, with no error (what `Environment`'s header comment warns about, confirmed by building it both ways).
-That is how this shipped: `DownloadCache` resolves `RuntimeConstants.DOWNLOAD_CACHE_DIR` in its constructor and `ClaudeSetup`/`BobSetup` each hold one; those instances used to be created in `RuntimeServices`, and commit 08a8ea0 (2026-08-26) moved the list into `ToolDefLoader`, which is not on the flag — so the binary carried `/root/.cache/incus-spawn/downloads` as a constant and `isx build` failed on any template with a `claude` or `bob` tool.
+That is how this shipped: `DownloadCache` resolves `RuntimeConstants.DOWNLOAD_CACHE_DIR` in its constructor and `ClaudeSetup`/`BobSetup` each hold one.
+Those instances used to be created in `RuntimeServices`, and commit 08a8ea0 (2026-08-26) moved the list into `ToolDefLoader`, which is not on the flag.
+So the binary carried `/root/.cache/incus-spawn/downloads` as a constant and `isx build` failed on any template with a `claude` or `bob` tool.
 The diagnosis was a bare path: `Failed to install Claude Code: /root/.cache/incus-spawn`, an `AccessDeniedException` message from `Files.createDirectories` walking into a directory only root can read.
 Everything else kept working, because every other `Environment` read happens at runtime — so it read as a container problem, not a build-host leak.
 `DownloadCache` now names the directory it failed to create.
 
 Two mechanisms keep it from recurring.
 `BakedHostStateFeature` registers an object replacer (the analysis calls it for every object scanned into the image heap) and aborts the build if a constant reflects the build machine.
-Its primary check tests the configuration rather than the builder's identity: before analysis — and so before any build-time class initialization — it sets the builder's `user.home` and `user.name` to canaries carrying a random name, so a holder wrongly initialized at build time bakes the canary, which no literal can contain.
+Its primary check tests the configuration rather than the builder's identity.
+Before analysis — and so before any build-time class initialization — it sets the builder's `user.home` and `user.name` to canaries carrying a random name, so a holder wrongly initialized at build time bakes the canary, which no literal can contain.
 Matching the builder's *real* home is kept as a second check, because some values reach the heap without reading the property during analysis — config Quarkus recorded in the Maven JVM, `getenv("HOME")`, JDK internals that cached `user.home` at startup.
-But that check needs the home to be distinctive, and it is not when building inside an isx instance: the build then runs as `agentuser`, and every `"/home/agentuser/..."` literal the tool setups write into instances looks like a leak (issue #708).
+But that check needs the home to be distinctive, and it is not when building inside an isx instance.
+The build then runs as `agentuser`, and every `"/home/agentuser/..."` literal the tool setups write into instances looks like a leak (issue #708).
 Allowing the prefix would blind the check silently, exactly where isx is dogfooded, so instead the guard switches real-home matching off *and says so* when the two coincide, leaving the canaries to cover that build.
 An earlier version guessed at precision the other way, flagging only paths containing `incus-spawn`, which would have tolerated a baked `~/.m2/repository`, `~/.config/incus/` or bare `$HOME`.
-The guard also watches the builder's `user.dir`, and checks `Path` objects as well as their string form, because `sun.nio.fs.UnixPath` stores bytes and computes its `String` lazily — a folded path can reach the heap with no matching `String` object at all (the regression produced both, and the guard reports both).
+The guard also watches the builder's `user.dir`, and checks `Path` objects as well as their string form, because `sun.nio.fs.UnixPath` stores bytes and computes its `String` lazily.
+A folded path can reach the heap with no matching `String` object at all (the regression produced both, and the guard reports both).
 
 Environment variables are covered by GraalVM itself: `native-image` hands the builder a sanitized environment (measured: `HOME`, `LANG`, `PATH`, `PWD`), so a build-time `getenv("GITHUB_TOKEN")` in a CI release build returns null rather than baking the token into a public binary.
 Only `-E<name>` widens it, and `NativeImageInitializationTest` rejects that.
 The guard keeps a backstop anyway — any builder variable that is a credential by name or shape must not appear in the heap — and names the variable while withholding the value, since build logs are often public.
 
 Second, `NativeImageInitializationTest` parses both modules' build arguments — each declared once, in its `resources-filtered/application.properties` — and fails in `mvn test` if one stops deferring a class, stops registering a guard, or passes an environment variable through with `-E`.
-It also fails if a pom redefines the list: a platform's own arguments join it through placeholders a profile sets (`svm.target.name.args`, `macos.plist.args`), because a pom property overrides the file and a platform's private copy is exercised by no build on the other.
+It also fails if a pom redefines the list.
+A platform's own arguments join it through placeholders a profile sets (`svm.target.name.args`, `macos.plist.args`), because a pom property overrides the file and a platform's private copy is exercised by no build on the other.
 The CLI's `macos-native` profile carried such a copy until #489, and it had drifted: macOS release builds kept `-R:MaxRAM=128m` after Linux moved to 512m.
 
 The sibling guard `SyscallReachabilityFeature` targets something else — keeping lazy system-property resolvers off the startup path of short-lived commands — and currently cannot fail, because it resolves its targets on an abstract GraalVM class whose concrete overrides are what the analysis reaches.
@@ -3082,7 +3101,8 @@ Intel Macs are not covered: arm64 is what Mac users run, and macOS runners are s
 **The test JVM keeps `AESCrypt.makeSessionKey` out of the JIT.**
 CI tests on GraalVM 25, whose JIT now and then gives one AES-256 cipher a wrong key schedule while it deoptimizes the compiled and OSR versions of `com.sun.crypto.provider.AESCrypt.makeSessionKey` during warm-up.
 TLS 1.3 prefers `TLS_AES_256_GCM_SHA384`, so that connection fails with `bad_record_mac` (or `Tag mismatch`, followed by a "record" of zeros, which is the JDK wiping the plaintext it refused).
-The proxy tests run every TLS hop in one JVM, so this showed up as a flake on whichever hop and test happened to be running: client to MITM, MITM to mock upstream, in either direction, sometimes twice within milliseconds as the method was recompiled (#940).
+The proxy tests run every TLS hop in one JVM.
+So this showed up as a flake on whichever hop and test happened to be running: client to MITM, MITM to mock upstream, in either direction, sometimes twice within milliseconds as the method was recompiled (#940).
 A standalone loop of `Cipher.init` + `doFinal` with fresh AES-256 keys, run in fresh JVMs, gave a wrong ciphertext in 24 of 960 GraalVM JVMs.
 It gave none in 480 with `-XX:-UseOnStackReplacement`, none in 480 with the method excluded from compilation, none in 96 with C2 in the same JDK (`-XX:-UseJVMCICompiler`), and none on OpenJDK's C2.
 AES-128 never failed.
@@ -3092,12 +3112,14 @@ It is a property, not surefire configuration, because the Quarkus plugin adds it
 On any other JDK the exclude is a no-op and that check is skipped: JDK 27 renamed the class to `AES_Crypt` and has no `makeSessionKey`, so requiring it there failed every build on a stock JDK 27 (#1050).
 A native image is unaffected, since it never deoptimizes into a recompiled method.
 A JVM install run on a GraalVM JDK is affected, though, so the launchers carry the same exclude (#1018).
-`install.sh` adds it to the generated wrapper only when the JDK it pins runs the Graal JIT (`UseJVMCICompiler` is `true`; a stock JDK has no such flag), and the JBang aliases set it as `java-options` unconditionally, since a catalog cannot ask which JDK it lands on and every HotSpot JDK accepts it.
+`install.sh` adds it to the generated wrapper only when the JDK it pins runs the Graal JIT (`UseJVMCICompiler` is `true`; a stock JDK has no such flag).
+The JBang aliases set it as `java-options` unconditionally, since a catalog cannot ask which JDK it lands on and every HotSpot JDK accepts it.
 `LauncherJitWorkaroundTest` keeps both equal to the `-XX:CompileCommand` options in the pom's `argLine`.
 The upstream finding that `-Djdk.graal.OptimisticAliasingAnalysis=false` also avoids the bug is not used: it disables a whole optimization rather than one method.
 The bug is GraalVM-only (Temurin 25 and 27 do not reproduce it) and is reported upstream as [oracle/graal#14599](https://github.com/oracle/graal/issues/14599); once it is fixed there, the fix here is dropping the flag.
 
-**Request budgets**: CLI latency regressions almost always arrive as extra Incus round trips -- a `configGet` per key, a GET per listed instance -- and each one is paid in sequence before the user gets a prompt, at well under a millisecond each, over a local Unix socket and over the macOS vsock tunnel alike (see "CLI latency baseline" and "CLI latency on macOS"); a settings write costs about 10 ms: 6-10 ms in a branch on macOS, 11-13 ms on Linux btrfs.
+**Request budgets**: CLI latency regressions almost always arrive as extra Incus round trips -- a `configGet` per key, a GET per listed instance -- and each one is paid in sequence before the user gets a prompt, at well under a millisecond each, over a local Unix socket and over the macOS vsock tunnel alike (see "CLI latency baseline" and "CLI latency on macOS").
+A settings write costs about 10 ms: 6-10 ms in a branch on macOS, 11-13 ms on Linux btrfs.
 Wall-clock benchmarks cannot gate PRs on shared CI runners, but a round-trip count is deterministic.
 `FakeIncusDaemon` (test scope, `common/src/test/.../incus/`) is an in-memory `IncusTransport` behind a real `IncusClient` (via its package-private `IncusClient(IncusApi)` constructor) that records every request; budget tests pin the exact count for a flow.
 `common` publishes its test classes as a test-jar that `cli` depends on in test scope, so a command's own wiring is pinned against the same fake (`BuildCommandAccountsWiringTest`, #932).
@@ -3108,7 +3130,8 @@ Wall-clock measurement belongs in `bench/`, not in the shipped CLI: `bench/cli.s
 
 **TUI snapshot tests**: TUI screens are only reviewable if they can be rendered without a terminal or an Incus daemon.
 `TuiSnapshot` (test scope, `cli/src/test/.../tui/`) renders into an in-memory Tamboui `Buffer` via `Frame.forTesting` and compares the plain text against golden files in `cli/src/test/resources/tui-snapshots/`.
-Every run also writes the actual rendering to `cli/target/tui-snapshots/` as `.txt` and `.ansi` (colours; view with `less -R`), which is how a reviewer -- human or agent -- sees a UI change; a missing golden fails rather than being created silently.
+Every run also writes the actual rendering to `cli/target/tui-snapshots/` as `.txt` and `.ansi` (colours; view with `less -R`), which is how a reviewer -- human or agent -- sees a UI change.
+A missing golden fails rather than being created silently.
 Accept a changed rendering with `-Dtui.snapshots.update=true` and review the golden diff.
 This requires the screen to be decoupled from `ListCommand`: a modal gets its own class holding its state, key handling and rendering, with side effects (the AI call, the executor) injected -- `HelpChatModal` is the first.
 Snapshot at several terminal sizes (80×24 is the floor), since truncation and wrapping bugs only show at some widths.
@@ -3121,13 +3144,17 @@ Each step's logic lives in a `(SpawnConfig, Prompts)` overload, and every effect
 `ScriptedPrompts` also fails a test when a value scripted as a secret is read through an echoing prompt, so a token prompt cannot quietly start printing the token.
 
 **The macOS tunnel, without a Mac**: the compensations described in "macOS vsock robustness" exist because of how vfkit's tunnel *behaves*, and Java never touches vsock -- vfkit hands the host an ordinary Unix socket.
-So the behaviour is faked instead of the hypervisor: `LossyIncusServer` (test scope, `common/src/test/.../incus/`) binds a real Unix socket, speaks just enough of the REST API for exec (`POST .../exec`, the four fd WebSockets, operation `/wait`), and can withhold close frames and EOF, keep sending output after the process exits, accept and never answer, stall after reading a request, drop an idle keep-alive connection, or truncate a body.
-`IncusApiLossyTunnelTest` asserts exec completes from `/wait` with no close frame, `/wait` is re-polled while `Running`, the adaptive drain both extends for late output and stops at its ceiling, every exec fd is pinged, and `tryConnect` fails at the probe timeout; `UnixSocketTransportTest`, `ConnectionPoolTest`, `KeepAliveConnectionTest` and `HttpResponseReaderTest` cover the watchdogs (the WebSocket handshake's included), responses and handshakes cut off at every stage, the once-only stale retry (and that a truncated, possibly-executed request is never replayed), pool expiry, and that the connection gauge returns to its baseline after every failure.
+So the behaviour is faked instead of the hypervisor.
+`LossyIncusServer` (test scope, `common/src/test/.../incus/`) binds a real Unix socket, speaks just enough of the REST API for exec (`POST .../exec`, the four fd WebSockets, operation `/wait`), and can withhold close frames and EOF, keep sending output after the process exits, accept and never answer, stall after reading a request, drop an idle keep-alive connection, or truncate a body.
+`IncusApiLossyTunnelTest` asserts exec completes from `/wait` with no close frame, `/wait` is re-polled while `Running`, the adaptive drain both extends for late output and stops at its ceiling, every exec fd is pinged, and `tryConnect` fails at the probe timeout.
+`UnixSocketTransportTest`, `ConnectionPoolTest`, `KeepAliveConnectionTest` and `HttpResponseReaderTest` cover the watchdogs (the WebSocket handshake's included), responses and handshakes cut off at every stage, the once-only stale retry (and that a truncated, possibly-executed request is never replayed), pool expiry, and that the connection gauge returns to its baseline after every failure.
 Each of these was checked by breaking the compensation and watching its test fail; the cut-off cases were found this way, as real bugs, and fixed with tests that failed first.
 Timing seams are package-private constructors (`IncusApi(transport, pingIntervalMs)`, `ConnectionPool(idleTtlNanos)`) and `IncusApi.tryConnect(List)`, rather than waiting out production intervals.
 Output a test needs inside the drain's window is timed by the drain itself: `IncusApi(transport, pingIntervalMs, DrainClock)` replaces the time the drain reads and its pause between polls, and the test sends each chunk from the pause that reaches it.
 A fake that slept between chunks on its own thread assumed the thread woke on time; on a loaded macOS runner it woke late, the gap outgrew the window, and the drain, correctly, read the output as finished (#1208).
-The guest half is covered too, in `integration-tests`: the appliance boots under QEMU with a `vhost-vsock-pci` device, host `socat` bridges its vsock ports to Unix sockets on the paths isx uses (the shape vfkit gives it), and `appliance/test-tunnel.sh` checks the forwarder, every `isx-agent` verb, concurrent-connection accounting, the `-T` backstop against a silent connection, and no-reboot recovery; the native `isx` then connects through the same socket.
+The guest half is covered too, in `integration-tests`.
+The appliance boots under QEMU with a `vhost-vsock-pci` device, host `socat` bridges its vsock ports to Unix sockets on the paths isx uses (the shape vfkit gives it), and `appliance/test-tunnel.sh` checks the forwarder, every `isx-agent` verb, concurrent-connection accounting, the `-T` backstop against a silent connection, and no-reboot recovery.
+The native `isx` then connects through the same socket.
 Both arches run it: x86_64 under KVM, aarch64 (the arch Apple Silicon runs) under TCG, since GitHub's arm64 runners expose no `/dev/kvm`.
 What remains uncovered is vfkit itself.
 It cannot run on GitHub-hosted macOS runners at all -- they are macOS VMs, and Virtualization.framework nests only Linux guests -- so it needs a bare-metal Mac, as a self-hosted release gate or the manual pre-release run of `test-boot.sh` / `test-with-isx.sh` (#774).
@@ -3172,7 +3199,8 @@ Domain interception for the MITM proxy is configured at the bridge level via `ra
 This avoids a class of bugs where Incus overwrites `/etc/hosts` on container start.
 Each intercepted domain gets two lines: `address=/<domain>/<gateway>` for A, and `local=/<domain>/`, which makes dnsmasq answer every other record type for it locally with no data.
 Without the `local=` line dnsmasq forwards AAAA (and HTTPS/SVCB, which can carry address hints) upstream, and the domain's real IPv6 addresses bypass the proxy.
-Released versions closed that hole with `address=/<domain>/::`, but `::` is the wildcard address, which clients treat as loopback: a nested isx refused every intercepted domain as host-local (`DownloadCache` rejects a host if any resolved address is loopback, wildcard or link-local), and an IPv6-preferring client would connect to itself (#814).
+Released versions closed that hole with `address=/<domain>/::`, but `::` is the wildcard address, which clients treat as loopback.
+A nested isx refused every intercepted domain as host-local (`DownloadCache` rejects a host if any resolved address is loopback, wildcard or link-local), and an IPv6-preferring client would connect to itself (#814).
 The `address=` + `local=` pair gives NODATA for AAAA on every dnsmasq from 2.80 to 2.92.
 The lines sit between `# BEGIN incus-spawn intercepted domains` and `# END incus-spawn intercepted domains` markers (`BridgeDns`), like the UFW blocks, so a rewrite replaces exactly what isx wrote and keeps every user line.
 Inferring ownership from line shapes is not safe with this layout: a `local=/<domain>/` left behind without its `address=` partner answers NXDOMAIN for the whole domain.
@@ -3183,7 +3211,8 @@ An override for a gateway the bridge has since given up counts as wrong, not as 
 Overrides that all point there fail doctor like having none; both values come from one read of the bridge (`ProxyConfig.bridgeDnsStatus()`).
 Having no overrides at all is not complete: instances then resolve intercepted domains to their real addresses and bypass the proxy, so while the proxy is up `isx doctor` fails that case (#839).
 A failed read of `raw.dnsmasq` is reported as "could not check", never as complete (`readDnsOverrides()` throws; only `getDnsOverrides()`, for callers looking for overrides to act on, turns it into `""`).
-Doctor offers to write the overrides only while the proxy is listening: with it down, they would send every intercepted domain to a gateway where nothing answers (`STALE_DNS`), which is worse than bypassing it, so doctor leaves the "Proxy running" finding to carry the problem.
+Doctor offers to write the overrides only while the proxy is listening.
+With it down, they would send every intercepted domain to a gateway where nothing answers (`STALE_DNS`), which is worse than bypassing it, so doctor leaves the "Proxy running" finding to carry the problem.
 A proxy that outlived a change of the bridge's address is still running, bound to the old gateway, and its block still points there.
 Probing the new gateway finds nothing and probing the old one cannot help either: once the bridge drops the address nothing answers on it, though the socket bound to it lives on.
 So when the probe fails and the block points elsewhere, `ProxyHealthCheck` looks for a listener on the health port at that address in `/proc/net/tcp` and `tcp6`, and, when the host no longer has that address, reports `STALE_GATEWAY` (restart the proxy) instead of `STALE_DNS` (start it) (#919).
@@ -3203,18 +3232,23 @@ A bridge that cannot be read, or has no address, is not a move: a restart would 
 An explicit `--gateway-ip` is never compared with the bridge, since it is the user's choice of address (#933).
 On macOS the gateway is the VM link, which the Incus bridge does not move.
 One Incus request a minute is the cost; it is not on any branch, start or shell path.
-On Linux the proxy points the block at the gateway it resolved at startup and listens on, which `--gateway-ip` can set, passing it in rather than reading the bridge again: a second read ignored the override and failed outright on a bridge with no address, leaving DNS unconfigured (#892).
+On Linux the proxy points the block at the gateway it resolved at startup and listens on, which `--gateway-ip` can set, passing it in rather than reading the bridge again.
+A second read ignored the override and failed outright on a bridge with no address, leaving DNS unconfigured (#892).
 The override is written into dnsmasq verbatim, so it must be a unicast IPv4 address in canonical dotted-quad form, and anything else is a configuration error (`EXIT_CONFIG`).
 A hostname, IPv6, link-local, multicast, broadcast or wildcard address would become every intercepted domain's answer, and most of them break the bridge's dnsmasq outright.
 A shorthand such as `10.1`, or an IPv4-mapped `::ffff:10.99.0.1`, parses as the right address in Java, but dnsmasq would not read it the same way: the mapped form becomes an AAAA answer, leaving intercepted domains with no A record.
 The override is also the bind address of the credential-injecting listener, which serves the default accounts to a caller it cannot place, so a LAN or public address would inject the user's credentials into requests from other hosts.
-On Linux it must therefore also be a private (RFC 1918) or loopback address, or the bridge's current gateway itself (`BridgeAddress.read()`, not `ProxyConfig.resolveGatewayIp()`, whose fallback to the gateway `isx init` cached could vouch for an address the bridge has since given up), and anything else is `EXIT_CONFIG` (#1022).
-A private or loopback override is accepted without reading the bridge, because working around a bridge whose address cannot be read is what the override is for (#892); the bridge is read only for an address outside those ranges (a bridge on, say, `100.64.0.0/10`), and when that read fails the proxy stops with exit 1, as it does without an override.
+On Linux it must therefore also be a private (RFC 1918) or loopback address, or the bridge's current gateway itself (`BridgeAddress.read()`, not `ProxyConfig.resolveGatewayIp()`, whose fallback to the gateway `isx init` cached could vouch for an address the bridge has since given up).
+Anything else is `EXIT_CONFIG` (#1022).
+A private or loopback override is accepted without reading the bridge, because working around a bridge whose address cannot be read is what the override is for (#892).
+The bridge is read only for an address outside those ranges (a bridge on, say, `100.64.0.0/10`), and when that read fails the proxy stops with exit 1, as it does without an override.
 Requiring exactly the bridge address, as on macOS, was the alternative, rejected because it would break that workaround; the cost is that a private LAN address remains accepted, which is the user's explicit choice of a network they control.
 Loopback is accepted though, as an A record, it sends instances to themselves: it exposes nothing.
 On macOS the address the proxy listens on is the host's end of the VM link, so the block, which dnsmasq serves inside the VM, still points at the VM's own bridge gateway.
-There `--gateway-ip` is not written anywhere but it is the bind address of the credential-injecting listener, and a caller the proxy cannot place is served the default accounts (build containers and host traffic rely on that), so an override of `0.0.0.0` or a LAN address would inject the user's credentials into any host's requests.
-On macOS the override must therefore be exactly the host's end of the VM link that `VmNetwork.discoverHostBridgeIp()` finds, and anything else is `EXIT_CONFIG`; when no VM bridge is found the override cannot be checked and the proxy stops as it would without one (#937).
+There `--gateway-ip` is not written anywhere but it is the bind address of the credential-injecting listener, and a caller the proxy cannot place is served the default accounts (build containers and host traffic rely on that).
+So an override of `0.0.0.0` or a LAN address would inject the user's credentials into any host's requests.
+On macOS the override must therefore be exactly the host's end of the VM link that `VmNetwork.discoverHostBridgeIp()` finds, and anything else is `EXIT_CONFIG`.
+When no VM bridge is found the override cannot be checked and the proxy stops as it would without one (#937).
 Refusing only wildcard and public addresses was the alternative, rejected because a private LAN address is just as reachable from other hosts.
 The TUI's auto-heal and doctor's remediation rewrite the block from `ToolProxyResolver.resolvedDomains()`, which resolves across all accounts exactly as the proxy does: the default account's narrower set would drop a domain that only a named account can serve.
 
@@ -3257,7 +3291,8 @@ We chose stateless scanning because it's simpler and eliminates a class of state
 The cost is scanning a few git repos on every destroy, which takes milliseconds.
 
 ### Single-branch clone with lazy refspec restoration
-When cloning from the remote (the fallback path when no host reference is available), template builds use `--single-branch` to avoid fetching objects for all remote branches and tags — on a large project like Quarkus this is the difference between ~3 MiB and ~100 MiB of network traffic.
+When cloning from the remote (the fallback path when no host reference is available), template builds use `--single-branch` to avoid fetching objects for all remote branches and tags.
+On a large project like Quarkus this is the difference between ~3 MiB and ~100 MiB of network traffic.
 The fetch refspec is immediately widened with `git remote set-branches origin '*'`, which costs nothing (no network, no object transfer) and makes the clone behave like a regular one.
 Users never need to know they received a single-branch clone; `git fetch`, `git branch -r`, and `git checkout other-branch` all work as expected — other branches just populate on first access.
 
@@ -3307,11 +3342,14 @@ The result is that the macOS path reuses the same `UnixSocketTransport` as Linux
 **Why vsock instead of HTTPS:** The original macOS transport used HTTPS over TCP to the VM's DHCP-assigned IP (192.168.64.0/24 subnet).
 This required client certificate generation, server certificate capture, hostname verification bypass (the self-signed cert doesn't include the DHCP IP), and IP rediscovery on VM restart.
 More critically, corporate VPN software (notably Cisco AnyConnect) installs a macOS socket filter that blocks non-Apple-signed binaries from TCP connections to the VM subnet — even when the VPN is disconnected.
-Since `isx` is an ad-hoc-signed GraalVM native binary, AnyConnect blocks it from reaching the VM over TCP. vsock bypasses this entirely because it operates outside the IP network stack (`AF_VSOCK`, not `AF_INET`), so socket filters that target TCP connections cannot intercept it.
+Since `isx` is an ad-hoc-signed GraalVM native binary, AnyConnect blocks it from reaching the VM over TCP.
+vsock bypasses this entirely because it operates outside the IP network stack (`AF_VSOCK`, not `AF_INET`), so socket filters that target TCP connections cannot intercept it.
 The MITM proxy is unaffected because its traffic flows in the opposite direction — containers inside the VM connect outward to the host, which arrives as inbound traffic to the proxy process, not as an outbound `connect()` from `isx`.
 
 **No HTTPS fallback:** `IncusApi.tryConnect()` selects a transport in order: Linux Unix sockets → vsock Unix socket.
-The earlier HTTPS-over-TCP path (mutual TLS to the VM's DHCP IP) has been removed — it reintroduced exactly the problems vsock exists to avoid (macOS Local Network permission prompts and VPN socket-filter blocking, described above), and maintaining two transports made field issues hard to diagnose because it was unknowable which path a given user was actually on.
+The earlier HTTPS-over-TCP path (mutual TLS to the VM's DHCP IP) has been removed.
+It reintroduced exactly the problems vsock exists to avoid (macOS Local Network permission prompts and VPN socket-filter blocking, described above).
+Maintaining two transports made field issues hard to diagnose because it was unknowable which path a given user was actually on.
 (`HttpsTransport` still exists in the tree but is no longer wired into connection selection.)
 
 **An operation is done when it says so, not when its wait returns.**
@@ -3331,32 +3369,45 @@ That single fault surfaced in two directions and shaped several design choices:
   When close frames are dropped, `readPayload()` blocks forever.
   The fix (`IncusApi.execWebSocket`) unifies capture/stream/bidirectional exec and takes the operation `/wait` endpoint — the daemon's operation state, over a normal HTTP request — as the authoritative completion + exit-code signal, then drains and force-closes the data sockets.
   Completion no longer depends on close-frame delivery.
-  Every exec fd is keepalive-pinged (each is a separate socat child that an inactivity reaper would otherwise collect on a quiet command), and the post-exit drain is **adaptive**: it waits a short minimum for bytes in flight, extends while output is still arriving (so trailing output isn't truncated), and closes shortly after it goes idle (`OutputDrain`).
-  Idle is counted only while the drain was watching: when the host process pauses (a VM's vCPU descheduled, a GC), the first poll after the pause used to read the pause as quiet output and close the sockets before the reader threads, paused with it, had taken what arrived meanwhile -- truncating the output (#1062, #1084, seen on macOS CI runners).
+  Every exec fd is keepalive-pinged (each is a separate socat child that an inactivity reaper would otherwise collect on a quiet command).
+  The post-exit drain is **adaptive**: it waits a short minimum for bytes in flight, extends while output is still arriving (so trailing output isn't truncated), and closes shortly after it goes idle (`OutputDrain`).
+  Idle is counted only while the drain was watching.
+  When the host process pauses (a VM's vCPU descheduled, a GC), the first poll after the pause used to read the pause as quiet output and close the sockets before the reader threads, paused with it, had taken what arrived meanwhile -- truncating the output (#1062, #1084, seen on macOS CI runners).
   So a gap between two polls counts as idle for at most half the window, and a late poll ends the drain only if the poll before it already found the output idle, which gives the readers the sleep in between to catch up.
   (Restarting the whole window on each late poll, the first form of this, held every drain to its ceiling on the macOS runners, where polls come late again and again: #1122.)
   The ceiling stays wall time, so pauses never hold the caller past it.
-  The drain also waits for bytes that reached the host but that no reader has taken yet: closing a socket discards what is queued in it, so a reader held up by a slow sink or woken late lost the end of output that had already arrived (#1208).
+  The drain also waits for bytes that reached the host but that no reader has taken yet.
+  Closing a socket discards what is queued in it, so a reader held up by a slow sink or woken late lost the end of output that had already arrived (#1208).
   Any byte waiting unread in a data socket counts as output arriving now (`WsConnection.hasUnread`, the socket's `available()`); the ceiling still bounds a sink that never takes it.
-  A caller that asks a guest it cannot trust to answer (`isx mcp` counting another session's tasks, or sweeping orphans) passes a limit (`execStreamWithin`, `IncusClient.execProbe`, which also skips the login shell): the wait's long-polls shrink to it, the process is then sent SIGKILL over the control fd, and after a short grace the caller is released either way, since a killed process whose child still holds its output keeps the operation open.
+  A caller that asks a guest it cannot trust to answer (`isx mcp` counting another session's tasks, or sweeping orphans) passes a limit (`execStreamWithin`, `IncusClient.execProbe`, which also skips the login shell).
+  The wait's long-polls shrink to it, the process is then sent SIGKILL over the control fd, and after a short grace the caller is released either way, since a killed process whose child still holds its output keeps the operation open.
   The kill goes out on every way the bounded wait can end before the command was reported finished -- a `/wait` that overran its slack (likely over the vsock tunnel), an operation lost, an interrupt -- so giving up on a bounded exec never leaves its command running unowned.
   (An unbounded one keeps its old behaviour: it waits, up to its four-hour ceiling.)
 
 - **The forwarder leaks, so it needs a backstop and a recovery path.**
-  The same close-propagation gap means the in-VM `socat` forwarder never reaps connections whose close didn't cross the boundary; they pile up as vfkit-held host fds and degrade every new connection (observed: hundreds of leaked streams, `list` latency from sub-second to ~30s).
+  The same close-propagation gap means the in-VM `socat` forwarder never reaps connections whose close didn't cross the boundary.
+  They pile up as vfkit-held host fds and degrade every new connection (observed: hundreds of leaked streams, `list` latency from sub-second to ~30s).
   Mitigations: a `socat -T` **inactivity timeout** reaps orphaned children (sized above the 120s `/wait` long-poll, with keepalives so live connections are never reaped); a **keep-alive connection cache** (`ConnectionPool`/`KeepAliveConnection`, via `requestPooled`) reuses a warm connection for short request-path calls (`get`/`post`/`/wait`) instead of reconnecting each time, cutting the churn that feeds the leak (exec WebSocket fds are per-operation and not poolable); and a per-process connection gauge + high-water mark in `UnixSocketTransport` makes accumulation visible.
 
 - **A cut-off exchange is an error, never a smaller success.**
   A tunnel that drops connections mid-exchange turns any parser that reads EOF as "end of line" or "end of headers" into a source of silent data loss.
   The one-shot request path used to: a response cut off in its headers came back as a 200 with an empty body, a cut-off chunked body spun until the watchdog fired, and a WebSocket upgrade the peer hung up on "succeeded" -- handing exec a dead fd whose output then came back empty while the exit code (from `/wait`) looked fine.
-  So there is one strict parser, `HttpResponseReader`, shared by the one-shot path, `KeepAliveConnection` and the WebSocket handshake: every early EOF is an `EOFException` (EOF before the first byte is `NoResponseException`, which the keep-alive path maps to its retry-safe stale case), and malformed numbers are `IOException`s rather than runtime exceptions that escape callers' handlers.
-  WebSocket frames follow the same rule (EOF inside a frame is an error; EOF between frames is end-of-stream), and the WebSocket connect + handshake is bounded by the transport timeout like any request, since a wedged tunnel accepts and then says nothing.
+  So there is one strict parser, `HttpResponseReader`, shared by the one-shot path, `KeepAliveConnection` and the WebSocket handshake.
+  Every early EOF is an `EOFException` (EOF before the first byte is `NoResponseException`, which the keep-alive path maps to its retry-safe stale case), and malformed numbers are `IOException`s rather than runtime exceptions that escape callers' handlers.
+  WebSocket frames follow the same rule (EOF inside a frame is an error; EOF between frames is end-of-stream).
+  The WebSocket connect + handshake is bounded by the transport timeout like any request, since a wedged tunnel accepts and then says nothing.
   Only the handshake is bounded -- an open exec or shell socket legitimately stays quiet, and its liveness comes from the keepalive pings.
 
-- **One silent connection can wedge the whole API.** incusd wraps its local Unix listener in a `StarttlsListener` whose `Accept()` peeks 8 bytes to detect a STARTTLS upgrade, synchronously and with no deadline, so a connection that has sent nothing blocks every connection behind it until it speaks or closes (found by the vsock-bridged CI boot: a new request completed exactly when a silent one finally sent its first bytes).
+- **One silent connection can wedge the whole API.** incusd wraps its local Unix listener in a `StarttlsListener` whose `Accept()` peeks 8 bytes to detect a STARTTLS upgrade, synchronously and with no deadline.
+  So a connection that has sent nothing blocks every connection behind it until it speaks or closes (found by the vsock-bridged CI boot: a new request completed exactly when a silent one finally sent its first bytes).
   On Linux a client's close reaches incusd at once and unblocks the peek.
-  Through vfkit it may never arrive, and then the forwarder keeps the silent connection open until `socat -T` reaps it -- up to 180s with no API at all, which reads exactly like the field "wedged tunnel" that `forwarder-restart` clears instantly by killing the child. isx therefore never opens a tunnel connection without writing a request straight away; the one place that used to (the vsock branch of `diagnoseConnectionFailure`, a connect-and-close reachability check that ran precisely when the tunnel was struggling) now sends a real `GET /1.0` under the probe timeout.
-  The server-side fix belongs upstream: LXD fixed the identical code (canonical/lxd#18705, peek moved off the accept loop with a read deadline); incus had not as of 7.5.1. incusd also closes idle keep-alive connections after 30s (`IdleTimeout`), a close vfkit may not deliver either, so `ConnectionPool`'s TTL (5s) must stay well under it.
+  Through vfkit it may never arrive, and then the forwarder keeps the silent connection open until `socat -T` reaps it -- up to 180s with no API at all, which reads exactly like the field "wedged tunnel" that `forwarder-restart` clears instantly by killing the child.
+  isx therefore never opens a tunnel connection without writing a request straight away.
+  The one place that used to (the vsock branch of `diagnoseConnectionFailure`, a connect-and-close reachability check that ran precisely when the tunnel was struggling) now sends a real `GET /1.0` under the probe timeout.
+  The server-side fix belongs upstream.
+  LXD fixed the identical code (canonical/lxd#18705, peek moved off the accept loop with a read deadline); incus had not as of 7.5.1.
+  incusd also closes idle keep-alive connections after 30s (`IdleTimeout`), a close vfkit may not deliver either.
+  So `ConnectionPool`'s TTL (5s) must stay well under it.
 
 - **The forwarder's accept queue must absorb one exec.** socat's default listen backlog is 5, and a vsock listener with a full accept queue refuses the connection rather than letting it wait.
   One exec opens four fd WebSockets plus `/wait` at once, so any overlap with other traffic was refused; CI measured 3 of 16 and 12 of 32 concurrent connects refused.
@@ -3387,8 +3438,10 @@ If perl is ever gone from macOS the command is run as before, and this has to be
 QEMU, the Linux path, is started the same way (#993): its exposure to a hangup or Ctrl+C is the same.
 Its console is qemu's own stdout, appended to `vm.log`, so perl's diagnostics share that file without the double-writer problem below.
 
-vfkit's own stdout/stderr (perl's diagnostics if the exec above fails; otherwise whatever vfkit itself prints) go to `Environment.vfkitLogFile()`, never to `vm.log`: vfkit opens `vm.log` itself, non-append, for the VM's virtio-serial console, and a second writer appending to the same file corrupts both — vfkit's own periodic lines ("machine awake" on host wake, timesync setup) land at EOF over console bytes `isx vm console` has already read past, and the console's next write lands over those in turn.
-A separate file also keeps `vm.log`'s absence a reliable signal of a first launch, which gates the one-time TCC permissions note: before the split, a perl failure still created `vm.log` (the append-mode redirect creates the file as soon as the process starts), so a retry after a perl failure saw `vm.log` already there and silently dropped the note.
+vfkit's own stdout/stderr (perl's diagnostics if the exec above fails; otherwise whatever vfkit itself prints) go to `Environment.vfkitLogFile()`, never to `vm.log`: vfkit opens `vm.log` itself, non-append, for the VM's virtio-serial console.
+A second writer appending to the same file corrupts both — vfkit's own periodic lines ("machine awake" on host wake, timesync setup) land at EOF over console bytes `isx vm console` has already read past, and the console's next write lands over those in turn.
+A separate file also keeps `vm.log`'s absence a reliable signal of a first launch, which gates the one-time TCC permissions note.
+Before the split, a perl failure still created `vm.log` (the append-mode redirect creates the file as soon as the process starts), so a retry after a perl failure saw `vm.log` already there and silently dropped the note.
 
 ### Lifecycle locking
 
@@ -3396,10 +3449,12 @@ Multiple `isx` processes can modify VM or proxy state concurrently (e.g. `isx vm
 `VmManager`, `ProxyService` and static IP allocation all guard their critical sections with one `HostLock`: an `fcntl` advisory file lock (`FileChannel.tryLock()`), auto-released on process death, behind a per-path in-process `ReentrantLock`.
 The in-process half is what makes it safe for a multi-threaded TUI: a second `tryLock` from the same JVM throws instead of waiting, and closing any channel on the file drops every lock the process holds on it.
 Each lock used to be open-coded, and only the newest had that half.
-`HostLock` is `AutoCloseable` and not reentrant, so public methods (`start`, `stop`, `restart`, `ensureRunning`, `install`, etc.) acquire it then delegate to private `*Locked()` variants, and a method that calls another mutating method (e.g. `restart` → `stopLocked` + `startLocked`) uses the locked variant.
+`HostLock` is `AutoCloseable` and not reentrant, so public methods (`start`, `stop`, `restart`, `ensureRunning`, `install`, etc.) acquire it then delegate to private `*Locked()` variants.
+A method that calls another mutating method (e.g. `restart` → `stopLocked` + `startLocked`) uses the locked variant.
 Lock files live at `~/.local/state/incus-spawn/vm.lock` (VM), `~/.config/incus-spawn/proxy.lock` (proxy) and `~/.cache/incus-spawn/locks/.static-ip.lock`.
 A waiter prints one wait message and polls with backoff from 10 ms to 50 ms, and times out after 30 seconds.
-The cap is low for fairness, not only speed: `fcntl` keeps no queue, so whoever polls first after a release wins, and a waiter backed off to half a second kept losing to newcomers polling every 10 ms until it timed out while the lock changed hands all along.
+The cap is low for fairness, not only speed.
+`fcntl` keeps no queue, so whoever polls first after a release wins, and a waiter backed off to half a second kept losing to newcomers polling every 10 ms until it timed out while the lock changed hands all along.
 The in-process lock is keyed by the lock file's real path, since `fcntl` locks a file rather than a path spelling.
 
 **Replacing a template that others copy from (#1212).**
@@ -3412,12 +3467,14 @@ A lock that only the swap took would not help either, because readers don't ask 
 So the lock is a read-write one.
 `TemplateLock.replace` holds the template's `HostLock` exclusively for the delete and the rename.
 Every path that copies from a template holds it shared, from the lookup until the copy is made: `isx branch`, the TUI's branch, `isx mcp`'s `create_instance(template)` and `delegate(template)`, and a build or project create copying its parent.
-`isx build`'s check of whether a parent is missing or outdated (`parentNeedsBuild`) holds it and its own parent too, or a parent caught mid-swap would read as missing and be rebuilt a second time, racing the first (and a grandparent caught mid-swap would make the parent look current); so does the chain's lookup before the rebuild confirmation, or a template in the gap would be replaced without asking.
+`isx build`'s check of whether a parent is missing or outdated (`parentNeedsBuild`) holds it and its own parent too, or a parent caught mid-swap would read as missing and be rebuilt a second time, racing the first (and a grandparent caught mid-swap would make the parent look current).
+So does the chain's lookup before the rebuild confirmation, or a template in the gap would be replaced without asking.
 A reader that arrives during the gap waits the two requests out and then finds the new template.
 Readers never hold each other off, so concurrent branches of one template, such as a coordinator's fan-out, cost each other nothing; the lock adds a few file syscalls and no Incus request to the branch path.
 The lock file is `~/.cache/incus-spawn/locks/templates/<name>.lock`, one per name and never deleted, since deleting it would let two processes lock different files.
 Names come from untrusted places (a project-local `name:`, an agent's `template` argument), so only a name Incus would accept for an instance gets a file (any other cannot be a template, and is held by nothing), and `isx mcp` holds only templates the user listed under `mcp.templates`.
-`isx branch` cannot do the same: whether its `--from` names a template is only known from a lookup, which has to be made under the hold, so a mistyped `--from`, or a branch of a plain instance, leaves a lock file behind.
+`isx branch` cannot do the same.
+Whether its `--from` names a template is only known from a lookup, which has to be made under the hold, so a mistyped `--from`, or a branch of a plain instance, leaves a lock file behind.
 That is an empty file per name the user typed, against a branch that never has to wait out a swap.
 A template's name may be at most 52 characters, since `isx build` and `isx project create` both build it as `<name>-rebuilding` first and Incus allows 63; both refuse a longer one before doing anything (`BuildCommand.reportNameTooLong`).
 A process holds one shared `fcntl` lock for all its readers, released with the last of them (`HostLock.acquireShared`), because closing any channel on the file drops every lock the process holds on it.
@@ -3447,7 +3504,8 @@ Lost events are the subscription's inherent gap, so every successful (re)connect
 **Live updates yield to the Incus channel.**
 The subscription is a convenience layered on the connection every other isx operation depends on, so when the two conflict, live updates lose.
 The watcher gives up for the session after three failures in a row -- a connect that fails, or a subscription that drops within a minute -- and the TUI falls back to 60s polling with a one-line notice.
-The reason is the macOS tunnel: every attempt is a new vsock stream through the appliance's forwarder, where closed streams can linger until reaped (see "macOS vsock robustness"), so an unbounded reconnect loop over a days-long session is exactly the leak pattern that degraded every connection there.
+The reason is the macOS tunnel.
+Every attempt is a new vsock stream through the appliance's forwarder, where closed streams can linger until reaped (see "macOS vsock robustness"), so an unbounded reconnect loop over a days-long session is exactly the leak pattern that degraded every connection there.
 A subscription that lived past a minute resets the budget, so a daemon restart is survived.
 `tui-live-refresh: false` in `config.yaml` turns the whole mechanism off -- no subscription, no polling -- for anyone who would rather refresh by hand.
 The action allowlist excludes `instance-exec`/`-console`/`-file-*`: the TUI's own shells and the proxy's probes produce those constantly and they change no row.
@@ -3456,7 +3514,8 @@ A start also schedules two follow-up reads, because the instance's address appea
 **Keepalive and liveness.**
 An event subscription can be silent for hours, which is exactly what the macOS forwarder's inactivity reaper (`socat -T`) and a half-open vsock stream after sleep/resume (see "macOS vsock robustness") punish.
 Incus heartbeats its event listeners with a ping about every 10s and drops listeners that never answer, so the event stream's reads (`readMessage()`) answer pings with pongs.
-The exec/shell read path (`readPayload()`) deliberately still skips them without replying: Incus doesn't ping exec sockets, and a pong written from the reader thread would have to wait for the lock a stdin write holds -- a stall risk on the channel that matters most, for no benefit.
+The exec/shell read path (`readPayload()`) deliberately still skips them without replying.
+Incus doesn't ping exec sockets, and a pong written from the reader thread would have to wait for the lock a stdin write holds -- a stall risk on the channel that matters most, for no benefit.
 `IncusApi.openEvents()` also pings every 15s and closes the stream after 50s with nothing received (five missed heartbeats), turning a half-open connection into an end-of-stream the watcher reconnects from, instead of a read blocked forever while the TUI believes it is live.
 Event messages are read with `readMessage()`, which reassembles fragmented frames: the exec path could ignore frame boundaries because its payloads are byte streams, but an event is one JSON document per message.
 
@@ -3471,7 +3530,8 @@ Full reloads remain on `r`, on TUI re-entry and after the TUI's own background t
 No refresh latency makes "the list is current" true at the instant a key is pressed, so actions re-check existence immediately before running and report "no longer exists" in the TUI instead of an Incus error.
 While the subscription is up and every received event has been applied, the listing itself answers -- asking Incus on each keypress would let a wedged daemon freeze the UI -- and only otherwise does the check cost one `GET /1.0/instances/<name>`.
 The one gap, an event still in transit, is covered by the action's own error handling and by the shell path re-checking before it connects.
-Dialogs whose target disappears are closed with the same notice on the next refresh -- the detail and actions dialogs render the current table selection, so otherwise a refresh that moved the selection off a deleted row would silently repoint them at a different instance.
+Dialogs whose target disappears are closed with the same notice on the next refresh.
+The detail and actions dialogs render the current table selection, so otherwise a refresh that moved the selection off a deleted row would silently repoint them at a different instance.
 A failing existence check does not block the action: an Incus hiccup should surface as the action's own error, not freeze the UI.
 
 **Ages as elapsed time.**
@@ -3488,19 +3548,22 @@ Two things were still wrong after that rule was written (#872).
 `ToolDefLoader` printed tool-definition problems to stderr, and loaders are built far from any command: `ToolProxyResolver.proxyToolSetups(config)` builds one for account validation, which the TUI reaches through `AccountSelection`.
 Threading a `Consumer<String>` through every such path would change a dozen signatures for a warning none of them care about.
 `Warnings` (`common`) is the process-wide default sink for this case: `warn(message)` goes to stderr, or to whichever `Warnings.Channel` the terminal's owner redirected it to (`Warnings.redirect`).
-The TUI redirects around its reloads and while its runner draws -- not while it has released the terminal to a build or a shell, which must print their own errors: a TUI-launched build that refuses an unparsable file says "see the error above", so the error has to be above it.
+The TUI redirects around its reloads and while its runner draws -- not while it has released the terminal to a build or a shell, which must print their own errors.
+A TUI-launched build that refuses an unparsable file says "see the error above", so the error has to be above it.
 Taking a sink from the caller stays the first choice; `Warnings` is for code where there is none.
 The loaders also keep what they found (`ToolDefLoader.warnings()`, like `conflicts()` and `parseFailures()`), so tests and callers that want to act on it need not listen.
 The default sinks of `ImageDef.loadAll()`/`loadAllWithConflicts()` go through it too, since `BranchFlow` -- which the TUI branches through -- calls `loadAll()`.
 
 Each channel reports a distinct message once.
 The same files are loaded many times in one command (every fresh loader re-reads them), and before this `isx branch` could print one broken tool file's warning several times.
-The memory is per channel, not per process: the TUI's channel lives for the whole TUI session, so returning from a shell does not re-announce the same definition problems, while stderr's channel is separate, so that build still prints a warning the TUI already logged.
+The memory is per channel, not per process.
+The TUI's channel lives for the whole TUI session, so returning from a shell does not re-announce the same definition problems, while stderr's channel is separate, so that build still prints a warning the TUI already logged.
 `forgetReported()` clears a channel's memory for the one case that wants repeats: the user asking for a reload.
 
 **One status line cannot hold several warnings.**
 The TUI used to put each warning on its status line, which shows one message until the next key.
-Two operations warning close together -- a reload that finds a broken tool file, then a start that drops a missing inbox -- overwrote each other, and each site had grown its own "first warning (+N more)" squeeze with no way to read the rest.
+Two operations warning close together -- a reload that finds a broken tool file, then a start that drops a missing inbox -- overwrote each other.
+Each site had grown its own "first warning (+N more)" squeeze with no way to read the rest.
 They now all go to one `WarningLog`, whichever thread raised them.
 The status line only *announces* what arrived since the last frame (the latest, led by how many arrived, since a long line is cut off at the terminal width), and only when it is empty or holds an older announcement, so an action's result ("Build failed") is never replaced -- the warnings wait for the next key; the header keeps "⚠ N warnings (w)" up while any are unread, so an announcement cleared by a keypress is not lost; and `w` opens a dialog listing every warning, newest first, with its lines intact -- several warnings carry a command or a YAML fix to copy, which a one-line status bar cannot show.
 A warning raised again moves to the end with the new time instead of appearing twice, and the log is capped at 100 entries.
@@ -3512,11 +3575,17 @@ Clearing also calls the TUI channel's `forgetReported()`, so a warning that is s
 **What isx says before the TUI opens is drawn over too** (#1154).
 Bare `isx` gets ready first -- on macOS it starts the VM, which also checks the running appliance against the installed one; a fresh host runs `isx init` -- and anything printed then sits on the screen only until the TUI takes it over, to be read after quitting.
 Fixing each message would leave the next one to be found the same way, so `IncusSpawn.launchTui()` opens a window (`PreTuiOutput`) that the TUI closes before its first reload (so time spent at the pause leaves no stale listing).
-Inside it, `Warnings` go to a held list that is handed to the TUI's `warningChannel` (so it does not announce the same one again) and from there to the `WarningLog`, which announces them as it does any other warning -- the stale-appliance notice reaches it this way (`VmManager.warnOfSkew`), at no cost to the user; the header's "Appliance X — restart VM for Y" stays where the skew remains visible, and keeps skipping the first load so opening the TUI asks the VM nothing extra.
-Everything else still reaches the terminal when it is written (a VM start or init that hangs must show its progress), but `System.out`/`System.err` are wrapped to note that something was printed, and if anything was, isx asks for Enter before opening the TUI.
-The held warnings are then printed above that prompt as well, since a Ctrl-C there would otherwise lose them (the TUI that would have shown them never opens), and an Enter typed while isx got ready is discarded so it cannot end the pause unseen.
-The window wraps `isx init` too: init's own text is exactly what the pause must not let the TUI cover, and the cost is that a `Warnings` warning raised during init is shown at the pause rather than among init's prompts.
-The two remedies the issue named are both used, each where it fits: deferring a warning keeps the common case free of a keypress, while progress and prompts are not warnings, and replaying them into the log would bury the warnings that are.
+Inside it, `Warnings` go to a held list that is handed to the TUI's `warningChannel` (so it does not announce the same one again) and from there to the `WarningLog`, which announces them as it does any other warning.
+The stale-appliance notice reaches it this way (`VmManager.warnOfSkew`), at no cost to the user.
+The header's "Appliance X — restart VM for Y" stays where the skew remains visible, and keeps skipping the first load so opening the TUI asks the VM nothing extra.
+Everything else still reaches the terminal when it is written (a VM start or init that hangs must show its progress).
+But `System.out`/`System.err` are wrapped to note that something was printed, and if anything was, isx asks for Enter before opening the TUI.
+The held warnings are then printed above that prompt as well, since a Ctrl-C there would otherwise lose them (the TUI that would have shown them never opens).
+An Enter typed while isx got ready is discarded so it cannot end the pause unseen.
+The window wraps `isx init` too: init's own text is exactly what the pause must not let the TUI cover.
+The cost is that a `Warnings` warning raised during init is shown at the pause rather than among init's prompts.
+The two remedies the issue named are both used, each where it fits.
+Deferring a warning keeps the common case free of a keypress, while progress and prompts are not warnings, and replaying them into the log would bury the warnings that are.
 A TUI that never opens (init declined) prints the held warnings as it closes, so none is lost.
 Without a terminal there is nothing to wait on and no TUI to cover anything, so no pause.
 
@@ -3554,7 +3623,8 @@ A started instance's placeholders are proof tokens (`gho_isx_<digest>`, see "Pro
 | GitHub token | Placeholder `gho_placeholder` in `GH_TOKEN` | Proxy replaces `Authorization` header with real token for GitHub domains (Basic auth for `github.com` git HTTP, Bearer for API) |
 
 **A placeholder is read when the tool runs, never fixed at build time (#1108).**
-The placeholders become per-start proofs derived from the instance secret (#1106), which the proxy checks before it injects anything (#1107, #1100): a value a build copied into a file would be the wrong one after the next start, and lose the credential.
+The placeholders become per-start proofs derived from the instance secret (#1106), which the proxy checks before it injects anything (#1107, #1100).
+A value a build copied into a file would be the wrong one after the next start, and lose the credential.
 So every consumer takes the variable its login exports, and where a tool insists on reading a file, a login script rewrites that file from the variable.
 What each tool reads, checked against its source or binary:
 
@@ -3572,9 +3642,11 @@ What each tool reads, checked against its source or binary:
 
 The two login scripts are named `isx-zz-*` so they sort after every other `isx-*.sh` in `/etc/profile.d`, and see the values a start exports rather than the build's.
 Both are POSIX sh, silent, and do nothing but a grep when nothing changed.
-Neither may break the file it edits: Claude Code's approval is added by replacing the last line of a file shaped as Claude Code writes it (`{` first, `}` last) with the field and the closing brace -- `JSON.parse` keeps the last of a repeated key and Claude Code rewrites the file with one -- and anything else is left alone, which costs a prompt, never a config.
+Neither may break the file it edits.
+Claude Code's approval is added by replacing the last line of a file shaped as Claude Code writes it (`{` first, `}` last) with the field and the closing brace -- `JSON.parse` keeps the last of a repeated key and Claude Code rewrites the file with one -- and anything else is left alone, which costs a prompt, never a config.
 Codex's file is replaced only while it still holds `sk-placeholder` or an `isx_` proof in `apikey` mode, so a `codex login` of the user's own survives.
-A child build rewrites both scripts and syncs the `gcloud` stub for a Claude or Codex it inherits without setting up again (`ToolSetup.refreshInherited`), so a parent built before #1108 does not pass on files that hold or lack the wrong thing; instances branched from such a parent get them only once it is rebuilt.
+A child build rewrites both scripts and syncs the `gcloud` stub for a Claude or Codex it inherits without setting up again (`ToolSetup.refreshInherited`), so a parent built before #1108 does not pass on files that hold or lack the wrong thing.
+Instances branched from such a parent get them only once it is rebuilt.
 A tool in an instance reads what its *login* environment holds: a process started some other way gets the build's placeholder, which the proxy will refuse once it checks.
 
 The MITM TLS proxy provides credential isolation:
@@ -3587,11 +3659,13 @@ The MITM TLS proxy provides credential isolation:
 ### Agents driving isx over MCP
 
 `isx mcp` exposes a deliberately narrow surface: approved, trusted, built templates only; each instance usable only by the host user's session holding it (another session of that user must adopt it first, never another user's); no host command execution and no host file access; results returned as text.
-It runs as the user, so that boundary holds for the MCP tools, not for an agent that may also run `isx` or edit `~/.config/incus-spawn` through its shell -- the README gives the Claude Code permission rules that close that path.
+It runs as the user, so that boundary holds for the MCP tools, not for an agent that may also run `isx` or edit `~/.config/incus-spawn` through its shell.
+The README gives the Claude Code permission rules that close that path.
 Text coming back from an instance (command output, a delegate's report, a diff) is produced inside the sandbox and may try to instruct the host agent; tool descriptions say to treat it as data.
 The same holds for `ask` answers, which a model wrote after reading that text: the summarising Claude Code gets no tools, so injected instructions cannot make it act, only mislead, and its answers are never a basis for merging.
 A delegated agent can do anything its template's credentials allow, which is why those are the user's choice per template and not the agent's.
-A coordinator in an instance (`isx branch --mcp-client`, #915) closes the shell path altogether: its only reach into the host is the tool list, granted by a stamp the user sets and no copy inherits, and checked by address, per-start secret and stamp together.
+A coordinator in an instance (`isx branch --mcp-client`, #915) closes the shell path altogether.
+Its only reach into the host is the tool list, granted by a stamp the user sets and no copy inherits, and checked by address, per-start secret and stamp together.
 
 Idempotency keys (#1011) add no capability: a replay goes through `requireOwned` or `adopt()`, never around them.
 What a controller must know: a replay naming another instance (or template, or kind of task) than the call that used the key is refused, not redirected, so a controller that picks the instance at run time must record that choice as part of its intent; and a key whose instance was kept is refused, the one outcome to handle by looking the instance up rather than retrying.
@@ -3602,11 +3676,14 @@ An agent there could plant one, which misdirects a keyed call on an instance it 
 
 `isx doctor` reports four statuses, not three.
 `OK`/`WARN`/`FAIL` cover "fine", "you should look at this" and "this is broken"; `NOTE` (`·`) states something about the setup that nothing is waiting on.
-Only `WARN` and `FAIL` answer `Status.isProblem()`, which is what the exit code, the "N issue(s) can be addressed" list and the closing summary all consult — so a note can never turn a clean run into a reported problem, and never dilutes the exit status a script checks.
+Only `WARN` and `FAIL` answer `Status.isProblem()`, which is what the exit code, the "N issue(s) can be addressed" list and the closing summary all consult.
+So a note can never turn a clean run into a reported problem, and never dilutes the exit status a script checks.
 
 It exists because of unconfigured credentials.
-Every tool's credential is offered unconditionally (`ToolProxyResolver.findUnresolved`), so "OpenAI key not set" says nothing about health on its own: it is missing for the user who has never touched codex exactly as it is for the user whose template installs it.
-Before `NOTE` those were the same yellow line, and the graduation of `codex` out of the `openai` feature flag would have added one to every existing user's `doctor` output — the classic way a diagnostic becomes something people learn to ignore.
+Every tool's credential is offered unconditionally (`ToolProxyResolver.findUnresolved`), so "OpenAI key not set" says nothing about health on its own.
+It is missing for the user who has never touched codex exactly as it is for the user whose template installs it.
+Before `NOTE` those were the same yellow line.
+The graduation of `codex` out of the `openai` feature flag would have added one to every existing user's `doctor` output — the classic way a diagnostic becomes something people learn to ignore.
 
 Doctor distinguishes the two by asking whether a template *the user wrote* declares the tool.
 Built-in definitions are excluded deliberately: they ship with isx and declare tools for everyone (`tpl-dev` has `gh`), so counting them would warn about every credential again and put us back where we started.
@@ -3617,18 +3694,22 @@ If the definitions can't be read at all, every tool counts as in use — the con
 ### Doctor and build remediations act through isx, never name an `incus` command
 
 A remediation says *what* is done, and isx does it: through `IncusClient` over REST where it can, so it works the same over the Unix socket and over the macOS vsock tunnel (#986).
-A hint telling the user to run `incus storage|profile|move|image ...` fails on a Mac, whose host has no `incus` CLI (#939), and on Linux it ties the advice to Incus's CLI syntax for an operation isx already knows how to perform.
+A hint telling the user to run `incus storage|profile|move|image ...` fails on a Mac, whose host has no `incus` CLI (#939).
+On Linux it ties the advice to Incus's CLI syntax for an operation isx already knows how to perform.
 So the default profile's root disk is repointed with `updateProfileRootDiskPool`, and stopped instances off the CoW pool are moved with `moveToPool` (`instance_pool_move`).
 That move copies to a temporary name, deletes the original and renames the copy back, so it gets `rename()`'s post-check (#717); a full copy can outlast one `/wait` poll, which the shared operation wait (#1089) already sees through.
 A running or frozen instance is listed, never stopped for the move; one in any other state (stopped, or `Error` after a failed start) is moved.
-A build whose base image's `/sbin/init` fails with "Exec format error" deletes the failed instance and the image its `volatile.base_image` names without asking when isx can get it back, since the cache is known corrupt: a remote image is launched once more, and a local one isx imported from the template's `image_url` is re-imported by the re-run it asks for.
+A build whose base image's `/sbin/init` fails with "Exec format error" deletes the failed instance and the image its `volatile.base_image` names without asking when isx can get it back, since the cache is known corrupt.
+A remote image is launched once more, and a local one isx imported from the template's `image_url` is re-imported by the re-run it asks for.
 A local image with no `image_url` behind it (imported by hand) is the only copy, so it is kept, and the error says to replace it.
-The check sits around the start (`BuildCommand.launchBuildInstance`), because that is where the fault shows: creating the instance runs nothing in it, so Incus fails the *start* (forkstart exits 1) and LXC writes `<errno> - Failed to exec "/sbin/init"` to the instance's `lxc.log`.
+The check sits around the start (`BuildCommand.launchBuildInstance`), because that is where the fault shows.
+Creating the instance runs nothing in it, so Incus fails the *start* (forkstart exits 1) and LXC writes `<errno> - Failed to exec "/sbin/init"` to the instance's `lxc.log`.
 Until #986 the hint was checked after the create and so could never fire.
 A base image imported by another project stays a trust gate: at a terminal the build offers to delete it (`--yes` does not answer for it) and stops either way.
 Without a terminal it says to re-run in one.
 A new `isx image delete` or `isx move` command, or "run it in `isx vm shell`", were the alternatives, rejected because each exposes an operation the user should not need to know about.
-The hints `isx init` prints during Linux setup, before isx manages a pool or profile, are the exception, along with `noCowPoolMsg`'s Linux arm. #1139 extended the rule to `incus network` and `incus remote`: the bridge-subnet conflict diagnostic now says only to run `isx init`, which reconfigures the subnet itself and prints the manual command (Linux setup) only when it finds no free one; an image naming an unknown remote says on macOS which remotes isx knows and which file it reads others from, and the `incus remote add` hint stays on Linux; `gatewayUnavailableHint` and the proxy's `--gateway-ip` check already named `incus network` only on Linux.
+The hints `isx init` prints during Linux setup, before isx manages a pool or profile, are the exception, along with `noCowPoolMsg`'s Linux arm. #1139 extended the rule to `incus network` and `incus remote`: the bridge-subnet conflict diagnostic now says only to run `isx init`, which reconfigures the subnet itself and prints the manual command (Linux setup) only when it finds no free one; an image naming an unknown remote says on macOS which remotes isx knows and which file it reads others from, and the `incus remote add` hint stays on Linux.
+`gatewayUnavailableHint` and the proxy's `--gateway-ip` check already named `incus network` only on Linux.
 `NoIncusCliHintTest` allowlists those literals one by one, scanning `cli`, `common` and `proxy`, and fails on any other.
 The `incus console` and `incus config device` hints are not covered yet.
 The macOS remediation for "no CoW pool" is still open (#1085): doctor offers none, and `noCowPoolMsg` names `isx vm delete`, which does not exist.
@@ -3648,7 +3729,8 @@ A future pluggable secrets backend — keychain, 1Password, environment — read
 
 **A declaration holds wherever the key appears.**
 A declared leaf is redacted at its exact path *and* anywhere else under its tool's namespace.
-That is not breadth for its own sake: when Claude credentials became a named map, `claude.accounts.<name>.apiKey` appeared in every real config, and an exact-path-only redactor wrote each account's token into the bundle while reporting that it had found no credentials to redact.
+That is not breadth for its own sake.
+When Claude credentials became a named map, `claude.accounts.<name>.apiKey` appeared in every real config, and an exact-path-only redactor wrote each account's token into the bundle while reporting that it had found no credentials to redact.
 The tool declared that `apiKey` under `claude` is a credential; honouring that at any depth keeps the declaration true as the config grows a dimension, with no second list to update.
 It stays narrow because only a declared namespace/leaf pair earns the deep walk — a map whose keys are user data, like `repo-paths`, is neither.
 
@@ -3680,13 +3762,19 @@ A declaration outranks all of this: a declared path is taken at its word and red
 `.github/workflows/gitleaks.yml` guards against a real leaked credential landing in the repo, as distinct from the credential-isolation work above, which guards containers against ever holding one.
 It runs `gitleaks/gitleaks-action@v2` on every push and PR targeting `main` (on a push, root jobs are gated with `if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork`, so feature-branch pushes only run on forks), scanning full git history rather than just the diff, since a secret introduced and later reverted is still live in history.
 
-The scan runs twice, against two separate rulesets, because gitleaks' `[extend]` table only supports one base ruleset per config file (`path` and `useDefault` are mutually exclusive — see `gitleaks/config/config.go`) and `extend.url` is an unimplemented stub in gitleaks itself, so a ruleset can't be pulled in live at scan time either.
-One pass extends gitleaks' own built-in rules (`.gitleaks.toml`); the other extends a vendored copy of [leaktk/patterns](https://github.com/leaktk/patterns)' generated gitleaks config (`.gitleaks-leaktk.toml` → `.gitleaks/leaktk-gitleaks-8.27.0.toml`). leaktk/patterns is not incidental: it's the closest public equivalent to the internal Red Hat "Pattern Server" that `rh-gitleaks` (an internal tool wrapping gitleaks) draws from, and its own README says as much — a false positive it produced during setup was on a rule literally named "Authorization Header," matching a finding category `rh-gitleaks` had independently reported against this repo.
+The scan runs twice, against two separate rulesets, because gitleaks' `[extend]` table only supports one base ruleset per config file (`path` and `useDefault` are mutually exclusive — see `gitleaks/config/config.go`) and `extend.url` is an unimplemented stub in gitleaks itself.
+So a ruleset can't be pulled in live at scan time either.
+One pass extends gitleaks' own built-in rules (`.gitleaks.toml`).
+The other extends a vendored copy of [leaktk/patterns](https://github.com/leaktk/patterns)' generated gitleaks config (`.gitleaks-leaktk.toml` → `.gitleaks/leaktk-gitleaks-8.27.0.toml`).
+leaktk/patterns is not incidental.
+It's the closest public equivalent to the internal Red Hat "Pattern Server" that `rh-gitleaks` (an internal tool wrapping gitleaks) draws from, and its own README says as much — a false positive it produced during setup was on a rule literally named "Authorization Header," matching a finding category `rh-gitleaks` had independently reported against this repo.
 `rh-gitleaks` itself can't be wired into this workflow: it needs to reach that internal Pattern Server, which a public-repo GitHub Actions runner has no path to.
 
 Both rulesets miss one thing neither maintains: an Anthropic-key-specific rule.
-`.gitleaks.toml` and `.gitleaks-leaktk.toml` each add `anthropic-api-key`/`anthropic-oauth-token` rules for `sk-ant-api03-`/`sk-ant-oat01-`, gated on a 40+ character suffix rather than the prefix alone — real keys run 90+ chars past the prefix, while this repo's own test fixtures (which legitimately need key-shaped strings to exercise `SpawnConfig`/`SecretRedactor` parsing) top out at 28, so the length gate catches a real leak without re-flagging a fake one.
-The same length-vs-shape distinction shows up in each config's `[allowlist]`: known-fixture paths are allowlisted outright (matching on path means it also covers commits from before the allowlist existed), and a secondary regex net for short (≤35 char) placeholder suffixes is deliberately capped below the 40-char detection floor, so it can never widen enough to swallow a genuine leak.
+`.gitleaks.toml` and `.gitleaks-leaktk.toml` each add `anthropic-api-key`/`anthropic-oauth-token` rules for `sk-ant-api03-`/`sk-ant-oat01-`, gated on a 40+ character suffix rather than the prefix alone.
+Real keys run 90+ chars past the prefix, while this repo's own test fixtures (which legitimately need key-shaped strings to exercise `SpawnConfig`/`SecretRedactor` parsing) top out at 28, so the length gate catches a real leak without re-flagging a fake one.
+The same length-vs-shape distinction shows up in each config's `[allowlist]`.
+Known-fixture paths are allowlisted outright (matching on path means it also covers commits from before the allowlist existed), and a secondary regex net for short (≤35 char) placeholder suffixes is deliberately capped below the 40-char detection floor, so it can never widen enough to swallow a genuine leak.
 
 ### Filesystem Isolation
 - Inbox mount is strictly read-only
