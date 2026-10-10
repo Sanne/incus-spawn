@@ -434,11 +434,11 @@ public class ListCommand extends BaseCommand {
         // disk usage for every running instance, on every TAB the completion scripts answer.
         var all = collectEntries(quiet ? incus.listJsonConfig() : incus.listJson());
         var instances = all.stream()
-                .filter(i -> !Metadata.TYPE_BASE.equals(i.type))
-                .filter(i -> wanted == null || wanted.equalsIgnoreCase(i.status))
+                .filter(i -> !Metadata.TYPE_BASE.equals(i.type()))
+                .filter(i -> wanted == null || wanted.equalsIgnoreCase(i.status()))
                 .toList();
         if (quiet) {
-            instances.forEach(i -> out.println(i.name));
+            instances.forEach(i -> out.println(i.name()));
             return;
         }
         switch (outputFormat) {
@@ -468,15 +468,15 @@ public class ListCommand extends BaseCommand {
         var records = new ArrayList<Map<String, Object>>();
         for (var i : instances) {
             var record = new java.util.LinkedHashMap<String, Object>();
-            record.put("name", i.name);
-            record.put("status", i.status.toLowerCase(java.util.Locale.ROOT));
-            record.put("ipv4", i.ipv4.isEmpty() ? null : i.ipv4);
-            record.put("parent", i.parent.isEmpty() ? null : i.parent);
-            record.put("runtime", i.runtime);
-            record.put("created", Metadata.createdIso(i.created, zone));
+            record.put("name", i.name());
+            record.put("status", i.status().toLowerCase(java.util.Locale.ROOT));
+            record.put("ipv4", i.ipv4().isEmpty() ? null : i.ipv4());
+            record.put("parent", i.parent().isEmpty() ? null : i.parent());
+            record.put("runtime", i.runtime());
+            record.put("created", Metadata.createdIso(i.created(), zone));
             // #1053: which instances an isx mcp session made, how they stand, and what for.
-            record.put("mcp_state", i.mcp == null ? null : i.mcp.state().label());
-            record.put("mcp_purpose", i.mcp == null ? null : i.mcp.purpose());
+            record.put("mcp_state", i.mcp() == null ? null : i.mcp().state().label());
+            record.put("mcp_purpose", i.mcp() == null ? null : i.mcp().purpose());
             records.add(record);
         }
         return records;
@@ -577,7 +577,7 @@ public class ListCommand extends BaseCommand {
             boolean templateRestored = false;
             if (returnToTemplate != null) {
                 for (int i = 0; i < templateEntries.size(); i++) {
-                    if (templateEntries.get(i).name.equals(returnToTemplate)) {
+                    if (templateEntries.get(i).name().equals(returnToTemplate)) {
                         templateTableState.select(i);
                         templateRestored = true;
                         break;
@@ -591,10 +591,10 @@ public class ListCommand extends BaseCommand {
 
             if (previousAction == PendingAction.BUILD_THEN_BRANCH) {
                 var tpl = templateEntries.stream()
-                        .filter(t -> t.name.equals(branchSourceName))
+                        .filter(t -> t.name().equals(branchSourceName))
                         .findFirst().orElse(null);
-                if (tpl != null && !"not built".equals(tpl.buildStatus)) {
-                    openBranchModal(tpl.name);
+                if (tpl != null && !"not built".equals(tpl.buildStatus())) {
+                    openBranchModal(tpl.name());
                 }
             }
 
@@ -603,7 +603,7 @@ public class ListCommand extends BaseCommand {
                 focusedPanel = Panel.INSTANCES;
                 boolean found = false;
                 for (int i = 0; i < rowToEntry.size(); i++) {
-                    if (rowToEntry.get(i) != null && rowToEntry.get(i).name.equals(returnToInstance)) {
+                    if (rowToEntry.get(i) != null && rowToEntry.get(i).name().equals(returnToInstance)) {
                         instanceTableState.select(i);
                         found = true;
                         break;
@@ -636,7 +636,7 @@ public class ListCommand extends BaseCommand {
 
             // Remember template selection for when we re-enter the TUI
             var tpl = selectedTemplate();
-            if (tpl != null) returnToTemplate = tpl.name;
+            if (tpl != null) returnToTemplate = tpl.name();
 
             switch (pendingAction) {
                 case SHELL -> {
@@ -801,15 +801,15 @@ public class ListCommand extends BaseCommand {
     private List<InstanceInfo> clearStalePendingOps(List<InstanceInfo> allInstances) {
         var clearedInstances = new java.util.HashSet<String>();
         for (var inst : allInstances) {
-            if (!inst.pendingOp.isEmpty()
-                    && !backgroundTasks.hasRunningTask(inst.name)
-                    && !lockManager.isHeldByOther(inst.name)) {
+            if (!inst.pendingOp().isEmpty()
+                    && !backgroundTasks.hasRunningTask(inst.name())
+                    && !lockManager.isHeldByOther(inst.name())) {
                 try {
-                    var cleanupLock = lockManager.tryAcquire(inst.name, "cleanup");
+                    var cleanupLock = lockManager.tryAcquire(inst.name(), "cleanup");
                     if (cleanupLock.isPresent()) {
                         try (var lock = cleanupLock.get()) {
-                            incus.clearPendingOperation(inst.name);
-                            clearedInstances.add(inst.name);
+                            incus.clearPendingOperation(inst.name());
+                            clearedInstances.add(inst.name());
                         }
                     }
                 } catch (java.io.UncheckedIOException ignored) {}
@@ -819,14 +819,14 @@ public class ListCommand extends BaseCommand {
         // so the UI doesn't render stale indicators until the next reload.
         if (!clearedInstances.isEmpty()) {
             allInstances = allInstances.stream()
-                    .map(inst -> clearedInstances.contains(inst.name)
-                            ? new InstanceInfo(inst.name, inst.status, inst.project, inst.profile,
-                                    inst.created, inst.runtime, inst.parent, inst.limitsCpu,
-                                    inst.limitsMemory, inst.rootSize, inst.ipv4, inst.networkMode,
-                                    inst.architecture, inst.buildVersion, inst.definitionSha,
-                                    inst.type, inst.buildSourceJson, "", inst.defaultAction,
-                                    inst.diskUsage, inst.referencedBytes, inst.instanceMode,
-                                    inst.kvmEnabled, inst.mcp, inst.mcpCaller)
+                    .map(inst -> clearedInstances.contains(inst.name())
+                            ? new InstanceInfo(inst.name(), inst.status(), inst.project(), inst.profile(),
+                                    inst.created(), inst.runtime(), inst.parent(), inst.limitsCpu(),
+                                    inst.limitsMemory(), inst.rootSize(), inst.ipv4(), inst.networkMode(),
+                                    inst.architecture(), inst.buildVersion(), inst.definitionSha(),
+                                    inst.type(), inst.buildSourceJson(), "", inst.defaultAction(),
+                                    inst.diskUsage(), inst.referencedBytes(), inst.instanceMode(),
+                                    inst.kvmEnabled(), inst.mcp(), inst.mcpCaller())
                             : inst)
                     .toList();
         }
@@ -852,19 +852,19 @@ public class ListCommand extends BaseCommand {
             // Find matching Incus instance
             InstanceInfo match = null;
             for (var inst : allInstances) {
-                if (inst.name.equals(name)) {
+                if (inst.name().equals(name)) {
                     match = inst;
                     break;
                 }
             }
             if (match != null) {
                 templateEntries.add(new TemplateInfo(name, def.getDescription(),
-                        match.created.isEmpty() ? "built" : match.created, match.runtime,
-                        match.buildVersion, match.definitionSha, match.pendingOp,
-                        match.parent, match.diskUsage, match.referencedBytes, match.instanceMode));
+                        match.created().isEmpty() ? "built" : match.created(), match.runtime(),
+                        match.buildVersion(), match.definitionSha(), match.pendingOp(),
+                        match.parent(), match.diskUsage(), match.referencedBytes(), match.instanceMode()));
                 templateNames.add(name);
                 // A live refresh brings the same stamp again: parse it only when it changed
-                var json = match.buildSourceJson;
+                var json = match.buildSourceJson();
                 var previous = templatesBuiltFrom.get(name);
                 builtFrom.put(name, previous != null && java.util.Objects.equals(json, previous.stamp())
                         ? previous : new StampedFile(json, BuildSource.sourceOf(json, name)));
@@ -875,11 +875,11 @@ public class ListCommand extends BaseCommand {
         // Add out-of-scope templates (built but not in current definition scope)
         var storedNames = new java.util.HashSet<String>();
         for (var inst : allInstances) {
-            if (templateNames.contains(inst.name)) continue;
-            if (inst.name.endsWith(BuildCommand.REBUILDING_SUFFIX)) continue;
-            if (!Metadata.TYPE_BASE.equals(inst.type)) continue;
+            if (templateNames.contains(inst.name())) continue;
+            if (inst.name().endsWith(BuildCommand.REBUILDING_SUFFIX)) continue;
+            if (!Metadata.TYPE_BASE.equals(inst.type())) continue;
 
-            var buildSource = BuildSource.fromJson(inst.buildSourceJson);
+            var buildSource = BuildSource.fromJson(inst.buildSourceJson());
             if (buildSource == null) continue;
 
             for (var entry : buildSource.getDefinitions().entrySet()) {
@@ -887,12 +887,12 @@ public class ListCommand extends BaseCommand {
             }
             toolDefLoader.addFallbacks(buildSource.getTools());
 
-            templateEntries.add(new TemplateInfo(inst.name, buildSource.descriptionFor(inst.name),
-                    inst.created.isEmpty() ? "built" : inst.created, inst.runtime,
-                    inst.buildVersion, inst.definitionSha, inst.pendingOp, inst.parent, inst.diskUsage,
-                    inst.referencedBytes, inst.instanceMode));
-            templateNames.add(inst.name);
-            storedNames.add(inst.name);
+            templateEntries.add(new TemplateInfo(inst.name(), buildSource.descriptionFor(inst.name()),
+                    inst.created().isEmpty() ? "built" : inst.created(), inst.runtime(),
+                    inst.buildVersion(), inst.definitionSha(), inst.pendingOp(), inst.parent(), inst.diskUsage(),
+                    inst.referencedBytes(), inst.instanceMode()));
+            templateNames.add(inst.name());
+            storedNames.add(inst.name());
         }
         storedSourceTemplates = storedNames;
         templatesBuiltFrom = builtFrom;
@@ -902,12 +902,12 @@ public class ListCommand extends BaseCommand {
         actionsCache = new java.util.HashMap<>();
         defaultActionRef = new java.util.HashMap<>();
         for (var inst : allInstances) {
-            if (!templateNames.contains(inst.name)) {
+            if (!templateNames.contains(inst.name())) {
                 entries.add(inst);
-                actionsCache.put(inst.name, resolveActionsForInstance(inst));
+                actionsCache.put(inst.name(), resolveActionsForInstance(inst));
                 var defAction = resolveDefaultActionRef(inst);
                 if (defAction != null) {
-                    defaultActionRef.put(inst.name, defAction);
+                    defaultActionRef.put(inst.name(), defAction);
                 }
             }
         }
@@ -1064,7 +1064,7 @@ public class ListCommand extends BaseCommand {
 
         long unique = 0;
         for (var t : templateEntries) if (t.diskUsage() > 0) unique += t.diskUsage();
-        for (var e : entries) if (e.diskUsage > 0) unique += e.diskUsage;
+        for (var e : entries) if (e.diskUsage() > 0) unique += e.diskUsage();
         long base = sharedBaseBytes(poolUsage.usedBytes(), unique);
         if (base <= 0) return;
 
@@ -1509,8 +1509,8 @@ public class ListCommand extends BaseCommand {
         }
 
         // Block all actions if there's a pending operation
-        if (hasPendingOp(template) || backgroundTasks.hasRunningTask(template.name)) {
-            statusMessage = "Operation in progress for " + template.name;
+        if (hasPendingOp(template) || backgroundTasks.hasRunningTask(template.name())) {
+            statusMessage = "Operation in progress for " + template.name();
             return true;
         }
 
@@ -1523,20 +1523,20 @@ public class ListCommand extends BaseCommand {
 
         // Enter/F4: Branch from template (only if built)
         if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F4)) {
-            if ("not built".equals(template.buildStatus)) {
-                branchSourceName = template.name;
+            if ("not built".equals(template.buildStatus())) {
+                branchSourceName = template.name();
                 mode = Mode.CONFIRM_BUILD_FOR_BRANCH;
                 return true;
             }
-            if (vanished(template.name)) return true;
-            openBranchModal(template.name);
+            if (vanished(template.name())) return true;
+            openBranchModal(template.name());
             return true;
         }
 
         // Shift+F8 or Shift+Delete: Destroy all built templates
         if ((key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) && key.hasShift()) {
             var anyBuilt = templateEntries.stream()
-                    .anyMatch(t -> !"not built".equals(t.buildStatus));
+                    .anyMatch(t -> !"not built".equals(t.buildStatus()));
             if (!anyBuilt) {
                 statusMessage = "No templates are built.";
                 return true;
@@ -1547,18 +1547,18 @@ public class ListCommand extends BaseCommand {
 
         // F8 or Delete: Destroy template
         if (key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) {
-            if ("not built".equals(template.buildStatus)) {
+            if ("not built".equals(template.buildStatus())) {
                 statusMessage = "Template is not built.";
                 return true;
             }
-            if (vanished(template.name)) return true;
-            openDeleteConfirm(template.name);
+            if (vanished(template.name())) return true;
+            openDeleteConfirm(template.name());
             return true;
         }
 
         // n: New child template
         if (key.isChar('n')) {
-            openNewTemplateModal(template.name);
+            openNewTemplateModal(template.name());
             return true;
         }
 
@@ -1580,7 +1580,7 @@ public class ListCommand extends BaseCommand {
         // F3: Show instance details (always accessible, even during operations)
         if (key.isKey(KeyCode.F3)) {
             instanceDetailScrollOffset = 0;
-            detailInstanceName = selected.name;
+            detailInstanceName = selected.name();
             detailAccountUses = accountUsesFor(selected);
             mode = Mode.INSTANCE_DETAIL;
             return true;
@@ -1596,19 +1596,19 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         // Block actions that mutate the selected instance if there's a pending operation
-        if (hasPendingOp(selected) || backgroundTasks.hasRunningTask(selected.name)) {
-            statusMessage = "Operation in progress for " + selected.name;
+        if (hasPendingOp(selected) || backgroundTasks.hasRunningTask(selected.name())) {
+            statusMessage = "Operation in progress for " + selected.name();
             return true;
         }
-        if (isInstanceActionKey(key, selected) && vanished(selected.name)) return true;
+        if (isInstanceActionKey(key, selected) && vanished(selected.name())) return true;
 
         // F8 or Delete: Destroy instance
         if (key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) {
-            openDeleteConfirm(selected.name);
+            openDeleteConfirm(selected.name());
             return true;
         }
         if (key.isKey(KeyCode.F2)) {
-            var target = new ActionContext(selected.name, selected.machineType());
+            var target = new ActionContext(selected.name(), selected.machineType());
             if (showProxyErrorIfNeeded(target)) return true;
             pendingAction = PendingAction.SHELL;
             pendingActionTarget = target;
@@ -1616,43 +1616,43 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         if (key.isChar('a')) {
-            openAccountsModal(selected.name, Mode.BROWSE);
+            openAccountsModal(selected.name(), Mode.BROWSE);
             return true;
         }
         if (key.isKey(KeyCode.ENTER)) {
-            if (showProxyErrorIfNeeded(new ActionContext(selected.name, selected.machineType()))) return true;
+            if (showProxyErrorIfNeeded(new ActionContext(selected.name(), selected.machineType()))) return true;
             if (dispatchDefaultAction(selected)) tui.quit();
             return true;
         }
         if (key.isKey(KeyCode.F4)) {
-            openBranchModal(selected.name);
+            openBranchModal(selected.name());
             return true;
         }
         if (key.isKey(KeyCode.F7) && !key.hasShift() && isRunning(selected)) {
-            execInBackground("Stopping " + selected.name,
-                    "Stopped " + selected.name,
-                    selected.name,
-                    "Stopped " + selected.name,
+            execInBackground("Stopping " + selected.name(),
+                    "Stopped " + selected.name(),
+                    selected.name(),
+                    "Stopped " + selected.name(),
                     Metadata.OP_STOPPING,
-                    () -> incus.stop(selected.name));
+                    () -> incus.stop(selected.name()));
             return true;
         }
         if (key.isKey(KeyCode.F7) && key.hasShift() && isRunning(selected)) {
-            execInBackground("Restarting " + selected.name,
-                    "Restarted " + selected.name,
-                    selected.name,
-                    "Restarted " + selected.name,
+            execInBackground("Restarting " + selected.name(),
+                    "Restarted " + selected.name(),
+                    selected.name(),
+                    "Restarted " + selected.name(),
                     Metadata.OP_RESTARTING,
-                    () -> InstanceLifecycle.restartForUse(incus, selected.name, selected.machineType(),
+                    () -> InstanceLifecycle.restartForUse(incus, selected.name(), selected.machineType(),
                             selected.mcpCaller()));
             return true;
         }
         if (key.isKey(KeyCode.F6)) {
-            renameSourceName = selected.name;
+            renameSourceName = selected.name();
             if (isRunning(selected)) {
                 mode = Mode.CONFIRM_STOP_FOR_RENAME;
             } else {
-                renameInput = new TextInputState(selected.name);
+                renameInput = new TextInputState(selected.name());
                 mode = Mode.RENAME;
             }
             return true;
@@ -1662,7 +1662,7 @@ public class ListCommand extends BaseCommand {
                     .filter(a -> !a.requiresRunning() || isRunning(selected))
                     .toList();
             if (actions.isEmpty()) {
-                statusMessage = "No actions available for " + selected.name;
+                statusMessage = "No actions available for " + selected.name();
                 return true;
             }
             actionsList = actions;
@@ -1684,20 +1684,20 @@ public class ListCommand extends BaseCommand {
 
     private void openBuildMenu(TemplateInfo template) {
         var options = new java.util.ArrayList<BuildMenuOption>();
-        var def = imageDefs.get(template.name);
-        boolean isBuilt = !"not built".equals(template.buildStatus);
+        var def = imageDefs.get(template.name());
+        boolean isBuilt = !"not built".equals(template.buildStatus());
 
         // Option 1: Build/Rebuild single template
         if (isBuilt) {
             options.add(new BuildMenuOption(
-                    "Rebuild " + template.name,
+                    "Rebuild " + template.name(),
                     "Deletes and rebuilds this template",
-                    null, new String[]{template.name}, true));
+                    null, new String[]{template.name()}, true));
         } else {
             options.add(new BuildMenuOption(
-                    "Build " + template.name,
+                    "Build " + template.name(),
                     "Builds this template for the first time",
-                    null, new String[]{template.name}, true));
+                    null, new String[]{template.name()}, true));
         }
 
         // Option 2: Rebuild with parents (only for non-root templates)
@@ -1706,31 +1706,31 @@ public class ListCommand extends BaseCommand {
             BuildCommand.collectAllRecursive(def, imageDefs, chain, new java.util.LinkedHashSet<>());
             var chainStr = String.join(" → ", chain);
             options.add(new BuildMenuOption(
-                    "Rebuild " + template.name + " with parents",
+                    "Rebuild " + template.name() + " with parents",
                     "Rebuilds " + chainStr,
-                    null, new String[]{template.name, "--with-parents"}, true));
+                    null, new String[]{template.name(), "--with-parents"}, true));
         }
 
         // Option: Rebuild with descendants (only when template has descendants)
         if (def != null) {
             var descChain = new java.util.ArrayList<String>();
             var descSeen = new java.util.LinkedHashSet<String>();
-            BuildCommand.collectDescendants(template.name, imageDefs, descChain, descSeen);
+            BuildCommand.collectDescendants(template.name(), imageDefs, descChain, descSeen);
             if (!descChain.isEmpty()) {
                 var fullChain = new java.util.ArrayList<String>();
-                fullChain.add(template.name);
+                fullChain.add(template.name());
                 fullChain.addAll(descChain);
                 var chainStr = String.join(" → ", fullChain);
                 options.add(new BuildMenuOption(
-                        "Rebuild " + template.name + " with descendants",
+                        "Rebuild " + template.name() + " with descendants",
                         "Rebuilds " + chainStr,
-                        null, new String[]{template.name, "--with-descendants"}, true));
+                        null, new String[]{template.name(), "--with-descendants"}, true));
             }
         }
 
         // Option 3: Build missing templates (only if there are missing ones)
         long missingCount = templateEntries.stream()
-                .filter(t -> "not built".equals(t.buildStatus)).count();
+                .filter(t -> "not built".equals(t.buildStatus())).count();
         if (missingCount > 0) {
             options.add(new BuildMenuOption(
                     "Build templates not yet built",
@@ -2665,14 +2665,14 @@ public class ListCommand extends BaseCommand {
         var pool = allEntries != null ? allEntries : entries;
         if (pool != null) {
             for (var inst : pool) {
-                if (inst.name.equals(name)) { parent = inst.parent; diskUsage = inst.diskUsage; break; }
+                if (inst.name().equals(name)) { parent = inst.parent(); diskUsage = inst.diskUsage(); break; }
             }
         }
         if (parent == null) {
             var templates = allTemplateEntries != null ? allTemplateEntries : templateEntries;
             if (templates != null) {
                 for (var t : templates) {
-                    if (t.name.equals(name)) { parent = t.parent; diskUsage = t.diskUsage; break; }
+                    if (t.name().equals(name)) { parent = t.parent(); diskUsage = t.diskUsage(); break; }
                 }
             }
         }
@@ -2688,7 +2688,7 @@ public class ListCommand extends BaseCommand {
     private java.util.List<String> rowParentNames() {
         var parents = new java.util.ArrayList<String>();
         var insts = allEntries != null ? allEntries : entries;
-        if (insts != null) for (var i : insts) parents.add(i.parent);
+        if (insts != null) for (var i : insts) parents.add(i.parent());
         var tpls = allTemplateEntries != null ? allTemplateEntries : templateEntries;
         if (tpls != null) for (var t : tpls) parents.add(t.parent());
         return parents;
@@ -2766,11 +2766,11 @@ public class ListCommand extends BaseCommand {
             var highlightStyle = Style.EMPTY.bg(theme.highlightBg()).fg(theme.highlightFg());
             // Preserve modifiers from selected row if it has a pending operation
             var selected = selectedTemplate();
-            if (selected != null && !selected.pendingOp.isEmpty()) {
-                if (Metadata.OP_DELETING.equals(selected.pendingOp)) {
+            if (selected != null && !selected.pendingOp().isEmpty()) {
+                if (Metadata.OP_DELETING.equals(selected.pendingOp())) {
                     highlightStyle = highlightStyle.addModifier(dev.tamboui.style.Modifier.DIM)
                             .addModifier(dev.tamboui.style.Modifier.ITALIC);
-                } else if (Metadata.OP_STOPPING.equals(selected.pendingOp) || Metadata.OP_RESTARTING.equals(selected.pendingOp)) {
+                } else if (Metadata.OP_STOPPING.equals(selected.pendingOp()) || Metadata.OP_RESTARTING.equals(selected.pendingOp())) {
                     highlightStyle = highlightStyle.addModifier(dev.tamboui.style.Modifier.DIM);
                 }
             }
@@ -2861,11 +2861,11 @@ public class ListCommand extends BaseCommand {
             var highlightStyle = Style.EMPTY.bg(theme.highlightBg()).fg(theme.highlightFg());
             // Preserve modifiers from selected row if it has a pending operation
             var selected = selectedEntry(tableState);
-            if (selected != null && !selected.pendingOp.isEmpty()) {
-                if (Metadata.OP_DELETING.equals(selected.pendingOp)) {
+            if (selected != null && !selected.pendingOp().isEmpty()) {
+                if (Metadata.OP_DELETING.equals(selected.pendingOp())) {
                     highlightStyle = highlightStyle.addModifier(dev.tamboui.style.Modifier.DIM)
                             .addModifier(dev.tamboui.style.Modifier.ITALIC);
-                } else if (Metadata.OP_STOPPING.equals(selected.pendingOp) || Metadata.OP_RESTARTING.equals(selected.pendingOp)) {
+                } else if (Metadata.OP_STOPPING.equals(selected.pendingOp()) || Metadata.OP_RESTARTING.equals(selected.pendingOp())) {
                     highlightStyle = highlightStyle.addModifier(dev.tamboui.style.Modifier.DIM);
                 }
             }
@@ -2898,7 +2898,7 @@ public class ListCommand extends BaseCommand {
 
         var template = selectedTemplate();
         boolean hasTemplate = template != null;
-        boolean isBuilt = hasTemplate && !"not built".equals(template.buildStatus);
+        boolean isBuilt = hasTemplate && !"not built".equals(template.buildStatus());
         var selected = selectedEntry(tableState);
         boolean hasInstance = selected != null;
         boolean running = hasInstance && isRunning(selected);
@@ -2971,23 +2971,23 @@ public class ListCommand extends BaseCommand {
         var bg = theme.contextBg();
         if (onTemplates && template != null) {
             var spans = new ArrayList<Span>();
-            spans.add(Span.styled(" " + template.name, Style.EMPTY.bold().fg(theme.contextPrimaryFg()).bg(bg)));
+            spans.add(Span.styled(" " + template.name(), Style.EMPTY.bold().fg(theme.contextPrimaryFg()).bg(bg)));
             boolean hasWarning = false;
-            if (!"not built".equals(template.buildStatus)) {
+            if (!"not built".equals(template.buildStatus())) {
                 var warnStyle = Style.EMPTY.fg(theme.statusWarning()).bg(bg);
                 var currentVersion = BuildInfo.instance().version();
-                if (!template.buildVersion.isEmpty() && !template.buildVersion.equals(currentVersion)) {
-                    spans.add(Span.styled("  ! built with isx v" + template.buildVersion
+                if (!template.buildVersion().isEmpty() && !template.buildVersion().equals(currentVersion)) {
+                    spans.add(Span.styled("  ! built with isx v" + template.buildVersion()
                             + " (current: v" + currentVersion + ")", warnStyle));
                     hasWarning = true;
-                } else if (template.buildVersion.isEmpty()) {
+                } else if (template.buildVersion().isEmpty()) {
                     spans.add(Span.styled("  ! built before isx version tracking", warnStyle));
                     hasWarning = true;
                 }
-                if (templatesDefChanged.contains(template.name)) {
+                if (templatesDefChanged.contains(template.name())) {
                     // The file name only: a full path could push the warnings after it off the bar
-                    var def = imageDefs.get(template.name);
-                    var builtFrom = TemplateDetailView.otherBuildFile(builtFrom(template.name), def);
+                    var def = imageDefs.get(template.name());
+                    var builtFrom = TemplateDetailView.otherBuildFile(builtFrom(template.name()), def);
                     spans.add(Span.styled("  △ definition changed since last build"
                             + (builtFrom != null ? " (built from "
                                     + TemplateDetailView.shortSourceLabel(builtFrom, def.getSource())
@@ -2995,28 +2995,28 @@ public class ListCommand extends BaseCommand {
                             warnStyle));
                     hasWarning = true;
                 }
-                if (templatesParentRebuilt.contains(template.name)) {
-                    var parentName = imageDefs.get(template.name).getParent();
+                if (templatesParentRebuilt.contains(template.name())) {
+                    var parentName = imageDefs.get(template.name()).getParent();
                     spans.add(Span.styled("  ↑ parent " + parentName + " was rebuilt since last build", warnStyle));
                     hasWarning = true;
                 }
             }
-            if (!hasWarning && template.description != null && !template.description.isEmpty()) {
-                spans.add(Span.styled("  " + template.description, Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
+            if (!hasWarning && template.description() != null && !template.description().isEmpty()) {
+                spans.add(Span.styled("  " + template.description(), Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
             }
             return Line.from(spans);
         }
         if (!onTemplates && instance != null) {
             var spans = new ArrayList<Span>();
-            spans.add(Span.styled(" " + instance.name, Style.EMPTY.bold().fg(theme.contextPrimaryFg()).bg(bg)));
-            if (!instance.parent.isEmpty() && !"-".equals(instance.parent)) {
-                spans.add(Span.styled("  from " + OutputFormat.oneLine(instance.parent), Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
+            spans.add(Span.styled(" " + instance.name(), Style.EMPTY.bold().fg(theme.contextPrimaryFg()).bg(bg)));
+            if (!instance.parent().isEmpty() && !"-".equals(instance.parent())) {
+                spans.add(Span.styled("  from " + OutputFormat.oneLine(instance.parent()), Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
             }
-            if (!instance.ipv4.isEmpty()) {
-                spans.add(Span.styled("  " + instance.ipv4, Style.EMPTY.fg(theme.contextAccentFg()).bg(bg)));
+            if (!instance.ipv4().isEmpty()) {
+                spans.add(Span.styled("  " + instance.ipv4(), Style.EMPTY.fg(theme.contextAccentFg()).bg(bg)));
             }
-            if (!instance.networkMode.isEmpty()) {
-                spans.add(Span.styled("  [" + instance.networkMode.toLowerCase() + "]",
+            if (!instance.networkMode().isEmpty()) {
+                spans.add(Span.styled("  [" + instance.networkMode().toLowerCase() + "]",
                         Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
             }
             return Line.from(spans);
@@ -3383,7 +3383,7 @@ public class ListCommand extends BaseCommand {
             var template = selectedTemplate();
             if (template != null) {
                 pendingAction = PendingAction.EDIT_TEMPLATE;
-                pendingActionTarget = new ActionContext(template.name, null);
+                pendingActionTarget = new ActionContext(template.name(), null);
                 mode = Mode.BROWSE;
                 tui.quit();
             }
@@ -3392,7 +3392,7 @@ public class ListCommand extends BaseCommand {
         if (key.isChar('n')) {
             var template = selectedTemplate();
             if (template != null) {
-                openNewTemplateModal(template.name);
+                openNewTemplateModal(template.name());
             }
             return true;
         }
@@ -3408,19 +3408,19 @@ public class ListCommand extends BaseCommand {
         }
         if (key.isChar('a')) {
             var selected = selectedEntry(instanceTableState);
-            if (selected == null || vanished(selected.name)) return true;
-            if (hasPendingOp(selected) || backgroundTasks.hasRunningTask(selected.name)) {
-                statusMessage = "Operation in progress for " + selected.name;
+            if (selected == null || vanished(selected.name())) return true;
+            if (hasPendingOp(selected) || backgroundTasks.hasRunningTask(selected.name())) {
+                statusMessage = "Operation in progress for " + selected.name();
                 return true;
             }
-            openAccountsModal(selected.name, Mode.INSTANCE_DETAIL);
+            openAccountsModal(selected.name(), Mode.INSTANCE_DETAIL);
             return true;
         }
         if (key.isKey(KeyCode.F2)) {
             var selected = selectedEntry(instanceTableState);
             if (selected != null) {
-                if (vanished(selected.name)) return true;
-                var target = new ActionContext(selected.name, selected.machineType());
+                if (vanished(selected.name())) return true;
+                var target = new ActionContext(selected.name(), selected.machineType());
                 if (showProxyErrorIfNeeded(target)) return true;
                 pendingAction = PendingAction.SHELL;
                 pendingActionTarget = target;
@@ -3432,8 +3432,8 @@ public class ListCommand extends BaseCommand {
         if (key.isKey(KeyCode.ENTER)) {
             var selected = selectedEntry(instanceTableState);
             if (selected != null) {
-                if (vanished(selected.name)) return true;
-                if (showProxyErrorIfNeeded(new ActionContext(selected.name, selected.machineType()))) return true;
+                if (vanished(selected.name())) return true;
+                if (showProxyErrorIfNeeded(new ActionContext(selected.name(), selected.machineType()))) return true;
                 mode = Mode.BROWSE;
                 if (dispatchDefaultAction(selected)) tui.quit();
             }
@@ -3983,7 +3983,7 @@ public class ListCommand extends BaseCommand {
             var templateAccounts = templateDef == null ? Map.<String, String>of()
                     : dev.incusspawn.config.ImageDef.resolveAccounts(templateDef, imageDefs);
             // One instance read for the pins and who chose them.
-            var metadata = incus.configByPrefix(info.name, Metadata.PREFIX);
+            var metadata = incus.configByPrefix(info.name(), Metadata.PREFIX);
             var pins = new java.util.LinkedHashMap<String, String>();
             var pinPrefix = Metadata.ACCOUNT_PREFIX.substring(Metadata.PREFIX.length());
             metadata.forEach((k, v) -> {
@@ -3992,7 +3992,7 @@ public class ListCommand extends BaseCommand {
             return dev.incusspawn.config.AccountUsage.of(config,
                     dev.incusspawn.config.AccountSelection.namespaceSetups(config, toolDefLoader),
                     pins, dev.incusspawn.config.AccountSelection.originsFromMetadata(metadata), templateAccounts,
-                    info.name, identities(metadata));
+                    info.name(), identities(metadata));
         } catch (RuntimeException e) {
             return List.of();
         }
@@ -4111,7 +4111,7 @@ public class ListCommand extends BaseCommand {
         var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
-                .title(modal.styledTitle(" " + selected.name + " ", modal.border()))
+                .title(modal.styledTitle(" " + selected.name() + " ", modal.border()))
                 .borderStyle(Style.EMPTY.fg(modal.border()))
                 .style(Style.EMPTY.bg(modal.bg()))
                 .padding(dev.tamboui.layout.Padding.horizontal(1))
@@ -4174,38 +4174,38 @@ public class ListCommand extends BaseCommand {
         var statusColor = isRunning(info) ? theme.statusRunning() : theme.statusStopped();
         lines.add(Line.from(List.of(
                 Span.styled("Status:         ", labelStyle),
-                Span.styled(info.status, Style.EMPTY.fg(statusColor).bg(modal.bg())))));
+                Span.styled(info.status(), Style.EMPTY.fg(statusColor).bg(modal.bg())))));
 
         lines.add(Line.from(List.of(
                 Span.styled("Type:           ", labelStyle),
-                Span.styled(info.runtime, lineStyle))));
+                Span.styled(info.runtime(), lineStyle))));
 
-        if (!"virtual-machine".equals(info.runtime)) {
+        if (!"virtual-machine".equals(info.runtime())) {
             lines.add(Line.from(List.of(
                     Span.styled("KVM:            ", labelStyle),
-                    Span.styled(info.kvmEnabled ? "enabled (/dev/kvm passed through)" : "disabled", lineStyle))));
+                    Span.styled(info.kvmEnabled() ? "enabled (/dev/kvm passed through)" : "disabled", lineStyle))));
         }
 
-        if (!info.architecture.isEmpty()) {
+        if (!info.architecture().isEmpty()) {
             lines.add(Line.from(List.of(
                     Span.styled("Architecture:   ", labelStyle),
-                    Span.styled(info.architecture, lineStyle))));
+                    Span.styled(info.architecture(), lineStyle))));
         }
 
         lines.add(Line.from(List.of(
                 Span.styled("Parent:         ", labelStyle),
-                Span.styled(info.parent.isEmpty() ? "-" : OutputFormat.oneLine(info.parent), lineStyle))));
+                Span.styled(info.parent().isEmpty() ? "-" : OutputFormat.oneLine(info.parent()), lineStyle))));
 
-        if (!info.created.isEmpty()) {
-            var age = Metadata.ageDescription(info.created);
+        if (!info.created().isEmpty()) {
+            var age = Metadata.ageDescription(info.created());
             lines.add(Line.from(List.of(
                     Span.styled("Created:        ", labelStyle),
-                    Span.styled(OutputFormat.oneLine(info.created), lineStyle),
+                    Span.styled(OutputFormat.oneLine(info.created()), lineStyle),
                     Span.styled("  (" + age + ")", dimStyle))));
         }
 
         // #1053: no column for it in the instance table, which has no width to spare.
-        for (var row : mcpDetailRows(info.mcp)) {
+        for (var row : mcpDetailRows(info.mcp())) {
             lines.add(row.label() == null
                     ? Line.from(List.of(Span.styled(" ".repeat(16) + row.value(), dimStyle)))
                     : Line.from(List.of(Span.styled(String.format("%-16s", row.label()), labelStyle),
@@ -4214,40 +4214,40 @@ public class ListCommand extends BaseCommand {
 
         lines.add(Line.styled("", lineStyle));
 
-        var networkLabel = info.networkMode.isEmpty() ? "Full internet"
-                : formatNetworkMode(info.networkMode);
+        var networkLabel = info.networkMode().isEmpty() ? "Full internet"
+                : formatNetworkMode(info.networkMode());
         lines.add(Line.from(List.of(
                 Span.styled("Network:        ", labelStyle),
                 Span.styled(networkLabel, lineStyle))));
 
         lines.add(Line.from(List.of(
                 Span.styled("IP address:     ", labelStyle),
-                Span.styled(info.ipv4.isEmpty() ? "-" : info.ipv4, lineStyle))));
+                Span.styled(info.ipv4().isEmpty() ? "-" : info.ipv4(), lineStyle))));
 
         lines.add(Line.styled("", lineStyle));
         lines.add(Line.from(List.of(Span.styled("Resource limits:", labelStyle))));
 
         lines.add(Line.from(List.of(
                 Span.styled("  CPU:          ", labelStyle),
-                Span.styled(info.limitsCpu.isEmpty() ? "-" : info.limitsCpu, lineStyle))));
+                Span.styled(info.limitsCpu().isEmpty() ? "-" : info.limitsCpu(), lineStyle))));
 
         lines.add(Line.from(List.of(
                 Span.styled("  Memory:       ", labelStyle),
-                Span.styled(info.limitsMemory.isEmpty() ? "-" : info.limitsMemory, lineStyle))));
+                Span.styled(info.limitsMemory().isEmpty() ? "-" : info.limitsMemory(), lineStyle))));
 
         lines.add(Line.from(List.of(
                 Span.styled("  Disk limit:   ", labelStyle),
-                Span.styled(info.rootSize.isEmpty() ? "-" : info.rootSize, lineStyle))));
+                Span.styled(info.rootSize().isEmpty() ? "-" : info.rootSize(), lineStyle))));
 
-        if (info.diskUsage >= 0) {
+        if (info.diskUsage() >= 0) {
             lines.add(Line.from(List.of(
                     Span.styled("  Disk used:    ", labelStyle),
-                    Span.styled(gib(info.diskUsage), lineStyle),
+                    Span.styled(gib(info.diskUsage()), lineStyle),
                     Span.styled("  (approx)", dimStyle))));
-            var hasParent = !info.parent.isEmpty() && !"-".equals(info.parent);
+            var hasParent = !info.parent().isEmpty() && !"-".equals(info.parent());
             lines.add(Line.from(List.of(Span.styled(
                     hasParent
-                        ? "    thin-provisioned; shares blocks with " + OutputFormat.oneLine(info.parent)
+                        ? "    thin-provisioned; shares blocks with " + OutputFormat.oneLine(info.parent())
                         : "    thin-provisioned; copy-on-write",
                     dimStyle))));
         }
@@ -4268,7 +4268,7 @@ public class ListCommand extends BaseCommand {
                 lines.add(Line.from(spans));
                 var template = resolveTemplateName(info);
                 lines.add(Line.from(List.of(Span.styled("    " + dev.incusspawn.config.AccountUsage.explainSource(
-                        use, template == null ? "-" : template, info.name.equals(template)), dimStyle))));
+                        use, template == null ? "-" : template, info.name().equals(template)), dimStyle))));
                 if (!use.problem().isEmpty()) {
                     lines.add(Line.from(List.of(Span.styled("    not configured: requests fail until it is,"
                             + " or it is changed", Style.EMPTY.fg(theme.modalWarn()).bg(modal.bg())))));
@@ -4288,11 +4288,11 @@ public class ListCommand extends BaseCommand {
 
         lines.add(Line.from(List.of(
                 Span.styled("Project:        ", labelStyle),
-                Span.styled(info.project, lineStyle))));
+                Span.styled(info.project(), lineStyle))));
 
         lines.add(Line.from(List.of(
                 Span.styled("Profile:        ", labelStyle),
-                Span.styled(info.profile, lineStyle))));
+                Span.styled(info.profile(), lineStyle))));
 
         return lines;
     }
@@ -4310,9 +4310,9 @@ public class ListCommand extends BaseCommand {
      * template name, even when the instance was branched from another clone) over PARENT.
      */
     private static String resolveTemplateName(InstanceInfo instance) {
-        var profile = instance.profile;
+        var profile = instance.profile();
         if (profile != null && !profile.isEmpty() && !"-".equals(profile)) return profile;
-        var parent = instance.parent;
+        var parent = instance.parent();
         if (parent != null && !parent.isEmpty() && !"-".equals(parent)) return parent;
         return null;
     }
@@ -4368,7 +4368,7 @@ public class ListCommand extends BaseCommand {
     }
 
     private java.util.List<ToolAction> getActionsForInstance(InstanceInfo instance) {
-        return actionsCache.getOrDefault(instance.name, java.util.List.of());
+        return actionsCache.getOrDefault(instance.name(), java.util.List.of());
     }
 
     /** The actions F9 offers for an instance, and Enter's default action is chosen from. */
@@ -4435,8 +4435,8 @@ public class ListCommand extends BaseCommand {
         }
         // YAML definitions not on disk (e.g. user deleted them after building the template):
         // fall back to the snapshot stored in Incus metadata at build time.
-        if (instance.defaultAction != null && !instance.defaultAction.isEmpty()) {
-            return instance.defaultAction;
+        if (instance.defaultAction() != null && !instance.defaultAction().isEmpty()) {
+            return instance.defaultAction();
         }
         return null;
     }
@@ -4496,10 +4496,10 @@ public class ListCommand extends BaseCommand {
     }
 
     private boolean dispatchDefaultAction(InstanceInfo selected) {
-        var ref = defaultActionRef.get(selected.name);
+        var ref = defaultActionRef.get(selected.name());
         if (ref == null || ref.isBlank()) {
             pendingAction = PendingAction.SHELL;
-            pendingActionTarget = new ActionContext(selected.name, selected.machineType());
+            pendingActionTarget = new ActionContext(selected.name(), selected.machineType());
             return true;
         }
         var result = findDefaultAction(ref, selected);
@@ -4583,9 +4583,9 @@ public class ListCommand extends BaseCommand {
         // A template uses its YAML, unless that is gone (ActionResolver.collectInstalledTools' rule).
         var templateName = resolveTemplateName(instance);
         var chain = templateName == null ? List.<dev.incusspawn.config.ImageDef>of() : getInheritanceChain(templateName);
-        if ((!Metadata.TYPE_BASE.equals(instance.type) || chain.isEmpty())
-                && instance.buildSourceJson != null && !instance.buildSourceJson.isEmpty()) {
-            var bs = dev.incusspawn.config.BuildSource.fromJson(instance.buildSourceJson);
+        if ((!Metadata.TYPE_BASE.equals(instance.type()) || chain.isEmpty())
+                && instance.buildSourceJson() != null && !instance.buildSourceJson().isEmpty()) {
+            var bs = dev.incusspawn.config.BuildSource.fromJson(instance.buildSourceJson());
             if (bs != null) {
                 return extractBuildTimeTools(bs);
             }
@@ -4668,10 +4668,10 @@ public class ListCommand extends BaseCommand {
         var tools = collectInstalledTools(instance);
         var repos = collectRepos(instance);
         return new ActionContext(
-                instance.name, instance.machineType(),
+                instance.name(), instance.machineType(),
                 tools, repos,
-                new ActionContext.InstanceState(instance.ipv4, instance.status,
-                        instance.parent, instance.networkMode));
+                new ActionContext.InstanceState(instance.ipv4(), instance.status(),
+                        instance.parent(), instance.networkMode()));
     }
 
     private ShellMenu shellMenu(String instanceName, IncusClient.ShellPrep prep) {
@@ -4684,7 +4684,7 @@ public class ListCommand extends BaseCommand {
 
     private String suggestBranchName(String sourceName) {
         var base = sourceName.startsWith("tpl-") ? sourceName.substring(4) : sourceName;
-        var existingNames = entries.stream().map(e -> e.name).collect(java.util.stream.Collectors.toSet());
+        var existingNames = entries.stream().map(e -> e.name()).collect(java.util.stream.Collectors.toSet());
         for (int i = 1; ; i++) {
             var candidate = base + "-" + i;
             if (!existingNames.contains(candidate)) return candidate;
@@ -4846,15 +4846,15 @@ public class ListCommand extends BaseCommand {
     // --- Helpers ---
 
     private static boolean isRunning(InstanceInfo entry) {
-        return "RUNNING".equalsIgnoreCase(entry.status);
+        return "RUNNING".equalsIgnoreCase(entry.status());
     }
 
     private static boolean hasPendingOp(InstanceInfo entry) {
-        return entry != null && !entry.pendingOp.isEmpty();
+        return entry != null && !entry.pendingOp().isEmpty();
     }
 
     private static boolean hasPendingOp(TemplateInfo template) {
-        return template != null && !template.pendingOp.isEmpty();
+        return template != null && !template.pendingOp().isEmpty();
     }
 
     private void execWithFeedback(TuiRunner tui, TableState tableState, String progressVerb,
@@ -4957,9 +4957,9 @@ public class ListCommand extends BaseCommand {
 
     private void deactivateSearch() {
         var selectedTpl = selectedTemplate();
-        var selectedTplName = selectedTpl != null ? selectedTpl.name : null;
+        var selectedTplName = selectedTpl != null ? selectedTpl.name() : null;
         var selectedInst = selectedEntry(instanceTableState);
-        var selectedInstName = selectedInst != null ? selectedInst.name : null;
+        var selectedInstName = selectedInst != null ? selectedInst.name() : null;
 
         searchActive = false;
         searchInput = null;
@@ -4970,7 +4970,7 @@ public class ListCommand extends BaseCommand {
 
         if (selectedTplName != null) {
             for (int i = 0; i < templateEntries.size(); i++) {
-                if (templateEntries.get(i).name.equals(selectedTplName)) {
+                if (templateEntries.get(i).name().equals(selectedTplName)) {
                     templateTableState.select(i);
                     break;
                 }
@@ -4978,7 +4978,7 @@ public class ListCommand extends BaseCommand {
         }
         if (selectedInstName != null) {
             for (int i = 0; i < rowToEntry.size(); i++) {
-                if (rowToEntry.get(i) != null && rowToEntry.get(i).name.equals(selectedInstName)) {
+                if (rowToEntry.get(i) != null && rowToEntry.get(i).name().equals(selectedInstName)) {
                     instanceTableState.select(i);
                     break;
                 }
@@ -5040,10 +5040,10 @@ public class ListCommand extends BaseCommand {
     private void applySearchFilter() {
         var query = searchInput != null ? searchInput.text() : "";
         templateEntries = allTemplateEntries.stream()
-                .filter(t -> matchesSearch(query, t.name, t.description))
+                .filter(t -> matchesSearch(query, t.name(), t.description()))
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         entries = allEntries.stream()
-                .filter(e -> matchesSearch(query, e.name, e.parent, e.ipv4))
+                .filter(e -> matchesSearch(query, e.name(), e.parent(), e.ipv4()))
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         buildTemplateRowData();
         buildRowData();
@@ -5116,16 +5116,16 @@ public class ListCommand extends BaseCommand {
      */
     private void preservingSelection(TableState tableState, Runnable reload) {
         var selectedInstance = selectedEntry(tableState);
-        var selectedInstanceName = selectedInstance != null ? selectedInstance.name : null;
+        var selectedInstanceName = selectedInstance != null ? selectedInstance.name() : null;
         var selectedTpl = selectedTemplate();
-        var selectedTplName = selectedTpl != null ? selectedTpl.name : null;
+        var selectedTplName = selectedTpl != null ? selectedTpl.name() : null;
 
         reload.run();
 
         // Restore template selection
         if (selectedTplName != null) {
             for (int i = 0; i < templateEntries.size(); i++) {
-                if (templateEntries.get(i).name.equals(selectedTplName)) {
+                if (templateEntries.get(i).name().equals(selectedTplName)) {
                     templateTableState.select(i);
                     break;
                 }
@@ -5136,7 +5136,7 @@ public class ListCommand extends BaseCommand {
         boolean reselected = false;
         if (selectedInstanceName != null) {
             for (int i = 0; i < rowToEntry.size(); i++) {
-                if (rowToEntry.get(i) != null && rowToEntry.get(i).name.equals(selectedInstanceName)) {
+                if (rowToEntry.get(i) != null && rowToEntry.get(i).name().equals(selectedInstanceName)) {
                     tableState.select(i);
                     reselected = true;
                     break;
@@ -5304,19 +5304,19 @@ public class ListCommand extends BaseCommand {
         var outOfSync = new java.util.LinkedHashSet<String>();
 
         var built = templateEntries.stream().filter(TemplateInfo::isBuilt)
-                .map(t -> new TemplateStaleness.Built(t.name, t.buildStatus, t.buildVersion, t.definitionSha,
-                        MachineType.fromIncus(t.runtime)))
+                .map(t -> new TemplateStaleness.Built(t.name(), t.buildStatus(), t.buildVersion(), t.definitionSha(),
+                        MachineType.fromIncus(t.runtime())))
                 .toList();
         var staleness = TemplateStaleness.assess(built, imageDefs, storedSourceTemplates,
                 () -> TemplateStaleness.toolFingerprints(imageDefs.values(), toolDefLoader),
                 BuildInfo.instance().version());
 
         for (var t : templateEntries) {
-            var statusDisplay = "not built".equals(t.buildStatus) ? "not built" : Metadata.ageDescription(t.buildStatus);
-            var statusStyle = "not built".equals(t.buildStatus)
+            var statusDisplay = "not built".equals(t.buildStatus()) ? "not built" : Metadata.ageDescription(t.buildStatus());
+            var statusStyle = "not built".equals(t.buildStatus())
                     ? Style.EMPTY.fg(theme.statusStopped())
                     : Style.EMPTY.fg(theme.statusRunning());
-            var stale = staleness.get(t.name);
+            var stale = staleness.get(t.name());
             if (stale != null) {
                 var symbols = new StringBuilder();
                 if (stale.versionOutdated()) {
@@ -5326,32 +5326,32 @@ public class ListCommand extends BaseCommand {
                 if (stale.definitionChanged()) {
                     symbols.append('△');
                     anyDefinitionChanged = true;
-                    defChanged.add(t.name);
+                    defChanged.add(t.name());
                 }
                 if (stale.parentRebuilt()) {
                     symbols.append('↑');
                     anyParentRebuilt = true;
-                    parentRebuilt.add(t.name);
+                    parentRebuilt.add(t.name());
                 }
-                if (stale.outOfSync()) outOfSync.add(t.name);
+                if (stale.outOfSync()) outOfSync.add(t.name());
                 if (!symbols.isEmpty()) {
                     statusDisplay += " " + symbols;
                     statusStyle = Style.EMPTY.fg(theme.statusWarning());
                 }
             }
-            var desc = t.description == null ? "" : t.description;
+            var desc = t.description() == null ? "" : t.description();
 
             // Apply pending operation visual indicators
-            if (!t.pendingOp.isEmpty()) {
-                if (Metadata.OP_DELETING.equals(t.pendingOp)) {
+            if (!t.pendingOp().isEmpty()) {
+                if (Metadata.OP_DELETING.equals(t.pendingOp())) {
                     statusStyle = statusStyle.addModifier(dev.tamboui.style.Modifier.DIM)
                             .addModifier(dev.tamboui.style.Modifier.ITALIC);
-                } else if (Metadata.OP_STOPPING.equals(t.pendingOp) || Metadata.OP_RESTARTING.equals(t.pendingOp)) {
+                } else if (Metadata.OP_STOPPING.equals(t.pendingOp()) || Metadata.OP_RESTARTING.equals(t.pendingOp())) {
                     statusStyle = statusStyle.addModifier(dev.tamboui.style.Modifier.DIM);
                 }
             }
 
-            templateRows.add(Row.from(t.name, statusDisplay, diskCell(t.diskUsage), desc).style(statusStyle));
+            templateRows.add(Row.from(t.name(), statusDisplay, diskCell(t.diskUsage()), desc).style(statusStyle));
         }
         templatesDefChanged = defChanged;
         templatesParentRebuilt = parentRebuilt;
@@ -5365,9 +5365,9 @@ public class ListCommand extends BaseCommand {
      */
     static List<TemplateStaleness.Built> builtTemplates(String listingJson) {
         return collectEntries(listingJson).stream()
-                .filter(i -> Metadata.TYPE_BASE.equals(i.type))
-                .filter(i -> !i.name.endsWith(BuildCommand.REBUILDING_SUFFIX))
-                .map(i -> new TemplateStaleness.Built(i.name, i.created, i.buildVersion, i.definitionSha, i.machineType()))
+                .filter(i -> Metadata.TYPE_BASE.equals(i.type()))
+                .filter(i -> !i.name().endsWith(BuildCommand.REBUILDING_SUFFIX))
+                .map(i -> new TemplateStaleness.Built(i.name(), i.created(), i.buildVersion(), i.definitionSha(), i.machineType()))
                 .toList();
     }
 
@@ -5392,30 +5392,30 @@ public class ListCommand extends BaseCommand {
             var aRunning = isRunning(a);
             var bRunning = isRunning(b);
             if (aRunning != bRunning) return aRunning ? -1 : 1;
-            return a.name.compareToIgnoreCase(b.name);
+            return a.name().compareToIgnoreCase(b.name());
         });
 
         for (var entry : sorted) {
-            var age = entry.created.isEmpty() ? "-" : Metadata.ageDescription(entry.created);
-            var parent = entry.parent.isEmpty() ? "-" : OutputFormat.oneLine(entry.parent);
-            var statusStyle = switch (entry.status.toUpperCase()) {
+            var age = entry.created().isEmpty() ? "-" : Metadata.ageDescription(entry.created());
+            var parent = entry.parent().isEmpty() ? "-" : OutputFormat.oneLine(entry.parent());
+            var statusStyle = switch (entry.status().toUpperCase()) {
                 case "RUNNING" -> Style.EMPTY.fg(theme.statusRunning());
                 case "STOPPED" -> Style.EMPTY.fg(theme.statusStopped());
                 default -> Style.EMPTY;
             };
 
             // Apply pending operation visual indicators
-            if (!entry.pendingOp.isEmpty()) {
-                if (Metadata.OP_DELETING.equals(entry.pendingOp)) {
+            if (!entry.pendingOp().isEmpty()) {
+                if (Metadata.OP_DELETING.equals(entry.pendingOp())) {
                     statusStyle = statusStyle.addModifier(dev.tamboui.style.Modifier.DIM)
                             .addModifier(dev.tamboui.style.Modifier.ITALIC);
-                } else if (Metadata.OP_STOPPING.equals(entry.pendingOp) || Metadata.OP_RESTARTING.equals(entry.pendingOp)) {
+                } else if (Metadata.OP_STOPPING.equals(entry.pendingOp()) || Metadata.OP_RESTARTING.equals(entry.pendingOp())) {
                     statusStyle = statusStyle.addModifier(dev.tamboui.style.Modifier.DIM);
                 }
             }
 
-            tableRows.add(Row.from(entry.name, entry.status, entry.ipv4,
-                    parent, entry.runtime, age, diskCell(entry.diskUsage)).style(statusStyle));
+            tableRows.add(Row.from(entry.name(), entry.status(), entry.ipv4(),
+                    parent, entry.runtime(), age, diskCell(entry.diskUsage())).style(statusStyle));
             rowToEntry.add(entry);
         }
     }
@@ -5775,20 +5775,20 @@ public class ListCommand extends BaseCommand {
     }
 
     private static void printTable(List<InstanceInfo> items, java.io.PrintStream out) {
-        var nameWidth = Math.max(20, items.stream().mapToInt(e -> e.name.length()).max().orElse(20));
+        var nameWidth = Math.max(20, items.stream().mapToInt(e -> e.name().length()).max().orElse(20));
         // The MCP column only for someone who uses isx mcp: without it, the format has no
         // conversion for the last argument, which printf ignores. AGE is padded when MCP follows.
-        var mcp = items.stream().anyMatch(e -> e.mcp != null);
+        var mcp = items.stream().anyMatch(e -> e.mcp() != null);
         var fmt = "  %-" + nameWidth + "s  %-10s  %-15s  %-20s  %-10s  " + (mcp ? "%-13s  %s%n" : "%s%n");
 
         out.printf(fmt, "NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "MCP");
         out.printf(fmt, "-".repeat(nameWidth), "----------", "---------------",
                 "--------------------", "----------", "---", "---");
         for (var entry : items) {
-            var age = entry.created.isEmpty() ? "-" : Metadata.ageDescription(entry.created);
-            var parent = entry.parent.isEmpty() ? "-" : OutputFormat.oneLine(entry.parent);
-            var ip = entry.ipv4.isEmpty() ? "-" : entry.ipv4;
-            out.printf(fmt, entry.name, entry.status, ip, parent, entry.runtime, age, mcpCell(entry.mcp));
+            var age = entry.created().isEmpty() ? "-" : Metadata.ageDescription(entry.created());
+            var parent = entry.parent().isEmpty() ? "-" : OutputFormat.oneLine(entry.parent());
+            var ip = entry.ipv4().isEmpty() ? "-" : entry.ipv4();
+            out.printf(fmt, entry.name(), entry.status(), ip, parent, entry.runtime(), age, mcpCell(entry.mcp()));
         }
         out.println();
     }
