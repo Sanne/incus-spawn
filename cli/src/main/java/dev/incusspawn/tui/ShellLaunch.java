@@ -81,8 +81,8 @@ final class ShellLaunch {
      * modal's fields) and the shell that follows are the TUI's own.
      */
     void createBranchFromModal(String name) {
-        var source = tui.branchSourceName;
         var request = tui.branch.request(name);
+        var source = request.source();
 
         BranchFlow.Preflight preflight;
         InstanceLifecycle.RuntimeConfig prefetched;

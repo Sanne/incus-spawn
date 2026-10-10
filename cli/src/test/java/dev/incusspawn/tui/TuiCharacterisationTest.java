@@ -123,10 +123,12 @@ class TuiCharacterisationTest {
         for (var key : keys) tui.handleEvent(key, runner);
     }
 
-    private static void typeText(Tui tui, TuiRunner runner, String text) {
-        for (char c : text.toCharArray()) tui.handleEvent(KeyEvent.ofChar(c), runner);
+    private void typeText(Tui tui, String text) {
+        for (char c : text.toCharArray()) press(tui, KeyEvent.ofChar(c));
     }
 
+    private static final java.util.regex.Pattern CREATED_STAMP =
+            java.util.regex.Pattern.compile("\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d");
     private static final java.util.regex.Pattern VM_LIMITS =
             java.util.regex.Pattern.compile("CPU \\d+ +RAM \\S+ +Disk (\\S+) *(?=║)");
 
@@ -136,8 +138,8 @@ class TuiCharacterisationTest {
      * fields out at their values' width, so the whole run up to its border is replaced.
      */
     private static String withoutVersion(String text) {
-        var stable = text.replace(BuildInfo.instance().version(), "<version>")
-                .replaceAll("\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d", "YYYY-MM-DDThh:mm:ss");
+        var stable = CREATED_STAMP.matcher(text.replace(BuildInfo.instance().version(), "<version>"))
+                .replaceAll("YYYY-MM-DDThh:mm:ss");
         return VM_LIMITS.matcher(stable).replaceAll(m -> "CPU <n>  RAM <mem>  Disk " + m.group(1) + " ");
     }
 
@@ -184,7 +186,7 @@ class TuiCharacterisationTest {
     void searching() {
         var tui = tui();
         press(tui, KeyEvent.ofChar('/'));
-        typeText(tui, runner, "work");
+        typeText(tui, "work");
         snapshot("search", tui);
         press(tui, ESC);
         snapshot("search-closed", tui);
@@ -242,7 +244,7 @@ class TuiCharacterisationTest {
         var tui = tui();
         press(tui, KeyEvent.ofChar('n'));
         assertEquals(Tui.Mode.NEW_TEMPLATE, tui.mode());
-        typeText(tui, runner, "tpl-child");
+        typeText(tui, "tpl-child");
         snapshot("new-template", tui);
         press(tui, ESC);
         assertEquals(Tui.Mode.BROWSE, tui.mode());
@@ -345,7 +347,7 @@ class TuiCharacterisationTest {
     void creatingABranchQuitsTheRunnerAndLeavesTheBranchPending() {
         var tui = tui();
         press(tui, ENTER);
-        typeText(tui, runner, "-x");
+        typeText(tui, "-x");
         press(tui, ENTER);
         assertEquals(Tui.PendingAction.BRANCH, tui.pendingAction());
         assertFalse(runner.isRunning());

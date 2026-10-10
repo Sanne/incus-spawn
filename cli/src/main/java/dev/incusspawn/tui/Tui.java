@@ -376,59 +376,7 @@ public class Tui {
                 entries = List.of();
                 rowToEntry = List.of();
             }
-            var previousAction = pendingAction;
-            mode = Mode.BROWSE;
-            if (reloadError != null) {
-                errorMessage = reloadError;
-                mode = Mode.ERROR;
-            }
-            pendingAction = PendingAction.NONE;
-
-            templateTableState = new TableState();
-            instanceTableState = new TableState();
-
-            // Restore template selection by name
-            boolean templateRestored = false;
-            if (returnToTemplate != null) {
-                for (int i = 0; i < templateEntries.size(); i++) {
-                    if (templateEntries.get(i).name().equals(returnToTemplate)) {
-                        templateTableState.select(i);
-                        templateRestored = true;
-                        break;
-                    }
-                }
-            }
-            if (!templateRestored) {
-                if (!templateEntries.isEmpty()) templateTableState.select(0);
-            }
-            returnToTemplate = null;
-
-            if (previousAction == PendingAction.BUILD_THEN_BRANCH) {
-                var tpl = templateEntries.stream()
-                        .filter(t -> t.name().equals(branchSourceName))
-                        .findFirst().orElse(null);
-                if (tpl != null && !"not built".equals(tpl.buildStatus())) {
-                    openBranchModal(tpl.name());
-                }
-            }
-
-            // If returning from a shell/branch, focus the target instance
-            if (returnToInstance != null) {
-                focusedPanel = Panel.INSTANCES;
-                boolean found = false;
-                for (int i = 0; i < rowToEntry.size(); i++) {
-                    if (rowToEntry.get(i) != null && rowToEntry.get(i).name().equals(returnToInstance)) {
-                        instanceTableState.select(i);
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) selectFirstDataRow(instanceTableState);
-                returnToInstance = null;
-            } else {
-                selectFirstDataRow(instanceTableState);
-                focusedPanel = Panel.TEMPLATES;
-            }
+            enterSession(reloadError);
 
             ProxyLog.setSuppressStderr(true);
             try (var ignored = Warnings.redirect(warningChannel);
@@ -437,9 +385,7 @@ public class Tui {
                     .bindings(ShiftTabBindings.createWithBacktab())
                     .tickRate(Duration.ofMillis(100))
                     .build())) {
-                runner.run(
-                        (event, tui) -> handleEvent(event, tui, instanceTableState),
-                        frame -> render(frame, instanceTableState));
+                runner.run(this::handleEvent, this::render);
             } catch (Exception e) {
                 System.err.println("TUI unavailable: " + e.getMessage());
                 ListCommand.printTable(entries, System.out);
@@ -529,6 +475,66 @@ public class Tui {
             // An action that failed mid-step (a branch whose copy or start threw) must not leave the
             // step animating over the TUI we are about to redraw, nor System.out/err guarded.
             BuildOutput.abandonStep();
+        }
+    }
+
+    /**
+     * The state a TUI session starts in, after a reload: browse mode (or the error, if the reload
+     * failed), nothing pending, and the selection restored to what the last session left.
+     */
+    private void enterSession(String reloadError) {
+        var previousAction = pendingAction;
+        mode = Mode.BROWSE;
+        if (reloadError != null) {
+            errorMessage = reloadError;
+            mode = Mode.ERROR;
+        }
+        pendingAction = PendingAction.NONE;
+
+        templateTableState = new TableState();
+        instanceTableState = new TableState();
+
+        // Restore template selection by name
+        boolean templateRestored = false;
+        if (returnToTemplate != null) {
+            for (int i = 0; i < templateEntries.size(); i++) {
+                if (templateEntries.get(i).name().equals(returnToTemplate)) {
+                    templateTableState.select(i);
+                    templateRestored = true;
+                    break;
+                }
+            }
+        }
+        if (!templateRestored) {
+            if (!templateEntries.isEmpty()) templateTableState.select(0);
+        }
+        returnToTemplate = null;
+
+        if (previousAction == PendingAction.BUILD_THEN_BRANCH) {
+            var tpl = templateEntries.stream()
+                    .filter(t -> t.name().equals(branchSourceName))
+                    .findFirst().orElse(null);
+            if (tpl != null && !"not built".equals(tpl.buildStatus())) {
+                openBranchModal(tpl.name());
+            }
+        }
+
+        // If returning from a shell/branch, focus the target instance
+        if (returnToInstance != null) {
+            focusedPanel = Panel.INSTANCES;
+            boolean found = false;
+            for (int i = 0; i < rowToEntry.size(); i++) {
+                if (rowToEntry.get(i) != null && rowToEntry.get(i).name().equals(returnToInstance)) {
+                    instanceTableState.select(i);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) selectFirstDataRow(instanceTableState);
+            returnToInstance = null;
+        } else {
+            selectFirstDataRow(instanceTableState);
+            focusedPanel = Panel.TEMPLATES;
         }
     }
 
@@ -1842,7 +1848,8 @@ public class Tui {
     /**
      * The TUI as a session starts on {@code instances}, with its services given rather than taken
      * from {@code RuntimeServices}, and without a terminal: what the characterisation tests (#959)
-     * render and drive keys into. Call {@link #useDefinitions} first.
+     * render and drive keys into. It enters the session through {@link #enterSession}, as every
+     * real session does after its reload. Call {@link #useDefinitions} first.
      */
     void startSession(IncusClient incus, BackgroundTaskManager backgroundTasks, InstanceLockManager lockManager,
                       List<InstanceInfo> instances) {
@@ -1851,16 +1858,10 @@ public class Tui {
         this.lockManager = lockManager;
         loader.mergeInstances(instances);
         publishRows();
-        mode = Mode.BROWSE;
-        pendingAction = PendingAction.NONE;
-        templateTableState = new TableState();
-        instanceTableState = new TableState();
-        if (!templateEntries.isEmpty()) templateTableState.select(0);
-        selectFirstDataRow(instanceTableState);
-        focusedPanel = Panel.TEMPLATES;
+        enterSession(null);
     }
 
-    /** One frame, as the runner draws it. */
+    /** One frame, as the runner draws it on the instances table's state. */
     void render(dev.tamboui.terminal.Frame frame) {
         render(frame, instanceTableState);
     }
