@@ -28,15 +28,15 @@ import java.util.Map;
  * @param agentNotes    notes added to the agent's managed CLAUDE.md, root first
  * @param root          the root definition, which owns the base image
  */
-record TemplateDetails(String type, boolean gui, String workdir, String shellCommand,
+public record TemplateDetails(String type, boolean gui, String workdir, String shellCommand,
                        String defaultAction, List<LayerEnv> env, Map<String, String> accounts,
                        List<String> skills, List<String> skillRepos, List<String> packageRepos,
                        List<String> removePackages, List<String> maskServices,
                        List<String> agentNotes, ImageDef root) {
 
-    record LayerEnv(String layer, EnvEntry entry) {}
+    public record LayerEnv(String layer, EnvEntry entry) {}
 
-    static TemplateDetails resolve(ImageDef def, Map<String, ImageDef> defs) {
+    public static TemplateDetails resolve(ImageDef def, Map<String, ImageDef> defs) {
         var chain = ImageDef.chain(def, defs);
 
         var type = ImageDef.resolveType(def, defs);
@@ -94,7 +94,7 @@ record TemplateDetails(String type, boolean gui, String workdir, String shellCom
     }
 
     /** A human label for an instance type, as declared ({@code type:}) or stamped at build. */
-    static String typeLabel(String type) {
+    public static String typeLabel(String type) {
         if (type == null || type.isBlank()) return "container";
         return switch (type) {
             case "vm" -> "virtual machine";
@@ -118,7 +118,7 @@ record TemplateDetails(String type, boolean gui, String workdir, String shellCom
      * The type a built template carries when it differs from what its definition now resolves
      * to (so a rebuild would change it), or null when they agree or the built type is unknown.
      */
-    static String staleBuiltType(String resolvedType, String instanceMode, String runtime) {
+    public static String staleBuiltType(String resolvedType, String instanceMode, String runtime) {
         var built = builtType(instanceMode, runtime);
         return built != null && !built.equals(resolvedType) ? built : null;
     }

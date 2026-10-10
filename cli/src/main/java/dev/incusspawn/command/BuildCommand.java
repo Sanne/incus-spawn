@@ -151,7 +151,7 @@ public class BuildCommand extends BaseCommand {
     private static final int CONNECTIONS_PER_EXEC = 5;
     // Half the 48-connection valve, leaving room for concurrent TUI/status activity
     private static final int MACOS_TUNNEL_BUDGET = 24;
-    static final String REBUILDING_SUFFIX = "-rebuilding";
+    public static final String REBUILDING_SUFFIX = "-rebuilding";
 
     /** The longest template name that can be rebuilt: it is built as {@code <name>-rebuilding} first. */
     static final int MAX_TEMPLATE_NAME_LENGTH = TemplateLock.MAX_INSTANCE_NAME_LENGTH - REBUILDING_SUFFIX.length();
@@ -515,7 +515,7 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    static void collectAllRecursive(ImageDef imageDef, Map<String, ImageDef> defs,
+    public static void collectAllRecursive(ImageDef imageDef, Map<String, ImageDef> defs,
                                      List<String> result, Set<String> seen) {
         var name = imageDef.getName();
         if (seen.contains(name)) return;
@@ -529,7 +529,7 @@ public class BuildCommand extends BaseCommand {
         result.add(name);
     }
 
-    static void collectDescendants(String parentName, Map<String, ImageDef> defs,
+    public static void collectDescendants(String parentName, Map<String, ImageDef> defs,
                                             List<String> result, Set<String> seen) {
         for (var def : defs.values()) {
             if (parentName.equals(def.getParent()) && seen.add(def.getName())) {
@@ -1579,7 +1579,7 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    static String resolveImageUrl(String imageUrl, String tag) {
+    public static String resolveImageUrl(String imageUrl, String tag) {
         var resolved = imageUrl.replace("{arch}", normalizeHostArch());
         return tag != null ? resolved.replace("{tag}", tag) : resolved;
     }
@@ -2487,7 +2487,7 @@ public class BuildCommand extends BaseCommand {
         return feature != null && !SpawnConfig.load().isFeatureEnabled(feature);
     }
 
-    static boolean isFeatureGated(ToolSetup tool, SpawnConfig config) {
+    public static boolean isFeatureGated(ToolSetup tool, SpawnConfig config) {
         var feature = tool.feature();
         return feature != null && !config.isFeatureEnabled(feature);
     }

@@ -17,12 +17,12 @@ import java.util.List;
  * and the {@link TemplateInfo} rows the TUI shows for templates. Shared by {@code isx list}, the
  * TUI, and the commands that ask which templates are built.
  */
-final class InstanceListing {
+public final class InstanceListing {
 
     private InstanceListing() {}
 
     /** Whether {@code parent} is the "no template parent" sentinel (null, empty, or "-"). */
-    static boolean isRootParent(String parent) {
+    public static boolean isRootParent(String parent) {
         return parent == null || parent.isEmpty() || "-".equals(parent);
     }
 
@@ -39,7 +39,7 @@ final class InstanceListing {
                 .toList();
     }
 
-    static java.time.LocalDateTime parseTimestamp(String ts) {
+    public static java.time.LocalDateTime parseTimestamp(String ts) {
         try {
             if (ts.contains("T")) {
                 return java.time.LocalDateTime.parse(ts, java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME);
@@ -56,7 +56,7 @@ final class InstanceListing {
      * The isx-managed instances in an instance listing, templates included. A listing that cannot
      * be read is an error, never an empty list: a script would take that for "no instances".
      */
-    static List<InstanceInfo> collectEntries(String listingJson) {
+    public static List<InstanceInfo> collectEntries(String listingJson) {
         try {
             var nodes = JSON.readTree(listingJson);
             if (!nodes.isArray()) {
@@ -134,7 +134,7 @@ final class InstanceListing {
      * {@code dir} pool does not, and stopped instances may report nothing. A -1
      * renders as "-" rather than a misleading zero.
      */
-    static long sumDiskUsage(JsonNode diskNode) {
+    public static long sumDiskUsage(JsonNode diskNode) {
         if (diskNode == null || !diskNode.isObject() || diskNode.isEmpty()) return -1;
         long total = 0;
         boolean any = false;
@@ -149,36 +149,36 @@ final class InstanceListing {
     }
 
     // Package-private so canUseReferencedModel(...) can be unit-tested with hand-built rows.
-    record TemplateInfo(String name, String description,
+    public record TemplateInfo(String name, String description,
                                 String buildStatus, String runtime, String buildVersion,
                                 String definitionSha, String pendingOp, String parent, long diskUsage,
                                 long referencedBytes, String instanceMode) {
-        static final String NOT_BUILT = "not built";
+        public static final String NOT_BUILT = "not built";
 
         /** Whether this template has been built (has a subvolume/stamp), vs. definition-only. */
-        boolean isBuilt() {
+        public boolean isBuilt() {
             return !NOT_BUILT.equals(buildStatus);
         }
 
         /** Whether this is a definitional root (no template parent) — where the base weight lands. */
-        boolean isRoot() {
+        public boolean isRoot() {
             return isRootParent(parent);
         }
 
         /** Copy with a substituted disk weight — used by the two disk-attribution models. */
-        TemplateInfo withDiskUsage(long newDiskUsage) {
+        public TemplateInfo withDiskUsage(long newDiskUsage) {
             return new TemplateInfo(name, description, buildStatus, runtime, buildVersion,
                     definitionSha, pendingOp, parent, newDiskUsage, referencedBytes, instanceMode);
         }
 
         /** Copy with a substituted referenced size — used to backfill a missing stamp live. */
-        TemplateInfo withReferencedBytes(long newReferencedBytes) {
+        public TemplateInfo withReferencedBytes(long newReferencedBytes) {
             return new TemplateInfo(name, description, buildStatus, runtime, buildVersion,
                     definitionSha, pendingOp, parent, diskUsage, newReferencedBytes, instanceMode);
         }
     }
 
-    record InstanceInfo(String name, String status,
+    public record InstanceInfo(String name, String status,
                                 String project, String profile, String created,
                                 String runtime, String parent,
                                 String limitsCpu, String limitsMemory, String rootSize,
@@ -188,6 +188,6 @@ final class InstanceListing {
                                 String defaultAction, long diskUsage, long referencedBytes,
                                 String instanceMode, boolean kvmEnabled,
                                 McpStanding mcp, boolean mcpCaller) {
-        MachineType machineType() { return MachineType.fromIncus(runtime); }
+        public MachineType machineType() { return MachineType.fromIncus(runtime); }
     }
 }

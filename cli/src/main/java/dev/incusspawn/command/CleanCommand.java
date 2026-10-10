@@ -49,7 +49,7 @@ public class CleanCommand extends BaseCommand {
 
     // -- shared helpers --
 
-    static String formatSize(long bytes) {
+    public static String formatSize(long bytes) {
         if (bytes < 1024) return bytes + " B";
         if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
         if (bytes < 1024L * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
@@ -336,7 +336,7 @@ public class CleanCommand extends BaseCommand {
 
     // -- shared pool-clean logic (used by both CLI and TUI) --
 
-    record CleanScan(
+    public record CleanScan(
             String poolName,
             IncusClient.PoolUsage usage,
             List<String> failedBuilds,
@@ -344,16 +344,16 @@ public class CleanCommand extends BaseCommand {
             List<IncusClient.ImageInfo> baseImages,
             boolean dnfCacheExists
     ) {
-        long unusedImagesBytes() {
+        public long unusedImagesBytes() {
             return totalSize(unusedImages);
         }
 
-        long baseImagesBytes() {
+        public long baseImagesBytes() {
             return totalSize(baseImages);
         }
     }
 
-    record CleanResult(
+    public record CleanResult(
             String poolName,
             IncusClient.PoolUsage beforeUsage,
             IncusClient.PoolUsage afterUsage,
@@ -363,7 +363,7 @@ public class CleanCommand extends BaseCommand {
             boolean dnfCacheDeleted,
             List<String> warnings
     ) {
-        boolean found() {
+        public boolean found() {
             return failedBuildsDeleted > 0 || unusedImagesDeleted > 0 || baseImagesDeleted > 0 || dnfCacheDeleted;
         }
     }
@@ -453,7 +453,7 @@ public class CleanCommand extends BaseCommand {
         return scanImages(incus).unused();
     }
 
-    static CleanScan scanPool(IncusClient incus) {
+    public static CleanScan scanPool(IncusClient incus) {
         var pool = incus.findCowPool();
         if (pool == null) return null;
 
@@ -472,7 +472,7 @@ public class CleanCommand extends BaseCommand {
         return cleanPool(incus, true, true, true, true);
     }
 
-    static CleanResult cleanPool(IncusClient incus,
+    public static CleanResult cleanPool(IncusClient incus,
                                  boolean deleteFailedBuilds,
                                  boolean deleteUnusedImages,
                                  boolean deleteBaseImages,

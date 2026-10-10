@@ -112,7 +112,7 @@ public class ListCommand extends BaseCommand {
         return records;
     }
 
-    static void printTable(List<InstanceInfo> items, java.io.PrintStream out) {
+    public static void printTable(List<InstanceInfo> items, java.io.PrintStream out) {
         var nameWidth = Math.max(20, items.stream().mapToInt(e -> e.name().length()).max().orElse(20));
         // The MCP column only for someone who uses isx mcp: without it, the format has no
         // conversion for the last argument, which printf ignores. AGE is padded when MCP follows.

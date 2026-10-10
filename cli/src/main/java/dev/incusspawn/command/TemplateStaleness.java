@@ -29,7 +29,7 @@ import java.util.function.Supplier;
  * Incus listing, the definitions, and the tool fingerprints, asked for only when a definition is
  * compared -- so the CLI pays for none of the TUI's reload.
  */
-final class TemplateStaleness {
+public final class TemplateStaleness {
 
     private TemplateStaleness() {}
 
@@ -38,7 +38,7 @@ final class TemplateStaleness {
      * when unknown), the isx version that built it, and its definition's fingerprint then; and
      * what Incus says it is, a container or a VM.
      */
-    record Built(String name, String created, String buildVersion, String definitionSha,
+    public record Built(String name, String created, String buildVersion, String definitionSha,
                  MachineType machineType) {
 
         /** {@code name} as Incus describes it, from one instance's metadata or a listing's entry. */
@@ -55,9 +55,9 @@ final class TemplateStaleness {
      * @param definitionChanged its definition (or a tool it uses) differs from the one it was built from
      * @param parentRebuilt     its parent was built after it
      */
-    record Staleness(boolean versionOutdated, boolean definitionChanged, boolean parentRebuilt) {
+    public record Staleness(boolean versionOutdated, boolean definitionChanged, boolean parentRebuilt) {
         /** What {@code isx build --out-of-sync} rebuilds, and the TUI counts for it: any of the three. */
-        boolean outOfSync() {
+        public boolean outOfSync() {
             return versionOutdated || definitionChanged || parentRebuilt;
         }
     }
@@ -71,7 +71,7 @@ final class TemplateStaleness {
      * @param toolFingerprints the tool fingerprints a definition fingerprint folds in, computed
      *                         at most once, and only if a definition is compared
      */
-    static Map<String, Staleness> assess(Collection<Built> built, Map<String, ImageDef> defs,
+    public static Map<String, Staleness> assess(Collection<Built> built, Map<String, ImageDef> defs,
                                          Set<String> storedSource,
                                          Supplier<Map<String, String>> toolFingerprints,
                                          String currentVersion) {
@@ -125,7 +125,7 @@ final class TemplateStaleness {
     }
 
     /** The composite fingerprints of every tool {@code defs} use, their {@code requires} folded in. */
-    static Map<String, String> toolFingerprints(Collection<ImageDef> defs, ToolDefLoader loader) {
+    public static Map<String, String> toolFingerprints(Collection<ImageDef> defs, ToolDefLoader loader) {
         var rawFps = new TreeMap<String, String>();
         var depMap = new TreeMap<String, List<String>>();
         var visited = new HashSet<String>();

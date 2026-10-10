@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.tui.InstanceDetailView;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.incus.FakeIncusDaemon;

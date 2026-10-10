@@ -147,10 +147,10 @@ public class TemplatesCommand extends BaseCommand {
     public static class Edit extends BaseCommand {
 
         @Argument(required = true, description = "Template name (e.g. tpl-java)")
-        String name;
+        public String name;
 
         @Override
-        protected CommandResult doExecute() throws Exception {
+        public CommandResult doExecute() throws Exception {
             name = normalizeName(name);
 
             var defs = ImageDef.loadAll();
@@ -264,7 +264,7 @@ public class TemplatesCommand extends BaseCommand {
 
     // ── shared helpers ──────────────────────────────────────────────────────────
 
-    static Path createTemplateFile(String name, String parent, Path dir) throws IOException {
+    public static Path createTemplateFile(String name, String parent, Path dir) throws IOException {
         var targetPath = dir.resolve(ImageDef.filenameForName(name));
         if (Files.exists(targetPath)) {
             throw new IOException("File already exists: " + targetPath);
@@ -278,7 +278,7 @@ public class TemplatesCommand extends BaseCommand {
         return targetPath;
     }
 
-    static String normalizeName(String input) {
+    public static String normalizeName(String input) {
         return input.startsWith("tpl-") ? input : "tpl-" + input;
     }
 
@@ -321,7 +321,7 @@ public class TemplatesCommand extends BaseCommand {
         return !result.hasErrors();
     }
 
-    static void editLoop(Path file, String originalName, boolean isBuiltinCopy) {
+    public static void editLoop(Path file, String originalName, boolean isBuiltinCopy) {
         while (true) {
             try {
                 int exitCode = launchEditor(file);

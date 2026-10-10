@@ -1,28 +1,7 @@
 ---
 paths:
-  - "cli/src/main/java/dev/incusspawn/command/Tui.java"
   - "cli/src/main/java/dev/incusspawn/tui/**"
-  - "cli/src/main/java/dev/incusspawn/command/ModalRenderer.java"
-  - "cli/src/main/java/dev/incusspawn/command/HelpChatModal.java"
-  - "cli/src/main/java/dev/incusspawn/command/AccountsModal.java"
-  - "cli/src/main/java/dev/incusspawn/command/BranchAccountChoices.java"
-  - "cli/src/main/java/dev/incusspawn/command/BranchModal.java"
-  - "cli/src/main/java/dev/incusspawn/command/CleanModal.java"
-  - "cli/src/main/java/dev/incusspawn/command/BuildMenu.java"
-  - "cli/src/main/java/dev/incusspawn/command/RenameDialog.java"
-  - "cli/src/main/java/dev/incusspawn/command/NewTemplateModal.java"
-  - "cli/src/main/java/dev/incusspawn/command/DeleteConfirm.java"
-  - "cli/src/main/java/dev/incusspawn/command/InstanceActions.java"
-  - "cli/src/main/java/dev/incusspawn/command/DiskUsageModel.java"
-  - "cli/src/main/java/dev/incusspawn/command/UsageFormat.java"
-  - "cli/src/main/java/dev/incusspawn/command/MainScreen.java"
-  - "cli/src/main/java/dev/incusspawn/command/ShellLaunch.java"
-  - "cli/src/main/java/dev/incusspawn/command/ListingLoader.java"
   - "cli/src/main/java/dev/incusspawn/command/TemplateDetails.java"
-  - "cli/src/main/java/dev/incusspawn/command/TemplateDetailView.java"
-  - "cli/src/main/java/dev/incusspawn/command/InstanceDetailView.java"
-  - "cli/src/main/java/dev/incusspawn/command/AboutModal.java"
-  - "cli/src/main/java/dev/incusspawn/command/ActionsMenu.java"
   - "cli/src/test/java/dev/incusspawn/tui/**"
   - "common/src/main/java/dev/incusspawn/incus/BtrfsUsage.java"
   - "common/src/main/java/dev/incusspawn/incus/BtrfsSysfs.java"
@@ -49,6 +28,8 @@ A notice meant for the TUI belongs on `Warnings`, so it costs no keypress.
 `TuiLaunchHandOverTest` drives `IncusSpawn.launchTui(ready, tui)` with a `StandInTui` (test scope, overriding `runTuiLoop`/`waitForUser`, reading `warningMessages()`) and fails if either end of the window is unwired.
 
 `Tui` is the TUI implementation using Tamboui widgets.
+It lives in `dev.incusspawn.tui` with every class it is made of: `MainScreen`, `ListingLoader`, `ShellLaunch`, `InstanceActions`, the disk model and formatting, and one class per dialog.
+Of these, only `Tui.run` (for `IncusSpawn`) and `InstanceDetailView.mcpDetailRows` (for `ListCommandOutputTest`) are public; the `command/` members the TUI calls (`InstanceListing`, `CleanCommand.scanPool`, `TemplatesCommand.editLoop` and the like) are public for it.
 `MainScreen` draws the screen below the dialogs (header, both tables, legend, search bar, context line and key bar) from what `Tui` holds, and changes none of it.
 `ShellLaunch` opens a shell from the TUI: the repairs an instance may owe first, the start, the shell with its auth-error title, and a branch made from the branch dialog before its shell.
 `ListingLoader` loads what the TUI shows (`reloadData`, `mergeInstances`, the disk model and its accounting checks, the pool gauge, the proxy and appliance status) and writes the rows into `Tui`, which keeps the selection and the live refresh.

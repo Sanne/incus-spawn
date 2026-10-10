@@ -11,7 +11,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class InitCommandTest {
+public class InitCommandTest {
 
     @Test
     void readIfReadableTreatsMissingAndUnreadableFilesAsNeedingAWrite(@TempDir Path dir) throws IOException {
@@ -320,7 +320,7 @@ class InitCommandTest {
      * Runs {@code body} with {@code user.home} pointed at {@code home}, so the tests below
      * exercise the real {@link Environment#initCompleteMarker()} path.
      */
-    static void withHome(Path home, Runnable body) {
+    public static void withHome(Path home, Runnable body) {
         var original = System.getProperty("user.home");
         System.setProperty("user.home", home.toString());
         try {
