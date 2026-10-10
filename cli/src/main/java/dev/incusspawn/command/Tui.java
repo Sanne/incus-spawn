@@ -16,26 +16,20 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.lifecycle.BranchFlow;
-import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
-import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
-import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyLog;
 import dev.incusspawn.lifecycle.ZmxSocketForward;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionContext;
-import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.tui.BackgroundTaskManager;
 import dev.incusspawn.tui.InstanceEventWatcher;
 import dev.incusspawn.tui.InstanceLockManager;
-import dev.incusspawn.tool.ShellMenu;
 import dev.incusspawn.tool.ToolAction;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
@@ -97,10 +91,10 @@ public class Tui {
     // What bare `isx` said before the TUI takes the terminal; handed over just before it does.
     private PreTuiOutput preTui;
 
-    private IncusClient incus;
+    IncusClient incus;
 
-    private ToolDefLoader toolDefLoader;
-    private java.util.List<ToolSetup> cdiTools;
+    ToolDefLoader toolDefLoader;
+    java.util.List<ToolSetup> cdiTools;
 
     BackgroundTaskManager backgroundTasks;
 
@@ -149,6 +143,7 @@ public class Tui {
     });
 
     private final MainScreen mainScreen = new MainScreen(this);
+    private final ShellLaunch shellLaunch = new ShellLaunch(this);
     private final InstanceActions instanceActions =
             new InstanceActions(() -> this.imageDefs, () -> this.toolDefLoader, () -> this.cdiTools);
 
@@ -219,9 +214,9 @@ public class Tui {
     private BuildMenu buildMenu;
     private String[] pendingBuildArgs;
     // Branch modal state
-    private String branchSourceName;
+    String branchSourceName;
     /** The branch dialog; set when it opens, and read once more to create the branch after it closes. */
-    private BranchModal branch;
+    BranchModal branch;
     // Rename modal state
     /** The instance F6 renames, kept through the stop-first confirm and while the dialog is open. */
     private String renameSourceName;
@@ -524,16 +519,16 @@ public class Tui {
             switch (pendingAction) {
                 case SHELL -> {
                     returnToInstance = pendingActionTarget.name();
-                    shellInto(pendingActionTarget);
+                    shellLaunch.shellInto(pendingActionTarget);
                 }
                 case SHELL_WITH_COMMAND -> {
                     returnToInstance = pendingActionTarget.name();
-                    shellInto(pendingActionTarget, pendingShellCommand);
+                    shellLaunch.shellInto(pendingActionTarget, pendingShellCommand);
                 }
                 case BRANCH -> {
                     returnToInstance = pendingActionTarget.name();
                     try {
-                        createBranchFromModal(pendingActionTarget.name());
+                        shellLaunch.createBranchFromModal(pendingActionTarget.name());
                         statusMessage = "Created branch " + pendingActionTarget.name();
                     } catch (Exception e) {
                         statusMessage = "Failed to create branch " + pendingActionTarget.name() + ": " + e.getMessage();
@@ -871,7 +866,7 @@ public class Tui {
         }
     }
 
-    private static final long PROXY_AUTH_CHECK_INTERVAL_MS = 30_000;
+    static final long PROXY_AUTH_CHECK_INTERVAL_MS = 30_000;
 
     private void refreshProxyAuthError() {
         long now = System.currentTimeMillis();
@@ -894,41 +889,6 @@ public class Tui {
         } catch (Exception e) {
             applianceSkewMessage = null;
         }
-    }
-
-    private Thread startAuthTitleMonitor(String containerName) {
-        var baseTitle = "isx:" + containerName;
-        String healthAddr;
-        try {
-            healthAddr = ProxyHealthCheck.healthAddress(incus);
-        } catch (Exception e) {
-            return Thread.currentThread(); // no-op: interrupt is harmless on current thread
-        }
-        var thread = new Thread(() -> {
-            boolean wasError = false;
-            while (!Thread.interrupted()) {
-                try { Thread.sleep(PROXY_AUTH_CHECK_INTERVAL_MS); }
-                catch (InterruptedException e) { break; }
-                try {
-                    var info = ProxyHealthCheck.fetchProxyInfo(healthAddr, 500);
-                    boolean isError = info != null && info.hasAuthError();
-                    if (isError && !wasError) {
-                        setTerminalTitle("⚠ " + info.authRemediationHint() + " — " + baseTitle);
-                    } else if (!isError && wasError) {
-                        setTerminalTitle(baseTitle);
-                    }
-                    wasError = isError;
-                } catch (Exception ignored) {}
-            }
-        }, "auth-title-monitor");
-        thread.setDaemon(true);
-        thread.start();
-        return thread;
-    }
-
-    private static void setTerminalTitle(String title) {
-        System.out.print("\033]0;" + title + "\007"); // raw ANSI: window title, set while the TUI owns the terminal
-        System.out.flush();
     }
 
     /**
@@ -2464,14 +2424,6 @@ public class Tui {
         return false;
     }
 
-    private ShellMenu shellMenu(String instanceName, IncusClient.ShellPrep prep) {
-        // Read fresh, as isx shell does, not from the list's cache: its entry can predate the
-        // instance (a branch just made from the dialog) or its start (no IP yet), and its parent
-        // is the direct one where the bar shows the leaf template.
-        return new ActionResolver(incus, toolDefLoader, cdiTools, imageDefs)
-                .shellMenu(instanceName, prep.templateName(), prep.workdir());
-    }
-
     private String suggestBranchName(String sourceName) {
         var base = sourceName.startsWith("tpl-") ? sourceName.substring(4) : sourceName;
         var existingNames = entries.stream().map(e -> e.name()).collect(java.util.stream.Collectors.toSet());
@@ -3035,35 +2987,6 @@ public class Tui {
         }
     }
 
-    /**
-     * Branch through {@link BranchFlow}, as {@code isx branch} does, so a TUI branch gets the same
-     * account selection, proxy refresh, CA and identity repairs (#800). Only the inputs (the
-     * modal's fields) and the shell that follows are the TUI's own.
-     */
-    private void createBranchFromModal(String name) {
-        var source = branchSourceName;
-        var request = branch.request(name);
-
-        BranchFlow.Preflight preflight;
-        InstanceLifecycle.RuntimeConfig prefetched;
-        // Held through the branch's start, so a rebuild cannot swap the template away meanwhile (#1212).
-        // Plain stdout: the TUI has released the terminal for the branch and the shell after it.
-        try (var held = TemplateLock.reading(source, System.out::println)) {
-            preflight = BranchFlow.preflight(incus, request, imageDefs);
-            prefetched = BranchFlow.create(incus, preflight);
-        }
-
-        BuildOutput.success(name + " is ready.");
-        var shellPrep = prefetched.toShellPrep();
-        var defaultCmd = new ActionResolver(incus, toolDefLoader, cdiTools, preflight.defs())
-                .defaultCommandForBranch(preflight.template(), preflight.sourceInstance());
-        if (defaultCmd != null) {
-            shellPrep = shellPrep.withActionCommand(defaultCmd);
-        }
-        incus.interactiveShell(name, "agentuser", shellPrep, shellMenu(name, shellPrep));
-        System.out.println();
-    }
-
     private volatile boolean proxyRestartInProgress;
     private volatile boolean dnsVerified;
 
@@ -3166,9 +3089,9 @@ public class Tui {
             if (NetworkMode.AIRGAP.name().equals(networkModeStr)) return false;
             if (showProxyError()) return true;
             showSubnetWarning();
-            fixStaticIpIfNeeded(target.name(), target.machineType());
-            fixCaMismatchIfNeeded(target.name(), target.machineType());
-            fixResolvConfIfNeeded(target.name());
+            shellLaunch.fixStaticIpIfNeeded(target.name(), target.machineType());
+            shellLaunch.fixCaMismatchIfNeeded(target.name(), target.machineType());
+            shellLaunch.fixResolvConfIfNeeded(target.name());
             return false;
         } catch (IncusException e) {
             errorMessage = "Cannot reach Incus: " + e.getMessage();
@@ -3185,81 +3108,6 @@ public class Tui {
             }
         } catch (Exception ignored) {
         }
-    }
-
-    private void fixStaticIpIfNeeded(String name, MachineType machineType) {
-        if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
-        // Runs on the TUI's own screen: printing would draw over it. A warning (spoofing
-        // protection refused, an unusable allocation lock) goes to the warning log; progress
-        // does not, since nothing can render until this returns.
-        var output = new StaticIpAllocator.Output(msg -> {}, warningLog::add);
-        try {
-            if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name, output, machineType)) {
-                statusMessage = "Static IP reassigned to current bridge subnet";
-            }
-        } catch (Exception ignored) {
-        }
-    }
-
-    private void fixResolvConfIfNeeded(String name) {
-        if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
-        try {
-            ProxyConfig.fixResolvConfIfNeeded(incus, name);
-        } catch (Exception ignored) {
-        }
-    }
-
-    private void fixCaMismatchIfNeeded(String containerName, MachineType machineType) {
-        JsonNode started = null;
-        if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(containerName))) {
-            // Runs on the TUI's own screen, where stderr would be drawn over: a mount dropped
-            // because its host directory is gone must not go unannounced (#852), so it goes to
-            // the warning log, which the status line announces when the shell returns to the TUI.
-            // Through InstanceLifecycle, as isx shell's start is: the prep re-arms IP spoofing
-            // protection (#905), the start falls back where the host cannot enforce it, and the
-            // instance gets its new secret (#934).
-            started = InstanceLifecycle.startForUse(incus, containerName, machineType, warningLog::add);
-        }
-        // The start's own read of the instance, when there was one: no need to read it again
-        CertificateAuthority.fixContainerCaIfNeeded(incus, containerName, started);
-    }
-
-    private void shellInto(ActionContext target) {
-        shellInto(target, null);
-    }
-
-    private void shellInto(ActionContext target, String commandOverride) {
-        var name = target.name();
-        var machineType = target.machineType();
-        // Read after fixStaticIpIfNeeded, so a VM it just reassigned is seen to owe its file
-        var instance = incus.instanceMetadata(name);
-        var status = instance.path("status").asText("");
-        // An empty status means any failed lookup, not just a missing instance, so confirm before
-        // giving up: a daemon hiccup must not cancel a shell on an instance that's still there.
-        if (status.isEmpty() && !incus.exists(name)) {
-            // Deleted between the TUI's check and now: report it back in the TUI (which reloads
-            // on re-entry) instead of failing on a start or exec against a missing instance.
-            statusMessage = name + " no longer exists";
-            return;
-        }
-        // Runs after the TUI has released the terminal, so plain stdout is safe here.
-        InstanceLifecycle.ensureReady(incus, name, instance, machineType, System.out::println);
-        ZmxSocketForward.ensureSymlink(name);
-        checkGuiHealth(name);
-        System.out.println("Connecting to " + name + "...\n");
-        var titleMonitor = startAuthTitleMonitor(name);
-        try {
-            var prep = IncusClient.ShellPrep.from(incus, name);
-            if (commandOverride != null) prep = prep.withActionCommand(commandOverride);
-            incus.interactiveShell(name, "agentuser", prep, shellMenu(name, prep));
-        } finally {
-            titleMonitor.interrupt();
-        }
-        System.out.println();
-    }
-
-    private void checkGuiHealth(String name) {
-        GuiPassthrough.checkGuiHealth(incus, name);
     }
 
     private List<InstanceInfo> collectEntries() {
