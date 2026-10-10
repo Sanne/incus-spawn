@@ -103,7 +103,7 @@ class InitStepOutputTest {
         var init = new FakeInit();
         init.failing = "sysctl";
         var conf = dir.resolve("99-incus-spawn.conf");
-        var output = capture(() -> init.configureHostSysctls(conf));
+        var output = capture(() -> init.host().configureHostSysctls(conf));
 
         assertEquals("sudo sysctl -p " + conf, init.commands.getLast());
         assertFalse(output.out().contains("Configured host sysctls"), output.out());
@@ -114,7 +114,7 @@ class InitStepOutputTest {
     void aNetworkManagerReloadThatFailedIsNotReportedAsConfigured(@TempDir Path dir) throws Exception {
         var init = new FakeInit();
         init.failing = "nmcli";
-        var output = capture(() -> init.configureNetworkManager(dir));
+        var output = capture(() -> init.host().configureNetworkManager(dir));
 
         assertEquals("sudo nmcli general reload", init.commands.getLast());
         assertFalse(output.out().contains("Configured NetworkManager"), output.out());

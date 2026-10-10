@@ -1107,7 +1107,7 @@ public final class InstanceLifecycle {
 
     /**
      * Walk all instances and fix any whose static IP belongs to a stale subnet.
-     * Called from {@code InitCommand} after a bridge subnet change, and from
+     * Called from {@code HostSetup} after a bridge subnet change, and from
      * {@code DoctorCommand} as an interactive remediation.
      *
      * @return count of instances that were migrated

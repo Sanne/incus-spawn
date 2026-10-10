@@ -54,11 +54,11 @@ class InitFirewallOutputTest {
     }
 
     private static Output firewalld(String failing) throws Exception {
-        return run(failing, FakeInit::configureFirewalld);
+        return run(failing, init -> init.host().configureFirewalld());
     }
 
     private static Output ufw(String failing) throws Exception {
-        return run(failing, init -> init.configureUfw(GATEWAY, BEFORE_RULES));
+        return run(failing, init -> init.host().configureUfw(GATEWAY, BEFORE_RULES));
     }
 
     private static void assertFailureReported(Output output, String command) {
@@ -88,7 +88,7 @@ class InitFirewallOutputTest {
         var init = new FakeInit();
         init.failing = "--add-masquerade";
         init.alsoFailing = "--reload";
-        var output = capture(init::configureFirewalld);
+        var output = capture(init.host()::configureFirewalld);
         assertFailureReported(output, "--add-masquerade");
         assertTrue(output.err().contains("re-run: isx init"), output.err());
     }
@@ -123,11 +123,11 @@ class InitFirewallOutputTest {
     }
 
     private static Mitm mitmFirewalld(String failing) throws Exception {
-        return mitm(failing, init -> init.configureMitmProxyFirewalld(GATEWAY));
+        return mitm(failing, init -> init.host().configureMitmProxyFirewalld(GATEWAY));
     }
 
     private static Mitm mitmUfw(String failing) throws Exception {
-        return mitm(failing, init -> init.configureMitmProxyUfw(GATEWAY, BEFORE_RULES));
+        return mitm(failing, init -> init.host().configureMitmProxyUfw(GATEWAY, BEFORE_RULES));
     }
 
     private static void assertRedirectFailureReported(Mitm mitm, String command) {

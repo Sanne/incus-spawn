@@ -16,15 +16,15 @@ public class InitCommandTest {
     @Test
     void readIfReadableTreatsMissingAndUnreadableFilesAsNeedingAWrite(@TempDir Path dir) throws IOException {
         var file = dir.resolve("99-incus-spawn.conf");
-        assertNull(InitCommand.readIfReadable(file));
+        assertNull(HostSetup.readIfReadable(file));
 
         Files.writeString(file, "fs.inotify.max_user_instances=8192\n");
-        assertEquals("fs.inotify.max_user_instances=8192\n", InitCommand.readIfReadable(file));
+        assertEquals("fs.inotify.max_user_instances=8192\n", HostSetup.readIfReadable(file));
 
         // What an earlier release left behind: 0600 root, unreadable to the user running init (#821)
         Files.setPosixFilePermissions(file, java.util.Set.of());
         org.junit.jupiter.api.Assumptions.assumeFalse(Files.isReadable(file), "running as root");
-        assertNull(InitCommand.readIfReadable(file));
+        assertNull(HostSetup.readIfReadable(file));
     }
 
     @Test
@@ -119,91 +119,91 @@ public class InitCommandTest {
 
     @Test
     void subidRangeCoversExactMatch() {
-        assertTrue(InitCommand.subidRangeCovers("root:1000:1", "root", 1000, 1));
-        assertTrue(InitCommand.subidRangeCovers("root:1000000:1000000000", "root", 1000000, 1000000000));
+        assertTrue(HostSetup.subidRangeCovers("root:1000:1", "root", 1000, 1));
+        assertTrue(HostSetup.subidRangeCovers("root:1000000:1000000000", "root", 1000000, 1000000000));
     }
 
     @Test
     void subidRangeCoversSupersetCovers() {
-        assertTrue(InitCommand.subidRangeCovers("root:1000000:2000000000", "root", 1000000, 1000000000));
+        assertTrue(HostSetup.subidRangeCovers("root:1000000:2000000000", "root", 1000000, 1000000000));
     }
 
     @Test
     void subidRangeCoversSmallerCountDoesNotCover() {
-        assertFalse(InitCommand.subidRangeCovers("root:1000000:100", "root", 1000000, 1000000000));
+        assertFalse(HostSetup.subidRangeCovers("root:1000000:100", "root", 1000000, 1000000000));
     }
 
     @Test
     void subidRangeCoversDifferentUserDoesNotCover() {
-        assertFalse(InitCommand.subidRangeCovers("nobody:1000:1", "root", 1000, 1));
+        assertFalse(HostSetup.subidRangeCovers("nobody:1000:1", "root", 1000, 1));
     }
 
     @Test
     void subidRangeCoversMalformedLine() {
-        assertFalse(InitCommand.subidRangeCovers("root:abc:1", "root", 1000, 1));
-        assertFalse(InitCommand.subidRangeCovers("root", "root", 1000, 1));
+        assertFalse(HostSetup.subidRangeCovers("root:abc:1", "root", 1000, 1));
+        assertFalse(HostSetup.subidRangeCovers("root", "root", 1000, 1));
     }
 
     // --- computeSubidUpdate ---
 
     @Test
     void computeSubidUpdateNoChangeWhenEntryPresent() {
-        var result = InitCommand.computeSubidUpdate("root:1000:1\n", "root:1000:1", null);
-        assertEquals(InitCommand.SubidAction.UNCHANGED, result.action());
+        var result = HostSetup.computeSubidUpdate("root:1000:1\n", "root:1000:1", null);
+        assertEquals(HostSetup.SubidAction.UNCHANGED, result.action());
     }
 
     @Test
     void computeSubidUpdateAppendsWhenNoPrefixMatch() {
-        var result = InitCommand.computeSubidUpdate("nobody:1000:1\n", "root:1000:1", null);
-        assertEquals(InitCommand.SubidAction.UPDATED, result.action());
+        var result = HostSetup.computeSubidUpdate("nobody:1000:1\n", "root:1000:1", null);
+        assertEquals(HostSetup.SubidAction.UPDATED, result.action());
         assertEquals("nobody:1000:1\nroot:1000:1\n", result.newContent());
     }
 
     @Test
     void computeSubidUpdateAppendsNewlineWhenContentLacksTrailingNewline() {
-        var result = InitCommand.computeSubidUpdate("nobody:1000:1", "root:1000:1", null);
-        assertEquals(InitCommand.SubidAction.UPDATED, result.action());
+        var result = HostSetup.computeSubidUpdate("nobody:1000:1", "root:1000:1", null);
+        assertEquals(HostSetup.SubidAction.UPDATED, result.action());
         assertEquals("nobody:1000:1\nroot:1000:1\n", result.newContent());
     }
 
     @Test
     void computeSubidUpdateReplacesOldEntry() {
-        var result = InitCommand.computeSubidUpdate(
+        var result = HostSetup.computeSubidUpdate(
                 "root:1000000:65536\n", "root:1000000:1000000000", "root:1000000:65536");
-        assertEquals(InitCommand.SubidAction.UPDATED, result.action());
+        assertEquals(HostSetup.SubidAction.UPDATED, result.action());
         assertEquals("root:1000000:1000000000\n", result.newContent());
     }
 
     @Test
     void computeSubidUpdateReplacesOldEntryPreservingOtherLines() {
         var content = "root:1000:1\nroot:1000000:65536\n";
-        var result = InitCommand.computeSubidUpdate(
+        var result = HostSetup.computeSubidUpdate(
                 content, "root:1000000:1000000000", "root:1000000:65536");
-        assertEquals(InitCommand.SubidAction.UPDATED, result.action());
+        assertEquals(HostSetup.SubidAction.UPDATED, result.action());
         assertEquals("root:1000:1\nroot:1000000:1000000000\n", result.newContent());
     }
 
     @Test
     void computeSubidUpdateUnchangedWhenExistingRangeCovers() {
-        var result = InitCommand.computeSubidUpdate(
+        var result = HostSetup.computeSubidUpdate(
                 "root:1000000:2000000000\n", "root:1000000:1000000000", null);
-        assertEquals(InitCommand.SubidAction.UNCHANGED, result.action());
+        assertEquals(HostSetup.SubidAction.UNCHANGED, result.action());
     }
 
     @Test
     void computeSubidUpdateNeedsConfirmationWhenRangeInsufficient() {
-        var result = InitCommand.computeSubidUpdate(
+        var result = HostSetup.computeSubidUpdate(
                 "root:1000000:100\n", "root:1000000:1000000000", null);
-        assertEquals(InitCommand.SubidAction.NEEDS_CONFIRMATION, result.action());
+        assertEquals(HostSetup.SubidAction.NEEDS_CONFIRMATION, result.action());
         assertEquals("root:1000000:100", result.conflictingEntry());
     }
 
     @Test
     void computeSubidUpdatePrefersExactOldEntryOverPrefix() {
         var content = "root:1000000:65536\n";
-        var result = InitCommand.computeSubidUpdate(
+        var result = HostSetup.computeSubidUpdate(
                 content, "root:1000000:1000000000", "root:1000000:65536");
-        assertEquals(InitCommand.SubidAction.UPDATED, result.action());
+        assertEquals(HostSetup.SubidAction.UPDATED, result.action());
         assertTrue(result.newContent().contains("root:1000000:1000000000"));
         assertFalse(result.newContent().contains("root:1000000:65536"));
     }
@@ -213,26 +213,26 @@ public class InitCommandTest {
     @Test
     void replaceSubidLineReplacesExactLine() {
         assertEquals("root:1000000:1000000000\n",
-                InitCommand.replaceSubidLine("root:1000000:65536\n", "root:1000000:65536", "root:1000000:1000000000"));
+                HostSetup.replaceSubidLine("root:1000000:65536\n", "root:1000000:65536", "root:1000000:1000000000"));
     }
 
     @Test
     void replaceSubidLinePreservesOtherLines() {
         String content = "nobody:100000:65536\nroot:1000000:65536\n";
         assertEquals("nobody:100000:65536\nroot:1000000:1000000000\n",
-                InitCommand.replaceSubidLine(content, "root:1000000:65536", "root:1000000:1000000000"));
+                HostSetup.replaceSubidLine(content, "root:1000000:65536", "root:1000000:1000000000"));
     }
 
     @Test
     void replaceSubidLineSafeWithDollarInReplacement() {
         assertEquals("$1:1000:1\n",
-                InitCommand.replaceSubidLine("old:1000:1\n", "old:1000:1", "$1:1000:1"));
+                HostSetup.replaceSubidLine("old:1000:1\n", "old:1000:1", "$1:1000:1"));
     }
 
     @Test
     void replaceSubidLineSafeWithBackslashInReplacement() {
         assertEquals("user\\1:1000:1\n",
-                InitCommand.replaceSubidLine("old:1000:1\n", "old:1000:1", "user\\1:1000:1"));
+                HostSetup.replaceSubidLine("old:1000:1\n", "old:1000:1", "user\\1:1000:1"));
     }
 
     // --- parseGitHubEmails ---
@@ -536,25 +536,25 @@ public class InitCommandTest {
     void cowPoolSkipsTrimOnlyWhenTheDaemonSupportsCreateOptions() {
         assertEquals(java.util.List.of("sudo", "incus", "storage", "create", "cow", "btrfs",
                         "size=100GiB", "btrfs.create_options=-K"),
-                java.util.List.of(InitCommand.cowPoolCreateCommand(true)));
+                java.util.List.of(HostSetup.cowPoolCreateCommand(true)));
         // Incus 6.x rejects the whole create over the unknown key (#820)
         assertEquals(java.util.List.of("sudo", "incus", "storage", "create", "cow", "btrfs",
                         "size=100GiB"),
-                java.util.List.of(InitCommand.cowPoolCreateCommand(false)));
+                java.util.List.of(HostSetup.cowPoolCreateCommand(false)));
     }
 
     @Test
     void cowPoolFailureIsWordedAfterIncusError() {
-        var unrelated = InitCommand.cowPoolFailureExplanation(
+        var unrelated = HostSetup.cowPoolFailureExplanation(
                 "Error: Invalid option \"btrfs.create_options\"\n");
         assertEquals(java.util.List.of("Error: Invalid option \"btrfs.create_options\""), unrelated);
 
-        var loop = InitCommand.cowPoolFailureExplanation("Error: Failed to find a free loop device");
+        var loop = HostSetup.cowPoolFailureExplanation("Error: Failed to find a free loop device");
         assertTrue(loop.stream().anyMatch(l -> l.contains("modprobe loop")), loop.toString());
 
-        var mkfs = InitCommand.cowPoolFailureExplanation("Error: exec: \"mkfs.btrfs\": not found");
+        var mkfs = HostSetup.cowPoolFailureExplanation("Error: exec: \"mkfs.btrfs\": not found");
         assertTrue(mkfs.stream().anyMatch(l -> l.contains("btrfs-progs")), mkfs.toString());
 
-        assertEquals(java.util.List.of(), InitCommand.cowPoolFailureExplanation(""));
+        assertEquals(java.util.List.of(), HostSetup.cowPoolFailureExplanation(""));
     }
 }
