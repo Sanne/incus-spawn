@@ -652,7 +652,7 @@ and contract when it gains one.
 
 Detected at branch time from host resources (`ResourceLimits`):
 
-- **CPU**: VMs get `available_cores - 2` (host keeps 2 cores, minimum 1); containers are not pinned
+- **CPU**: VMs get `available_cores - 2` (host keeps 2 cores), no more than 8, and on a hybrid host no more than its top tier's physical cores, minimum 1 (#1238, see "VM boot: where the wait goes"); containers are not pinned
 - **Memory**: containers 60% of total RAM; VMs 25% of total RAM, capped at 16 GiB, at least 4 GiB (but never more than the container default, on hosts too small for that floor)
 - **Disk**: 100GB root disk (a ceiling: CoW storage is thin-provisioned)
 
@@ -1240,7 +1240,7 @@ stopping the VM before booting out the agent cannot have launchd start it again.
 
 Repos declared in an image definition are cloned into the container during build as `agentuser`. Clones use `--single-branch` to fetch only the target branch (or the default branch when none is specified), avoiding the download of hundreds of release/PR branches and thousands of tags that are present on large upstream repos but rarely needed in a dev container. After cloning, `git remote set-branches origin '*'` immediately widens the fetch refspec — this is a pure metadata write with no network traffic — so the clone is indistinguishable from a regular one. Other branches populate lazily on first `git fetch` or `git checkout`.
 
-**Parallel cloning**: when a template declares multiple repos they are cloned concurrently, bounded to the host's high-performance ("P") core count (`CpuInfo.highPerfCores()` — `sysctl hw.perflevel0.logicalcpu` on macOS, `cpu_capacity` on Linux, falling back to all logical processors). `CpuInfo` is the shared home for CPU-topology detection: it also backs the appliance VM's vCPU default (`VmManager.detectCpus()` → `performanceCores()`) and the native-image-safe host processor count (`ResourceLimits.hostProcessorCount()` → `logicalCores()`, which reads `/proc/cpuinfo`/`sysctl` rather than `Runtime.availableProcessors()` since the CLI native image pins the latter via `-R:ActiveProcessorCount`). Cloning runs entirely with captured (non-streamed) exec so the many parallel clones don't garble the terminal; progress is rendered by the shared `TerminalProgress` helper as one animated braille-spinner line per repo (green ✓ / red ✗ on completion), falling back to plain per-repo log lines on a non-ANSI terminal. Any clone failure is surfaced after the batch and aborts the build. Which repos have a host reference is decided on the host before the parallel section; each worker attaches its own reference just before its clone and detaches it as soon as the clone is done (#826). Attaches and detaches share a lock, because a device removal is a read-modify-write of the whole device map and would drop an attach that landed in between. Attaching lazily is what keeps a VM within its 8 PCI hotplug slots (see "Devices are attached before start"): mounting every reference up front lost the 9th one to the network, silently. The slots are a budget (`HotplugSlots`) that starts at `min(references, 8)` on a VM and is unbounded for a container. It is a hint, not a count: an attach Incus refuses for want of a slot retires one permit for good and waits for another, so a device nobody counted shrinks the budget instead of reintroducing the bug, and only when the budget would reach zero does a repo clone from the network, with a note saying why on its line. The latch the primes wait on counts *planned* references, each counted down once, in a `finally`, after its attach is resolved and anything attached is detached, so a failed or re-queued attach can neither hang the primes nor land after them. Each repo's declared `prime` command (also captured, no PTY) runs in the same worker once that repo's clone is done **and every reference has been detached**, so priming still pipelines with the network clones in flight. The reason is that a reference mount is the host checkout's whole working tree: untracked `.env` files, stashes, unpushed branches, and credentials in `.git/config` URLs. A prime command is arbitrary code with network access, and the old "remove all references after everything" order let any repo's prime read every mounted checkout (#765). A failed detach fails the build rather than prime next to a mount. The concurrency bound is a semaphore in `prepareOne` taken around the clone and the prime separately, not `TerminalProgress`'s per-task slot. A worker waiting for the detaches must not hold a slot, or with more referenced repos than slots the clones that would detach them could never start. A single progress line per repo advances Cloning → Priming → ✓/✗. Failures are aggregated and abort the build; as a best-effort fail-fast, once any repo fails a clone that completes afterward skips launching its (potentially expensive) prime — primes already in flight run to completion.
+**Parallel cloning**: when a template declares multiple repos they are cloned concurrently, bounded to the host's high-performance ("P") core count (`CpuInfo.highPerfCores()` — `sysctl hw.perflevel0.logicalcpu` on macOS, on Linux the top tier of the sysfs scan described in "VM boot: where the wait goes" (the hybrid PMU's `cpu_core` list, else `cpu_capacity`, else `cpufreq`), falling back to all logical processors). `CpuInfo` is the shared home for CPU-topology detection: it also backs the appliance VM's vCPU default (`VmManager.detectCpus()` → `performanceCores()`) and the native-image-safe host processor count (`ResourceLimits.hostProcessorCount()` → `logicalCores()`, which reads `/proc/cpuinfo`/`sysctl` rather than `Runtime.availableProcessors()` since the CLI native image pins the latter via `-R:ActiveProcessorCount`). Cloning runs entirely with captured (non-streamed) exec so the many parallel clones don't garble the terminal; progress is rendered by the shared `TerminalProgress` helper as one animated braille-spinner line per repo (green ✓ / red ✗ on completion), falling back to plain per-repo log lines on a non-ANSI terminal. Any clone failure is surfaced after the batch and aborts the build. Which repos have a host reference is decided on the host before the parallel section; each worker attaches its own reference just before its clone and detaches it as soon as the clone is done (#826). Attaches and detaches share a lock, because a device removal is a read-modify-write of the whole device map and would drop an attach that landed in between. Attaching lazily is what keeps a VM within its 8 PCI hotplug slots (see "Devices are attached before start"): mounting every reference up front lost the 9th one to the network, silently. The slots are a budget (`HotplugSlots`) that starts at `min(references, 8)` on a VM and is unbounded for a container. It is a hint, not a count: an attach Incus refuses for want of a slot retires one permit for good and waits for another, so a device nobody counted shrinks the budget instead of reintroducing the bug, and only when the budget would reach zero does a repo clone from the network, with a note saying why on its line. The latch the primes wait on counts *planned* references, each counted down once, in a `finally`, after its attach is resolved and anything attached is detached, so a failed or re-queued attach can neither hang the primes nor land after them. Each repo's declared `prime` command (also captured, no PTY) runs in the same worker once that repo's clone is done **and every reference has been detached**, so priming still pipelines with the network clones in flight. The reason is that a reference mount is the host checkout's whole working tree: untracked `.env` files, stashes, unpushed branches, and credentials in `.git/config` URLs. A prime command is arbitrary code with network access, and the old "remove all references after everything" order let any repo's prime read every mounted checkout (#765). A failed detach fails the build rather than prime next to a mount. The concurrency bound is a semaphore in `prepareOne` taken around the clone and the prime separately, not `TerminalProgress`'s per-task slot. A worker waiting for the detaches must not hold a slot, or with more referenced repos than slots the clones that would detach them could never start. A single progress line per repo advances Cloning → Priming → ✓/✗. Failures are aggregated and abort the build; as a best-effort fail-fast, once any repo fails a clone that completes afterward skips launching its (potentially expensive) prime — primes already in flight run to completion.
 
 **Local-clone optimization**: When `host-paths` or `repo-paths` is configured in `~/.config/incus-spawn/config.yaml`, the build checks whether a matching host-side checkout exists before cloning. The lookup first checks direct children of each configured base directory, then recursively scans subdirectories up to 4 levels deep (skipping known non-project directories like `.git`, `node_modules`, `target`, `build`, `vendor`, etc.) to handle repos organized in nested folder structures (e.g. `~/Code/java/repo-a`). When a repo subdirectory exists in more than one location, the build fails with an error instructing the user to add an explicit `repo-paths` entry to disambiguate. Matching uses URL normalization (strips scheme, `user@`, SSH colon separator, trailing `.git`, `www.`, then lowercases) and checks **all** git remotes, not just `origin` — this handles the common case where the user's fork is `origin` and the canonical upstream is `upstream`. If a match is found, the host directory is temporarily mounted into the container as a read-only Incus disk device (`readonly=true shift=true`) at a fixed path under `/var/lib/incus-spawn/repo-ref/` and cloned locally via `git clone --no-hardlinks`. This copies pack files directly — no network transfer and, critically, no `git repack` or dissociation step. The old approach used `git clone --reference` and then ran `git repack -a -d` to make the clone self-contained before unmounting the reference; for large repos this repack was the dominant cost (re-reading, re-deltifying, and rewriting every object). The local-clone approach avoids it entirely: pack files are copied as-is, then the remote URL is fixed to the real origin and a `git fetch` picks up any commits added since the last host refresh (usually nothing — `HostRepoRefresh` just ran — so only ref advertisements travel the network). If a specific branch was requested, it is checked out after the fetch supplies the ref. The clone includes objects reachable from all branches in the reference (pack files can't be efficiently subsetted), but only the needed refs are set up; extra objects are harmless dead weight cleaned by a future `git gc`. Only committed history is copied, but the whole checkout (working tree, untracked files, `.git/config`) is *visible* inside the build container while the reference is mounted. That is why no prime command runs until every reference is detached (see above), and why project-local templates get no references at all. If the reference mount, clone, or fetch fails for any reason the build cleans up the partial checkout and falls back transparently to a plain remote clone.
 
@@ -1654,8 +1654,7 @@ What it shows:
   SMM entry is expensive under nesting, and OVMF enters it per vCPU. With it off, the firmware
   takes ~5 s at 8 or 30 vCPUs. On Sanne's host, one level of virtualization, #1238 measured
   ~4.3 s from the request to the guest kernel starting, copy and QEMU start included, so there
-  Secure Boot costs at most that. Whether to turn it off is a decision, not a tuning: it is a
-  guest protection.
+  Secure Boot costs at most that.
 - **The kernel's console output was the next largest.** The released image boots with
   `console=tty1 console=ttyS0` at the default log level, ~125 KB per boot through an emulated
   UART and framebuffer. incus-spawn-images#19 (a draft; it reaches users only with an image
@@ -1675,9 +1674,8 @@ What it shows:
   whose hardware a host-only dracut would detect.
 - **Memory slows the kernel, vCPUs slow the firmware.** 12 GiB instead of 4 added ~1.7 s of
   kernel time (memory zone setup); 30 vCPUs instead of 8 added ~12 s of firmware, all of it
-  SMM. The VM in #1238 had 32 vCPUs and 15 GiB (isx's default VM memory is a quarter of host
-  RAM, up to 16 GiB), the slow end of both; smaller defaults would trade boot time against the
-  work the VM is for.
+  SMM, which turning Secure Boot off removes. The VM in #1238 had 32 vCPUs and 15 GiB (isx's
+  default VM memory is a quarter of host RAM, up to 16 GiB).
 - **isx's own polling can add at most a quarter of a second, by its code.** Exec answered
   0.06-0.11 s after Incus reported the agent connected, with the script probing every 50 ms.
   `waitForReady` reads the same report every 250 ms (`VM_POLL_INTERVAL_MS`) and probes with
@@ -1686,6 +1684,53 @@ What it shows:
 
 Not measured: a VM on bare metal (one level of virtualization, as on Sanne's host) and VMs
 inside the macOS appliance (aarch64 firmware has no SMM, so the Secure Boot finding is x86-only).
+
+What was decided (Sanne, 2026-10-10, on #1240):
+
+- **Secure Boot is off for every VM.** It guards the guest's boot chain against tampering from
+  inside the guest, which is not what an isx VM is for: the agent in it has root anyway, and the
+  isolation isx stands for is the VM boundary and the proxy, which this leaves alone. VM builds
+  set `security.secureboot=false` in the one write `InstanceLifecycle.prepareVmBuild` makes,
+  `InstanceLifecycle.configureBranch` sets it on every VM branch in the write it already makes,
+  and `startForUse` (`isx shell`, `isx run`, the TUI, MCP) on a VM that still has it on, in the
+  write that rotates its secret: none of these adds a request. `isx project create` sets it on
+  its copy of the parent with one write of its own, off the latency path. Other starts of an
+  existing VM -- template updates, agent recovery -- leave it as it is: a template built before
+  this keeps Secure Boot until it is rebuilt, though its branches never get it.
+- **A VM's default vCPU count is capped at 8, and on a hybrid host at its top tier** (Sanne's
+  choice "C" on #1240). `ResourceLimits.defaultVmCpus()` is `max(1, min(8, host CPUs - 2))` on a
+  host with one tier of cores, and `max(1, min(8, host CPUs - 2, top-tier physical cores))` on
+  a hybrid one (`CpuInfo.hybridTopTierCores()`, read once per process). A host whose tiers
+  cannot be told apart follows the first rule. A 16-core, 32-thread desktop gets 8 instead of
+  30, a 4-core, 8-thread host 6 and a 4-core host without SMT 2, as before #1238, an i7-12700H (6
+  P-cores, 8 E-cores, 20 threads) 6 instead of 18, and an i9-13900K (8 P-cores, 32 threads) 8.
+  It is a default, not a ceiling: `--cpu` still sets any count. A host is hybrid when its
+  online CPUs fall into more than one tier; the top tier's cores are then counted with a core's
+  SMT threads once. On Linux the tier
+  comes from the first source that tells CPUs apart: the hybrid PMU's list of performance CPUs
+  (`/sys/devices/cpu_core/cpus`), which Intel 12th-14th gen hybrids with Hyper-Threading need
+  because intel_pstate leaves every `cpu_capacity` at 1024 there, and Arrow Lake, whose E-cores
+  reach about 80% of its P-cores by every other measure; then `cpu_capacity` where it differs
+  (ARM big.LITTLE, Intel hybrids without SMT); then `cpufreq/cpuinfo_max_freq` where it differs
+  (AMD Zen 5 + Zen 5c hybrids, which have neither). With the last two, the top tier is every CPU
+  within 80% of the highest: favoured cores and a dual-CCD X3D's slower CCD stay one tier (so
+  such a host is not hybrid), and a three-tier ARM SoC's top tier is its prime cores. A physical
+  core is the set of CPUs in its `topology/core_cpus_list` (`thread_siblings_list` before 5.3),
+  not its package and core id: on device-tree Arm with Linux 6.x, `core_id` restarts in every
+  cluster and the package is 0 throughout, so an RK3588's four A76 cores would count as two.
+  Anything that leaves the tier in doubt makes it unknown, which choice C maps to the one-tier
+  rule: an unreadable capacity, a capacity on some CPUs but not others, a top-tier CPU without a
+  core list. CPU detection stops here for #1238: hardware nobody can test here degrades to the
+  one-tier rule.
+  The same scan feeds `performanceCores()`, so clone concurrency on such hybrids
+  now counts only their top tier's threads (an i7-12700H: 12 of 20). On macOS a host is hybrid
+  when `hw.nperflevels` is above 1, and its top tier is `hw.perflevel0.logicalcpu`, which
+  equals the physical count on performance cores; both come from one `sysctl`, and a failed
+  read is not kept.
+- **Of the services #1238 listed, only `dnf-makecache.timer` is masked** (incus-spawn-images,
+  `configure-base.sh`, container and VM alike). The LVM units have a user in a nested Incus with
+  an LVM pool, and `upower` and `rtkit-daemon` come from templates, rtkit for GUI audio.
+- **Resuming a VM from a stateful snapshot is deferred**; it would need its own design.
 
 ### Why nothing is pushed into an instance just before it starts
 
