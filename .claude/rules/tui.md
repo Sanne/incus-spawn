@@ -15,6 +15,7 @@ paths:
   - "cli/src/main/java/dev/incusspawn/command/InstanceActions.java"
   - "cli/src/main/java/dev/incusspawn/command/DiskUsageModel.java"
   - "cli/src/main/java/dev/incusspawn/command/UsageFormat.java"
+  - "cli/src/main/java/dev/incusspawn/command/MainScreen.java"
   - "cli/src/main/java/dev/incusspawn/command/TemplateDetails.java"
   - "cli/src/main/java/dev/incusspawn/command/TemplateDetailView.java"
   - "cli/src/main/java/dev/incusspawn/command/InstanceDetailView.java"
@@ -46,6 +47,7 @@ A notice meant for the TUI belongs on `Warnings`, so it costs no keypress.
 `TuiLaunchHandOverTest` drives `IncusSpawn.launchTui(ready, tui)` with a `StandInTui` (test scope, overriding `runTuiLoop`/`waitForUser`, reading `warningMessages()`) and fails if either end of the window is unwired.
 
 `Tui` is the TUI implementation using Tamboui widgets.
+`MainScreen` draws the screen below the dialogs (header, both tables, legend, search bar, context line and key bar) from what `Tui` holds, and changes none of it.
 `isx list` is `ListCommand`, which prints the listing and never opens the TUI; both parse the Incus listing through `InstanceListing`.
 Two-panel layout (Templates + Instances) with modal dialogs for branching, renaming, and building.
 
@@ -118,7 +120,7 @@ Env values that look secret (`SecretRedactor`) are masked.
 `rebuildRowData()` records the key in `rowsAgeKey`, and `tickLiveRefresh()` rebuilds the rows when the minute moves on; no Incus call is involved.
 Legacy date-only stamps use calendar days ("today", "yesterday").
 
-**Disk-space metrics**: An always-present **header band** (`renderHeader`) sits above the panels.
+**Disk-space metrics**: An always-present **header band** (`MainScreen.renderHeader`) sits above the panels.
 A bold accent "brand chip" (` isx ` reverse-video, plus dim version) anchors app identity on the left, and a compact **storage gauge** is right-aligned on the same row when pool usage is available (fed by `IncusClient.getPoolUsageBytes(findUsablePool())`, cached in `poolUsage`, refreshed by each `reloadData()` and each light live refresh -- never per frame).
 Gauge fill colour is green/amber/red at the `STORAGE_WARN_PERCENT`/`STORAGE_CRIT_PERCENT` thresholds; at critical it also raises a one-shot status warning.
 The gauge bar grows with the terminal (`HEADER_BAR_MIN`..`HEADER_BAR_MAX`, ~width/5).

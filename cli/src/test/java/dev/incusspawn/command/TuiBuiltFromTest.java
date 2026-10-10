@@ -56,7 +56,7 @@ class TuiBuiltFromTest {
         list.buildTemplateRowData();
         var template = new InstanceListing.TemplateInfo(TEMPLATE, "", "2026-10-01", "container",
                 BuildInfo.instance().version(), "sha-of-an-older-definition", "", "", -1, -1, "container");
-        return list.buildContextLine(template, null, true).spans().stream()
+        return new MainScreen(list).buildContextLine(template, null, true).spans().stream()
                 .map(s -> s.content()).reduce("", String::concat);
     }
 

@@ -49,11 +49,7 @@ import dev.tamboui.backend.panama.PanamaBackend;
 import dev.incusspawn.vm.VmManager;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
-import dev.tamboui.text.Line;
-import dev.tamboui.text.Span;
-import dev.tamboui.text.Text;
 import dev.tamboui.tui.TuiConfig;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
@@ -61,20 +57,12 @@ import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.tui.event.TickEvent;
 import dev.tamboui.widgets.block.Block;
-import dev.tamboui.widgets.block.BorderType;
-import dev.tamboui.widgets.block.Borders;
-import dev.tamboui.widgets.input.TextInput;
 import dev.tamboui.widgets.input.TextInputState;
-import dev.tamboui.widgets.paragraph.Paragraph;
 import dev.tamboui.widgets.table.Row;
-import dev.tamboui.widgets.table.Table;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import dev.tamboui.widgets.scrollbar.Scrollbar;
-import dev.tamboui.widgets.scrollbar.ScrollbarOrientation;
-import dev.tamboui.widgets.scrollbar.ScrollbarState;
 import dev.tamboui.widgets.table.TableState;
 import dev.incusspawn.RuntimeServices;
 
@@ -95,8 +83,6 @@ import static dev.incusspawn.command.DiskUsageModel.restampFromLive;
 import static dev.incusspawn.command.DiskUsageModel.sharedBaseBytes;
 import static dev.incusspawn.command.UsageFormat.bar;
 import static dev.incusspawn.command.UsageFormat.diskCell;
-import static dev.incusspawn.command.UsageFormat.gibShort;
-import static dev.incusspawn.command.UsageFormat.runningSummary;
 
 import dev.incusspawn.command.InstanceListing.InstanceInfo;
 import dev.incusspawn.command.InstanceListing.TemplateInfo;
@@ -116,14 +102,14 @@ public class Tui {
     private ToolDefLoader toolDefLoader;
     private java.util.List<ToolSetup> cdiTools;
 
-    private BackgroundTaskManager backgroundTasks;
+    BackgroundTaskManager backgroundTasks;
 
     private InstanceLockManager lockManager;
 
-    private final TuiTheme theme = TerminalThemeDetector.detect();
+    final TuiTheme theme = TerminalThemeDetector.detect();
     private final ModalRenderer modal = new ModalRenderer(theme);
     /** Warnings from any operation while the TUI runs; the status line holds only one. */
-    private final WarningLog warningLog = new WarningLog();
+    final WarningLog warningLog = new WarningLog();
     /**
      * Where {@link Warnings} go while the TUI draws or reloads (#872). Its own channel, so what it
      * has reported is remembered across TUI sessions, while a build run on the released terminal
@@ -162,6 +148,7 @@ public class Tui {
         @Override public boolean isMacOS() { return Platform.isMacOS(); }
     });
 
+    private final MainScreen mainScreen = new MainScreen(this);
     private final InstanceActions instanceActions =
             new InstanceActions(() -> this.imageDefs, () -> this.toolDefLoader, () -> this.cdiTools);
 
@@ -245,10 +232,10 @@ public class Tui {
     String statusMessage;
     private String progressMessage;
     // Search/filter state
-    private boolean searchActive = false;
-    private TextInputState searchInput;
+    boolean searchActive = false;
+    TextInputState searchInput;
     private List<TemplateInfo> allTemplateEntries;
-    private List<InstanceInfo> allEntries;
+    List<InstanceInfo> allEntries;
     // AI Help modal state
     /** Kept after closing, so reopening preselects the account used last. */
     private volatile HelpChatModal helpChat;
@@ -271,17 +258,17 @@ public class Tui {
     private static final int PAGE_SIZE = 10;
 
     // Two-panel focus
-    private enum Panel { TEMPLATES, INSTANCES }
-    private Panel focusedPanel = Panel.TEMPLATES;
+    enum Panel { TEMPLATES, INSTANCES }
+    Panel focusedPanel = Panel.TEMPLATES;
 
     // Template panel data (top)
-    private Map<String, dev.incusspawn.config.ImageDef> imageDefs;
-    private List<TemplateInfo> templateEntries;
-    private List<Row> templateRows;
-    private boolean anyTemplateOutdated;
-    private boolean anyDefinitionChanged;
-    private boolean anyParentRebuilt;
-    private java.util.Set<String> templatesDefChanged = java.util.Set.of();
+    Map<String, dev.incusspawn.config.ImageDef> imageDefs;
+    List<TemplateInfo> templateEntries;
+    List<Row> templateRows;
+    boolean anyTemplateOutdated;
+    boolean anyDefinitionChanged;
+    boolean anyParentRebuilt;
+    java.util.Set<String> templatesDefChanged = java.util.Set.of();
     /** Where each image definition came from, for what it overrides. */
     private dev.incusspawn.config.LayeredDefinitions<dev.incusspawn.config.ImageDef> imageLayers =
             new dev.incusspawn.config.LayeredDefinitions<>("image");
@@ -289,20 +276,20 @@ public class Tui {
     private Map<String, StampedFile> templatesBuiltFrom = Map.of();
 
     private record StampedFile(String stamp, String file) {}
-    private java.util.Set<String> templatesParentRebuilt = java.util.Set.of();
+    java.util.Set<String> templatesParentRebuilt = java.util.Set.of();
     private java.util.Set<String> templatesOutOfSync = java.util.Set.of();
     private java.util.Set<String> storedSourceTemplates = java.util.Set.of();
-    private TableState templateTableState;
+    TableState templateTableState;
 
     // Instance panel data (bottom)
-    private List<InstanceInfo> entries;
-    private List<Row> tableRows;
+    List<InstanceInfo> entries;
+    List<Row> tableRows;
     private List<InstanceInfo> rowToEntry;
     private TableState instanceTableState;
 
     // Storage-pool usage for the top gauge; refreshed in reloadData (not per-frame,
     // since it costs an API call). Null when no pool usage is available.
-    private IncusClient.PoolUsage poolUsage;
+    IncusClient.PoolUsage poolUsage;
     // Resolved once and cached: the pool name is constant for a TUI session, so we
     // avoid re-probing the storage-pool list (an extra HTTP call) on every reload.
     private String usagePoolName;
@@ -348,8 +335,8 @@ public class Tui {
     // Set true once we've shown the low-space warning for the current session,
     // so the reminder doesn't clobber every other status message on each refresh.
     private boolean storageWarningShown;
-    private volatile ProxyHealthCheck.ProxyInfo proxyInfo;
-    private volatile String applianceSkewMessage;
+    volatile ProxyHealthCheck.ProxyInfo proxyInfo;
+    volatile String applianceSkewMessage;
     private boolean applianceSkewFirstLoad = true;
     // Defer the first proxy health check so the TUI renders immediately instead of
     // stalling up to 500ms on the connect timeout when the proxy isn't running.
@@ -1931,10 +1918,10 @@ public class Tui {
                         Constraint.length(footerHeight))
                 .split(area);
 
-        renderHeader(frame, chunks.get(0));
-        renderTemplateTable(frame, chunks.get(1));
-        renderInstanceTable(frame, chunks.get(2), tableState);
-        renderToolbar(frame, chunks.get(3), tableState, hasStatus);
+        mainScreen.renderHeader(frame, chunks.get(0));
+        mainScreen.renderTemplateTable(frame, chunks.get(1));
+        mainScreen.renderInstanceTable(frame, chunks.get(2), tableState);
+        mainScreen.renderToolbar(frame, chunks.get(3), tableState, hasStatus);
 
         if (mode != Mode.BROWSE) {
             renderModal(frame, area, tableState);
@@ -1944,146 +1931,6 @@ public class Tui {
         if (progressMessage != null) {
             modal.renderProgressOverlay(frame, area, progressMessage);
         }
-    }
-
-    // Compact storage gauge width targets for the header's right-hand side.
-    private static final int HEADER_BAR_MIN = 10;  // floor for the bar fill (excl. borders)
-    private static final int HEADER_BAR_MAX = 32;  // cap so the bar stays a gauge, not a ruler
-
-    /**
-     * Render the always-present header band above the panels: a bold accent "brand chip" on the
-     * left for app identity, and — when pool usage is available — a compact storage gauge
-     * right-aligned on the same row. The gauge's fill colour signals the threshold
-     * (green → amber → red) while the segment glyphs carry the level independently of colour, so
-     * it reads on mono terminals too. Both the gauge and (last) its bar drop out on narrow
-     * terminals so the brand always survives.
-     */
-    private void renderHeader(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
-        fillBackground(frame, area, theme.contextBg());
-        if (area.width() <= 0) return;
-        var bg = theme.contextBg();
-
-        // Left: brand chip (reverse-video accent tag) + dim version. Stands out, ~5 cells.
-        var left = new ArrayList<Span>();
-        left.add(Span.styled(" isx ", Style.EMPTY.bold().fg(bg).bg(theme.contextAccentFg())));
-        int leftW = 5;
-        var version = BuildInfo.instance().version();
-        if (version != null && !version.isBlank()) {
-            var vtext = "  " + version;
-            left.add(Span.styled(vtext, Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
-            leftW += vtext.length();
-        }
-
-        // Right: compact storage gauge, only when we have pool usage and room for it. Built first
-        // so the centre badge can claim the leftover gap without ever evicting the gauge.
-        var gauge = new ArrayList<Span>();
-        int gaugeW = 0;
-        if (poolUsage != null && poolUsage.totalBytes() > 0) {
-            int percent = poolUsage.percent();
-            Color fillColor = percent >= IncusClient.PoolUsage.CRIT_PERCENT ? theme.statusFailure()
-                    : percent >= STORAGE_WARN_PERCENT ? theme.statusWarning()
-                    : theme.statusRunning();
-            var glabel = percent >= IncusClient.PoolUsage.CRIT_PERCENT ? "⚠ Storage " : "Storage ";
-            var readout = "  " + percent + "%  " + gibShort(poolUsage.usedBytes())
-                    + "/" + gibShort(poolUsage.totalBytes());
-
-            int fixed = glabel.length() + readout.length();       // gauge text, sans bar/borders
-            int avail = area.width() - leftW - 1;                 // -1 keeps at least one filler cell
-            // Grow the bar with the terminal (up to HEADER_BAR_MAX) so it stays substantial on wide
-            // screens and the whole gauge sits closer to centre instead of hugging the far edge.
-            int idealBar = Math.max(HEADER_BAR_MIN, Math.min(HEADER_BAR_MAX, area.width() / 5));
-            int barInner = Math.min(idealBar, avail - fixed - 2 /*borders*/);
-            int candidateW = fixed + (barInner >= 1 ? barInner + 2 : 0);
-
-            if (avail - candidateW >= 0) {                        // gauge (maybe sans bar) fits
-                gaugeW = candidateW;
-                gauge.add(Span.styled(glabel, Style.EMPTY.bold().fg(theme.contextPrimaryFg()).bg(bg)));
-                if (barInner >= 1) {
-                    gauge.add(Span.styled("▕", Style.EMPTY.fg(fillColor).bg(bg)));
-                    gauge.add(Span.styled(bar(percent, barInner), Style.EMPTY.fg(fillColor).bg(bg)));
-                    gauge.add(Span.styled("▏", Style.EMPTY.fg(fillColor).bg(bg)));
-                }
-                gauge.add(Span.styled(readout, Style.EMPTY.fg(fillColor).bg(bg)));
-                if (percent >= STORAGE_WARN_PERCENT) {
-                    var hint = "  C:clean";
-                    if (avail - gaugeW >= hint.length()) {
-                        gauge.add(Span.styled(hint, Style.EMPTY.fg(theme.textDim()).bg(bg)));
-                        gaugeW += hint.length();
-                    }
-                }
-            }
-        }
-
-        // Centre: auth-error warning (highest priority) or a quiet "N running" badge,
-        // filling the gap between the version and the gauge.
-        var centre = new ArrayList<Span>();
-        int centreW = 0;
-        var pi = proxyInfo;
-        if (pi != null && pi.hasAuthError()) {
-            var label = "  ⚠ Auth expired — run: " + pi.authRemediationHint();
-            int need = label.length();
-            if (area.width() - leftW - gaugeW - need >= 1) {
-                centre.add(Span.styled(label, Style.EMPTY.bold().fg(theme.statusWarning()).bg(bg)));
-                centreW = need;
-            }
-        }
-        if (centreW == 0) {
-            var skew = applianceSkewMessage;
-            if (skew != null) {
-                var label = "  !! " + skew;
-                int need = label.length();
-                if (area.width() - leftW - gaugeW - need >= 1) {
-                    centre.add(Span.styled(label, Style.EMPTY.bold().fg(theme.statusWarning()).bg(bg)));
-                    centreW = need;
-                }
-            }
-        }
-        if (centreW == 0) {
-            int unread = warningLog.unread();
-            if (unread > 0) {
-                var label = "  ⚠ " + unread + (unread == 1 ? " warning" : " warnings")
-                        + " (" + WarningsModal.KEY + ")";
-                int need = label.length();
-                if (area.width() - leftW - gaugeW - need >= 1) {
-                    centre.add(Span.styled(label, Style.EMPTY.bold().fg(theme.statusWarning()).bg(bg)));
-                    centreW = need;
-                }
-            }
-        }
-        if (centreW == 0) {
-            var badge = runningSummary(runningCounts(BadgeKind.CONTAINER), runningCounts(BadgeKind.VM));
-            if (!badge.isEmpty()) {
-                int need = 4 + badge.length();                    // "  ● " prefix + text
-                if (area.width() - leftW - gaugeW - need >= 1) {  // keep >=1 filler cell
-                    centre.add(Span.styled("  ● ", Style.EMPTY.fg(theme.statusRunning()).bg(bg)));
-                    centre.add(Span.styled(badge, Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
-                    centreW = need;
-                }
-            }
-        }
-
-        // Assemble left → centre → filler → gauge.
-        var spans = new ArrayList<Span>(left);
-        spans.addAll(centre);
-        int fillerW = area.width() - leftW - centreW - gaugeW;
-        if (fillerW > 0) spans.add(Span.styled(" ".repeat(fillerW), Style.EMPTY.bg(bg)));
-        spans.addAll(gauge);
-        frame.renderWidget(Paragraph.from(Line.from(spans)), area);
-    }
-
-    private enum BadgeKind { CONTAINER, VM }
-
-    /** Count running instances of one kind, across the unfiltered set. */
-    private int runningCounts(BadgeKind kind) {
-        var pool = allEntries != null ? allEntries : entries;
-        if (pool == null) return 0;
-        int n = 0;
-        for (var e : pool) {
-            if (!isRunning(e)) continue;
-            boolean vm = "virtual-machine".equals(e.runtime());
-            if ((kind == BadgeKind.VM) == vm) n++;
-        }
-        return n;
     }
 
     /**
@@ -2155,425 +2002,6 @@ public class Tui {
         return parents;
     }
 
-    private void renderTemplateTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
-        boolean focused = focusedPanel == Panel.TEMPLATES;
-        var borderColor = focused ? theme.panelBorderFocused() : theme.panelBorderUnfocused();
-
-        if (templateEntries.isEmpty()) {
-            var block = Block.builder()
-                    .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                    .title(" Templates ")
-                    .borderStyle(Style.EMPTY.fg(borderColor)).build();
-            frame.renderWidget(block, area);
-            var inner = block.inner(area);
-            if (inner.height() > 0) {
-                frame.renderWidget(Paragraph.from(
-                        Line.styled("  No template definitions found.",
-                                Style.EMPTY.fg(theme.textDim()))), inner);
-            }
-            return;
-        }
-
-        var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" Templates ")
-                .borderStyle(Style.EMPTY.fg(borderColor)).build();
-        frame.renderWidget(block, area);
-        var inner = block.inner(area);
-
-        boolean showLegend = anyTemplateOutdated || anyDefinitionChanged || anyParentRebuilt;
-        dev.tamboui.layout.Rect tableArea;
-        if (showLegend && inner.height() > 2) {
-            var parts = splitVertical(inner, inner.height() - 1, 1);
-            tableArea = parts.get(0);
-            renderLegend(frame, parts.get(1));
-        } else {
-            tableArea = inner;
-        }
-
-        int visibleRows = Math.max(tableArea.height() - 1, 1);
-        boolean needsScroll = templateRows.size() > visibleRows;
-        dev.tamboui.layout.Rect actualTableArea;
-        dev.tamboui.layout.Rect scrollArea;
-        if (needsScroll) {
-            var cols = Layout.horizontal()
-                    .constraints(Constraint.fill(), Constraint.length(1))
-                    .split(tableArea);
-            actualTableArea = cols.get(0);
-            scrollArea = cols.get(1);
-        } else {
-            actualTableArea = tableArea;
-            scrollArea = null;
-        }
-
-        var tableBuilder = Table.builder()
-                .header(Row.from("NAME", "BUILT", "DISK", "DESCRIPTION")
-                        .style(Style.EMPTY.bold().fg(focused ? theme.panelBorderFocused() : theme.panelBorderUnfocused())))
-                .rows(templateRows)
-                .widths(Constraint.min(14), Constraint.length(20), Constraint.length(8), Constraint.fill())
-                .highlightSymbol(focused ? "\u25b8 " : "  ");
-
-        if (focused) {
-            var highlightStyle = Style.EMPTY.bg(theme.highlightBg()).fg(theme.highlightFg());
-            // Preserve modifiers from selected row if it has a pending operation
-            var selected = selectedTemplate();
-            if (selected != null && !selected.pendingOp().isEmpty()) {
-                if (Metadata.OP_DELETING.equals(selected.pendingOp())) {
-                    highlightStyle = highlightStyle.addModifier(dev.tamboui.style.Modifier.DIM)
-                            .addModifier(dev.tamboui.style.Modifier.ITALIC);
-                } else if (Metadata.OP_STOPPING.equals(selected.pendingOp()) || Metadata.OP_RESTARTING.equals(selected.pendingOp())) {
-                    highlightStyle = highlightStyle.addModifier(dev.tamboui.style.Modifier.DIM);
-                }
-            }
-            tableBuilder.highlightStyle(highlightStyle);
-        } else {
-            tableBuilder.highlightStyle(Style.EMPTY);
-        }
-
-        frame.renderStatefulWidget(tableBuilder.build(), actualTableArea, templateTableState);
-
-        if (scrollArea != null) {
-            var scrollbar = Scrollbar.builder()
-                    .orientation(ScrollbarOrientation.VERTICAL_RIGHT)
-                    .thumbStyle(Style.EMPTY.fg(borderColor))
-                    .trackStyle(Style.EMPTY.fg(theme.scrollbarTrack()))
-                    .build();
-            var scrollState = new ScrollbarState()
-                    .contentLength(templateRows.size())
-                    .viewportContentLength(visibleRows)
-                    .position(templateTableState.offset());
-            frame.renderStatefulWidget(scrollbar, scrollArea, scrollState);
-        }
-    }
-
-    private void renderLegend(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
-        var text = "! = outdated  \u25b3 = changed  \u2191 = parent rebuilt ";
-        var padding = Math.max(0, area.width() - text.length());
-        var style = Style.EMPTY.fg(theme.textDim());
-        frame.renderWidget(Paragraph.from(Line.from(
-                Span.styled(" ".repeat(padding) + text, style))), area);
-    }
-
-    private void renderInstanceTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
-                                      TableState tableState) {
-        boolean focused = focusedPanel == Panel.INSTANCES;
-        var borderColor = focused ? theme.panelBorderFocused() : theme.panelBorderUnfocused();
-
-        if (entries.isEmpty()) {
-            var block = Block.builder()
-                    .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                    .title(" Instances ")
-                    .borderStyle(Style.EMPTY.fg(borderColor)).build();
-            frame.renderWidget(block, area);
-            var inner = block.inner(area);
-            if (inner.height() > 1) {
-                var hint = Layout.vertical()
-                        .constraints(Constraint.length(inner.height() / 2), Constraint.length(1))
-                        .split(inner);
-                frame.renderWidget(Paragraph.from(
-                        Line.styled("  No instances. Select a template and press Enter to create one.",
-                                Style.EMPTY.fg(theme.textDim()))), hint.get(1));
-            }
-            return;
-        }
-
-        var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" Instances ")
-                .borderStyle(Style.EMPTY.fg(borderColor)).build();
-        frame.renderWidget(block, area);
-        var inner = block.inner(area);
-
-        int visibleRows = Math.max(inner.height() - 1, 1);
-        boolean needsScroll = tableRows.size() > visibleRows;
-        dev.tamboui.layout.Rect actualArea;
-        dev.tamboui.layout.Rect scrollArea;
-        if (needsScroll) {
-            var cols = Layout.horizontal()
-                    .constraints(Constraint.fill(), Constraint.length(1))
-                    .split(inner);
-            actualArea = cols.get(0);
-            scrollArea = cols.get(1);
-        } else {
-            actualArea = inner;
-            scrollArea = null;
-        }
-
-        var tableBuilder = Table.builder()
-                .header(Row.from("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "DISK")
-                        .style(Style.EMPTY.bold().fg(focused ? theme.panelBorderFocused() : theme.panelBorderUnfocused())))
-                .rows(tableRows)
-                .widths(Constraint.min(10), Constraint.min(7),
-                        Constraint.min(11), Constraint.min(10),
-                        Constraint.length(10), Constraint.min(8), Constraint.length(6))
-                .highlightSymbol(focused ? "\u25b8 " : "  ");
-
-        if (focused) {
-            var highlightStyle = Style.EMPTY.bg(theme.highlightBg()).fg(theme.highlightFg());
-            // Preserve modifiers from selected row if it has a pending operation
-            var selected = selectedEntry(tableState);
-            if (selected != null && !selected.pendingOp().isEmpty()) {
-                if (Metadata.OP_DELETING.equals(selected.pendingOp())) {
-                    highlightStyle = highlightStyle.addModifier(dev.tamboui.style.Modifier.DIM)
-                            .addModifier(dev.tamboui.style.Modifier.ITALIC);
-                } else if (Metadata.OP_STOPPING.equals(selected.pendingOp()) || Metadata.OP_RESTARTING.equals(selected.pendingOp())) {
-                    highlightStyle = highlightStyle.addModifier(dev.tamboui.style.Modifier.DIM);
-                }
-            }
-            tableBuilder.highlightStyle(highlightStyle);
-        } else {
-            tableBuilder.highlightStyle(Style.EMPTY);
-        }
-
-        frame.renderStatefulWidget(tableBuilder.build(), actualArea, tableState);
-
-        if (scrollArea != null) {
-            var scrollbar = Scrollbar.builder()
-                    .orientation(ScrollbarOrientation.VERTICAL_RIGHT)
-                    .thumbStyle(Style.EMPTY.fg(borderColor))
-                    .trackStyle(Style.EMPTY.fg(theme.scrollbarTrack()))
-                    .build();
-            var scrollState = new ScrollbarState()
-                    .contentLength(tableRows.size())
-                    .viewportContentLength(visibleRows)
-                    .position(tableState.offset());
-            frame.renderStatefulWidget(scrollbar, scrollArea, scrollState);
-        }
-    }
-
-    private record KeyItem(Line line, int width) {}
-
-    private void renderToolbar(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
-                                TableState tableState, boolean hasStatus) {
-        fillBackground(frame, area, theme.barBg());
-
-        var template = selectedTemplate();
-        boolean hasTemplate = template != null;
-        boolean isBuilt = hasTemplate && !"not built".equals(template.buildStatus());
-        var selected = selectedEntry(tableState);
-        boolean hasInstance = selected != null;
-        boolean running = hasInstance && isRunning(selected);
-        boolean onTemplates = focusedPanel == Panel.TEMPLATES;
-
-        var items = new ArrayList<KeyItem>();
-        items.add(makeKey("F1", "Info", false));
-        items.add(makeKey("F2", "Shell", !hasInstance || onTemplates));
-        items.add(makeKey("F3", "Details", onTemplates ? !hasTemplate : !hasInstance));
-        items.add(makeKey("F4", "Branch\u2026", onTemplates ? !isBuilt : !hasInstance));
-        items.add(makeKey("F5", "Build…", !hasTemplate || !onTemplates));
-        items.add(makeKey("F6", "Rename\u2026", !hasInstance || onTemplates));
-        items.add(makeKey("F7", "Stop", !running || onTemplates));
-        items.add(makeKey("F8", "Destroy\u2026", onTemplates ? !isBuilt : !hasInstance));
-        boolean hasActions = hasInstance && !onTemplates && hasActionsForInstance(selected);
-        items.add(makeKey("F9", "Actions", !hasActions));
-        items.add(makeKey("F10", "Quit", false));
-
-        var contextLine = buildContextLine(template, selected, onTemplates);
-
-        if (hasStatus) {
-            var rows = splitVertical(area, 1, 1, 1);
-            var singleLine = statusMessage.replaceAll("[\\n\\r]+", " ").strip();
-            var isError = singleLine.startsWith("Failed") || singleLine.startsWith("Invalid")
-                    || singleLine.startsWith("Template");
-            var isWarning = singleLine.startsWith("⚠") || singleLine.startsWith("Warning");
-            var statusBg = theme.statusBarBg();
-            var msgFg = isError ? theme.statusBarErrorFg()
-                    : isWarning ? theme.statusWarning() : theme.contextPrimaryFg();
-            frame.renderWidget(
-                    Paragraph.builder()
-                            .text(Text.from(Line.styled(" " + singleLine,
-                                    Style.EMPTY.bold().fg(msgFg))))
-                            .style(Style.EMPTY.bg(statusBg))
-                            .build(), rows.get(0));
-            if (searchActive) {
-                renderSearchBar(frame, rows.get(1));
-            } else {
-                renderContextLine(frame, rows.get(1), contextLine);
-            }
-            renderKeyItems(frame, rows.get(2), items);
-        } else {
-            var rows = splitVertical(area, 1, 1);
-            if (searchActive) {
-                renderSearchBar(frame, rows.get(0));
-            } else {
-                renderContextLine(frame, rows.get(0), contextLine);
-            }
-            renderKeyItems(frame, rows.get(1), items);
-        }
-    }
-
-    private void renderSearchBar(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
-        fillBackground(frame, area, theme.contextBg());
-        var cols = Layout.horizontal()
-                .constraints(Constraint.length(3), Constraint.fill())
-                .split(area);
-        frame.renderWidget(Paragraph.from(Line.styled(" / ",
-                Style.EMPTY.bold().fg(theme.contextAccentFg()).bg(theme.contextBg()))), cols.get(0));
-        TextInput.builder()
-                .placeholder("type to filter…")
-                .style(Style.EMPTY.fg(theme.contextPrimaryFg()).bg(theme.contextBg()))
-                .placeholderStyle(Style.EMPTY.fg(theme.textDim()).bg(theme.contextBg()))
-                .build()
-                .renderWithCursor(cols.get(1), frame.buffer(), searchInput, frame);
-    }
-
-
-    Line buildContextLine(TemplateInfo template, InstanceInfo instance, boolean onTemplates) {
-        var bg = theme.contextBg();
-        if (onTemplates && template != null) {
-            var spans = new ArrayList<Span>();
-            spans.add(Span.styled(" " + template.name(), Style.EMPTY.bold().fg(theme.contextPrimaryFg()).bg(bg)));
-            boolean hasWarning = false;
-            if (!"not built".equals(template.buildStatus())) {
-                var warnStyle = Style.EMPTY.fg(theme.statusWarning()).bg(bg);
-                var currentVersion = BuildInfo.instance().version();
-                if (!template.buildVersion().isEmpty() && !template.buildVersion().equals(currentVersion)) {
-                    spans.add(Span.styled("  ! built with isx v" + template.buildVersion()
-                            + " (current: v" + currentVersion + ")", warnStyle));
-                    hasWarning = true;
-                } else if (template.buildVersion().isEmpty()) {
-                    spans.add(Span.styled("  ! built before isx version tracking", warnStyle));
-                    hasWarning = true;
-                }
-                if (templatesDefChanged.contains(template.name())) {
-                    // The file name only: a full path could push the warnings after it off the bar
-                    var def = imageDefs.get(template.name());
-                    var builtFrom = TemplateDetailView.otherBuildFile(builtFrom(template.name()), def);
-                    spans.add(Span.styled("  △ definition changed since last build"
-                            + (builtFrom != null ? " (built from "
-                                    + TemplateDetailView.shortSourceLabel(builtFrom, def.getSource())
-                                    + ")" : ""),
-                            warnStyle));
-                    hasWarning = true;
-                }
-                if (templatesParentRebuilt.contains(template.name())) {
-                    var parentName = imageDefs.get(template.name()).getParent();
-                    spans.add(Span.styled("  ↑ parent " + parentName + " was rebuilt since last build", warnStyle));
-                    hasWarning = true;
-                }
-            }
-            if (!hasWarning && template.description() != null && !template.description().isEmpty()) {
-                spans.add(Span.styled("  " + template.description(), Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
-            }
-            return Line.from(spans);
-        }
-        if (!onTemplates && instance != null) {
-            var spans = new ArrayList<Span>();
-            spans.add(Span.styled(" " + instance.name(), Style.EMPTY.bold().fg(theme.contextPrimaryFg()).bg(bg)));
-            if (!instance.parent().isEmpty() && !"-".equals(instance.parent())) {
-                spans.add(Span.styled("  from " + OutputFormat.oneLine(instance.parent()), Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
-            }
-            if (!instance.ipv4().isEmpty()) {
-                spans.add(Span.styled("  " + instance.ipv4(), Style.EMPTY.fg(theme.contextAccentFg()).bg(bg)));
-            }
-            if (!instance.networkMode().isEmpty()) {
-                spans.add(Span.styled("  [" + instance.networkMode().toLowerCase() + "]",
-                        Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
-            }
-            return Line.from(spans);
-        }
-        return Line.styled("", Style.EMPTY);
-    }
-
-    private void renderContextLine(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Line line) {
-        fillBackground(frame, area, theme.contextBg());
-
-        // Reserve right side for background tasks if any exist
-        var tasks = backgroundTasks.getActiveTasks();
-        if (!tasks.isEmpty()) {
-            // Estimate width needed for background tasks
-            int taskWidth = estimateBackgroundTaskWidth(tasks);
-            if (taskWidth > 0 && area.width() > 30) {
-                int allocatedWidth = Math.min(taskWidth, area.width() / 2);
-                var parts = Layout.horizontal()
-                        .constraints(Constraint.fill(), Constraint.length(allocatedWidth))
-                        .split(area);
-                frame.renderWidget(Paragraph.from(line), parts.get(0));
-                renderBackgroundTasksInline(frame, parts.get(1), tasks);
-                return;
-            }
-        }
-
-        frame.renderWidget(Paragraph.from(line), area);
-    }
-
-    private int estimateBackgroundTaskWidth(List<dev.incusspawn.tui.BackgroundTask> tasks) {
-        var running = tasks.stream()
-                .filter(t -> t.status() == dev.incusspawn.tui.BackgroundTask.TaskStatus.RUNNING)
-                .toList();
-        var completed = tasks.stream()
-                .filter(t -> t.status() != dev.incusspawn.tui.BackgroundTask.TaskStatus.RUNNING)
-                .toList();
-
-        int width = 0;
-        if (!running.isEmpty()) {
-            width += 15; // " Running: X "
-            int toShow = Math.min(running.size(), 2);
-            for (int i = 0; i < toShow; i++) {
-                width += running.get(i).displayName().length() + 5; // name + "... "
-            }
-            if (running.size() > 2) {
-                width += 10; // " +X more "
-            }
-        }
-        for (var task : completed) {
-            if (task instanceof dev.incusspawn.tui.BackgroundTask.Completed completedTask) {
-                width += completedTask.getDisplayText().length() + 4; // symbol + spaces
-            }
-        }
-        return Math.min(width, 80); // Cap at reasonable width
-    }
-
-    private void renderBackgroundTasksInline(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
-                                             List<dev.incusspawn.tui.BackgroundTask> tasks) {
-        var running = tasks.stream()
-                .filter(t -> t.status() == dev.incusspawn.tui.BackgroundTask.TaskStatus.RUNNING)
-                .toList();
-        var completed = tasks.stream()
-                .filter(t -> t.status() != dev.incusspawn.tui.BackgroundTask.TaskStatus.RUNNING)
-                .toList();
-
-        var spans = new ArrayList<Span>();
-
-        // Show running tasks
-        if (!running.isEmpty()) {
-            spans.add(Span.styled(" Running: " + running.size() + " ",
-                    Style.EMPTY.fg(theme.statusWarning()).bg(theme.contextBg())));
-            for (var task : running.stream().limit(2).toList()) {
-                spans.add(Span.styled(" " + task.displayName() + "... ",
-                        Style.EMPTY.fg(theme.contextPrimaryFg()).bg(theme.contextBg())));
-            }
-            if (running.size() > 2) {
-                spans.add(Span.styled(" +" + (running.size() - 2) + " more ",
-                        Style.EMPTY.fg(theme.contextSecondaryFg()).bg(theme.contextBg())));
-            }
-        }
-
-        // Show completed tasks
-        for (var task : completed) {
-            if (task instanceof dev.incusspawn.tui.BackgroundTask.Completed completedTask) {
-                var symbol = task.status() == dev.incusspawn.tui.BackgroundTask.TaskStatus.SUCCESS ? "✓" : "✗";
-                var color = task.status() == dev.incusspawn.tui.BackgroundTask.TaskStatus.SUCCESS ? theme.statusSuccess() : theme.statusFailure();
-                spans.add(Span.styled(" " + symbol + " " + completedTask.getDisplayText() + " ",
-                        Style.EMPTY.fg(color).bg(theme.contextBg())));
-            }
-        }
-
-        frame.renderWidget(Paragraph.from(Line.from(spans)), area);
-    }
-
-    private void renderKeyItems(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
-                                 List<KeyItem> items) {
-        var constraints = items.stream()
-                .map(item -> Constraint.ratio(1, items.size()))
-                .toArray(Constraint[]::new);
-        var cells = Layout.horizontal()
-                .constraints(constraints)
-                .split(area);
-        for (int i = 0; i < items.size(); i++) {
-            frame.renderWidget(Paragraph.from(items.get(i).line()), cells.get(i));
-        }
-    }
 
     // --- Modal dialogs (centered overlay) ---
 
@@ -2923,7 +2351,7 @@ public class Tui {
         }
     }
 
-    private boolean hasActionsForInstance(InstanceInfo instance) {
+    boolean hasActionsForInstance(InstanceInfo instance) {
         return getActionsForInstance(instance).stream()
                 .anyMatch(a -> !a.requiresRunning() || isRunning(instance));
     }
@@ -3053,29 +2481,6 @@ public class Tui {
         }
     }
 
-
-    private KeyItem makeKey(String key, String label, boolean disabled) {
-        var spans = new ArrayList<Span>();
-        spans.add(Span.styled("│", Style.EMPTY.fg(theme.barSeparatorFg()).bg(theme.barBg())));
-        if (disabled) {
-            spans.add(Span.styled(key, Style.EMPTY.fg(theme.barDisabledFg()).bg(theme.barBg())));
-            spans.add(Span.styled(label, Style.EMPTY.fg(theme.barDisabledFg()).bg(theme.barBg())));
-        } else {
-            spans.add(Span.styled(key, Style.EMPTY.bold().fg(theme.barKeyFg()).bg(theme.barBg())));
-            spans.add(Span.styled(label, Style.EMPTY.fg(theme.barLabelFg()).bg(theme.barBg())));
-        }
-        return new KeyItem(Line.from(spans), 1 + key.length() + label.length());
-    }
-
-    private static void fillBackground(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Color bg) {
-        frame.buffer().setStyle(area, Style.EMPTY.bg(bg));
-    }
-
-    private static List<dev.tamboui.layout.Rect> splitVertical(dev.tamboui.layout.Rect area, int... heights) {
-        var constraints = new Constraint[heights.length];
-        for (int i = 0; i < heights.length; i++) constraints[i] = Constraint.length(heights[i]);
-        return Layout.vertical().constraints(constraints).split(area);
-    }
 
     // --- Helpers ---
 
@@ -3321,13 +2726,13 @@ public class Tui {
             if (rowToEntry.get(i) != null) { state.select(i); return; }
     }
 
-    private InstanceInfo selectedEntry(TableState state) {
+    InstanceInfo selectedEntry(TableState state) {
         var idx = state.selected();
         if (idx == null || idx < 0 || idx >= rowToEntry.size()) return null;
         return rowToEntry.get(idx);
     }
 
-    private TemplateInfo selectedTemplate() {
+    TemplateInfo selectedTemplate() {
         var idx = templateTableState != null ? templateTableState.selected() : null;
         if (idx == null || idx < 0 || idx >= templateEntries.size()) return null;
         return templateEntries.get(idx);
