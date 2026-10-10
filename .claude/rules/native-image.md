@@ -14,87 +14,54 @@ paths:
 
 # Native Image: Build-Time Initialization
 
-Quarkus initializes application classes **at image-build time** unless they are named in
-`--initialize-at-run-time`. Everything reachable from a static initializer is therefore constructed
-by the *builder* and snapshotted into the image heap, fields and all. On Linux the builder is **root
-inside the GraalVM builder container** (`install.sh` runs native-image through docker/podman, where
-`$HOME=/root`), so a field holding an `Environment` path freezes `/root/...` into the binary and
-every user's run then fails on a directory they cannot even stat.
+Quarkus initializes application classes **at image-build time** unless they are named in `--initialize-at-run-time`.
+Everything reachable from a static initializer is therefore constructed by the *builder* and snapshotted into the image heap, fields and all.
+On Linux the builder is **root inside the GraalVM builder container** (`install.sh` runs native-image through docker/podman, where `$HOME=/root`), so a field holding an `Environment` path freezes `/root/...` into the binary and every user's run then fails on a directory they cannot even stat.
 
 **Two classes may hold eagerly resolved host state, and both are on the flag:**
 
-- `RuntimeConstants` (`common`) — `DOWNLOAD_CACHE_DIR`, `SKILLS_CACHE_DIR`, and `CDI_TOOLS` (the
-  Java tool setups, which hold a `DownloadCache`).
+- `RuntimeConstants` (`common`) — `DOWNLOAD_CACHE_DIR`, `SKILLS_CACHE_DIR`, and `CDI_TOOLS` (the Java tool setups, which hold a `DownloadCache`).
 - `RuntimeServices` (`cli`) — Incus client, background tasks, lock manager, tool-def loader.
 
-`Environment` is on the list too and stays **method-based** on purpose: that is what lets tests
-point `user.home` at a temp dir. `Platform` is deliberately *not* on it — its `os.name` lookup is
-meant to be constant-folded so platform branches die at build time.
+`Environment` is on the list too and stays **method-based** on purpose: that is what lets tests point `user.home` at a temp dir.
+`Platform` is deliberately *not* on it — its `os.name` lookup is meant to be constant-folded so platform branches die at build time.
 
 Anywhere else: call the `Environment` method, never store its result.
 
-**Deferring the class that resolves the path is not enough.** GraalVM does not reject a build-time
-initializer that touches a run-time-initialized class — it initializes it early and folds the value,
-silently (this is what `Environment`'s header comment warns about, and it was measured here: listing
-`RuntimeConstants` while leaving the tool-setup list in `ToolDefLoader`'s static initializer still
-baked `/root/.cache/incus-spawn/downloads`). The *holder* has to be deferred too, which is why
-`CDI_TOOLS` lives in `RuntimeConstants` rather than in `ToolDefLoader`. That regression was commit
-08a8ea0 (2026-08-26), which moved the tool-setup list out of the already-deferred `RuntimeServices`
-and into `ToolDefLoader`'s static initializer.
+**Deferring the class that resolves the path is not enough.**
+GraalVM does not reject a build-time initializer that touches a run-time-initialized class.
+It initializes it early and folds the value, silently (this is what `Environment`'s header comment warns about, and it was measured here: listing `RuntimeConstants` while leaving the tool-setup list in `ToolDefLoader`'s static initializer still baked `/root/.cache/incus-spawn/downloads`).
+The *holder* has to be deferred too, which is why `CDI_TOOLS` lives in `RuntimeConstants` rather than in `ToolDefLoader`.
+That regression was commit 08a8ea0 (2026-08-26), which moved the tool-setup list out of the already-deferred `RuntimeServices` and into `ToolDefLoader`'s static initializer.
 
 The flag is declared **once per module**, in its `resources-filtered/application.properties`.
-Arguments only one platform takes come in through placeholders the list includes, empty by default
-and set by a pom profile: `svm.target.name.args` (`-Dsvm.targetName=Linux`, from an
-`<os><name>linux</name></os>` profile, in both modules), `macos.min.args` (the
-`-mmacosx-version-min` linker option for the root pom's `macos.deployment.target`, from its
-`<os><family>mac</family></os>` profile, in both modules), and the CLI's `macos.plist.args` (the
-Info.plist linker options, from `macos-native`). A pom must never redefine
-`quarkus.native.additional-build-args` itself: a pom property overrides `application.properties`,
-so the copy would be the only list that platform builds with, and no build elsewhere exercises it.
-The CLI's `macos-native` profile had such a copy, and it drifted — macOS release builds kept
-`-R:MaxRAM=128m` after Linux moved to 512m, and ignored `-Dnative.optimization` (#489).
-`NativeImageInitializationTest` (in `cli`) parses both lists and asserts each defers the right
-classes, registers both guards *and* passes no `-E` environment variable to the builder. It fails if
-any pom (root included) defines the list, if a list drops a placeholder it must carry, or if a placeholder
-value passes `-E` or `--initialize-at-build-time` — so drift fails `mvn test` rather than shipping.
+Arguments only one platform takes come in through placeholders the list includes, empty by default and set by a pom profile: `svm.target.name.args` (`-Dsvm.targetName=Linux`, from an `<os><name>linux</name></os>` profile, in both modules), `macos.min.args` (the `-mmacosx-version-min` linker option for the root pom's `macos.deployment.target`, from its `<os><family>mac</family></os>` profile, in both modules), and the CLI's `macos.plist.args` (the Info.plist linker options, from `macos-native`).
+A pom must never redefine `quarkus.native.additional-build-args` itself: a pom property overrides `application.properties`, so the copy would be the only list that platform builds with, and no build elsewhere exercises it.
+The CLI's `macos-native` profile had such a copy, and it drifted — macOS release builds kept `-R:MaxRAM=128m` after Linux moved to 512m, and ignored `-Dnative.optimization` (#489).
+`NativeImageInitializationTest` (in `cli`) parses both lists and asserts each defers the right classes, registers both guards *and* passes no `-E` environment variable to the builder.
+It fails if any pom (root included) defines the list, if a list drops a placeholder it must carry, or if a placeholder value passes `-E` or `--initialize-at-build-time` — so drift fails `mvn test` rather than shipping.
 
 ## Build-time guards (`graal/`)
 
-Registered via `--features=` in both modules' `application.properties`, comma-escaped as `\\,` so
-Quarkus does not split the argument:
+Registered via `--features=` in both modules' `application.properties`, comma-escaped as `\\,` so Quarkus does not split the argument:
 
-- **`BakedHostStateFeature`** — registers an object replacer and aborts the build if any `String`,
-  `Path` or `File` in the image heap trips one of four checks:
-  - **Canaries.** Before analysis (and so before build-time class initialization) it sets the
-    builder's `user.home` and `user.name` to values carrying a random name; a constant containing
-    one was derived at build time. Exact whoever builds and wherever. It is what catches the
-    regression that shipped: verified by dropping `RuntimeConstants` from the flag (reports the
-    download and skills caches as both `String` and `UnixPath`) and by a build-time
-    `System.getProperty("user.name")`.
-  - **The builder's real home** (`user.home` before the swap, and `$HOME`, which survives
-    `native-image`'s environment sanitization) and anything under it — catching what never reads
-    the property during analysis: values Quarkus recorded in the Maven JVM, `getenv("HOME")`, JDK
-    internals that cached `user.home` at startup. **Disabled, with a loud notice, when the builder's
-    home is `GUEST_HOME` (`/home/agentuser`)**: building inside an isx instance would otherwise flag
-    every guest-path literal the tool setups write into instances (issue #708). The canaries still
-    run there, so only those side routes go unwatched when dogfooding.
-  - **The builder's `user.dir`** (real value — the builder resolves relative paths against it; it
-    is the `target/` source-jar directory, which no literal matches).
-  - **Credentials in the builder's environment**, by name (`SecretRedactor.looksSecret`) or shape
-    (`SecretRedactor.hasSecretShape`); the report names the variable and withholds the value.
-    Normally inert: `native-image` gives the builder only `HOME`, `LANG`, `PATH`, `PWD` (measured),
-    so a build-time `getenv` of a token returns null. That sanitization is the real protection,
-    and `NativeImageInitializationTest` keeps it by failing on any `-E<name>` pass-through.
-  `sun.nio.fs.UnixPath` stores bytes and materializes its `String` lazily, which is why `Path` is
-  checked as well as `String`.
-- **`SyscallReachabilityFeature`** — meant to keep reachable GraalVM lazy system-property resolvers
-  (`user.dir`/`user.home`/`os.name`) off the startup path of short-lived commands. **It cannot
-  currently fail**: it resolves `userHomeValue`/`userDirValue`/… on the abstract
-  `com.oracle.svm.core.jdk.SystemPropertiesSupport`, while the analysis reaches the concrete
-  `PosixSystemPropertiesSupport`/`LinuxSystemPropertiesSupport` overrides, so `isReachable` answers
-  `false` for every target regardless. It now prints `??  INCONCLUSIVE` per target rather than a
-  reassuring `ok`. Fixing it means targeting the concrete subclasses *and* adding the allowed list
-  its javadoc promises — the CLI legitimately reads `user.home` and `user.name` at runtime, so a
-  working version fails the build on correct code until those are allowed with a rationale.
+- **`BakedHostStateFeature`** — registers an object replacer and aborts the build if any `String`, `Path` or `File` in the image heap trips one of four checks:
+  - **Canaries.**
+    Before analysis (and so before build-time class initialization) it sets the builder's `user.home` and `user.name` to values carrying a random name; a constant containing one was derived at build time.
+    Exact whoever builds and wherever.
+    It is what catches the regression that shipped: verified by dropping `RuntimeConstants` from the flag (reports the download and skills caches as both `String` and `UnixPath`) and by a build-time `System.getProperty("user.name")`.
+  - **The builder's real home** (`user.home` before the swap, and `$HOME`, which survives `native-image`'s environment sanitization) and anything under it — catching what never reads the property during analysis: values Quarkus recorded in the Maven JVM, `getenv("HOME")`, JDK internals that cached `user.home` at startup.
+    **Disabled, with a loud notice, when the builder's home is `GUEST_HOME` (`/home/agentuser`)**: building inside an isx instance would otherwise flag every guest-path literal the tool setups write into instances (issue #708).
+    The canaries still run there, so only those side routes go unwatched when dogfooding.
+  - **The builder's `user.dir`** (real value — the builder resolves relative paths against it; it is the `target/` source-jar directory, which no literal matches).
+  - **Credentials in the builder's environment**, by name (`SecretRedactor.looksSecret`) or shape (`SecretRedactor.hasSecretShape`); the report names the variable and withholds the value.
+    Normally inert: `native-image` gives the builder only `HOME`, `LANG`, `PATH`, `PWD` (measured), so a build-time `getenv` of a token returns null.
+    That sanitization is the real protection, and `NativeImageInitializationTest` keeps it by failing on any `-E<name>` pass-through.
+    `sun.nio.fs.UnixPath` stores bytes and materializes its `String` lazily, which is why `Path` is checked as well as `String`.
+- **`SyscallReachabilityFeature`** — meant to keep reachable GraalVM lazy system-property resolvers (`user.dir`/`user.home`/`os.name`) off the startup path of short-lived commands.
+  **It cannot currently fail**: it resolves `userHomeValue`/`userDirValue`/… on the abstract `com.oracle.svm.core.jdk.SystemPropertiesSupport`, while the analysis reaches the concrete `PosixSystemPropertiesSupport`/`LinuxSystemPropertiesSupport` overrides, so `isReachable` answers `false` for every target regardless.
+  It now prints `??  INCONCLUSIVE` per target rather than a reassuring `ok`.
+  Fixing it means targeting the concrete subclasses *and* adding the allowed list its javadoc promises.
+  The CLI legitimately reads `user.home` and `user.name` at runtime, so a working version fails the build on correct code until those are allowed with a rationale.
 
 Both print a `[isx-…-guard]` report to stderr during the build; check it when touching either.
