@@ -150,6 +150,16 @@ public class Tui {
 
     private final InstanceDetailView instanceDetail = new InstanceDetailView(modal, theme);
 
+    private final AboutModal about = new AboutModal(modal, theme, new AboutModal.Source() {
+        @Override public String version() { return BuildInfo.instance().version(); }
+        @Override public String gitSha() { return BuildInfo.instance().gitSha(); }
+        @Override public String incusClient() { return BuildInfo.instance().incusClient(); }
+        @Override public String incusServer() { return BuildInfo.instance().incusServer(); }
+        @Override public String runtime() { return BuildInfo.instance().runtime(); }
+        @Override public String kernelInfo() { return BuildInfo.instance().kernelInfo(); }
+        @Override public boolean isMacOS() { return Platform.isMacOS(); }
+    });
+
     private final InstanceActions instanceActions =
             new InstanceActions(() -> this.imageDefs, () -> this.toolDefLoader, () -> this.cdiTools);
 
@@ -237,8 +247,6 @@ public class Tui {
     private TextInputState searchInput;
     private List<TemplateInfo> allTemplateEntries;
     private List<InstanceInfo> allEntries;
-    // Info modal state
-    private int infoScrollOffset;
     // AI Help modal state
     /** Kept after closing, so reopening preselects the account used last. */
     private volatile HelpChatModal helpChat;
@@ -1184,7 +1192,7 @@ public class Tui {
         statusMessage = null;
 
         if (key.isKey(KeyCode.F1)) {
-            infoScrollOffset = 0;
+            about.open();
             mode = Mode.INFO;
             return true;
         }
@@ -2605,7 +2613,7 @@ public class Tui {
                 if (selected != null) instanceDetail.render(frame, screen, selected, detailAccountUses);
             }
             case ACCOUNTS -> accountsModal.render(frame, screen);
-            case INFO -> renderInfoModal(frame, screen);
+            case INFO -> about.render(frame, screen);
             case WARNINGS -> warningsModal.render(frame, screen);
             case HELP_CHAT -> helpChat.render(frame, screen);
             case ACTIONS -> renderActionsModal(frame, screen);
@@ -2690,29 +2698,10 @@ public class Tui {
     }
 
     private boolean handleInfoEvent(KeyEvent key) {
-        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC() || key.isKey(KeyCode.F1)) {
-            mode = Mode.BROWSE;
-            return true;
-        }
-        if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
-            infoScrollOffset++;
-            return true;
-        }
-        if (key.isKey(KeyCode.UP) || key.isChar('k')) {
-            if (infoScrollOffset > 0) infoScrollOffset--;
-            return true;
-        }
-        if (key.isKey(KeyCode.HOME) || key.isChar('g')) {
-            infoScrollOffset = 0;
-            return true;
-        }
-        if (key.isKey(KeyCode.END) || key.isChar('G')) {
-            infoScrollOffset = Integer.MAX_VALUE;
-            return true;
-        }
-        if (key.isChar('?')) {
-            openHelpChat(SpawnConfig.load());
-            return true;
+        switch (about.handleKey(key)) {
+            case HANDLED -> {}
+            case CLOSE -> mode = Mode.BROWSE;
+            case HELP_CHAT -> openHelpChat(SpawnConfig.load());
         }
         return true;
     }
@@ -2779,95 +2768,6 @@ public class Tui {
         return false;
     }
 
-    private void renderInfoModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        var info = dev.incusspawn.BuildInfo.instance();
-        var lines = new ArrayList<>(List.of(
-                Line.from(List.of(
-                        Span.styled("incus-spawn", Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())),
-                        Span.styled(" (isx) ", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
-                        Span.styled(info.version(), Style.EMPTY.fg(theme.statusSuccess()).bg(modal.bg())))),
-                Line.styled("Commit " + info.gitSha(),
-                        Style.EMPTY.fg(theme.textDim()).bg(modal.bg())),
-                Line.styled("Incus  client " + info.incusClient() + ", server " + info.incusServer(),
-                        Style.EMPTY.fg(theme.textDim()).bg(modal.bg())),
-                Line.styled(info.runtime(),
-                        Style.EMPTY.fg(theme.textDim()).bg(modal.bg()))));
-        var kernelInfo = info.kernelInfo();
-        if (!kernelInfo.isEmpty()) {
-            var kernelLabel = Platform.isMacOS() ? "VM     " : "Host   ";
-            lines.add(Line.styled(kernelLabel + kernelInfo,
-                    Style.EMPTY.fg(theme.textDim()).bg(modal.bg())));
-        }
-        lines.addAll(List.of(
-                Line.styled("", Style.EMPTY),
-                Line.styled("Copyright 2026 Sanne Grinovero",
-                        Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
-                Line.styled("Licensed under the Apache License 2.0",
-                        Style.EMPTY.fg(theme.textDim()).bg(modal.bg())),
-                Line.styled("github.com/Sanne/incus-spawn",
-                        Style.EMPTY.fg(modal.accent()).bg(modal.bg()))
-                        .hyperlink("https://github.com/Sanne/incus-spawn"),
-                Line.styled("", Style.EMPTY),
-                Line.styled("Manage isolated Incus development environments.",
-                        Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
-                Line.styled("Templates define base images; Instances are", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
-                Line.styled("lightweight copy-on-write branches of them.", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
-                Line.styled("", Style.EMPTY),
-                Line.styled("Keyboard shortcuts:", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
-                Line.styled("", Style.EMPTY),
-                shortcutRow("Enter", "Default instance action", null, null),
-                shortcutRow("?", "AI Help — ask a question", null, null),
-                shortcutRow("Tab", "Switch panels", "⇧Tab", "Reverse"),
-                shortcutRow("F1", "This dialog", null, null),
-                shortcutRow("F2", "Shell into instance", null, null),
-                shortcutRow("F3", "View details", null, null),
-                shortcutRow("F4", "Branch", null, null),
-                shortcutRow("F5", "Build menu", null, null),
-                shortcutRow("F6", "Rename instance", null, null),
-                shortcutRow("F7", "Stop instance", "⇧F7", "Restart"),
-                shortcutRow("F8/Del", "Destroy", "⇧F8/Del", "Destroy all"),
-                shortcutRow("F9", "Tool actions", null, null),
-                shortcutRow("F10", "Quit", null, null),
-                shortcutRow("a", "Credential accounts", null, null),
-                shortcutRow("C", "Clean pool storage", null, null),
-                shortcutRow("r", "Refresh", null, null),
-                shortcutRow(WarningsModal.KEY, "Warnings", null, null),
-                shortcutRow("n", "New template…", null, null),
-                shortcutRow("/", "Search / filter", null, null),
-                shortcutRow("g/Home", "Jump to top", "G/End", "Jump to bottom")));
-        if (Platform.isMacOS()) {
-            lines.add(Line.styled("", Style.EMPTY));
-            lines.add(Line.styled("macOS shortcuts:", Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
-            lines.add(shortcutRow("Fn+←/→", "Home / End", "Fn+↑/↓", "PgUp / PgDn"));
-        }
-
-        int width = 60;
-        int maxHeight = screen.height() - 2;
-        int modalHeight = Math.min(lines.size() + 4, maxHeight);
-
-        var modalArea = ModalRenderer.centerRect(screen, width, modalHeight);
-        var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
-                .title(modal.styledTitle(" About incus-spawn ", modal.border()))
-                .borderStyle(Style.EMPTY.fg(modal.border()))
-                .style(Style.EMPTY.bg(modal.bg()))
-                .padding(dev.tamboui.layout.Padding.horizontal(1))
-                .build();
-        modal.renderBlock(frame, block, modalArea);
-        var inner = block.inner(modalArea);
-
-        var rows = Layout.vertical()
-                .constraints(Constraint.fill(), Constraint.length(1))
-                .split(inner);
-
-        infoScrollOffset = modal.renderScrollableContent(frame, rows.get(0), lines, infoScrollOffset);
-
-        var hintSpans = new ArrayList<Span>();
-        modal.addKey(hintSpans, "F1/Esc", "Close");
-        modal.addKey(hintSpans, "?", "AI-assisted help");
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
-    }
-
     static String buildStatusMessage(String[] args, boolean success, java.time.Instant buildStart) {
         var firstArg = args[0];
         // isx build takes several templates (#1130): name them all.
@@ -2908,19 +2808,6 @@ public class Tui {
         } catch (java.io.IOException e) {
             return null; // no report at all
         }
-    }
-
-    private Line shortcutRow(String key, String desc, String shiftKey, String shiftDesc) {
-        var spans = new ArrayList<Span>();
-        var keyStr = key != null ? key : "";
-        var descStr = desc != null ? desc : "";
-        spans.add(Span.styled(String.format("  %-8s", keyStr), Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())));
-        spans.add(Span.styled(String.format("%-18s", descStr), Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
-        if (shiftKey != null) {
-            spans.add(Span.styled(String.format("%-9s", shiftKey), Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())));
-            spans.add(Span.styled(shiftDesc, Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
-        }
-        return Line.from(spans);
     }
 
     /**

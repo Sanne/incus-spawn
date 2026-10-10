@@ -18,6 +18,7 @@ paths:
   - "cli/src/main/java/dev/incusspawn/command/TemplateDetails.java"
   - "cli/src/main/java/dev/incusspawn/command/TemplateDetailView.java"
   - "cli/src/main/java/dev/incusspawn/command/InstanceDetailView.java"
+  - "cli/src/main/java/dev/incusspawn/command/AboutModal.java"
   - "cli/src/test/java/dev/incusspawn/tui/**"
   - "common/src/main/java/dev/incusspawn/incus/BtrfsUsage.java"
   - "common/src/main/java/dev/incusspawn/incus/BtrfsSysfs.java"
@@ -87,6 +88,7 @@ They also say how an instance an `isx mcp` session made stands (`InstanceDetailV
 Tool setups come from the TUI's own `toolDefLoader` (`AccountSelection.namespaceSetups(config, loader)`), not a fresh loader.
 
 The F5 build menu is `BuildMenu` (`BuildMenuTest`): it builds its options from the template definitions, rows and out-of-sync set `Tui` passes in, owns their keys and its rendering, and hands the chosen option back, so `Tui` leaves the build pending and quits the runner.
+The F1 dialog (versions and keyboard shortcuts) is `AboutModal` (`AboutModalTest`): what it says about the build and the host comes through its `Source`, and it hands Esc and `?` (AI Help) back to `Tui`.
 The branch dialog is `BranchModal` (`BranchModalTest`): it owns its fields, their keys and its rendering, and hands Enter back, so `Tui` runs the proxy, credential and still-exists checks and creates the branch from `BranchModal.request` once the terminal is released.
 The rename dialog is `RenameDialog` (`RenameDialogTest`): it owns the name input, its keys and its rendering, and hands Enter back, so `Tui` keeps `renameSourceName` through the stop-first confirm and runs the checks and the rename.
 The new-template dialog is `NewTemplateModal` (`NewTemplateModalTest`): it owns the name, parent and location fields, their keys and its rendering, while `Tui` lists the locations (from `SpawnConfig`), checks the name and parent on Enter, and creates the template from `NewTemplateModal.parent` and `locationDir` once the terminal is released.
