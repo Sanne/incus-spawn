@@ -90,11 +90,11 @@ class TuiCharacterisationTest {
     }
 
     /** Two templates (one built), a running container branch and a stopped VM branch. */
-    private ListCommand tui(boolean withInstances) {
+    private Tui tui(boolean withInstances) {
         return tui(withInstances, new FakeIncusDaemon());
     }
 
-    private ListCommand tui(boolean withInstances, FakeIncusDaemon daemon) {
+    private Tui tui(boolean withInstances, FakeIncusDaemon daemon) {
         var defs = new LinkedHashMap<String, ImageDef>();
         defs.put("tpl-minimal", def("tpl-minimal", null, "Minimal Fedora"));
         defs.put("tpl-dev", def("tpl-dev", "tpl-minimal", "Development tools"));
@@ -104,7 +104,7 @@ class TuiCharacterisationTest {
                     .instance("vm-1", "virtual-machine", "Stopped", branch("tpl-minimal", 2 * 24 * 60 + 30));
         }
         // The proxy check reads the host's proxy, and may start a DNS repair: not this test's to run.
-        var tui = new ListCommand() {
+        var tui = new Tui() {
             @Override
             boolean showProxyError() {
                 return false;
@@ -112,19 +112,19 @@ class TuiCharacterisationTest {
         };
         tui.useDefinitions(defs, new ToolDefLoader(List.of()), List.of());
         tui.startSession(daemon.client(), new BackgroundTaskManager(), new FlockInstanceLockManager(),
-                ListCommand.collectEntries(daemon.client().listJson()));
+                InstanceListing.collectEntries(daemon.client().listJson()));
         return tui;
     }
 
-    private ListCommand tui() {
+    private Tui tui() {
         return tui(true);
     }
 
-    private void press(ListCommand tui, KeyEvent... keys) {
+    private void press(Tui tui, KeyEvent... keys) {
         for (var key : keys) tui.handleEvent(key, runner);
     }
 
-    private static void typeText(ListCommand tui, TuiRunner runner, String text) {
+    private static void typeText(Tui tui, TuiRunner runner, String text) {
         for (char c : text.toCharArray()) tui.handleEvent(KeyEvent.ofChar(c), runner);
     }
 
@@ -142,19 +142,19 @@ class TuiCharacterisationTest {
         return VM_LIMITS.matcher(stable).replaceAll(m -> "CPU <n>  RAM <mem>  Disk " + m.group(1) + " ");
     }
 
-    private static void snapshot(String name, ListCommand tui) {
+    private static void snapshot(String name, Tui tui) {
         TuiSnapshot.assertMatches("tui-" + name + "-80x24", TuiSnapshot.render(80, 24, tui::render),
                 TuiCharacterisationTest::withoutVersion);
         TuiSnapshot.assertMatches("tui-" + name + "-120x40", TuiSnapshot.render(120, 40, tui::render),
                 TuiCharacterisationTest::withoutVersion);
     }
 
-    private void opensAndCloses(String name, ListCommand tui, ListCommand.Mode expected, KeyEvent... keys) {
+    private void opensAndCloses(String name, Tui tui, Tui.Mode expected, KeyEvent... keys) {
         press(tui, keys);
         assertEquals(expected, tui.mode(), name);
         snapshot(name, tui);
         press(tui, ESC);
-        assertEquals(ListCommand.Mode.BROWSE, tui.mode(), name + " closes on Esc");
+        assertEquals(Tui.Mode.BROWSE, tui.mode(), name + " closes on Esc");
     }
 
     @Test
@@ -196,9 +196,9 @@ class TuiCharacterisationTest {
         // Not rendered: it names the commit, the JVM and the Incus daemon this test JVM last saw.
         var tui = tui();
         press(tui, KeyEvent.ofKey(KeyCode.F1));
-        assertEquals(ListCommand.Mode.INFO, tui.mode());
+        assertEquals(Tui.Mode.INFO, tui.mode());
         press(tui, ESC);
-        assertEquals(ListCommand.Mode.BROWSE, tui.mode());
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
     }
 
     @Test
@@ -207,12 +207,12 @@ class TuiCharacterisationTest {
         press(tui, KeyEvent.ofKey(KeyCode.F5));
         snapshot("build-menu", tui);
         press(tui, ESC);
-        assertEquals(ListCommand.Mode.BROWSE, tui.mode());
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
     }
 
     @Test
     void branchFromATemplate() {
-        opensAndCloses("branch-template", tui(), ListCommand.Mode.BRANCH, ENTER);
+        opensAndCloses("branch-template", tui(), Tui.Mode.BRANCH, ENTER);
     }
 
     @Test
@@ -221,7 +221,7 @@ class TuiCharacterisationTest {
         press(tui, TAB);
         // The VM is the second instance row.
         press(tui, DOWN);
-        opensAndCloses("branch-vm", tui, ListCommand.Mode.BRANCH, KeyEvent.ofKey(KeyCode.F4));
+        opensAndCloses("branch-vm", tui, Tui.Mode.BRANCH, KeyEvent.ofKey(KeyCode.F4));
     }
 
     @Test
@@ -235,29 +235,29 @@ class TuiCharacterisationTest {
     void branchFromAnUnbuiltTemplateOffersABuild() {
         var tui = tui();
         press(tui, DOWN);
-        opensAndCloses("confirm-build-for-branch", tui, ListCommand.Mode.CONFIRM_BUILD_FOR_BRANCH, ENTER);
+        opensAndCloses("confirm-build-for-branch", tui, Tui.Mode.CONFIRM_BUILD_FOR_BRANCH, ENTER);
     }
 
     @Test
     void newChildTemplate() {
         var tui = tui();
         press(tui, KeyEvent.ofChar('n'));
-        assertEquals(ListCommand.Mode.NEW_TEMPLATE, tui.mode());
+        assertEquals(Tui.Mode.NEW_TEMPLATE, tui.mode());
         typeText(tui, runner, "tpl-child");
         snapshot("new-template", tui);
         press(tui, ESC);
-        assertEquals(ListCommand.Mode.BROWSE, tui.mode());
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
     }
 
     @Test
     void deleteATemplate() {
-        opensAndCloses("confirm-delete-template", tui(), ListCommand.Mode.CONFIRM_DELETE,
+        opensAndCloses("confirm-delete-template", tui(), Tui.Mode.CONFIRM_DELETE,
                 KeyEvent.ofKey(KeyCode.F8));
     }
 
     @Test
     void deleteEveryTemplate() {
-        opensAndCloses("confirm-delete-all-templates", tui(), ListCommand.Mode.CONFIRM_DELETE,
+        opensAndCloses("confirm-delete-all-templates", tui(), Tui.Mode.CONFIRM_DELETE,
                 KeyEvent.ofKey(KeyCode.F8, KeyModifiers.SHIFT));
     }
 
@@ -265,7 +265,7 @@ class TuiCharacterisationTest {
     void deleteAnInstance() {
         var tui = tui();
         press(tui, TAB);
-        opensAndCloses("confirm-delete-instance", tui, ListCommand.Mode.CONFIRM_DELETE,
+        opensAndCloses("confirm-delete-instance", tui, Tui.Mode.CONFIRM_DELETE,
                 KeyEvent.ofKey(KeyCode.F8));
     }
 
@@ -273,7 +273,7 @@ class TuiCharacterisationTest {
     void deleteEveryInstance() {
         var tui = tui();
         press(tui, TAB);
-        opensAndCloses("confirm-delete-all-instances", tui, ListCommand.Mode.CONFIRM_DELETE,
+        opensAndCloses("confirm-delete-all-instances", tui, Tui.Mode.CONFIRM_DELETE,
                 KeyEvent.ofKey(KeyCode.F8, KeyModifiers.SHIFT));
     }
 
@@ -281,7 +281,7 @@ class TuiCharacterisationTest {
     void renameARunningInstanceAsksToStopIt() {
         var tui = tui();
         press(tui, TAB);
-        opensAndCloses("confirm-stop-for-rename", tui, ListCommand.Mode.CONFIRM_STOP_FOR_RENAME,
+        opensAndCloses("confirm-stop-for-rename", tui, Tui.Mode.CONFIRM_STOP_FOR_RENAME,
                 KeyEvent.ofKey(KeyCode.F6));
     }
 
@@ -289,23 +289,23 @@ class TuiCharacterisationTest {
     void renameAStoppedInstance() {
         var tui = tui();
         press(tui, TAB, DOWN);
-        opensAndCloses("rename", tui, ListCommand.Mode.RENAME, KeyEvent.ofKey(KeyCode.F6));
+        opensAndCloses("rename", tui, Tui.Mode.RENAME, KeyEvent.ofKey(KeyCode.F6));
     }
 
     @Test
     void instanceDetails() {
         var tui = tui();
         press(tui, TAB);
-        opensAndCloses("instance-detail", tui, ListCommand.Mode.INSTANCE_DETAIL, KeyEvent.ofKey(KeyCode.F3));
+        opensAndCloses("instance-detail", tui, Tui.Mode.INSTANCE_DETAIL, KeyEvent.ofKey(KeyCode.F3));
     }
 
     @Test
     void templateDetails() {
         var tui = tui();
         press(tui, KeyEvent.ofKey(KeyCode.F3));
-        assertEquals(ListCommand.Mode.TEMPLATE_DETAIL, tui.mode());
+        assertEquals(Tui.Mode.TEMPLATE_DETAIL, tui.mode());
         press(tui, ESC);
-        assertEquals(ListCommand.Mode.BROWSE, tui.mode());
+        assertEquals(Tui.Mode.BROWSE, tui.mode());
     }
 
     @Test
@@ -318,19 +318,19 @@ class TuiCharacterisationTest {
     @Test
     void cleaningThePool() {
         var tui = tui(true, new FakeIncusDaemon().pool("default", "btrfs").image("0123456789abcdef"));
-        opensAndCloses("clean-confirm", tui, ListCommand.Mode.CLEAN_CONFIRM, KeyEvent.ofChar('c'));
+        opensAndCloses("clean-confirm", tui, Tui.Mode.CLEAN_CONFIRM, KeyEvent.ofChar('c'));
     }
 
     @Test
     void warningsDialog() {
-        opensAndCloses("warnings", tui(), ListCommand.Mode.WARNINGS, KeyEvent.ofChar('w'));
+        opensAndCloses("warnings", tui(), Tui.Mode.WARNINGS, KeyEvent.ofChar('w'));
     }
 
     @Test
     void shellQuitsTheRunnerAndLeavesTheShellPending() {
         var tui = tui();
         press(tui, TAB, KeyEvent.ofKey(KeyCode.F2));
-        assertEquals(ListCommand.PendingAction.SHELL, tui.pendingAction());
+        assertEquals(Tui.PendingAction.SHELL, tui.pendingAction());
         assertFalse(runner.isRunning());
     }
 
@@ -338,7 +338,7 @@ class TuiCharacterisationTest {
     void quitting() {
         var tui = tui();
         press(tui, KeyEvent.ofChar('q'));
-        assertEquals(ListCommand.PendingAction.NONE, tui.pendingAction());
+        assertEquals(Tui.PendingAction.NONE, tui.pendingAction());
         assertFalse(runner.isRunning());
     }
 
@@ -348,7 +348,7 @@ class TuiCharacterisationTest {
         press(tui, ENTER);
         typeText(tui, runner, "-x");
         press(tui, ENTER);
-        assertEquals(ListCommand.PendingAction.BRANCH, tui.pendingAction());
+        assertEquals(Tui.PendingAction.BRANCH, tui.pendingAction());
         assertFalse(runner.isRunning());
     }
 
@@ -356,7 +356,7 @@ class TuiCharacterisationTest {
     void buildingFromTheMenuQuitsTheRunnerAndLeavesTheBuildPending() {
         var tui = tui();
         press(tui, KeyEvent.ofKey(KeyCode.F5), ENTER);
-        assertEquals(ListCommand.PendingAction.BUILD_TEMPLATE, tui.pendingAction());
+        assertEquals(Tui.PendingAction.BUILD_TEMPLATE, tui.pendingAction());
         assertFalse(runner.isRunning());
     }
 }

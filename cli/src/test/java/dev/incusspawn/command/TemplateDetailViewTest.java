@@ -106,14 +106,14 @@ class TemplateDetailViewTest {
     }
 
     /** Built as a plain container by an older isx, before the definition asked for KVM. */
-    private static final ListCommand.TemplateInfo BUILT_STALE = new ListCommand.TemplateInfo(
+    private static final InstanceListing.TemplateInfo BUILT_STALE = new InstanceListing.TemplateInfo(
             "tpl-kvm", "", "2026-09-20T10:00:00", "container", "1.3.0", "sha", "", "tpl-root",
             3L * 1024 * 1024 * 1024, -1, "container");
 
-    private static final ListCommand.TemplateInfo NOT_BUILT = new ListCommand.TemplateInfo(
-            "tpl-kvm", "", ListCommand.TemplateInfo.NOT_BUILT, "", "", "", "", "", -1, -1, "");
+    private static final InstanceListing.TemplateInfo NOT_BUILT = new InstanceListing.TemplateInfo(
+            "tpl-kvm", "", InstanceListing.TemplateInfo.NOT_BUILT, "", "", "", "", "", -1, -1, "");
 
-    private static String text(TemplateDetailView view, ListCommand.TemplateInfo t, int w, int h) {
+    private static String text(TemplateDetailView view, InstanceListing.TemplateInfo t, int w, int h) {
         return TuiSnapshot.toText(TuiSnapshot.render(w, h, f -> view.render(f, f.area(), t)));
     }
 
@@ -192,7 +192,7 @@ class TemplateDetailViewTest {
     @Test
     void emptyNewerSectionsAreHidden() throws Exception {
         var screen = String.join("\n", view(Set.of()).compactLines(
-                new ListCommand.TemplateInfo("tpl-root", "", ListCommand.TemplateInfo.NOT_BUILT,
+                new InstanceListing.TemplateInfo("tpl-root", "", InstanceListing.TemplateInfo.NOT_BUILT,
                         "", "", "", "", "", -1, -1, ""), 100)
                 .stream().map(l -> l.spans().stream().map(s -> s.content()).reduce("", String::concat)).toList());
         assertTrue(screen.contains("Tools: (none)"), screen);

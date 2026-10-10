@@ -25,7 +25,7 @@ class ListCommandBuildStatusTest {
             var buildStart = Instant.now();
             setModified(report, buildStart.minus(Duration.ofHours(23)));
 
-            assertNull(ListCommand.freshFailureReport("tpl-minimal", buildStart));
+            assertNull(Tui.freshFailureReport("tpl-minimal", buildStart));
         });
     }
 
@@ -36,7 +36,7 @@ class ListCommandBuildStatusTest {
             var report = writeReport("tpl-minimal");
             setModified(report, buildStart.plusSeconds(5));
 
-            assertEquals(report, ListCommand.freshFailureReport("tpl-minimal", buildStart));
+            assertEquals(report, Tui.freshFailureReport("tpl-minimal", buildStart));
         });
     }
 
@@ -48,7 +48,7 @@ class ListCommandBuildStatusTest {
             var report = writeReport("tpl-minimal");
             setModified(report, Instant.parse("2026-09-15T10:00:00Z"));
 
-            assertEquals(report, ListCommand.freshFailureReport("tpl-minimal", buildStart));
+            assertEquals(report, Tui.freshFailureReport("tpl-minimal", buildStart));
         });
     }
 
@@ -63,14 +63,14 @@ class ListCommandBuildStatusTest {
     void nullBuildStartSuppressesReport(@TempDir Path tmp) {
         InitCommandTest.withHome(tmp, () -> {
             writeReport("tpl-minimal");
-            assertNull(ListCommand.freshFailureReport("tpl-minimal", null));
+            assertNull(Tui.freshFailureReport("tpl-minimal", null));
         });
     }
 
     @Test
     void missingReportIsNotNamed(@TempDir Path tmp) {
         InitCommandTest.withHome(tmp, () ->
-                assertNull(ListCommand.freshFailureReport("tpl-minimal", Instant.now())));
+                assertNull(Tui.freshFailureReport("tpl-minimal", Instant.now())));
     }
 
     private static Path writeReport(String template) {
@@ -89,13 +89,13 @@ class ListCommandBuildStatusTest {
     /** A build of several templates names them all, not only the first (#1130). */
     @Test
     void severalTargetsAreAllNamed() {
-        assertEquals("Rebuilt tpl-isx, tpl-quarkus with parents successfully", ListCommand.buildStatusMessage(
+        assertEquals("Rebuilt tpl-isx, tpl-quarkus with parents successfully", Tui.buildStatusMessage(
                 new String[]{"tpl-isx", "tpl-quarkus", "--with-parents"}, true, null));
-        assertEquals("Failed to build tpl-a, tpl-b with descendants", ListCommand.buildStatusMessage(
+        assertEquals("Failed to build tpl-a, tpl-b with descendants", Tui.buildStatusMessage(
                 new String[]{"tpl-a", "tpl-b", "--with-descendants"}, false, null));
-        assertEquals("Failed to build tpl-a, tpl-b.", ListCommand.buildStatusMessage(
+        assertEquals("Failed to build tpl-a, tpl-b.", Tui.buildStatusMessage(
                 new String[]{"tpl-a", "tpl-b"}, false, Instant.now()));
-        assertEquals("Built tpl-a successfully", ListCommand.buildStatusMessage(
+        assertEquals("Built tpl-a successfully", Tui.buildStatusMessage(
                 new String[]{"tpl-a"}, true, null));
     }
 }

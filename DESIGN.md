@@ -3126,7 +3126,7 @@ Wall-clock measurement belongs in `bench/`, not in the shipped CLI: `bench/cli.s
 Every run also writes the actual rendering to `cli/target/tui-snapshots/` as `.txt` and `.ansi` (colours; view with `less -R`), which is how a reviewer -- human or agent -- sees a UI change.
 A missing golden fails rather than being created silently.
 Accept a changed rendering with `-Dtui.snapshots.update=true` and review the golden diff.
-This requires the screen to be decoupled from `ListCommand`: a modal gets its own class holding its state, key handling and rendering, with side effects (the AI call, the executor) injected -- `HelpChatModal` is the first.
+This requires the screen to be decoupled from `Tui`: a modal gets its own class holding its state, key handling and rendering, with side effects (the AI call, the executor) injected -- `HelpChatModal` is the first.
 Snapshot at several terminal sizes (80×24 is the floor), since truncation and wrapping bugs only show at some widths.
 
 **Interactive init flows**: `isx init`'s credential steps are where a token gets written to the wrong place, silently cleared, or an operator's personal `gh` identity reused when a dedicated one was intended -- failures that announce nothing.

@@ -79,17 +79,17 @@ public class IncusSpawn implements QuarkusApplication {
     }
 
     static boolean launchTui() {
-        return launchTui(InitCommand::requireInit, ListCommand::new);
+        return launchTui(InitCommand::requireInit, Tui::new);
     }
 
     /** {@link #launchTui()} with its two steps given, so a test can drive the hand-over between them. */
     static boolean launchTui(java.util.function.BooleanSupplier ready,
-                             java.util.function.Supplier<ListCommand> tui) {
+                             java.util.function.Supplier<Tui> tui) {
         // What isx prints while getting ready (the macOS VM starting, init) would be drawn over
         // by the TUI: hold the warnings for its log, and let it wait for anything else (#1154).
         try (var preTui = PreTuiOutput.begin()) {
             if (!ready.getAsBoolean()) return false;
-            tui.get().executeDirect(preTui);
+            tui.get().run(preTui);
             return true;
         }
     }

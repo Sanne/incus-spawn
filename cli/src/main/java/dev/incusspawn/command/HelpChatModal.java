@@ -35,7 +35,7 @@ import dev.tamboui.widgets.select.SelectState;
 
 /**
  * The "AI Help" dialog: state, key handling and rendering. Independent of Incus and of
- * {@link ListCommand}, so it can be rendered headlessly in tests.
+ * {@link Tui}, so it can be rendered headlessly in tests.
  */
 final class HelpChatModal {
 

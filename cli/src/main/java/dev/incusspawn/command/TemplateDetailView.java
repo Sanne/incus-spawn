@@ -38,7 +38,7 @@ import java.util.stream.Collectors;
  * {@link TemplateDetails}); the tree view shows each setting on the layer that declares it.
  *
  * <p>Owns its view state and scroll keys. The keys with side effects (F4 edit, n new child,
- * Esc close) stay with {@link ListCommand}, which supplies what the view reads through
+ * Esc close) stay with {@link Tui}, which supplies what the view reads through
  * {@link Source} so it can be rendered headlessly.
  */
 final class TemplateDetailView {
@@ -117,7 +117,7 @@ final class TemplateDetailView {
         scrollOffset = (int) Math.max(0, Math.min(Integer.MAX_VALUE, (long) scrollOffset + rows));
     }
 
-    void render(Frame frame, Rect screen, ListCommand.TemplateInfo template) {
+    void render(Frame frame, Rect screen, InstanceListing.TemplateInfo template) {
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
                 .title(modal.styledTitle(" " + template.name() + " — " + (compact ? "Compact" : "Tree") + " ",
@@ -161,7 +161,7 @@ final class TemplateDetailView {
 
     // --- Compact view: the effective settings ---
 
-    List<Line> compactLines(ListCommand.TemplateInfo template, int width) {
+    List<Line> compactLines(InstanceListing.TemplateInfo template, int width) {
         var chain = chain(template.name());
         if (chain.isEmpty()) return List.of();
 
@@ -330,7 +330,7 @@ final class TemplateDetailView {
     }
 
     /** Built date and age, what the list flags as out of sync, the building isx version and size. */
-    private void addBuildStatus(List<Line> lines, ListCommand.TemplateInfo template) {
+    private void addBuildStatus(List<Line> lines, InstanceListing.TemplateInfo template) {
         if (!template.isBuilt()) {
             lines.add(row("Status:", "not built", Style.EMPTY.fg(theme.statusStopped()).bg(modal.bg())));
             lines.add(Line.styled("", lineStyle()));
@@ -339,7 +339,7 @@ final class TemplateDetailView {
         var spans = new ArrayList<Span>();
         spans.add(Span.styled(String.format("%-" + LABEL_WIDTH + "s", "Built:"), labelStyle()));
         spans.add(Span.styled(template.buildStatus(), lineStyle()));
-        if (ListCommand.parseTimestamp(template.buildStatus()) != null) {
+        if (InstanceListing.parseTimestamp(template.buildStatus()) != null) {
             spans.add(Span.styled("  (" + Metadata.ageDescription(template.buildStatus(), clock.get()) + ")",
                     dimStyle()));
         }
@@ -363,7 +363,7 @@ final class TemplateDetailView {
             lines.add(row("", "↑ parent " + parentName + " was rebuilt since last build", warnStyle()));
         }
         if (template.diskUsage() >= 0) {
-            lines.add(row("Disk:", ListCommand.diskCell(template.diskUsage())
+            lines.add(row("Disk:", Tui.diskCell(template.diskUsage())
                     + "  (approx, excludes shared blocks)", lineStyle()));
         }
         lines.add(Line.styled("", lineStyle()));

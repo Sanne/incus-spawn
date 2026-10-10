@@ -1,6 +1,6 @@
 ---
 paths:
-  - "cli/src/main/java/dev/incusspawn/command/ListCommand.java"
+  - "cli/src/main/java/dev/incusspawn/command/Tui.java"
   - "cli/src/main/java/dev/incusspawn/tui/**"
   - "cli/src/main/java/dev/incusspawn/command/ModalRenderer.java"
   - "cli/src/main/java/dev/incusspawn/command/HelpChatModal.java"
@@ -33,7 +33,8 @@ Anything printed to stdout/stderr still shows, and makes isx print the held warn
 A notice meant for the TUI belongs on `Warnings`, so it costs no keypress.
 `TuiLaunchHandOverTest` drives `IncusSpawn.launchTui(ready, tui)` with a `StandInTui` (test scope, overriding `runTuiLoop`/`waitForUser`, reading `warningMessages()`) and fails if either end of the window is unwired.
 
-`ListCommand` is the TUI implementation (~5,500 lines) using Tamboui widgets.
+`Tui` is the TUI implementation using Tamboui widgets.
+`isx list` is `ListCommand`, which prints the listing and never opens the TUI; both parse the Incus listing through `InstanceListing`.
 Two-panel layout (Templates + Instances) with modal dialogs for branching, renaming, and building.
 
 **Staying current (live refresh).**
@@ -69,9 +70,9 @@ A failed existence check lets the action proceed rather than blocking the UI.
 `AccountsModal`, extracted like `HelpChatModal` and snapshot-tested in `AccountsModalTest`, offers per namespace "default (<current default>)" then every usable account.
 A pin to an account that is gone stays selectable as "(not configured)" so opening and applying unchanged never re-points anything.
 `changes()` holds only the rows the user changed (null = follow the default).
-`ListCommand` checks them on the event thread with `InstanceLifecycle.checkAccountChange` so a refusal (e.g. a Claude auth mode the build did not bake) is shown in the dialog while the user is still choosing, then applies them with `InstanceLifecycle.changeAccounts` in a background task, with sinks, not stdout -- the same path as `isx account set/unset`.
+`Tui` checks them on the event thread with `InstanceLifecycle.checkAccountChange` so a refusal (e.g. a Claude auth mode the build did not bake) is shown in the dialog while the user is still choosing, then applies them with `InstanceLifecycle.changeAccounts` in a background task, with sinks, not stdout -- the same path as `isx account set/unset`.
 The F3 instance details show the same resolution as `isx account show` (`AccountUsage`), re-read when a background change finishes (`detailAccountsStale`).
-They also say how an instance an `isx mcp` session made stands (`ListCommand.mcpDetailRows`, from the `McpStanding` that `collectEntries` reads off the listing: held by whom, orphaned since when -- and, for one a sweep stopped as dormant (#1028), since when and that `mcp.dormant-grace-hours` comes next, as `list_instances` gives `dormant_since` only while it is stopped -- or kept; its purpose and the session's cwd) -- and only there: Sanne ruled out an instance-table column for it (#1053), since the table has no width to spare.
+They also say how an instance an `isx mcp` session made stands (`Tui.mcpDetailRows`, from the `McpStanding` that `collectEntries` reads off the listing: held by whom, orphaned since when -- and, for one a sweep stopped as dormant (#1028), since when and that `mcp.dormant-grace-hours` comes next, as `list_instances` gives `dormant_since` only while it is stopped -- or kept; its purpose and the session's cwd) -- and only there: Sanne ruled out an instance-table column for it (#1053), since the table has no width to spare.
 Tool setups come from the TUI's own `toolDefLoader` (`AccountSelection.namespaceSetups(config, loader)`), not a fresh loader.
 
 **Branch dialog accounts** (`BranchAccountChoices`, snapshot-tested in `BranchAccountChoicesTest`): account rows follow the inbox field (`accountFieldBase()`), one per credential the template's tools use with more than one account.
@@ -87,7 +88,7 @@ The tree view shows each setting on the layer that declares it.
 `TemplateDetails.resolve()` does the chain resolution and must call the build's own resolvers (`ImageDef.resolveType`/`resolveAccounts`, `BuildCommand.resolveEffectiveWorkdir`/`resolveEffectiveDefaultAction`/`resolveImageUrl`) rather than re-derive them, or the view drifts from what a build produces.
 The type a template was *built* as comes from its `instance-mode` stamp (`TemplateInfo.instanceMode`); when it differs from the definition the view says a rebuild is needed.
 Under `Source:` it names the definition this one overrides from an earlier search layer (`LayeredDefinitions.overriddenSource()`, from the load the TUI already does) and, when the build stamped another file (`BuildSource.sourceOf()` on the `build-source` stamp the listing already carries, re-parsed only when the stamp changes), "built from <path>" (`TemplateDetailView.sourceLabel` says the `built-in` placeholder in words).
-The list's △ context line names that file by its file name only, so the warnings after it stay on the bar (#1099, `ListCommandBuiltFromTest`).
+The list's △ context line names that file by its file name only, so the warnings after it stay on the bar (#1099, `TuiBuiltFromTest`).
 A directory scanned twice (a search path naming the user directory, or reaching one through a symlink) records no override of a file by itself.
 The later layer's path and definition are recorded as for any layer, since project-local confinement is read from them (`ToolDefLoader.projectLocalToolNames()` from the path, images from the definition's `projectRoot`), and the override the earlier spelling recorded is carried over to the later one so `Overrides:` survives (`LayeredDefinitionsTest`, `ToolDefLoaderTest#aProjectToolAlsoReachedThroughASymlinkedSearchPathStaysProjectLocal`).
 A new `ImageDef` field belongs in both views.

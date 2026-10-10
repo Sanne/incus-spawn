@@ -105,7 +105,7 @@ public final class Metadata {
     public static final String ACCOUNT_IDENTITY_VERIFIED = PREFIX + "account-identity-verified";
     // Referenced (rfer) bytes of a built template's btrfs subvolume, stamped once at build time.
     // Templates are immutable and rfer is stable, so this cached value stays correct; the TUI uses
-    // it to show each template as a delta from its parent (see BtrfsUsage / ListCommand). Not part
+    // it to show each template as a delta from its parent (see BtrfsUsage / Tui). Not part
     // of contentFingerprint(), so stamping it never triggers a rebuild.
     public static final String DISK_REFERENCED = PREFIX + "disk-referenced";
 

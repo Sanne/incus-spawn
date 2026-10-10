@@ -72,7 +72,7 @@ public class TemplatesCommand extends BaseCommand {
                 // fields are then null, never "not built", and the reason goes to stderr.
                 List<TemplateStaleness.Built> built = null;
                 try {
-                    built = ListCommand.builtTemplates(RuntimeServices.incus().listJsonConfig());
+                    built = InstanceListing.builtTemplates(RuntimeServices.incus().listJsonConfig());
                 } catch (IncusException e) {
                     // Only Incus failing to answer is "unknown"; anything else is a bug, reported as one.
                     System.err.println("Could not read which templates are built: " + e.getMessage());

@@ -43,13 +43,13 @@ The Java tool instances themselves live in `RuntimeConstants.CDI_TOOLS` (module 
 Tools can declare runtime actions (`ActionEntry`) shown in the TUI's F9 actions menu and available via `RunCommand` (`isx run`).
 Both YAML tools (via `actions:` in the YAML) and Java/CDI tools (via `ToolSetup.actions()`) can contribute actions.
 An action with `shell_menu: true` and a one-key `shortcut` also appears in the shell status bar's F12 menu (`ShellMenu.of`, url actions only; see `.claude/rules/incus.md`).
-F9 runs in-process actions through `ToolAction.executeWithoutPrompting` (#982, `ListCommandActionDispatchTest`); `execute`, which may prompt on stdin, is only for `isx run` and deferred `command` actions.
+F9 runs in-process actions through `ToolAction.executeWithoutPrompting` (#982, `TuiActionDispatchTest`); `execute`, which may prompt on stdin, is only for `isx run` and deferred `command` actions.
 Templates select a default action via `ImageDef.defaultAction` (`default-action` in YAML), which is run on Enter in the TUI or when executing `isx run <instance>`.
 The reference format is `tool-name` (single action) or `tool-name:action-id` (multiple actions).
 `default-action` inherits through the parent chain (child overrides parent) and is intentionally excluded from `contentFingerprint()` so changing it doesn't trigger template rebuilds.
 Its metadata stamp (`user.incus-spawn.default-action`, the fallback when the YAML is gone) is instead reconciled onto every up-to-date template at the end of each `isx build` by `BuildCommand.syncDefaultActions()` (see DESIGN.md "Metadata outside the fingerprint").
 
-Action resolution logic is centralized in `ActionResolver`, shared by both `ListCommand` (TUI) and `RunCommand` (CLI).
+Action resolution logic is centralized in `ActionResolver`, shared by both `Tui` and `RunCommand` (CLI).
 `ActionResolver` handles discovering actions from installed tools, resolving default actions from template inheritance chains, finding specific actions by reference, and building `ActionContext` for execution.
 For instances (clones), the installed-tools set comes from `BUILD_SOURCE` metadata (baked at build time) so that action resolution reflects what is actually installed — the current YAML chain may reference tools added after the instance was branched.
 For templates, the YAML chain is authoritative -- unless it is gone (the YAML deleted after the build), when the template's own `BUILD_SOURCE` snapshot stands in, as the `default-action` stamp does for the ref.

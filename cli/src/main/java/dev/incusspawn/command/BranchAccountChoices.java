@@ -31,7 +31,7 @@ import dev.tamboui.widgets.paragraph.Paragraph;
  * explicit pin, the inherited one included: pinning the account that is the global default is a
  * different choice from following the default, since the pin stays when the default moves.
  *
- * <p>Independent of Incus and of {@link ListCommand}, so it can be driven and rendered headlessly;
+ * <p>Independent of Incus and of {@link Tui}, so it can be driven and rendered headlessly;
  * the dialog passes keys in while a row is focused and reads {@link #overrides()} when it
  * branches.
  */

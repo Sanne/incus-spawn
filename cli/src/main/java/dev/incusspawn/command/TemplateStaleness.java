@@ -119,8 +119,8 @@ final class TemplateStaleness {
      */
     static boolean parentRebuilt(Built parent, Built template) {
         if (parent == null || parent.machineType() != template.machineType()) return false;
-        var parentTs = ListCommand.parseTimestamp(parent.created());
-        var ts = ListCommand.parseTimestamp(template.created());
+        var parentTs = InstanceListing.parseTimestamp(parent.created());
+        var ts = InstanceListing.parseTimestamp(template.created());
         return parentTs != null && ts != null && parentTs.isAfter(ts);
     }
 

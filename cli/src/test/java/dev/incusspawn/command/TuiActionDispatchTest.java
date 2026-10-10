@@ -11,13 +11,13 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** The F9 actions menu runs url actions while the TUI still owns the terminal (#982). */
-class ListCommandActionDispatchTest {
+class TuiActionDispatchTest {
 
     private static final ActionContext CONTEXT = new ActionContext("dev", MachineType.CONTAINER);
 
     @Test
     void urlActionRunsWithoutPromptingAndReportsInTheStatusLine() {
-        var list = new ListCommand();
+        var list = new Tui();
         var action = new ToolAction() {
             @Override public String toolName() { return "vscode-remote"; }
             @Override public String label() { return "Open in VS Code"; }

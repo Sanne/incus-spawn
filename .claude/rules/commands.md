@@ -9,7 +9,7 @@ paths:
 # Entry Point and Command Structure
 
 `IncusSpawn.java` is the aesh `@CommandDefinition` top command.
-With no subcommand, it launches the TUI (`ListCommand`).
+With no subcommand, it launches the TUI (`Tui`).
 Each subcommand in `command/` is an aesh `@CommandDefinition` with Quarkus DI.
 
 **Platform-specific command tree**: aesh bakes `groupCommands` into the annotation at compile time, so macOS-only commands can't exist on one platform without a second top command.

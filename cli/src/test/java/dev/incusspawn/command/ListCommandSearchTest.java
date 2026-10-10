@@ -8,48 +8,48 @@ class ListCommandSearchTest {
 
     @Test
     void emptyQueryMatchesEverything() {
-        assertTrue(ListCommand.matchesSearch("", "foo", "bar"));
-        assertTrue(ListCommand.matchesSearch(null, "foo"));
-        assertTrue(ListCommand.matchesSearch(""));
+        assertTrue(Tui.matchesSearch("", "foo", "bar"));
+        assertTrue(Tui.matchesSearch(null, "foo"));
+        assertTrue(Tui.matchesSearch(""));
     }
 
     @Test
     void caseInsensitiveMatch() {
-        assertTrue(ListCommand.matchesSearch("java", "tpl-java"));
-        assertTrue(ListCommand.matchesSearch("JAVA", "tpl-java"));
-        assertTrue(ListCommand.matchesSearch("Java", "tpl-java"));
-        assertTrue(ListCommand.matchesSearch("java", "TPL-JAVA"));
+        assertTrue(Tui.matchesSearch("java", "tpl-java"));
+        assertTrue(Tui.matchesSearch("JAVA", "tpl-java"));
+        assertTrue(Tui.matchesSearch("Java", "tpl-java"));
+        assertTrue(Tui.matchesSearch("java", "TPL-JAVA"));
     }
 
     @Test
     void substringMatch() {
-        assertTrue(ListCommand.matchesSearch("dev", "tpl-dev"));
-        assertTrue(ListCommand.matchesSearch("pl-d", "tpl-dev"));
-        assertTrue(ListCommand.matchesSearch("tpl-dev", "tpl-dev"));
+        assertTrue(Tui.matchesSearch("dev", "tpl-dev"));
+        assertTrue(Tui.matchesSearch("pl-d", "tpl-dev"));
+        assertTrue(Tui.matchesSearch("tpl-dev", "tpl-dev"));
     }
 
     @Test
     void matchesAnyField() {
-        assertTrue(ListCommand.matchesSearch("quarkus", "my-instance", "tpl-java", "Quarkus dev"));
-        assertTrue(ListCommand.matchesSearch("192", "my-instance", "10.0.0.1", "192.168.1.1"));
+        assertTrue(Tui.matchesSearch("quarkus", "my-instance", "tpl-java", "Quarkus dev"));
+        assertTrue(Tui.matchesSearch("192", "my-instance", "10.0.0.1", "192.168.1.1"));
     }
 
     @Test
     void noMatchReturnsFalse() {
-        assertFalse(ListCommand.matchesSearch("python", "tpl-java", "Java development"));
-        assertFalse(ListCommand.matchesSearch("xyz", "abc", "def"));
+        assertFalse(Tui.matchesSearch("python", "tpl-java", "Java development"));
+        assertFalse(Tui.matchesSearch("xyz", "abc", "def"));
     }
 
     @Test
     void nullFieldsHandledGracefully() {
-        assertTrue(ListCommand.matchesSearch("foo", null, "foobar", null));
-        assertFalse(ListCommand.matchesSearch("foo", null, null));
-        assertTrue(ListCommand.matchesSearch("", (String[]) null));
-        assertFalse(ListCommand.matchesSearch("foo", (String[]) null));
+        assertTrue(Tui.matchesSearch("foo", null, "foobar", null));
+        assertFalse(Tui.matchesSearch("foo", null, null));
+        assertTrue(Tui.matchesSearch("", (String[]) null));
+        assertFalse(Tui.matchesSearch("foo", (String[]) null));
     }
 
     @Test
     void noFieldsWithNonEmptyQuery() {
-        assertFalse(ListCommand.matchesSearch("foo"));
+        assertFalse(Tui.matchesSearch("foo"));
     }
 }

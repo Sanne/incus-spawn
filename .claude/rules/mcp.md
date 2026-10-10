@@ -148,7 +148,7 @@ Only `1` registers; anything else removes, so a copy's first start (the branch's
 A new start path that delivers a secret must say the grant too -- `McpClientRegistrationStartTest` covers each one.
 The coordination playbook is the `coordinate` MCP prompt (`McpPrompt`, `prompts/list`/`prompts/get`), never a file in the rootfs; keep it to tools that exist (`McpPromptTest`).
 `isx branch --mcp-client` then checks the endpoint from the guest, and that `~/.claude.json` holds the entry (`McpClientCheck`, one exec, warns and never fails the branch; guest output through `OutputFormat.oneLine`).
-Every start path's bit is pinned both ways, `1` for a coordinator and `0` otherwise (`McpClientRegistrationStartTest`, `ListCommandMcpCallerTest` for the TUI listing).
+Every start path's bit is pinned both ways, `1` for a coordinator and `0` otherwise (`McpClientRegistrationStartTest`, `InstanceListingMcpCallerTest` for the TUI listing).
 
 **Set up by `isx init`.**
 The "Agent Access over MCP (experimental)" step (`InitCommand.setupMcp`, default off, skipped without a host `claude` or a console) registers the server with `claude mcp add --scope user isx -- <isx> mcp` and asks, per template whose chain installs the `claude` tool, whether to approve it.

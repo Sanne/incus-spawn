@@ -28,7 +28,7 @@ import dev.tamboui.widgets.select.SelectState;
 /**
  * The TUI's "Credential accounts" dialog: which account one instance uses per credential
  * namespace, and changing it -- {@code isx account set/unset} in a form. Independent of Incus and
- * of {@link ListCommand}, so it can be rendered and driven headlessly in tests; the caller checks
+ * of {@link Tui}, so it can be rendered and driven headlessly in tests; the caller checks
  * and applies {@link #changes()}.
  *
  * <p>The first option of every row is "follow the default", which is what an unpinned namespace

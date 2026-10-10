@@ -44,7 +44,7 @@ import java.util.regex.Pattern;
 
 /**
  * Shared helpers for instance/template creation lifecycle.
- * Eliminates duplication between BranchCommand and ListCommand.
+ * Eliminates duplication between BranchCommand and the TUI.
  */
 public final class InstanceLifecycle {
 

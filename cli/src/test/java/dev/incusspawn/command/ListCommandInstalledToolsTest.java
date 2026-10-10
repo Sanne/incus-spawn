@@ -56,9 +56,9 @@ class ListCommandInstalledToolsTest {
                 Metadata.PROFILE, TEMPLATE,
                 Metadata.BUILD_SOURCE, new BuildSource(Map.of(TEMPLATE, template(built)),
                         Map.of(), Map.of(), Map.of()).toJson()));
-        var instance = ListCommand.collectEntries(daemon.client().listJson()).getFirst();
+        var instance = InstanceListing.collectEntries(daemon.client().listJson()).getFirst();
 
-        var list = new ListCommand();
+        var list = new Tui();
         list.useDefinitions(defs, new ToolDefLoader(List.of()),
                 List.of(new Tool("test-agent-868"), new Tool("test-other-868")));
         return list.resolveActionsForInstance(instance).stream().map(ToolAction::toolName).toList();

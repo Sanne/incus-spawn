@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * stamp the listing carries, re-read when a rebuild re-stamps it, and named on the △ context line.
  */
 @ExtendWith(IsolatedHome.class)
-class ListCommandBuiltFromTest {
+class TuiBuiltFromTest {
 
     private static final String TEMPLATE = "tpl-app";
     private static final String CURRENT = "/home/me/work/.incus-spawn/images/tpl-app.yaml";
@@ -34,7 +34,7 @@ class ListCommandBuiltFromTest {
     }
 
     /** The listing of one built template whose build stamped {@code builtFrom}, with a stale definition sha. */
-    private static List<ListCommand.InstanceInfo> listing(String builtFrom) {
+    private static List<InstanceListing.InstanceInfo> listing(String builtFrom) {
         var daemon = new FakeIncusDaemon().container(TEMPLATE, Map.of(
                 Metadata.TYPE, Metadata.TYPE_BASE,
                 Metadata.PROFILE, TEMPLATE,
@@ -42,19 +42,19 @@ class ListCommandBuiltFromTest {
                 Metadata.DEFINITION_SHA, "sha-of-an-older-definition",
                 Metadata.BUILD_SOURCE, new BuildSource(Map.of(TEMPLATE, definition()), Map.of(), Map.of(),
                         Map.of(TEMPLATE, builtFrom)).toJson()));
-        return ListCommand.collectEntries(daemon.client().listJson());
+        return InstanceListing.collectEntries(daemon.client().listJson());
     }
 
-    private static ListCommand list() {
-        var list = new ListCommand();
+    private static Tui list() {
+        var list = new Tui();
         list.useDefinitions(new java.util.HashMap<>(Map.of(TEMPLATE, definition())),
                 new ToolDefLoader(List.of()), List.of());
         return list;
     }
 
-    private static String contextLine(ListCommand list) {
+    private static String contextLine(Tui list) {
         list.buildTemplateRowData();
-        var template = new ListCommand.TemplateInfo(TEMPLATE, "", "2026-10-01", "container",
+        var template = new InstanceListing.TemplateInfo(TEMPLATE, "", "2026-10-01", "container",
                 BuildInfo.instance().version(), "sha-of-an-older-definition", "", "", -1, -1, "container");
         return list.buildContextLine(template, null, true).spans().stream()
                 .map(s -> s.content()).reduce("", String::concat);

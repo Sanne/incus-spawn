@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * well-formed grant reads as a coordinator, so a copy or a malformed stamp is restarted as
  * nothing more, and its Claude Code registration is removed rather than made.
  */
-class ListCommandMcpCallerTest {
+class InstanceListingMcpCallerTest {
 
     private static String instance(String name, String grant) {
         var stamp = grant == null ? "" : ",\"" + Metadata.MCP_CALLER + "\":\"" + grant + "\"";
@@ -28,8 +28,8 @@ class ListCommandMcpCallerTest {
                 instance("copy", null),
                 instance("old", "2026-10-05T10:00:00")) + "]";
 
-        var callers = ListCommand.collectEntries(listing).stream()
-                .collect(Collectors.toMap(ListCommand.InstanceInfo::name, ListCommand.InstanceInfo::mcpCaller));
+        var callers = InstanceListing.collectEntries(listing).stream()
+                .collect(Collectors.toMap(InstanceListing.InstanceInfo::name, InstanceListing.InstanceInfo::mcpCaller));
 
         assertEquals(Map.of("coord", true, "copy", false, "old", false), callers);
     }
