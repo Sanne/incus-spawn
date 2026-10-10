@@ -20,7 +20,7 @@ Only code running after the runner has closed (the `pendingAction` switch, e.g. 
 
 **Warnings go to the `WarningLog`, not the status line** (#872).
 `runTuiSessions()` redirects `Warnings` (`common`) to its own `warningChannel` around each `reloadData()` and the runner, but **not** while the terminal is released (`pendingAction`: a build, a template edit, a shell), so those print their own warnings -- even ones the TUI has already logged, since each channel remembers what it reported separately.
-and TUI code passes `warningLog::add` as the warn sink of shared code (`prepareHostDevicesForStart`, `StaticIpAllocator.Output`).
+And TUI code passes `warningLog::add` as the warn sink of shared code (`prepareHostDevicesForStart`, `StaticIpAllocator.Output`).
 The log keeps every warning, from any thread, deduplicated (a repeat moves to the end with a new time) and capped at 100.
 `render()` announces what arrived since the last frame on the status line, but only when the line is empty or holds an older announcement (`canAnnounceWarnings()`).
 An action's result such as "Build failed" is never replaced, the warnings wait for the next key (`WarningLog.statusLine`: the latest, led by the count when several arrived, since a long line is cut off at the terminal width), the header shows "⚠ N warnings (w)" while any are unread, ahead of the running badge, and `w` opens `WarningsModal` (extracted and snapshot-tested like `HelpChatModal`): every warning, newest first, in full with its lines kept.

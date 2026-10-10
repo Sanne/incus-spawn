@@ -79,7 +79,7 @@ Exec has no default timeout; cancellation kills the command's `setsid` session.
 Tasks are systemd units in the guest (`TaskScripts`), but `su -` inside the unit goes through PAM, which moves the run into a user session scope.
 The unit's cgroup does not contain it, so anything that must find or stop a task's processes (`cancel`, `Presence`) goes by the `ISX_MCP_TASK` environment marker every run exports.
 A run becomes `current` only once `systemd-run` succeeded, and a reservation is undone on any failure, building its script included.
-their state is the files under `~/.isx-mcp/tasks/<id>/`, and unit state is read with `sudo -n systemctl` (an unprivileged session cannot reach the system bus in a container).
+Their state is the files under `~/.isx-mcp/tasks/<id>/`, and unit state is read with `sudo -n systemctl` (an unprivileged session cannot reach the system bus in a container).
 Poll with `TaskScripts.states()` (one cheap exec per instance), not `status()`, which carries the output tail.
 An `unknown` answer (systemd not reachable) never changes a task's recorded state, and an instance that cannot be probed only loses its tasks once it is gone (`Tasks.forgetInstance`, also called by `destroy_instance`).
 "gone" means a 404 (`InstanceBackend.metadata()` throws on any other failure).
