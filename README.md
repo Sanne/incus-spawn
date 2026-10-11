@@ -1309,6 +1309,12 @@ A VM from Lima, Multipass, Tart or Vagrant, or a cloud instance, gives an agent 
 
 ## FAQ
 
+### Why does clicking a URL in Codex fail with "No valid browsers detected"?
+
+Use **Ctrl+Shift-click** to open the URL in your host browser. This worked in our testing: adding Shift lets the host terminal handle the link instead of passing the click to Codex. The exact modifier keys depend on your terminal; macOS users have also reported success with **Cmd+Shift-click**.
+
+Codex CLI can intercept URL clicks and try to launch a browser inside the isx instance, producing `Failed to open browser for ...: No valid browsers detected`. This also affects remote SSH sessions and is tracked upstream in [openai/codex#52766](https://github.com/openai/codex/issues/52766). The `tui.link_activation = "disabled"` setting did not resolve it in our testing, and other users report the same limitation in [openai/codex#48886](https://github.com/openai/codex/issues/48886).
+
 ### Why can't I mount a host directory read-write to follow agent work in my IDE?
 
 A project directory is not just data — it is an implicit code execution channel. Build tools, package managers, and IDEs all trust its contents and execute them with your full host privileges. A read-write mount turns the agent's output into unreviewed host-side code execution, which is exactly the threat model isx exists to prevent.
