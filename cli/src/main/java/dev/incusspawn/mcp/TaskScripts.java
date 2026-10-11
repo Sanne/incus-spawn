@@ -79,6 +79,16 @@ final class TaskScripts {
         return "{ [ -f " + quoted + " ] && { [ -f /dev/fd/3 ] && " + command + " <&3; } 3<> " + quoted + "; } 2>/dev/null";
     }
 
+    /**
+     * True if {@code file} (a path the shell expands, quoted here) is a regular file agentuser may
+     * read: for a file only checked for, never opened, so unlike {@link #ifFile} it need not be
+     * writable.
+     */
+    static String isReadableFile(String file) {
+        var quoted = "\"" + file + "\"";
+        return "[ -f " + quoted + " ] && [ -r " + quoted + " ]";
+    }
+
     /** The contents of {@code file} if it is a regular file ({@link #ifFile}). */
     static String readFile(String file) {
         return ifFile(file, "cat");

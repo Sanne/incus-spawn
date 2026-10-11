@@ -1024,7 +1024,7 @@ final class McpTools {
                         checkAgent(instance, template, account, profile.model(), agent);
                         if (agent == DelegateAgent.CODEX && prompt.skill() != null) {
                             var skillPath = "$HOME/.agents/skills/" + prompt.skill() + "/SKILL.md";
-                            if (backend.exec(instance, TaskScripts.ifFile(skillPath, "head -c 1 >/dev/null"), null,
+                            if (backend.exec(instance, TaskScripts.isReadableFile(skillPath), null,
                                     new ByteArrayOutputStream(), new ByteArrayOutputStream()) != 0)
                                 throw new ToolError(ToolError.Code.REFUSED, "Codex skill '" + prompt.skill()
                                         + "' is not installed at " + skillPath + "; rebuild the template with that skill.");
