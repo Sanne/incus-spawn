@@ -360,10 +360,13 @@ Optionally, missing repos can be cloned — the first prompt accepts `y`/`n`/`al
 8. Install image-defined tools (resolved from YAML/Java)
 9. Clone declared repos (with reference optimization — see below)
 10. Configure terminal title (`PROMPT_COMMAND` in `.bashrc` sets `isx:<hostname>`)
-11. Pre-trust cloned repo directories in `.claude.json` (if Claude Code is installed)
+11. Pre-trust cloned repo directories in `.claude.json` and `.codex/config.toml` (when the corresponding tool is installed)
 12. Write the agent context file (`/etc/claude-code/CLAUDE.md`) — see below
 13. Clean caches (dnf, /tmp)
 14. Tag metadata (version, SHA, definition fingerprint, CA fingerprint, build source), stop
+
+Codex trust is restored for repositories from the whole template chain after all tool setup finishes, in both build paths.
+Reconfiguring Codex in a child layer rewrites its config, so trusting only that layer's repositories would lose the parent's pre-approvals.
 
 **VM-specific build behavior:**
 

@@ -292,22 +292,14 @@ public class GuestProvisioning {
 
         // generate() drops blanks and repeats, so collect freely here.
         var notes = new ArrayList<String>();
-        var repos = new ArrayList<AgentContextGenerator.Repo>();
-        var seenRepoPaths = new HashSet<String>();
         for (var layer : chain) {
             notes.add(layer.getAgentNote());
-            // Ancestor repos are in the final image too: buildFromScratch clones them
-            // per-layer in the chain loop, buildFromParent inherits them with the copy.
-            for (var repo : layer.getRepos()) {
-                // getPath() derives ~/<name> from the url, but yields null for an entry
-                // with neither — nothing was cloned for it, so there is nothing to list.
-                var path = repo.getPath();
-                if (path == null || path.isBlank()) continue;
-                // Dedupe on the resolved path: ~/jdk and /home/agentuser/jdk are one clone.
-                if (seenRepoPaths.add(expandHome(path))) {
-                    repos.add(new AgentContextGenerator.Repo(path, repo.getUrl()));
-                }
-            }
+        }
+        // Ancestor repos are in the final image too: buildFromScratch clones them
+        // per-layer in the chain loop, buildFromParent inherits them with the copy.
+        var repos = new ArrayList<AgentContextGenerator.Repo>();
+        for (var repo : chainRepos(imageDef, defs)) {
+            repos.add(new AgentContextGenerator.Repo(repo.getPath(), repo.getUrl()));
         }
 
         var toolNames = new ArrayList<String>(allTools.size());
@@ -389,8 +381,30 @@ public class GuestProvisioning {
 
     private static final String CODEX_CONFIG_PATH = CodexSetup.CONFIG_PATH;
 
-    static void updateCodexTrust(Container container, ImageDef imageDef) {
-        if (imageDef.getRepos().isEmpty()) return;
+    /**
+     * Repos declared across the template chain, one per resolved path, skipping entries with no
+     * path. Tool setup in a child layer can rewrite a tool's config, so trust is
+     * restored for all of them after it, not just for the current layer's.
+     */
+    static List<ImageDef.RepoEntry> chainRepos(ImageDef imageDef, Map<String, ImageDef> defs) {
+        var seen = new HashSet<String>();
+        var repos = new ArrayList<ImageDef.RepoEntry>();
+        for (var layer : ImageDef.chain(imageDef, defs)) {
+            for (var repo : layer.getRepos()) {
+                // getPath() derives ~/<name> from the url, but yields null for an entry
+                // with neither — nothing was cloned for it.
+                var path = repo.getPath();
+                if (path == null || path.isBlank()) continue;
+                // Dedupe on the resolved path: ~/jdk and /home/agentuser/jdk are one clone.
+                if (seen.add(expandHome(path))) repos.add(repo);
+            }
+        }
+        return repos;
+    }
+
+    static void updateCodexTrust(Container container, ImageDef imageDef, Map<String, ImageDef> defs) {
+        var repos = chainRepos(imageDef, defs);
+        if (repos.isEmpty()) return;
 
         var checkResult = container.exec("test", "-f", CODEX_CONFIG_PATH);
         if (!checkResult.success()) return;
@@ -401,10 +415,10 @@ public class GuestProvisioning {
         var existing = catResult.stdout();
         var sb = new StringBuilder();
 
-        for (var repo : imageDef.getRepos()) {
+        for (var repo : repos) {
             var expandedPath = expandHome(repo.getPath());
             var section = "[projects.\"" + expandedPath + "\"]";
-            if (!existing.contains(section) && !sb.toString().contains(section)) {
+            if (!existing.contains(section)) {
                 sb.append("\n").append(section).append("\n");
                 sb.append("trust_level = \"trusted\"\n");
             }

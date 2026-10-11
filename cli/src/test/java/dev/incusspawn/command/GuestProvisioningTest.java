@@ -13,6 +13,8 @@ import dev.incusspawn.tool.ToolSetup;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 import java.nio.file.Files;
@@ -300,6 +302,71 @@ class GuestProvisioningTest {
 
     // --- updateCodexTrust ---
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void updateCodexTrustRestoresInheritedReposAfterReconfiguration(boolean childHasRepos) {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        // A child overriding Codex's model rewrites config.toml, removing parent repo trust.
+        new CodexSetup().reconfigure(container, Map.of("model", "child-model"));
+        var rewrittenConfig = capturedWrite(incus, ".codex/config.toml");
+        assertNotNull(rewrittenConfig);
+        assertFalse(rewrittenConfig.contains("/home/agentuser/parent-repo"));
+        clearInvocations(incus);
+        when(incus.shellExec("test", "cat", CodexSetup.CONFIG_PATH))
+                .thenReturn(new IncusClient.ExecResult(0, rewrittenConfig, ""));
+
+        var parentRepo = new ImageDef.RepoEntry();
+        parentRepo.setUrl("https://github.com/owner/parent-repo.git");
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setRepos(List.of(parentRepo));
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent(parent.getName());
+        if (childHasRepos) {
+            var childRepo = new ImageDef.RepoEntry();
+            childRepo.setPath("~/child-repo");
+            // Explicit and derived paths for the same clone must produce just one table.
+            var duplicate = new ImageDef.RepoEntry();
+            duplicate.setPath("/home/agentuser/child-repo");
+            child.setRepos(List.of(childRepo, duplicate));
+        }
+
+        GuestProvisioning.updateCodexTrust(container, child, Map.of(parent.getName(), parent));
+
+        var written = capturedWrite(incus, ".codex/config.toml");
+        assertNotNull(written);
+        assertTrue(written.startsWith(rewrittenConfig), "Preserve the child's Codex settings");
+        assertTrue(written.contains("[projects.\"/home/agentuser/parent-repo\"]\ntrust_level = \"trusted\""));
+        assertEquals(1, written.lines().filter(l -> l.equals("[projects.\"/home/agentuser/parent-repo\"]")).count());
+        assertEquals(childHasRepos, written.contains("[projects.\"/home/agentuser/child-repo\"]\ntrust_level = \"trusted\""));
+        assertEquals(childHasRepos ? 1 : 0,
+                written.lines().filter(l -> l.equals("[projects.\"/home/agentuser/child-repo\"]")).count());
+        verify(incus).shellExec("test", "cat", CodexSetup.CONFIG_PATH);
+    }
+
+    @Test
+    void chainReposSkipsEntriesWithoutPathAndDedupesResolvedPaths() {
+        var parentRepo = new ImageDef.RepoEntry();
+        parentRepo.setPath("~/repo");
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setRepos(List.of(parentRepo, new ImageDef.RepoEntry()));
+        var sameClone = new ImageDef.RepoEntry();
+        sameClone.setPath("/home/agentuser/repo");
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent(parent.getName());
+        child.setRepos(List.of(sameClone));
+
+        var repos = GuestProvisioning.chainRepos(child, Map.of(parent.getName(), parent));
+
+        assertEquals(List.of(parentRepo), repos);
+    }
+
     @Test
     void updateCodexTrustAddsRepoDirectories() {
         var incus = mock(IncusClient.class);
@@ -326,7 +393,7 @@ class GuestProvisioningTest {
         imageDef.setName("tpl-quarkus");
         imageDef.setRepos(List.of(repo));
 
-        GuestProvisioning.updateCodexTrust(container, imageDef);
+        GuestProvisioning.updateCodexTrust(container, imageDef, Map.of());
 
         var writtenContent = capturedWrite(incus, ".codex/config.toml");
         assertNotNull(writtenContent, "Expected config.toml to be written");
@@ -345,7 +412,7 @@ class GuestProvisioningTest {
         var imageDef = new ImageDef();
         imageDef.setName("tpl-empty");
 
-        GuestProvisioning.updateCodexTrust(container, imageDef);
+        GuestProvisioning.updateCodexTrust(container, imageDef, Map.of());
 
         verifyNoInteractions(incus);
     }
@@ -365,7 +432,7 @@ class GuestProvisioningTest {
         imageDef.setName("tpl-nocodex");
         imageDef.setRepos(List.of(repo));
 
-        GuestProvisioning.updateCodexTrust(container, imageDef);
+        GuestProvisioning.updateCodexTrust(container, imageDef, Map.of());
 
         verify(incus).shellExec(eq("test"), eq("test"), eq("-f"), anyString());
         verify(incus, never()).shellExec(eq("test"), eq("cat"), anyString());
@@ -397,7 +464,7 @@ class GuestProvisioningTest {
         imageDef.setName("tpl-quarkus");
         imageDef.setRepos(List.of(repo));
 
-        GuestProvisioning.updateCodexTrust(container, imageDef);
+        GuestProvisioning.updateCodexTrust(container, imageDef, Map.of());
 
         // Should not write since path already trusted
         verify(incus, never()).shellExec(eq("test"), eq("sh"), eq("-c"), anyString());

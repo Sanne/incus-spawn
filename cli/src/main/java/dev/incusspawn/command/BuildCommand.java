@@ -1276,7 +1276,7 @@ public class BuildCommand extends BaseCommand {
         installSkills(container, imageDef, defs, toolResolution.effective());
         cloneRepos(container, imageDef, machineType);
         updateClaudeJsonTrust(container, imageDef);
-        updateCodexTrust(container, imageDef);
+        updateCodexTrust(container, imageDef, defs);
         // After the repos it lists have actually been cloned, matching buildFromScratch.
         writeAgentContext(container, imageDef, defs, allTools, canonicalName);
         if (machineType == MachineType.VM) {
@@ -1519,8 +1519,8 @@ public class BuildCommand extends BaseCommand {
             installSkills(container, layer, defs, toolResolution.effective());
             cloneRepos(container, layer, machineType);
             updateClaudeJsonTrust(container, layer);
-            updateCodexTrust(container, layer);
         }
+        updateCodexTrust(container, imageDef, defs);
         var identityStamps = settleIdentities(container, imageDef, defs, started.inheritedIdentities());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         verifyTools(container, allTools);
