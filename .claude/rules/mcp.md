@@ -16,6 +16,7 @@ DESIGN.md "MCP server: delegating work to isx instances" has the rationale; thes
 Managed delegation supports Claude Code and Codex through the closed `DelegateAgent` registry.
 `list_templates.delegate_agents` exposes installed agents, capabilities, permissions and configuration refusals; explicit `delegate.agent` selects one, otherwise Claude wins when installed.
 `send_message` keeps the task's recorded agent, including after adoption and idempotent replay.
+`send_message` and `delegate(instance=...)` re-check the instance's template with `TemplatePolicy.requireLineage` to select the agent, so follow-ups are refused once that template is unapproved, project-local or has no definition.
 The [Codex worker design](../../docs/MCP-CODEX-DELEGATION.md) describes the lifecycle and capability differences.
 Codex runs through the bundled guest Node runner (`mcp/codex-runner.cjs`, included in native resources), which saves the thread ID while running and publishes outcome and report files before the exit record.
 Task identity is `1 <agent>` in the `identity` file; absence means legacy Claude, while an unknown version or agent refuses continuation.
@@ -23,7 +24,7 @@ The keyed creation stamp `mcp-delegate-agent` preserves selection before the fir
 Codex's namespace is `openai`, its approval policy is always `never`, and its sandbox mode comes only from `mcp.codex` host configuration.
 A restrictive Claude `delegate-permission-modes` entry for a template is covered only by that template's `codex.sandbox-modes` entry, never by the section-wide `codex.sandbox-mode` (`McpConfig.codexSandboxMode`).
 Codex rejects `max_turns` and a configured `delegate-max-turns` ceiling; it does no paid model preflight.
-`ask` requires Claude and is checked before the producer runs; do not substitute a tool-enabled Codex as a summarizer.
+`ask` requires Claude and is checked before the producer runs against the template's current definition; one without a definition is left to `AskScript`'s in-instance check; do not substitute a tool-enabled Codex as a summarizer.
 `instance_activity.model_usage_providers` declares the proxy's Anthropic-only model counters; OpenAI traffic remains in the domain counters.
 
 **No Quarkus extensions for it.**

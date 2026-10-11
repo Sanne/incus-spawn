@@ -374,10 +374,15 @@ final class McpTools {
         }
     }
 
+    /**
+     * Refuse {@code ask} before its producer runs when the instance's template is known to have
+     * no Claude. A definition since removed or renamed proves nothing: {@link AskScript} then
+     * finds out in the instance, and answers that it cannot summarise rather than using Codex.
+     */
     private void requireAsk(String instance) {
         var template = session.instances().stream().filter(o -> o.name().equals(instance))
                 .map(McpSession.Owned::template).findFirst().orElse("");
-        if (!backend.template(template).map(t -> t.tools().contains("claude")).orElse(false))
+        if (!backend.template(template).map(t -> t.tools().contains("claude")).orElse(true))
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "ask requires Claude's tool-free summary service in the instance; omit ask and read the output directly");
     }
 
