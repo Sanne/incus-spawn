@@ -65,7 +65,7 @@ public class CopilotSetup implements ToolSetup {
         return List.of(
                 EnvEntry.set("COPILOT_GITHUB_TOKEN", PLACEHOLDER_TOKEN),
                 // Isx containers are already the isolation boundary (see ClaudeSetup's
-                // bypassPermissions, CodexSetup's danger-full-access): auto-approve every
+                // bypassPermissions, CodexSetup's full-access permission profile): auto-approve every
                 // tool/path/URL for non-interactive `copilot -p` runs, same as --yolo.
                 EnvEntry.set("COPILOT_ALLOW_ALL", "true"));
     }
