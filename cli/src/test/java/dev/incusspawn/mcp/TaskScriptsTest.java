@@ -1106,6 +1106,25 @@ class TaskScriptsTest {
     }
 
     @Test
+    void codexCountsAFallbackReportBeforeCuttingIt() throws Exception {
+        // No --output-last-message file: the last agent message is the report. Two bytes a
+        // character, so it is over the 1 MiB report limit while its event line is not, and the
+        // leading byte puts the limit inside a character.
+        codexStub("""
+                console.log(JSON.stringify({type:'thread.started', thread_id:'codex-session-123'}));
+                console.log(JSON.stringify({type:'item.completed', item:{type:'agent_message',text:'a' + '\u00e9'.repeat(600000)}}));
+                console.log(JSON.stringify({type:'turn.completed'}));
+                """);
+        launchCodex("t3-codex", 1, "large fallback report");
+        var status = awaitFinished("t3-codex");
+        assertEquals(0, status.exit(), status.stderr());
+        var result = CodexEvents.summarize(status.output(), 0).result();
+        assertEquals(1200001, result.path("report_bytes").asInt());
+        assertTrue(result.path("report_truncated").asBoolean());
+        assertEquals(1024 * 1024 - 1, Files.size(home.resolve(".isx-mcp/tasks/t3-codex/result-1.txt")), "cut before the split character");
+    }
+
+    @Test
     void codexRequiresTerminalSuccessAndZeroExit() throws Exception {
         int trial = 0;
         for (var ending : List.of("", "console.log(JSON.stringify({type:'turn.failed',error:{message:'denied'}}));",

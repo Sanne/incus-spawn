@@ -16,12 +16,14 @@ function read(file, limit = LIMIT, optional = false) {
     const buf = Buffer.alloc(Math.min(st.size, limit));
     let used = 0, n;
     while (used < buf.length && (n = fs.readSync(fd, buf, used, buf.length - used, null)) > 0) used += n;
-    return {text: buf.subarray(0, used).toString('utf8'), bytes: st.size};
+    return {text: utf8(buf.subarray(0, used)), bytes: st.size};
   } catch (e) {
     if (optional) return {text: '', bytes: 0};
     throw e;
   } finally { if (fd !== undefined) fs.closeSync(fd); }
 }
+// A cut never splits a character: an incomplete one at the end is left out, not replaced.
+const utf8 = buf => new StringDecoder('utf8').write(buf);
 function publish(name, text) {
   const tmp = path.join(scratch, 'publish-' + Math.random().toString(36).slice(2));
   fs.writeFileSync(tmp, text, {flag: 'wx', mode: 0o600});
@@ -91,7 +93,7 @@ try {
     }
     if (e.type === 'turn.failed') { terminal = 'failed'; error = String(e.error?.message || 'Codex turn failed').slice(0, 2000); }
     if (e.type === 'error') error = String(e.message || e.error?.message || 'Codex error').slice(0, 2000);
-    if (e.type === 'item.completed' && e.item?.type === 'agent_message') lastMessage = String(e.item.text || '').slice(0, LIMIT);
+    if (e.type === 'item.completed' && e.item?.type === 'agent_message') lastMessage = String(e.item.text || '');
   }
   child.stdout.on('data', data => {
     try {
@@ -116,8 +118,9 @@ try {
       pending += decoder.end();
       if (pending && !dropping) event(pending);
       const report = read(reportFile, LIMIT, true);
-      const text = report.bytes ? report.text : lastMessage;
-      const bytes = report.bytes || Buffer.byteLength(text);
+      const message = report.bytes ? null : Buffer.from(lastMessage);
+      const text = message ? utf8(message.subarray(0, LIMIT)) : report.text;
+      const bytes = message ? message.length : report.bytes;
       publish('result-' + run + '.txt', text);
       publish('outcome-' + run + '.json', JSON.stringify({type: 'isx.codex.result',
         success: code === 0 && terminal === 'success' && !malformed,
