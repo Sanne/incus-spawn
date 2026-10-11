@@ -253,7 +253,7 @@ Codex has no equivalent to Claude's `max_turns`: an explicit argument is rejecte
 The user must revise that policy to use Codex.
 `ask` requires Claude's tool-free summarizer and is refused on Codex-only instances before its command runs; ordinary output, reports and diffs work with either agent.
 Codex uses the template's `openai` credential account and always runs without approval prompts.
-If a template has a restrictive Claude permission policy, configure its Codex sandbox mode explicitly before selecting Codex.
+If a template has a restrictive Claude permission policy, configure its Codex sandbox mode explicitly before selecting Codex: one restricted in `delegate-permission-modes` needs its own `codex.sandbox-modes` entry, as the section-wide `sandbox-mode` does not apply to it.
 The proxy's `model_usage_providers` currently lists Anthropic; OpenAI traffic is included in `traffic_*`, and Codex reports task token usage when available.
 
 Restart existing MCP server connections after upgrading to enable Codex workers.

@@ -21,6 +21,7 @@ Codex runs through the bundled guest Node runner (`mcp/codex-runner.cjs`, includ
 Task identity is `1 <agent>` in the `identity` file; absence means legacy Claude, while an unknown version or agent refuses continuation.
 The keyed creation stamp `mcp-delegate-agent` preserves selection before the first task exists and is cleared on copies like other MCP stamps.
 Codex's namespace is `openai`, its approval policy is always `never`, and its sandbox mode comes only from `mcp.codex` host configuration.
+A restrictive Claude `delegate-permission-modes` entry for a template is covered only by that template's `codex.sandbox-modes` entry, never by the section-wide `codex.sandbox-mode` (`McpConfig.codexSandboxMode`).
 Codex rejects `max_turns` and a configured `delegate-max-turns` ceiling; it does no paid model preflight.
 `ask` requires Claude and is checked before the producer runs; do not substitute a tool-enabled Codex as a summarizer.
 `instance_activity.model_usage_providers` declares the proxy's Anthropic-only model counters; OpenAI traffic remains in the domain counters.

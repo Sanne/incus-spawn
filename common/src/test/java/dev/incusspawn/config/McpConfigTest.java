@@ -156,6 +156,36 @@ class McpConfigTest {
         assertEquals("workspace-write", again.codexSandboxMode("tpl-dev"));
         var restricted = parse("mcp:\n  delegate-permission-mode: plan\n").mcp();
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> restricted.codexSandboxMode("tpl-dev"));
+        var ownRestriction = parse("""
+                mcp:
+                  delegate-permission-modes:
+                    prod: plan
+                  codex:
+                    sandbox-mode: danger-full-access
+                    sandbox-modes:
+                      review: read-only
+                """).mcp();
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> ownRestriction.codexSandboxMode("prod"));
+        assertEquals("danger-full-access", ownRestriction.codexSandboxMode("tpl-dev"));
+        var ownRestrictionCovered = parse("""
+                mcp:
+                  delegate-permission-modes:
+                    prod: plan
+                  codex:
+                    sandbox-mode: danger-full-access
+                    sandbox-modes:
+                      prod: read-only
+                """).mcp();
+        assertEquals("read-only", ownRestrictionCovered.codexSandboxMode("prod"));
+        var emptyEntry = parse("""
+                mcp:
+                  delegate-permission-mode: plan
+                  delegate-permission-modes:
+                    prod: ~
+                  codex:
+                    sandbox-mode: read-only
+                """).mcp();
+        assertEquals("read-only", emptyEntry.codexSandboxMode("prod"), "an empty entry is the section's restriction");
         var invalid = parse("mcp:\n  codex:\n    sandbox-mode: arbitrary\n").mcp();
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> invalid.codexSandboxMode("tpl-dev"));
         assertEquals("danger-full-access", new McpConfig().codexSandboxMode("tpl-dev"));

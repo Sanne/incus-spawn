@@ -95,15 +95,29 @@ public class McpConfig {
 
     public void setCodex(Codex codex) { this.codex = codex; }
 
+    /**
+     * Codex's sandbox for {@code template}: its {@code sandbox-modes} entry, else the section's
+     * {@code sandbox-mode}, else {@code danger-full-access}. A restrictive Claude permission mode
+     * is never widened by a default: one set for this template in {@code delegate-permission-modes}
+     * needs this template's own {@code sandbox-modes} entry, a section-wide one at least the
+     * section-wide {@code sandbox-mode}.
+     */
     public String codexSandboxMode(String template) {
         var mode = codex == null || codex.sandboxModes == null ? null : codex.sandboxModes.get(template);
-        if (mode == null && codex != null) mode = codex.sandboxMode;
         if (mode == null) {
-            if (!DEFAULT_PERMISSION_MODE.equals(delegatePermissionMode(template))) {
-                throw new IllegalArgumentException("template '" + template
-                        + "' has a restrictive Claude permission policy; set mcp.codex.sandbox-mode or sandbox-modes explicitly before using Codex");
+            var restricted = !DEFAULT_PERMISSION_MODE.equals(delegatePermissionMode(template));
+            if (restricted && delegatePermissionModes != null && delegatePermissionModes.get(template) != null) {
+                throw new IllegalArgumentException("template '" + template + "' has its own restrictive Claude "
+                        + "permission mode; set mcp.codex.sandbox-modes for it explicitly before using Codex");
             }
-            return "danger-full-access";
+            if (codex != null) mode = codex.sandboxMode;
+            if (mode == null) {
+                if (restricted) {
+                    throw new IllegalArgumentException("template '" + template + "' has a restrictive Claude permission "
+                            + "policy; set mcp.codex.sandbox-mode or sandbox-modes explicitly before using Codex");
+                }
+                return "danger-full-access";
+            }
         }
         if (!List.of("read-only", "workspace-write", "danger-full-access").contains(mode)) {
             throw new IllegalArgumentException("mcp.codex sandbox mode must be read-only, workspace-write or danger-full-access");

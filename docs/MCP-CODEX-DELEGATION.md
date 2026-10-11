@@ -229,6 +229,7 @@ Allow only `read-only`, `workspace-write`, and `danger-full-access`, with `appro
 These are Codex settings, documented in the [CLI reference](https://developers.openai.com/codex/cli/reference/) and [configuration reference](https://developers.openai.com/codex/config-reference/).
 The default matches `CodexSetup` and relies on the existing isx instance boundary.
 If the effective legacy Claude permission setting is restrictive and no explicit Codex setting covers the template, refuse Codex delegation until the user chooses its policy.
+A restriction set for one template in `delegate-permission-modes` is covered only by that template's `sandbox-modes` entry, never by the section-wide `sandbox-mode`.
 Do not silently turn a configured Claude `plan` worker into a fully writable Codex worker.
 Codex sandboxing is not a promise that every remote tool is read-only; the template's credentials remain the external authority boundary.
 

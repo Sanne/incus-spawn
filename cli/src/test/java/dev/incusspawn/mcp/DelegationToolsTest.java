@@ -1281,6 +1281,19 @@ class DelegationToolsTest {
     }
 
     @Test
+    void aGlobalCodexSandboxDoesNotWidenATemplatesOwnClaudeRestriction() throws Exception {
+        addCodexTemplates();
+        config.setDelegatePermissionModes(java.util.Map.of("tpl-codex", "plan"));
+        var policy = new McpConfig.Codex();
+        policy.setSandboxMode("danger-full-access");
+        config.setCodex(policy);
+        assertEquals("refused", code(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\"}")));
+        assertEquals(0, backend.mcpInstances().size());
+        policy.setSandboxModes(java.util.Map.of("tpl-codex", "read-only"));
+        assertEquals("read-only", structured(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\"}")).path("permission_mode").asText());
+    }
+
+    @Test
     void codexResultsContinuationAndIdempotencyUseItsRecordedAgent() throws Exception {
         addCodexTemplates();
         var args = "{\"template\":\"tpl-both\",\"agent\":\"codex\",\"instruction\":\"go\",\"idempotency_key\":\"codex-key\"}";
