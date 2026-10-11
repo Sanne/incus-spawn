@@ -1106,6 +1106,16 @@ class TaskScriptsTest {
     }
 
     @Test
+    void aReadableButUnwritableFileCountsAsReadable() throws Exception {
+        var file = Files.writeString(home.resolve("SKILL.md"), "x");
+        Files.setPosixFilePermissions(file, java.nio.file.attribute.PosixFilePermissions.fromString("r--r--r--"));
+        assertEquals("ok", sh(TaskScripts.isReadableFile(file.toString()) + " && echo ok", "").strip());
+        assertEquals("no", sh("{ " + TaskScripts.isReadableFile(home.resolve("missing").toString()) + "; } || echo no", "").strip());
+        // What ifFile would have said: it opens read-write, so this file would read as missing.
+        assertEquals("no", sh("{ " + TaskScripts.ifFile(file.toString(), "cat") + "; } || echo no", "").strip());
+    }
+
+    @Test
     void codexCountsAFallbackReportBeforeCuttingIt() throws Exception {
         // No --output-last-message file: the last agent message is the report. Two bytes a
         // character, so it is over the 1 MiB report limit while its event line is not, and the

@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -1281,6 +1282,24 @@ class DelegationToolsTest {
         assertEquals("invalid_argument", code(call("exec", "{\"instance\":\"" + task.path("instance").asText()
                 + "\",\"command\":\"touch side-effect\",\"ask\":\"what happened\"}")));
         assertEquals(calls, backend.scripts.size());
+    }
+
+    @Test
+    void askIsLeftToTheInstanceWhenTheTemplateDefinitionIsGone() throws Exception {
+        addCodexTemplates();
+        var task = structured(call("delegate", "{\"template\":\"tpl-both\",\"instruction\":\"go\"}"));
+        backend.templates.removeIf(t -> t.name().equals("tpl-both"));
+        var result = call("exec", "{\"instance\":\"" + task.path("instance").asText()
+                + "\",\"command\":\"true\",\"ask\":\"what happened\"}");
+        assertNotEquals("invalid_argument", code(result), "a missing definition proves nothing about Claude");
+    }
+
+    @Test
+    void codexSkillIsCheckedForReadabilityNotOpenedReadWrite() throws Exception {
+        addCodexTemplates();
+        structured(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"\",\"skill\":\"review\"}"));
+        var check = TaskScripts.isReadableFile("$HOME/.agents/skills/review/SKILL.md");
+        assertTrue(backend.scripts.contains(check), backend.scripts.toString());
     }
 
     @Test
