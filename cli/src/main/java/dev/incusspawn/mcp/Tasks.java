@@ -336,15 +336,20 @@ final class Tasks {
     }
 
     /**
-     * The profile an instance recorded for a task ({@code -} for a value never chosen). Read
-     * from inside the instance, so only what a coordinator could have chosen is taken: anything
-     * else is dropped, never passed to the next run.
+     * The agent an instance recorded for a task in its {@code identity} file ({@code 1 <agent>});
+     * none means a task from before Codex, so Claude. Read from inside the instance, so any other
+     * shape is {@link DelegateAgent#UNKNOWN}, never guessed.
      */
     static DelegateAgent recordedAgent(String identity) {
         if (identity == null) return DelegateAgent.CLAUDE;
         return identity.startsWith("1 ") ? DelegateAgent.parse(identity.substring(2).strip()) : DelegateAgent.UNKNOWN;
     }
 
+    /**
+     * The profile an instance recorded for a task ({@code -} for a value never chosen). Read
+     * from inside the instance, so only what a coordinator could have chosen is taken: anything
+     * else is dropped, never passed to the next run.
+     */
     static Profile recordedProfile(String model, String maxTurns) {
         Integer turns = null;
         try {

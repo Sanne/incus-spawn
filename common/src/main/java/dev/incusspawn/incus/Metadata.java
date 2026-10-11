@@ -161,8 +161,13 @@ public final class Metadata {
      * request itself; like every {@code mcp-} key, never carried by a copy, not even before the
      * copy is configured ({@code BranchFlow} unsets the source's in the copy request).
      */
-    public static final String MCP_DELEGATE_AGENT = PREFIX + "mcp-delegate-agent";
     public static final String MCP_IDEMPOTENCY_KEY = MCP_PREFIX + "idempotency-key";
+    /**
+     * The delegate agent ({@code claude} or {@code codex}) {@code delegate} made the instance
+     * for: a repeat under the same {@link #MCP_IDEMPOTENCY_KEY} with another agent is refused,
+     * and one naming none gets this one. An {@code mcp-} key, so never carried by a copy.
+     */
+    public static final String MCP_DELEGATE_AGENT = MCP_PREFIX + "delegate-agent";
 
     public static final String TYPE_BASE = "base";
     public static final String TYPE_PROJECT = "project";
