@@ -25,7 +25,7 @@ tags = ["type:secret", "type:crd", "alert:repo-owner"]
 keywords = ["sk-ant-oat01-"]
 
 [allowlist]
-  description = "Synthetic credentials used by config/proxy unit tests, never real secrets"
+  description = "Synthetic credentials in unit-test fixtures, plus exact false-positive values; never real secrets"
 
   # These tests exercise Claude/GitHub credential parsing and redaction, so they
   # necessarily contain strings shaped like API keys and tokens. The values are
@@ -48,11 +48,12 @@ keywords = ["sk-ant-oat01-"]
     '''cli/src/test/java/dev/incusspawn/ai/HelpContextTest\.java$''',
   ]
 
-  # Belt-and-suspenders, and covers future tests without needing a path added here
-  # every time: fake key/token prefixes our fixtures use, followed by a short
+  # Fixture regexes for fake key/token prefixes our fixtures use, followed by a short
   # (<=35 char) human-readable suffix, capped well under the 40-char minimum the
   # anthropic-api-key/anthropic-oauth-token rules above require -- so this can
   # never accidentally allowlist a real, ~90+-char leaked key.
+  # Note: gitleaks matches these against the captured secret, which carries no trailing
+  # quote, so the quote-suffixed ones currently match nothing; fixtures rely on the paths above.
   regexes = [
     '''sk-ant-api03-[A-Za-z0-9]{1,35}["']''',
     '''sk-ant-oat01-[A-Za-z0-9]{1,35}["']''',

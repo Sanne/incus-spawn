@@ -170,11 +170,13 @@ The `tpl-minimal` base image is Fedora with only git, curl, which, procps-ng, an
 
 `.github/workflows/gitleaks.yml` runs on every push and on PRs targeting `main` with `gitleaks/gitleaks-action@v2`, in two independent jobs.
 It scans **the commits in that push or PR**, not the repository's full history -- the `fetch-depth: 0` checkout is there so the action can resolve the range, not so it re-scans everything.
-The difference is load-bearing and easy to get wrong: a full-history scan of this repo reports four `generic-api-key` hits in `CertificateAuthority.java`, from commits in April and July 2026, on both gitleaks 8.27.0 and 8.30.1.
-All four are false positives -- Java method and record signatures declaring a private-key parameter next to a certificate one, where the rule treats the type name following the `key` identifier as its value.
-CI is green because it never looks at those commits.
-(Do not paste one of those signatures into a file to illustrate the point: quoting it verbatim here failed `scan-stock` on the very commit that added this paragraph.)
-So a credential committed before this workflow existed, or in any range it did not scan, is not caught by it, and nothing re-scans history on a schedule.
+The difference matters: a credential committed before this workflow existed, or in any range it did not scan, is not caught by it.
+The stock ruleset's `generic-api-key` captures the type name after a Java `PrivateKey` parameter (`PrivateKey key, X509Certificate cert` in `CertificateAuthority.java`) as if it were a secret, so the root `.gitleaks.toml` allowlists the exact captured value `^X509Certificate$`.
+It is anchored to the whole captured secret, so a value that merely starts with it (`apiKey = "X509Certificate…"`) is still flagged.
+It applies to every rule in that config, not only `generic-api-key`; a secret exactly equal to `X509Certificate` is not a credential, so nothing real is hidden.
+Without it a full-history scan reports three hits in that file.
+(Do not paste such a signature into a file to illustrate the point: quoting one verbatim failed `scan-stock` on the commit that first documented it.)
+Nothing re-scans history on a schedule.
 
 - **`scan-stock`**: reads the root `.gitleaks.toml`, which sets `[extend] useDefault = true` to pull in gitleaks' own built-in rules.
 - **`scan-leaktk`**: reads `.gitleaks-leaktk.toml` via `GITLEAKS_CONFIG`, which extends the vendored `.gitleaks/leaktk-gitleaks-8.27.0.toml` (unmodified copy of [leaktk/patterns](https://github.com/leaktk/patterns)' generated gitleaks config -- see the header comment in that file for the source commit and refresh instructions).
@@ -185,9 +187,9 @@ They must be two **jobs**, not two steps in one job.
 `gitleaks-action` installs the gitleaks binary to a fixed `/tmp` path, so a second invocation in the same job fails with "Destination file path /tmp/gitleaks.tmp already exists".
 This shipped once and failed on the very first PR.
 
-Both configs carry the same `[allowlist]` (kept in sync manually, not shared via a common file): known-fake credentials in config/proxy unit tests that legitimately need key-shaped strings to exercise parsing and redaction logic (`ClaudeLegacyConfigCompatTest`, `ClaudeAccountsTest`, `ProxyCredentialsAccountsTest`, `SecretRedactorTest`, `SupportBundleTest`, `HelpContextTest`, and the previous-release fixtures under `common/src/test/resources/config-compat/`), plus `^\.gitleaks/` -- the vendored leaktk ruleset's own rule definitions and example regex fragments look like credentials to a scanner.
+Each config carries its own `[allowlist]` (not shared via a common file, and the path lists differ on purpose: each lists the fixtures whose strings that config's rules actually flag): known-fake credentials in config/proxy unit tests that legitimately need key-shaped strings to exercise parsing and redaction logic (`ClaudeLegacyConfigCompatTest`, `ClaudeAccountsTest`, `ProxyCredentialsAccountsTest`, `SecretRedactorTest`, `SupportBundleTest`, `HelpContextTest`, and the previous-release fixtures under `common/src/test/resources/config-compat/`), plus `^\.gitleaks/` -- the vendored leaktk ruleset's own rule definitions and example regex fragments look like credentials to a scanner.
 Path-based allowlist entries apply across all historical commits gitleaks scans, since matching is on file path, not commit content -- so this also covers commits that predate the allowlist.
-A new test fixture with a fake credential needs its path added to **both** `.toml` files, or it (rightly) fails the PR check the first time.
+A new test fixture with a fake credential needs its path added to whichever `.toml` file's scan flags it (run both scans locally; do not add a path a scan does not need, since a path entry also hides a real key pasted into that file), or it (rightly) fails the PR check the first time.
 
 Both configs also carry two custom `[[rules]]` (`anthropic-api-key`, `anthropic-oauth-token`) for `sk-ant-api03-`/`sk-ant-oat01-` keys -- neither gitleaks' defaults nor leaktk/patterns have an Anthropic-specific rule.
 They're gated on a 40+ char suffix rather than matching the prefix alone.
