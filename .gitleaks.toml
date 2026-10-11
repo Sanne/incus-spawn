@@ -60,4 +60,8 @@ keywords = ["sk-ant-oat01-"]
     # Per-start proof tokens in the guest-script tests (#1108): a tool's placeholder prefix,
     # then isx_ and hex. Not a credential shape any service issues, and capped at 40 hex.
     '''^(?:gho_|sk-ant-|sk-|ya29\.)isx_[0-9a-f]{8,40}$''',
+    # Not a fixture: generic-api-key captures the parameter type after a Java
+    # PrivateKey parameter ("PrivateKey key, X509Certificate cert"). Anchored to
+    # the whole captured secret, so a value that only starts with it is still flagged.
+    '''^X509Certificate$''',
   ]
