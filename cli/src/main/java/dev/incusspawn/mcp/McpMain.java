@@ -31,7 +31,7 @@ public final class McpMain {
             isx gives you disposable Linux instances (full systems, not Docker containers) \
             branched copy-on-write from templates the user approved. Use them to run builds and \
             tests, to try risky changes away from the user's machine, or to hand whole tasks to \
-            a Claude Code inside one (delegate). Start with list_templates, then create_instance, \
+            Claude Code or Codex inside one (delegate). Start with list_templates, then create_instance, \
             then exec. Instances outlive this session: if you restart, list_instances shows the \
             ones you left and adopt_instance takes them back; orphans nobody adopts are destroyed \
             after a grace period. Destroy instances you are done with. Credentials are injected by \

@@ -161,6 +161,7 @@ public final class Metadata {
      * request itself; like every {@code mcp-} key, never carried by a copy, not even before the
      * copy is configured ({@code BranchFlow} unsets the source's in the copy request).
      */
+    public static final String MCP_DELEGATE_AGENT = PREFIX + "mcp-delegate-agent";
     public static final String MCP_IDEMPOTENCY_KEY = MCP_PREFIX + "idempotency-key";
 
     public static final String TYPE_BASE = "base";

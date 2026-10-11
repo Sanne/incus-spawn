@@ -90,9 +90,13 @@ final class IncusInstanceBackend implements InstanceBackend {
      * is listed as {@code stale}.
      */
     static String delegateModel(ImageDef def, Map<String, ImageDef> defs) {
+        return delegateModel(def, defs, "claude");
+    }
+
+    static String delegateModel(ImageDef def, Map<String, ImageDef> defs, String agent) {
         return ImageDef.chain(def, defs).reversed().stream()
                 .flatMap(d -> d.getTools().stream())
-                .filter(ref -> "claude".equals(ref.getName()))
+                .filter(ref -> agent.equals(ref.getName()))
                 .findFirst().map(ref -> ref.getParams().get("model")).orElse(null);
     }
 

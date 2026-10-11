@@ -14,7 +14,7 @@ A branch is to a template what a git worktree is to a repository, except that th
 - [Template images](https://isx.run/docs#template-images): defining, building and rebuilding templates
 - [Custom tools](https://isx.run/docs#custom-tools): adding tools with YAML definitions
 - [Credential accounts](https://isx.run/docs#credential-accounts): several accounts per service, chosen per instance
-- [Delegating from an agent on your host (MCP)](https://isx.run/docs#delegating-from-an-agent-on-your-host-mcp): `isx mcp`, approved templates, background commands and delegated tasks
+- [Delegating from an agent on your host (MCP)](https://isx.run/docs#delegating-from-an-agent-on-your-host-mcp): `isx mcp`, approved templates, Claude Code and Codex workers, agent discovery, background commands and delegated tasks
 - [Compared with other sandboxes](https://isx.run/docs#compared-with-other-sandboxes): a sandboxed process, workload or workstation, and where isx and the other agent sandboxes sit
 - [FAQ](https://isx.run/docs#faq)
 

@@ -74,7 +74,7 @@ final class TaskScripts {
      * as missing too; isx writes every task file as agentuser, so only something else in the
      * instance makes one.
      */
-    private static String ifFile(String file, String command) {
+    static String ifFile(String file, String command) {
         var quoted = "\"" + file + "\"";
         return "{ [ -f " + quoted + " ] && { [ -f /dev/fd/3 ] && " + command + " <&3; } 3<> " + quoted + "; } 2>/dev/null";
     }
@@ -134,11 +134,23 @@ final class TaskScripts {
      */
     static String agentRun(String taskId, int run, String cwd, Tasks.Profile chosen, Integer maxTurns,
                            String permissionMode) {
+        return agentRun(taskId, run, cwd, chosen, maxTurns, permissionMode, DelegateAgent.CLAUDE);
+    }
+
+    static String agentRun(String taskId, int run, String cwd, Tasks.Profile chosen, Integer maxTurns,
+                           String permissionMode, DelegateAgent agent) {
         var d = dir(taskId);
         var sb = new StringBuilder();
         sb.append("D=").append(d).append('\n');
         sb.append("export ").append(TASK_ENV).append('=').append(taskId).append('\n');
-        sb.append("cd -- ").append(ExecScript.quote(cwd)).append(" 2> \"$D/stderr-").append(run).append(".log\" || { ")
+        if (agent == DelegateAgent.CODEX) {
+            // Keep the opened descriptor across rename, so a replaced log path cannot block us.
+            sb.append("w=$(mktemp \"$D/.tmp.XXXXXX\") && { exec 4> \"$w\"; } && mv -fT \"$w\" \"$D/runner-")
+                    .append(run).append(".log\" || { rm -f -- \"$w\"; ")
+                    .append(recordExit(String.valueOf(run), "125")).append("; exit 0; }\n");
+        }
+        sb.append("cd -- ").append(ExecScript.quote(cwd))
+                .append(agent == DelegateAgent.CODEX ? " 2>&4" : " 2> \"$D/stderr-" + run + ".log\"").append(" || { ")
                 .append(recordExit(String.valueOf(run), "125")).append("; exit 0; }\n");
         if (run == 1) {
             sb.append(RECORD_CWD);
@@ -154,6 +166,14 @@ final class TaskScripts {
         }
         if (chosen.maxTurns() != null) {
             sb.append("echo ").append(chosen.maxTurns().intValue()).append(" > \"$D/max-turns\"\n");
+        }
+        if (agent == DelegateAgent.CODEX) {
+            sb.append("node -e ").append(ExecScript.quote(CodexEvents.runner()))
+                    .append(" \"$D\" ").append(run).append(' ').append(ExecScript.quote(permissionMode))
+                    .append(' ').append(ExecScript.quote(chosen.model() == null ? "" : chosen.model()))
+                    .append(" 2>&4\n");
+            sb.append("rc=$?\n").append(recordExit(String.valueOf(run), "$rc")).append('\n');
+            return sb.toString();
         }
         sb.append("claude -p --output-format stream-json --verbose")
                 .append(" --append-system-prompt \"$(cat \"$D/brief.md\")\"");
@@ -192,6 +212,10 @@ final class TaskScripts {
 
     /** {@link #launch}, for a task started under idempotency key {@code key} (null for none). */
     static String launch(String taskId, int run, String kind, String runScript, String key) {
+        return launch(taskId, run, kind, runScript, key, DelegateAgent.CLAUDE);
+    }
+
+    static String launch(String taskId, int run, String kind, String runScript, String key, DelegateAgent agent) {
         var d = dir(taskId);
         var sb = new StringBuilder();
         sb.append("set -e; D=").append(d).append("; mkdir -p \"$D\"; ");
@@ -201,6 +225,9 @@ final class TaskScripts {
         sb.append(writeAside("run-" + run + ".sh", "echo " + b64(runScript) + " | base64 -d")).append(orExit);
         if (Tasks.AGENT.equals(kind) && run == 1) sb.append(writeAside("brief.md", "echo " + b64(DELEGATE_BRIEF) + " | base64 -d")).append(orExit);
         sb.append(writeAside("kind", "echo " + kind)).append(orExit);
+        if (Tasks.AGENT.equals(kind) && run == 1) {
+            sb.append(writeAside("identity", "echo '1 " + agent.id + "'")).append(orExit);
+        }
         // A system unit, so the task survives this exec and any session; su - gives the same
         // login environment exec has.
         sb.append("sudo -n systemd-run --quiet --collect --unit=").append(unit(taskId, String.valueOf(run)))
@@ -226,11 +253,14 @@ final class TaskScripts {
                 + "[ $s = finished ] && echo exit=$(" + readFile("$D/exit-$n") + "); "
                 + "if [ \"$k\" = agent ]; then "
                 + "echo cwd=$(" + readFile("$D/cwd") + "); echo session_id=$(" + readFile("$D/session_id") + "); "
+                + "if [ -e \"$D/identity\" ] || [ -L \"$D/identity\" ]; then echo identity=$(" + ifFile("$D/identity", "head -c 200") + "); fi; "
                 + Presence.script("presence=") + "; "
                 // Size and last write of the events in one stat: this runs on every status read.
                 + "set -- $(stat -c '%s %Y' \"$D/events-$n.jsonl\" 2>/dev/null); echo events_bytes=${1:-0}; echo activity=$2; echo ---; "
-                + ifFile("$D/events-$n.jsonl", "tail -c " + tailBytes) + "; echo; echo ---stderr; "
+                + ifFile("$D/events-$n.jsonl", "tail -c " + tailBytes) + "; echo; "
+                + ifFile("$D/outcome-$n.json", "head -c 16384") + "; echo; echo ---stderr; "
                 + ifFile("$D/stderr-$n.log", "tail -c 2000") + "; "
+                + ifFile("$D/runner-$n.log", "tail -c 2000") + "; "
                 + "else a=; for t in $(stat -c %Y \"$D/stdout\" \"$D/stderr\" 2>/dev/null); do [ \"$t\" -gt \"${a:-0}\" ] && a=$t; done; echo activity=$a; "
                 + "echo stdout_bytes=$(stat -c %s \"$D/stdout\" 2>/dev/null || echo 0); "
                 + "echo stderr_bytes=$(stat -c %s \"$D/stderr\" 2>/dev/null || echo 0); echo ---; "
@@ -333,6 +363,8 @@ final class TaskScripts {
                 + "t=$(" + ifFile("$d/max-turns", "head -c 20") + " | tr -d ' \\n'); "
                 // '=' marks a key: '-' is one too, so it cannot also mean none.
                 + "k=-; [ -f \"$d/key\" ] && k==$(" + ifFile("$d/key", "head -c 64") + " | tr -d ' \\n'); "
+                + "{ [ ! -e \"$d/identity\" ] && [ ! -L \"$d/identity\" ]; } || { printf 'identity %s ' \"$(basename \"$d\")\"; "
+                + ifFile("$d/identity", "head -c 200") + "; echo; }; "
                 + "printf '%s %s %s %s %s %s %s %s\\n' \"$(basename \"$d\")\" \"$(" + readFile("$d/kind") + ")\" \"$n\" \"$r\" "
                 + "\"${m:--}\" \"${t:--}\" \"$k\" \"$(" + readFile("$d/cwd") + ")\"; done; exit 0";
     }

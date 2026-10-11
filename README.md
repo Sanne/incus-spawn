@@ -189,9 +189,9 @@ With this configuration, `isx branch` adds a git remote named after the instance
 
 ## Delegating from an agent on your host (MCP)
 
-An agent running on your machine -- Claude Code, say -- can use isx itself: create disposable instances from templates you approved, run builds and tests in them, and hand whole tasks to the Claude Code inside an instance. `isx mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) over stdio:
+An agent running on your machine -- Claude Code, say -- can use isx itself: create disposable instances from templates you approved, run builds and tests in them, and hand whole tasks to Claude Code or Codex inside an instance. `isx mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) over stdio:
 
-`isx init` offers to set this up (it is experimental, so off by default): it registers `isx mcp` with Claude Code for all projects and asks, for each template that installs Claude Code, whether agents may use it. Once it is set up, a re-run of `isx init` asks one question instead: `t` to change the approved templates, `n` to see how to turn it off, Enter to keep everything.
+`isx init` offers to set this up (it is experimental, so off by default): it registers `isx mcp` with Claude Code for all projects and asks, for each template that installs Claude Code or Codex, whether agents may use it. Once it is set up, a re-run of `isx init` asks one question instead: `t` to change the approved templates, `n` to see how to turn it off, Enter to keep everything.
 
 To register it with Claude Code by hand instead:
 
@@ -206,10 +206,14 @@ mcp:
   templates: [tpl-java, tpl-dev]   # the only templates an agent may branch from
   max-instances: 8                 # per host user, across sessions (default 8)
   max-concurrent-tasks: 8          # background commands and delegated agents, per host user, across sessions (default 8)
-  delegate-max-turns: 200          # optional turn budget for delegated agents; a task may ask for less, never more
-  delegate-permission-mode: bypassPermissions   # the delegates' --permission-mode (default shown)
+  # delegate-max-turns: 200        # optional Claude turn ceiling; Codex is refused while this is set
+  delegate-permission-mode: bypassPermissions   # Claude's --permission-mode (default shown)
   delegate-permission-modes:       # per-template overrides, e.g. a reviewer that only plans
     tpl-review: plan
+  codex:
+    sandbox-mode: danger-full-access  # Codex always runs with approval_policy=never
+    sandbox-modes:
+      tpl-codex-review: read-only
   orphan-grace-hours: 24           # how long an instance outlives its session (default 24)
   dormant-after-hours: 24          # past that, one kept only for a delegate showing no activity
                                    # this long is stopped instead (default 24)
@@ -221,12 +225,12 @@ mcp:
 
 | Tool | What it does |
 |------|--------------|
-| `list_templates` | The approved templates, whether they are built, which can take a delegated task, in which permission mode and on which model |
+| `list_templates` | Approved templates, their `delegate_agents`, default agent, model and permissions, capability differences, and policy refusals |
 | `create_instance` | A fresh CoW branch of an approved template, as `isx branch` would make it, with an optional `purpose`; or, with `from_instance`, a fork of one of your stopped instances -- prepare once, fork N times |
 | `stop_instance` / `start_instance` | Stop an instance (to fork it; refused while a task runs, unless `force`), and start it again |
 | `list_instances` / `adopt_instance` | Your instances and their tasks, including those an ended session left behind; take one back |
 | `exec` | Run a command as `agentuser`; no time limit unless the agent sets one, or `background: true` for a task |
-| `delegate` | Give an instruction, or a skill name and arguments, to the Claude Code inside an instance (or a fresh one from a template), optionally on its own `model` and `max_turns` |
+| `delegate` | Give an instruction or installed skill to an instance, or a fresh one from a template; select `agent: "claude"` or `"codex"`, optionally with `model` and Claude-only `max_turns` |
 | `task_status` / `wait_any` / `task_result` | Follow a task (optionally waiting), wait for whichever of several finishes first, read its outcome or the agent's report |
 | `send_message` | Continue a delegated agent's conversation (e.g. "push and open a PR") |
 | `get_diff` | What a delegated task changed, committed or not: a patch, or with `stat` just the files and line counts |
@@ -234,7 +238,27 @@ mcp:
 | `cancel_task` / `destroy_instance` | Stop a task, or throw an instance away |
 | `keep_instance` | Hand an instance over to you for good |
 
-A delegated task can run under its own profile: `model` (a Claude Code model id or alias, e.g. `haiku` for a rebase, the template's own for a design) and `max_turns`, which later `send_message` turns keep unless they choose again. A model is checked against the template's credential account first, with one tiny request inside the instance that is remembered for the session, so a model the account cannot use fails the call rather than the task. `max_turns` can only narrow your `delegate-max-turns`. The permission mode is never the agent's to choose.
+`list_templates` reports each template's `delegate_agents` and `default_delegate_agent`.
+Use `agent: "claude"` or `agent: "codex"` on `delegate` to select an installed agent explicitly.
+When omitted, Claude is selected if installed, otherwise Codex.
+`send_message` keeps the task's agent and resumes its exact saved conversation.
+The coordinator may be Claude Code regardless of which agent the worker runs.
+
+Each descriptor reports `supports_max_turns`, `supports_model_preflight`, its configured model and permission settings, and a `refusal` if current host policy prevents launch.
+`supports_ask` and `summary_agent` describe the separate summary service.
+Models and permissions come from the selected agent's configuration; task `model` overrides persist across follow-ups and adoption.
+Claude validates a chosen model against its account before launching; Codex reports model-access errors in the task result.
+
+Codex has no equivalent to Claude's `max_turns`: an explicit argument is rejected, and a configured `mcp.delegate-max-turns` prevents Codex delegation and continuation.
+The user must revise that policy to use Codex.
+`ask` requires Claude's tool-free summarizer and is refused on Codex-only instances before its command runs; ordinary output, reports and diffs work with either agent.
+Codex uses the template's `openai` credential account and always runs without approval prompts.
+If a template has a restrictive Claude permission policy, configure its Codex sandbox mode explicitly before selecting Codex.
+The proxy's `model_usage_providers` currently lists Anthropic; OpenAI traffic is included in `traffic_*`, and Codex reports task token usage when available.
+
+Restart existing MCP server connections after upgrading to enable Codex workers.
+Older isx servers cannot manage the new Codex task records; keep outstanding Codex instances before downgrading.
+
 
 A client that drives `isx mcp` from code rather than from a model can ask to be told instead of waiting: list `isx/task_changed` under `capabilities.experimental` in `initialize`, and every change of a task's state arrives as a `notifications/isx/task_changed` (`task_id`, `instance`, `run`, `state`: `running`, `finished`, `lost`, `attached` or `released`, and `exit_code` once finished). Clients that do not ask are not polled for it.
 
@@ -249,7 +273,7 @@ What an agent gets is deliberately narrow:
 - **Only approved templates.** Never a project-local (`.incus-spawn/`) definition or an image built from one, and never an unbuilt one -- it is told to ask you to run `isx build`.
 - **Template defaults, no choices.** Network mode, credential accounts, resources: exactly what `isx branch --from <template>` gives. Credentials stay in the host proxy as always; which GitHub account a delegate can push with is the one you pinned on the template.
 - **Your instances, one session at a time.** Every instance is stamped with your host user, an optional purpose (`#870 implement`), and the session holding it; every tool checks that stamp. Instances outlive their session, because a coordinating agent restarts while its workers wait: when a session ends (or dies), its instances become orphans that any later session of yours can take back with `adopt_instance`, tasks included. An orphan nobody adopts is destroyed by the next `isx mcp` to start once `orphan-grace-hours` have passed -- never while someone is in it with `isx shell` or an agent it delegated to is still working, and never one handed to you with `keep_instance`. Instances are named `mcp-<template>-<hint>-<suffix>`; don't give your own instances `mcp-*` names. `isx list` adds an `MCP` column when there are any, showing each instance's state and purpose (`held: #870 implement`, `orphaned`, `kept: spike`). The TUI shows the same in an instance's details (F3), with who holds it, and has no column for it.
-- **Taking over is safe.** You can join a delegate's conversation yourself: `isx shell` into the instance, then `claude --resume <session>`. While you are in it, `task_status` says `attached` and `send_message` is refused, so the host agent never races you on one conversation.
+- **Taking over is safe.** You can join a delegate's conversation yourself: `isx shell` into the instance, then `claude --resume <session>` or `codex resume <session>` (the ID is in `task_status.session_id`). While you are in it, `task_status` says `attached` and `send_message` is refused, so the host agent never races you on one conversation.
 - **No host access.** Nothing runs on the host and no host files are read or written: results come back as text, and `get_diff` returns a patch rather than touching your checkout.
 - **An audit trail.** Every call is logged, with credentials scrubbed, to `~/.local/state/incus-spawn/mcp.log`.
 
@@ -264,7 +288,7 @@ What an agent gets is deliberately narrow:
 }
 ```
 
-Delegated agents spend the Claude account of the template they run in. Text coming back from an instance -- command output, a delegate's report, a diff -- is data produced inside the sandbox, and the tool descriptions tell the host agent to treat it that way.
+Delegated agents use the template's selected `claude` or `openai` account. Text coming back from an instance -- command output, a delegate's report, a diff -- is data produced inside the sandbox, and the tool descriptions tell the host agent to treat it that way.
 
 ### A coordinator in an instance
 

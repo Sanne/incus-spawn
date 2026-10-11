@@ -32,6 +32,16 @@ final class OutputSchemas {
                 .string("summarised", "What it read, e.g. '12 lines, 345 bytes'", true);
     }
 
+    private static Schema delegateAgent() {
+        return Schema.object().choice("agent", null, true, "claude", "codex")
+                .string("model", "Template configured model", false)
+                .bool("supports_max_turns", null, true)
+                .bool("supports_model_preflight", null, true)
+                .string("permission_mode", "Claude permission mode or Codex sandbox mode", false)
+                .string("approval_policy", null, false)
+                .string("refusal", "Configuration that prevents a new run", false);
+    }
+
     static ObjectNode listTemplates() {
         var template = Schema.object()
                 .string("template", null, true)
@@ -40,6 +50,10 @@ final class OutputSchemas {
                 .bool("stale", "Built from a definition that has changed since", true)
                 .stringList("tools", null, true)
                 .bool("supports_delegate", null, true)
+                .list("delegate_agents", "Supported installed worker agents", false, delegateAgent())
+                .string("default_delegate_agent", null, false)
+                .bool("supports_ask", null, false)
+                .string("summary_agent", null, false)
                 .string("permission_mode", "The delegated agent's permission mode", false)
                 .string("delegate_model", "The delegated agent's default model", false);
         return Schema.object()
@@ -58,9 +72,15 @@ final class OutputSchemas {
                 .string("purpose", null, false)
                 .string("forked_from", "The instance it was forked from", false)
                 .string("ip", null, false)
+                .string("permission_mode", null, false)
+                .string("delegate_model", null, false)
                 .string("workdir", null, true)
                 .stringList("tools", null, true)
                 .bool("supports_delegate", null, true)
+                .list("delegate_agents", "Supported installed worker agents", false, delegateAgent())
+                .string("default_delegate_agent", null, false)
+                .bool("supports_ask", null, false)
+                .string("summary_agent", null, false)
                 .bool("replayed", REPLAYED, false)
                 .build();
     }
@@ -69,6 +89,7 @@ final class OutputSchemas {
         var task = Schema.object()
                 .string("task_id", null, true)
                 .choice("kind", null, true, KINDS)
+                .string("agent", "Worker agent; unknown for unsupported persisted metadata", false)
                 .choice("state", "As this session last saw it; unknown: nothing has read how it ended "
                         + "(as after cancel_task). task_status reads it now", true, TASK_STATES);
         var instance = Schema.object()
@@ -86,6 +107,13 @@ final class OutputSchemas {
                 .string("dormant_since", "ISO-8601: when the orphan sweep stopped it, its delegate "
                         + "showing no activity; adopt_instance starts it again", false)
                 .string("dormant_until", "ISO-8601: destroyed after this unless adopted", false)
+                .bool("supports_delegate", null, false)
+                .list("delegate_agents", null, false, delegateAgent())
+                .string("default_delegate_agent", null, false)
+                .bool("supports_ask", null, false)
+                .string("summary_agent", null, false)
+                .string("permission_mode", null, false)
+                .string("delegate_model", null, false)
                 .list("tasks", "This session's tasks in it", true, task);
         return Schema.object().list("instances", null, true, instance).build();
     }
@@ -96,6 +124,12 @@ final class OutputSchemas {
                 .string("template", null, true)
                 .string("purpose", null, false)
                 .bool("supports_delegate", null, true)
+                .list("delegate_agents", "Supported installed worker agents", false, delegateAgent())
+                .string("default_delegate_agent", null, false)
+                .bool("supports_ask", null, false)
+                .string("summary_agent", null, false)
+                .string("permission_mode", null, false)
+                .string("delegate_model", null, false)
                 .stringList("tasks", "Ids of its tasks, now this session's", true)
                 .string("warning", "Why its tasks could not be read", false)
                 .build();
@@ -136,8 +170,10 @@ final class OutputSchemas {
                 .string("task_id", null, true)
                 .string("instance", null, true)
                 .choice("kind", null, true, Tasks.AGENT)
+                .choice("agent", null, false, "claude", "codex", "unknown")
                 .integer("run", "The run (turn of the conversation) now going: 1 for the first", true)
-                .string("permission_mode", null, true)
+                .string("permission_mode", "Claude permission mode or Codex sandbox mode", true)
+                .string("approval_policy", "Codex always uses never", false)
                 .string("model", null, false)
                 .integer("max_turns", null, false);
     }
@@ -147,10 +183,13 @@ final class OutputSchemas {
                 .string("task_id", null, true)
                 .string("instance", null, true)
                 .choice("kind", null, true, KINDS)
+                .string("agent", "Worker agent; unknown for unsupported persisted metadata", false)
                 .choice("state", "attached: finished, and a person is in its conversation", true, TASK_STATES)
                 .integer("exit_code", null, false)
                 .integer("run", null, true)
-                .integer("attached_pid", "The Claude Code of a person in its conversation", false)
+                .integer("attached_pid", "The coding agent of a person in its conversation", false)
+                .string("session_id", "The saved agent conversation ID", false)
+                .bool("resumable", "A supported agent with a saved conversation ID", false)
                 .string("started_at", "ISO-8601: when the current run started", false)
                 .string("last_activity", "ISO-8601: when the current run last wrote output", false)
                 .string("model", null, false)
@@ -172,6 +211,7 @@ final class OutputSchemas {
                 .string("task_id", null, true)
                 .string("instance", null, true)
                 .choice("kind", null, true, KINDS)
+                .string("agent", "Worker agent; unknown for unsupported persisted metadata", false)
                 .choice("state", "unknown: over, but its status could not be read", true, TASK_STATES)
                 .integer("exit_code", null, false);
         return Schema.object()
@@ -185,6 +225,7 @@ final class OutputSchemas {
                 .string("task_id", null, true)
                 .string("instance", null, true)
                 .choice("kind", null, true, KINDS)
+                .string("agent", "Worker agent; unknown for unsupported persisted metadata", false)
                 .choice("state", null, true, TASK_STATES)
                 .integer("exit_code", null, false)
                 .string("outcome", "An agent's result subtype, e.g. success", false)
@@ -194,6 +235,10 @@ final class OutputSchemas {
                 .stringList("permission_denials", null, false)
                 .stringList("recent", "What an agent did last", false)
                 .string("report", "An agent's final report", false)
+                .string("agent_stderr", "Failure diagnostic", false)
+                .integer("input_tokens", "Codex reported usage", false)
+                .integer("output_tokens", "Codex reported usage", false)
+                .integer("cached_input_tokens", "Codex reported usage", false)
                 .integer("report_bytes", null, false)
                 .string("stdout", "A command's", false)
                 .string("stderr", "A command's", false)
@@ -226,6 +271,7 @@ final class OutputSchemas {
                 .string("task_id", null, true)
                 .string("instance", null, true)
                 .choice("kind", null, true, KINDS)
+                .string("agent", "Worker agent; unknown for unsupported persisted metadata", false)
                 .build();
     }
 
@@ -263,6 +309,7 @@ final class OutputSchemas {
                 .string("last_request_at", "ISO-8601", false)
                 .string("last_response_at", "ISO-8601", false)
                 .integer("idle_seconds", "Since the last call ended; only while none is in flight", false)
+                .stringList("model_usage_providers", "Providers measured by the proxy model counters", false)
                 .integer("input_tokens", null, true)
                 .integer("output_tokens", null, true)
                 .integer("cache_read_input_tokens", null, true)

@@ -504,8 +504,8 @@ public class InitCommand extends BaseCommand {
 
     /**
      * Offer to register {@code isx mcp} with Claude Code, then ask about each template that
-     * installs Claude Code (the only ones a task can be delegated to) whether agents may use it.
-     * Templates already approved by hand that do not install Claude Code are left as they are.
+     * installs Claude Code or Codex (the only ones a task can be delegated to) whether agents may
+     * use it. Templates already approved by hand that install neither are left as they are.
      */
     void setupMcp(SpawnConfig config, Prompts prompts, java.util.Map<String, ImageDef> defs) {
         if (!hostHasCommand("claude")) {
@@ -517,7 +517,7 @@ public class InitCommand extends BaseCommand {
         var approved = config.mcp().templates();
         var candidates = defs.values().stream()
                 .filter(def -> ImageDef.chain(def, defs).stream()
-                        .anyMatch(d -> d.getTools().stream().anyMatch(t -> "claude".equals(t.getName()))))
+                        .anyMatch(d -> d.getTools().stream().anyMatch(t -> List.of("claude", "codex").contains(t.getName()))))
                 .map(ImageDef::getName)
                 .sorted()
                 .toList();
@@ -564,7 +564,7 @@ public class InitCommand extends BaseCommand {
         }
 
         if (candidates.isEmpty()) {
-            System.out.println("  No template installs Claude Code yet (the 'claude' tool), so there is");
+            System.out.println("  No template installs Claude Code or Codex yet, so there is");
             System.out.println("  none to approve. Add one, then re-run 'isx init' or edit the mcp:");
             System.out.println("  section of " + Environment.configDir().resolve("config.yaml") + ".");
             return;

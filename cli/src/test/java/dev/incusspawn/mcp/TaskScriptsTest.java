@@ -105,6 +105,9 @@ class TaskScriptsTest {
         var pb = new ProcessBuilder("bash", "-c", script).directory(home.toFile());
         pb.environment().put("HOME", home.toString());
         pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        var outFile = Files.createTempFile(home, "script-out-", ".txt");
+        var errFile = Files.createTempFile(home, "script-err-", ".txt");
+        pb.redirectOutput(outFile.toFile()).redirectError(errFile.toFile());
         var p = pb.start();
         p.getOutputStream().write(stdin.getBytes(StandardCharsets.UTF_8));
         p.getOutputStream().close();
@@ -113,8 +116,10 @@ class TaskScriptsTest {
             p.destroyForcibly();
             throw new AssertionError("still waiting after " + seconds + " s: " + script);
         }
-        var out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        var err = new String(p.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+        var out = Files.readString(outFile);
+        var err = Files.readString(errFile);
+        Files.delete(outFile);
+        Files.delete(errFile);
         assertEquals(0, p.exitValue(), "script failed: " + err + "\n" + script);
         return out;
     }
@@ -179,7 +184,7 @@ class TaskScriptsTest {
         assertTrue(args.contains("--max-turns 5 "), args);
         assertTrue(args.contains("--model claude-haiku-4-5 "), args);
         // An adopting session learns the profile with the task.
-        assertTrue(sh(TaskScripts.list(), "").startsWith("t1-abc agent 1 done claude-haiku-4-5 5 "));
+        assertTrue(sh(TaskScripts.list(), "").contains("t1-abc agent 1 done claude-haiku-4-5 5 "));
 
         // Without one, the template's model (no --model) and the budget the session gives.
         sh(TaskScripts.launch("t2-abc", 1, Tasks.AGENT, TaskScripts.agentRun("t2-abc", 1, work.toString(),
@@ -1031,5 +1036,207 @@ class TaskScriptsTest {
         assertEquals("=" + planted.substring(0, 64).replaceAll("[ \n]", ""), fields[6], "at most 64 bytes, no space or newline");
         assertNull(McpSession.keyOf(fields[6].substring(1)), "and not a key");
         assertTrue(lines.stream().anyMatch(l -> l.startsWith("t2-abc agent 1 done - - - ")), lines.toString());
+    }
+
+    private void codexStub(String events) throws Exception {
+        var script = home.resolve("codex-stub.cjs");
+        Files.writeString(script, """
+                const fs = require('node:fs');
+                const args = process.argv.slice(2);
+                fs.writeFileSync(process.env.HOME + '/codex-args', JSON.stringify(args));
+                const prompt = fs.readFileSync(0, 'utf8');
+                fs.writeFileSync(process.env.HOME + '/codex-prompt', prompt);
+                const report = args[args.indexOf('--output-last-message') + 1];
+                """ + events);
+        stub("codex", "exec node " + ExecScript.quote(script.toString()) + " \"$@\"");
+    }
+
+    private void launchCodex(String id, int run, String prompt) throws Exception {
+        sh(TaskScripts.launch(id, run, Tasks.AGENT,
+                TaskScripts.agentRun(id, run, work.toString(), Tasks.Profile.NONE, null, "danger-full-access", DelegateAgent.CODEX),
+                null, DelegateAgent.CODEX), prompt);
+    }
+
+    @Test
+    void codexRunsAndResumesTheExactConversationWithPromptsOnStdin() throws Exception {
+        codexStub("""
+                console.log(JSON.stringify({type:'thread.started', thread_id:'codex-session-123'}));
+                fs.writeFileSync(report, 'The report: ' + prompt);
+                console.log(JSON.stringify({type:'turn.completed', usage:{input_tokens:10, output_tokens:3}}));
+                """);
+        launchCodex("t1-codex", 1, "fix 'quotes'; $(touch SHOULD_NOT_EXIST) — safely");
+        var first = awaitFinished("t1-codex");
+        assertEquals(0, first.exit(), first.stderr());
+        assertEquals("codex-session-123", first.sessionId());
+        assertFalse(Files.exists(work.resolve("SHOULD_NOT_EXIST")));
+        assertTrue(Files.readString(home.resolve("codex-prompt")).contains("You are a delegate"));
+        assertTrue(sh(TaskScripts.list(), "").contains("identity t1-codex 1 codex"));
+        // Recover from the durable opening event if publishing its separate ID was interrupted.
+        Files.delete(home.resolve(".isx-mcp/tasks/t1-codex/session_id"));
+        launchCodex("t1-codex", 2, "follow up with $HOME and `literal`");
+        var resumed = awaitFinished("t1-codex");
+        assertEquals(0, resumed.exit(), resumed.stderr());
+        var argv = JsonRpc.JSON.readTree(Files.readString(home.resolve("codex-args")));
+        assertEquals("resume", argv.get(1).asText());
+        assertEquals("codex-session-123", argv.get(argv.size() - 2).asText());
+        assertEquals("-", argv.get(argv.size() - 1).asText());
+        assertEquals("follow up with $HOME and `literal`", Files.readString(home.resolve("codex-prompt")));
+        assertTrue(CodexEvents.summarize(resumed.output(), 8).finished());
+    }
+
+    @Test
+    void codexKeepsLargeReportsOutsideTheEventTailAndReplacesHostileTargets() throws Exception {
+        codexStub("""
+                console.log(JSON.stringify({type:'thread.started', thread_id:'codex-session-123'}));
+                console.log(JSON.stringify({type:'future.event',data:'x'.repeat(2 * 1024 * 1024)}));
+                console.log(JSON.stringify({type:'item.completed', item:{type:'agent_message',text:'a'.repeat(300000)}}));
+                fs.writeFileSync(report, 'a'.repeat(300000));
+                console.log(JSON.stringify({type:'turn.completed'}));
+                """);
+        var d = Files.createDirectories(home.resolve(".isx-mcp/tasks/t2-codex"));
+        for (var file : List.of("session_id", "runner-1.log", "stderr-1.log"))
+            sh("mkfifo " + ExecScript.quote(d.resolve(file).toString()), "");
+        Files.createSymbolicLink(d.resolve("outcome-1.json"), home.resolve("must-not-write"));
+        launchCodex("t2-codex", 1, "large report");
+        var status = awaitFinished("t2-codex");
+        assertEquals(0, status.exit(), status.stderr());
+        assertEquals(300000, Files.size(d.resolve("result-1.txt")));
+        assertFalse(Files.exists(home.resolve("must-not-write")));
+        assertEquals(300000, CodexEvents.summarize(status.output(), 0).result().path("report_bytes").asInt());
+    }
+
+    @Test
+    void codexRequiresTerminalSuccessAndZeroExit() throws Exception {
+        int trial = 0;
+        for (var ending : List.of("", "console.log(JSON.stringify({type:'turn.failed',error:{message:'denied'}}));",
+                "console.log('invalid-json'); console.log(JSON.stringify({type:'turn.completed'}));",
+                "console.log(JSON.stringify({type:'turn.completed'})); process.exitCode = 7;")) {
+            codexStub("console.log(JSON.stringify({type:'thread.started', thread_id:'codex-session-123'})); fs.writeFileSync(report, 'partial'); " + ending);
+            var id = "t3-codex-" + trial++;
+            launchCodex(id, 1, "fail");
+            var status = awaitFinished(id);
+            assertTrue(status.exit() != 0, status.toString());
+            assertTrue(CodexEvents.summarize(status.output(), 0).isError());
+        }
+    }
+
+    @Test
+    void codexSessionIsDurableBeforeItFinishesAndCancelKillsItsChildren() throws Exception {
+        codexStub("""
+                console.log(JSON.stringify({type:'thread.started', thread_id:'codex-session-123'}));
+                const child = require('node:child_process').spawn('sleep', ['120'], {stdio:'ignore'});
+                fs.writeFileSync(process.env.HOME + '/codex-child', String(child.pid));
+                setTimeout(() => {}, 120000);
+                """);
+        launchCodex("t4-codex", 1, "wait");
+        var d = home.resolve(".isx-mcp/tasks/t4-codex");
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while ((!Files.exists(d.resolve("session_id")) || !Files.exists(home.resolve("codex-child"))) && System.nanoTime() < deadline) Thread.sleep(50);
+        try {
+            assertEquals("codex-session-123", Files.readString(d.resolve("session_id")));
+            assertTrue(Tasks.parse(sh(TaskScripts.status("t4-codex", 1000), "")).running());
+        } finally {
+            sh(TaskScripts.cancel("t4-codex"), "");
+        }
+        assertFalse(Tasks.parse(sh(TaskScripts.status("t4-codex", 1000), "")).running());
+        var pid = Files.readString(home.resolve("codex-child"));
+        assertEquals("", sh("p=" + pid + "; [ ! -f /proc/$p/stat ] || { s=$(cat /proc/$p/stat); [[ $s == *') Z '* ]] || echo alive; }; true", ""));
+    }
+
+    @Test
+    void presenceRecognizesBothAgentsAndQualifiesSessionIds() {
+        var presence = Presence.parse(List.of("codex 71 /codex", "resume 71 same-id", "claude 72 /claude", "resume 72 same-id"));
+        assertTrue(presence.attended());
+        assertEquals(71L, presence.holderOf(DelegateAgent.CODEX, "same-id", "/other"));
+        assertEquals(72L, presence.holderOf(DelegateAgent.CLAUDE, "same-id", "/other"));
+        assertEquals(71L, presence.holderOf(DelegateAgent.CLAUDE, null, "/codex"), "same worktree stays protected across agents");
+    }
+
+    @Test
+    void codexResumeOptionsStillAttachFromAnotherDirectory() throws Exception {
+        var id = "t5-codex";
+        var d = finishedTaskFiles(id, Tasks.AGENT);
+        Files.writeString(d.resolve("identity"), "1 codex\n");
+        Files.writeString(d.resolve("session_id"), sessionId());
+        Files.writeString(d.resolve("cwd"), work.toString());
+        for (var args : List.of(
+                List.of("exec", "resume", "--json", sessionId(), "follow up"),
+                List.of("resume", "--all", "--model", "model-value", "-c", "key=value", sessionId()),
+                List.of("exec", "resume", "--output-last-message", "report-value", "--image", "image-value", sessionId(), "-"),
+                List.of("resume", "-mattached-value", "--config=key=value", "--", sessionId(), "prompt-value"),
+                List.of("--profile", "profile-value", "exec", "--color", "never", "resume", "--enable", "feature-value", sessionId()),
+                List.of("e", "resume", "-o", "report-value", "-m", "model-value", sessionId()))) {
+            // Native argv and the Node launcher both occur in supported Codex installs.
+            for (var launcher : List.of(false, true)) {
+                var resumed = codexPresence(args, launcher, false);
+                try {
+                    var status = Tasks.parse(sh(TaskScripts.status(id, 0), ""));
+                    assertEquals("attached", status.state(), args.toString());
+                    assertEquals(resumed.pid(), status.attachedPid());
+                    var watched = sh(TaskScripts.watch(List.of(id)), "");
+                    assertTrue(watched.contains("presence resume " + resumed.pid() + " " + sessionId() + "\n"), watched);
+                    var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
+                    for (var value : List.of("model-value", "report-value", "image-value", "attached-value", "prompt-value", "follow up"))
+                        assertNull(who.holderOf(DelegateAgent.CODEX, value, work.toString()), value);
+                } finally {
+                    resumed.destroy();
+                    assertTrue(resumed.waitFor(5, TimeUnit.SECONDS));
+                }
+            }
+        }
+    }
+
+    @Test
+    void codexPromptsAndManagedProcessesAreNotHumanResumes() throws Exception {
+        for (var args : List.of(
+                List.of("exec", "--model", "resume", sessionId()),
+                List.of("exec", "a prompt", "resume", sessionId()),
+                List.of("--", "resume", sessionId()),
+                List.of("exec", "resume", "--last", "--json"))) {
+            var proc = codexPresence(args, false, false);
+            try {
+                var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
+                assertNull(who.holderOf(DelegateAgent.CODEX, sessionId(), work.toString()), args.toString());
+            } finally {
+                proc.destroy();
+                assertTrue(proc.waitFor(5, TimeUnit.SECONDS));
+            }
+        }
+        var managed = codexPresence(List.of("exec", "resume", "--json", sessionId()), true, true);
+        try {
+            var who = Presence.parse(sh(Presence.script(""), "").lines().toList());
+            assertNull(who.holderOf(DelegateAgent.CODEX, sessionId(), work.toString()));
+        } finally {
+            managed.destroy();
+            assertTrue(managed.waitFor(5, TimeUnit.SECONDS));
+        }
+    }
+
+    /** A sleeping process with Codex's argv, ready before the probe scans /proc. */
+    private Process codexPresence(List<String> args, boolean launcher, boolean managed) throws Exception {
+        var ready = home.resolve("presence-ready");
+        Files.deleteIfExists(ready);
+        var command = new java.util.ArrayList<String>();
+        if (launcher) {
+            var script = home.resolve("codex-presence.cjs");
+            Files.writeString(script, "require('node:fs').writeFileSync(process.env.CODEX_PRESENCE_READY, 'ready'); setTimeout(() => {}, 30000);");
+            command.addAll(List.of("node", script.toString()));
+        } else {
+            // bash's -c is also a Codex option taking one value; the rest of argv is exact.
+            command.addAll(List.of("bash", "-c", "exec -a codex bash -c ': > \"$CODEX_PRESENCE_READY\"; while read -r line; do :; done' \"$@\"", "presence"));
+        }
+        command.addAll(args);
+        var pb = new ProcessBuilder(command).directory(home.toFile());
+        pb.environment().put("CODEX_PRESENCE_READY", ready.toString());
+        if (managed) pb.environment().put(TaskScripts.TASK_ENV, "another-task");
+        else pb.environment().remove(TaskScripts.TASK_ENV);
+        var proc = pb.start();
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!Files.exists(ready) && proc.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
+        if (!Files.exists(ready)) {
+            proc.destroyForcibly();
+            throw new AssertionError("Codex presence stand-in did not start: " + args);
+        }
+        return proc;
     }
 }

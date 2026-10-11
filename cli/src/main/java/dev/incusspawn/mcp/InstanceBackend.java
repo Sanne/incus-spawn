@@ -50,7 +50,22 @@ interface InstanceBackend {
                         List<String> tools, String delegateModel, boolean projectLocal,
                         Map<String, ImageDef> definitions) {
         boolean supportsDelegate() {
-            return tools.contains("claude");
+            return defaultAgent() != DelegateAgent.UNKNOWN;
+        }
+
+        DelegateAgent defaultAgent() {
+            return tools.contains("claude") ? DelegateAgent.CLAUDE
+                    : tools.contains("codex") ? DelegateAgent.CODEX : DelegateAgent.UNKNOWN;
+        }
+
+        List<DelegateAgent> agents() {
+            return java.util.Arrays.stream(DelegateAgent.values()).filter(a -> a != DelegateAgent.UNKNOWN && tools.contains(a.id)).toList();
+        }
+
+        String model(DelegateAgent agent) {
+            var def = definitions.get(name);
+            if (def != null) return IncusInstanceBackend.delegateModel(def, definitions, agent.id);
+            return agent == defaultAgent() ? delegateModel : null;
         }
     }
 

@@ -39,7 +39,7 @@ final class ModelCheck {
     /** Refuse, with a {@link ToolError} and before anything runs, what is not a model name. */
     static void requireName(String model) {
         if (model != null && !McpConfig.isModelName(model)) {
-            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "model must be a Claude Code model id or alias (e.g. claude-haiku-4-5, "
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "model must be an agent model id or Claude alias (e.g. claude-haiku-4-5, "
                     + "sonnet, opus[1m]): letters, digits and . _ : @ / [ ] -");
         }
     }

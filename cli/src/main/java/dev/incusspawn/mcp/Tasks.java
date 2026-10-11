@@ -60,11 +60,16 @@ final class Tasks {
      * {@code key} is the idempotency key it was started under, null for none.
      */
     record Task(String id, String instance, String kind, String cwd, Profile profile, int runs, String state,
-                boolean launching, String key) {
-        Task launchingRun(int n) { return new Task(id, instance, kind, cwd, profile, n, TaskWatcher.RUNNING, true, key); }
-        Task launched() { return new Task(id, instance, kind, cwd, profile, runs, TaskWatcher.RUNNING, false, key); }
-        Task withState(String s) { return launching ? this : new Task(id, instance, kind, cwd, profile, runs, s, false, key); }
-        Task withProfile(Profile p) { return new Task(id, instance, kind, cwd, p, runs, state, launching, key); }
+                boolean launching, String key, DelegateAgent agent) {
+        Task(String id, String instance, String kind, String cwd, Profile profile, int runs, String state,
+             boolean launching, String key) {
+            this(id, instance, kind, cwd, profile, runs, state, launching, key,
+                    AGENT.equals(kind) ? DelegateAgent.CLAUDE : null);
+        }
+        Task launchingRun(int n) { return new Task(id, instance, kind, cwd, profile, n, TaskWatcher.RUNNING, true, key, agent); }
+        Task launched() { return new Task(id, instance, kind, cwd, profile, runs, TaskWatcher.RUNNING, false, key, agent); }
+        Task withState(String s) { return launching ? this : new Task(id, instance, kind, cwd, profile, runs, s, false, key, agent); }
+        Task withProfile(Profile p) { return new Task(id, instance, kind, cwd, p, runs, state, launching, key, agent); }
         boolean running() { return TaskWatcher.RUNNING.equals(state); }
         boolean busy() { return running() || launching; }
     }
@@ -83,7 +88,7 @@ final class Tasks {
      */
     record Status(String state, int run, Integer exit, long outputBytes,
                   long stderrBytes, String output, String stderr, Long attachedPid,
-                  Instant startedAt, Instant lastActivity) {
+                  Instant startedAt, Instant lastActivity, String sessionId) {
         boolean running() {
             return "running".equals(state);
         }
@@ -227,7 +232,13 @@ final class Tasks {
      */
     Task delegate(String instance, String cwd, String instruction, Profile profile, String permissionMode,
                   boolean refresh, Runnable check, String key) {
-        var task = reserve(null, null, new Task(nextId(), instance, AGENT, cwd, profile, 1, TaskWatcher.RUNNING, true, key), refresh);
+        return delegate(instance, cwd, instruction, profile, permissionMode, refresh, check, key, DelegateAgent.CLAUDE);
+    }
+
+    Task delegate(String instance, String cwd, String instruction, Profile profile, String permissionMode,
+                  boolean refresh, Runnable check, String key, DelegateAgent agent) {
+        agent.requireBudget(config.get(), profile);
+        var task = reserve(null, null, new Task(nextId(), instance, AGENT, cwd, profile, 1, TaskWatcher.RUNNING, true, key, agent), refresh);
         return launch(task, null, check, t -> agentRun(t, permissionMode), instruction);
     }
 
@@ -240,9 +251,23 @@ final class Tasks {
      */
     Task sendMessage(Task task, String message, Profile override, String permissionMode, Runnable check) {
         if (!AGENT.equals(task.kind())) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "task " + task.id() + " is a command, not a delegated agent.");
-        var attached = status(task, 0).attachedPid();
+        task.agent().requireBudget(config.get(), task.profile().with(override));
+        var current = status(task, 0);
+        var attached = current.attachedPid();
+        if (task.agent() == DelegateAgent.CODEX && !current.running() && current.sessionId() == null) {
+            try {
+                var recovered = run(task.instance(), "node -e " + ExecScript.quote(CodexEvents.runner()) + " \""
+                        + TaskScripts.dir(task.id()) + "\" recover '' ''", null).strip();
+                if (!recovered.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,127}"))
+                    throw new ToolError(ToolError.Code.WRONG_STATE, "no valid recovered thread ID");
+                attached = status(task, 0).attachedPid();
+            } catch (ToolError e) {
+                throw new ToolError(ToolError.Code.WRONG_STATE, "task " + task.id()
+                        + " has no recoverable Codex thread ID; start a new delegated task. " + e.getMessage());
+            }
+        }
         if (attached != null) {
-            throw new ToolError(ToolError.Code.WRONG_STATE, "a person is in task " + task.id() + "'s conversation (Claude Code, pid " + attached
+            throw new ToolError(ToolError.Code.WRONG_STATE, "a person is in task " + task.id() + "'s conversation (agent, pid " + attached
                     + ", in " + task.instance() + "). Messages would race with theirs: wait until task_status "
                     + "no longer says attached, or ask the user.");
         }
@@ -256,7 +281,7 @@ final class Tasks {
      * ceiling is held to the one the user set since.
      */
     private String agentRun(Task t, String permissionMode) {
-        return TaskScripts.agentRun(t.id(), t.runs(), t.cwd(), t.profile(), turnBudget(t), permissionMode);
+        return TaskScripts.agentRun(t.id(), t.runs(), t.cwd(), t.profile(), turnBudget(t), permissionMode, t.agent());
     }
 
     /**
@@ -264,7 +289,7 @@ final class Tasks {
      * since, else that ceiling; null for none. What launches a run and what every tool reports.
      */
     Integer turnBudget(Task task) {
-        return config.get().delegateMaxTurns(task.profile().maxTurns());
+        return task.agent() == DelegateAgent.CODEX ? null : config.get().delegateMaxTurns(task.profile().maxTurns());
     }
 
     /**
@@ -273,7 +298,14 @@ final class Tasks {
      */
     List<String> adopt(String instance) {
         var adopted = new java.util.ArrayList<String>();
-        for (var line : run(instance, TaskScripts.list(), null).split("\n")) {
+        var identities = new HashMap<String, DelegateAgent>();
+        var listing = run(instance, TaskScripts.list(), null).split("\n");
+        for (var line : listing) {
+            if (!line.startsWith("identity ")) continue;
+            var p = line.split(" ", 3);
+            if (p.length >= 2) identities.put(p[1], p.length == 3 ? recordedAgent(p[2]) : DelegateAgent.UNKNOWN);
+        }
+        for (var line : listing) {
             var parts = line.strip().split(" ", 8);
             if (parts.length < 4 || !parts[0].matches("[a-z0-9-]+")) continue;
             var kind = parts[1];
@@ -290,7 +322,8 @@ final class Tasks {
             var key = parts.length > 6 && parts[6].startsWith("=") ? McpSession.keyOf(parts[6].substring(1)) : null;
             // An exit recorded is finished (attached, if a person is in it, is read by task_status).
             var state = "running".equals(parts[3]) ? TaskWatcher.RUNNING : "finished";
-            var task = new Task(parts[0], instance, kind, cwd, profile, runs, state, false, key);
+            var task = new Task(parts[0], instance, kind, cwd, profile, runs, state, false, key,
+                    AGENT.equals(kind) ? identities.getOrDefault(parts[0], DelegateAgent.CLAUDE) : null);
             synchronized (this) {
                 // Once reported released, a task this session takes back is reported again.
                 if (tasks.putIfAbsent(task.id(), task) == null) watcher.revive(task.id());
@@ -307,6 +340,11 @@ final class Tasks {
      * from inside the instance, so only what a coordinator could have chosen is taken: anything
      * else is dropped, never passed to the next run.
      */
+    static DelegateAgent recordedAgent(String identity) {
+        if (identity == null) return DelegateAgent.CLAUDE;
+        return identity.startsWith("1 ") ? DelegateAgent.parse(identity.substring(2).strip()) : DelegateAgent.UNKNOWN;
+    }
+
     static Profile recordedProfile(String model, String maxTurns) {
         Integer turns = null;
         try {
@@ -737,15 +775,17 @@ final class Tasks {
         var known = new HashMap<String, String>();
         seen.forEach((id, task) -> {
             int runs;
+            DelegateAgent agent;
             synchronized (this) {
                 var now = tasks.get(id);
                 if (task.state == null || now == null || task.run > 0 && task.run < now.runs()) return;
                 runs = now.runs();
+                agent = now.agent();
             }
             // No run at all (its directory is gone): reported under the run the session knows.
             if (task.run == 0) task.run = runs;
             var state = task.state.equals("finished") && task.session != null
-                    && who.holderOf(task.session, task.cwd) != null ? "attached" : task.state;
+                    && who.holderOf(agent, task.session, task.cwd) != null ? "attached" : task.state;
             if (!state.equals("unknown")) known.put(id, state);
             watcher.observe(id, instance, task.run, state, task.exit);
         });
@@ -764,7 +804,7 @@ final class Tasks {
         try {
             if (check != null) check.run();
             run(reserved.instance(), TaskScripts.launch(reserved.id(), reserved.runs(), reserved.kind(),
-                    runScript.apply(reserved), reserved.key()), stdin);
+                    runScript.apply(reserved), reserved.key(), reserved.agent()), stdin);
         } catch (RuntimeException e) {
             synchronized (this) {
                 if (previous == null) tasks.remove(reserved.id());
@@ -839,7 +879,7 @@ final class Tasks {
             else header.put(key, lines[i].substring(eq + 1));
         }
         if ("missing".equals(header.get("state"))) {
-            return new Status("lost", 0, null, 0, 0, "", "", null, null, null);
+            return new Status("lost", 0, null, 0, 0, "", "", null, null, null, null);
         }
         var rest = i < lines.length ? String.join("\n", List.of(lines).subList(i + 1, lines.length)) : "";
         var split = rest.indexOf("\n---stderr\n");
@@ -850,13 +890,14 @@ final class Tasks {
         var state = header.getOrDefault("state", "unknown");
         if (!List.of("running", "finished", "lost").contains(state)) state = "unknown";
         var agent = AGENT.equals(header.get("kind"));
-        var attached = agent ? Presence.parse(presence).holderOf(header.get("session_id"), header.get("cwd")) : null;
+        var attached = agent ? Presence.parse(presence).holderOf(recordedAgent(header.get("identity")), header.get("session_id"), header.get("cwd")) : null;
         if (attached != null && state.equals("finished")) state = "attached";
         long outputBytes = parseLong(header.getOrDefault(agent ? "events_bytes" : "stdout_bytes", "0"));
         return new Status(state, (int) parseLong(header.getOrDefault("run", "0")), exit,
                 outputBytes, parseLong(header.getOrDefault("stderr_bytes", "0")),
                 output.endsWith("\n") ? output.substring(0, output.length() - 1) : output, stderr, attached,
-                epochSeconds(header.get("started")), epochSeconds(header.get("activity")));
+                epochSeconds(header.get("started")), epochSeconds(header.get("activity")),
+                header.getOrDefault("session_id", "").matches("[A-Za-z0-9][A-Za-z0-9_-]{0,127}") ? header.get("session_id") : null);
     }
 
     /** A time the guest reported in seconds since the epoch; null if it reported none. */

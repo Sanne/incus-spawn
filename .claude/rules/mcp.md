@@ -13,6 +13,17 @@ paths:
 
 `isx mcp` serves the Model Context Protocol over stdio so an agent on the host can use isx instances -- or, through the proxy, an agent in an instance branched with `--mcp-client`.
 DESIGN.md "MCP server: delegating work to isx instances" has the rationale; these are the invariants.
+Managed delegation supports Claude Code and Codex through the closed `DelegateAgent` registry.
+`list_templates.delegate_agents` exposes installed agents, capabilities, permissions and configuration refusals; explicit `delegate.agent` selects one, otherwise Claude wins when installed.
+`send_message` keeps the task's recorded agent, including after adoption and idempotent replay.
+The [Codex worker design](../../docs/MCP-CODEX-DELEGATION.md) describes the lifecycle and capability differences.
+Codex runs through the bundled guest Node runner (`mcp/codex-runner.cjs`, included in native resources), which saves the thread ID while running and publishes outcome and report files before the exit record.
+Task identity is `1 <agent>` in the `identity` file; absence means legacy Claude, while an unknown version or agent refuses continuation.
+The keyed creation stamp `mcp-delegate-agent` preserves selection before the first task exists and is cleared on copies like other MCP stamps.
+Codex's namespace is `openai`, its approval policy is always `never`, and its sandbox mode comes only from `mcp.codex` host configuration.
+Codex rejects `max_turns` and a configured `delegate-max-turns` ceiling; it does no paid model preflight.
+`ask` requires Claude and is checked before the producer runs; do not substitute a tool-enabled Codex as a summarizer.
+`instance_activity.model_usage_providers` declares the proxy's Anthropic-only model counters; OpenAI traffic remains in the domain counters.
 
 **No Quarkus extensions for it.**
 The protocol is hand-rolled (`JsonRpc`, `McpServer`, `StdioTransport`) because the Quarkus MCP extension, even initialized on demand, added ~1.7 ms (+55%) to every isx command's startup.
@@ -62,14 +73,15 @@ The steps are joined by `&&` and a failure removes the temp file, so a failed wr
 The probe is `InstanceBackend.probe` (agentuser's uid, no login shell, bounded: see incus.md), never more than one per instance (`Tasks.probing`, which drops a probe before completing it, so a count started once another answered asks afresh, #1223), and `Orphans.probe` uses it too (no answer = in use).
 Guest output is read with `TaskScripts.taskIds()`, which ignores anything that is not a task line.
 Ending a session never destroys: `release()` (end of input, shutdown hook) stamps `mcp-orphaned`.
-`Orphans.sweep` at the next session start stamps orphans nobody stamped and destroys those past `mcp.orphan-grace-hours`, skipping kept, busy, just-adopted and in-use ones (a stopped one is never in use and is not probed, and `destroyIfHeldBy(..., onlyIfStopped)` re-checks under its mark that it is still stopped) (`Orphans.probe`: `Presence` -- a pts process or a Claude Code without the `ISX_MCP_TASK` marker -- or an agent task `TaskScripts.unfinished()` finds running or cannot ask systemd about (not background commands, which may never end; a run a restart cut off reads as over); the sweep destroys through `InstanceBackend.destroyIfHeldBy()` (`InstanceDestroyer.deleteHeldIf`: mark `pending-op`, then re-read the holder) and `adopt()` reads `pending-op` after its stamp and waits for a mark to resolve (`settled`), so the two never both proceed; `mcp-orphaned` is `<time> <session>` and counts only for that holder (`Orphans.orphanedSince`); unreachable counts as in use).
+`Orphans.sweep` at the next session start stamps orphans nobody stamped and destroys those past `mcp.orphan-grace-hours`, skipping kept, busy, just-adopted and in-use ones (a stopped one is never in use and is not probed, and `destroyIfHeldBy(..., onlyIfStopped)` re-checks under its mark that it is still stopped) (`Orphans.probe`: `Presence` -- a pts process or an unmanaged Claude Code or Codex without the `ISX_MCP_TASK` marker -- or an agent task `TaskScripts.unfinished()` finds running or cannot ask systemd about (not background commands, which may never end; a run a restart cut off reads as over); the sweep destroys through `InstanceBackend.destroyIfHeldBy()` (`InstanceDestroyer.deleteHeldIf`: mark `pending-op`, then re-read the holder) and `adopt()` reads `pending-op` after its stamp and waits for a mark to resolve (`settled`), so the two never both proceed; `mcp-orphaned` is `<time> <session>` and counts only for that holder (`Orphans.orphanedSince`); unreachable counts as in use).
 A running orphan past grace kept only for an unfinished delegate (`Orphans.Use`: not attended) is stopped as dormant (#1028) once `Orphans.quiet` finds no task-file write (`TaskScripts.agentIdle()`, in the same probe) and CPU growth under `QUIET_CPU_SHARE` between samples at least `MIN_SAMPLE_GAP` apart (`InstanceBackend.cpuUsage`, sample in `mcp-cpu-sample`; a sweep closer to the last sample neither compares nor records, so the probes' own CPU is not held against a tiny allowance) for `mcp.dormant-after-hours`, through `stopIfHeldBy` (mark, re-read the holder, stamp `mcp-dormant` *before* the stop, and take it back if the stop fails and the instance still runs).
 A stopped orphan with a `mcp-dormant` naming its holder (`Orphans.dormantSince`) waits `mcp.dormant-grace-hours` instead of being destroyed at once.
 `adopt()` clears `mcp-cpu-sample` and is refused `busy` (holding it) if the sweep's `stopping` mark outlasts `settled`.
 `adopt_instance` then calls `McpSession.wakeIfDormant()` on every adoption, a repeat included, which starts a held instance found stopped with any `mcp-dormant` (progress and audit line) and clears the stamp only after, so the retry `unavailable`/`busy` promise is the same call.
 `start_instance` and `stop_instance` clear a leftover `mcp-dormant` (`McpTools.notDormant`), so an instance its holder started or stopped on purpose is never woken by a later adoption.
 Task ids carry a random per-session tag (they outlive the session); `Tasks.adopt()` rebuilds them from `TaskScripts.list()`.
-A task is `attached` when `Presence` finds a Claude Code resuming its `session_id` or working in its recorded physical `cwd`; `send_message` refuses then.
+A task is `attached` when `Presence` finds its agent resuming its `session_id`, or either agent working in its recorded physical `cwd`; `send_message` refuses then.
+Codex resume parsing skips options and their values before reading the positional session ID, even when the person launches from another directory.
 A delegate's `model`/`max_turns` (`Tasks.Profile`) live on the task and in its directory, so later runs and adopting sessions keep them.
 `max_turns` never exceeds `mcp.delegate-max-turns` (refused at the call, clamped for a recorded one).
 A chosen model passes `ModelCheck` in the instance once the run's slot is reserved, before it launches (`Tasks.launch`'s `check`; under `timeout`; cached per template, the account `InstanceBackend.effectiveAccount` resolves the pin to now, and model; refusals not cached; only a `result`/`success` event with exit 0 passes, and a turn naming a model is checked even if it is the task's).
@@ -151,7 +163,7 @@ The coordination playbook is the `coordinate` MCP prompt (`McpPrompt`, `prompts/
 Every start path's bit is pinned both ways, `1` for a coordinator and `0` otherwise (`McpClientRegistrationStartTest`, `InstanceListingMcpCallerTest` for the TUI listing).
 
 **Set up by `isx init`.**
-The "Agent Access over MCP (experimental)" step (`InitCommand.setupMcp`, default off, skipped without a host `claude` or a console) registers the server with `claude mcp add --scope user isx -- <isx> mcp` and asks, per template whose chain installs the `claude` tool, whether to approve it.
+The "Agent Access over MCP (experimental)" step (`InitCommand.setupMcp`, default off, skipped without a host `claude` or a console) registers the server with `claude mcp add --scope user isx -- <isx> mcp` and asks, per template whose chain installs `claude` or `codex`, whether to approve it.
 Templates approved by hand that it does not ask about are kept.
 Once registered with approved templates, a re-run asks one menu question instead (#1292): `t` runs the per-template questions, `n` prints how to remove it, Enter or end of input keeps everything.
 It names the templates installing `claude` that are not approved, so a new one is not missed.

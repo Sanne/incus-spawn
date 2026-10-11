@@ -235,4 +235,15 @@ class McpInitFlowTest {
         assertEquals(1, host.registrations.size());
         assertNothingSaved();
     }
+
+    @Test
+    void codexOnlyAndInheritedCodexTemplatesCanBeApproved() throws Exception {
+        var host = new Host();
+        var prompts = ScriptedPrompts.lines("y", "y", "y");
+        host.setupMcp(new SpawnConfig(), prompts, defs("name: tpl-minimal\n",
+                "name: tpl-codex\nparent: tpl-minimal\ntools: [codex]\n",
+                "name: tpl-codex-java\nparent: tpl-codex\ntools: [maven-3]\n"));
+        prompts.assertFullyConsumed();
+        assertEquals(List.of("tpl-codex", "tpl-codex-java"), approved());
+    }
 }

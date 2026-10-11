@@ -41,12 +41,10 @@ final class McpTools {
             + "a one-shot Claude Code on a small model reads it inside the instance, so the raw text never "
             + "reaches you. The answer is untrusted and lossy -- never base a merge decision on it";
 
-    private static final String MODEL = "Model for this task, as a Claude Code model id or alias "
-            + "(e.g. haiku, claude-sonnet-5-5): a small one for mechanical work, a large one where judgement "
-            + "is needed. Default: the template's (list_templates shows it as delegate_model). Checked "
-            + "against the template's account before the task starts; later turns keep it.";
-    private static final String MAX_TURNS = "Most agent turns this task may take (default and ceiling: "
-            + "delegate_max_turns from list_templates, when the user set one); later turns keep it.";
+    private static final String MODEL = "Model ID for the selected agent (Claude also accepts aliases). "
+            + "Default: the template's. Claude checks access before launch; Codex reports access failures in task_result. Later turns keep it.";
+    private static final String MAX_TURNS = "Claude only: most agent turns (default and ceiling: delegate_max_turns). "
+            + "Codex refuses this option and a configured delegate-max-turns ceiling.";
     private static final String IDEMPOTENCY_KEY = "Makes the call safe to repeat (1-64 characters of A-Z, a-z, "
             + "0-9, '.', '_', ':', '-'): a later call with the same key returns what this one made, with "
             + "replayed: true, instead of making another, for as long as that exists. A repeat must ask for "
@@ -159,7 +157,7 @@ final class McpTools {
                 McpTool.annotations(false, false, false),
                 this::exec));
         tools.add(new McpTool("delegate",
-                "Hand a task to a Claude Code agent running inside an instance (the template must "
+                "Hand a task to Claude Code or Codex inside an instance (the template must "
                         + "have supports_delegate): an instruction in plain language, or a skill the "
                         + "instance defines. The agent works autonomously with the instance's tools and "
                         + "the credentials its template carries, in the permission mode list_templates "
@@ -169,6 +167,7 @@ final class McpTools {
                         + "with task_result, review changes with get_diff, and continue the "
                         + "conversation with send_message.",
                 Schema.object()
+                        .choice("agent", "Worker agent; defaults to Claude when installed, otherwise Codex", false, "claude", "codex")
                         .string("instruction", "What the agent should do, with everything it needs "
                                 + "to know: it sees nothing of your conversation", false)
                         .string("skill", "Or: a skill defined in the instance, run as /<skill> <args> -- "
@@ -334,11 +333,7 @@ final class McpTools {
             node.put("stale", t.stale());
             var tools = node.putArray("tools");
             t.tools().forEach(tools::add);
-            node.put("supports_delegate", t.supportsDelegate());
-            if (t.supportsDelegate()) {
-                node.put("permission_mode", permissionMode(t.name()));
-                if (t.delegateModel() != null) node.put("delegate_model", t.delegateModel());
-            }
+            describeAgents(node, t);
         }
         result.put("max_instances", config.maxInstances());
         result.put("max_concurrent_tasks", config.maxConcurrentTasks());
@@ -350,12 +345,87 @@ final class McpTools {
         return ToolResult.json(result);
     }
 
-    private String permissionMode(String template) {
-        try {
-            return session.config().delegatePermissionMode(template);
-        } catch (IllegalArgumentException e) {
-            throw new ToolError(ToolError.Code.REFUSED, e.getMessage() + ". Ask the user to fix it in their config.");
+    private void describeAgents(ObjectNode node, InstanceBackend.TemplateInfo template) {
+        node.put("supports_delegate", template.supportsDelegate());
+        node.put("supports_ask", template.tools().contains("claude"));
+        if (template.tools().contains("claude")) node.put("summary_agent", "claude");
+        var agents = node.putArray("delegate_agents");
+        for (var agent : template.agents()) {
+            var entry = agents.addObject();
+            entry.put("agent", agent.id);
+            entry.put("supports_max_turns", agent == DelegateAgent.CLAUDE);
+            entry.put("supports_model_preflight", agent == DelegateAgent.CLAUDE);
+            var model = template.model(agent);
+            if (model != null) entry.put("model", model);
+            if (agent == DelegateAgent.CODEX) entry.put("approval_policy", "never");
+            try {
+                var mode = agent.permissionMode(session.config(), template.name());
+                entry.put("permission_mode", mode);
+                if (agent == template.defaultAgent()) node.put("permission_mode", mode);
+                agent.requireBudget(session.config(), Tasks.Profile.NONE);
+            } catch (ToolError e) {
+                entry.put("refusal", e.getMessage());
+            }
         }
+        if (template.supportsDelegate()) {
+            node.put("default_delegate_agent", template.defaultAgent().id);
+            var model = template.model(template.defaultAgent());
+            if (model != null) node.put("delegate_model", model);
+        }
+    }
+
+    private void requireAsk(String instance) {
+        var template = session.instances().stream().filter(o -> o.name().equals(instance))
+                .map(McpSession.Owned::template).findFirst().orElse("");
+        if (!backend.template(template).map(t -> t.tools().contains("claude")).orElse(false))
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "ask requires Claude's tool-free summary service in the instance; omit ask and read the output directly");
+    }
+
+    private void checkAgent(String instance, String template, String account, String model, DelegateAgent agent) {
+        if (agent == DelegateAgent.CLAUDE) {
+            modelCheck.require(instance, template, account, model);
+        } else {
+            var err = new ByteArrayOutputStream();
+            if (backend.exec(instance, agent.probe(), null, new ByteArrayOutputStream(), err) != 0)
+                throw new ToolError(ToolError.Code.REFUSED, "Codex and Node with exec/resume JSON output are required in "
+                        + instance + "; rebuild its template or upgrade the CLI.");
+        }
+    }
+
+    private static String renderBrief(DelegateAgent agent, Brief brief) {
+        if (agent != DelegateAgent.CODEX || brief.skill() == null) return brief.text();
+        if (!brief.skill().matches("[A-Za-z0-9][A-Za-z0-9_.-]{0,100}"))
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "Codex skill must be an installed skill name without a command namespace or path");
+        return "Use the installed skill at ~/.agents/skills/" + brief.skill() + "/SKILL.md.\nArguments: "
+                + brief.text().substring(brief.skill().length() + 1).strip();
+    }
+
+    private static StreamJsonEvents.Summary summarize(Tasks.Task task, String output, int keep) {
+        return task.agent() == DelegateAgent.CODEX ? CodexEvents.summarize(output, keep) : StreamJsonEvents.summarize(output, keep);
+    }
+
+    private ToolResult codexResult(Tasks.Task task, Tasks.Status status, ObjectNode node, int limit, String question, boolean events) {
+        var summary = CodexEvents.summarize(status.output(), events ? 20 : 0);
+        if (!summary.finished()) throw new ToolError(ToolError.Code.TASK_FAILED,
+                "Codex ended without a recorded outcome (exit " + status.exit() + "): " + status.stderr().strip());
+        var result = summary.result();
+        var failed = status.exit() == null || status.exit() != 0 || summary.isError();
+        node.put("outcome", failed ? "error" : "success");
+        node.put("is_error", failed);
+        var report = tasks.run(task.instance(), TaskScripts.ifFile(TaskScripts.dir(task.id()) + "/result-" + status.run() + ".txt",
+                "head -c " + (question == null ? limit : AskScript.INPUT_LIMIT)) + "; exit 0", null);
+        node.put("report_bytes", result.path("report_bytes").asLong());
+        if (question == null) {
+            node.put("report", report);
+            node.put("truncated", result.path("report_truncated").asBoolean()
+                    || result.path("report_bytes").asLong() > report.getBytes(StandardCharsets.UTF_8).length);
+        } else node.set("answer", answer(ask(task.instance(), "cat", false, report, question)));
+        if (events) node.set("recent", strings(summary.recent()));
+        var usage = result.path("usage");
+        for (var field : List.of("input_tokens", "output_tokens", "cached_input_tokens"))
+            if (usage.path(field).canConvertToLong()) node.put(field, usage.path(field).asLong());
+        if (failed) node.put("agent_stderr", (result.path("result").asText() + "\n" + status.stderr()).strip());
+        return ToolResult.json(node, "Review the changes with get_diff; continue this conversation with send_message.");
     }
 
     private ToolResult createInstance(McpTool.Args args, ToolContext ctx) {
@@ -393,7 +463,7 @@ final class McpTools {
     }
 
     /** What {@code create_instance} says about an instance, made now or by an earlier call with its key. */
-    private static ObjectNode instanceNode(String name, InstanceBackend.TemplateInfo info,
+    private ObjectNode instanceNode(String name, InstanceBackend.TemplateInfo info,
             String purpose, String forkedFrom, String ip, String workdir) {
         var node = JsonRpc.JSON.createObjectNode();
         node.put("instance", name);
@@ -404,7 +474,7 @@ final class McpTools {
         node.put("workdir", workdir);
         var tools = node.putArray("tools");
         info.tools().forEach(tools::add);
-        node.put("supports_delegate", info.supportsDelegate());
+        describeAgents(node, info);
         return node;
     }
 
@@ -577,6 +647,7 @@ final class McpTools {
     private ToolResult listInstances() {
         var result = JsonRpc.JSON.createObjectNode();
         var list = result.putArray("instances");
+        var templates = new java.util.HashMap<String, java.util.Optional<InstanceBackend.TemplateInfo>>();
         for (var o : session.instances()) {
             var node = list.addObject();
             node.put("instance", o.name());
@@ -585,11 +656,13 @@ final class McpTools {
             node.put("created", o.created().toString());
             node.put("state", o.ready() ? "ready" : "creating");
             node.put("kept", o.kept());
+            templates.computeIfAbsent(o.template(), backend::template).ifPresent(t -> describeAgents(node, t));
             var owned = node.putArray("tasks");
             tasks.all().stream().filter(t -> t.instance().equals(o.name())).forEach(t -> {
                 var tn = owned.addObject();
                 tn.put("task_id", t.id());
                 tn.put("kind", t.kind());
+                if (t.agent() != null) tn.put("agent", t.agent().id);
                 tn.put("state", t.state());
             });
         }
@@ -645,6 +718,7 @@ final class McpTools {
         node.put("instance", adopted.name());
         node.put("template", adopted.template());
         if (adopted.purpose() != null) node.put("purpose", adopted.purpose());
+        backend.template(adopted.template()).ifPresent(t -> describeAgents(node, t));
         node.put("supports_delegate", adopted.supportsDelegate());
         var ids = node.putArray("tasks");
         try {
@@ -674,6 +748,7 @@ final class McpTools {
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "stdin is limited to " + MAX_STDIN_BYTES + " bytes");
         }
         var ask = AskScript.checkQuestion(args.string("ask"));
+        if (ask != null) requireAsk(name);
         var key = McpSession.checkKey(args.string("idempotency_key"));
         if (args.bool("background")) {
             if (ask != null) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "ask does not apply to a background command; set it on task_result");
@@ -789,6 +864,7 @@ final class McpTools {
     private AskScript.Answer ask(String instance, String producer, boolean mergeStderr, String stdin, String question) {
         var out = new ByteArrayOutputStream();
         var err = new ByteArrayOutputStream();
+        requireAsk(instance);
         var exit = backend.exec(instance, AskScript.build(producer, mergeStderr, question, summaryModel()),
                 stdin == null ? null : new ByteArrayInputStream(stdin.getBytes(StandardCharsets.UTF_8)), out, err);
         if (exit != 0) {
@@ -827,70 +903,70 @@ final class McpTools {
     }
 
     private ToolResult delegate(McpTool.Args args, ToolContext ctx) {
-        var prompt = delegatePrompt(args);
+        var prompt = new Brief(delegatePrompt(args), args.string("skill"));
         var profile = profile(args);
         var instance = args.string("instance");
         var template = args.string("template");
+        var requested = args.string("agent");
+        if (requested != null && DelegateAgent.parse(requested) == DelegateAgent.UNKNOWN)
+            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "agent must be claude or codex");
         if ((instance == null) == (template == null)) {
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "give exactly one of instance or template");
         }
         var key = McpSession.checkKey(args.string("idempotency_key"));
         var cwd = args.string("cwd");
         if (template != null) {
-            return underKey(key, made -> delegateInReplayed(made, key, template, cwd, prompt, profile), listing -> {
-                // A task key used elsewhere would only be refused once the instance is made for nothing.
+            return underKey(key, made -> {
+                var adopt = session.replayable(made.getKey(), made.getValue(), key);
+                requireSameInstance(key, made.getKey(), made.getValue(), template, null);
+                policy.requireLineage(template);
+                var intended = made.getValue().get(Metadata.MCP_DELEGATE_AGENT);
+                if (requested != null && intended != null && !requested.equals(intended))
+                    throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "idempotency_key already selected agent " + intended);
+                if (adopt) adoptForReplay(made.getKey(), made.getValue(), key);
+                return delegateIn(made.getKey(), cwd, prompt, profile, key, requested == null ? intended : requested);
+            }, listing -> {
                 if (key != null) tasks.keyed(null, Tasks.AGENT, key);
-                // Before the hold: an agent's arbitrary name gets no lock file
                 policy.requireListed(template);
                 try (var held = backend.holdTemplate(template)) {
                     var info = policy.require(template);
-                    requireDelegate(info);
-                    var mode = permissionMode(info.name());
-                    // Refuse before branching an instance the task could not start in.
+                    var agent = DelegateAgent.select(info, requested);
+                    agent.requireBudget(session.config(), profile);
+                    var mode = agent.permissionMode(session.config(), template);
                     tasks.checkCapacityForNewAgent();
-                    var created = newInstance(info, "task", args.string("purpose"), key, listing, ctx);
+                    var created = provision(info, "task", args.string("purpose"), key, listing, ctx,
+                            name -> "Creating " + name + " from " + template, template, "created", (name, stamps) -> {
+                                var withAgent = new java.util.HashMap<>(stamps);
+                                withAgent.put(Metadata.MCP_DELEGATE_AGENT, agent.id);
+                                return backend.create(info, name, withAgent);
+                            });
                     return new Made(created, () -> startDelegate(created.name(), info.name(),
-                            created.accounts().get(ModelCheck.NAMESPACE), cwd, created.workdir(), prompt, profile, mode, true, key));
+                            created.accounts().get(agent.namespace), cwd, created.workdir(), prompt, profile, mode, true, key, agent));
                 }
             });
         }
-        return delegateIn(instance, cwd, prompt, profile, key);
+        return delegateIn(instance, cwd, prompt, profile, key, requested);
     }
 
-    /**
-     * {@code delegate(template)} under {@code key}, once it found the instance {@code made} under
-     * that key: the task in it, as the call that made it started it -- or, if that call never got
-     * as far as starting it, started now, which finishes what it meant rather than making a
-     * second instance. Refused if the instance did not come from {@code template}.
-     */
-    private ToolResult delegateInReplayed(java.util.Map.Entry<String, java.util.Map<String, String>> made, String key,
-                                          String template, String cwd, String prompt, Tasks.Profile profile) {
-        var adopt = session.replayable(made.getKey(), made.getValue(), key);
-        requireSameInstance(key, made.getKey(), made.getValue(), template, null);
-        requireDelegate(policy.requireLineage(template));
-        if (adopt) adoptForReplay(made.getKey(), made.getValue(), key);
-        return delegateIn(made.getKey(), cwd, prompt, profile, key);
-    }
+    private record Brief(String text, String skill) {}
 
-    /** {@code delegate(instance)}: the task this session started under {@code key} there, or a new one. */
-    private ToolResult delegateIn(String name, String cwd, String prompt, Tasks.Profile profile, String key) {
+    private ToolResult delegateIn(String name, String cwd, Brief prompt, Tasks.Profile profile, String key, String requested) {
         var metadata = session.requireRunning(name);
-        var entry = session.instances().stream().filter(o -> o.name().equals(name)).findFirst();
-        if (entry.isEmpty() || !entry.get().supportsDelegate()) {
-            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "the template " + name + " came from has no Claude Code to delegate to. "
-                    + "Use a template whose list_templates entry has supports_delegate, or exec.");
-        }
-        var from = entry.get().template();
-        var mode = permissionMode(from);
+        var template = McpSession.templateOf(metadata);
         var replayed = key == null ? null : tasks.keyed(name, Tasks.AGENT, key);
         if (replayed != null) {
-            var node = runStarted(replayed, mode);
+            if (requested != null && !requested.equals(replayed.agent().id))
+                throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "idempotency_key already selected agent " + replayed.agent().id);
+            var node = runStarted(replayed, replayed.agent().permissionMode(session.config(), template));
             node.put("replayed", true);
-            return ToolResult.json(node, "An earlier call with this idempotency_key started this task; nothing new was "
-                    + "started. Use task_status with wait_seconds, or wait_any, to wait for it.");
+            return ToolResult.json(node, "An earlier call started this task; use task_status or wait_any.");
         }
-        return startDelegate(name, from, metadata.get(Metadata.accountKey(ModelCheck.NAMESPACE)), cwd,
-                IncusInstanceBackend.workdir(metadata), prompt, profile, mode, false, key);
+        var info = policy.requireLineage(template);
+        var agent = DelegateAgent.select(info, requested);
+        agent.requireBudget(session.config(), profile);
+        var mode = agent.permissionMode(session.config(), template);
+        return startDelegate(name, template, metadata.get(Metadata.accountKey(agent.namespace)), cwd,
+                IncusInstanceBackend.workdir(metadata), prompt, profile, mode, false, key, agent);
     }
 
     /**
@@ -932,18 +1008,27 @@ final class McpTools {
     }
 
     /**
-     * Start the agent in {@code instance}, made from {@code template}, whose Claude account is
+     * Start the agent in {@code instance}, made from {@code template}, whose provider account is
      * pinned to {@code account} (null for the configured default). A chosen model is checked
      * once the task's slot is reserved, so a call refused anyway spends no request on it.
      */
     private ToolResult startDelegate(String instance, String template, String account, String cwd, String workdir,
-                                     String prompt, Tasks.Profile profile, String mode, boolean fresh, String key) {
+                                     Brief prompt, Tasks.Profile profile, String mode, boolean fresh, String key, DelegateAgent agent) {
         Tasks.Task task;
         try {
             // A fresh instance's caller just ran checkCapacityForNewAgent: its own tasks need not
             // be asked again. Other sessions' are: they may have started some while it branched.
-            task = tasks.delegate(instance, resolveCwd(cwd, workdir), prompt, profile, mode, !fresh,
-                    () -> modelCheck.require(instance, template, account, profile.model()), key);
+            task = tasks.delegate(instance, resolveCwd(cwd, workdir), renderBrief(agent, prompt), profile, mode, !fresh,
+                    () -> {
+                        checkAgent(instance, template, account, profile.model(), agent);
+                        if (agent == DelegateAgent.CODEX && prompt.skill() != null) {
+                            var skillPath = "$HOME/.agents/skills/" + prompt.skill() + "/SKILL.md";
+                            if (backend.exec(instance, TaskScripts.ifFile(skillPath, "head -c 1 >/dev/null"), null,
+                                    new ByteArrayOutputStream(), new ByteArrayOutputStream()) != 0)
+                                throw new ToolError(ToolError.Code.REFUSED, "Codex skill '" + prompt.skill()
+                                        + "' is not installed at " + skillPath + "; rebuild the template with that skill.");
+                        }
+                    }, key, agent);
         } catch (RuntimeException e) {
             // An instance made for this task alone is no use to the agent, which never learns its name
             // -- unless a call repeating this one under its key found it, and started the task there.
@@ -956,7 +1041,7 @@ final class McpTools {
             }
             throw e;
         }
-        McpAuditLog.record(session.id, "delegate", instance, prompt, 0, "task=" + task.id() + " mode=" + mode
+        McpAuditLog.record(session.id, "delegate", instance, prompt.text(), 0, "task=" + task.id() + " agent=" + agent.id + " mode=" + mode
                 + describe(profile));
         return ToolResult.json(runStarted(task, mode), "The agent is working. Use task_status with wait_seconds, "
                 + "or wait_any, to wait for it, then task_result and get_diff.");
@@ -967,6 +1052,7 @@ final class McpTools {
         var node = taskNode(task);
         node.put("run", task.runs());
         node.put("permission_mode", mode);
+        if (task.agent() == DelegateAgent.CODEX) node.put("approval_policy", "never");
         if (task.profile().model() != null) node.put("model", task.profile().model());
         var budget = tasks.turnBudget(task);
         if (budget != null) node.put("max_turns", budget);
@@ -981,13 +1067,6 @@ final class McpTools {
                 + (profile.maxTurns() != null ? " max_turns=" + profile.maxTurns() : "");
     }
 
-    private static void requireDelegate(InstanceBackend.TemplateInfo info) {
-        if (!info.supportsDelegate()) {
-            throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "template '" + info.name() + "' has no Claude Code to delegate to. "
-                    + "Use a template whose list_templates entry has supports_delegate, or exec.");
-        }
-    }
-
     private ToolResult taskStatus(McpTool.Args args, ToolContext ctx) throws InterruptedException {
         var task = tasks.require(args.requireString("task_id")).task();
         var wait = args.integer("wait_seconds");
@@ -998,6 +1077,10 @@ final class McpTools {
         if (status.exit() != null) node.put("exit_code", status.exit());
         node.put("run", status.run());
         if (status.attachedPid() != null) node.put("attached_pid", status.attachedPid());
+        if (Tasks.AGENT.equals(task.kind())) {
+            if (status.sessionId() != null) node.put("session_id", status.sessionId());
+            node.put("resumable", status.sessionId() != null && task.agent() != DelegateAgent.UNKNOWN);
+        }
         if (status.startedAt() != null) node.put("started_at", status.startedAt().toString());
         if (status.lastActivity() != null) node.put("last_activity", status.lastActivity().toString());
         var sb = new StringBuilder();
@@ -1005,11 +1088,11 @@ final class McpTools {
                 .append(task.instance()).append(")\nstate: ").append(status.state());
         if (status.exit() != null) sb.append("\nexit_code: ").append(status.exit());
         if (status.attachedPid() != null) {
-            sb.append("\nattached: a person is in this conversation (Claude Code, pid ").append(status.attachedPid())
+            sb.append("\nattached: a person is in this conversation (agent, pid ").append(status.attachedPid())
                     .append("); send_message is refused until they leave.");
         }
         if (Tasks.AGENT.equals(task.kind())) {
-            var summary = StreamJsonEvents.summarize(status.output(), 8);
+            var summary = summarize(task, status.output(), 8);
             sb.append("\nturn: ").append(status.run());
             if (task.profile().model() != null) {
                 sb.append("\nmodel: ").append(task.profile().model());
@@ -1023,10 +1106,10 @@ final class McpTools {
             sb.append("\nassistant_messages: ").append(summary.assistantMessages());
             node.put("assistant_messages", summary.assistantMessages());
             if (summary.finished()) {
-                sb.append("\ncost_usd: ").append(summary.result().path("total_cost_usd").asText("?"));
+                if (summary.result().has("total_cost_usd")) sb.append("\ncost_usd: ").append(summary.result().path("total_cost_usd").asText());
                 putNumber(node, "cost_usd", summary.result().path("total_cost_usd"));
                 appendDenials(sb, summary);
-                node.set("permission_denials", denials(summary));
+                if (task.agent() == DelegateAgent.CLAUDE) node.set("permission_denials", denials(summary));
                 sb.append("\nThe agent has finished: read its report with task_result.");
             }
             if (!summary.recent().isEmpty()) {
@@ -1074,6 +1157,7 @@ final class McpTools {
         node.put("task_id", task.id());
         node.put("instance", task.instance());
         node.put("kind", task.kind());
+        if (task.agent() != null) node.put("agent", task.agent().id);
         return node;
     }
 
@@ -1151,6 +1235,7 @@ final class McpTools {
         var max = args.integer("max_bytes");
         int limit = max == null ? DEFAULT_REPORT_BYTES : Math.clamp(max, 256, MAX_OUTPUT_BYTES);
         var ask = AskScript.checkQuestion(args.string("ask"));
+        if (ask != null) requireAsk(task.instance());
         var agent = Tasks.AGENT.equals(task.kind());
         var status = agent ? tasks.status(task) : tasks.status(task, limit);
         if (status.running()) {
@@ -1181,6 +1266,7 @@ final class McpTools {
             node.put("truncated", status.outputBytes() > limit || status.stderrBytes() > limit);
             return ToolResult.text(sb.toString(), node);
         }
+        if (task.agent() == DelegateAgent.CODEX) return codexResult(task, status, node, limit, ask, args.bool("events"));
         var summary = StreamJsonEvents.summarize(status.output(), args.bool("events") ? 20 : 0);
         if (!summary.finished()) {
             sb.append("\nThe agent ended without a final report.\nagent stderr:\n")
@@ -1241,10 +1327,14 @@ final class McpTools {
         // Checked even when it names the task's model: the account may have changed since, and
         // after an adoption the recorded model is only what the instance says. The cache makes
         // a repeat free.
-        var account = owned.metadata().get(Metadata.accountKey(ModelCheck.NAMESPACE));
-        var mode = permissionMode(template);
+        var agent = task.agent();
+        if (agent == null) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "send_message needs an agent task");
+        agent.requireBudget(session.config(), task.profile().with(override));
+        DelegateAgent.select(policy.requireLineage(template), agent.id);
+        var account = owned.metadata().get(Metadata.accountKey(agent.namespace));
+        var mode = agent.permissionMode(session.config(), template);
         var updated = tasks.sendMessage(task, message, override, mode,
-                () -> modelCheck.require(task.instance(), template, account, override.model()));
+                () -> checkAgent(task.instance(), template, account, override.model(), agent));
         McpAuditLog.record(session.id, "send_message", task.instance(), message, 0,
                 "task=" + task.id() + " turn=" + updated.runs() + describe(override));
         return ToolResult.text("Sent. Task " + task.id() + " is running turn " + updated.runs()
@@ -1395,6 +1485,7 @@ final class McpTools {
         if (counted.inFlight() == 0 && counted.lastResponseAt() != null) {
             node.put("idle_seconds", Math.max(0, Duration.between(counted.lastResponseAt(), Instant.now()).toSeconds()));
         }
+        node.putArray("model_usage_providers").add("anthropic");
         node.put("input_tokens", counted.inputTokens());
         node.put("output_tokens", counted.outputTokens());
         node.put("cache_read_input_tokens", counted.cacheReadInputTokens());

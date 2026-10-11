@@ -77,6 +77,40 @@ public class McpConfig {
     @JsonProperty("summary-model")
     private String summaryModel;
 
+    @JsonProperty("codex")
+    private Codex codex;
+
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class Codex {
+        @JsonProperty("sandbox-mode")
+        private String sandboxMode;
+        @JsonProperty("sandbox-modes")
+        private Map<String, String> sandboxModes;
+
+        public void setSandboxMode(String mode) { sandboxMode = mode; }
+        public void setSandboxModes(Map<String, String> modes) { sandboxModes = modes; }
+    }
+
+    public void setCodex(Codex codex) { this.codex = codex; }
+
+    public String codexSandboxMode(String template) {
+        var mode = codex == null || codex.sandboxModes == null ? null : codex.sandboxModes.get(template);
+        if (mode == null && codex != null) mode = codex.sandboxMode;
+        if (mode == null) {
+            if (!DEFAULT_PERMISSION_MODE.equals(delegatePermissionMode(template))) {
+                throw new IllegalArgumentException("template '" + template
+                        + "' has a restrictive Claude permission policy; set mcp.codex.sandbox-mode or sandbox-modes explicitly before using Codex");
+            }
+            return "danger-full-access";
+        }
+        if (!List.of("read-only", "workspace-write", "danger-full-access").contains(mode)) {
+            throw new IllegalArgumentException("mcp.codex sandbox mode must be read-only, workspace-write or danger-full-access");
+        }
+        return mode;
+    }
+
     public List<String> templates() {
         return templates == null ? List.of() : List.copyOf(templates);
     }

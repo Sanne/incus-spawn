@@ -43,6 +43,7 @@ class DelegationToolsTest {
     private volatile String finishedEvents;
     /** What the tasks listing of an adopted instance answers. */
     private volatile String taskListing = "";
+    private volatile String savedSession;
     /** When set, reading the tasks listing fails, as an exec the guest did not answer would. */
     private volatile boolean failListing;
     /** What the model check answers; null for a model the account can use. */
@@ -108,6 +109,7 @@ class DelegationToolsTest {
                 return taskListing;
             }
             if (script.startsWith("f=$(mktemp)")) return "exit=0\nsummarised=12 lines, 345 bytes\n---\nIt touches A.java only.\n";
+            if (script.contains("/result-1.txt")) return "Codex completed the task";
             if (script.contains("--numstat")) {
                 return "## /home/agentuser\n3\t1\tsrc/A.java\0-\t-\tlogo.png\0\n---\n"
                         + (script.contains("--src-prefix") ? "diff --git a/src/A.java b/src/A.java\n+fixed\n" : "");
@@ -116,7 +118,7 @@ class DelegationToolsTest {
             if (!script.startsWith("D=") || !script.contains("echo run=")) return ""; // cancel
             if (taskState.equals("unknown")) return "run=1\nkind=agent\nstate=unknown\n---\n\n---stderr\n";
             var who = attached ? "cwd=/home/agentuser\nsession_id=s1\npresence=claude 77 /elsewhere\n"
-                    + "presence=resume 77 s1\n" : "";
+                    + "presence=resume 77 s1\n" : savedSession == null ? "" : "identity=1 codex\nsession_id=" + savedSession + "\n";
             return taskState.equals("running")
                     ? "run=1\nkind=agent\nstate=running\n" + who + "events_bytes=10\n---\n" + EVENTS.lines().limit(2)
                             .reduce("", (a, b) -> a + b + "\n") + "\n---stderr\n"
@@ -1230,5 +1232,96 @@ class DelegationToolsTest {
         assertEquals("t3-old", again.path("task_id").asText());
         assertTrue(again.path("replayed").asBoolean());
         assertEquals(0, launches());
+    }
+
+    private void addCodexTemplates() {
+        backend.template("tpl-codex", true, "codex").template("tpl-both", true, "claude", "codex");
+        config.setTemplates(List.of("tpl-agent", "tpl-plain", "tpl-codex", "tpl-both"));
+    }
+
+    @Test
+    void discoveryAndSelectionIncludeCodexAndPreserveClaudeDefaults() throws Exception {
+        addCodexTemplates();
+        var templates = structured(call("list_templates", "{}")).path("templates");
+        var codex = java.util.stream.StreamSupport.stream(templates.spliterator(), false)
+                .filter(t -> t.path("template").asText().equals("tpl-codex")).findFirst().orElseThrow();
+        assertEquals("codex", codex.path("default_delegate_agent").asText());
+        assertFalse(codex.path("supports_ask").asBoolean());
+        assertEquals(1, codex.path("delegate_agents").size());
+        assertFalse(codex.path("delegate_agents").get(0).path("supports_max_turns").asBoolean());
+        assertEquals("claude", structured(call("delegate", "{\"template\":\"tpl-both\",\"instruction\":\"go\"}")).path("agent").asText());
+        assertEquals("claude", structured(call("delegate", "{\"template\":\"tpl-both\",\"agent\":\"claude\",\"instruction\":\"go\"}")).path("agent").asText());
+        var task = structured(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\"}"));
+        assertEquals("codex", task.path("agent").asText());
+        assertEquals("never", task.path("approval_policy").asText());
+        assertFalse(task.has("max_turns"));
+        assertEquals("codex", structured(call("delegate", "{\"template\":\"tpl-both\",\"agent\":\"codex\",\"instruction\":\"go\"}")).path("agent").asText());
+        assertEquals("invalid_argument", code(call("delegate", "{\"template\":\"tpl-codex\",\"agent\":\"claude\",\"instruction\":\"go\"}")));
+    }
+
+    @Test
+    void codexPoliciesFailBeforeBranchingAndAskFailsBeforeItsProducer() throws Exception {
+        addCodexTemplates();
+        config.setDelegateMaxTurns(10);
+        assertEquals("refused", code(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\"}")));
+        assertEquals(0, backend.mcpInstances().size());
+        config.setDelegateMaxTurns(null);
+        assertEquals("invalid_argument", code(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\",\"max_turns\":2}")));
+        config.setDelegatePermissionMode("plan");
+        assertEquals("refused", code(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\"}")));
+        var policy = new McpConfig.Codex();
+        policy.setSandboxMode("read-only");
+        config.setCodex(policy);
+        var task = structured(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\"}"));
+        assertEquals("read-only", task.path("permission_mode").asText());
+        var calls = backend.scripts.size();
+        assertEquals("invalid_argument", code(call("exec", "{\"instance\":\"" + task.path("instance").asText()
+                + "\",\"command\":\"touch side-effect\",\"ask\":\"what happened\"}")));
+        assertEquals(calls, backend.scripts.size());
+    }
+
+    @Test
+    void codexResultsContinuationAndIdempotencyUseItsRecordedAgent() throws Exception {
+        addCodexTemplates();
+        var args = "{\"template\":\"tpl-both\",\"agent\":\"codex\",\"instruction\":\"go\",\"idempotency_key\":\"codex-key\"}";
+        var task = structured(call("delegate", args));
+        var id = task.path("task_id").asText();
+        assertTrue(structured(call("delegate", args.replace(",\"agent\":\"codex\"", ""))).path("replayed").asBoolean());
+        assertEquals("invalid_argument", code(call("delegate", args.replace("\"agent\":\"codex\"", "\"agent\":\"claude\""))));
+        taskState = "finished";
+        savedSession = "codex-thread-123";
+        finishedEvents = "{\"type\":\"isx.codex.result\",\"success\":true,\"report_bytes\":24,\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}\n";
+        var status = structured(call("task_status", "{\"task_id\":\"" + id + "\"}"));
+        assertEquals(savedSession, status.path("session_id").asText());
+        assertTrue(status.path("resumable").asBoolean());
+        var report = structured(call("task_result", "{\"task_id\":\"" + id + "\"}"));
+        assertEquals("Codex completed the task", report.path("report").asText());
+        assertFalse(report.path("is_error").asBoolean());
+        assertFalse(report.has("cost_usd"));
+        assertEquals(10, report.path("input_tokens").asInt());
+        var continued = structured(call("send_message", "{\"task_id\":\"" + id + "\",\"message\":\"continue\"}"));
+        assertEquals("codex", continued.path("agent").asText());
+        assertEquals(2, continued.path("run").asInt());
+    }
+
+    @Test
+    void codexAdoptionAndInterruptedCreationRetainSelection() throws Exception {
+        addCodexTemplates();
+        backend.instance("mcp-both-task-abcde", Map.of(
+                dev.incusspawn.incus.Metadata.PROFILE, "tpl-both",
+                dev.incusspawn.incus.Metadata.PARENT, "tpl-both",
+                dev.incusspawn.incus.Metadata.STATIC_IP, "10.0.0.7",
+                dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
+                dev.incusspawn.incus.Metadata.MCP_OWNER, "alice",
+                dev.incusspawn.incus.Metadata.MCP_IDEMPOTENCY_KEY, "codex-key",
+                dev.incusspawn.incus.Metadata.MCP_DELEGATE_AGENT, "codex"));
+        var args = "{\"template\":\"tpl-both\",\"instruction\":\"go\",\"idempotency_key\":\"codex-key\"}";
+        assertEquals("codex", structured(call("delegate", args)).path("agent").asText());
+        assertEquals(1, backend.mcpInstances().size());
+        // Versioned records reconstruct the adapter; old versionless rows remain Claude.
+        taskListing = "identity t7-old 1 codex\nt7-old agent 1 done - - =old-key /work\nt8-old agent 1 done - - - /other\n";
+        tasks.adopt("mcp-both-task-abcde");
+        assertEquals(DelegateAgent.CODEX, tasks.all().stream().filter(t -> t.id().equals("t7-old")).findFirst().orElseThrow().agent());
+        assertEquals(DelegateAgent.CLAUDE, tasks.all().stream().filter(t -> t.id().equals("t8-old")).findFirst().orElseThrow().agent());
     }
 }

@@ -140,4 +140,25 @@ class McpConfigTest {
         assertFalse(McpConfig.isModelName(""));
         assertFalse(McpConfig.isModelName(null));
     }
+
+    @Test
+    void codexPoliciesRoundTripAndDoNotSilentlyWidenClaudeRestrictions() throws Exception {
+        var config = parse("""
+                mcp:
+                  delegate-permission-mode: plan
+                  codex:
+                    sandbox-mode: workspace-write
+                    sandbox-modes:
+                      tpl-review: read-only
+                """);
+        var again = parse(YAML.writeValueAsString(config)).mcp();
+        assertEquals("read-only", again.codexSandboxMode("tpl-review"));
+        assertEquals("workspace-write", again.codexSandboxMode("tpl-dev"));
+        var restricted = parse("mcp:\n  delegate-permission-mode: plan\n").mcp();
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> restricted.codexSandboxMode("tpl-dev"));
+        var invalid = parse("mcp:\n  codex:\n    sandbox-mode: arbitrary\n").mcp();
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> invalid.codexSandboxMode("tpl-dev"));
+        assertEquals("danger-full-access", new McpConfig().codexSandboxMode("tpl-dev"));
+        assertFalse(YAML.writeValueAsString(new McpConfig()).contains("codex"));
+    }
 }

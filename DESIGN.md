@@ -2376,8 +2376,12 @@ The result is a canonical form like `github.com/org/repo` that matches regardles
 
 ### MCP server: delegating work to isx instances
 
-`isx mcp` lets an agent on the host -- the user's own Claude Code -- use isx the way the user does: create disposable instances from approved templates, run commands in them, and hand whole tasks to the Claude Code inside one.
+`isx mcp` lets an agent on the host -- the user's own Claude Code -- use isx the way the user does: create disposable instances from approved templates, run commands in them, and hand whole tasks to Claude Code or Codex inside one.
 The host agent plans and reviews; instances do the work, with the same isolation and credential injection as any branch.
+
+Managed delegation selects the installed worker agent independently of the MCP client.
+The [Codex worker design](docs/MCP-CODEX-DELEGATION.md) describes agent discovery, durable continuation, adoption, and explicit capability differences.
+Existing Claude-only calls retain their defaults; mixed templates default to Claude, and Codex-only templates default to Codex.
 
 **Hand-rolled protocol, measured.**
 The Quarkus MCP extension was tried first, initialized only on demand (`quarkus.mcp.server.stdio.initialization-enabled=false`, started explicitly by the command).

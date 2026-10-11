@@ -27,8 +27,8 @@ record McpPrompt(String name, String description, String text) {
             2. create_instance, once per piece of work, with a purpose saying what it is for. Give it \
             an idempotency_key derived from the work, so that repeating the call after an error or a \
             restart returns the same instance instead of making another.
-            3. delegate hands the work to the Claude Code inside the instance. Its brief must stand on \
-            its own: that agent sees nothing of this conversation. Use exec for commands you run \
+            3. delegate hands work to an installed agent; list_templates lists the supported agents. Its brief must stand on \
+            its own: that agent sees nothing of this conversation. Select agent: claude or codex when needed. Use exec for commands you run \
             yourself, such as a build or a check.
             4. wait_any over the running tasks returns as soon as any one finishes: one call per \
             tick, never a poll of each task. instance_activity tells a working agent from a stuck \

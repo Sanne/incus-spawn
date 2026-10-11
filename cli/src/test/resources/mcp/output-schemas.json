@@ -30,6 +30,51 @@
             "supports_delegate" : {
               "type" : "boolean"
             },
+            "delegate_agents" : {
+              "description" : "Supported installed worker agents",
+              "type" : "array",
+              "items" : {
+                "type" : "object",
+                "properties" : {
+                  "agent" : {
+                    "type" : "string",
+                    "enum" : [ "claude", "codex" ]
+                  },
+                  "model" : {
+                    "description" : "Template configured model",
+                    "type" : "string"
+                  },
+                  "supports_max_turns" : {
+                    "type" : "boolean"
+                  },
+                  "supports_model_preflight" : {
+                    "type" : "boolean"
+                  },
+                  "permission_mode" : {
+                    "description" : "Claude permission mode or Codex sandbox mode",
+                    "type" : "string"
+                  },
+                  "approval_policy" : {
+                    "type" : "string"
+                  },
+                  "refusal" : {
+                    "description" : "Configuration that prevents a new run",
+                    "type" : "string"
+                  }
+                },
+                "required" : [ "agent", "supports_max_turns", "supports_model_preflight" ],
+                "additionalProperties" : false
+              }
+            },
+            "default_delegate_agent" : {
+              "type" : "string"
+            },
+            "supports_ask" : {
+              "type" : "boolean"
+            },
+            "summary_agent" : {
+              "type" : "string"
+            },
             "permission_mode" : {
               "description" : "The delegated agent's permission mode",
               "type" : "string"
@@ -79,6 +124,12 @@
       "ip" : {
         "type" : "string"
       },
+      "permission_mode" : {
+        "type" : "string"
+      },
+      "delegate_model" : {
+        "type" : "string"
+      },
       "workdir" : {
         "type" : "string"
       },
@@ -90,6 +141,51 @@
       },
       "supports_delegate" : {
         "type" : "boolean"
+      },
+      "delegate_agents" : {
+        "description" : "Supported installed worker agents",
+        "type" : "array",
+        "items" : {
+          "type" : "object",
+          "properties" : {
+            "agent" : {
+              "type" : "string",
+              "enum" : [ "claude", "codex" ]
+            },
+            "model" : {
+              "description" : "Template configured model",
+              "type" : "string"
+            },
+            "supports_max_turns" : {
+              "type" : "boolean"
+            },
+            "supports_model_preflight" : {
+              "type" : "boolean"
+            },
+            "permission_mode" : {
+              "description" : "Claude permission mode or Codex sandbox mode",
+              "type" : "string"
+            },
+            "approval_policy" : {
+              "type" : "string"
+            },
+            "refusal" : {
+              "description" : "Configuration that prevents a new run",
+              "type" : "string"
+            }
+          },
+          "required" : [ "agent", "supports_max_turns", "supports_model_preflight" ],
+          "additionalProperties" : false
+        }
+      },
+      "default_delegate_agent" : {
+        "type" : "string"
+      },
+      "supports_ask" : {
+        "type" : "boolean"
+      },
+      "summary_agent" : {
+        "type" : "string"
       },
       "replayed" : {
         "description" : "true when an earlier call with this idempotency_key made it, and this one made nothing",
@@ -152,6 +248,59 @@
               "description" : "ISO-8601: destroyed after this unless adopted",
               "type" : "string"
             },
+            "supports_delegate" : {
+              "type" : "boolean"
+            },
+            "delegate_agents" : {
+              "type" : "array",
+              "items" : {
+                "type" : "object",
+                "properties" : {
+                  "agent" : {
+                    "type" : "string",
+                    "enum" : [ "claude", "codex" ]
+                  },
+                  "model" : {
+                    "description" : "Template configured model",
+                    "type" : "string"
+                  },
+                  "supports_max_turns" : {
+                    "type" : "boolean"
+                  },
+                  "supports_model_preflight" : {
+                    "type" : "boolean"
+                  },
+                  "permission_mode" : {
+                    "description" : "Claude permission mode or Codex sandbox mode",
+                    "type" : "string"
+                  },
+                  "approval_policy" : {
+                    "type" : "string"
+                  },
+                  "refusal" : {
+                    "description" : "Configuration that prevents a new run",
+                    "type" : "string"
+                  }
+                },
+                "required" : [ "agent", "supports_max_turns", "supports_model_preflight" ],
+                "additionalProperties" : false
+              }
+            },
+            "default_delegate_agent" : {
+              "type" : "string"
+            },
+            "supports_ask" : {
+              "type" : "boolean"
+            },
+            "summary_agent" : {
+              "type" : "string"
+            },
+            "permission_mode" : {
+              "type" : "string"
+            },
+            "delegate_model" : {
+              "type" : "string"
+            },
             "tasks" : {
               "description" : "This session's tasks in it",
               "type" : "array",
@@ -164,6 +313,10 @@
                   "kind" : {
                     "type" : "string",
                     "enum" : [ "agent", "command" ]
+                  },
+                  "agent" : {
+                    "description" : "Worker agent; unknown for unsupported persisted metadata",
+                    "type" : "string"
                   },
                   "state" : {
                     "description" : "As this session last saw it; unknown: nothing has read how it ended (as after cancel_task). task_status reads it now",
@@ -198,6 +351,57 @@
       },
       "supports_delegate" : {
         "type" : "boolean"
+      },
+      "delegate_agents" : {
+        "description" : "Supported installed worker agents",
+        "type" : "array",
+        "items" : {
+          "type" : "object",
+          "properties" : {
+            "agent" : {
+              "type" : "string",
+              "enum" : [ "claude", "codex" ]
+            },
+            "model" : {
+              "description" : "Template configured model",
+              "type" : "string"
+            },
+            "supports_max_turns" : {
+              "type" : "boolean"
+            },
+            "supports_model_preflight" : {
+              "type" : "boolean"
+            },
+            "permission_mode" : {
+              "description" : "Claude permission mode or Codex sandbox mode",
+              "type" : "string"
+            },
+            "approval_policy" : {
+              "type" : "string"
+            },
+            "refusal" : {
+              "description" : "Configuration that prevents a new run",
+              "type" : "string"
+            }
+          },
+          "required" : [ "agent", "supports_max_turns", "supports_model_preflight" ],
+          "additionalProperties" : false
+        }
+      },
+      "default_delegate_agent" : {
+        "type" : "string"
+      },
+      "supports_ask" : {
+        "type" : "boolean"
+      },
+      "summary_agent" : {
+        "type" : "string"
+      },
+      "permission_mode" : {
+        "type" : "string"
+      },
+      "delegate_model" : {
+        "type" : "string"
       },
       "tasks" : {
         "description" : "Ids of its tasks, now this session's",
@@ -301,11 +505,20 @@
         "type" : "string",
         "enum" : [ "agent" ]
       },
+      "agent" : {
+        "type" : "string",
+        "enum" : [ "claude", "codex", "unknown" ]
+      },
       "run" : {
         "description" : "The run (turn of the conversation) now going: 1 for the first",
         "type" : "integer"
       },
       "permission_mode" : {
+        "description" : "Claude permission mode or Codex sandbox mode",
+        "type" : "string"
+      },
+      "approval_policy" : {
+        "description" : "Codex always uses never",
         "type" : "string"
       },
       "model" : {
@@ -335,6 +548,10 @@
         "type" : "string",
         "enum" : [ "agent", "command" ]
       },
+      "agent" : {
+        "description" : "Worker agent; unknown for unsupported persisted metadata",
+        "type" : "string"
+      },
       "state" : {
         "description" : "attached: finished, and a person is in its conversation",
         "type" : "string",
@@ -347,8 +564,16 @@
         "type" : "integer"
       },
       "attached_pid" : {
-        "description" : "The Claude Code of a person in its conversation",
+        "description" : "The coding agent of a person in its conversation",
         "type" : "integer"
+      },
+      "session_id" : {
+        "description" : "The saved agent conversation ID",
+        "type" : "string"
+      },
+      "resumable" : {
+        "description" : "A supported agent with a saved conversation ID",
+        "type" : "boolean"
       },
       "started_at" : {
         "description" : "ISO-8601: when the current run started",
@@ -427,6 +652,10 @@
               "type" : "string",
               "enum" : [ "agent", "command" ]
             },
+            "agent" : {
+              "description" : "Worker agent; unknown for unsupported persisted metadata",
+              "type" : "string"
+            },
             "state" : {
               "description" : "unknown: over, but its status could not be read",
               "type" : "string",
@@ -463,6 +692,10 @@
       "kind" : {
         "type" : "string",
         "enum" : [ "agent", "command" ]
+      },
+      "agent" : {
+        "description" : "Worker agent; unknown for unsupported persisted metadata",
+        "type" : "string"
       },
       "state" : {
         "type" : "string",
@@ -501,6 +734,22 @@
       "report" : {
         "description" : "An agent's final report",
         "type" : "string"
+      },
+      "agent_stderr" : {
+        "description" : "Failure diagnostic",
+        "type" : "string"
+      },
+      "input_tokens" : {
+        "description" : "Codex reported usage",
+        "type" : "integer"
+      },
+      "output_tokens" : {
+        "description" : "Codex reported usage",
+        "type" : "integer"
+      },
+      "cached_input_tokens" : {
+        "description" : "Codex reported usage",
+        "type" : "integer"
       },
       "report_bytes" : {
         "type" : "integer"
@@ -555,11 +804,20 @@
         "type" : "string",
         "enum" : [ "agent" ]
       },
+      "agent" : {
+        "type" : "string",
+        "enum" : [ "claude", "codex", "unknown" ]
+      },
       "run" : {
         "description" : "The run (turn of the conversation) now going: 1 for the first",
         "type" : "integer"
       },
       "permission_mode" : {
+        "description" : "Claude permission mode or Codex sandbox mode",
+        "type" : "string"
+      },
+      "approval_policy" : {
+        "description" : "Codex always uses never",
         "type" : "string"
       },
       "model" : {
@@ -584,6 +842,10 @@
       "kind" : {
         "type" : "string",
         "enum" : [ "agent", "command" ]
+      },
+      "agent" : {
+        "description" : "Worker agent; unknown for unsupported persisted metadata",
+        "type" : "string"
       }
     },
     "required" : [ "task_id", "instance", "kind" ],
@@ -686,6 +948,13 @@
       "idle_seconds" : {
         "description" : "Since the last call ended; only while none is in flight",
         "type" : "integer"
+      },
+      "model_usage_providers" : {
+        "description" : "Providers measured by the proxy model counters",
+        "type" : "array",
+        "items" : {
+          "type" : "string"
+        }
       },
       "input_tokens" : {
         "type" : "integer"

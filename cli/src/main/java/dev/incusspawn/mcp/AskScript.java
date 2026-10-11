@@ -55,7 +55,7 @@ final class AskScript {
                 + "echo \"summarised=$(wc -l < \"$f\") lines, $b bytes$n\"; "
                 + "echo ---; "
                 + "[ \"$b\" -gt 0 ] || { echo '(there was nothing to summarise)'; exit 0; }; "
-                + "command -v claude >/dev/null || { echo '(no Claude Code in this instance to answer: ask needs a template with supports_delegate)'; exit 0; }; "
+                + "command -v claude >/dev/null || { echo '(no Claude Code in this instance to answer: ask needs a template with supports_ask)'; exit 0; }; "
                 + "cd \"$w\" && { echo " + TaskScripts.b64(prompt) + " | base64 -d; head -c " + INPUT_LIMIT + " \"$f\"; "
                 + "printf '\\n</data>\\n'; } | " + oneShot(model)
                 + " --output-format text > \"$w/answer\" 2> \"$w/err\"; "
