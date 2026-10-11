@@ -396,8 +396,7 @@ final class McpTools {
         if (agent != DelegateAgent.CODEX || brief.skill() == null) return brief.text();
         if (!brief.skill().matches("[A-Za-z0-9][A-Za-z0-9_.-]{0,100}"))
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "Codex skill must be an installed skill name without a command namespace or path");
-        return "Use the installed skill at ~/.agents/skills/" + brief.skill() + "/SKILL.md.\nArguments: "
-                + brief.text().substring(brief.skill().length() + 1).strip();
+        return "Use the installed skill at ~/.agents/skills/" + brief.skill() + "/SKILL.md.\nArguments: " + brief.args();
     }
 
     private static StreamJsonEvents.Summary summarize(Tasks.Task task, String output, int keep) {
@@ -903,7 +902,7 @@ final class McpTools {
     }
 
     private ToolResult delegate(McpTool.Args args, ToolContext ctx) {
-        var prompt = new Brief(delegatePrompt(args), args.string("skill"));
+        var prompt = delegatePrompt(args);
         var profile = profile(args);
         var instance = args.string("instance");
         var template = args.string("template");
@@ -948,7 +947,8 @@ final class McpTools {
         return delegateIn(instance, cwd, prompt, profile, key, requested);
     }
 
-    private record Brief(String text, String skill) {}
+    /** What {@code delegate} was asked: {@code text} as Claude reads it, and a skill's name and arguments. */
+    private record Brief(String text, String skill, String args) {}
 
     private ToolResult delegateIn(String name, String cwd, Brief prompt, Tasks.Profile profile, String key, String requested) {
         var metadata = session.requireRunning(name);
@@ -990,7 +990,7 @@ final class McpTools {
     }
 
     /** The instruction, or {@code /<skill> <args>}: exactly one of them. */
-    private static String delegatePrompt(McpTool.Args args) {
+    private static Brief delegatePrompt(McpTool.Args args) {
         var instruction = args.string("instruction");
         var skill = args.string("skill");
         var skillArgs = args.string("args");
@@ -999,12 +999,13 @@ final class McpTools {
         }
         if (instruction != null && !instruction.isBlank()) {
             if (skillArgs != null) throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "args go with skill, not with instruction");
-            return instruction;
+            return new Brief(instruction, null, null);
         }
         if (!SKILL.matcher(skill).matches()) {
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, "skill must be a skill's name (letters, digits, '_', ':', '.', '-'), without the '/'");
         }
-        return "/" + skill + (skillArgs == null || skillArgs.isBlank() ? "" : " " + skillArgs.strip());
+        var rest = skillArgs == null ? "" : skillArgs.strip();
+        return new Brief("/" + skill + (rest.isEmpty() ? "" : " " + rest), skill, rest);
     }
 
     /**

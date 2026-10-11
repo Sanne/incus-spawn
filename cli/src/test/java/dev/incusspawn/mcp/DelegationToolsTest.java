@@ -1257,6 +1257,9 @@ class DelegationToolsTest {
         assertFalse(task.has("max_turns"));
         assertEquals("codex", structured(call("delegate", "{\"template\":\"tpl-both\",\"agent\":\"codex\",\"instruction\":\"go\"}")).path("agent").asText());
         assertEquals("invalid_argument", code(call("delegate", "{\"template\":\"tpl-codex\",\"agent\":\"claude\",\"instruction\":\"go\"}")));
+
+        // A blank skill is absent, as it is for Claude.
+        assertEquals("codex", structured(call("delegate", "{\"template\":\"tpl-codex\",\"instruction\":\"go\",\"skill\":\"\"}")).path("agent").asText());
     }
 
     @Test
