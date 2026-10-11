@@ -113,7 +113,7 @@ class GuestProvisioningTest {
         imageDef.setName("tpl-quarkus");
         imageDef.setRepos(List.of(repo));
 
-        GuestProvisioning.updateClaudeJsonTrust(container, imageDef);
+        GuestProvisioning.updateClaudeJsonTrust(container, imageDef, Map.of());
 
         var writtenJson = capturedWrite(incus, ".claude.json");
         assertNotNull(writtenJson, "Expected .claude.json to be written");
@@ -140,6 +140,62 @@ class GuestProvisioningTest {
     }
 
     @Test
+    void updateClaudeJsonTrustRestoresInheritedReposAfterReconfiguration() throws Exception {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        // A child overriding Claude's model rewrites .claude.json, removing parent repo trust.
+        new ClaudeSetup().reconfigure(container, Map.of("model", "child-model"));
+        var rewrittenJson = capturedWrite(incus, ".claude.json");
+        assertNotNull(rewrittenJson);
+        assertFalse(rewrittenJson.contains("/home/agentuser/parent-repo"));
+        clearInvocations(incus);
+        when(incus.shellExec("test", "cat", "/home/agentuser/.claude.json"))
+                .thenReturn(new IncusClient.ExecResult(0, rewrittenJson, ""));
+
+        var parentRepo = new ImageDef.RepoEntry();
+        parentRepo.setUrl("https://github.com/owner/parent-repo.git");
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setRepos(List.of(parentRepo));
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent(parent.getName());
+
+        GuestProvisioning.updateClaudeJsonTrust(container, child, Map.of(parent.getName(), parent));
+
+        var root = new ObjectMapper().readTree(capturedWrite(incus, ".claude.json"));
+        assertTrue(root.path("projects").path("/home/agentuser/parent-repo").path("hasTrustDialogAccepted").asBoolean());
+        assertEquals("/home/agentuser/parent-repo", root.path("githubRepoPaths").path("owner/parent-repo").path(0).asText());
+        assertTrue(root.path("projects").path("/home/agentuser").path("hasTrustDialogAccepted").asBoolean(),
+                "Preserve the reconfigured file's own entries");
+    }
+
+    @Test
+    void updateClaudeJsonTrustSkipsWriteWhenAlreadyTrusted() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.shellExec(eq("test"), eq("test"), eq("-f"), anyString())).thenReturn(OK);
+        when(incus.shellExec(eq("test"), eq("cat"), anyString())).thenReturn(new IncusClient.ExecResult(0, """
+                {
+                  "projects": {"/home/agentuser/repo": {"hasTrustDialogAccepted": true}},
+                  "githubRepoPaths": {"owner/repo": ["/home/agentuser/repo"]}
+                }
+                """, ""));
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-repo");
+        imageDef.setRepos(List.of(repo));
+
+        GuestProvisioning.updateClaudeJsonTrust(container, imageDef, Map.of());
+
+        verify(incus, never()).shellExec(eq("test"), eq("sh"), eq("-c"), anyString());
+    }
+
+    @Test
     void updateClaudeJsonTrustNoopWhenNoRepos() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
@@ -148,7 +204,7 @@ class GuestProvisioningTest {
         imageDef.setName("tpl-empty");
         // repos defaults to empty
 
-        GuestProvisioning.updateClaudeJsonTrust(container, imageDef);
+        GuestProvisioning.updateClaudeJsonTrust(container, imageDef, Map.of());
 
         verifyNoInteractions(incus);
     }
@@ -168,7 +224,7 @@ class GuestProvisioningTest {
         imageDef.setName("tpl-nonclaude");
         imageDef.setRepos(List.of(repo));
 
-        GuestProvisioning.updateClaudeJsonTrust(container, imageDef);
+        GuestProvisioning.updateClaudeJsonTrust(container, imageDef, Map.of());
 
         // Should check for file but not attempt to read/write it
         verify(incus).shellExec(eq("test"), eq("test"), eq("-f"), anyString());

@@ -365,8 +365,8 @@ Optionally, missing repos can be cloned — the first prompt accepts `y`/`n`/`al
 13. Clean caches (dnf, /tmp)
 14. Tag metadata (version, SHA, definition fingerprint, CA fingerprint, build source), stop
 
-Codex trust is restored for repositories from the whole template chain after all tool setup finishes, in both build paths.
-Reconfiguring Codex in a child layer rewrites its config, so trusting only that layer's repositories would lose the parent's pre-approvals.
+Claude Code and Codex trust is restored for repositories from the whole template chain after all tool setup finishes, in both build paths.
+Reconfiguring either tool in a child layer rewrites its config, so trusting only that layer's repositories would lose the parent's pre-approvals.
 
 **VM-specific build behavior:**
 

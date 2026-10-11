@@ -1275,7 +1275,7 @@ public class BuildCommand extends BaseCommand {
         // Only this layer's tools: an ancestor's tool skills came in with the parent copy.
         installSkills(container, imageDef, defs, toolResolution.effective());
         cloneRepos(container, imageDef, machineType);
-        updateClaudeJsonTrust(container, imageDef);
+        updateClaudeJsonTrust(container, imageDef, defs);
         updateCodexTrust(container, imageDef, defs);
         // After the repos it lists have actually been cloned, matching buildFromScratch.
         writeAgentContext(container, imageDef, defs, allTools, canonicalName);
@@ -1518,8 +1518,8 @@ public class BuildCommand extends BaseCommand {
             maskServices(container, layer);
             installSkills(container, layer, defs, toolResolution.effective());
             cloneRepos(container, layer, machineType);
-            updateClaudeJsonTrust(container, layer);
         }
+        updateClaudeJsonTrust(container, imageDef, defs);
         updateCodexTrust(container, imageDef, defs);
         var identityStamps = settleIdentities(container, imageDef, defs, started.inheritedIdentities());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);

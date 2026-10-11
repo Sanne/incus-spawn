@@ -38,8 +38,8 @@ VM definitions also support `vm_image_url` and `vm_image_sha256` for a pre-baked
 For VMs, `buildFromScratch` applies the entire ancestor chain from YAML definitions -- parent Incus instances are not needed.
 `buildChain` detects type changes (container->VM) and skips unnecessary parent rebuilds.
 Container-specific security config (raw.idmap, nesting, setxattr interception) is skipped for VMs.
-Both build paths restore Codex trust for repositories from the whole template chain after tool setup finishes.
-A child's Codex reconfiguration rewrites its config, so it can erase inherited repository trust even when the child declares no repositories.
+Both build paths restore Claude Code and Codex trust for repositories from the whole template chain after tool setup finishes.
+A child's Claude or Codex reconfiguration rewrites that tool's config, so it can erase inherited repository trust even when the child declares no repositories.
 Tool downloads use a mount-and-copy strategy instead of file push (vsock can't handle large pushes).
 The `--type` CLI flag overrides the definition's type; `effectiveMachineType()` returns the effective `MachineType` considering both the flag and definition.
 `BuildCommand.InstanceType` (`container`, `vm`, `kvm`) is the CLI/definition-level enum; `MachineType` (`CONTAINER`, `VM`) is the Incus API-level type -- KVM is a container with `/dev/kvm` passthrough, not an Incus VM.

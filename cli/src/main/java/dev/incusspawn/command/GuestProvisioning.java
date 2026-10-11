@@ -383,7 +383,7 @@ public class GuestProvisioning {
 
     /**
      * Repos declared across the template chain, one per resolved path, skipping entries with no
-     * path. Tool setup in a child layer can rewrite a tool's config, so trust is
+     * path. Tool setup in a child layer can rewrite Claude's or Codex's config, so trust is
      * restored for all of them after it, not just for the current layer's.
      */
     static List<ImageDef.RepoEntry> chainRepos(ImageDef imageDef, Map<String, ImageDef> defs) {
@@ -437,8 +437,9 @@ public class GuestProvisioning {
     /**
      * Update .claude.json to pre-trust cloned repo directories and register GitHub repo paths.
      */
-    static void updateClaudeJsonTrust(Container container, ImageDef imageDef) {
-        if (imageDef.getRepos().isEmpty()) return;
+    static void updateClaudeJsonTrust(Container container, ImageDef imageDef, Map<String, ImageDef> defs) {
+        var repos = chainRepos(imageDef, defs);
+        if (repos.isEmpty()) return;
 
         var checkResult = container.exec("test", "-f", CLAUDE_JSON_PATH);
         if (!checkResult.success()) return;
@@ -460,13 +461,16 @@ public class GuestProvisioning {
                     ? (ObjectNode) root.get("githubRepoPaths")
                     : root.putObject("githubRepoPaths");
 
-            for (var repo : imageDef.getRepos()) {
+            // Inherited repos are usually trusted already: skip the write when nothing changes.
+            boolean changed = false;
+            for (var repo : repos) {
                 var expandedPath = expandHome(repo.getPath());
 
                 if (!projects.has(expandedPath)) {
                     var projectEntry = projects.putObject(expandedPath);
                     projectEntry.putArray("allowedTools");
                     projectEntry.put("hasTrustDialogAccepted", true);
+                    changed = true;
                 }
 
                 var ownerRepo = parseGitHubOwnerRepo(repo.getUrl());
@@ -486,9 +490,11 @@ public class GuestProvisioning {
                     }
                     if (!found) {
                         paths.add(expandedPath);
+                        changed = true;
                     }
                 }
             }
+            if (!changed) return;
 
             var updatedJson = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(root);
             container.writeFile(CLAUDE_JSON_PATH, updatedJson);
