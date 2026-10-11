@@ -115,7 +115,7 @@ Keep the two in sync.
 
 The `isx-integration-tests` job exercises five environments: a container (from `tpl-minimal`), a podman container with the default rootful socket (from `tpl-test-podman`), one with every non-default `podman` parameter (from `tpl-test-podman-rootless`), a codex container (from `tpl-test-codex`), and a VM (from `tpl-test-vm`).
 The accounts scripts below branch two further instances of their own.
-Test scripts live in `.github/scripts/`:
+Test scripts live in `.github/scripts/`; a script pushed into a guest cannot use awk (the base image has none; grep, sed and bash do the job):
 
 - **`test-instance.sh`**: pushed into containers and VMs, tests proxy interception (Maven/GitHub HTTPS), git clone, passwordless sudo, systemd lifecycle, DNS interception (A to the gateway, no `::` or real AAAA answer, #814), login shell env vars, TLS certificate quality, and tool-contributed proxy credential injection (section 9 verifies bearer token injection via a test fixture tool `.github/test-fixtures/tools/test-proxy-tool.yaml` and a local HTTPS echo server at `echo.incus-spawn.test`).
   Uses `assert()` / `assert_eq()` shell helpers.
@@ -128,7 +128,7 @@ Test scripts live in `.github/scripts/`:
 - **`test-podman.sh`**: pushed into the podman container, tests rootless podman (pull, run, build).
 - **`test-podman-rootless.sh`**: pushed into the `tpl-test-podman-rootless` container (`mode: rootless`, `short-names: permissive`, `compose: true`), tests that `/run/docker.sock` and `/var/run/docker.sock` point at agentuser's socket with the system `podman.socket` left disabled, that an unqualified name pulls from docker.io without a prompt, that `podman-compose` is installed, and a PostgreSQL container run as agentuser.
   The short-name check pulls `testcontainers/ryuk`, which has no alias in Fedora's `shortnames.conf`; `alpine` and `postgres` do, so pulling them would pass under `enforcing` too.
-- **`test-codex.sh`**: pushed into the codex container, tests the built-in `codex` tool end to end -- that `CodexSetup` installed the CLI, wrote the template's `model`/`effort` parameters and the unattended settings into `~/.codex/config.toml`, that only the `sk-placeholder` value reached the container, and that the proxy injects the real key for `api.openai.com`.
+- **`test-codex.sh`**: pushed into the codex container, tests the built-in `codex` tool end to end -- that `CodexSetup` installed the CLI, wrote the template's `model`/`effort` parameters and the unattended settings into `~/.codex/config.toml` (including the selected permission profile's full filesystem and network tables), that `codex exec` reports the effective policy as `danger-full-access`, that only the `sk-placeholder` value reached the container, and that the proxy injects the real key for `api.openai.com`.
   Asserting against what the tool actually wrote is the point: the hand-rolled `config.toml` fixture this replaced would have kept passing after `CodexSetup` changed underneath it.
   `tpl-test-codex` deliberately sets non-default `model`/`effort` so the test can tell template parameters from built-in defaults.
 - **`test-mcp-client.sh`** (host-side): `isx branch --mcp-client` registers `isx mcp` in the instance's Claude Code and a copy loses it on its first start (#1182).

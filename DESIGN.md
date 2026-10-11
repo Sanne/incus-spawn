@@ -370,6 +370,10 @@ Optionally, missing repos can be cloned — the first prompt accepts `y`/`n`/`al
 Claude Code and Codex trust is restored for repositories from the whole template chain after all tool setup finishes, in both build paths.
 Reconfiguring either tool in a child layer rewrites its config, so trusting only that layer's repositories would lose the parent's pre-approvals.
 
+Codex's footer renders a custom permission profile's name verbatim (verified with stock Codex 0.162.1).
+The built-in tool selects a profile named `Running unconstrained in isx [version] [container]`, granting root filesystem writes and network access with approvals disabled, and `web_search = "live"` restores the live search a custom profile would otherwise lose.
+Its login script refreshes only that name after `isx-env.sh`, so clones display their own identity while preserving custom footer fields and user-selected permissions.
+
 **VM-specific build behavior:**
 
 When `type` is `vm` (set in the definition or via `--type`), `buildFromScratch` applies the entire ancestor tool/package chain from YAML definitions alone.

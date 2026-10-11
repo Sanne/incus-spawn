@@ -111,6 +111,7 @@ public class CodexSetup implements ToolSetup {
     @Override
     public void refreshInherited(Container c) {
         c.writeFile(LOGIN_AUTH_PATH, LOGIN_AUTH_SCRIPT);
+        c.writeFile(LOGIN_FOOTER_PATH, LOGIN_FOOTER_SCRIPT);
     }
 
     private void installBinary(Container c) {
@@ -132,25 +133,7 @@ public class CodexSetup implements ToolSetup {
      */
     private void configureSettings(Container c, Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Configuring Codex CLI...");
-        var settings = new StringBuilder();
-        appendIfPresent(settings, resolvedParams, "model", "model");
-        appendIfPresent(settings, resolvedParams, "effort", "model_reasoning_effort");
-        settings.append("""
-                approval_policy = "never"
-                sandbox_mode = "danger-full-access"
-                forced_login_method = "api"
-                check_for_update_on_startup = false
-
-                [notice]
-                hide_full_access_warning = true
-
-                [tui]
-                show_tooltips = false
-
-                [projects."/home/agentuser"]
-                trust_level = "trusted"
-                """);
-        var configToml = settings.toString();
+        var configToml = configToml(resolvedParams);
         var authJson = """
                 {
                   "auth_mode": "apikey",
@@ -162,8 +145,73 @@ public class CodexSetup implements ToolSetup {
         c.writeFile(AUTH_PATH, authJson);
         c.chown("/home/agentuser/.codex", "agentuser:agentuser");
         c.writeFile(LOGIN_AUTH_PATH, LOGIN_AUTH_SCRIPT);
+        c.writeFile(LOGIN_FOOTER_PATH, LOGIN_FOOTER_SCRIPT);
         BuildOutput.stepDone();
     }
+
+    static String configToml(Map<String, String> resolvedParams) {
+        var settings = new StringBuilder();
+        appendIfPresent(settings, resolvedParams, "model", "model");
+        appendIfPresent(settings, resolvedParams, "effort", "model_reasoning_effort");
+        settings.append("""
+                approval_policy = "never"
+                default_permissions = "Running unconstrained in isx dev [container]"
+                forced_login_method = "api"
+                check_for_update_on_startup = false
+                web_search = "live"
+
+                [notice]
+                hide_full_access_warning = true
+
+                [tui]
+                show_tooltips = false
+                status_line = ["model-with-reasoning", "current-dir", "permissions"]
+
+                [permissions."Running unconstrained in isx dev [container]".filesystem]
+                ":root" = "write"
+
+                [permissions."Running unconstrained in isx dev [container]".network]
+                enabled = true
+
+                [projects."/home/agentuser"]
+                trust_level = "trusted"
+                """);
+        return settings.toString();
+    }
+
+    static final String LOGIN_FOOTER_PATH = "/etc/profile.d/isx-zz-codex-footer.sh";
+
+    /**
+     * Codex renders a named permission profile verbatim in its permissions footer item (0.162.1).
+     * Refresh only our profile name at login, after isx-env.sh: a clone must show its own name,
+     * not its template's. Keep user settings, including a different selected profile, intact.
+     */
+    static final String LOGIN_FOOTER_SCRIPT = """
+            # Written by isx: the permissions footer shows the selected profile's name
+            if [ -f "$HOME/.codex/config.toml" ] && [ -w "$HOME/.codex/config.toml" ]; then
+              isx_codex_version=${ISX_VERSION:-dev}
+              isx_codex_container=${ISX_CONTAINER:-container}
+              # These identifiers go into both TOML strings and a sed replacement.
+              case $isx_codex_version$isx_codex_container in
+                *[!A-Za-z0-9._+-]*) ;;
+                *)
+                  isx_codex_label="Running unconstrained in isx $isx_codex_version [$isx_codex_container]"
+                  # Rewrite while any isx reference, the selection or a table, still has another name.
+                  if grep -e '^default_permissions = "Running unconstrained in isx ' -e '^\\[permissions\\."Running unconstrained in isx ' "$HOME/.codex/config.toml" \\
+                      | grep -qvF "\\"$isx_codex_label\\""; then
+                    cp -p "$HOME/.codex/config.toml" "$HOME/.codex/config.toml.isx-footer-$$" 2>/dev/null \\
+                      && sed -e "/^default_permissions = /s/Running unconstrained in isx [^\\\"]*/$isx_codex_label/" \\
+                          -e "/^\\\\[permissions\\\\./s/Running unconstrained in isx [^\\\"]*/$isx_codex_label/" \\
+                          "$HOME/.codex/config.toml" > "$HOME/.codex/config.toml.isx-footer-$$" 2>/dev/null \\
+                      && mv -f "$HOME/.codex/config.toml.isx-footer-$$" "$HOME/.codex/config.toml" 2>/dev/null
+                    rm -f "$HOME/.codex/config.toml.isx-footer-$$"
+                  fi
+                  unset isx_codex_label
+                  ;;
+              esac
+              unset isx_codex_version isx_codex_container
+            fi
+            """;
 
     /** Sorts after every other {@code isx-*.sh}, so it sees the key a start exports (#1106). */
     static final String LOGIN_AUTH_PATH = "/etc/profile.d/isx-zz-codex-auth.sh";

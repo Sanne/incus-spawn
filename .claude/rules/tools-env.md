@@ -21,6 +21,10 @@ paths:
   After install, and after `npm update -g` in `update-all`/`project update` (`NpmUpdate`), the platform package is resolved with node as root, reinstalled once if missing, then the step fails.
   Never verify by running the CLI: that writes caches into the template.
   A new CLI with this package shape adds itself to `PLATFORM_SPLIT_CLIS`.
+  Codex's footer uses `tui.status_line = ["model-with-reasoning", "current-dir", "permissions"]` and a full-access named permission profile, plus `web_search = "live"`: a custom profile does not get the live search `danger-full-access` implies.
+  Full access rests on Codex classifying that profile as unsandboxed, which `@openai/codex` upgrades (unpinned, moved by `npm update -g`) can change: re-check it on an upgrade; `test-codex.sh` asserts `codex exec` reports `sandbox: danger-full-access`.
+  Codex 0.162.1 renders the profile name verbatim, so its name carries `Running unconstrained in isx [version] [container]` without a patched binary.
+  `/etc/profile.d/isx-zz-codex-footer.sh` refreshes that name from `ISX_VERSION` and `ISX_CONTAINER` at login, preserving other settings and any user-selected permission profile.
 
 Tools can declare an `agent_note:` (exposed uniformly via `ToolSetup.agentNote()`, overridden in `YamlToolSetup`; Java tools may override it too).
 It is an always-true fact that must be known *before* the first relevant action, rendered by the build into `/etc/claude-code/CLAUDE.md` (see `.claude/rules/build.md`).

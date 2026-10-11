@@ -111,7 +111,11 @@ class CodexSetupTest {
                 eq("sh"), eq("-c"), argThat(arg ->
                         arg.contains(CodexSetup.CONFIG_PATH) &&
                         arg.contains("approval_policy = \"never\"") &&
-                        arg.contains("sandbox_mode = \"danger-full-access\"") &&
+                        arg.contains("default_permissions = \"Running unconstrained in isx dev [container]\"") &&
+                        arg.contains("status_line = [\"model-with-reasoning\", \"current-dir\", \"permissions\"]") &&
+                        arg.contains("web_search = \"live\"") &&
+                        arg.contains("\":root\" = \"write\"") &&
+                        arg.contains("enabled = true") &&
                         arg.contains("forced_login_method = \"api\"") &&
                         arg.contains("check_for_update_on_startup = false") &&
                         arg.contains("hide_full_access_warning = true") &&

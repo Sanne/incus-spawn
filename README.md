@@ -518,6 +518,9 @@ default-action: codex
 Codex needs an OpenAI API key ([create one here](https://platform.openai.com/api-keys); API usage needs billing credits, even on free accounts). Run `isx init` to configure it: the key stays on the host and the [MITM proxy](#credential-isolation) injects it.
 
 The build configures Codex for unattended use and trusts the template's repos. The default action resumes your most recent session.
+The footer shows the model, the current directory and `Running unconstrained in isx [version] [container name]`, the name of a permission profile with full filesystem and network access (and live web search).
+The version and container name refresh at login, including after cloning a template.
+Use `/statusline` to customize the footer; the `permissions` item displays the isx message.
 
 To pin a model or reasoning effort (by default Codex picks both):
 
