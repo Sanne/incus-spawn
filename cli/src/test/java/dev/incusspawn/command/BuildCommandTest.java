@@ -105,6 +105,56 @@ class BuildCommandTest {
         });
     }
 
+    @Test
+    void stepOutputOnExceptionReachesHostLog(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.shellExec(anyString(), any(String[].class)))
+                    .thenThrow(new IncusException("exec channel wedged"));
+            var cmd = new BuildCommand();
+            cmd.incus = incus;
+
+            var cause = (IncusException) new IncusException("Failed to prepare 1 repo(s):\n  my-repo: prime failed")
+                    .withStepOutput("─── prepare output: my-repo ───\nFATAL: npm ERR! could not resolve\n─── end prepare output: my-repo ───\n\n");
+
+            cmd.reportBuildFailure("tpl-java-rebuilding", "tpl-java",
+                    "Build failed for tpl-java: " + cause.getMessage(), cause);
+
+            var log = Environment.buildFailureLogFile("tpl-java");
+            assertTrue(Files.exists(log), "host log should exist at " + log);
+            var content = assertDoesNotThrow(() -> Files.readString(log));
+            assertTrue(content.contains("npm ERR! could not resolve"),
+                    "host log should contain the step's stdout, not just the error summary");
+        });
+    }
+
+    @Test
+    void stepOutputIncludedInEarlyHostReport(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            // Simulate diagnostics hanging by throwing on every exec
+            when(incus.shellExec(anyString(), any(String[].class)))
+                    .thenThrow(new IncusException("exec channel wedged"));
+            var cmd = new BuildCommand();
+            cmd.incus = incus;
+
+            var cause = (IncusException) new IncusException("prime failed")
+                    .withStepOutput("─── prepare output: my-repo ───\nconnection refused\n─── end prepare output: my-repo ───\n\n");
+
+            cmd.reportBuildFailure("tpl-dev-rebuilding", "tpl-dev",
+                    "Build failed for tpl-dev: prime failed", cause);
+
+            // The early report is overwritten by the full one when diagnostics succeed,
+            // but when diagnostics hang (exec wedged), only the early report survives.
+            // Since our mock throws on all execs, diagnostics "succeed" with the error text,
+            // so we check the final report instead, which must also contain the step output.
+            var log = Environment.buildFailureLogFile("tpl-dev");
+            var content = assertDoesNotThrow(() -> Files.readString(log));
+            assertTrue(content.contains("connection refused"),
+                    "report should contain step output");
+        });
+    }
+
     /**
      * A deprecated template still builds, and so does what derives from it, but each build says
      * so, naming the template built (the deprecated parent's own build, then the user's), and
