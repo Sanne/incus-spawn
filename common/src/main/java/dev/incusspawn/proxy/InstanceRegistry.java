@@ -117,11 +117,13 @@ public final class InstanceRegistry {
      *                        out of {@link InstanceAccounts} for the same reason as the secret
      * @param lineageByName   what each instance owning an address was built from, for the
      *                        host routes' {@code templates:} filter (#936)
+     * @param chatGptByAddress the ChatGPT session binding of each address's instance (#1332),
+     *                        for those that have one; kept apart for the same reason as the secret
      */
     record Parsed(Map<String, InstanceAccounts> byAddress, Map<String, String> secretByAddress,
                   java.util.Set<String> mcpCallers, Map<String, String> incarnationByName,
-                  Map<String, Lineage> lineageByName) {
-        static final Parsed EMPTY = new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of(), Map.of());
+                  Map<String, Lineage> lineageByName, Map<String, ChatGptBinding> chatGptByAddress) {
+        static final Parsed EMPTY = new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of(), Map.of(), Map.of());
     }
 
     /**
@@ -150,6 +152,44 @@ public final class InstanceRegistry {
 
     /** An instance that proved who it is ({@link #identify}), with what it was built from. */
     public record Identified(String instanceName, Lineage lineage) {}
+
+    /**
+     * What an instance's proofs for a ChatGPT session were derived for, and the verifiers of
+     * those proofs ({@code ChatGptProof}), as its metadata records them.
+     */
+    public record ChatGptBinding(String instanceName, String account, String sessionId,
+                                 String accessSha256, String refreshSha256) {
+
+        /**
+         * The binding {@code config} records, or null when it records none, only part of one, or
+         * one made with a secret that is no longer the instance's: inherited by a copy, or from
+         * before a start that did not renew it.
+         */
+        static ChatGptBinding of(String instanceName, JqValue config) {
+            var secret = config.pathText(Metadata.INSTANCE_SECRET_SHA256, "").strip();
+            if (secret.isEmpty() || !secret.equals(config.pathText(Metadata.CHATGPT_PROOF_SECRET_SHA256, "").strip())) {
+                return null;
+            }
+            var session = config.pathText(Metadata.CHATGPT_SESSION, "").strip();
+            var access = config.pathText(Metadata.CHATGPT_ACCESS_PROOF_SHA256, "").strip();
+            var refresh = config.pathText(Metadata.CHATGPT_REFRESH_PROOF_SHA256, "").strip();
+            var colon = session.indexOf(':');
+            if (colon <= 0 || access.isEmpty() || refresh.isEmpty()) return null;
+            var account = session.substring(0, colon);
+            var sessionId = session.substring(colon + 1);
+            if (!ChatGptProof.isValidName(account) || !ChatGptProof.isValidName(sessionId)) return null;
+            return new ChatGptBinding(instanceName, account, sessionId, access, refresh);
+        }
+    }
+
+    /**
+     * The ChatGPT session binding of the instance at this address, or null when the address is
+     * no known instance or its instance has none. Non-blocking.
+     */
+    public ChatGptBinding chatGptBinding(String sourceAddress) {
+        if (sourceAddress == null || sourceAddress.isBlank()) return null;
+        return snapshot.parsed().chatGptByAddress().get(normalize(sourceAddress));
+    }
 
     /**
      * @param view from {@link #VIEWS}, so a later snapshot always has a higher one, even from a
@@ -451,6 +491,7 @@ public final class InstanceRegistry {
         var incarnationByName = new java.util.HashMap<String, String>();
         var lineageByName = new java.util.HashMap<String, Lineage>();
         var configByName = configsByName(root);
+        var chatGptByAddress = new LinkedHashMap<String, ChatGptBinding>();
         claimants.forEach((address, all) -> {
             var owner = owner(address, all);
             if (owner == null) return;
@@ -460,9 +501,11 @@ public final class InstanceRegistry {
             incarnationByName.put(owner.accounts().instanceName(), owner.createdAt());
             // Only for owners: a build stamp is parsed for no address nobody serves
             lineageByName.put(owner.accounts().instanceName(), lineageOf(owner.config(), configByName));
+            var chatGpt = ChatGptBinding.of(owner.accounts().instanceName(), owner.config());
+            if (chatGpt != null) chatGptByAddress.put(address, chatGpt);
         });
         return new Parsed(byAddress, secretByAddress, java.util.Set.copyOf(mcpCallers),
-                Map.copyOf(incarnationByName), Map.copyOf(lineageByName));
+                Map.copyOf(incarnationByName), Map.copyOf(lineageByName), Map.copyOf(chatGptByAddress));
     }
 
     private record Claimant(InstanceAccounts accounts, boolean running, String secretSha256, boolean mcpCaller,

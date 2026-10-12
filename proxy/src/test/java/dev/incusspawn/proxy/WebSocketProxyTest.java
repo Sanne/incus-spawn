@@ -222,6 +222,31 @@ class WebSocketProxyTest {
     }
 
     @Test
+    void anUpstreamOverrideReachesWebSocketsToo() throws Exception {
+        // ISX_BENCH_UPSTREAM and tests point a host at a stub; the WebSocket dial used to ignore
+        // that and go to the real host (here: a port nothing listens on), as #1332's review found
+        var defaultPort = proxy.upstreamWsPort;
+        var dialled = new java.util.ArrayList<WebSocketConnectOptions>();
+        proxy.upstreamWsPort = 1;
+        proxy.overrideUpstream("api.openai.com", "127.0.0.1", mockUpstream.actualPort());
+        var client = createClient();
+        try {
+            var result = new CompletableFuture<String>();
+            connect(client, connectOptions("/v1/override"), ws -> {
+                ws.textMessageHandler(result::complete);
+                ws.writeTextMessage("via-override");
+            });
+            assertEquals("echo:via-override", result.get(5, TimeUnit.SECONDS));
+            dialled.addAll(upstreamDials);
+            assertEquals("api.openai.com", dialled.getFirst().getHeaders().get("Host"),
+                    "the stub is still asked for the real host");
+        } finally {
+            proxy.upstreamWsPort = defaultPort;
+            close(client);
+        }
+    }
+
+    @Test
     void textFramesAreRelayed() throws Exception {
         var client = createClient();
         var result = new CompletableFuture<String>();

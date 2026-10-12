@@ -72,6 +72,27 @@ public final class Metadata {
      */
     public static final String INSTANCE_SECRET_BOOT = PREFIX + "instance-secret-boot";
     /**
+     * The ChatGPT session an instance's proofs were derived for, as {@code <account>:<session id>}
+     * (#1332). The proxy serves the instance only while that is still the account's current session,
+     * so a sign-in again invalidates every proof made for the previous one.
+     */
+    public static final String CHATGPT_SESSION = PREFIX + "chatgpt-session";
+    /**
+     * SHA-256 verifiers of the instance's ChatGPT access and refresh proofs; see
+     * {@code ChatGptProof}. Never the proofs: the guest can read these keys through
+     * {@code /dev/incus}. Set with the secret they derive from, by the same write; a copy
+     * inherits them, so whatever gives a copy its own secret must replace or clear them too.
+     */
+    public static final String CHATGPT_ACCESS_PROOF_SHA256 = PREFIX + "chatgpt-access-proof-sha256";
+    /** @see #CHATGPT_ACCESS_PROOF_SHA256 */
+    public static final String CHATGPT_REFRESH_PROOF_SHA256 = PREFIX + "chatgpt-refresh-proof-sha256";
+    /**
+     * The {@link #INSTANCE_SECRET_SHA256} the ChatGPT verifiers were made with. The verifiers count
+     * only while it is still the instance's own, so a copy, which gets a secret of its own, never
+     * inherits its source's ChatGPT access with them.
+     */
+    public static final String CHATGPT_PROOF_SECRET_SHA256 = PREFIX + "chatgpt-proof-secret-sha256";
+    /**
      * The {@link IncusClient#pid} of the boot isx last restarted a VM into because its agent did
      * not answer. Unresponsive again on that same boot, the VM is reported rather than restarted
      * a second time (#843).

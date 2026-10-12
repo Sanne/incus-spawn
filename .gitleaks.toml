@@ -46,6 +46,10 @@ keywords = ["sk-ant-oat01-"]
     '''cli/src/test/java/dev/incusspawn/command/SupportBundleTest\.java$''',
     '''cli/src/test/java/dev/incusspawn/command/ClaudeAuthFlowTest\.java$''',
     '''cli/src/test/java/dev/incusspawn/ai/HelpContextTest\.java$''',
+    # #1332: a pinned HMAC test vector, and the end-to-end script's stub-minted placeholders
+    # and RFC 6455's sample WebSocket key -- no value in either ever reached a real service.
+    '''common/src/test/java/dev/incusspawn/proxy/ChatGptProofTest\.java$''',
+    '''\.github/scripts/test-chatgpt-session\.sh$''',
   ]
 
   # Fixture regexes for fake key/token prefixes our fixtures use, followed by a short

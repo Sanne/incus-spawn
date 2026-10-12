@@ -125,7 +125,8 @@ public final class ToolProxyResolver {
     /**
      * The domains the proxy intercepts beyond its built-in ones: the tool domains any
      * configured account makes resolvable, as {@link #resolveAcrossAccounts} decides for the
-     * proxy itself, and the names of the {@link #hostRoutes host routes}. Anything that rewrites
+     * proxy itself, the names of the {@link #hostRoutes host routes}, and ChatGPT's hosts while a
+     * ChatGPT account is configured ({@link ChatGptAccounts}). Anything that rewrites
      * bridge DNS from this set (the TUI's auto-heal, {@code isx doctor}) must not use the
      * default account's narrower set, or it drops a domain only a named account can serve
      * and its requests go upstream without credentials until the proxy reloads; nor leave the
@@ -138,7 +139,18 @@ public final class ToolProxyResolver {
                 .collect(Collectors.toCollection(java.util.HashSet::new));
         // The proxy reports what it drops; a CLI writer only needs the names
         domains.addAll(hostRoutes(config, acrossAccounts, warning -> {}).keySet());
+        domains.addAll(handlerDomains(config.tree()));
         return Set.copyOf(domains);
+    }
+
+    /**
+     * The domains a built-in handler serves without a tool proxy, as {@code tree} configures them:
+     * ChatGPT's hosts while an {@code openai} account is {@code type: chatgpt} (#1332). The one
+     * place the proxy and {@link #resolvedDomains} take them from. A host route cannot clash with
+     * them: its name must lie under {@code .internal}.
+     */
+    public static Set<String> handlerDomains(JqValue tree) {
+        return ChatGptAccounts.enabledBy(tree) ? ChatGptAccounts.DOMAINS : Set.of();
     }
 
     /**

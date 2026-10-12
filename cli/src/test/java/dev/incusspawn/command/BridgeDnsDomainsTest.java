@@ -51,4 +51,22 @@ class BridgeDnsDomainsTest {
         others.remove("work.isx.internal");
         assertEquals(ProxyConfig.interceptedDomains(ToolProxyResolver.resolvedDomains(IsolatedHome.seed("{}\n"))), others);
     }
+
+    @Test
+    void chatGptHostsAreKeptWhileAChatGptAccountExists() throws Exception {
+        // The proxy intercepts them then (#1332): a rewrite without them would send Codex's
+        // placeholders straight to OpenAI
+        var config = IsolatedHome.seed("""
+                openai:
+                  accounts:
+                    sso:
+                      type: chatgpt
+                """);
+        var domains = ProxyConfig.interceptedDomains(ToolProxyResolver.resolvedDomains(config));
+        assertTrue(domains.contains("chatgpt.com"), domains.toString());
+        assertTrue(domains.contains("auth.openai.com"), domains.toString());
+
+        var none = ProxyConfig.interceptedDomains(ToolProxyResolver.resolvedDomains(IsolatedHome.seed("{}\n")));
+        assertFalse(none.contains("chatgpt.com"), none.toString());
+    }
 }

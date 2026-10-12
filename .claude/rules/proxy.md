@@ -325,3 +325,12 @@ Key design:
   `ProxyService.signalAccountRefresh()` reads it at signalling time and falls back to `fuser` for older proxies, as `isx proxy stop` does for a proxy started by hand (`stopManualProxy`, #155: `fuser` finds nothing on macOS or without psmisc).
   Tests must never send it: `TempHome` (common, `lifecycle`) and `IsolatedHome` (cli, `command`) swap the signaller for a counter (`ProxyService.replaceAccountRefreshSignal`, `proxySignals()`) for the test classes that `@ExtendWith` them.
   Protection is opt-in, so a test reaching any caller -- branch, destroy, clean, an account change -- must run under one of them, never add a seam of its own (#871).
+- ChatGPT sessions for Codex (#1332, experimental) go through `ChatGptRoute`, ahead of every other domain check, for `chatgpt.com` and `auth.openai.com` while some `openai` account has `type: chatgpt`.
+  Only requests carrying an isx placeholder are handled; everything else to those hosts is relayed untouched.
+  The allowlist (`ChatGptRoute.Operation`) is a security boundary: widening it is a decision on #1332, never a fix for a failing Codex feature.
+  Proofs are verified against SHA-256 verifiers in instance metadata (`Metadata.CHATGPT_*`), never derived from `sha256(secret)` (#1107).
+  The session file is the one file the proxy writes, under `ChatGptSessionStore`'s lock, and only to the session and generation a refresh started from; it never creates one.
+  Whether ChatGPT's hosts are intercepted is `ChatGptAccounts.enabledBy`, the one decision the proxy and `ToolProxyResolver.resolvedDomains` (the CLI's DNS rewrites) share; a host route cannot clash with them, since its name must lie under `.internal`.
+  A proven backend request streams through `Upstream.relayRequest` with `RelayHooks` (#1315), and a refused caller gets `CallerCheck`'s one registry refresh and retry.
+  See DESIGN.md "Codex ChatGPT sessions stay on the host".
+- `ISX_BENCH_UPSTREAM` reaches WebSockets too: Vert.x 4 ignores `setServer()` for them, so an overridden WebSocket is dialled to the override's address with `Host` set to the real name and no SNI.

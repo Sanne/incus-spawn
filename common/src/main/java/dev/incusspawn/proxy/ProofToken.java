@@ -117,11 +117,15 @@ public final class ProofToken {
         if (!ToolDefValidator.isNamespace(namespace)) {
             throw new IllegalArgumentException("Not a credential namespace: " + namespace);
         }
+        return hmacSha256Hex(HexFormat.of().parseHex(secret), CONTEXT + namespace).substring(0, DIGEST_HEX_CHARS);
+    }
+
+    /** HMAC-SHA256 of {@code context} keyed with {@code key}, as hex: what every proof is made of. */
+    static String hmacSha256Hex(byte[] key, String context) {
         try {
             var mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(HexFormat.of().parseHex(secret), "HmacSHA256"));
-            var digest = mac.doFinal((CONTEXT + namespace).getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest).substring(0, DIGEST_HEX_CHARS);
+            mac.init(new SecretKeySpec(key, "HmacSHA256"));
+            return HexFormat.of().formatHex(mac.doFinal(context.getBytes(StandardCharsets.UTF_8)));
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("HmacSHA256 is unavailable", e);
         }

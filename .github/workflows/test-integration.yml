@@ -848,6 +848,16 @@ jobs:
             fi
           fi
 
+      # Last: it stops the shared proxy and runs its own, pointed at a stub, with egress blocked
+      - name: Test a host-owned ChatGPT session through a stub (#1332)
+        run: |
+          sudo apt-get install -y -qq nftables
+          # isx branch starts it, which delivers the per-start secret the proofs derive from
+          sg incus-admin -c "isx branch test-chatgpt --from tpl-test-codex" </dev/null
+          sg incus-admin -c "incus exec test-chatgpt -- dnf install -y -q python3"
+          sg incus-admin -c "incus exec test-chatgpt -- su - agentuser -c 'codex --version'"
+          sg incus-admin -c "bash .github/scripts/test-chatgpt-session.sh test-chatgpt"
+
       - name: Dump proxy log on failure
         if: failure()
         run: |

@@ -206,6 +206,21 @@ class Upstream {
         });
     }
 
+    /**
+     * Opens an upstream WebSocket, to its override when its host has one. Vert.x 4 dials a
+     * WebSocket to its host and port and ignores setServer(), so the override is dialled by
+     * address: the Host header still names the real host, but there is no SNI, and the stub's
+     * certificate must cover the address. Without this, the socket went to the real host.
+     */
+    Future<io.vertx.core.http.WebSocket> connectWebSocket(io.vertx.core.http.WebSocketConnectOptions options) {
+        var host = options.getHost();
+        var override = upstreamOverrides.get(host);
+        if (override != null) {
+            options.putHeader("Host", host).setHost(override.host()).setPort(override.port());
+        }
+        return wsUpstreamClient.webSocket(options);
+    }
+
     Future<HttpClientRequest> requestWithAsyncDns(RequestOptions options) {
         return requestWithAsyncDns(upstreamClient, options);
     }
@@ -600,6 +615,35 @@ class Upstream {
         upReq.headers().remove("Connection");
         upReq.headers().remove("Transfer-Encoding");
         upReq.putHeader("Host", domain);
+    }
+
+    /** Relays a request whose body has already been read, as it came. */
+    void relayBuffered(HttpServerRequest clientReq, String domain, Buffer body) {
+        var options = new RequestOptions().setMethod(clientReq.method()).setHost(domain).setPort(443)
+                .setURI(clientReq.uri());
+        requestWithAsyncDns(options).onSuccess(upReq -> {
+            copyBufferedRequestHeaders(clientReq, upReq, domain);
+            upReq.putHeader("Content-Length", String.valueOf(body.length()));
+            upReq.send(body).onSuccess(upResp -> {
+                copyResponseHead(upResp, clientReq.response());
+                pipeResponse(upResp, clientReq.response(), null);
+            }).onFailure(e -> {
+                ProxyLog.warn("Upstream send error (" + domain + "): " + e.getMessage());
+                sendError(clientReq.response(), 502, "Upstream error");
+            });
+        }).onFailure(e -> {
+            ProxyLog.warn("Upstream connect error (" + domain + "): " + e.getMessage());
+            sendError(clientReq.response(), 502, "Upstream connection failed");
+        });
+    }
+
+    /**
+     * {@link #copyRequestHeaders}, for a request whose body was read here and goes upstream at
+     * once: its {@code Expect} was answered here, and upstream must not wait to send a 100.
+     */
+    void copyBufferedRequestHeaders(HttpServerRequest clientReq, HttpClientRequest upReq, String domain) {
+        copyRequestHeaders(clientReq, upReq, domain);
+        upReq.headers().remove("Expect");
     }
 
     /** Upstream's status and headers, for a response relayed as it is. */
