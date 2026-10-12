@@ -817,7 +817,7 @@ public class BuildCommand extends BaseCommand {
         } catch (Exception e) {
             BuildOutput.abandonStep();
             reportBuildFailure(tempName, canonicalName,
-                    "Build failed for " + shown(canonicalName) + ": " + e.getMessage());
+                    "Build failed for " + shown(canonicalName) + ": " + e.getMessage(), e);
             try {
                 // A build that failed before its instance existed has no devices to remove, and
                 // trying would print one warning per resource.
@@ -1114,10 +1114,17 @@ public class BuildCommand extends BaseCommand {
     }
 
     void reportBuildFailure(String buildName, String canonicalName, String errorLine) {
+        reportBuildFailure(buildName, canonicalName, errorLine, null);
+    }
+
+    void reportBuildFailure(String buildName, String canonicalName, String errorLine, Exception cause) {
         System.err.println("\n" + styled(YELLOW, "─".repeat(60)));
         // The message can quote what a template chose, and only isx's own line breaks are kept:
         // each line is made safe as it is printed (#1228).
         errorLine.lines().forEach(line -> System.err.println(styled(BOLD, shown(line))));
+
+        var stepOutput = cause instanceof IncusException ie && ie.stepOutput() != null
+                ? ie.stepOutput() : "";
 
         // Resolve the host log path first; the path-traversal guard in buildFailureLogFile can
         // throw for a malformed template name, and that must not abort failure handling.
@@ -1129,13 +1136,15 @@ public class BuildCommand extends BaseCommand {
             hostLog = null;
         }
 
-        // Write the host report with just the error line BEFORE running diagnostics.
+        // Write the host report with the error line and step output BEFORE running diagnostics.
         // printBuildDiagnostics can hang when the exec channel is wedged -- exactly the failures
         // this host report exists for -- so the report must exist before those calls.
         if (hostLog != null) {
             try {
                 Files.createDirectories(hostLog.getParent());
-                Files.writeString(hostLog, errorLine + "\n");
+                var earlyReport = stepOutput.isEmpty() ? errorLine + "\n"
+                        : errorLine + "\n\n" + stepOutput;
+                Files.writeString(hostLog, earlyReport);
             } catch (Exception e) {
                 System.err.println("Could not save failure report to " + shown(hostLog) + ": " + shown(e.getMessage()));
             }
@@ -1143,6 +1152,9 @@ public class BuildCommand extends BaseCommand {
 
         var diagnostics = printBuildDiagnostics(buildName);
         var report = errorLine + "\n\n" + diagnostics;
+        if (!stepOutput.isEmpty()) {
+            report += "\n" + stepOutput;
+        }
 
         // Update the host report with the full diagnostics. Write to a temp file and move so
         // a failure (e.g. disk full) after truncation cannot erase the initial error-only report.
