@@ -143,7 +143,7 @@ jobs:
   # local remote with gh faked: one PR at a time, refreshed to the newest release (#1355).
   update-kernel-steps:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6

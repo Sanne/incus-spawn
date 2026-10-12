@@ -30,7 +30,7 @@ permissions:
 jobs:
   pin:
     name: signed kernel pin
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       # main's copy, whatever the PR's base: a base branch could carry its own key and script.
       - name: Checkout

@@ -119,6 +119,7 @@ run new 7.2.9 7.2.10 '[]' '[]'
 [ "$(git -C "$WORK/new/remote.git" rev-list --count main..bot/kernel-bump)" = 1 ] || fail "new: not one commit on main"
 [ "$(calls new 'pr create .*--title Update the kernel to 7.2.10 .*<!-- update-kernel.yml: 7.2.10 --> --label env:macos')" = 1 ] \
     || fail "new: no PR for 7.2.10 with env:macos: $(cat "$WORK/new/calls")"
+[ "$(calls new 'auth setup-git')" = 1 ] || fail "new: pushes do not go through gh's credentials"
 
 # A newer release while 7.2.10's PR is open: the same PR, marked pending, the new commit pushed, and
 # only then named for it, labelled env:macos again and told its Mac boot no longer applies.

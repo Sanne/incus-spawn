@@ -29,14 +29,15 @@ concurrency:
 
 jobs:
   bump:
-    # Forks have neither BOT_TOKEN nor a reason to propose bumps.
-    if: github.repository == 'Sanne/incus-spawn'
-    runs-on: ubuntu-latest
+    # Forks have neither BOT_TOKEN nor a reason to propose bumps, and only main's copy of this job
+    # and its scripts runs with BOT_TOKEN: a dispatch on another branch would build the bump from it.
+    if: github.repository == 'Sanne/incus-spawn' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
     steps:
-      # BOT_TOKEN, as in update-base-image.yml: a PR opened with GITHUB_TOKEN runs no CI.
+      # No credentials left in .git/config: the steps that use github.token must not push as the bot.
       - uses: actions/checkout@v6
         with:
-          token: ${{ secrets.BOT_TOKEN }}
+          persist-credentials: false
 
       - name: Find the newest point release
         id: pin
@@ -61,6 +62,8 @@ jobs:
           BRANCH=bot/kernel-bump
           BOT_EMAIL="github-actions[bot]@users.noreply.github.com"
           PIN=appliance/kernel/build-kernel.sh
+          # The checkout keeps no credentials; pushes go through gh, as BOT_TOKEN.
+          gh auth setup-git
           # This repository's own branch: a fork's branch of the same name is someone else's PR.
           OURS='select(.headRepositoryOwner.login == "Sanne" and .isCrossRepository == false)'
           OPEN=$(gh pr list --head "$BRANCH" --state open --json number,headRepositoryOwner,isCrossRepository \
