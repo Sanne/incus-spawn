@@ -236,6 +236,16 @@ A new series is never proposed: when kernel.org ends the pinned one, the job ope
 A failed run opens `[kernel] update check failing`, which the next good run closes, so a failure is not only in an Actions log.
 Nothing merges by itself: the bump goes through CI and a Mac boot (ci.md, #791), and Sanne merges it.
 
+**The Mac boot is recorded against what it booted.**
+The `kernel-mac-verified` check fails any PR, by anyone, whose merge changes the appliance kernel's inputs, until a Mac boot of a build with those inputs is recorded (`.claude/rules/ci.md`).
+The inputs are `appliance/build.sh`, `build-kernel.sh` and the appliance fragments, hashed by their git blobs into a fingerprint.
+The build says what it built: `build-appliance.yml` writes the commit into `kernel-inputs` beside the image, and on a PR that commit is the merge, not the head.
+The Mac boots it only if that is the PR's merge as GitHub has it now, fingerprints that merge, checks the kernel's own `Linux version` banner against its `KERNEL_VERSION`, and sets a status on the PR's head with the fingerprint.
+The check compares it with the fingerprint of the PR merged into its base as it is when the check runs, so a rebase that leaves the kernel alone keeps the boot, while a change to any input, on the PR or under it on the base, needs another; the check and the Mac both fingerprint with `main`'s script, never the PR's.
+**Alternatives:** a status on the commit alone, which a rebase or an unrelated push would discard and send every bump back to the Mac queue; the head's fingerprint, which misses a kernel change the base brought in and is not what the PR build compiled; a comment a reviewer compares by eye, the habit this replaces; the PR's own copy of the check, which a PR could edit to pass, so it runs on `pull_request_target` from the base branch.
+**What it does not cover:** the compiler, which `build.sh` takes from `fedora:44` at build time; a base that moves after the check passed, which only branch protection's "require branches to be up to date" catches; and the artifact is the PR's own build, so the check proves a boot happened, not that a PR's workflow was honest, which review still does.
+The verifiers are Sanne and the bot account the Mac runner uses, which the worker boxes use too.
+
 **Where the sum comes from.**
 `update-kernel-pin.sh` verifies `sha256sums.asc` with `gpgv` against `appliance/kernel/kernel.org-autosigner.asc`, the kernel.org checksum autosigner's key, and also requires the one valid signature to be by `AUTOSIGNER_FPR`, the same key's fingerprint pinned in the script.
 It reads only the text gpgv reports as signed, so a line added after the signature never counts.
