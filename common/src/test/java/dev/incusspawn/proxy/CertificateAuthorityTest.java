@@ -19,6 +19,7 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Date;
 import java.util.HexFormat;
+import java.util.TreeMap;
 
 import static dev.incusspawn.DerEncoder.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -108,10 +109,14 @@ class CertificateAuthorityTest {
     @Test
     void trustSnapshotClassifiesStoredFingerprints() throws Exception {
         var legacyFp = fingerprint(writeLegacyCa());
-        var current = CertificateAuthority.loadOrCreate().caFingerprint();
+        var mitmFp = CertificateAuthority.loadOrCreate().caFingerprint();
+        var combinedFp = CertificateAuthority.trustFingerprint(CertificateAuthority.collectTrustAnchors());
 
         var trust = CertificateAuthority.CaTrust.snapshot();
-        assertEquals(CertificateAuthority.CaStatus.CURRENT, trust.classify(current));
+        assertEquals(CertificateAuthority.CaStatus.CURRENT, trust.classify(combinedFp),
+                "a template stamped with the combined trust-set fingerprint is current");
+        assertEquals(CertificateAuthority.CaStatus.REPAIRABLE, trust.classify(mitmFp),
+                "a template stamped with the old MITM-only fingerprint is repairable");
         assertEquals(CertificateAuthority.CaStatus.REPAIRABLE, trust.classify(legacyFp),
                 "an image built against the cert we re-issued is repairable, not foreign");
         assertEquals(CertificateAuthority.CaStatus.FOREIGN, trust.classify("deadbeef"));
@@ -145,6 +150,65 @@ class CertificateAuthorityTest {
                 "a corrupt CA must surface as an error, not be silently regenerated");
         assertEquals("", CertificateAuthority.supersededCaFingerprint(),
                 "nothing was superseded, so no backup must be left behind");
+    }
+
+    // --- Trust anchors ---
+
+    @Test
+    void collectTrustAnchorsIncludesMitmCa() {
+        var ca = CertificateAuthority.loadOrCreate();
+        var anchors = CertificateAuthority.collectTrustAnchors();
+        var expectedKey = "isx-" + ca.caFingerprint() + ".crt";
+        assertTrue(anchors.containsKey(expectedKey),
+                "trust anchors must include the MITM CA keyed by its DER fingerprint");
+        assertEquals(ca.caCertPem().strip(), anchors.get(expectedKey));
+    }
+
+    @Test
+    void collectTrustAnchorsKeysAreSha256Filenames() {
+        CertificateAuthority.loadOrCreate();
+        var anchors = CertificateAuthority.collectTrustAnchors();
+        for (var key : anchors.keySet()) {
+            assertTrue(key.matches("isx-[0-9a-f]{64}\\.crt"),
+                    "anchor key must be isx-<sha256>.crt, got: " + key);
+        }
+    }
+
+    @Test
+    void trustFingerprintEmptyForNoAnchors() {
+        assertEquals("", CertificateAuthority.trustFingerprint(new TreeMap<>()));
+    }
+
+    @Test
+    void trustFingerprintChangesWithContent() {
+        var a = new TreeMap<String, String>();
+        a.put("isx-aaa.crt", "ONE");
+        var fp1 = CertificateAuthority.trustFingerprint(a);
+        assertFalse(fp1.isEmpty());
+
+        a.put("isx-bbb.crt", "TWO");
+        var fp2 = CertificateAuthority.trustFingerprint(a);
+        assertNotEquals(fp1, fp2);
+    }
+
+    @Test
+    void trustFingerprintIsDeterministic() {
+        CertificateAuthority.loadOrCreate();
+        var fp1 = CertificateAuthority.trustFingerprint(CertificateAuthority.collectTrustAnchors());
+        var fp2 = CertificateAuthority.trustFingerprint(CertificateAuthority.collectTrustAnchors());
+        assertEquals(fp1, fp2);
+    }
+
+    @Test
+    void buildReconcileScriptCleansOldNamesAndWritesNewOnes() {
+        var anchors = new TreeMap<String, String>();
+        anchors.put("isx-abc.crt", "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----");
+        var script = CertificateAuthority.buildReconcileScript(anchors);
+        assertTrue(script.contains("rm -f"));
+        assertTrue(script.contains("incus-spawn-mitm.crt"));
+        assertTrue(script.contains("isx-*.crt"));
+        assertTrue(script.contains("isx-abc.crt"));
+        assertTrue(script.contains("update-ca-trust"));
     }
 
     // --- Helpers ---

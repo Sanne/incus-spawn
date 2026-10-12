@@ -1232,7 +1232,7 @@ public class BuildCommand extends BaseCommand {
                 .assertSuccess("Failed to fix DNS after copy");
 
         if (CertificateAuthority.fixContainerCaIfNeeded(incus, buildName)) {
-            BuildOutput.step("Refreshed MITM proxy CA certificate.");
+            BuildOutput.step("Refreshed trust anchors.");
         }
 
         requireBuildAddress(buildName, started);
@@ -1375,13 +1375,13 @@ public class BuildCommand extends BaseCommand {
 
         var container = new Container(incus, buildName);
 
-        BuildOutput.stepStart("Installing MITM proxy CA certificate...");
-        var ca = CertificateAuthority.loadOrCreate();
-        container.sh(
-                "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt << 'CERTEOF'\n" +
-                ca.caCertPem() +
-                "CERTEOF")
-                .assertSuccess("Failed to install MITM CA certificate");
+        BuildOutput.stepStart("Installing trust anchors...");
+        var trustAnchors = CertificateAuthority.collectTrustAnchors();
+        for (var entry : trustAnchors.entrySet()) {
+            container.writeFile(
+                    "/etc/pki/ca-trust/source/anchors/" + entry.getKey(),
+                    entry.getValue());
+        }
         container.exec("update-ca-trust")
                 .assertSuccess("Failed to update CA trust");
         BuildOutput.stepDone();
@@ -2029,7 +2029,8 @@ public class BuildCommand extends BaseCommand {
         var info = BuildInfo.instance();
         incus.configSet(container, Metadata.BUILD_VERSION, info.version());
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
-        incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.currentCaFingerprint());
+        incus.configSet(container, Metadata.CA_FINGERPRINT,
+                CertificateAuthority.trustFingerprint(CertificateAuthority.collectTrustAnchors()));
         incus.configSet(container, Metadata.DEFINITION_SHA,
                 imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader)));
         stampAccountIdentities(container, identityStamps);

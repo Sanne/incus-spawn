@@ -354,7 +354,7 @@ Optionally, missing repos can be cloned — the first prompt accepts `y`/`n`/`al
 
 **`buildFromScratch` (root image, no parent):**
 1. Import and launch base image (pre-baked with agentuser, systemd-networkd, service masks)
-2. Install MITM proxy CA certificate
+2. Install trust anchors: MITM proxy CA and, when `host-ca: { propagate: true }`, host CA certs — each as `isx-<sha256>.crt`
 3. Configure security (idmap, nesting, syscall interception, no capability dropping) — *skipped for VMs*
 4. Prepare container for package install (tmpfiles overrides, temporary DHCP network config, man dirs) — *skipped for VMs*
 5. Configure DNS (disable systemd-resolved, point at Incus bridge gateway)
@@ -1152,6 +1152,16 @@ Startup used to leave the per-account part to a lazy read on the first pinned re
 **CA certificate mismatch**: At branch time, `BranchCommand` compares the template's `ca-fingerprint` metadata against the current CA certificate.
 If they differ (e.g. after `isx init` regenerated the CA), a warning is shown suggesting to rebuild the template.
 This prevents TLS failures in branches where the container's trusted CA doesn't match the proxy's signing CA.
+
+**Host CA propagation (opt-in).**
+Corporate environments often install custom CA certificates on the host for TLS inspection or internal services.
+When `host-ca: { propagate: true }` is set in `config.yaml`, `CertificateAuthority.collectTrustAnchors()` builds one trust set: the MITM proxy CA plus host CA anchors from `/etc/pki/ca-trust/source/anchors/`, each parsed as X.509 and keyed by SHA-256 fingerprint (`isx-<sha256>.crt`).
+Content-addressable naming eliminates filename collisions and shell injection via filenames, and naturally deduplicates the MITM CA if it also sits in the host anchor directory.
+One combined fingerprint over the whole trust set is stamped as `user.incus-spawn.ca-fingerprint` (the same key as the MITM-only fingerprint was, so there is one stamp, not two).
+`fixContainerCaIfNeeded` reconciles the entire set in one guest exec (`buildReconcileScript`): it clears the stamp before cleanup so a failed install is retried, removes both old `incus-spawn-mitm.crt` and `isx-*.crt`, writes the current set via `Container.heredoc` (safe against content escaping the heredoc), runs `update-ca-trust`, and re-stamps on success.
+`CaTrust.snapshot()` carries the combined fingerprint as `current` and the old MITM-only fingerprints (current cert DER hash and superseded) as `compatible`, so templates built before the combined stamp are classified as `REPAIRABLE` rather than `FOREIGN`.
+`buildFromScratch` writes each anchor via `Container.writeFile` and stamps the combined fingerprint; `buildFromParent`, `BranchFlow`, `InstancePrep` and the TUI shell prep reconcile through `fixContainerCaIfNeeded`.
+The config follows the same raw-YAML pattern as `artifact-cache:` and `ready-timeouts:` (`HostCaConfig.of(raw)`): a mistyped section is ignored, not a fatal config error.
 
 **Leaf certificate persistence (clock-skew safety)**: Per-domain leaf certs are not minted fresh on every proxy start.
 `CertStore` persists them under `~/.config/incus-spawn/certs/` (keyed by domain — `<domain>.crt`/`.key`, wildcards as `_wildcard.<domain>`) and reuses them across restarts, re-minting only when a cert is missing, was signed by a rotated CA, or is within 30 days of expiry.

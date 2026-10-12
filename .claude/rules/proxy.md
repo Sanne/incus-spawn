@@ -38,6 +38,13 @@ Key design:
   Strict validators (OpenSSL 3.5, and so Python 3.13+, which turns on `VERIFY_X509_STRICT` by default) reject a chain without them -- including the trust anchor, so leaf-only extensions are not enough.
   A CA generated before this is re-issued on load over its **existing key** (`reissueWithSki`), which keeps every leaf valid and un-re-minted; the replaced cert is kept as `ca-superseded.crt`.
   Images stamped with that superseded fingerprint carry a stale-but-not-foreign anchor: `BranchCommand` lets them branch (the new cert is pushed into the instance by `InstancePrep`/`fixContainerCaIfNeeded` on first use) instead of demanding a rebuild the way a real CA rotation does.
+- **Host CA propagation** (opt-in, `host-ca: { propagate: true }` in config.yaml): `CertificateAuthority.collectTrustAnchors()` builds one trust set -- the MITM CA plus host anchors from `/etc/pki/ca-trust/source/anchors/`, each parsed as X.509 and keyed by SHA-256 fingerprint (`isx-<fp>.crt`).
+  Content-addressable naming eliminates filename collisions and shell injection.
+  One combined fingerprint (`trustFingerprint()`) is stamped as `Metadata.CA_FINGERPRINT`.
+  `fixContainerCaIfNeeded` reconciles the whole set in one guest exec (`buildReconcileScript`): it clears the stamp before cleanup so a failed install retries, removes old `incus-spawn-mitm.crt` and `isx-*.crt`, writes the current set via `Container.heredoc`, runs `update-ca-trust`, and re-stamps on success.
+  `CaTrust.snapshot()` carries the combined fingerprint as `current` and the old MITM-only fingerprints (current cert DER hash, superseded) as `compatible`, so templates built before the combined stamp are classified as `REPAIRABLE`, not `FOREIGN`.
+  `buildFromScratch` writes each anchor via `Container.writeFile` and stamps the combined fingerprint; `buildFromParent`, `BranchFlow`, `InstancePrep` and the TUI shell prep reconcile through `fixContainerCaIfNeeded`.
+  The config is structured (`HostCaConfig.of(raw)`, same raw-YAML pattern as `ArtifactCacheTiers` and `ReadyTimeoutsConfig`) so a mistyped section does not fail config.yaml.
 - Claude credentials live in `claude.accounts`, a named map (`ClaudeAccount`, `type: api-key|oauth|vertex`) so several accounts can be configured at once; `claude.default` names the one instances use.
   `ClaudeConfig.accountFor(Predicate)` picks the default when it qualifies, else the first that does.
   Which accounts exist and which is the default are answered by `AccountResolver` against `ClaudeConfig.ACCOUNT_SHAPE`, the same rule as every namespace (a pre-accounts flat file presents as the account `default`; see `config.md`), so nothing outside `ClaudeConfig` branches on Claude.
