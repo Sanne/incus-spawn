@@ -2474,8 +2474,7 @@ public class Tui {
     private void tryFixStaleDns() {
         if (dnsVerified) return;
         dnsVerified = true;
-        var toolProxyDomains = dev.incusspawn.proxy.ToolProxyResolver.resolvedDomains(SpawnConfig.load());
-        var allDomains = ProxyConfig.interceptedDomains(toolProxyDomains);
+        var allDomains = ProxyConfig.bridgeDnsDomains(SpawnConfig.load());
         try {
             if (ProxyConfig.isBridgeDnsComplete(incus, allDomains)) return;
         } catch (Exception e) {

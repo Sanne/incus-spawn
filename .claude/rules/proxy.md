@@ -277,6 +277,9 @@ Key design:
   Never infer ownership from line shapes: an orphaned `local=/<d>/` answers NXDOMAIN for the whole domain.
   The pre-block layout is detected by its `::` lines and migrated.
   Anything that rewrites the block takes its domains from `ToolProxyResolver.resolvedDomains()` (all accounts, as the proxy does), never the default account alone.
+  A CLI writer gets them, built-ins included, from `ProxyConfig.bridgeDnsDomains(config)` or `configureBridgeDns(incus, config)`.
+  Never add a writer that takes no domains: `isx init` once rewrote the block with the built-in ones alone after the proxy's reload, and builds got 401 from GitHub until the proxy restarted (#1354).
+  `writeBridgeDns` refuses an empty set; `clearBridgeDns()` is the only way to remove the block.
   On Linux the proxy points the block at the gateway it already resolved and listens on (`ProxyMain.Addresses`, whose writers startup uses and `MitmProxy` is handed for reloads; `--gateway-ip` sets it, and must be a unicast IPv4 address in canonical form or the proxy exits `EXIT_CONFIG`; DESIGN.md says why), never a second bridge lookup, which ignored the override and failed on a bridge with no address (#892).
   The proxy serves only where the CLI looks for it (`ProxyConfig.resolveGatewayIp()`), so a Linux `--gateway-ip` must equal the bridge's current gateway (`BridgeAddress.read()`, never the cached one) when Incus reports it, else `EXIT_CONFIG` (#933).
   With no bridge address to read it stands in for one (#892): it must equal the gateway `isx init` cached, if any (else `EXIT_CONFIG`), and be private (RFC 1918) or loopback, else exit 1 (#1022).

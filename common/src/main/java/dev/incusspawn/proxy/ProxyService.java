@@ -3,6 +3,7 @@ package dev.incusspawn.proxy;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.Platform;
 import dev.incusspawn.util.HostLock;
@@ -1284,7 +1285,7 @@ public final class ProxyService {
         // local network access from ad-hoc-signed binaries under launchd.
         System.out.println("  Configuring bridge DNS...");
         try {
-            ProxyConfig.configureBridgeDns(new IncusClient());
+            ProxyConfig.configureBridgeDns(new IncusClient(), SpawnConfig.load());
         } catch (Exception e) {
             System.err.println("  Warning: could not configure bridge DNS: " + e.getMessage());
             System.err.println("  Is the VM running? The proxy will retry DNS at startup.");

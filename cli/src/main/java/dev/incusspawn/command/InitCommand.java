@@ -336,11 +336,18 @@ public class InitCommand extends BaseCommand {
                 this::setupSearchPaths,
                 this::setupHostPaths,
                 this::setupMcp,
-                () -> {
-                    startStep("DNS Configuration", DNS_HINT);
-                    ProxyConfig.configureBridgeDns(incus);
-                },
+                this::setupBridgeDns,
                 service);
+    }
+
+    /**
+     * DNS Configuration, which writes the whole block from the configuration the earlier steps
+     * saved. Never the built-in domains alone: the proxy's reload has just written the tool
+     * domains too, and nothing would write them back until it restarts (#1354).
+     */
+    void setupBridgeDns() {
+        startStep("DNS Configuration", DNS_HINT);
+        ProxyConfig.configureBridgeDns(incus, SpawnConfig.load());
     }
 
     private void setupMacOsCa() {

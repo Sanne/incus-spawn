@@ -172,20 +172,26 @@ public final class ProxyConfig {
         return write.success();
     }
 
-    public static void configureBridgeDns(IncusClient incus) {
-        configureBridgeDns(incus, Set.of(), resolveGatewayIp(incus));
+    /**
+     * Every domain the bridge DNS block overrides under {@code config}: the built-in ones, the
+     * tool domains of every account and the host routes, as the proxy intercepts them. A CLI
+     * writer of the block takes its set from here; a narrower one drops the tool domains, and
+     * their requests reach upstream with placeholder credentials until the proxy restarts (#1354).
+     */
+    public static Set<String> bridgeDnsDomains(SpawnConfig config) {
+        return interceptedDomains(ToolProxyResolver.resolvedDomains(config));
     }
 
-    /** Write the overrides for {@code allDomains} (the built-in set if empty), pointing at {@code gatewayIp}. */
+    /** Write the overrides for every domain {@code config} intercepts, pointing at the bridge's gateway. */
+    public static void configureBridgeDns(IncusClient incus, SpawnConfig config) {
+        configureBridgeDns(incus, bridgeDnsDomains(config), resolveGatewayIp(incus));
+    }
+
+    /** Write the overrides for {@code allDomains}, pointing at {@code gatewayIp}. */
     public static void configureBridgeDns(IncusClient incus, Set<String> allDomains, String gatewayIp) {
-        var effective = allDomains.isEmpty() ? BUILTIN_INTERCEPTED_DOMAINS : allDomains;
-        writeBridgeDns(incus, effective, gatewayIp);
-        System.out.println("  DNS overrides: " + effective.size() +
+        writeBridgeDns(incus, allDomains, gatewayIp);
+        System.out.println("  DNS overrides: " + allDomains.size() +
                 " domains -> " + gatewayIp + " (via bridge dnsmasq)");
-    }
-
-    public static void writeBridgeDns(IncusClient incus) {
-        writeBridgeDns(incus, BUILTIN_INTERCEPTED_DOMAINS);
     }
 
     /** Rewrite isx's block of bridge DNS overrides; see {@link BridgeDns} for the layout. */
@@ -198,6 +204,11 @@ public final class ProxyConfig {
      * proxy passes the address it listens on, which {@code --gateway-ip} may have decided (#892).
      */
     public static void writeBridgeDns(IncusClient incus, Set<String> allDomains, String gatewayIp) {
+        // The full set always holds the built-in domains: an empty one is a caller's mistake,
+        // and writing it would remove every override (clearBridgeDns is how to do that)
+        if (allDomains.isEmpty()) {
+            throw new IllegalArgumentException("No domains to override; use bridgeDnsDomains(config)");
+        }
         var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
         var dnsmasqConfig = BridgeDns.render(existing, allDomains, gatewayIp);
         if (dnsmasqConfig.equals(existing)) {
@@ -425,8 +436,7 @@ public final class ProxyConfig {
      * since given up (#840). Throws when Incus cannot be read, which is not an answer either way.
      */
     public static boolean isBridgeDnsComplete(IncusClient incus, Set<String> allDomains) {
-        var domains = allDomains.isEmpty() ? BUILTIN_INTERCEPTED_DOMAINS : allDomains;
-        return bridgeDnsStatus(incus, domains).complete();
+        return bridgeDnsStatus(incus, allDomains).complete();
     }
 
     /**

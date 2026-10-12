@@ -151,4 +151,13 @@ class BridgeDnsTest {
         ProxyConfig.writeBridgeDns(incus, Set.of("github.com"));
         verify(incus, never()).networkConfigSet(any(), any(), any());
     }
+
+    @Test
+    void writeBridgeDnsRefusesToRemoveEveryOverride() {
+        var incus = mock(IncusClient.class);
+        when(incus.networkConfigGet("incusbr0", "raw.dnsmasq")).thenReturn(GITHUB_BLOCK);
+        // Only clearBridgeDns removes the block; an empty set is a caller that forgot the domains (#1354)
+        assertThrows(IllegalArgumentException.class, () -> ProxyConfig.writeBridgeDns(incus, Set.of(), "10.0.0.1"));
+        verify(incus, never()).networkConfigSet(any(), any(), any());
+    }
 }

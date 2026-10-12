@@ -80,7 +80,7 @@ class ProxyNetworkIT {
         Assumptions.assumeTrue(healthy, "Proxy health check failed after 15s");
 
         originalDnsmasq = client.networkConfigGet("incusbr0", "raw.dnsmasq");
-        ProxyConfig.configureBridgeDns(client);
+        ProxyConfig.configureBridgeDns(client, dev.incusspawn.config.SpawnConfig.load());
     }
 
     @AfterAll

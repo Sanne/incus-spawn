@@ -601,6 +601,14 @@ public final class FakeIncusDaemon implements IncusTransport {
             var network = networks.get(path.substring("/1.0/networks/".length()));
             return network == null ? notFound() : sync(network);
         }
+        if (path.startsWith("/1.0/networks/") && method.equals("PATCH")) {
+            // Incus merges a PATCH's config keys into the network's
+            var network = networks.get(path.substring("/1.0/networks/".length()));
+            if (network == null) return notFound();
+            var config = (ObjectNode) network.get("config");
+            JSON.readTree(body).path("config").properties().forEach(e -> config.set(e.getKey(), e.getValue()));
+            return sync(JSON.createObjectNode());
+        }
         var name = instanceName(path);
         var instance = name == null ? null : instances.get(name);
         if (instance == null) return notFound();

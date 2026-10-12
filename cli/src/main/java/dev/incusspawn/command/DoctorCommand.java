@@ -1406,8 +1406,7 @@ public class DoctorCommand extends BaseCommand {
         Set<String> allDomains;
         BridgeDns.Status status;
         try {
-            var toolProxyDomains = ToolProxyResolver.resolvedDomains(SpawnConfig.load());
-            allDomains = ProxyConfig.interceptedDomains(toolProxyDomains);
+            allDomains = ProxyConfig.bridgeDnsDomains(SpawnConfig.load());
             status = ProxyConfig.bridgeDnsStatus(incus, allDomains);
         } catch (Exception e) {
             return Finding.warn("Bridge DNS overrides", "(could not check: " + e.getMessage() + ")", null);

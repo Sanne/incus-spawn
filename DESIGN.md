@@ -3440,6 +3440,10 @@ On macOS the override must therefore be exactly the host's end of the VM link th
 When no VM bridge is found the override cannot be checked and the proxy stops as it would without one (#937).
 Refusing only wildcard and public addresses was the alternative, rejected because a private LAN address is just as reachable from other hosts.
 The TUI's auto-heal and doctor's remediation rewrite the block from `ToolProxyResolver.resolvedDomains()`, which resolves across all accounts exactly as the proxy does: the default account's narrower set would drop a domain that only a named account can serve.
+Every CLI writer of the block (`isx init`'s DNS step, the macOS service install, the TUI's auto-heal and doctor's remediation) takes its set from `ProxyConfig.bridgeDnsDomains()`, the built-in domains plus that resolution.
+There is no writer that takes no domains, and an empty set is refused rather than read as the built-in ones (#1354).
+Init's DNS step once wrote the built-in domains alone, just after the proxy's reload had written them all.
+Nothing wrote the tool domains back until the proxy restarted, so builds reached GitHub with the placeholder token and got 401.
 
 ### Credential isolation via MITM TLS proxy
 A TLS-terminating MITM proxy intercepts HTTPS connections to specific domains (Anthropic API, GitHub, IBM Bob), injects authentication headers server-side, and forwards to the real upstream.
