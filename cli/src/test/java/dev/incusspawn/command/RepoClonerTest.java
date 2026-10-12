@@ -458,6 +458,32 @@ class RepoClonerTest {
                 "git clone -- 'https://github.com/owner/own.git' '/home/agentuser/own'");
     }
 
+    @Test
+    void failedPrimeCarriesStepOutputOnException() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString()))
+                .thenReturn(OK)  // clone
+                .thenReturn(OK)  // refspec restore
+                .thenReturn(new IncusClient.ExecResult(1, "npm ERR! could not resolve dependency\nnpm ERR! peer dep missing", ""));
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/app.git");
+        repo.setPath("~/app");
+        repo.setPrime("npm install");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-app");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = cloner(incus);
+        var ex = assertThrows(IncusException.class,
+                () -> cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
+        assertNotNull(ex.stepOutput(), "the exception should carry step output from the failed prime");
+        assertTrue(ex.stepOutput().contains("npm ERR! could not resolve dependency"),
+                "step output should contain the prime's captured stdout");
+    }
+
     private static ImageDef.RepoEntry repo(String url, String path, String prime) {
         var repo = new ImageDef.RepoEntry();
         repo.setUrl(url);

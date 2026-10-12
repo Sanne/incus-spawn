@@ -270,6 +270,54 @@ class BuildCommandTest {
         });
     }
 
+    @Test
+    void stepOutputOnExceptionReachesHostLog(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.instanceMetadataOrThrow("tpl-java-rebuilding")).thenReturn(instance("container", Map.of()));
+            var cmd = new BuildCommand();
+            cmd.incus = incus;
+
+            var cause = new IncusException("Failed to prepare 1 repo(s):\n  my-repo: prime failed")
+                    .withStepOutput("─── prepare output: my-repo ───\nFATAL: npm ERR! could not resolve\n─── end prepare output: my-repo ───\n\n");
+
+            cmd.reportBuildFailure("tpl-java-rebuilding", "tpl-java",
+                    "Build failed for tpl-java: " + cause.getMessage(), cause);
+
+            var log = Environment.buildFailureLogFile("tpl-java");
+            assertTrue(Files.exists(log), "host log should exist at " + log);
+            var content = assertDoesNotThrow(() -> Files.readString(log));
+            assertTrue(content.contains("npm ERR! could not resolve"),
+                    "host log should contain the step's stdout, not just the error summary");
+        });
+    }
+
+    @Test
+    void stepOutputIncludedInEarlyHostReport(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.instanceMetadataOrThrow("tpl-dev-rebuilding")).thenReturn(instance("container", Map.of()));
+            var cmd = new BuildCommand();
+            cmd.incus = incus;
+
+            var cause = new IncusException("prime failed")
+                    .withStepOutput("─── prepare output: my-repo ───\nconnection refused\n─── end prepare output: my-repo ───\n\n");
+
+            var earlyContent = new String[1];
+            when(incus.getInstanceStatus("tpl-dev-rebuilding")).thenAnswer(invocation -> {
+                var log = Environment.buildFailureLogFile("tpl-dev");
+                earlyContent[0] = Files.readString(log);
+                return "Running";
+            });
+
+            cmd.reportBuildFailure("tpl-dev-rebuilding", "tpl-dev",
+                    "Build failed for tpl-dev: prime failed", cause);
+
+            assertTrue(earlyContent[0].contains("connection refused"),
+                    "early report (before diagnostics) should contain step output");
+        });
+    }
+
     /**
      * A deprecated template still builds, and so does what derives from it, but each build says
      * so, naming the template built (the deprecated parent's own build, then the user's), and

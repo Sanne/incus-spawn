@@ -664,6 +664,7 @@ class RepoCloner {
     private static void assertNoStepFailures(List<ImageDef.RepoEntry> repos,
                                              AtomicReferenceArray<StepProgress> states, String verb) {
         var errors = new ArrayList<String>();
+        var output = new StringBuilder();
         for (int i = 0; i < repos.size(); i++) {
             var progress = states.get(i);
             // Require an explicit DONE: a step left RUNNING or unset (e.g. a task that
@@ -675,18 +676,24 @@ class RepoCloner {
                     ? verb + " failed" : progress.detail();
             errors.add(name + ": " + detail);
 
-            // Print the full captured output so the diagnostic isn't reduced to the
-            // concise inline line. Done here, after the animated batch, to avoid
-            // interleaving multi-line logs with the live progress display.
+            // Collect the full captured output for the failure report and print it
+            // to stderr. Done here, after the animated batch, to avoid interleaving
+            // multi-line logs with the live progress display.
             if (progress != null && progress.log() != null && !progress.log().isBlank()) {
-                System.err.println(styled(BOLD, "─── " + verb + " output: " + name + " ───"));
+                var header = "─── " + verb + " output: " + name + " ───";
+                var footer = "─── end " + verb + " output: " + name + " ───";
+                System.err.println(styled(BOLD, header));
                 System.err.println(progress.log().strip());
-                System.err.println(styled(BOLD, "─── end " + verb + " output: " + name + " ───"));
+                System.err.println(styled(BOLD, footer));
+                output.append(header).append('\n');
+                output.append(progress.log().strip()).append('\n');
+                output.append(footer).append("\n\n");
             }
         }
         if (!errors.isEmpty()) {
             throw new IncusException("Failed to " + verb + " " + errors.size()
-                    + " repo(s):\n  " + String.join("\n  ", errors));
+                    + " repo(s):\n  " + String.join("\n  ", errors))
+                    .withStepOutput(output.toString());
         }
     }
 
