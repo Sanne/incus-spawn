@@ -406,7 +406,7 @@ class RepoClonerTest {
 
         verify(incus, never()).execInContainer(eq("test"), eq("agentuser"), contains("shared"));
         verify(incus, times(1)).execInContainer("test", "agentuser",
-                "git clone --single-branch -- 'https://github.com/owner/own.git' '/home/agentuser/own'");
+                "git clone -- 'https://github.com/owner/own.git' '/home/agentuser/own'");
     }
 
     private static ImageDef.RepoEntry repo(String url, String path, String prime) {

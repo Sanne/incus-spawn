@@ -103,9 +103,12 @@ Failures report a network fallback; remote command lines and credential-bearing 
 `GitPreparationTest` executes real Git fixtures for complete and mixed packs, private commits/stashes/staged blobs, a forced private delta base, changed refs, corrupt indexes and certificates, source writes after pinning, standalone snapshots, retention, concurrent writers and readers, and dead-process lease reclamation.
 The physical object inventory is compared against the selected remote closure, not merely its visible refs.
 `RepoClonerPreparedTest` runs the production preparation and guest shell commands, including detached tag checkout, later fetches after source removal, and corruption fallback before priming.
+Checksum checks use `-c -`, supported by GNU and BSD `sha256sum` and the `shasum` fallback; the explicit input file `-` is required by the macOS tool to read the piped manifest.
+Tests require explicit standard input and require valid copies to use the prepared path.
 The existing shallow, hotplug, mount-timeout, detach-failure and project-local tests remain regression coverage.
 
 The [2026-10-13 measurements](../bench/data/git-preparation-2026-10-13.json) use a 1,097,673-object Quarkus fixture, Git 2.56.0 and a JVM build on Linux.
+The recorded source fingerprints identify the measured implementation before the rebase onto #1394 and the checksum-option portability fix.
 
 | Operation | Measured time |
 | --- | --- |

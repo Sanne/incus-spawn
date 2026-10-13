@@ -649,9 +649,10 @@ class RepoCloner {
             var checksums = new StringBuilder();
             ref.prepared().checksums().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey())
                     .forEach(e -> checksums.append(e.getValue()).append("  ").append(e.getKey()).append('\n'));
+            // BSD sha256sum requires an explicit input file: '-' reads the piped manifest.
             command.append("printf '%s' ").append(shellQuote(checksums.toString()))
-                    .append(" | { if command -v sha256sum >/dev/null 2>&1; then sha256sum --check --status;")
-                    .append(" else shasum -a 256 --check --status; fi; }")
+                    .append(" | { if command -v sha256sum >/dev/null 2>&1; then sha256sum -c -;")
+                    .append(" else shasum -a 256 -c -; fi; } >/dev/null")
                     .append(" || { echo 'fatal: prepared Git pack checksum failed' >&2; false; }");
         }
         return command.append("); }").toString();
