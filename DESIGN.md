@@ -2467,12 +2467,15 @@ A worker waiting for the detaches must not hold a slot, or with more referenced 
 A single progress line per repo advances Cloning → Priming → ✓/✗.
 Failures are aggregated and abort the build; as a best-effort fail-fast, once any repo fails a clone that completes afterward skips launching its (potentially expensive) prime — primes already in flight run to completion.
 
-**Host preparation** (#1395): `GitPreparation` retains bounded clean snapshots for all full clones, optionally seeding the first from an independent copy of a discovered checkout's packs.
+**Host preparation** (#1395): `GitPreparation` retains bounded clean snapshots for all full clones, optionally seeding the first by reading a discovered checkout's objects directly.
 Discovery still uses `host-paths` and `repo-paths`, matching every configured remote, including an upstream beside a fork.
-The host checkout is never fetched into or maintained.
+The host checkout is never fetched into or maintained, and its packs are not copied before borrowing.
+A small list of the matching remote's tracking tips supplies negotiation hints through an invocation-scoped `core.alternateRefsCommand`, excluding private refs and other remotes' tips.
+If a reference clone, dissociation or full fsck fails, its partial output is discarded and preparation retries once from the remote without any reference.
+Source removal, corruption or concurrent pruning therefore cannot publish an incomplete snapshot.
 A warm reuse requires a fresh authoritative advertisement with identical heads, tags, default HEAD and object format, plus a verified SHA-256 seal covering all cached repository files.
 Branch/tag pins share the full selection and are checked on every request.
-No graph walk, source pin or repack runs on a hit.
+No graph walk, user-checkout access or repack runs on a hit.
 Changed refs create a fresh `clone --bare --no-local --reference … --dissociate`, preferring a valid previous snapshot as the reference.
 Git's dissociation repack selects the current closure, excluding private reference objects and objects belonging only to deleted refs; a mutable fetch/prune mirror would retain them.
 Bare cloning avoids the historical commit-graph/checkout failure in older Git's dissociation path.

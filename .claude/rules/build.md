@@ -137,8 +137,10 @@ A physical core is its `core_cpus_list` (`thread_siblings_list` before 5.3), nev
 Whatever leaves the tier in doubt (an unreadable capacity, a capacity on some CPUs only, a missing core list) makes it unknown, which the VM default treats as one tier.
 The scan of the real sysfs is made once per process.
 `CpuInfoTest` pins each source with sysfs fixtures (an i7-12700H, a Ryzen AI 300, an X3D, a three-tier ARM SoC, an RK3588 device-tree layout).
-For full clones, `GitPreparation` selects all advertised remote branches and tags in owned host staging, borrowing only independently copied packs from a matching checkout.
+For full clones, `GitPreparation` selects all advertised remote branches and tags in owned host staging, borrowing objects directly from a matching checkout without copying its packs first.
 It never fetches into or maintains the user's repository.
+Only that remote's tracking tips are used for negotiation.
+A failed reference clone, dissociation or integrity check discards the partial output and retries once without a reference before publication.
 A warm snapshot requires matching fresh remote heads, tags, default HEAD and object format, plus a valid SHA-256 seal over all repository bytes.
 Changed refs create a fresh `clone --bare --no-local --reference … --dissociate`, preferring the previous clean snapshot over a host checkout.
 Bare dissociation avoids older Git's commit-graph/checkout bug, and fresh output passes full fsck before publication.

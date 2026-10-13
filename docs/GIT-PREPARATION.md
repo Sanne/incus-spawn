@@ -2,7 +2,7 @@
 
 Full template clones use a bounded cache of clean, independent bare repositories.
 A fresh remote advertisement decides whether the cached snapshot can be reused.
-When it cannot, Git creates a new snapshot with `clone --bare --no-local --reference … --dissociate`, borrowing objects from the previous clean snapshot or independently pinned host packs.
+When it cannot, Git creates a new snapshot with `clone --bare --no-local --reference … --dissociate`, borrowing objects from the previous clean snapshot or the user's existing checkout directly.
 The guest copies the resulting repository with `--no-hardlinks` and verifies its object bytes before priming.
 
 This is the clean-snapshot alternative to the certificate/bitmap implementation in [PR #1400](https://github.com/Sanne/incus-spawn/pull/1400), addressing [#1395](https://github.com/Sanne/incus-spawn/issues/1395).
@@ -30,7 +30,7 @@ This covers refs, HEAD, config, pack/index pairs and any added object or alterna
 Reuse rehashes the owned bytes and checks the seal before invoking Git in that repository.
 Damaged snapshots are discarded as references and rebuilt.
 The seal detects corruption of owned cache data; it is not an authentication boundary against someone who can rewrite the host user's cache and its seal.
-A hit does no source pinning, object enumeration, repacking or full fsck.
+A hit does not access the user checkout or perform object enumeration, repacking or full fsck.
 
 ## Creating a snapshot
 
@@ -39,12 +39,20 @@ Otherwise discovery can supply an existing checkout through `host-paths` or `rep
 Builds never fetch into, maintain, create or request permission to create user checkouts.
 Explicit `update-all` and instance push/pull linking retain their existing behavior.
 
-Only regular pack/index files are copied from a host checkout into private staging.
-These are independent copies, never hardlinks to user-owned inodes, so source deletion, GC or in-place writes after pinning cannot change them.
-Shallow, alternate-backed and promisor sources are ineligible.
-Source refs used for negotiation are limited to the matching remote's tracking refs; local branches and private tags are not advertised as haves.
-A loose public tip can use its nearest packed first-parent ancestor, bounded to 64 candidates, without importing user loose objects.
-User config, hooks, reflogs, loose objects, alternates, bitmaps and commit graphs are not copied.
+The user's repository supplies objects in place through `--reference`; no preliminary pack/index copy or hardlink is made.
+Both packed and loose objects can be borrowed, including from a loose-only checkout.
+Shallow, alternate-backed and promisor sources remain ineligible.
+A small staging file records only the matching remote's tracking object IDs for fetch negotiation.
+An invocation-scoped `core.alternateRefsCommand` reads that file, preventing local branches, private tags or other remotes' tracking tips from being advertised as haves.
+User config, hooks, reflogs, refs and other metadata are never copied into the result.
+No part of the user's repository is mounted in the guest for a full clone.
+
+The source can change while it is being read.
+Git may recover by downloading objects it can no longer borrow.
+If the reference clone, dissociation or full integrity check fails, preparation deletes the entire partial repository and retries once from the real remote without any reference.
+An unavailable source during reference selection also uses the remote directly.
+Interruption is propagated, and a failed remote retry cannot publish a snapshot.
+After successful dissociation, verification, publication and guest copying no longer access the user checkout.
 
 The authoritative remote supplies refs to a new bare transport clone.
 With a reference, Git's `--dissociate` repacks the selected objects into a standalone, non-thin store and removes the alternate.
@@ -94,18 +102,18 @@ No prime runs while any reference remains mounted, retaining the barrier require
 ## Validation and measurements
 
 Real-Git tests compare the physical object inventory with the selected remote closure, including mixed private commits, stashes, staged blobs and a forced private delta base.
-They cover ref rewrites/deletions, moved tags, default HEAD changes, branch/tag pins, SHA-256 repositories, empty remotes, source writes after pinning, snapshot corruption and an unavailable remote.
+They cover ref rewrites/deletions, moved tags, default HEAD changes, branch/tag pins, SHA-256 repositories, empty remotes, source removal, corruption and pruning while borrowing, integrity-failure retry, snapshot corruption and an unavailable remote.
 Concurrency tests cover independent readers, replacement and eviction, cross-process leases and dead-reader reclamation.
 Guest-command tests exercise independent copies, later fetches, corruption fallback and the macOS checksum-input requirement.
 Existing shallow, project-local, hotplug, timeout and detach-failure tests remain regression coverage.
 
 `bench/GitPreparationBench.java` runs the production preparation code with a fresh cache and reports cold/warm phase timings.
 Measurements and their limits are recorded with the raw dataset linked from `bench/README.md`.
-Build diagnostics report remote selection, snapshot validation, pinning, cloning, verification and publication durations alongside guest-copy time.
+Build diagnostics report remote selection, snapshot validation, reference selection, cloning, verification and publication durations alongside guest-copy time.
 Credential-bearing command lines are not included in failure diagnostics.
 
 The [production Quarkus measurements](../bench/data/git-clean-snapshots-2026-10-13.json) use Git 2.56.0, four packing threads, loopback transport, tmpfs and a warm filesystem cache.
-The recorded commit and source fingerprints precede the Unicode ref-order normalization.
+These historical measurements include the former preliminary host-pack copy and precede direct borrowing; the recorded commit and source fingerprints identify that implementation.
 The fixture contains 1,097,673 selected objects, with private objects both loose and mixed into the host's packs.
 
 | Preparation | Time |
@@ -120,7 +128,10 @@ The retained snapshot is about 310 MiB in this fixture.
 These are small-sample JVM host measurements excluding Incus, guest copying and priming; #1400's earlier figures used different filesystem conditions and are not a controlled direct comparison.
 The choice retains a full clean payload and pays for generation verification in exchange for simpler state and cheap unchanged rebuilds.
 
-Local validation passed 4,479 tests with one skipped, with focused preparation and guest-copy checks passing on Git 2.56.0 and 2.54.0.
+Local `mvn package` passed 4,487 tests with one skipped and no failures or errors on Git 2.56.0.
+Focused preparation, cache and guest-copy tests also passed with Git 2.54.0.
 A real Incus 6.23 container passed first preparation, cached reuse, independence after detach, full fsck and exact physical object inventory checks.
-The nested kernel lacks idmapped mounts, so successful mount checks used a test-only omission of `shift=` with an explicit UID mapping; the unchanged production mount settings separately exercised the network fallback.
-macOS, native and VM integration checks remain CI responsibilities for this draft.
+The direct-borrowing smoke test used an explicit UID mapping in this nested container.
+Its cold/warm checks omitted `shift=` in the test harness, and an additional warm copy passed with the unchanged production mount options.
+Earlier validation also exercised the network fallback when the nested kernel refused a shifted mount.
+macOS, native and VM integration checks passed for the preceding revision and run again in CI for this update.

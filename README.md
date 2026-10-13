@@ -1264,7 +1264,7 @@ What holds today: the inner proxy presents the outer instance's proof for an ins
 
 A template whose own `accounts:` says `claude: inherit` builds Claude for an API key, the form the outer proxy turns into whichever account it serves. The git identity of an instance that inherits GitHub is the outer account's when it starts inheriting; if the outer instance later switches GitHub accounts, branch again or run `isx account set` to pick up the new one.
 
-Builds can reuse Git objects from linked host checkouts without changing those checkouts. Full clones select all remote branches and tags; shallow clones retain their configured depth. A bounded cache of clean snapshots avoids repeated downloads and packing, including when a linked checkout exists:
+Builds can read Git objects directly from linked host checkouts without changing them or copying their object stores first. Full clones select all remote branches and tags; shallow clones retain their configured depth. A bounded cache of clean snapshots avoids repeated downloads and packing, including when a linked checkout exists:
 
 ```yaml
 git-cache:

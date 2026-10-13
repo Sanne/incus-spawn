@@ -15,6 +15,7 @@ import java.util.TreeMap;
 import java.util.function.Consumer;
 
 import static dev.incusspawn.git.PreparationGit.*;
+import static dev.incusspawn.incus.Container.shellQuote;
 
 /** Standalone full clones selected by the remote, retained as bounded immutable snapshots. */
 public final class GitPreparation {
@@ -84,50 +85,50 @@ public final class GitPreparation {
             } catch (IOException invalid) {
                 // Damaged cache bytes or metadata are rebuildable; never use them as a reference.
             }
-            var reference = previous.resolve("repo.git");
-            if (manifest != null && advertised != null && advertised.equals(selection(reference))) {
-                validatePin(reference, request.branch());
+            var previousRepo = previous.resolve("repo.git");
+            if (manifest != null && advertised != null && advertised.equals(selection(previousRepo))) {
+                validatePin(previousRepo, request.branch());
                 elapsed(timings, "check", start);
                 success = true;
-                return new Prepared(lease, reference, "cached clean snapshot", objectChecksums(manifest), timings);
+                return new Prepared(lease, previousRepo, "cached clean snapshot", objectChecksums(manifest), timings);
             }
             elapsed(timings, "check", start);
 
             start = System.nanoTime();
-            phase.accept("Pinning Git objects");
-            boolean borrowed = manifest != null;
-            if (!borrowed) {
+            phase.accept("Selecting Git reference");
+            Reference reference = manifest == null ? null : new Reference(previousRepo, null);
+            var tips = lease.path.resolve("reference-tips");
+            boolean retried = false;
+            if (reference == null) {
                 delete(previous);
-                reference = lease.path.resolve("source.git");
-                if (request.checkout() != null) borrowed = pinCheckout(request.checkout(), request.url(), reference);
+                if (request.checkout() != null) {
+                    try {
+                        reference = hostReference(request.checkout(), request.url(), tips);
+                    } catch (IOException unavailable) {
+                        if (Thread.currentThread().isInterrupted()) throw unavailable;
+                        phase.accept("Host reference unavailable; cloning remote");
+                    }
+                }
             }
-            elapsed(timings, "pin", start);
+            elapsed(timings, "reference", start);
 
-            start = System.nanoTime();
-            phase.accept("Creating clean Git snapshot");
             var staged = Files.createDirectory(lease.path.resolve("snapshot"));
             var result = staged.resolve("repo.git");
-            // A bare clone avoids the commit-graph/checkout bug in older Git's --dissociate.
-            // Transport selection and Git's non-thin repack drop every unselected reference object.
-            var clone = new ArrayList<>(List.of("clone", "--bare", "--no-local", "--template="));
-            if (borrowed) clone.addAll(List.of("--reference", reference.toString(), "--dissociate"));
-            clone.addAll(List.of("--", request.url(), result.toString()));
-            run(lease.path, null, null, clone);
-            if (Files.exists(result.resolve("shallow")) || Files.exists(result.resolve("objects/info/alternates"))) {
-                throw new IOException("Git snapshot is not a standalone full repository");
+            try {
+                cloneSnapshot(request.url(), lease.path, result, reference, phase, timings);
+            } catch (IOException failedReference) {
+                if (reference == null || Thread.currentThread().isInterrupted()) throw failedReference;
+                // A live checkout can be repacked, removed or damaged while we borrow from it.
+                // Discard every byte of the failed attempt and retry once with only the real remote.
+                delete(result);
+                reference = null;
+                retried = true;
+                phase.accept("Retrying Git snapshot without reference");
+                cloneSnapshot(request.url(), lease.path, result, null, phase, timings);
             }
             validatePin(result, request.branch());
-            // Small network clones may unpack received objects. Normalize those once; a dissociated
-            // reference clone already has its selected pack and must not pay for a second repack.
-            if (hasLooseObjects(result)) {
-                git(result, "repack", "-a", "-d");
-                git(result, "prune-packed");
-            }
-            elapsed(timings, "clone", start);
 
             start = System.nanoTime();
-            phase.accept("Verifying Git snapshot");
-            git(result, "fsck", "--full", "--no-dangling");
             // Recreate only the selected refs and pack/index pairs in a minimal bare repository.
             // Discard clone config (including credentials), reflogs and generated object sidecars.
             var clean = lease.path.resolve("prepared.git");
@@ -145,10 +146,11 @@ public final class GitPreparation {
             cache.publishSnapshot(key, staged);
             delete(staged);
             delete(previous);
-            delete(lease.path.resolve("source.git"));
+            Files.deleteIfExists(tips);
             elapsed(timings, "publish", start);
             success = true;
-            return new Prepared(lease, clean, borrowed ? "reference-seeded clean snapshot" : "new clean snapshot",
+            return new Prepared(lease, clean, reference != null ? "reference-seeded clean snapshot"
+                    : retried ? "new clean snapshot (reference retry)" : "new clean snapshot",
                     objectChecksums(manifest), timings);
         } finally {
             if (!success) lease.close();
@@ -156,7 +158,7 @@ public final class GitPreparation {
     }
 
     private static void elapsed(Map<String, Long> timings, String name, long start) {
-        timings.put(name, (System.nanoTime() - start) / 1_000_000);
+        timings.merge(name, (System.nanoTime() - start) / 1_000_000, Long::sum);
     }
 
     private static void init(Path repo, String format) throws IOException {
@@ -164,54 +166,58 @@ public final class GitPreparation {
         git(repo, "init", "--bare", "--template=", "--object-format=" + format, ".");
     }
 
-    /** An independent copy pins bytes, not names or shared inodes, across source GC and in-place writes. */
-    private static boolean pinCheckout(Path checkout, String url, Path pinned) throws IOException {
-        if (!git(checkout, "rev-parse", "--is-shallow-repository").equals("false")) return false;
+    private record Reference(Path repository, Path tips) {}
+
+    /** Read objects in place; only the matching remote's tracking tips become negotiation hints. */
+    private static Reference hostReference(Path checkout, String url, Path tips) throws IOException {
+        if (!git(checkout, "rev-parse", "--is-shallow-repository").equals("false")) return null;
         var objects = Path.of(git(checkout, "rev-parse", "--path-format=absolute", "--git-path", "objects"));
-        if (Files.exists(objects.resolve("info/alternates"))) return false;
-        var sourcePacks = children(objects.resolve("pack"));
-        if (sourcePacks.stream().anyMatch(p -> p.toString().endsWith(".promisor"))) return false;
-        if (sourcePacks.stream().noneMatch(p -> p.toString().endsWith(".pack"))) return false;
-        init(pinned, git(checkout, "rev-parse", "--show-object-format"));
-        var target = Files.createDirectories(pinned.resolve("objects/pack"));
-        for (var source : sourcePacks) {
-            if (!packFile(source)) continue;
-            if (!Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)) throw new IOException("Non-regular source pack");
-            Files.copy(source, target.resolve(source.getFileName()));
-        }
-        // Never advertise local branches or private tags as fetch haves. Only this remote's tracking
-        // refs supply negotiation hints; authority still comes from the fresh remote clone.
+        if (Files.exists(objects.resolve("info/alternates"))) return null;
+        if (children(objects.resolve("pack")).stream().anyMatch(p -> p.toString().endsWith(".promisor"))) return null;
         var remote = GitRemoteUtils.matchingRemoteName(checkout, url);
-        if (remote == null) return true;
-        var refs = git(checkout, "for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes/" + remote + "/");
-        var input = pinned.resolve("tips.in");
-        var output = pinned.resolve("tips.out");
-        var lines = refs.isEmpty() ? List.<String>of() : refs.lines().toList();
-        Files.write(input, lines.stream().map(s -> s.substring(0, s.indexOf(' '))).toList());
-        run(pinned, input, output, List.of("cat-file", "--batch-check=%(objectname) %(objecttype)"));
-        var checked = Files.readAllLines(output);
-        var commands = new ArrayList<String>();
-        for (int i = 0; i < checked.size(); i++) {
-            var line = lines.get(i);
-            var oid = line.substring(0, line.indexOf(' '));
-            if (!checked.get(i).endsWith(" missing")) {
-                commands.add("update " + line.substring(line.indexOf(' ') + 1) + " " + oid);
-            } else {
-                // A small fetch often leaves a public tip loose. Find a packed public ancestor
-                // without importing any user loose objects or losing all negotiation on that branch.
-                var ancestors = git(checkout, "rev-list", "--first-parent", "--max-count=64", oid, "--");
-                Files.writeString(input, ancestors + "\n");
-                run(pinned, input, output, List.of("cat-file", "--batch-check=%(objectname) %(objecttype)"));
-                var ancestor = Files.readAllLines(output).stream().filter(s -> s.endsWith(" commit")).findFirst();
-                if (ancestor.isPresent()) commands.add("update " + line.substring(line.indexOf(' ') + 1)
-                        + " " + ancestor.get().split(" ")[0]);
+        if (remote == null) return null;
+        var refs = git(checkout, "for-each-ref", "--format=%(objectname)", "refs/remotes/" + remote + "/");
+        Files.writeString(tips, refs.isEmpty() ? "" : refs + "\n");
+        return new Reference(checkout.toAbsolutePath(), tips);
+    }
+
+    private static void cloneSnapshot(String url, Path work, Path result, Reference reference,
+                                      Consumer<String> phase, Map<String, Long> timings) throws IOException {
+        long start = System.nanoTime();
+        phase.accept("Creating clean Git snapshot");
+        try {
+            var clone = new ArrayList<String>();
+            if (reference != null && reference.tips() != null) {
+                // Git appends the alternate's repository path. Ignore it: emitting only captured
+                // public tracking tips also overrides a global alternateRefsCommand/prefix policy.
+                clone.addAll(List.of("-c", "core.alternateRefsCommand=sh -c 'cat \"$1\"' - "
+                        + shellQuote(reference.tips().toString())));
             }
+            // A bare clone avoids the commit-graph/checkout bug in older Git's --dissociate.
+            // The real remote selects refs; Git's non-thin repack excludes private reference objects.
+            clone.addAll(List.of("clone", "--bare", "--no-local", "--template="));
+            if (reference != null) clone.addAll(List.of("--reference", reference.repository().toString(), "--dissociate"));
+            clone.addAll(List.of("--", url, result.toString()));
+            run(work, null, null, clone);
+            if (Files.exists(result.resolve("shallow")) || Files.exists(result.resolve("objects/info/alternates"))) {
+                throw new IOException("Git snapshot is not a standalone full repository");
+            }
+            // Small network clones may unpack received objects. Normalize those once; a dissociated
+            // reference clone already has its selected pack and must not pay for a second repack.
+            if (hasLooseObjects(result)) {
+                git(result, "repack", "-a", "-d");
+                git(result, "prune-packed");
+            }
+        } finally {
+            elapsed(timings, "clone", start);
         }
-        Files.write(input, commands);
-        run(pinned, input, null, List.of("update-ref", "--stdin"));
-        Files.delete(input);
-        Files.delete(output);
-        return true;
+        start = System.nanoTime();
+        phase.accept("Verifying Git snapshot");
+        try {
+            git(result, "fsck", "--full", "--no-dangling");
+        } finally {
+            elapsed(timings, "verify", start);
+        }
     }
 
     /** Canonical heads, tags, HEAD target and inferred object format. Unborn/ambiguous HEADs cannot hit. */

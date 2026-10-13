@@ -3,6 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 Full Git clone acceleration is specified in [Git preparation](docs/GIT-PREPARATION.md): remote-authoritative selection, bare reference/dissociation, immutable bounded clean snapshots and reader leases.
+Borrow host objects directly, without a preliminary pack copy; a failed reference attempt retries once from the remote before publication.
 Never run build-time fetch or maintenance in a user checkout, or mount its full object store for a full clone.
 The shallow transport/fixup path remains separate.
 

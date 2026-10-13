@@ -13,7 +13,7 @@ java --class-path common/target/classes bench/GitPreparationBench.java <remote-u
 
 Omit the checkout to measure a first clone seeded entirely from the remote. The checkout is read only; its configured remote should match the URL so its remote-tracking refs can supply fetch negotiation hints. Use a local transport fixture to separate CPU and disk cost from WAN transfer. These figures exclude Incus mounts, guest checkout and priming; normal build diagnostics report the host phases, attach, guest and detach times.
 
-The [clean-snapshot measurements](data/git-clean-snapshots-2026-10-13.json) use a controlled Quarkus fixture with 1,097,673 objects. The [preparation design](../docs/GIT-PREPARATION.md) describes selection, retention and platform limits. The certificate/bitmap alternative has its separate measurements in [PR #1400](https://github.com/Sanne/incus-spawn/pull/1400).
+The [initial clean-snapshot measurements](data/git-clean-snapshots-2026-10-13.json) use a controlled Quarkus fixture with 1,097,673 objects; they predate removal of the preliminary host-pack copy, as identified by their recorded source revision. The [preparation design](../docs/GIT-PREPARATION.md) describes selection, retention and platform limits. The certificate/bitmap alternative has its separate measurements in [PR #1400](https://github.com/Sanne/incus-spawn/pull/1400).
 
 ## Prerequisites
 

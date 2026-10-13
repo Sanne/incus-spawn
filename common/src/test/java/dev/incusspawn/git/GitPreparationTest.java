@@ -4,6 +4,8 @@ import dev.incusspawn.config.GitCacheConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -149,49 +151,163 @@ class GitPreparationTest {
         }
     }
 
-    @Test void changingTheSourceAfterPinningCannotChangeThePreparedBytes() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"remove", "corrupt", "prune"})
+    void changedSourceEitherRecoversOrRetriesWithoutAReference(String mutation) throws Exception {
         start();
-        var expected = reachable(remote);
+        var phases = new ArrayList<String>();
         try (var result = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, host), phase -> {
-            if (phase.equals("Creating clean Git snapshot")) {
+            phases.add(phase);
+            if (phase.equals("Creating clean Git snapshot") && phases.stream().filter(phase::equals).count() == 1) {
                 try {
-                    for (var file : PreparationGit.children(host.resolve(".git/objects/pack"))) {
-                        // An in-place write changes a hardlink too: this catches an unsafe pin implementation.
-                        assertTrue(file.toFile().setWritable(true));
-                        Files.writeString(file, "source replaced during preparation");
+                    var work = PreparationGit.children(cache.resolve("work")).getFirst();
+                    try (var files = Files.walk(work)) {
+                        assertFalse(files.anyMatch(p -> p.toString().endsWith(".pack") || p.toString().endsWith(".idx")),
+                                "reading a host reference must not pre-copy any pack/index files");
                     }
+                    if (mutation.equals("remove")) PreparationGit.delete(host);
+                    else if (mutation.equals("corrupt")) {
+                        for (var file : PreparationGit.children(host.resolve(".git/objects/pack"))) {
+                            assertTrue(file.toFile().setWritable(true));
+                            Files.writeString(file, "source replaced during preparation");
+                        }
+                    } else {
+                        for (var ref : git(host, "for-each-ref", "--format=%(refname)").lines().toList()) {
+                            git(host, "update-ref", "--no-deref", "-d", ref);
+                        }
+                        git(host, "reflog", "expire", "--expire=now", "--all");
+                        git(host, "gc", "--prune=now");
+                    }
+                } catch (Exception e) { throw new RuntimeException(e); }
+            }
+        })) {
+            long attempts = phases.stream().filter("Creating clean Git snapshot"::equals).count();
+            if (mutation.equals("remove")) {
+                assertEquals("new clean snapshot (reference retry)", result.strategy());
+                assertEquals(2, attempts);
+            } else {
+                // Git can discard missing negotiation tips itself and download the complete closure.
+                assertTrue(attempts == 1 || attempts == 2);
+            }
+            sameObjects(remote, result.repository());
+            assertEquals("", git(result.repository(), "fsck", "--full", "--no-dangling"));
+        }
+        try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }
+    }
+
+    @Test void unavailableCheckoutDuringSelectionUsesTheRemoteDirectly() throws Exception {
+        start();
+        PreparationGit.delete(host);
+        var phases = new ArrayList<String>();
+        try (var result = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, host), phases::add)) {
+            assertEquals("new clean snapshot", result.strategy());
+            assertTrue(phases.contains("Host reference unavailable; cloning remote"));
+            assertEquals(1, phases.stream().filter("Creating clean Git snapshot"::equals).count());
+            sameObjects(remote, result.repository());
+        }
+    }
+
+    @Test void failedIntegrityCheckRetriesBeforePublishing() throws Exception {
+        start();
+        var checks = new java.util.concurrent.atomic.AtomicInteger();
+        try (var result = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, host), phase -> {
+            if (phase.equals("Verifying Git snapshot") && checks.incrementAndGet() == 1) {
+                try {
+                    assertTrue(PreparationGit.children(cache.resolve("snapshots")).isEmpty());
+                    var work = PreparationGit.children(cache.resolve("work")).getFirst();
+                    var pack = PreparationGit.children(work.resolve("snapshot/repo.git/objects/pack")).stream()
+                            .filter(p -> p.toString().endsWith(".pack")).findFirst().orElseThrow();
+                    assertTrue(pack.toFile().setWritable(true));
+                    Files.writeString(pack, "incomplete or damaged dissociation");
                 } catch (IOException e) { throw new java.io.UncheckedIOException(e); }
             }
         })) {
-            assertEquals(expected, allObjects(result.repository()));
+            assertEquals(2, checks.get());
+            assertEquals("new clean snapshot (reference retry)", result.strategy());
+            sameObjects(remote, result.repository());
+        }
+    }
+
+    @Test void aFailedRemoteRetryLeavesNoSnapshotOrWork() throws Exception {
+        start();
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        assertThrows(IOException.class, () -> preparation.prepare(
+                new GitPreparation.Request(remote.toUri().toString(), null, host), phase -> {
+                    if (phase.equals("Creating clean Git snapshot") && attempts.incrementAndGet() == 1) {
+                        try {
+                            PreparationGit.delete(host);
+                            PreparationGit.delete(remote);
+                        } catch (IOException e) { throw new java.io.UncheckedIOException(e); }
+                    }
+                }));
+        assertEquals(2, attempts.get(), "retry must be bounded and must not keep borrowing the failed source");
+        assertTrue(PreparationGit.children(cache.resolve("snapshots")).isEmpty());
+        assertTrue(PreparationGit.children(cache.resolve("work")).isEmpty());
+    }
+
+    @Test void completedDissociationNeedsNoFurtherAccessToTheSource() throws Exception {
+        start();
+        try (var result = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, host), phase -> {
+            if (phase.equals("Verifying Git snapshot")) {
+                try { PreparationGit.delete(host); }
+                catch (IOException e) { throw new java.io.UncheckedIOException(e); }
+            }
+        })) {
+            assertEquals("reference-seeded clean snapshot", result.strategy());
+            sameObjects(remote, result.repository());
             assertEquals("", git(result.repository(), "fsck", "--full", "--no-dangling"));
         }
     }
 
-    @Test void negotiationUsesPublicTrackingRefsAndFindsAPackedAncestorOfALooseTip() throws Exception {
+    @Test void directReferenceUsesOnlyMatchingTrackingTipsAndCanReadLooseObjects() throws Exception {
         start();
-        var previousPublic = git(remote, "rev-parse", "HEAD");
+        git(host, "remote", "rename", "origin", "upstream");
         commitBinary(host, "private negotiation tip");
         var secret = git(host, "rev-parse", "HEAD");
         git(host, "tag", "private-tag");
+        git(host, "update-ref", "refs/remotes/private/main", secret);
         git(host, "repack", "-a", "-d");
         commitBinary(remote, "new loose public tip");
-        git(host, "fetch", "origin");
+        git(host, "fetch", "upstream");
         var tip = git(remote, "rev-parse", "HEAD");
         assertTrue(Files.isRegularFile(host.resolve(".git/objects/" + tip.substring(0, 2) + "/" + tip.substring(2))));
+        // This path is passed to Git's shell-based alternateRefsCommand; it must be quoted literally.
+        cache = tmp.resolve("cache ' $(touch unexpected) $literal");
+        preparation = new GitPreparation(cache, GitCacheConfig.DEFAULT);
+        var before = contents(host.resolve(".git"));
         try (var result = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, host), phase -> {
             if (phase.equals("Creating clean Git snapshot")) {
                 try {
-                    var source = PreparationGit.children(cache.resolve("work")).getFirst().resolve("source.git");
-                    var hints = git(source, "for-each-ref", "--format=%(refname) %(objectname)");
+                    var work = PreparationGit.children(cache.resolve("work")).getFirst();
+                    var hints = Files.readString(work.resolve("reference-tips"));
                     assertFalse(hints.contains(secret), hints);
-                    assertFalse(hints.contains("refs/heads/") || hints.contains("refs/tags/"), hints);
-                    assertTrue(hints.contains("refs/remotes/origin/main " + previousPublic), hints);
+                    assertTrue(hints.contains(tip), hints);
+                    try (var files = Files.walk(work)) {
+                        assertFalse(files.anyMatch(p -> p.toString().endsWith(".pack") || p.toString().endsWith(".idx")));
+                    }
                 } catch (Exception e) { throw new RuntimeException(e); }
             }
         })) {
+            assertEquals("reference-seeded clean snapshot", result.strategy());
             sameObjects(remote, result.repository());
         }
+        assertEquals(before, contents(host.resolve(".git")));
+        try (var paths = Files.walk(cache)) {
+            assertFalse(paths.anyMatch(p -> p.getFileName().toString().equals("unexpected")));
+        }
+    }
+
+    @Test void looseOnlyCheckoutsCanSupplyAReferenceWithoutBeingPacked() throws Exception {
+        start();
+        PreparationGit.delete(host);
+        git(tmp, "clone", "-q", "--no-hardlinks", "--", remote.toString(), host.toString());
+        assertTrue(PreparationGit.children(host.resolve(".git/objects/pack")).isEmpty());
+        var before = contents(host.resolve(".git"));
+        try (var result = prepare(host, null)) {
+            assertEquals("reference-seeded clean snapshot", result.strategy());
+            sameObjects(remote, result.repository());
+        }
+        assertEquals(before, contents(host.resolve(".git")));
     }
 
     @Test void corruptSnapshotBytesAndMetadataAreRebuiltWithoutBorrowingThem() throws Exception {
