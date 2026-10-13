@@ -249,7 +249,9 @@ public final class GitPreparation {
     }
 
     private static String refs(Path repo) throws IOException {
-        return git(repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/", "refs/tags/");
+        // Use the advertisement's Java ordering too: Git's UTF-8 order differs for supplementary characters.
+        return git(repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/", "refs/tags/")
+                .lines().sorted().collect(java.util.stream.Collectors.joining("\n"));
     }
 
     private static String refText(Map<String, String> refs) {

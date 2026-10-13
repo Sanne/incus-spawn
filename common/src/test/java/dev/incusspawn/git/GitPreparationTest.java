@@ -250,6 +250,14 @@ class GitPreparationTest {
         try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }
     }
 
+    @Test void unicodeRefNamesUseTheSameOrderingForAdvertisementsAndSnapshots() throws Exception {
+        start();
+        git(remote, "branch", "\uE000");
+        git(remote, "branch", "\uD83D\uDE04");
+        try (var result = prepare(host, null)) { sameObjects(remote, result.repository()); }
+        try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }
+    }
+
     @Test void cachedSnapshotsStillRequireAnAccessibleAuthoritativeRemote() throws Exception {
         start();
         try (var result = prepare(host, null)) { }

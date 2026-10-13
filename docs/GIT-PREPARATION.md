@@ -105,6 +105,7 @@ Build diagnostics report remote selection, snapshot validation, pinning, cloning
 Credential-bearing command lines are not included in failure diagnostics.
 
 The [production Quarkus measurements](../bench/data/git-clean-snapshots-2026-10-13.json) use Git 2.56.0, four packing threads, loopback transport, tmpfs and a warm filesystem cache.
+The recorded commit and source fingerprints precede the Unicode ref-order normalization.
 The fixture contains 1,097,673 selected objects, with private objects both loose and mixed into the host's packs.
 
 | Preparation | Time |

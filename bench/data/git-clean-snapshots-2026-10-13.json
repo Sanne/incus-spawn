@@ -131,6 +131,8 @@
     "One first-generation or refresh sample per case, two warm samples; no native-image measurements.",
     "Host preparation only: no Incus mount, guest copy, checksum or prime costs.",
     "Loopback Git transport and warm tmpfs: no WAN latency or cold physical disk I/O.",
-    "Not a controlled direct comparison with PR #1400 measurements taken on a different filesystem."
-  ]
+    "Not a controlled direct comparison with PR #1400 measurements taken on a different filesystem.",
+    "Measurements precede the Unicode ref-order normalization; source_commit and fingerprints identify the measured production code."
+  ],
+  "source_commit": "16179c9cccd0eb86af08c071b75b1b09598804ad"
 }

@@ -19,6 +19,7 @@ public class GitPreparationBench {
             for (int trial = 0; trial < 3; trial++) {
                 long start = System.nanoTime();
                 try (var result = preparation.prepare(request, phase -> {})) {
+                    long elapsed = (System.nanoTime() - start) / 1_000_000;
                     var phases = result.timingsMillis().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey())
                             .map(e -> "\"" + e.getKey() + "\":" + e.getValue()).collect(Collectors.joining(","));
                     long retained = 0;
@@ -29,7 +30,7 @@ public class GitPreparationBench {
                         }
                     }
                     System.out.println("{\"trial\":" + trial + ",\"strategy\":\"" + result.strategy()
-                            + "\",\"total_ms\":" + (System.nanoTime() - start) / 1_000_000
+                            + "\",\"total_ms\":" + elapsed
                             + ",\"retained_bytes\":" + retained + ",\"phases_ms\":{" + phases + "}}");
                 }
             }
