@@ -5,6 +5,7 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
+import dev.incusspawn.git.GitPreparation;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -31,12 +32,13 @@ import static dev.incusspawn.util.BuildOutput.BOLD;
 import static dev.incusspawn.util.BuildOutput.styled;
 
 /**
- * Clones a template's repos into the build instance, each from a host checkout where one is
- * available, and primes them.
+ * Prepares and clones a template's repositories, then primes them after every reference is detached.
  */
 class RepoCloner {
 
     private final IncusClient incus;
+    private final java.util.Map<Integer, GitPreparation.Prepared> prepared = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<Integer, String> preparationTimings = new java.util.concurrent.ConcurrentHashMap<>();
 
     RepoCloner(IncusClient incus) {
         this.incus = incus;
@@ -47,8 +49,12 @@ class RepoCloner {
     // Half the 48-connection valve, leaving room for concurrent TUI/status activity
     private static final int MACOS_TUNNEL_BUDGET = 24;
 
-    /** A host checkout to clone a repo from: planned up front on the host, attached by the repo's worker. */
-    record RepoReference(String deviceName, String containerPath, String source, String skipReason) {
+    /** A preparation request, prepared repository, or shallow checkout, attached by the repo's worker. */
+    record RepoReference(String deviceName, String containerPath, String source, String skipReason,
+                         GitPreparation.Request request, GitPreparation.Prepared prepared) {
+        RepoReference(String deviceName, String containerPath, String source, String skipReason) {
+            this(deviceName, containerPath, source, skipReason, null, null);
+        }
         static RepoReference skipped(String reason) { return new RepoReference(null, null, null, reason); }
         boolean hasDevice() { return deviceName != null; }
     }
@@ -163,6 +169,8 @@ class RepoCloner {
             try {
                 incus.devicesRemoveAll(container.name(),
                         attached.stream().map(idx -> refs[idx].deviceName()).toList());
+                for (int idx : attached) releasePrepared(idx);
+                attached.clear();
             } catch (Exception e) {
                 System.err.println("Warning: failed to remove reference device: " + e.getMessage());
             }
@@ -177,7 +185,7 @@ class RepoCloner {
      * per-repo progress display. Each repo's
      * declared {@code prime} command runs in the same worker once that repo's
      * clone finishes <em>and</em> every host reference has been detached, so
-     * priming still pipelines with the remaining network clones. A reference is
+     * priming still pipelines with the remaining network clones. A shallow reference is
      * the host checkout's whole working tree (untracked files, unpushed work),
      * and a prime command is arbitrary code with network access, so no prime may
      * run while one is mounted (#765). Which repos have a reference is decided
@@ -194,12 +202,8 @@ class RepoCloner {
      * are cloned from the network, since the reference would hand the host
      * checkout to prime commands the cloned repository itself controls.
      *
-     * <p>When a matching host-side checkout is available (via SpawnConfig
-     * host-path/repo-paths), the clone runs locally from the mounted reference
-     * ({@code git clone --no-hardlinks}) instead of fetching from the remote.
-     * This copies pack files directly — no repack or dissociation needed.  After
-     * the local clone, the remote URL is fixed to the real origin and a
-     * {@code git fetch} picks up any commits added since the last host refresh.
+     * <p>Full clones mount only a standalone repository prepared from remote-authoritative refs.
+     * Shallow clones retain the transport/fixup path from a discovered checkout.
      */
     void cloneRepos(Container container, ImageDef imageDef, java.util.Map<String, ImageDef> defs,
                     MachineType machineType) {
@@ -224,10 +228,25 @@ class RepoCloner {
             // Phase 1 (serial, host only): find the host checkout each repo can clone from.
             var refs = new RepoReference[repos.size()];
             var projectLocal = imageDef.getProjectRoot() != null;
+            var deviceNames = new java.util.HashSet<String>();
             for (int i = 0; i < repos.size(); i++) {
                 refs[i] = projectLocal
                         ? RepoReference.skipped("project-local template, host checkouts are not shared")
                         : planReference(repos.get(i).getUrl(), config);
+                // Shallow selection keeps the established transport/fixup path, with no host fetch.
+                if (repos.get(i).getDepth() != null && refs[i] != null && refs[i].request() != null) {
+                    var r = refs[i];
+                    refs[i] = r.request().checkout() == null ? null
+                            : new RepoReference(r.deviceName(), r.containerPath(),
+                                    HostResourceSetup.translateForVm(r.request().checkout().toString()), null);
+                }
+                if (refs[i] != null && refs[i].hasDevice() && !deviceNames.add(refs[i].deviceName())) {
+                    // Two entries for one URL can prepare different revisions concurrently.
+                    // They must not PATCH the same device or remove each other's mount.
+                    var r = refs[i];
+                    refs[i] = new RepoReference(r.deviceName() + "-" + i, r.containerPath() + "-" + i,
+                            r.source(), r.skipReason(), r.request(), r.prepared());
+                }
             }
             var planned = java.util.Arrays.stream(refs).filter(r -> r != null && r.hasDevice())
                     .map(RepoReference::containerPath).toArray(String[]::new);
@@ -274,6 +293,8 @@ class RepoCloner {
                 mounts.removeLeftovers();
             }
 
+            preparationTimings.forEach((idx, timing) -> BuildOutput.note(repoDisplayName(repos.get(idx)) + ": " + timing));
+
             assertNoStepFailures(repos, states, "prepare");
         }
     }
@@ -305,15 +326,32 @@ class RepoCloner {
         try {
             limiter.acquireUninterruptibly();
             try {
-                if (hasReference) ref = mounts.attach(idx, planned);
+                if (hasReference && planned.prepared() != null) prepared.put(idx, planned.prepared());
+                if (hasReference && planned.request() != null) {
+                    ref = prepareReference(repo, planned, states, idx);
+                    if (ref.prepared() != null) prepared.put(idx, ref.prepared());
+                }
+                if (hasReference && ref.hasDevice() && repo.getDepth() == null && ref.prepared() == null) {
+                    ref = RepoReference.skipped("full Git reference was not prepared");
+                }
+                long attaching = System.nanoTime();
+                if (hasReference && ref.hasDevice()) ref = mounts.attach(idx, ref);
+                long attachMillis = (System.nanoTime() - attaching) / 1_000_000;
+                long start = System.nanoTime();
                 clone = cloneOne(container, repo, ref, states, idx);
+                if (prepared.containsKey(idx)) preparationTimings.put(idx, prepared.get(idx).timingSummary()
+                        + ", attach=" + attachMillis + "ms, guest=" + (System.nanoTime() - start) / 1_000_000 + "ms");
             } finally {
                 limiter.release();
             }
         } finally {
             if (hasReference) {
                 try {
+                    long detaching = System.nanoTime();
                     if (ref.hasDevice()) detachedOk = mounts.detach(idx);
+                    if (prepared.containsKey(idx)) preparationTimings.merge(idx,
+                            "detach=" + (System.nanoTime() - detaching) / 1_000_000 + "ms", (a, b) -> a + ", " + b);
+                    if (detachedOk) releasePrepared(idx);
                     // Before the count-down, so a prime woken by it already sees the failure.
                     if (!detachedOk) failureSeen.set(true);
                 } finally {
@@ -335,7 +373,9 @@ class RepoCloner {
         var reason = clone.usedReference() ? null
                 : clone.fallbackReason() != null ? clone.fallbackReason()
                 : ref != null ? ref.skipReason() : null;
-        String note = clone.usedReference() ? "via host reference" : reason;
+        String note = clone.usedReference()
+                ? ref.prepared() == null ? "via host reference" : "via " + ref.prepared().strategy()
+                : reason;
         boolean highlight = reason != null;
         if (repo.hasPrime()) {
             if (referencesDetached.getCount() > 0) {
@@ -364,6 +404,27 @@ class RepoCloner {
             }
         }
         states.set(idx, highlight ? StepProgress.doneHighlight(note) : StepProgress.done(note));
+    }
+
+    RepoReference prepareReference(ImageDef.RepoEntry repo, RepoReference ref,
+                                   AtomicReferenceArray<StepProgress> states, int idx) {
+        try {
+            var request = new GitPreparation.Request(repo.getUrl(), repo.getBranch(), ref.request().checkout());
+            var result = new GitPreparation(SpawnConfig.load().gitCache()).prepare(request,
+                    phase -> states.set(idx, StepProgress.running(phase)));
+            return new RepoReference(ref.deviceName(), ref.containerPath(),
+                    HostResourceSetup.translateForVm(result.repository().toString()), null, null, result);
+        } catch (Exception e) {
+            return RepoReference.skipped("Git preparation unavailable: " + e.getMessage());
+        }
+    }
+
+    private void releasePrepared(int idx) {
+        var result = prepared.remove(idx);
+        if (result != null) {
+            try { result.close(); }
+            catch (Exception e) { preparationTimings.merge(idx, "Git staging cleanup deferred", (a, b) -> a + "; " + b); }
+        }
     }
 
     /** How many repos clone or prime at once: high-performance cores, and on macOS the vsock tunnel budget. */
@@ -404,42 +465,14 @@ class RepoCloner {
             if (ref != null && ref.hasDevice()) {
                 var expandedPath = expandHome(repo.getPath());
                 var clone = container.shAsUser("agentuser", freshDestination(expandedPath) + " && "
-                        + awaitMount(ref.containerPath()) + " && " + buildCloneCommand(repo, ref.containerPath()));
+                        + awaitMount(ref.containerPath()) + " && " + (ref.prepared() == null
+                                ? buildCloneCommand(repo, ref.containerPath()) : preparedCloneCommand(repo, ref)));
                 var last = clone;
-                if (clone.success() && repo.getDepth() != null) {
+                if (clone.success() && ref.prepared() != null) {
+                    usedReference = true;
+                } else if (clone.success() && repo.getDepth() != null) {
                     last = container.shAsUser("agentuser", shallowFixupCommand(repo));
                     usedReference = last.success();
-                } else if (clone.success()) {
-                    // Point origin at the real remote, fetch current refs, and
-                    // detect the remote's default branch.  Objects are already
-                    // local (copied from the reference's pack files), so only ref
-                    // advertisements travel the network.  set-head --auto is needed
-                    // because the local clone inherits HEAD from the host checkout,
-                    // which may be on a different branch than the remote's default.
-                    // The host's own tags and branches go (#1362): --prune --prune-tags drops those
-                    // origin lacks, --force resets a tag origin has moved.
-                    var git = "git -C " + shellQuote(expandedPath);
-                    var fixup = container.shAsUser("agentuser",
-                            git + " remote set-url origin " + shellQuote(repo.getUrl())
-                                    + " && " + git + NO_AUTO_GC + " fetch --quiet --prune --prune-tags --force origin"
-                                    + " && " + git + " remote set-head origin --auto");
-                    last = fixup;
-                    if (fixup.success()) {
-                        // Then its checked-out branch, leaving a network clone's refs, and every
-                        // object only the host had. A configured name origin has no branch of is a
-                        // tag (#1350), which the fetch brought with the remote's others.
-                        var checkout = container.shAsUser("agentuser", resolveBranch(repo,
-                                "$(" + git + " for-each-ref --format='%(symref:lstrip=3)' refs/remotes/origin/HEAD)")
-                                + " && { [ -n \"$b\" ] || { echo 'fatal: origin has no default branch' >&2; false; }; }"
-                                + " && " + (repo.hasBranch()
-                                        ? checkoutBranchOrTag(git, git + " show-ref --verify -q \"refs/remotes/origin/$b\"",
-                                                "{ " + git + " show-ref --verify -q \"refs/tags/$b\" || { echo \"" + NO_BRANCH_OR_TAG + "\" >&2; false; }; }")
-                                        : checkoutTracking(git))
-                                + " && " + deleteOtherBranches(git)
-                                + " && " + stripUnreachableObjects(git));
-                        usedReference = checkout.success();
-                        last = checkout;
-                    }
                 }
                 if (!usedReference) {
                     var error = last.exitCode() == MOUNT_TIMEOUT_EXIT && last == clone
@@ -459,10 +492,8 @@ class RepoCloner {
                     return CloneResult.FAILED;
                 }
 
-                // Widen the fetch refspec that --single-branch narrowed, so the
-                // clone behaves like a regular one.  The local-clone path doesn't
-                // use --single-branch, so it skips this.  A shallow repo keeps it
-                // narrow: a fetch of every branch would bring their history back.
+                // Enforce the broad future-fetch contract for a full clone, including tag pins.
+                // A shallow repo keeps its narrow refspec, so a later fetch won't pull other histories.
                 if (repo.getDepth() == null) {
                     var repoPath = shellQuote(expandHome(repo.getPath()));
                     var restore = container.shAsUser("agentuser",
@@ -587,15 +618,10 @@ class RepoCloner {
     private static String buildCloneCommand(ImageDef.RepoEntry repo, String referencePath) {
         var cmd = new StringBuilder("git clone");
         if (referencePath != null) {
-            // Local clone from mounted host reference — copies pack files
-            // directly.  Branch checkout is handled separately after the
-            // remote URL is fixed up and a fetch supplies current refs.
-            // A shallow repo cannot: a local clone ignores --depth and would copy the
-            // reference's whole history, so it goes through the transport, which sends only
-            // the last commits (from a shallow host checkout too).
-            cmd.append(repo.getDepth() != null ? " --no-local --depth " + repo.getDepth() : " --no-hardlinks");
+            // Only shallow clones use a raw host reference. Full clones use preparedCloneCommand.
+            cmd.append(" --no-local --depth ").append(repo.getDepth());
         } else {
-            cmd.append(" --single-branch");
+            if (repo.getDepth() != null) cmd.append(" --single-branch");
             if (repo.getDepth() != null) cmd.append(" --depth ").append(repo.getDepth());
             if (repo.hasBranch()) {
                 cmd.append(" --branch ").append(shellQuote(repo.getBranch()));
@@ -604,13 +630,32 @@ class RepoCloner {
         cmd.append(" -- ").append(shellQuote(referencePath != null ? referencePath : repo.getUrl()));
         var path = shellQuote(expandHome(repo.getPath()));
         cmd.append(" ").append(path);
-        if (referencePath != null && repo.getDepth() == null) {
-            // A local clone of a shallow checkout (one a repo with a depth made on the host) is
-            // shallow too, and no fetch deepens it: this repo keeps its full history, from the network.
-            cmd.append(" && { [ \"$(git -C ").append(path).append(" rev-parse --is-shallow-repository)\" != true ]")
-                    .append(" || { echo 'fatal: the host checkout is shallow' >&2; exit 1; }; }");
-        }
         return cmd.toString();
+    }
+
+    /** Copy an already selected store; verify the independent bytes before any prime can run. */
+    static String preparedCloneCommand(ImageDef.RepoEntry repo, RepoReference ref) {
+        var path = shellQuote(expandHome(repo.getPath()));
+        var command = new StringBuilder("git clone --no-hardlinks");
+        if (repo.hasBranch()) command.append(" --branch ").append(shellQuote(repo.getBranch()));
+        command.append(" -- ").append(shellQuote(ref.containerPath())).append(' ').append(path)
+                .append(" && git -C ").append(path).append(" remote set-url origin ").append(shellQuote(repo.getUrl()))
+                .append(" && { g=$(git -C ").append(path).append(" rev-parse --absolute-git-dir) && ")
+                .append("[ ! -e \"$g/objects/info/alternates\" ] && ")
+                .append("{ [ \"$(find \"$g/objects\" -type f | wc -l)\" -eq ")
+                .append(ref.prepared().checksums().size()).append(" ] || { echo 'fatal: prepared Git object inventory changed' >&2; false; }; } && (cd \"$g\" && ");
+        if (ref.prepared().checksums().isEmpty()) command.append("true");
+        else {
+            var checksums = new StringBuilder();
+            ref.prepared().checksums().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey())
+                    .forEach(e -> checksums.append(e.getValue()).append("  ").append(e.getKey()).append('\n'));
+            // BSD sha256sum requires an explicit input file: '-' reads the piped manifest.
+            command.append("printf '%s' ").append(shellQuote(checksums.toString()))
+                    .append(" | { if command -v sha256sum >/dev/null 2>&1; then sha256sum -c -;")
+                    .append(" else shasum -a 256 -c -; fi; } >/dev/null")
+                    .append(" || { echo 'fatal: prepared Git pack checksum failed' >&2; false; }");
+        }
+        return command.append("); }").toString();
     }
 
     /**
@@ -750,15 +795,15 @@ class RepoCloner {
             if (repoName.isEmpty()) return null;
 
             var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
-            if (hostPath == null) return null;
-            if (!Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath)
-                    || !GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl)) {
-                return RepoReference.skipped("no local reference found to speedup cloning");
+            if (hostPath != null && (!Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath)
+                    || !GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl))) {
+                hostPath = null;
             }
 
             return new RepoReference(GitRemoteUtils.referenceDeviceName(repoName, cloneUrl),
                     GitRemoteUtils.referenceContainerPath(repoName, cloneUrl),
-                    HostResourceSetup.translateForVm(hostPath.toString()), null);
+                    hostPath == null ? null : HostResourceSetup.translateForVm(hostPath.toString()), null,
+                    new GitPreparation.Request(cloneUrl, null, hostPath), null);
         } catch (Exception e) {
             System.err.println("Warning: could not set up repo reference: " + e.getMessage());
             return null;

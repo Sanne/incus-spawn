@@ -17,11 +17,19 @@ import static org.mockito.Mockito.*;
 
 class RepoClonerTest {
 
-    /** What the local-clone path appends to its checkout to leave a network clone's refs (#1362). */
-    private static final String DROP_HOST_REFS =
-            " && l=$(git -C '/home/agentuser/repo' for-each-ref --format='%(if)%(HEAD)%(then)%(else)%(refname:strip=2)%(end)' refs/heads)"
-                    + " && { [ -z \"$l\" ] || git -C '/home/agentuser/repo' branch -q -D -- $l; }"
-                    + " && " + RepoCloner.stripUnreachableObjects("git -C '/home/agentuser/repo'");
+    private static RepoCloner cloner(IncusClient incus) {
+        var cloner = spy(new RepoCloner(incus));
+        doReturn(null).when(cloner).planReference(any(), any());
+        return cloner;
+    }
+
+    static RepoCloner.RepoReference reference(String device, String path, String source, String reason) {
+        var prepared = mock(dev.incusspawn.git.GitPreparation.Prepared.class);
+        when(prepared.checksums()).thenReturn(java.util.Map.of());
+        when(prepared.strategy()).thenReturn("prepared Git packs");
+        when(prepared.timingSummary()).thenReturn("prepare=0ms");
+        return new RepoCloner.RepoReference(device, path, source, reason, null, prepared);
+    }
 
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
     private static final IncusClient.ExecResult FAIL = new IncusClient.ExecResult(1, "", "");
@@ -43,11 +51,11 @@ class RepoClonerTest {
         imageDef.setName("tpl-quarkus");
         imageDef.setRepos(List.of(repo));
 
-        var cmd = new RepoCloner(incus);
+        var cmd = cloner(incus);
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         verify(incus).execInContainer("test", "agentuser",
-                "git clone --single-branch -- 'https://github.com/quarkusio/quarkus.git' '/home/agentuser/quarkus'");
+                "git clone -- 'https://github.com/quarkusio/quarkus.git' '/home/agentuser/quarkus'");
         verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/quarkus' remote set-branches origin '*'");
         verify(incus).execInContainer("test", "agentuser",
@@ -69,11 +77,11 @@ class RepoClonerTest {
         imageDef.setName("tpl-test");
         imageDef.setRepos(List.of(repo));
 
-        var cmd = new RepoCloner(incus);
+        var cmd = cloner(incus);
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         verify(incus).execInContainer("test", "agentuser",
-                "git clone --single-branch --branch 'feature/my branch' -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
+                "git clone --branch 'feature/my branch' -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
         verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/repo' remote set-branches origin '*'");
     }
@@ -94,7 +102,7 @@ class RepoClonerTest {
         imageDef.setName("tpl-test");
         imageDef.setRepos(List.of(repo));
 
-        var cmd = new RepoCloner(incus);
+        var cmd = cloner(incus);
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         // Clone call + refspec restore, but no prime
@@ -115,29 +123,15 @@ class RepoClonerTest {
         imageDef.setName("tpl-test");
         imageDef.setRepos(List.of(repo));
 
-        var cmd = spy(new RepoCloner(incus));
-        var ref = new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        var cmd = cloner(incus);
+        var ref = reference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
         doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
-        // Local clone from mounted reference
-        verify(incus).execInContainer("test", "agentuser",
-                RepoCloner.freshDestination("/home/agentuser/repo") + " && " + RepoCloner.awaitMount("/mnt/ref/repo")
-                        + " && git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'"
-                        + " && { [ \"$(git -C '/home/agentuser/repo' rev-parse --is-shallow-repository)\" != true ]"
-                        + " || { echo 'fatal: the host checkout is shallow' >&2; exit 1; }; }");
-        // URL fixup + fetch + detect default branch
-        verify(incus).execInContainer("test", "agentuser",
-                "git -C '/home/agentuser/repo' remote set-url origin 'https://github.com/owner/repo.git'"
-                        + " && git -C '/home/agentuser/repo' -c gc.auto=0 -c maintenance.auto=false fetch --quiet --prune --prune-tags --force origin"
-                        + " && git -C '/home/agentuser/repo' remote set-head origin --auto");
-        // Checkout remote's default branch (host ref may have a different HEAD)
-        verify(incus).execInContainer("test", "agentuser",
-                "b=$(git -C '/home/agentuser/repo' for-each-ref --format='%(symref:lstrip=3)' refs/remotes/origin/HEAD)"
-                        + " && { [ -n \"$b\" ] || { echo 'fatal: origin has no default branch' >&2; false; }; }"
-                        + " && git -C '/home/agentuser/repo' checkout -B \"$b\" --track \"origin/$b\""
-                        + DROP_HOST_REFS);
+        verify(incus).execInContainer(eq("test"), eq("agentuser"), argThat(script ->
+                script.contains("git clone --no-hardlinks") && script.contains("remote set-url origin")
+                        && !script.contains("pack-objects") && !script.contains("fetch --")));
         // Reference device cleaned up
         verify(incus).deviceRemove("test", "ref-repo");
     }
@@ -161,15 +155,15 @@ class RepoClonerTest {
         imageDef.setName("tpl-test");
         imageDef.setRepos(List.of(repo));
 
-        var cmd = spy(new RepoCloner(incus));
-        var ref = new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        var cmd = cloner(incus);
+        var ref = reference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
         doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         // Should fall back to normal clone
         verify(incus).execInContainer("test", "agentuser",
-                "git clone --single-branch -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
+                "git clone -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
         // Reference device still cleaned up
         verify(incus).deviceRemove("test", "ref-repo");
     }
@@ -189,26 +183,15 @@ class RepoClonerTest {
         imageDef.setName("tpl-test");
         imageDef.setRepos(List.of(repo));
 
-        var cmd = spy(new RepoCloner(incus));
-        var ref = new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        var cmd = cloner(incus);
+        var ref = reference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
         doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
-        // Local clone (no --branch — handled after fetch)
-        verify(incus).execInContainer("test", "agentuser",
-                RepoCloner.freshDestination("/home/agentuser/repo") + " && " + RepoCloner.awaitMount("/mnt/ref/repo")
-                        + " && git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'"
-                        + " && { [ \"$(git -C '/home/agentuser/repo' rev-parse --is-shallow-repository)\" != true ]"
-                        + " || { echo 'fatal: the host checkout is shallow' >&2; exit 1; }; }");
-        // URL fixup + fetch + detect default branch
-        verify(incus).execInContainer("test", "agentuser",
-                "git -C '/home/agentuser/repo' remote set-url origin 'https://github.com/owner/repo.git'"
-                        + " && git -C '/home/agentuser/repo' -c gc.auto=0 -c maintenance.auto=false fetch --quiet --prune --prune-tags --force origin"
-                        + " && git -C '/home/agentuser/repo' remote set-head origin --auto");
-        // Branch checkout (explicit branch overrides detected default)
-        verify(incus).execInContainer("test", "agentuser",
-                checkout("b='feature/x'") + DROP_HOST_REFS);
+        verify(incus).execInContainer(eq("test"), eq("agentuser"), argThat(script ->
+                script.contains("git clone --no-hardlinks --branch 'feature/x'")
+                        && script.contains("remote set-url origin")));
     }
 
     @Test
@@ -216,9 +199,7 @@ class RepoClonerTest {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
         when(incus.execInContainer(eq("test"), anyString(), anyString()))
-                .thenReturn(OK)    // local clone
-                .thenReturn(OK)    // fixup (set-url + fetch + set-head)
-                .thenReturn(FAIL)  // checkout fails
+                .thenReturn(FAIL)  // copy/checkout/verification fails
                 .thenReturn(OK)    // cleanup rm -rf
                 .thenReturn(OK)    // normal remote clone
                 .thenReturn(OK);   // set-branches
@@ -232,15 +213,15 @@ class RepoClonerTest {
         imageDef.setName("tpl-test");
         imageDef.setRepos(List.of(repo));
 
-        var cmd = spy(new RepoCloner(incus));
-        var ref = new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        var cmd = cloner(incus);
+        var ref = reference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
         doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         // Should fall back to normal clone after checkout failure
         verify(incus).execInContainer("test", "agentuser",
-                "git clone --single-branch --branch 'nonexistent'"
+                "git clone --branch 'nonexistent'"
                         + " -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
         verify(incus).deviceRemove("test", "ref-repo");
     }
@@ -262,13 +243,13 @@ class RepoClonerTest {
         imageDef.setName("tpl-test");
         imageDef.setRepos(List.of(a, b));
 
-        var cmd = new RepoCloner(incus);
+        var cmd = cloner(incus);
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         verify(incus).execInContainer("test", "agentuser",
-                "git clone --single-branch -- 'https://github.com/owner/alpha.git' '/home/agentuser/alpha'");
+                "git clone -- 'https://github.com/owner/alpha.git' '/home/agentuser/alpha'");
         verify(incus).execInContainer("test", "agentuser",
-                "git clone --single-branch -- 'https://github.com/owner/beta.git' '/home/agentuser/beta'");
+                "git clone -- 'https://github.com/owner/beta.git' '/home/agentuser/beta'");
         verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/alpha' remote set-branches origin '*'");
         verify(incus).execInContainer("test", "agentuser",
@@ -294,7 +275,7 @@ class RepoClonerTest {
         imageDef.setName("tpl-test");
         imageDef.setRepos(List.of(a, b));
 
-        var cmd = new RepoCloner(incus);
+        var cmd = cloner(incus);
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         // Each repo's prime runs (pipelined with the other repo's clone), scoped to
@@ -319,12 +300,12 @@ class RepoClonerTest {
         // Another repo has already failed → the build will abort.
         var failureSeen = new java.util.concurrent.atomic.AtomicBoolean(true);
 
-        new RepoCloner(incus).prepareOne(container, repo, null, states, 0, failureSeen);
+        cloner(incus).prepareOne(container, repo, null, states, 0, failureSeen);
 
         // The clone still ran, but priming was skipped rather than doing work the
         // aborting build will throw away.
         verify(incus).execInContainer("test", "agentuser",
-                "git clone --single-branch -- 'https://github.com/owner/beta.git' '/home/agentuser/beta'");
+                "git clone -- 'https://github.com/owner/beta.git' '/home/agentuser/beta'");
         verify(incus, never()).execInContainer("test", "agentuser",
                 "cd '/home/agentuser/beta' && build-beta");
         assertEquals(BuildProgress.StepState.DONE, states.get(0).state());
@@ -380,8 +361,8 @@ class RepoClonerTest {
         imageDef.setName("tpl-test");
         imageDef.setRepos(List.of(repo));
 
-        var cmd = spy(new RepoCloner(incus));
-        doReturn(new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null))
+        var cmd = cloner(incus);
+        doReturn(reference("ref-repo", "/mnt/ref/repo", "/host/repo", null))
                 .when(cmd).planReference(eq(repo.getUrl()), any());
 
         assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
@@ -420,12 +401,12 @@ class RepoClonerTest {
                 repo("https://github.com/owner/own.git", null, null),
                 repo("https://github.com/owner/own.git", "~/own", null)));
 
-        new RepoCloner(incus).cloneRepos(container, child,
+        cloner(incus).cloneRepos(container, child,
                 java.util.Map.of("tpl-parent", parent, "tpl-child", child), MachineType.CONTAINER);
 
         verify(incus, never()).execInContainer(eq("test"), eq("agentuser"), contains("shared"));
         verify(incus, times(1)).execInContainer("test", "agentuser",
-                "git clone --single-branch -- 'https://github.com/owner/own.git' '/home/agentuser/own'");
+                "git clone -- 'https://github.com/owner/own.git' '/home/agentuser/own'");
     }
 
     private static ImageDef.RepoEntry repo(String url, String path, String prime) {
@@ -452,14 +433,14 @@ class RepoClonerTest {
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/owner/repo.git");
         repo.setPath("~/repo");
-        var ref = new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        var ref = reference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
 
         var states = new java.util.concurrent.atomic.AtomicReferenceArray<BuildProgress.StepProgress>(1);
-        new RepoCloner(incus).prepareOne(container, repo, ref, states, 0,
+        cloner(incus).prepareOne(container, repo, ref, states, 0,
                 new java.util.concurrent.atomic.AtomicBoolean());
 
         verify(incus).execInContainer("test", "agentuser",
-                "git clone --single-branch -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
+                "git clone -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
         assertEquals(BuildProgress.StepState.DONE, states.get(0).state());
         assertEquals("could not use the host reference: fatal: repository '/mnt/ref/repo' does not exist",
                 states.get(0).note());
@@ -480,7 +461,7 @@ class RepoClonerTest {
         imageDef.setName("tpl-test");
         imageDef.setRepos(List.of(repo));
 
-        var cmd = new RepoCloner(incus);
+        var cmd = cloner(incus);
         var ex = assertThrows(dev.incusspawn.incus.IncusException.class,
                 () -> cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
         assertTrue(ex.getMessage().contains("fatal: repository not found"),
@@ -505,17 +486,6 @@ class RepoClonerTest {
     void firstGitErrorEmptyForBlank() {
         assertEquals("", RepoCloner.firstGitError(""));
         assertEquals("", RepoCloner.firstGitError(null));
-    }
-
-    /** The reference path's checkout of a configured {@code $b}, as set by {@code setB}: a branch tracking origin's, else the tag. */
-    private static String checkout(String setB) {
-        var git = "git -C '/home/agentuser/repo'";
-        return setB + " && { [ -n \"$b\" ] || { echo 'fatal: origin has no default branch' >&2; false; }; }"
-                + " && if " + git + " show-ref --verify -q \"refs/remotes/origin/$b\";"
-                + " then " + git + " checkout -B \"$b\" --track \"origin/$b\";"
-                + " else { " + git + " show-ref --verify -q \"refs/tags/$b\""
-                + " || { echo \"fatal: origin has no branch or tag '$b'\" >&2; false; }; }"
-                + " && " + git + " checkout -q --detach \"refs/tags/$b\"; fi";
     }
 
     private static ImageDef projectLocal(String name, Path root) {
@@ -543,13 +513,13 @@ class RepoClonerTest {
         var imageDef = projectLocal("tpl-proj", Path.of("/work/repo"));
         imageDef.setRepos(List.of(repo));
 
-        var cmd = spy(new RepoCloner(incus));
+        var cmd = cloner(incus);
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
 
         verify(cmd, never()).planReference(any(), any());
         verify(incus, never()).deviceAdd(any(), any(), any(), any(String[].class));
         verify(incus).execInContainer("test", "agentuser",
-                "git clone --single-branch -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
+                "git clone -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
     }
 
     @Test
@@ -583,12 +553,12 @@ class RepoClonerTest {
         var imageDef = trusted("tpl-test");
         imageDef.setRepos(repos);
 
-        var cmd = spy(new RepoCloner(incus));
+        var cmd = cloner(incus);
         doReturn(1).when(cmd).repoConcurrency(anyInt()); // one slot: 6 references > 1 worker
         for (int i = 0; i < 12; i++) {
             if (i % 2 == 1) continue; // half via host reference, half from the network
             var url = repos.get(i).getUrl();
-            doReturn(new RepoCloner.RepoReference("ref-" + url.hashCode(), "/mnt/ref/" + url.hashCode(), "/host/repo", null))
+            doReturn(reference("ref-" + url.hashCode(), "/mnt/ref/" + url.hashCode(), "/host/repo", null))
                     .when(cmd).planReference(eq(url), any());
         }
         doAnswer(inv -> { mounted.incrementAndGet(); return null; })
@@ -614,8 +584,8 @@ class RepoClonerTest {
         var imageDef = trusted("tpl-test");
         imageDef.setRepos(List.of(repo));
 
-        var cmd = spy(new RepoCloner(incus));
-        doReturn(new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null))
+        var cmd = cloner(incus);
+        doReturn(reference("ref-repo", "/mnt/ref/repo", "/host/repo", null))
                 .when(cmd).planReference(eq(repo.getUrl()), any());
 
         assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
@@ -635,13 +605,13 @@ class RepoClonerTest {
         doAnswer(inv -> { stillPlugged.set(true); throw new IncusException("busy"); })
                 .when(incus).deviceRemove("test", "ref-0");
         var repos = new java.util.ArrayList<ImageDef.RepoEntry>();
-        var cmd = spy(new RepoCloner(incus));
+        var cmd = cloner(incus);
         for (int i = 0; i < 2; i++) {
             var repo = new ImageDef.RepoEntry();
             repo.setUrl("https://github.com/owner/repo" + i + ".git");
             repo.setPath("~/repo" + i);
             repos.add(repo);
-            doReturn(new RepoCloner.RepoReference("ref-" + i, "/mnt/ref/" + i, "/host/repo" + i, null))
+            doReturn(reference("ref-" + i, "/mnt/ref/" + i, "/host/repo" + i, null))
                     .when(cmd).planReference(eq(repo.getUrl()), any());
         }
         var imageDef = trusted("tpl-test");

@@ -1,0 +1,136 @@
+{
+  "fixture_filesystem": "tmpfs",
+  "git": "git version 2.56.0",
+  "pack_threads": 4,
+  "scope": "Production JVM host preparation; includes source pin, full cold fsck, seals and publication, excludes Incus and guest copying; loopback transport, warm filesystem cache.",
+  "source_hashes": {
+    "common/src/main/java/dev/incusspawn/git/GitPreparation.java": "57e63b42056aba8c15065950b1578549c22a6f3ad7bc2bdb20ec3cee5e3889bb",
+    "common/src/main/java/dev/incusspawn/git/PreparationCache.java": "e6922e110a72d3dda016c5ecf9cbe07567f7e3eabe1544ee9a57ae6ed288b036",
+    "common/src/main/java/dev/incusspawn/git/PreparationGit.java": "f66d592414f0d13d29661b120c9c7abc276872fe8d10db0001ebcfe0323746d7"
+  },
+  "trials": {
+    "clean": [
+      {
+        "trial": 0,
+        "strategy": "reference-seeded clean snapshot",
+        "total_ms": 20835,
+        "retained_bytes": 325296411,
+        "phases_ms": {
+          "check": 0,
+          "clone": 7291,
+          "pin": 78,
+          "publish": 18,
+          "remote": 46,
+          "verify": 13388
+        }
+      },
+      {
+        "trial": 1,
+        "strategy": "cached clean snapshot",
+        "total_ms": 245,
+        "retained_bytes": 325296411,
+        "phases_ms": {
+          "check": 201,
+          "remote": 43
+        }
+      },
+      {
+        "trial": 2,
+        "strategy": "cached clean snapshot",
+        "total_ms": 234,
+        "retained_bytes": 325296411,
+        "phases_ms": {
+          "check": 190,
+          "remote": 43
+        }
+      }
+    ],
+    "mixed": [
+      {
+        "trial": 0,
+        "strategy": "reference-seeded clean snapshot",
+        "total_ms": 20858,
+        "retained_bytes": 325288450,
+        "phases_ms": {
+          "check": 0,
+          "clone": 7348,
+          "pin": 79,
+          "publish": 16,
+          "remote": 47,
+          "verify": 13353
+        }
+      },
+      {
+        "trial": 1,
+        "strategy": "cached clean snapshot",
+        "total_ms": 247,
+        "retained_bytes": 325288450,
+        "phases_ms": {
+          "check": 203,
+          "remote": 42
+        }
+      },
+      {
+        "trial": 2,
+        "strategy": "cached clean snapshot",
+        "total_ms": 241,
+        "retained_bytes": 325288450,
+        "phases_ms": {
+          "check": 196,
+          "remote": 43
+        }
+      }
+    ],
+    "advance": [
+      {
+        "trial": 0,
+        "strategy": "reference-seeded clean snapshot",
+        "total_ms": 20800,
+        "retained_bytes": 325288636,
+        "phases_ms": {
+          "check": 213,
+          "clone": 7176,
+          "pin": 0,
+          "publish": 16,
+          "remote": 47,
+          "verify": 13333
+        }
+      },
+      {
+        "trial": 1,
+        "strategy": "cached clean snapshot",
+        "total_ms": 235,
+        "retained_bytes": 325288636,
+        "phases_ms": {
+          "check": 192,
+          "remote": 43
+        }
+      },
+      {
+        "trial": 2,
+        "strategy": "cached clean snapshot",
+        "total_ms": 224,
+        "retained_bytes": 325288636,
+        "phases_ms": {
+          "check": 180,
+          "remote": 43
+        }
+      }
+    ]
+  },
+  "tip": "e91ca9612da2753a8edc1529227184f627d4ff3b",
+  "selected_objects": 1097673,
+  "environment": {
+    "os": "Linux-7.2.9-201.fc44.x86_64-x86_64-with-glibc2.43",
+    "runtime": "OpenJDK 25 JVM",
+    "filesystem_cache": "warm",
+    "fixture_storage": "tmpfs"
+  },
+  "method": "Each clean/mixed series uses a fresh cache and three requests; advance adds one commit on the mixed series remote and retains its existing cache. Each resulting persistent repository was checked outside the timed interval for exact equality of physical objects and selected remote closure, excluding all private fixture objects.",
+  "limitations": [
+    "One first-generation or refresh sample per case, two warm samples; no native-image measurements.",
+    "Host preparation only: no Incus mount, guest copy, checksum or prime costs.",
+    "Loopback Git transport and warm tmpfs: no WAN latency or cold physical disk I/O.",
+    "Not a controlled direct comparison with PR #1400 measurements taken on a different filesystem."
+  ]
+}

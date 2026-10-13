@@ -1264,6 +1264,16 @@ What holds today: the inner proxy presents the outer instance's proof for an ins
 
 A template whose own `accounts:` says `claude: inherit` builds Claude for an API key, the form the outer proxy turns into whichever account it serves. The git identity of an instance that inherits GitHub is the outer account's when it starts inheriting; if the outer instance later switches GitHub accounts, branch again or run `isx account set` to pick up the new one.
 
+Builds can reuse Git objects from linked host checkouts without changing those checkouts. Full clones select all remote branches and tags; shallow clones retain their configured depth. A bounded cache of clean snapshots avoids repeated downloads and packing, including when a linked checkout exists:
+
+```yaml
+git-cache:
+  snapshot-max-mib: 1024
+  max-age-days: 7
+```
+
+These are the defaults. Set either limit to `0` to disable persistent retention. Active builds keep their temporary data until their reference mounts are detached. See [Git preparation](docs/GIT-PREPARATION.md) for details.
+
 The `config.yaml` also supports git remote auto-management via `host-paths` and `repo-paths` (see [Git Remotes](#git-remotes)), and a `searchPaths` list for loading templates and tools from external directories. Each directory should contain `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions. Tilde (`~`) expansion is supported for all path settings:
 
 ```yaml
@@ -1487,7 +1497,7 @@ Several templates build in one invocation: plainly, each in turn, a named parent
 | `--missing` | Build only templates that don't exist yet; like several named templates, a failure skips what inherits from it and the rest are still built, then exits 1 naming what was not |
 | `--type <type>` | Instance type: `container`, `vm`, or `kvm` (overrides image definition) |
 | `--yes` | Skip interactive confirmations |
-| `--skip-git-refresh` | Skip refreshing host-side git repositories before building |
+| `--skip-git-refresh` | Compatibility option; builds no longer refresh host checkouts |
 
 ### `isx branch`
 
