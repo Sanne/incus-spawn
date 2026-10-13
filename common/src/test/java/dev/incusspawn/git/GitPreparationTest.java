@@ -111,6 +111,249 @@ class GitPreparationTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"sha1", "sha256"})
+    void incrementalGenerationsKeepOldPacksAndReadersAndProduceIndependentGuests(String format) throws Exception {
+        remote = tmp.resolve("incremental");
+        git(tmp, "init", "--object-format=" + format, "-b", "main", remote.toString());
+        commitBinary(remote, "initial public commit");
+        start();
+        try (var first = prepare(host, null)) {
+            var before = contents(first.repository());
+            PreparationGit.delete(host);
+            for (int i = 0; i < 3; i++) {
+                commitBinary(remote, "incremental public commit " + i);
+                git(remote, "branch", "added-" + i);
+                git(remote, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "release-" + i, "-m", "new tag");
+                var phases = new ArrayList<String>();
+                try (var next = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, host), phases::add)) {
+                    assertEquals("incremental clean snapshot", next.strategy());
+                    assertFalse(phases.contains("Creating clean Git snapshot"));
+                    assertFalse(phases.contains("Verifying Git snapshot"));
+                    assertEquals(before, contents(first.repository()), "active readers must keep their old refs and bytes");
+                    for (var file : first.checksums().keySet()) {
+                        assertTrue(Files.isSameFile(first.repository().resolve(file), next.repository().resolve(file)),
+                                "old packs must be reused without copying or repacking");
+                    }
+                    assertEquals(i + 2, packCount(next.repository()));
+                    sameObjects(remote, next.repository());
+                    assertEquals("", git(next.repository(), "fsck", "--full", "--no-dangling"));
+                    var guest = tmp.resolve("incremental-guest-" + i);
+                    git(tmp, "clone", "--no-hardlinks", next.repository().toString(), guest.toString());
+                    next.close();
+                    assertEquals("", git(guest, "fsck", "--full", "--no-dangling"));
+                    sameObjects(remote, guest);
+                }
+            }
+        }
+        try (var hit = prepare(null, null)) { assertEquals("cached clean snapshot", hit.strategy()); }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void detachedRemoteHeadIsFetchedEvenWithoutAnyBranches(boolean removeBranch) throws Exception {
+        remote = tmp.resolve("detached");
+        git(tmp, "init", "-b", "main", remote.toString());
+        commitBinary(remote, "initial public commit");
+        start();
+        try (var first = prepare(null, null)) { }
+        git(remote, "checkout", "--detach");
+        if (removeBranch) git(remote, "branch", "-D", "main");
+        for (int i = 0; i < 2; i++) {
+            commitBinary(remote, "detached public commit " + i);
+            try (var next = prepare(null, null)) {
+                assertEquals("incremental clean snapshot", next.strategy());
+                assertEquals(git(remote, "rev-parse", "HEAD"), git(next.repository(), "rev-parse", "HEAD"));
+                sameObjects(remote, next.repository());
+                assertEquals("", git(next.repository(), "fsck", "--full", "--no-dangling"));
+            }
+            try (var hit = prepare(null, null)) { assertEquals("cached clean snapshot", hit.strategy()); }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"merged-branch", "renamed-branch", "rewind-retained", "lightweight-tag"})
+    void refsCanDisappearIncrementallyWhenTheirObjectsRemainSelected(String change) throws Exception {
+        start();
+        git(remote, "tag", "lightweight", "HEAD");
+        try (var first = prepare(null, null)) {
+            switch (change) {
+                case "merged-branch" -> {
+                    git(remote, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "--no-ff", "stable", "-m", "merge stable");
+                    git(remote, "branch", "-D", "stable");
+                }
+                case "renamed-branch" -> git(remote, "branch", "-m", "stable", "renamed");
+                case "rewind-retained" -> git(remote, "reset", "--hard", "HEAD~2");
+                case "lightweight-tag" -> git(remote, "tag", "-d", "lightweight");
+            }
+            try (var next = prepare(null, null)) {
+                assertEquals("incremental clean snapshot", next.strategy());
+                sameObjects(remote, next.repository());
+                for (var file : first.checksums().keySet()) {
+                    assertTrue(Files.isSameFile(first.repository().resolve(file), next.repository().resolve(file)));
+                }
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"unmerged-branch", "rewind", "moved-tag", "deleted-tag"})
+    void removedHistoryRebuildsAndExcludesFormerlySelectedObjects(String change) throws Exception {
+        start();
+        try (var first = prepare(null, null)) {
+            var before = contents(first.repository());
+            switch (change) {
+                case "unmerged-branch" -> git(remote, "branch", "-D", "stable");
+                case "rewind" -> {
+                    git(remote, "branch", "-D", "stable");
+                    git(remote, "reset", "--hard", "HEAD~2");
+                }
+                case "moved-tag" -> git(remote, "tag", "-f", "v1", "HEAD");
+                case "deleted-tag" -> git(remote, "tag", "-d", "v1");
+            }
+            var removed = allObjects(first.repository());
+            removed.removeAll(reachable(remote));
+            assertFalse(removed.isEmpty(), "fixture must remove selected objects, including annotated tag objects");
+            var phases = new ArrayList<String>();
+            try (var next = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, null), phases::add)) {
+                assertEquals("reference-seeded clean snapshot", next.strategy());
+                assertTrue(phases.contains("Rebuilding Git snapshot: selected history was removed"));
+                assertTrue(phases.contains("Verifying Git snapshot"));
+                sameObjects(remote, next.repository());
+                assertEquals(before, contents(first.repository()));
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"new-pack", "new-idx", "retained-pack", "retained-idx"})
+    void incrementalCorruptionNeverPublishesUncheckedBytes(String damage) throws Exception {
+        start();
+        try (var first = prepare(null, null)) {
+            var before = contents(first.repository());
+            commitBinary(remote, "new objects to corrupt");
+            var phases = new ArrayList<String>();
+            try (var next = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, null), phase -> {
+                phases.add(phase);
+                if (phase.equals("Verifying incremental Git snapshot")) {
+                    try {
+                        var work = PreparationGit.children(cache.resolve("work")).stream()
+                                .filter(p -> Files.isDirectory(p.resolve("snapshot/repo.git"))).findFirst().orElseThrow();
+                        var repo = work.resolve("snapshot/repo.git");
+                        var suffix = damage.endsWith("idx") ? ".idx" : ".pack";
+                        var corrupt = PreparationGit.children(repo.resolve("objects/pack")).stream()
+                                .filter(p -> p.toString().endsWith(suffix))
+                                .filter(p -> first.checksums().containsKey("objects/pack/" + p.getFileName()) == damage.startsWith("retained"))
+                                .findFirst().orElseThrow();
+                        assertTrue(corrupt.toFile().setWritable(true));
+                        Files.writeString(corrupt, "corrupt incremental object data");
+                    } catch (IOException e) { throw new java.io.UncheckedIOException(e); }
+                }
+            })) {
+                assertNotEquals("incremental clean snapshot", next.strategy());
+                assertTrue(phases.contains("Incremental Git refresh failed; rebuilding snapshot"));
+                sameObjects(remote, next.repository());
+                assertEquals("", git(next.repository(), "fsck", "--full", "--no-dangling"));
+                if (damage.startsWith("new")) assertEquals(before, contents(first.repository()));
+            }
+        }
+        try (var hit = prepare(null, null)) { assertEquals("cached clean snapshot", hit.strategy()); }
+    }
+
+    @Test void failedIncrementalFetchLeavesThePublishedGenerationIntact() throws Exception {
+        start();
+        try (var first = prepare(null, null)) {
+            var published = PreparationGit.children(cache.resolve("snapshots")).getFirst();
+            var before = contents(published);
+            commitBinary(remote, "unavailable during refresh");
+            assertThrows(IOException.class, () -> preparation.prepare(
+                    new GitPreparation.Request(remote.toUri().toString(), null, null), phase -> {
+                        if (phase.equals("Fetching incremental Git snapshot")) {
+                            try { PreparationGit.delete(remote); }
+                            catch (IOException e) { throw new java.io.UncheckedIOException(e); }
+                        }
+                    }));
+            assertEquals(before, contents(published));
+            assertEquals(List.of(published), PreparationGit.children(cache.resolve("snapshots")));
+            assertEquals(1, PreparationGit.children(cache.resolve("work")).size(), "only the original reader may remain");
+            assertEquals("", git(first.repository(), "fsck", "--full", "--no-dangling"));
+        }
+        assertTrue(PreparationGit.children(cache.resolve("work")).isEmpty());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void incrementalFetchRacingAnUpstreamChangeFallsBackToFreshSelection(boolean detachedHead) throws Exception {
+        start();
+        if (detachedHead) git(remote, "checkout", "--detach");
+        try (var first = prepare(null, null)) { }
+        commitBinary(remote, "advertised update");
+        var phases = new ArrayList<String>();
+        try (var next = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, null), phase -> {
+            phases.add(phase);
+            if (phase.equals("Fetching incremental Git snapshot")) {
+                try { commitBinary(remote, "published after advertisement"); }
+                catch (Exception e) { throw new RuntimeException(e); }
+            }
+        })) {
+            assertEquals("reference-seeded clean snapshot", next.strategy());
+            assertTrue(phases.contains("Rebuilding Git snapshot: remote refs changed during fetch"));
+            sameObjects(remote, next.repository());
+        }
+        try (var hit = prepare(null, null)) { assertEquals("cached clean snapshot", hit.strategy()); }
+    }
+
+    @Test void interruptedIncrementalRefreshDoesNotRetryOrPublish() throws Exception {
+        start();
+        try (var first = prepare(null, null)) { }
+        var published = PreparationGit.children(cache.resolve("snapshots")).getFirst();
+        var before = contents(published);
+        commitBinary(remote, "interrupted update");
+        var phases = new ArrayList<String>();
+        try {
+            assertThrows(IOException.class, () -> preparation.prepare(
+                    new GitPreparation.Request(remote.toUri().toString(), null, null), phase -> {
+                        phases.add(phase);
+                        if (phase.equals("Fetching incremental Git snapshot")) Thread.currentThread().interrupt();
+                    }));
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally { Thread.interrupted(); }
+        assertFalse(phases.contains("Creating clean Git snapshot"));
+        assertEquals(before, contents(published));
+        assertTrue(PreparationGit.children(cache.resolve("work")).isEmpty());
+    }
+
+    @Test void incrementalPackGrowthEventuallyCompactsWithoutChangingReaders() throws Exception {
+        remote = tmp.resolve("small");
+        git(tmp, "init", "-b", "main", remote.toString());
+        git(remote, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "initial");
+        start();
+        try (var first = prepare(null, null)) {
+            var before = contents(first.repository());
+            for (int i = 0; i < GitPreparation.MAX_INCREMENTAL_PACKS; i++) {
+                git(remote, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "update " + i);
+                var phases = new ArrayList<String>();
+                try (var next = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, null), phases::add)) {
+                    assertTrue(packCount(next.repository()) <= GitPreparation.MAX_INCREMENTAL_PACKS);
+                    if (i + 1 < GitPreparation.MAX_INCREMENTAL_PACKS) {
+                        assertEquals("incremental clean snapshot", next.strategy());
+                    } else {
+                        assertEquals("reference-seeded clean snapshot", next.strategy());
+                        assertTrue(phases.contains("Compacting Git snapshot"));
+                        assertEquals(1, packCount(next.repository()));
+                    }
+                    sameObjects(remote, next.repository());
+                    assertEquals(before, contents(first.repository()));
+                }
+            }
+        }
+    }
+
+    private static long packCount(Path repo) throws IOException {
+        return PreparationGit.children(repo.resolve("objects/pack")).stream()
+                .filter(p -> p.toString().endsWith(".pack")).count();
+    }
+
     @Test void branchAndAnnotatedTagSelectionSurviveRemovingEverySource() throws Exception {
         start();
         try (var result = prepare(host, "v1")) {
@@ -349,7 +592,7 @@ class GitPreparationTest {
         assertThrows(IOException.class, () -> prepare(null, "private"));
         git(remote, "symbolic-ref", "HEAD", "refs/heads/stable");
         try (var result = prepare(null, null)) {
-            assertEquals("reference-seeded clean snapshot", result.strategy());
+            assertEquals("incremental clean snapshot", result.strategy());
             assertEquals("ref: refs/heads/stable", Files.readString(result.repository().resolve("HEAD")).strip());
         }
         try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }
@@ -396,7 +639,7 @@ class GitPreparationTest {
         commitBinary(host, "first published commit");
         git(host, "push", "origin", "HEAD:refs/heads/next");
         try (var result = prepare(null, null)) {
-            assertEquals("reference-seeded clean snapshot", result.strategy());
+            assertEquals("incremental clean snapshot", result.strategy());
             sameObjects(remote, result.repository());
         }
         try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }

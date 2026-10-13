@@ -106,6 +106,27 @@ class RepoClonerPreparedTest {
         assertTrue(scripts.stream().noneMatch(s -> s.contains("pack-objects")), "guest copy must not repack");
     }
 
+    @Test void incrementalSnapshotCopiesAllPacksAndVerifiesTheGuestBeforePriming() throws Exception {
+        var first = run(null);
+        assertEquals(BuildProgress.StepState.DONE, first.state(), first.detail());
+        try (var files = Files.walk(tmp.resolve("guest"))) {
+            for (var file : files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(file);
+        }
+        commitBinary(remote, "incremental upstream update");
+        var next = run(null);
+        assertEquals(BuildProgress.StepState.DONE, next.state(), next.detail());
+        assertEquals("via incremental clean snapshot", next.note());
+        var guest = tmp.resolve("guest");
+        assertEquals(git(remote, "rev-parse", "HEAD"), git(guest, "rev-parse", "HEAD"));
+        assertEquals("", git(guest, "fsck", "--full", "--no-dangling"));
+        assertEquals(new java.util.HashSet<>(git(remote, "rev-list", "--objects", "--all", "--no-object-names").lines().toList()),
+                new java.util.HashSet<>(git(guest, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)").lines().toList()));
+        try (var packs = Files.list(guest.resolve(".git/objects/pack"))) {
+            assertEquals(2, packs.filter(p -> p.toString().endsWith(".pack")).count());
+        }
+        assertTrue(mounts.stream().noneMatch(Files::exists), "all generations must detach before lease cleanup");
+    }
+
     @Test void requestedAnnotatedTagChecksOutDetached() throws Exception {
         git(remote, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "release", "HEAD~2", "-m", "tag");
         var result = run("release");

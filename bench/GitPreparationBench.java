@@ -6,16 +6,19 @@ import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.stream.Collectors;
 
-/** Run with Java 25 and common/target/classes on the classpath; uses a fresh, automatically removed cache. */
+/** Run with Java 25 and common/target/classes; --cache retains generations across remote updates. */
 public class GitPreparationBench {
     public static void main(String[] args) throws Exception {
-        if (args.length < 1 || args.length > 2) {
-            throw new IllegalArgumentException("Usage: GitPreparationBench.java <remote-url> [matching-checkout]");
+        boolean persistent = args.length > 0 && args[0].equals("--cache");
+        int offset = persistent ? 2 : 0;
+        if (args.length < offset + 1 || args.length > offset + 2) {
+            throw new IllegalArgumentException("Usage: GitPreparationBench.java [--cache directory] <remote-url> [matching-checkout]");
         }
-        var cache = Files.createTempDirectory("isx-git-bench-");
+        var cache = persistent ? Path.of(args[1]) : Files.createTempDirectory("isx-git-bench-");
         try {
             var preparation = new GitPreparation(cache, GitCacheConfig.DEFAULT);
-            var request = new GitPreparation.Request(args[0], null, args.length == 2 ? Path.of(args[1]) : null);
+            var request = new GitPreparation.Request(args[offset], null,
+                    args.length == offset + 2 ? Path.of(args[offset + 1]) : null);
             for (int trial = 0; trial < 3; trial++) {
                 long start = System.nanoTime();
                 try (var result = preparation.prepare(request, phase -> {})) {
@@ -35,8 +38,10 @@ public class GitPreparationBench {
                 }
             }
         } finally {
-            try (var paths = Files.walk(cache)) {
-                for (var path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
+            if (!persistent) {
+                try (var paths = Files.walk(cache)) {
+                    for (var path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
+                }
             }
         }
     }

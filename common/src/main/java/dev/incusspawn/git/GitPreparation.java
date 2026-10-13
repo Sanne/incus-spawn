@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +21,7 @@ import static dev.incusspawn.incus.Container.shellQuote;
 /** Standalone full clones selected by the remote, retained as bounded immutable snapshots. */
 public final class GitPreparation {
     private static final String POLICY = "isx-clean-full-snapshot-v1";
+    static final int MAX_INCREMENTAL_PACKS = 32;
     private final PreparationCache cache;
 
     public GitPreparation(GitCacheConfig policy) throws IOException {
@@ -114,17 +116,31 @@ public final class GitPreparation {
 
             var staged = Files.createDirectory(lease.path.resolve("snapshot"));
             var result = staged.resolve("repo.git");
-            try {
-                cloneSnapshot(request.url(), lease.path, result, reference, phase, timings);
-            } catch (IOException failedReference) {
-                if (reference == null || Thread.currentThread().isInterrupted()) throw failedReference;
-                // A live checkout can be repacked, removed or damaged while we borrow from it.
-                // Discard every byte of the failed attempt and retry once with only the real remote.
+            boolean incremental = false;
+            if (manifest != null && advertised != null) {
+                try {
+                    incremental = refreshSnapshot(request.url(), previousRepo, manifest, advertised,
+                            lease.path, result, phase, timings);
+                } catch (IOException failedRefresh) {
+                    if (Thread.currentThread().isInterrupted()) throw failedRefresh;
+                    phase.accept("Incremental Git refresh failed; rebuilding snapshot");
+                }
+            }
+            if (!incremental) {
+                // Failed fetches can leave unchecked objects behind. Never borrow from this staging tree.
                 delete(result);
-                reference = null;
-                retried = true;
-                phase.accept("Retrying Git snapshot without reference");
-                cloneSnapshot(request.url(), lease.path, result, null, phase, timings);
+                try {
+                    cloneSnapshot(request.url(), lease.path, result, reference, phase, timings);
+                } catch (IOException failedReference) {
+                    if (reference == null || Thread.currentThread().isInterrupted()) throw failedReference;
+                    // A live checkout can be repacked, removed or damaged while we borrow from it.
+                    // Discard every byte of the failed attempt and retry once with only the real remote.
+                    delete(result);
+                    reference = null;
+                    retried = true;
+                    phase.accept("Retrying Git snapshot without reference");
+                    cloneSnapshot(request.url(), lease.path, result, null, phase, timings);
+                }
             }
             validatePin(result, request.branch());
 
@@ -149,7 +165,8 @@ public final class GitPreparation {
             Files.deleteIfExists(tips);
             elapsed(timings, "publish", start);
             success = true;
-            return new Prepared(lease, clean, reference != null ? "reference-seeded clean snapshot"
+            return new Prepared(lease, clean, incremental ? "incremental clean snapshot"
+                    : reference != null ? "reference-seeded clean snapshot"
                     : retried ? "new clean snapshot (reference retry)" : "new clean snapshot",
                     objectChecksums(manifest), timings);
         } finally {
@@ -220,6 +237,95 @@ public final class GitPreparation {
         }
     }
 
+    /** Extend a verified generation without rewriting or decoding its old packs. */
+    private static boolean refreshSnapshot(String url, Path previous, Map<String, String> previousManifest,
+                                           String advertised, Path work, Path result,
+                                           Consumer<String> phase, Map<String, Long> timings) throws IOException {
+        long start = System.nanoTime();
+        phase.accept("Fetching incremental Git snapshot");
+        try {
+            // Only owned immutable packs are linked. Config, HEAD and refs are recreated independently.
+            sanitize(previous, result);
+            git(result, "-c", "fetch.fsckObjects=true", "-c", "fetch.unpackLimit=1",
+                    "fetch", "--atomic", "--prune", "--no-tags", "--no-write-fetch-head",
+                    "--no-auto-maintenance", "--no-write-commit-graph", "--no-recurse-submodules",
+                    "--", url, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*", "+HEAD:refs/isx/remote-head");
+        } finally {
+            elapsed(timings, "fetch", start);
+        }
+        start = System.nanoTime();
+        phase.accept("Verifying incremental Git snapshot");
+        try {
+            var advertisedParts = advertised.split("\n", 4);
+            // A detached remote HEAD need not be reachable from any branch or tag. Fetch it too,
+            // recording its actual fetched ID so a concurrent HEAD update cannot pass selection checks.
+            var fetchedHead = git(result, "rev-parse", "--verify", "refs/isx/remote-head");
+            git(result, "update-ref", "-d", "refs/isx/remote-head");
+            Files.writeString(result.resolve("HEAD"), advertisedParts[1] + "\n");
+            if (!fetchedHead.equals(advertisedParts[2]) || !advertised.equals(selection(result))) {
+                phase.accept("Rebuilding Git snapshot: remote refs changed during fetch");
+                return false;
+            }
+            if (Files.exists(result.resolve("shallow")) || Files.exists(result.resolve("objects/info/alternates"))
+                    || hasLooseObjects(result)) throw new IOException("Incremental Git snapshot is not standalone and packed");
+            var packs = children(result.resolve("objects/pack")).stream()
+                    .filter(p -> p.toString().endsWith(".pack")).toList();
+            if (packs.size() > MAX_INCREMENTAL_PACKS) {
+                phase.accept("Compacting Git snapshot");
+                return false;
+            }
+            // Reuse the old object validation only for exactly the sealed bytes. Check new packs and
+            // indexes independently, including object structure and links into the verified old store.
+            for (var entry : objectChecksums(previousManifest).entrySet()) {
+                if (!entry.getValue().equals(hash(result.resolve(entry.getKey())))) {
+                    throw new IOException("Retained Git snapshot bytes changed");
+                }
+            }
+            for (var pack : packs) {
+                if (!previousManifest.containsKey("objects/pack/" + pack.getFileName())) {
+                    git(result, "index-pack", "--verify", "--strict", pack.toString());
+                }
+            }
+            if (!retainsHistory(previous, result, work)) {
+                phase.accept("Rebuilding Git snapshot: selected history was removed");
+                return false;
+            }
+            return true;
+        } finally {
+            elapsed(timings, "verify", start);
+        }
+    }
+
+    /** Every formerly selected root must remain reachable, including annotated tag objects and HEAD. */
+    private static boolean retainsHistory(Path previous, Path result, Path work) throws IOException {
+        var oldRefs = refMap(previous);
+        var newRefs = refMap(result);
+        var retained = new HashSet<>(newRefs.values());
+        for (var entry : oldRefs.entrySet()) {
+            var old = entry.getValue();
+            var next = newRefs.get(entry.getKey());
+            if (!retained.contains(old) && next != null && entry.getKey().startsWith("refs/heads/")
+                    && git(result, "merge-base", old, next).equals(old)) retained.add(old);
+        }
+        var remaining = new HashSet<>(oldRefs.values());
+        var oldSelection = selection(previous);
+        if (oldSelection != null) remaining.add(oldSelection.split("\n", 4)[2]);
+        remaining.removeAll(retained);
+        if (remaining.isEmpty()) return true;
+        // Deleting a merged branch is safe; deleting an unmerged one or an annotated tag may not be.
+        // Stream a potentially large difference to disk instead of capturing it in the JVM heap.
+        var input = work.resolve("retained-tips");
+        var output = work.resolve("removed-objects");
+        try {
+            Files.write(input, remaining);
+            run(result, input, output, List.of("rev-list", "--objects", "--no-object-names", "--stdin", "--not", "--all"));
+            return Files.size(output) == 0;
+        } finally {
+            Files.deleteIfExists(input);
+            Files.deleteIfExists(output);
+        }
+    }
+
     /** Canonical heads, tags, HEAD target and inferred object format. Unborn/ambiguous HEADs cannot hit. */
     private static String advertisement(Path work, String url) throws IOException {
         var refs = new TreeMap<String, String>();
@@ -256,8 +362,17 @@ public final class GitPreparation {
 
     private static String refs(Path repo) throws IOException {
         // Use the advertisement's Java ordering too: Git's UTF-8 order differs for supplementary characters.
-        return git(repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/", "refs/tags/")
-                .lines().sorted().collect(java.util.stream.Collectors.joining("\n"));
+        return refText(refMap(repo));
+    }
+
+    private static Map<String, String> refMap(Path repo) throws IOException {
+        var refs = new TreeMap<String, String>();
+        for (var line : git(repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/", "refs/tags/")
+                .lines().toList()) {
+            int space = line.indexOf(' ');
+            refs.put(line.substring(0, space), line.substring(space + 1));
+        }
+        return refs;
     }
 
     private static String refText(Map<String, String> refs) {

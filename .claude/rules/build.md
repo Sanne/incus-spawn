@@ -142,11 +142,16 @@ It never fetches into or maintains the user's repository.
 Only that remote's tracking tips are used for negotiation.
 A failed reference clone, dissociation or integrity check discards the partial output and retries once without a reference before publication.
 A warm snapshot requires matching fresh remote heads, tags, default HEAD and object format, plus a valid SHA-256 seal over all repository bytes.
-Changed refs create a fresh `clone --bare --no-local --reference … --dissociate`, preferring the previous clean snapshot over a host checkout.
-Bare dissociation avoids older Git's commit-graph/checkout bug, and fresh output passes full fsck before publication.
+Changed refs first fetch into staging that shares only the verified snapshot's immutable packs, with separate metadata and no automatic maintenance.
+Incoming objects and new packs are checked, retained bytes must still match their sealed hashes, and every old root must remain reachable from the new selection.
+Fast-forwards, merged branch deletions and HEAD changes can therefore reuse old packs without full-history repacking or fsck.
+Removed history, a fetch/verification failure, an advertisement mismatch or more than 32 packs uses a fresh `clone --bare --no-local --reference … --dissociate` instead.
+Failed staging is discarded before the rebuild; it never becomes a reference.
+Bare dissociation avoids older Git's commit-graph/checkout bug, and rebuilt output passes full fsck before publication.
 `PreparationCache` coordinates writers and leased readers, publishes complete generations atomically, and bounds retained snapshots even when a host checkout exists.
 Only the clean prepared bare repository is mounted for `clone --no-hardlinks`; guest SHA-256 checks precede priming, and a failed check falls back to the remote.
 Both prepared and network full clones start with all advertised branches and tags and a broad future-fetch refspec.
+Shallow clones bypass the snapshot cache and report their depth plus guest/attach/detach timings.
 See [Git preparation](../../docs/GIT-PREPARATION.md) for the selection, retention and failure contracts.
 A repo with a `depth` never takes the local fast path (it ignores `--depth`): it clones the reference with `--no-local --depth`, then fetches its branch at that depth from the real origin (`shallowFixupCommand`).
 From the network it is `--single-branch --depth`, and its refspec stays narrow (#1344).

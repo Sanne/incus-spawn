@@ -220,6 +220,7 @@ class RepoCloner {
             }
         }
         if (repos.isEmpty()) return;
+        preparationTimings.clear();
 
         try (var reposGroup = BuildOutput.group("Repositories", repos.size() + " to prepare")) {
 
@@ -339,8 +340,9 @@ class RepoCloner {
                 long attachMillis = (System.nanoTime() - attaching) / 1_000_000;
                 long start = System.nanoTime();
                 clone = cloneOne(container, repo, ref, states, idx);
-                if (prepared.containsKey(idx)) preparationTimings.put(idx, prepared.get(idx).timingSummary()
-                        + ", attach=" + attachMillis + "ms, guest=" + (System.nanoTime() - start) / 1_000_000 + "ms");
+                var snapshot = prepared.get(idx);
+                preparationTimings.put(idx, (snapshot == null ? "" : snapshot.timingSummary() + ", ")
+                        + "attach=" + attachMillis + "ms, guest=" + (System.nanoTime() - start) / 1_000_000 + "ms");
             } finally {
                 limiter.release();
             }
@@ -349,7 +351,7 @@ class RepoCloner {
                 try {
                     long detaching = System.nanoTime();
                     if (ref.hasDevice()) detachedOk = mounts.detach(idx);
-                    if (prepared.containsKey(idx)) preparationTimings.merge(idx,
+                    preparationTimings.merge(idx,
                             "detach=" + (System.nanoTime() - detaching) / 1_000_000 + "ms", (a, b) -> a + ", " + b);
                     if (detachedOk) releasePrepared(idx);
                     // Before the count-down, so a prime woken by it already sees the failure.
@@ -374,8 +376,9 @@ class RepoCloner {
                 : clone.fallbackReason() != null ? clone.fallbackReason()
                 : ref != null ? ref.skipReason() : null;
         String note = clone.usedReference()
-                ? ref.prepared() == null ? "via host reference" : "via " + ref.prepared().strategy()
-                : reason;
+                ? ref.prepared() == null ? "via host reference (shallow, depth " + repo.getDepth() + ")"
+                    : "via " + ref.prepared().strategy()
+                : reason != null ? reason : repo.getDepth() != null ? "via remote (shallow, depth " + repo.getDepth() + ")" : null;
         boolean highlight = reason != null;
         if (repo.hasPrime()) {
             if (referencesDetached.getCount() > 0) {

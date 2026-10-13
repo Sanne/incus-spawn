@@ -1,0 +1,182 @@
+{
+  "fixture_filesystem": "tmpfs",
+  "git": "git version 2.56.0",
+  "pack_threads": 4,
+  "scope": "Production JVM host preparation: direct borrowing, incremental fetching, pack verification, SHA-256 seals and publication; excludes fixture setup, audits, Incus and guest copying. Loopback transport and warm filesystem cache.",
+  "base_revision": "8201e00283c1f05d23c155dfd72a1dd9c1aea198",
+  "working_tree_modified": true,
+  "source_hashes": {
+    "common/src/main/java/dev/incusspawn/git/GitPreparation.java": "fe84b9a52c672a20ffbabc0f600308e597e2d3050e412eb1ec10ee908a3821ae",
+    "common/src/main/java/dev/incusspawn/git/PreparationCache.java": "3a69bc8f5e07b1f446cc85bfeb316f8ed2d2f50f9bff1c0706c3f9a67da46da4",
+    "common/src/main/java/dev/incusspawn/git/PreparationGit.java": "f66d592414f0d13d29661b120c9c7abc276872fe8d10db0001ebcfe0323746d7"
+  },
+  "trials": {
+    "initial": {
+      "tip": "e91ca9612da2753a8edc1529227184f627d4ff3b",
+      "physical_objects": 1097673,
+      "pack_count": 1,
+      "measurements": [
+        {
+          "trial": 0,
+          "strategy": "reference-seeded clean snapshot",
+          "total_ms": 21519,
+          "retained_bytes": 325288450,
+          "phases_ms": {
+            "check": 0,
+            "clone": 7784,
+            "publish": 1,
+            "reference": 6,
+            "remote": 46,
+            "verify": 13659
+          }
+        },
+        {
+          "trial": 1,
+          "strategy": "cached clean snapshot",
+          "total_ms": 265,
+          "retained_bytes": 325288450,
+          "phases_ms": {
+            "check": 220,
+            "remote": 44
+          }
+        },
+        {
+          "trial": 2,
+          "strategy": "cached clean snapshot",
+          "total_ms": 245,
+          "retained_bytes": 325288450,
+          "phases_ms": {
+            "check": 201,
+            "remote": 43
+          }
+        }
+      ]
+    },
+    "advance": {
+      "tip": "7ef63cb92e02741b24b29ab24026297cfb334092",
+      "physical_objects": 1097674,
+      "pack_count": 2,
+      "measurements": [
+        {
+          "trial": 0,
+          "strategy": "incremental clean snapshot",
+          "total_ms": 804,
+          "retained_bytes": 325289743,
+          "phases_ms": {
+            "check": 215,
+            "fetch": 120,
+            "publish": 1,
+            "reference": 0,
+            "remote": 46,
+            "verify": 403
+          }
+        },
+        {
+          "trial": 1,
+          "strategy": "cached clean snapshot",
+          "total_ms": 231,
+          "retained_bytes": 325289743,
+          "phases_ms": {
+            "check": 187,
+            "remote": 44
+          }
+        },
+        {
+          "trial": 2,
+          "strategy": "cached clean snapshot",
+          "total_ms": 230,
+          "retained_bytes": 325289743,
+          "phases_ms": {
+            "check": 186,
+            "remote": 43
+          }
+        }
+      ]
+    },
+    "advance_again": {
+      "tip": "257d2d879c7d8ee61c872942699d825362a2bd77",
+      "physical_objects": 1097675,
+      "pack_count": 3,
+      "measurements": [
+        {
+          "trial": 0,
+          "strategy": "incremental clean snapshot",
+          "total_ms": 800,
+          "retained_bytes": 325291041,
+          "phases_ms": {
+            "check": 217,
+            "fetch": 119,
+            "publish": 1,
+            "reference": 0,
+            "remote": 47,
+            "verify": 399
+          }
+        },
+        {
+          "trial": 1,
+          "strategy": "cached clean snapshot",
+          "total_ms": 228,
+          "retained_bytes": 325291041,
+          "phases_ms": {
+            "check": 184,
+            "remote": 43
+          }
+        },
+        {
+          "trial": 2,
+          "strategy": "cached clean snapshot",
+          "total_ms": 241,
+          "retained_bytes": 325291041,
+          "phases_ms": {
+            "check": 196,
+            "remote": 43
+          }
+        }
+      ]
+    },
+    "rewind": {
+      "tip": "e91ca9612da2753a8edc1529227184f627d4ff3b",
+      "physical_objects": 1097673,
+      "pack_count": 1,
+      "measurements": [
+        {
+          "trial": 0,
+          "strategy": "reference-seeded clean snapshot",
+          "total_ms": 21401,
+          "retained_bytes": 325288450,
+          "phases_ms": {
+            "check": 214,
+            "clone": 7382,
+            "fetch": 51,
+            "publish": 18,
+            "reference": 0,
+            "remote": 46,
+            "verify": 13670
+          }
+        },
+        {
+          "trial": 1,
+          "strategy": "cached clean snapshot",
+          "total_ms": 226,
+          "retained_bytes": 325288450,
+          "phases_ms": {
+            "check": 181,
+            "remote": 44
+          }
+        },
+        {
+          "trial": 2,
+          "strategy": "cached clean snapshot",
+          "total_ms": 224,
+          "retained_bytes": 325288450,
+          "phases_ms": {
+            "check": 180,
+            "remote": 42
+          }
+        }
+      ]
+    }
+  },
+  "initial_tip": "e91ca9612da2753a8edc1529227184f627d4ff3b",
+  "initial_selected_objects": 1097673
+}

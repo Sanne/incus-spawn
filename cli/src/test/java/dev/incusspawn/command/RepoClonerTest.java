@@ -34,6 +34,45 @@ class RepoClonerTest {
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
     private static final IncusClient.ExecResult FAIL = new IncusClient.ExecResult(1, "", "");
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void shallowClonesReportDepthAndTimingsOnEveryBuild(boolean reference) {
+        var incus = mock(IncusClient.class);
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
+        var cmd = cloner(incus);
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://example.invalid/releases.git");
+        repo.setDepth(1);
+        if (reference) doReturn(new RepoCloner.RepoReference("ref", "/mnt/ref", "/host/releases", null))
+                .when(cmd).planReference(eq(repo.getUrl()), any());
+        var other = new ImageDef.RepoEntry();
+        other.setUrl("https://example.invalid/other.git");
+        var def = new ImageDef();
+        def.setName("tpl-test");
+        def.setRepos(List.of(repo, other));
+        var output = new java.io.ByteArrayOutputStream();
+        var originalOut = System.out;
+        var originalErr = System.err;
+        try {
+            System.setOut(new java.io.PrintStream(output, true));
+            System.setErr(new java.io.PrintStream(output, true));
+            cmd.cloneRepos(new Container(incus, "test"), def, java.util.Map.of(), MachineType.CONTAINER);
+            String first = output.toString();
+            assertTrue(first.contains("via " + (reference ? "host reference" : "remote") + " (shallow, depth 1)"), first);
+            assertTrue(first.matches("(?s).*releases: attach=[0-9]+ms, guest=[0-9]+ms.*"), first);
+            assertTrue(first.matches("(?s).*other: attach=[0-9]+ms, guest=[0-9]+ms.*"), first);
+            if (reference) assertTrue(first.matches("(?s).*releases: attach=[0-9]+ms, guest=[0-9]+ms, detach=[0-9]+ms.*"), first);
+            output.reset();
+            def.setRepos(List.of(repo));
+            cmd.cloneRepos(new Container(incus, "test"), def, java.util.Map.of(), MachineType.CONTAINER);
+            assertTrue(output.toString().contains("releases: attach="), output.toString());
+            assertFalse(output.toString().contains("other:"), "timings must not leak across builds");
+        } finally {
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+        }
+    }
+
     @Test
     void cloneReposRunsPrimeCommand() {
         var incus = mock(IncusClient.class);

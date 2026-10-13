@@ -2476,12 +2476,19 @@ Source removal, corruption or concurrent pruning therefore cannot publish an inc
 A warm reuse requires a fresh authoritative advertisement with identical heads, tags, default HEAD and object format, plus a verified SHA-256 seal covering all cached repository files.
 Branch/tag pins share the full selection and are checked on every request.
 No graph walk, user-checkout access or repack runs on a hit.
-Changed refs create a fresh `clone --bare --no-local --reference … --dissociate`, preferring a valid previous snapshot as the reference.
-Git's dissociation repack selects the current closure, excluding private reference objects and objects belonging only to deleted refs; a mutable fetch/prune mirror would retain them.
-Bare cloning avoids the historical commit-graph/checkout failure in older Git's dissociation path.
-Fresh snapshots must be independent and pass full fsck; only selected pack/index pairs and freshly written refs enter the minimal bare repository mounted read-only into the guest.
+Changed refs first fetch incrementally into staging, with separate metadata and hardlinks only to the previous verified generation's owned immutable packs.
+Fetching checks incoming objects, forces packed storage and disables automatic maintenance; new packs also pass `index-pack --verify --strict`, while old pack/index hashes must still match their seal.
+Old refs and HEAD must remain reachable from the new selection, including annotated tag objects; unchanged roots and fast-forward ancestry avoid an object walk, with a reachability difference for the remaining roots.
+This permits ordinary merges, new branches/tags and deletion of merged branches without rewriting or fully decoding old packs.
+An advertisement/fetch mismatch, removed history, failed incremental validation or growth beyond 32 packs discards staging and uses a fresh `clone --bare --no-local --reference … --dissociate` instead.
+The rebuild prefers the previous snapshot as its reference, never the failed staging tree.
+Git's dissociation repack selects the current closure, excluding private reference objects and objects belonging only to deleted refs; bare cloning avoids the historical commit-graph/checkout failure in older Git's dissociation path.
+Initial and rebuilt snapshots pass full fsck, while incremental snapshots reuse the object validation of exactly matching old bytes and validate new objects and their links.
+Only selected pack/index pairs and freshly written refs enter the minimal bare repository mounted read-only into the guest.
 The guest copies them with `clone --no-hardlinks`, checks their SHA-256 digests, and sets the real remote URL; no full-history guest repack remains.
 A failed preparation, mount or verification falls back to a fresh remote clone before priming.
+Shallow clones bypass this cache and still reconcile with the remote and repack their selected objects for each build.
+Their ready line identifies the depth, and guest/attach/detach timings cover shallow and network clones as well as prepared snapshots.
 `PreparationCache` atomically publishes immutable generations, coordinates writers through stable locks and pins readers in leased work directories across replacement and eviction.
 One size/age budget bounds retained payload and metadata together, including for repositories with a host checkout.
 Per-repo progress reports preparation phases and records their milliseconds alongside guest copy time.

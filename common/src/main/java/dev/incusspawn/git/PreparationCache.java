@@ -84,6 +84,8 @@ final class PreparationCache {
         @Override
         public synchronized void close() throws IOException {
             if (closed) return;
+            // Cancellation must still release its lease; restore the interrupt after cleanup.
+            boolean interrupted = Thread.interrupted();
             try (var ignored = catalogue()) {
                 closed = true;
                 try {
@@ -93,6 +95,8 @@ final class PreparationCache {
                     synchronized (ACTIVE) { ACTIVE.remove(path); }
                     delete(path);
                 }
+            } finally {
+                if (interrupted) Thread.currentThread().interrupt();
             }
         }
     }
