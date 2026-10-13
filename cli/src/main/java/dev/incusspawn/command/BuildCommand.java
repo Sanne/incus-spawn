@@ -9,7 +9,6 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
-import dev.incusspawn.git.HostRepoRefresh;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.FirewallDetector;
@@ -128,7 +127,7 @@ public class BuildCommand extends BaseCommand {
     @Option(name = "yes", hasValue = false, description = "Skip interactive confirmations (for TUI integration)")
     boolean yes;
 
-    @Option(name = "skip-git-refresh", hasValue = false, description = "Skip refreshing host-side git repositories before building")
+    @Option(name = "skip-git-refresh", hasValue = false, description = "Compatibility option; builds no longer refresh host checkouts")
     boolean skipGitRefresh;
 
     IncusClient incus;
@@ -180,8 +179,6 @@ public class BuildCommand extends BaseCommand {
 
     record ActiveBuild(String tempName, String canonicalName, MachineType machineType) {}
     private volatile ActiveBuild activeBuild;
-
-    private HostRepoRefresh.AsyncRefresh hostRepoRefresh;
 
     /** Templates whose build failed in this invocation, so a later target built on them is skipped. */
     private final Set<String> failedInRun = new LinkedHashSet<>();
@@ -285,23 +282,19 @@ public class BuildCommand extends BaseCommand {
             }
             var targets = definitionsOf(names, defs);
             if (targets == null) return CommandResult.valueOf(1);
-            startHostRepoRefresh(targets, defs, executor);
             if (withParents) buildWithParents(targets, defs);
             else buildWithDescendants(targets, defs);
             return CommandResult.SUCCESS;
         }
         if (missing) {
-            startHostRepoRefresh(new ArrayList<>(defs.values()), defs, executor);
             buildMissing(defs);
             return CommandResult.SUCCESS;
         }
         if (outOfSync) {
-            startHostRepoRefresh(new ArrayList<>(defs.values()), defs, executor);
             buildAll(defs, true);
             return CommandResult.SUCCESS;
         }
         if (all) {
-            startHostRepoRefresh(new ArrayList<>(defs.values()), defs, executor);
             buildAll(defs, false);
             return CommandResult.SUCCESS;
         }
@@ -331,7 +324,6 @@ public class BuildCommand extends BaseCommand {
         for (var target : targets) collectAllRecursive(target, defs, chains, seen);
         requireValidAccounts(chains, defs);
         requireConsistentRepos(chains, defs);
-        startHostRepoRefresh(targets, defs, executor);
         build(parentsFirst(targets, defs), defs);
         return CommandResult.SUCCESS;
     }
@@ -377,17 +369,6 @@ public class BuildCommand extends BaseCommand {
             sb.append("  • ").append(shown(file.toString())).append('\n');
         }
         return sb.append("Fix the file, or move it out of the definitions directory.").toString();
-    }
-
-    private void startHostRepoRefresh(List<ImageDef> targets, Map<String, ImageDef> defs,
-                                      ExecutorService executor) {
-        if (skipGitRefresh) {
-            hostRepoRefresh = HostRepoRefresh.AsyncRefresh.COMPLETE;
-            return;
-        }
-        var config = SpawnConfig.load();
-        var allRepos = HostRepoRefresh.collectAllRepos(targets, defs);
-        hostRepoRefresh = HostRepoRefresh.refreshAsync(allRepos, HostRepoRefresh.hostDepths(defs), config, true, executor);
     }
 
     /**
@@ -2611,21 +2592,8 @@ public class BuildCommand extends BaseCommand {
         return BuildTools.collectEffectiveTools(imageDef, defs, toolDefLoader, toolSetups);
     }
 
-    /** Waits for this run's host repo refresh, then clones the repos ({@link RepoCloner#cloneRepos}). */
+    /** Prepare and clone the repos without changing user checkouts. */
     void cloneRepos(Container container, ImageDef imageDef, Map<String, ImageDef> defs, MachineType machineType) {
-        if (hostRepoRefresh != null) {
-            if (!hostRepoRefresh.isDone()) {
-                BuildOutput.stepStart("Waiting for host repo refresh");
-                hostRepoRefresh.join();
-                BuildOutput.stepDone();
-            } else {
-                hostRepoRefresh.join();
-            }
-            for (var w : hostRepoRefresh.warnings()) {
-                BuildOutput.note(w);
-            }
-            hostRepoRefresh = null;
-        }
         new RepoCloner(incus).cloneRepos(container, imageDef, defs, machineType);
     }
 

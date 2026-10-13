@@ -123,13 +123,9 @@ Callers do not escape anything themselves.
 
 # Host Repo Refresh
 
-Before building, `HostRepoRefresh` (`git/HostRepoRefresh.java`) fetches host-side git repos matching image definition repos so local-clone optimization uses current objects.
-Optionally clones missing repos (persisted via `auto-clone-repos` config).
-`--skip-git-refresh` bypasses the refresh.
-`update-all` only fetches.
-A repo with a `depth` is cloned with `--depth` on the host and marked (`isx.depth` in its git config); only a marked checkout is fetched with `--depth`, or unshallowed once a template wants all of history.
-An unmarked one is the user's and only plainly fetched (#1344).
-The depth is `HostRepoRefresh.hostDepths(defs)` over every definition, never only the build's targets.
+Builds no longer create or refresh user checkouts for acceleration (#1395); `--skip-git-refresh` is a compatibility no-op.
+Explicit `update-all` still calls `HostRepoRefresh` and preserves its managed-shallow policy.
+Checkout discovery and instance push/pull linking are unchanged.
 
 # Parallel Repo Cloning
 
@@ -141,19 +137,22 @@ A physical core is its `core_cpus_list` (`thread_siblings_list` before 5.3), nev
 Whatever leaves the tier in doubt (an unreadable capacity, a capacity on some CPUs only, a missing core list) makes it unknown, which the VM default treats as one tier.
 The scan of the real sysfs is made once per process.
 `CpuInfoTest` pins each source with sysfs fixtures (an i7-12700H, a Ryzen AI 300, an X3D, a three-tier ARM SoC, an RK3588 device-tree layout).
-When a host-side checkout is available, the clone runs locally from the mounted reference (`git clone --no-hardlinks`) -- this copies pack files directly, with no network transfer; the strip below then repacks them, the cost the old `--reference`/dissociate approach also paid (#1362).
-After the local clone, the remote URL is fixed to the real origin and a `git fetch` picks up any commits added since the last host refresh (usually nothing, so only ref advertisements travel the network).
-If a specific branch was requested, it is checked out after the fetch supplies the ref.
-The fast path then keeps only a network clone's refs (`fetch --prune --prune-tags --force`, other local branches deleted with `branch -D` so their config sections go too, reflogs expired), so no ref reaches the host's unpushed work (#1362); each listing runs before its deletion, so a failure fails closed.
-Both paths then strip the object store to what those refs reach and check it (`stripUnreachableObjects`, run last), so no unpushed commit, stash or once-staged blob ships; a strip that fails or cannot be checked falls back to a network clone.
-On any failure the local-clone path is discarded and a normal remote clone runs as fallback.
+For full clones, `GitPreparation` selects all advertised remote branches and tags in owned host staging, borrowing only independently copied packs from a matching checkout.
+It never fetches into or maintains the user's repository.
+Cold certificates validate pack/index integrity and complete selected-object coverage; warm ones still hash the exact pinned bytes.
+Mixed packs are packed non-thin with `--use-bitmap-index`, using only owned MIDX/bitmap metadata.
+A missing or unusable checkout can use a bounded immutable remote-derived snapshot, with no permanent mutable mirror.
+`PreparationCache` coordinates writers and leased readers, publishes complete generations atomically, and bounds metadata separately from payload.
+Only the clean prepared bare repository is mounted for `clone --no-hardlinks`; guest SHA-256 checks precede priming, and a failed check falls back to the remote.
+Both prepared and network full clones start with all advertised branches and tags and a broad future-fetch refspec.
+See [Git preparation](../../docs/GIT-PREPARATION.md) for the selection, retention and failure contracts.
 A repo with a `depth` never takes the local fast path (it ignores `--depth`): it clones the reference with `--no-local --depth`, then fetches its branch at that depth from the real origin (`shallowFixupCommand`).
 From the network it is `--single-branch --depth`, and its refspec stays narrow (#1344).
-A repo without a `depth` refuses a shallow reference and clones in full from the network.
+Full preparation refuses shallow references and uses a standalone snapshot or the remote.
 The shallow fixup then drops the host checkout's own branch and origin/HEAD, leaving a network clone's refs.
 Clones and `prime` commands use captured (non-streamed) exec so parallel output doesn't garble; progress renders via `util/TerminalProgress.java`, the shared animated braille-spinner display also used by `HostRepoRefresh`'s parallel fetch and by `BuildCommand`'s dnf operations.
 Each repo's `prime` command runs in the same worker once that repo's clone finishes **and every host reference is detached** (Cloning -> Waiting to prime -> Priming within one progress line).
-A reference mount is the host checkout's whole working tree, so no prime may run next to one (#765).
+The shallow path still mounts the host checkout's working tree, so no prime may run next to any reference (#765).
 Which repos have a reference is decided on the host up front (`planReference`).
 Each worker attaches its own just before its clone and detaches it right after (`DeviceMounts`, #826), both under one lock, because a device removal rewrites the whole device map and would drop an attach that landed meanwhile.
 A VM has only 8 PCI hotplug slots, so attaches go through `HotplugSlots`: a budget starting at `min(references, 8)` (unbounded for containers), where an attach Incus refuses for want of a slot (`IncusClient.NoHotplugSlotException`) retires a permit for good and waits for another.

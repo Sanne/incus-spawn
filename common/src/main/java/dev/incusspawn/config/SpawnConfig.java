@@ -70,6 +70,9 @@ public class SpawnConfig {
     @JqName("artifact-cache")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object artifactCache;
+    @JqName("git-cache")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private Object gitCache;
     @JqName("ready-timeouts")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object readyTimeouts;
@@ -637,6 +640,8 @@ public class SpawnConfig {
     public void setTuiLiveRefresh(Boolean enabled) { this.tuiLiveRefresh = enabled; }
     /** The {@code artifact-cache:} section, or null when there is none. */
     public ArtifactCacheConfig artifactCache() { return ArtifactCacheConfig.of(artifactCache); }
+    /** Bounded, rebuildable metadata and remote-derived Git snapshots. */
+    public GitCacheConfig gitCache() { return GitCacheConfig.of(gitCache); }
     /** The {@code ready-timeouts:} section, or null when there is none. */
     public ReadyTimeoutsConfig readyTimeouts() { return ReadyTimeoutsConfig.of(readyTimeouts); }
     /** The {@code host-routes:} section; it has no routes when there is none. */
@@ -790,6 +795,7 @@ public class SpawnConfig {
         this.autoCloneRepos = other.autoCloneRepos;
         this.tuiLiveRefresh = other.tuiLiveRefresh;
         this.artifactCache = other.artifactCache;
+        this.gitCache = other.gitCache;
         this.readyTimeouts = other.readyTimeouts;
         this.hostRoutes = other.hostRoutes;
         this.hostCa = other.hostCa;

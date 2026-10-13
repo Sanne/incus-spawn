@@ -359,18 +359,11 @@ Enablement is purely the `features` list: the earlier "a configured `openai.apiK
 
 ### Host Repo Refresh
 
-Before building templates or running `isx update-all`, `HostRepoRefresh` fetches all host-side git repos that match repos declared in image definitions (using the same `host-paths`/`repo-paths` resolution as local cloning).
-This ensures the local-clone optimization uses current objects.
-Fetches run in parallel and are rendered with the shared `TerminalProgress` animated per-repo spinner display (same helper used for parallel repo cloning).
-Optionally, missing repos can be cloned — the first prompt accepts `y`/`n`/`always`/`never`, with `always` and `never` persisted to the `auto-clone-repos` config field.
-`--skip-git-refresh` bypasses the refresh entirely.
-A repo with a `depth` is cloned on the host with `--depth` (and its `branch`, if any), and marked with the depth in its git config (`isx.depth`).
-Only a checkout with that mark has its depth managed: each refresh fetches it with `--depth`, at whatever depth the templates ask for now.
-Once a template wants all of history it is unshallowed and its refspec widened, and only then is its mark removed, so it becomes the regular clone it would have been.
-A checkout without the mark is the user's, shallow or full, and is only ever plainly fetched: `--depth` shortens as well as deepens, so passing it would cut a deeper shallow clone down to the template's depth.
-Every template naming the URL shares the one host checkout, so it is shallow only when all of them give a depth, at the deepest one (`HostRepoRefresh.hostDepths`).
-That is computed over every loaded definition, not only those being built: otherwise building one template would make the checkout shallow, building another would deepen it, and the next build of the first would cut it down again.
-`update-all` only fetches (no clone prompts).
+Builds never fetch into or create user working checkouts for acceleration (#1395).
+`GitPreparation` reads matching checkouts as object sources and reconciles against the real remote in owned staging.
+Explicit `isx update-all` still uses `HostRepoRefresh` to fetch linked checkouts; its existing managed-shallow depth policy remains intact.
+`--skip-git-refresh` remains accepted by builds as a compatibility no-op.
+Checkout discovery and instance push/pull linking still use `host-paths` and `repo-paths`.
 
 ### Build Flow
 
@@ -2430,9 +2423,10 @@ The VM's launch agent has no `KeepAlive` (checked on a Mac in the plists 0.3.9 a
 ### Repo Cloning and Reference Optimization
 
 Repos declared in an image definition are cloned into the container during build as `agentuser`.
-Clones use `--single-branch` to fetch only the target branch (or the default branch when none is specified), avoiding the download of hundreds of release/PR branches and thousands of tags that are present on large upstream repos but rarely needed in a dev container.
-After cloning, `git remote set-branches origin '*'` immediately widens the fetch refspec — this is a pure metadata write with no network traffic — so the clone is indistinguishable from a regular one.
-Other branches populate lazily on first `git fetch` or `git checkout`.
+Full clones select all advertised branches and tags, with the remote's default HEAD or the requested branch/tag checked out.
+This is the former local path's scope, now also used by the network fallback; the old network path initially fetched only one branch.
+The normal broad fetch refspec is retained, while shallow clones keep their existing narrow selection and refspec.
+The selection and cache contracts are specified in [Git preparation](docs/GIT-PREPARATION.md).
 
 **One clone per destination** (#1394): a repo's identity is its destination (`~/x` and `/home/agentuser/x` are one, and the default path comes from the URL), resolved across the whole template chain by `ImageDef.chainRepos`.
 A layer clones only the destinations it declares first; one an ancestor declared is already in the parent copy (or was cloned by that ancestor's layer in a build from scratch), so the build prints `✓ Inherited <repo> (from <template>)` and neither clones nor primes it again, and a repeat within a template is the same clone.
@@ -2465,7 +2459,7 @@ Before the fallback the failed attempt's destination is removed, but only one it
 The latch the primes wait on counts *planned* references, each counted down once, in a `finally`, after its attach is resolved and anything attached is detached.
 So a failed or re-queued attach can neither hang the primes nor land after them.
 Each repo's declared `prime` command (also captured, no PTY) runs in the same worker once that repo's clone is done **and every reference has been detached**, so priming still pipelines with the network clones in flight.
-The reason is that a reference mount is the host checkout's whole working tree: untracked `.env` files, stashes, unpushed branches, and credentials in `.git/config` URLs.
+Full-clone mounts contain only prepared public-to-that-remote objects and sanitized repository metadata; the unchanged shallow path can still mount the host checkout's whole working tree.
 A prime command is arbitrary code with network access, and the old "remove all references after everything" order let any repo's prime read every mounted checkout (#765).
 A failed detach fails the build rather than prime next to a mount.
 The concurrency bound is a semaphore in `prepareOne` taken around the clone and the prime separately, not `TerminalProgress`'s per-task slot.
@@ -2473,42 +2467,20 @@ A worker waiting for the detaches must not hold a slot, or with more referenced 
 A single progress line per repo advances Cloning → Priming → ✓/✗.
 Failures are aggregated and abort the build; as a best-effort fail-fast, once any repo fails a clone that completes afterward skips launching its (potentially expensive) prime — primes already in flight run to completion.
 
-**Local-clone optimization**: When `host-paths` or `repo-paths` is configured in `~/.config/incus-spawn/config.yaml`, the build checks whether a matching host-side checkout exists before cloning.
-The lookup first checks direct children of each configured base directory, then recursively scans subdirectories up to 4 levels deep (skipping known non-project directories like `.git`, `node_modules`, `target`, `build`, `vendor`, etc.) to handle repos organized in nested folder structures (e.g. `~/Code/java/repo-a`).
-When a repo subdirectory exists in more than one location, the build fails with an error instructing the user to add an explicit `repo-paths` entry to disambiguate.
-Matching uses URL normalization (strips scheme, `user@`, SSH colon separator, trailing `.git`, `www.`, then lowercases) and checks **all** git remotes, not just `origin`.
-This handles the common case where the user's fork is `origin` and the canonical upstream is `upstream`.
-If a match is found, the host directory is temporarily mounted into the container as a read-only Incus disk device (`readonly=true shift=true`) at a fixed path under `/var/lib/incus-spawn/repo-ref/` and cloned locally via `git clone --no-hardlinks`.
-This copies pack files directly, with no network transfer.
-Pack files are copied as-is, then the remote URL is fixed to the real origin and a `git fetch` picks up any commits added since the last host refresh (usually nothing — `HostRepoRefresh` just ran — so only ref advertisements travel the network).
-If a specific branch was requested, it is checked out after the fetch supplies the ref.
-A tag (`branch:` accepts one, as `git clone --branch` does) has no `origin/<tag>` to track (#1350).
-So a configured name origin has no branch of is looked up among the tags the fetch brought (`--prune-tags` fetches all of origin's), and HEAD is detached at it, as `clone --branch <tag>` leaves it.
-A branch wins over a tag of the same name, as it does for `clone --branch`; with neither, the fallback reason says `origin has no branch or tag '<name>'`.
-The clone keeps origin's branches and tags as a branch pin's does, where a network clone of the tag has only that tag until its first fetch.
-The local clone also takes over the host checkout's own branch (and its name, in a `[branch]` config section), its branches as `origin/*` and its tags, any of which may hold unpushed work (#1362).
-So the fetch runs with `--prune --prune-tags --force`, which leaves origin's branches and tags only; `--force` resets a tag the host has and origin has moved.
-Every local branch but the one checked out (all of them, for a tag) is then deleted with `branch -D`, which drops its config section, and the reflogs are expired: the refs and branch config a network clone has.
-Each deletion lists the refs before deleting them, so a listing that fails fails the clone, which then falls back to the network, rather than leaving the host's refs in place.
-The copy also takes everything in the host's object store, not only committed history.
-That is the host's unpushed commits, its stash entries, the blobs of content once staged (`git add`) and never committed, the commit-graph naming its commits, and any stray file there (a `tmp_pack_*` an interrupted fetch left).
-The ref store also keeps the host's values of the branches and tags the fetch moved (in `packed-refs`, or in a reftable's older tables), shadowed but naming its commits when it is ahead of origin.
-A template image must not carry any of those (#1362), so once the refs are a network clone's they are repacked (`pack-refs --all`) and the object store replaced (`stripUnreachableObjects`).
-`pack-objects --all --reflog --indexed-objects` writes one pack of what the refs, HEAD and index reach into a new directory, which takes the old store's place, so nothing copied survives.
-Automatic gc is off for the fetches before it (`-c gc.auto=0 -c maintenance.auto=false`), since a detached gc could write into the store behind the strip.
-A shallow repo is pruned first, which drops the shallow boundaries its refs no longer reach.
-The strip then proves its result rather than trusting it: the store must be that one pack, holding exactly as many objects as `rev-list --objects` reaches, and every shallow boundary must be in it.
-A store with alternates or promisor packs, which no pack of its own makes whole, is refused; a refusal, a failing step or a failed check falls back to a network clone.
-The shallow path ends with the same strip.
-Writing the pack is the cost the old approach paid: it used `git clone --reference` and then ran `git repack -a -d` to make the clone self-contained before unmounting the reference.
-It reuses the copied deltas rather than recomputing them, keeping them as offsets (`--delta-base-offset`, as `repack` does) rather than base ids, which would make the quarkus pack 18 MiB larger.
-On quarkus (580 MiB of packs, 2.4 million objects) it takes about 13 s and the check about 3 s more, against 1 s for the copy; a repack took about 12 s whether it had 4 threads or 32.
-A network clone of the same repo transfers about those 580 MiB.
-`clone --reference --dissociate` from origin would reach the same store through a repack, with no ref cleanup.
-It would rebuild this path and the tag pins #1361 adds to it (#1350), though; the strip keeps both paths as they are and is one helper they share.
-Beyond the object store, the whole checkout (working tree, untracked files, `.git/config`) is *visible* inside the build container while the reference is mounted.
-That is why no prime command runs until every reference is detached (see above), and why project-local templates get no references at all.
-If the reference mount, clone, or fetch fails for any reason the build cleans up the partial checkout and falls back transparently to a plain remote clone.
+**Host preparation** (#1395): `GitPreparation` makes a fresh bare clone from the authoritative remote, using an independent copy of a discovered checkout's packs only as an object source.
+Discovery still uses `host-paths` and `repo-paths`, matching every configured remote, including an upstream beside a fork.
+The host checkout is never fetched into or maintained.
+A full selection's remote URL, requested branch/tag, remote HEAD, ref vector and object format, together with SHA-256 digests of every candidate pack/index pair, identify its certificate.
+Cold certification verifies pack/index integrity and proves that every object in a reusable pack belongs to the selected closure, and that the reusable packs cover that closure completely.
+A warm certificate skips that graph walk, but rehashes the independently pinned bytes.
+Mixed packs are rewritten by non-thin `pack-objects --all --revs --delta-base-offset --use-bitmap-index`, using MIDX/bitmap metadata built only in owned staging.
+Only the selected output's pack/index pairs and freshly written refs are mounted read-only into the guest.
+The guest copies them with `clone --no-hardlinks`, checks their SHA-256 digests, and sets the real remote URL; no full-history guest repack remains.
+A failed preparation, mount or verification falls back to a fresh remote clone before priming.
+Without a usable checkout, one bounded remote-derived snapshot replaces the mutable-mirror proposal: updates select into staging and atomically publish a new immutable generation, so deleted refs cannot retain old objects.
+`PreparationCache` coordinates writers through stable host locks, pins readers in leased work directories, and independently bounds metadata and snapshot retention.
+Per-repo progress reports preparation phases and records their milliseconds alongside guest copy time.
+Project-local definitions still get no host preparation or host mounts.
 
 **Shallow repos** (#1344): a repo entry's `depth` keeps only that many commits, for repositories that publish binaries as commits (`isx-apt-releases` replaces its `.deb` files on every release, and every old one stays in its history).
 Full history stays the default, since development repositories need it.
@@ -2520,11 +2492,11 @@ A configured name `ls-remote` finds no branch for is a tag (exit code 2; any oth
 Its refspec becomes the tag's (`+refs/tags/<tag>:refs/tags/<tag>`, what `clone --single-branch --branch <tag>` sets), HEAD is detached at it, and no branch is kept.
 Commits the reference already has do not travel again.
 The clone through the transport also takes over the host checkout's own branch (which may hold unpushed work) and its origin/HEAD, so those refs are deleted, and origin/HEAD set to the branch only when it is the remote's default: the refs a shallow network clone has.
-The objects only they reached are then stripped as on the full path (`stripUnreachableObjects`, cheap in a shallow repo), so a host branch's unpushed work does not ship in the image.
+The objects only they reached are then stripped (`stripUnreachableObjects`, cheap in a shallow repo), so a host branch's unpushed work does not ship in the image.
 Its tags go the same way, before the depth fetch, which follows the remote's own tags as a network clone does.
 Guest updates do not pass `--depth`, so a shallow repo in a long-lived instance keeps the history fetched after its build; the old history stays out.
 The other way round, a repo without a depth never inherits a shallow host checkout (one another template's depth made, or the user's own).
-A local clone of it would be shallow too, and no fetch deepens it, so that clone is refused and the repo clones in full from the network, its line saying why.
+Full preparation refuses shallow object sources and uses a remote-derived snapshot or the remote instead.
 
 **TUI visibility**: The F3 template detail view shows the host repo link status for each declared repo — the resolved host path when matched, or "No matching host checkout found" when not.
 This lets users verify their `host-paths`/`repo-paths` configuration without running a build.
@@ -3776,21 +3748,13 @@ Two approaches: (1) track which remotes were added in metadata and remove exactl
 We chose stateless scanning because it's simpler and eliminates a class of state-sync bugs (user manually removes a remote, add failed silently, metadata gets corrupted).
 The cost is scanning a few git repos on every destroy, which takes milliseconds.
 
-### Single-branch clone with lazy refspec restoration
-When cloning from the remote (the fallback path when no host reference is available), template builds use `--single-branch` to avoid fetching objects for all remote branches and tags.
-On a large project like Quarkus this is the difference between ~3 MiB and ~100 MiB of network traffic.
-The fetch refspec is immediately widened with `git remote set-branches origin '*'`, which costs nothing (no network, no object transfer) and makes the clone behave like a regular one.
-Users never need to know they received a single-branch clone; `git fetch`, `git branch -r`, and `git checkout other-branch` all work as expected — other branches just populate on first access.
+### Clone selection and future fetches
 
-The local-clone path (from a host reference) does not use `--single-branch` because it copies pack files wholesale regardless — the flag would only narrow the refs, which the follow-up `fetch` and `set-branches` fix anyway.
-`--single-branch` is reserved for the remote-clone fallback where it actually reduces network transfer.
-
-The alternative — a full remote clone — would download objects for hundreds of branches and thousands of tags that most container workflows never touch.
-Post-hoc pruning is not straightforward because git doesn't garbage-collect fetched objects unless explicitly told to.
-The single-branch + refspec-restore approach gets the performance benefit without any user-visible limitation.
-
-A repo with a `depth` is the exception, and the limitation is the point: its clone stays single-branch and shallow (see "Shallow repos" under Repo Cloning).
-`depth` is opt-in, per repo, rather than a default for some repos or a global setting: whether history is worth its download is a property of the repository, and only its template knows that.
+Full clones now use the same initial selection on the prepared and network paths: all advertised branches and tags, with a broad future-fetch refspec.
+The old network-only single-branch optimization made initial refs and tag reachability depend on whether a host checkout happened to exist.
+A configured branch wins over a same-named tag; a tag checks out detached.
+Shallow clones remain single-branch, with the existing depth and tag-following behavior and narrow future-fetch refspec.
+`depth` remains opt-in and per repository.
 
 ### Auto-remote: opt-in via configuration
 Auto-remote management requires explicit `host-paths` or `repo-paths` configuration — we don't scan `~` or `/` to auto-discover repos.

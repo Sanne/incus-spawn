@@ -42,7 +42,7 @@ class RepoClonerReferenceTest {
 
     /** {@code clones} holds the clones that succeeded. */
     private record Build(FakeIncusDaemon daemon, List<String> clones, AtomicInteger primes,
-                         AtomicInteger primesWhileAttached, String output) {}
+                         AtomicInteger primesWhileAttached, String output, List<String> deviceNames) {}
 
     /** Builds {@code count} referenced repos, each with a prime, into a running VM. */
     private Build build(int count, int hotplugSlots) throws IOException {
@@ -55,10 +55,14 @@ class RepoClonerReferenceTest {
      * with {@code mountAppears} false that wait times out.
      */
     private Build build(int count, int hotplugSlots, boolean mountAppears) throws IOException {
+        return build(count, hotplugSlots, mountAppears, false);
+    }
+
+    private Build build(int count, int hotplugSlots, boolean mountAppears, boolean sameUrl) throws IOException {
         IsolatedHome.seed("host-paths:\n  - " + checkouts + "\n");
         var repos = new ArrayList<ImageDef.RepoEntry>();
         for (int i = 0; i < count; i++) {
-            var url = "https://github.com/owner/repo" + i + ".git";
+            var url = "https://github.com/owner/repo" + (sameUrl ? 0 : i) + ".git";
             var git = Files.createDirectories(checkouts.resolve("repo" + i).resolve(".git"));
             Files.writeString(git.resolve("config"), "[remote \"origin\"]\n\turl = " + url + "\n");
             var repo = new ImageDef.RepoEntry();
@@ -75,6 +79,11 @@ class RepoClonerReferenceTest {
                 .instance(VM, "virtual-machine", "Running", Map.of())
                 .hotplugSlots(hotplugSlots);
         var incus = spy(daemon.client());
+        var deviceNames = java.util.Collections.synchronizedList(new ArrayList<String>());
+        doAnswer(inv -> {
+            deviceNames.add(inv.getArgument(1));
+            return inv.callRealMethod();
+        }).when(incus).deviceAdd(eq(VM), anyString(), eq("disk"), any(String[].class));
         var clones = java.util.Collections.synchronizedList(new ArrayList<String>());
         var primes = new AtomicInteger();
         var primesWhileAttached = new AtomicInteger();
@@ -101,6 +110,10 @@ class RepoClonerReferenceTest {
         }).when(incus).execInContainer(eq(VM), eq("agentuser"), anyString());
 
         var cmd = spy(new RepoCloner(incus));
+        doAnswer(inv -> {
+            RepoCloner.RepoReference ref = inv.getArgument(1);
+            return RepoClonerTest.reference(ref.deviceName(), ref.containerPath(), ref.source(), null);
+        }).when(cmd).prepareReference(any(), any(), any(), anyInt());
         doReturn(count).when(cmd).repoConcurrency(anyInt()); // every clone at once: the most slot pressure
         var out = new ByteArrayOutputStream();
         var originalOut = System.out;
@@ -114,7 +127,16 @@ class RepoClonerReferenceTest {
             System.setOut(originalOut);
             System.setErr(originalErr);
         }
-        return new Build(daemon, clones, primes, primesWhileAttached, out.toString());
+        return new Build(daemon, clones, primes, primesWhileAttached, out.toString(), deviceNames);
+    }
+
+    @Test
+    void twoEntriesForOneUrlHaveIndependentMounts() throws IOException {
+        var build = build(3, 8, true, true);
+        assertEquals(3, viaReference(build), build.output());
+        assertEquals(3, new java.util.HashSet<>(build.deviceNames()).size());
+        assertEquals(0, build.primesWhileAttached().get());
+        assertEquals(List.of(), referenceDevices(build));
     }
 
     private static long viaReference(Build build) {
@@ -167,7 +189,7 @@ class RepoClonerReferenceTest {
         var build = build(3, 8);
 
         assertEquals(3, viaReference(build), build.output());
-        assertTrue(build.output().contains("via host reference"), build.output());
+        assertTrue(build.output().contains("via prepared Git packs"), build.output());
         assertEquals(List.of(), referenceDevices(build));
     }
 

@@ -2,6 +2,19 @@
 
 Performance benchmarks for the native image build of the MITM proxy. Use these to catch regressions in binary size, memory usage, startup time, or request latency before and after changes.
 
+## Git preparation
+
+`GitPreparationBench.java` exercises the production host preparation code three times with a fresh cache, reporting phase timings as JSON lines and removing its cache afterward:
+
+```sh
+mvn -q -pl common compile
+java --class-path common/target/classes bench/GitPreparationBench.java <remote-url> <matching-checkout>
+```
+
+Omit the checkout to measure the bounded snapshot path. The checkout is read only; its configured remote should match the URL so its remote-tracking refs can supply fetch negotiation hints. Use a local transport fixture to separate CPU and disk cost from WAN transfer. These figures exclude Incus mounts, guest checkout and priming; normal build diagnostics report the host phases, attach, guest and detach times.
+
+The [implementation measurements](data/git-preparation-2026-10-13.json) include a controlled Quarkus fixture and a real nested-Incus comparison against `c46355fd`; the [preparation design](../docs/GIT-PREPARATION.md) describes selection, retention and platform limits.
+
 ## Prerequisites
 
 - **Linux**, or **macOS on Apple Silicon** with the differences under "On macOS" below

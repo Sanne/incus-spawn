@@ -1,0 +1,184 @@
+{
+  "date": "2026-10-13",
+  "base_commit": "c46355fd",
+  "git": "2.56.0",
+  "java": "OpenJDK 25.0.4.1",
+  "incus": "6.23",
+  "cpu": "AMD Ryzen 9 9950X3D2 16-Core Processor",
+  "fixture": {
+    "repository": "Quarkus",
+    "head": "e91ca9612da2753a8edc1529227184f627d4ff3b",
+    "objects": 1097673,
+    "pack_and_index_mib": 310.3,
+    "remote_refs": [
+      "refs/heads/main"
+    ]
+  },
+  "source_sha256": {
+    "common/src/main/java/dev/incusspawn/git/GitPreparation.java": "798ba202e5727cd01ba99a0d4a1836c213e83c95262951ccf9bf809b356af726",
+    "common/src/main/java/dev/incusspawn/git/PreparationCache.java": "6c7de9cabe8e458568e17324eee6de103a6258f30e07c78183d2e3882a85b73d",
+    "common/src/main/java/dev/incusspawn/git/PreparationGit.java": "f66d592414f0d13d29661b120c9c7abc276872fe8d10db0001ebcfe0323746d7",
+    "cli/src/main/java/dev/incusspawn/command/RepoCloner.java": "1cdaff221ceb5ce22e1ffa083571a88ea9f286dba867b3044d7c27cc0e80a4ee"
+  },
+  "method": [
+    "Original checkout never modified; benchmark sources are disposable copies.",
+    "Host-only clean run uses a loopback git:// server; mixed run uses file:// transport, with --no-local enforced by preparation.",
+    "Host benchmark staging is on tmpfs; Incus preparation uses the normal home cache.",
+    "Clean host trials 0 and 1 use the original remote HEAD; trials 2 and 3 advance it by one commit with the same tree.",
+    "Mixed source adds one private commit to a pack containing the public history.",
+    "Incus trial timer includes host preparation, attach, guest clone, detach, and an identical git fsck --full --no-dangling prime.",
+    "Nested kernel lacks the requested idmapped mount; both base and candidate use the same test-only client override omitting shift=, with guest UID 1000 mapped to host UID 1000.",
+    "Without that override, production code correctly reported the mount failure and completed via remote clone.",
+    "Incus head trial 0 has no matching closure proof; trials 1 and 2 reuse it. Base trials are consecutive warm runs.",
+    "These are small-sample JVM Linux results, not native/macOS/VM performance claims."
+  ],
+  "host_clean_then_advance": [
+    {
+      "trial": 0,
+      "strategy": "certified packs",
+      "milliseconds": {
+        "pin": 83,
+        "remote": 49,
+        "certify": 9704,
+        "pack": 1,
+        "publish": 200,
+        "total": 10061
+      }
+    },
+    {
+      "trial": 1,
+      "strategy": "certified packs (cached proof)",
+      "milliseconds": {
+        "pin": 71,
+        "remote": 49,
+        "certify": 180,
+        "pack": 1,
+        "publish": 177,
+        "total": 481
+      }
+    },
+    {
+      "trial": 2,
+      "strategy": "certified packs",
+      "milliseconds": {
+        "pin": 76,
+        "remote": 135,
+        "certify": 2497,
+        "pack": 1,
+        "publish": 186,
+        "total": 2899
+      }
+    },
+    {
+      "trial": 3,
+      "strategy": "certified packs (cached proof)",
+      "milliseconds": {
+        "pin": 76,
+        "remote": 136,
+        "certify": 176,
+        "pack": 1,
+        "publish": 185,
+        "total": 578
+      }
+    }
+  ],
+  "host_mixed": [
+    {
+      "trial": 0,
+      "strategy": "selected objects",
+      "milliseconds": {
+        "pin": 79,
+        "remote": 8,
+        "certify": 9738,
+        "pack": 3929,
+        "publish": 198,
+        "total": 13992
+      }
+    },
+    {
+      "trial": 1,
+      "strategy": "selected objects",
+      "milliseconds": {
+        "pin": 66,
+        "remote": 7,
+        "certify": 178,
+        "pack": 1659,
+        "publish": 177,
+        "total": 2106
+      }
+    },
+    {
+      "trial": 2,
+      "strategy": "selected objects",
+      "milliseconds": {
+        "pin": 59,
+        "remote": 8,
+        "certify": 176,
+        "pack": 1600,
+        "publish": 179,
+        "total": 2041
+      }
+    }
+  ],
+  "incus_base": [
+    {
+      "trial": 0,
+      "total_ms": 22058,
+      "phases_ms": null
+    },
+    {
+      "trial": 1,
+      "total_ms": 20988,
+      "phases_ms": null
+    },
+    {
+      "trial": 2,
+      "total_ms": 21327,
+      "phases_ms": null
+    }
+  ],
+  "incus_candidate": [
+    {
+      "trial": 0,
+      "total_ms": 24901,
+      "phases_ms": {
+        "pin": 54,
+        "remote": 51,
+        "certify": 9795,
+        "pack": 2,
+        "publish": 191,
+        "attach": 29,
+        "guest": 1399,
+        "detach": 106
+      }
+    },
+    {
+      "trial": 1,
+      "total_ms": 15212,
+      "phases_ms": {
+        "pin": 46,
+        "remote": 50,
+        "certify": 173,
+        "pack": 1,
+        "publish": 170,
+        "attach": 29,
+        "guest": 1418,
+        "detach": 89
+      }
+    },
+    {
+      "trial": 2,
+      "total_ms": 15143,
+      "phases_ms": {
+        "pin": 46,
+        "remote": 50,
+        "certify": 168,
+        "pack": 1,
+        "publish": 168,
+        "attach": 38,
+        "guest": 1360,
+        "detach": 85
+      }
+    }
+  ]
+}

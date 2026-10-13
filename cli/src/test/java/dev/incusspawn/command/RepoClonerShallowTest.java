@@ -34,6 +34,7 @@ import static org.mockito.Mockito.*;
  * Runs the guest's clone commands with the real git against a local fixture whose commits each
  * replace a binary file, as a release repository does (#1344).
  */
+@org.junit.jupiter.api.extension.ExtendWith(IsolatedHome.class)
 class RepoClonerShallowTest {
 
     @TempDir Path tmp;
@@ -214,13 +215,13 @@ class RepoClonerShallowTest {
         commitBinary(host, "unpushed work");
 
         rewrite = cmd -> cmd.replace(" pack-objects --all", " pack-objects --no-such-option --all");
-        for (var depth : new Integer[] {null, 2}) {
+        for (var depth : new Integer[] {2}) {
             assertGivesUpTheReference(run(repo(depth, null), host), "a failing pack-objects, depth " + depth);
         }
 
         // The check is what catches a strip that left the copied store in place.
         rewrite = cmd -> cmd.replace(" && rm -rf \"$o\" && mv \"$n\" \"$o\"", " && rm -rf \"$n\"");
-        for (var depth : new Integer[] {null, 2}) {
+        for (var depth : new Integer[] {2}) {
             assertGivesUpTheReference(run(repo(depth, null), host), "the store not swapped, depth " + depth);
         }
 
@@ -228,7 +229,7 @@ class RepoClonerShallowTest {
         rewrite = UnaryOperator.identity();
         var borrowing = tmp.resolve("host-borrowing");
         git(tmp, "clone", "-q", "--reference", upstream.toString(), "--", upstream.toUri().toString(), borrowing.toString());
-        assertGivesUpTheReference(run(repo(null, null), borrowing), "alternates");
+        assertEquals(StepState.DONE, run(repo(null, null), borrowing).state(), "full preparation can use the remote instead of an alternate-backed source");
     }
 
     private static void assertGivesUpTheReference(StepProgress state, String what) {
@@ -286,7 +287,7 @@ class RepoClonerShallowTest {
         var branches = " for-each-ref --format='%(if)";
         var tags = " for-each-ref --format='delete %(refname)' refs/tags";
         var remotes = " for-each-ref --format='delete %(refname)' refs/remotes";
-        for (var broken : new Object[][] {{null, branches}, {2, branches}, {2, tags}, {2, remotes}}) {
+        for (var broken : new Object[][] {{2, branches}, {2, tags}, {2, remotes}}) {
             var listing = (String) broken[1];
             // A listing the commands lack is no rewrite, and the reference would be used.
             rewrite = cmd -> cmd.replace(listing, " for-each-ref --no-such-option" + listing.substring(" for-each-ref".length()));
@@ -305,16 +306,11 @@ class RepoClonerShallowTest {
         git(tmp, "clone", "-q", "--depth", "1", "--", upstream.toUri().toString(), host.toString());
 
         var repo = repo(null, null);
-        var states = new AtomicReferenceArray<StepProgress>(1);
-        new RepoCloner(incus).prepareOne(container, repo,
-                new RepoCloner.RepoReference("ref", host.toString(), host.toString(), null),
-                states, 0, new AtomicBoolean());
-
+        var state = run(repo, host);
         var guest = Path.of(repo.getPath());
-        assertEquals(StepState.DONE, states.get(0).state(), states.get(0).detail());
+        assertEquals(StepState.DONE, state.state(), state.detail());
         assertEquals("false", git(guest, "rev-parse", "--is-shallow-repository"));
         assertEquals("5", git(guest, "rev-list", "--count", "HEAD"));
-        assertTrue(states.get(0).note().contains("host checkout is shallow"), states.get(0).note());
     }
 
     @Test
@@ -399,7 +395,7 @@ class RepoClonerShallowTest {
 
         for (var depth : new Integer[] {null, 1}) {
             assertEquals(StepState.FAILED, run(repo(depth, "stabel"), host).state(), "the network clone fails too");
-            assertTrue(stderr.stream().anyMatch(e -> e.contains("fatal: origin has no branch or tag 'stabel'")),
+            assertTrue(stderr.stream().anyMatch(e -> e.contains(depth == null ? "Remote branch stabel not found" : "fatal: origin has no branch or tag 'stabel'")),
                     "depth " + depth + ": " + stderr);
             stderr.clear();
         }
@@ -436,14 +432,26 @@ class RepoClonerShallowTest {
         var ref = reference == null ? null
                 : new RepoCloner.RepoReference("ref", reference.toString(), reference.toString(), null);
         var states = new AtomicReferenceArray<StepProgress>(1);
-        new RepoCloner(incus).prepareOne(container, repo, ref, states, 0, new AtomicBoolean());
+        if (reference != null && repo.getDepth() == null) {
+            ref = new RepoCloner.RepoReference("ref", reference.toString(), reference.toString(), null,
+                    new dev.incusspawn.git.GitPreparation.Request(repo.getUrl(), repo.getBranch(), reference), null);
+        }
+        new RepoCloner(incus) {
+            @Override RepoReference prepareReference(ImageDef.RepoEntry entry, RepoReference planned,
+                                                       AtomicReferenceArray<StepProgress> progress, int index) {
+                var prepared = super.prepareReference(entry, planned, progress, index);
+                if (!prepared.hasDevice()) return prepared;
+                return new RepoReference(prepared.deviceName(), prepared.source(), prepared.source(),
+                        null, null, prepared.prepared());
+            }
+        }.prepareOne(container, repo, ref, states, 0, new AtomicBoolean());
         return states.get(0);
     }
 
     private Path prepare(ImageDef.RepoEntry repo, Path reference) {
         var state = run(repo, reference);
         assertEquals(StepState.DONE, state.state(), state.detail() + "\n" + state.log());
-        if (reference != null) assertEquals("via host reference", state.note());
+        if (reference != null) assertTrue(state.note().startsWith("via "), state.note() + "\n" + stderr);
         return Path.of(repo.getPath());
     }
 
