@@ -7,7 +7,7 @@ Initial snapshots and updates that remove selected history use `clone --bare --n
 The guest copies the resulting repository with `--no-hardlinks` and verifies its object bytes before priming.
 
 This is the clean-snapshot alternative to the certificate/bitmap implementation in [PR #1400](https://github.com/Sanne/incus-spawn/pull/1400), addressing [#1395](https://github.com/Sanne/incus-spawn/issues/1395).
-The historical dissociation failure and comparative experiments are recorded in [research PR #1398](https://github.com/Sanne/incus-spawn/pull/1398).
+The [dissociation regression note](GIT-DISSOCIATE-REVIEW.md) preserves the historical checkout failure, its reproducer and the reason for bare preparation.
 
 ## When and why we use a clean snapshot
 

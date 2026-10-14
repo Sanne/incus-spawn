@@ -1,0 +1,71 @@
+[
+  {
+    "git": "git version 2.54.0",
+    "mode": "normal",
+    "exit": 128,
+    "stderr": "Cloning into '/tmp/isx-dissociate-graph-tzsfd4rl/normal'...\nfatal: unable to parse commit 477ecd506ed374cc1071246006be9eee2d21ba95\nwarning: Clone succeeded, but checkout failed.\nYou can inspect what was checked out with 'git status'\nand retry with 'git restore --source=HEAD :/'\n\n"
+  },
+  {
+    "git": "git version 2.54.0",
+    "mode": "disable-commit-graph",
+    "exit": 0,
+    "stderr": "Cloning into '/tmp/isx-dissociate-graph-tzsfd4rl/disable-commit-graph'...\n",
+    "independent_fsck_and_checkout": true
+  },
+  {
+    "git": "git version 2.54.0",
+    "mode": "no-checkout",
+    "exit": 0,
+    "stderr": "Cloning into '/tmp/isx-dissociate-graph-tzsfd4rl/no-checkout'...\n",
+    "independent_fsck_and_checkout": true
+  },
+  {
+    "git": "git version 2.54.0",
+    "mode": "bare",
+    "exit": 0,
+    "stderr": "Cloning into bare repository '/tmp/isx-dissociate-graph-tzsfd4rl/bare'...\n",
+    "independent_fsck_and_checkout": true
+  },
+  {
+    "git": "git version 2.54.0",
+    "mode": "deferred",
+    "exit": 0,
+    "stderr": "Cloning into '/tmp/isx-dissociate-graph-tzsfd4rl/deferred'...\n",
+    "independent_fsck_and_checkout": true
+  },
+  {
+    "git": "git version 2.56.0",
+    "mode": "normal",
+    "exit": 0,
+    "stderr": "Cloning into '/tmp/isx-dissociate-graph-ksvqi9p9/normal'...\n",
+    "independent_fsck_and_checkout": true
+  },
+  {
+    "git": "git version 2.56.0",
+    "mode": "disable-commit-graph",
+    "exit": 0,
+    "stderr": "Cloning into '/tmp/isx-dissociate-graph-ksvqi9p9/disable-commit-graph'...\n",
+    "independent_fsck_and_checkout": true
+  },
+  {
+    "git": "git version 2.56.0",
+    "mode": "no-checkout",
+    "exit": 0,
+    "stderr": "Cloning into '/tmp/isx-dissociate-graph-ksvqi9p9/no-checkout'...\n",
+    "independent_fsck_and_checkout": true
+  },
+  {
+    "git": "git version 2.56.0",
+    "mode": "bare",
+    "exit": 0,
+    "stderr": "Cloning into bare repository '/tmp/isx-dissociate-graph-ksvqi9p9/bare'...\n",
+    "independent_fsck_and_checkout": true
+  },
+  {
+    "git": "git version 2.56.0",
+    "mode": "deferred",
+    "exit": 0,
+    "stderr": "Cloning into '/tmp/isx-dissociate-graph-ksvqi9p9/deferred'...\n",
+    "independent_fsck_and_checkout": true
+  }
+]

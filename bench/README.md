@@ -19,6 +19,8 @@ The [incremental measurements](data/git-incremental-snapshots-2026-10-13.json) u
 
 The [initial clean-snapshot measurements](data/git-clean-snapshots-2026-10-13.json) use a controlled Quarkus fixture with 1,097,673 objects; they predate removal of the preliminary host-pack copy, as identified by their recorded source revision. The [preparation design](../docs/GIT-PREPARATION.md) describes selection, retention and platform limits. The certificate/bitmap alternative has its separate measurements in [PR #1400](https://github.com/Sanne/incus-spawn/pull/1400).
 
+The [dissociation regression note](../docs/GIT-DISSOCIATE-REVIEW.md) explains why preparation uses a bare clone and how to run `git-dissociate-regression.py` against older and fixed Git versions.
+
 ## Prerequisites
 
 - **Linux**, or **macOS on Apple Silicon** with the differences under "On macOS" below
