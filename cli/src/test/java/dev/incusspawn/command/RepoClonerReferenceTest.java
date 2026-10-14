@@ -26,7 +26,7 @@ import static org.mockito.Mockito.*;
 /**
  * Host repo references on a VM build, against a {@link FakeIncusDaemon} that gives a running VM
  * the 8 PCI hotplug slots Incus does (#826): more referenced repos than slots must all still clone
- * from their reference, and no prime may run while any reference is attached (#765).
+ * from their reference; clean snapshots permit independent priming while other copies continue.
  */
 @ExtendWith(IsolatedHome.class)
 class RepoClonerReferenceTest {
@@ -113,7 +113,7 @@ class RepoClonerReferenceTest {
         doAnswer(inv -> {
             RepoCloner.RepoReference ref = inv.getArgument(1);
             return RepoClonerTest.reference(ref.deviceName(), ref.containerPath(), ref.source(), null);
-        }).when(cmd).prepareReference(any(), any(), any(), anyInt());
+        }).when(cmd).prepareReference(any(), any(), any(), anyInt(), any());
         doReturn(count).when(cmd).repoConcurrency(anyInt()); // every clone at once: the most slot pressure
         var out = new ByteArrayOutputStream();
         var originalOut = System.out;
@@ -135,7 +135,6 @@ class RepoClonerReferenceTest {
         var build = build(3, 8, true, true);
         assertEquals(3, viaReference(build), build.output());
         assertEquals(3, new java.util.HashSet<>(build.deviceNames()).size());
-        assertEquals(0, build.primesWhileAttached().get());
         assertEquals(List.of(), referenceDevices(build));
     }
 
@@ -157,7 +156,6 @@ class RepoClonerReferenceTest {
 
         assertEquals(12, viaReference(build), build.output());
         assertEquals(12, build.primes().get());
-        assertEquals(0, build.primesWhileAttached().get());
         assertEquals(List.of(), referenceDevices(build));
     }
 
@@ -167,7 +165,6 @@ class RepoClonerReferenceTest {
         var build = build(12, 3);
 
         assertEquals(12, viaReference(build), build.output());
-        assertEquals(0, build.primesWhileAttached().get());
         assertEquals(List.of(), referenceDevices(build));
     }
 

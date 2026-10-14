@@ -53,6 +53,11 @@ public final class GitPreparation {
 
         public Path repository() { return repository; }
         public String strategy() { return strategy; }
+        /** The guest must independently see exactly this selection before any prepared bytes are mounted. */
+        public boolean matchesAdvertisement(String advertisement) throws IOException {
+            var visible = parseAdvertisement(advertisement);
+            return visible != null && visible.equals(selection(repository));
+        }
         /** Relative to the bare repository; checked again on the guest's independent copy. */
         public Map<String, String> checksums() { return checksums; }
         public Map<String, Long> timingsMillis() { return Map.copyOf(timings); }
@@ -63,10 +68,23 @@ public final class GitPreparation {
         @Override public void close() throws IOException { lease.close(); }
     }
 
-    public Prepared prepare(Request request, Consumer<String> phase) throws IOException {
-        if (request.url() == null || request.url().isBlank() || request.url().contains("\n")) {
-            throw new IOException("Invalid Git remote");
+    /** Host preparation accepts network transports only, never paths or arbitrary remote helpers. */
+    public static boolean isRemoteUrl(String url) {
+        if (url == null || url.isBlank() || url.chars().anyMatch(c -> Character.isWhitespace(c) || Character.isISOControl(c))) return false;
+        if (url.contains("://")) {
+            try {
+                var uri = java.net.URI.create(url);
+                return java.util.Set.of("https", "ssh", "git").contains(uri.getScheme())
+                        && uri.getHost() != null && !uri.getHost().isBlank();
+            } catch (IllegalArgumentException e) { return false; }
         }
+        // SCP-style SSH: a slash before the colon denotes a path, and drive letters are paths too.
+        return !url.startsWith("file:") && !url.matches("^[A-Za-z]:.*") && !url.startsWith("-")
+                && url.matches("(?:[^/@:]+@)?(?:\\[[0-9a-fA-F:]+\\]|[^/@:]+):[^:].*");
+    }
+
+    public Prepared prepare(Request request, Consumer<String> phase) throws IOException {
+        if (!isRemoteUrl(request.url())) throw new IOException("Git preparation requires an HTTPS, SSH or Git remote");
         var timings = new LinkedHashMap<String, Long>();
         var key = hash(POLICY + "\n" + request.url());
         var lease = cache.lease();
@@ -328,9 +346,12 @@ public final class GitPreparation {
 
     /** Canonical heads, tags, HEAD target and inferred object format. Unborn/ambiguous HEADs cannot hit. */
     private static String advertisement(Path work, String url) throws IOException {
+        return parseAdvertisement(git(work, "ls-remote", "--symref", "--", url, "HEAD", "refs/heads/*", "refs/tags/*"));
+    }
+
+    private static String parseAdvertisement(String output) throws IOException {
         var refs = new TreeMap<String, String>();
         String head = null;
-        var output = git(work, "ls-remote", "--symref", "--", url, "HEAD", "refs/heads/*", "refs/tags/*");
         for (var line : output.lines().toList()) {
             var parts = line.split("\t", 2);
             if (parts.length != 2) throw new IOException("Invalid Git advertisement");

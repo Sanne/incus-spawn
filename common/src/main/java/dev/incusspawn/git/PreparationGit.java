@@ -29,7 +29,10 @@ final class PreparationGit {
         var command = new ArrayList<>(List.of("git", "--no-replace-objects", "-c", "gc.auto=0",
                 "-c", "maintenance.auto=false", "-c", "core.hooksPath=/dev/null",
                 "-c", "pack.writeReverseIndex=false",
-                "-c", "fetch.writeCommitGraph=false", "-C", repo.toString()));
+                "-c", "fetch.writeCommitGraph=false",
+                "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
+                "-c", "protocol.ssh.allow=always", "-c", "protocol.git.allow=always",
+                "-c", "protocol.file.allow=never", "-C", repo.toString()));
         command.addAll(args);
         var stdout = output == null ? Files.createTempFile("isx-git-", ".out") : output;
         var stderr = Files.createTempFile("isx-git-", ".err");
@@ -39,6 +42,7 @@ final class PreparationGit {
             // In particular, do not inherit an alternate, a worktree, replace refs or injected -c options.
             // Keep the normal host config/credential helpers for authenticating the real remote.
             builder.environment().keySet().removeIf(k -> k.startsWith("GIT_") && !TRANSPORT_ENV.contains(k));
+            nonInteractiveSsh(builder.environment());
             builder.environment().put("GIT_TERMINAL_PROMPT", "0");
             builder.environment().put("GIT_OPTIONAL_LOCKS", "0");
             builder.environment().put("LC_ALL", "C");
@@ -63,6 +67,12 @@ final class PreparationGit {
             }
             if (output == null) Files.deleteIfExists(stdout);
             Files.deleteIfExists(stderr);
+        }
+    }
+
+    static void nonInteractiveSsh(java.util.Map<String, String> environment) {
+        if (!environment.containsKey("GIT_SSH_COMMAND") && !environment.containsKey("GIT_SSH")) {
+            environment.put("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
         }
     }
 

@@ -39,6 +39,7 @@ class RepoClonerShallowTest {
 
     @TempDir Path tmp;
     private Path upstream;
+    private dev.incusspawn.git.GitTestServer server;
     private IncusClient incus;
     private Container container;
     private final List<String> stderr = Collections.synchronizedList(new ArrayList<>());
@@ -46,6 +47,7 @@ class RepoClonerShallowTest {
     @BeforeEach
     void setUp() throws Exception {
         upstream = releasesFixture(tmp);
+        server = new dev.incusspawn.git.GitTestServer(tmp);
 
         incus = mock(IncusClient.class);
         container = new Container(incus, "test");
@@ -57,6 +59,8 @@ class RepoClonerShallowTest {
             return result;
         });
     }
+
+    @org.junit.jupiter.api.AfterEach void stopServer() throws Exception { if (server != null) server.close(); }
 
     /** Applied to every guest command before it runs. */
     private UnaryOperator<String> rewrite = UnaryOperator.identity();
@@ -87,7 +91,7 @@ class RepoClonerShallowTest {
     @Test
     void aShallowRepoClonedFromAFullHostCheckoutIsShallowAndLeavesTheHostAlone() throws Exception {
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
         commitBinary(upstream, "release 6"); // the host refresh has not seen it yet
 
         var guest = prepare(repo(2, null), host);
@@ -95,7 +99,7 @@ class RepoClonerShallowTest {
         assertEquals("true", git(guest, "rev-parse", "--is-shallow-repository"));
         assertEquals("2", git(guest, "rev-list", "--count", "HEAD"));
         assertEquals("release 6", git(guest, "log", "-1", "--format=%s"));
-        assertEquals(upstream.toUri().toString(), git(guest, "remote", "get-url", "origin"));
+        assertEquals(server.url(upstream), git(guest, "remote", "get-url", "origin"));
         assertEquals("false", git(host, "rev-parse", "--is-shallow-repository"));
         assertEquals("5", git(host, "rev-list", "--count", "HEAD"));
     }
@@ -103,7 +107,7 @@ class RepoClonerShallowTest {
     @Test
     void aShallowRepoClonedFromAShallowHostCheckoutGetsItsConfiguredBranch() throws Exception {
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--depth", "1", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--depth", "1", "--", server.url(upstream), host.toString());
 
         var guest = prepare(repo(1, "stable"), host);
 
@@ -119,7 +123,7 @@ class RepoClonerShallowTest {
         assertEquals("5", git(fromNetwork, "rev-list", "--count", "HEAD"));
 
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
         var fromHost = prepare(repo(null, null), host);
         assertEquals("false", git(fromHost, "rev-parse", "--is-shallow-repository"));
         assertEquals("5", git(fromHost, "rev-list", "--count", "HEAD"));
@@ -128,7 +132,7 @@ class RepoClonerShallowTest {
     @Test
     void aShallowRepoLeavesNothingOfTheHostCheckoutsOwnBranch() throws Exception {
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
         git(host, "checkout", "-q", "-b", "wip");
         commitBinary(host, "unpushed work");
         var unpushed = git(host, "rev-parse", "HEAD");
@@ -154,7 +158,7 @@ class RepoClonerShallowTest {
     void noObjectOfTheHostCheckoutsOwnWorkReachesTheClone() throws Exception {
         git(upstream, "tag", "v1", "HEAD~4");
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
         commitBinary(host, "unpushed on main"); // the clone takes the host's main as origin/main
         var aheadOfOrigin = git(host, "rev-parse", "HEAD");
         git(host, "checkout", "-q", "--detach");
@@ -210,7 +214,7 @@ class RepoClonerShallowTest {
     @Test
     void aStripThatFailsOrCannotBeCheckedGivesUpTheHostReference() throws Exception {
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
         git(host, "checkout", "-q", "-b", "wip");
         commitBinary(host, "unpushed work");
 
@@ -228,7 +232,7 @@ class RepoClonerShallowTest {
         // A host checkout borrowing objects through alternates: the clone takes them over.
         rewrite = UnaryOperator.identity();
         var borrowing = tmp.resolve("host-borrowing");
-        git(tmp, "clone", "-q", "--reference", upstream.toString(), "--", upstream.toUri().toString(), borrowing.toString());
+        git(tmp, "clone", "-q", "--reference", upstream.toString(), "--", server.url(upstream), borrowing.toString());
         assertEquals(StepState.DONE, run(repo(null, null), borrowing).state(), "full preparation can use the remote instead of an alternate-backed source");
     }
 
@@ -256,7 +260,7 @@ class RepoClonerShallowTest {
     void aFullRepoKeepsNoRefOfTheHostCheckoutsOwnWork() throws Exception {
         git(upstream, "tag", "v1", "HEAD~4");
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
         git(host, "checkout", "-q", "-b", "wip");
         commitBinary(host, "unpushed work");
         var unpushed = git(host, "rev-parse", "HEAD");
@@ -281,7 +285,7 @@ class RepoClonerShallowTest {
         // A for-each-ref listing refs to delete fails (say a corrupt packed-refs): the deletion must
         // not go ahead with nothing, leaving the host's refs in the image.
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
         git(host, "checkout", "-q", "-b", "wip");
 
         var branches = " for-each-ref --format='%(if)";
@@ -303,7 +307,7 @@ class RepoClonerShallowTest {
     void aRepoWithoutADepthDoesNotInheritAShallowHostCheckout() throws Exception {
         // Shallow because another template gave this URL a depth when the host cloned it.
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--depth", "1", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--depth", "1", "--", server.url(upstream), host.toString());
 
         var repo = repo(null, null);
         var state = run(repo, host);
@@ -319,7 +323,7 @@ class RepoClonerShallowTest {
         var tagged = git(upstream, "rev-parse", "HEAD~1");
         git(upstream, "tag", "v4", "HEAD~1");
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
 
         var guest = prepare(repo(null, "v4"), host);
 
@@ -333,7 +337,7 @@ class RepoClonerShallowTest {
         var tagged = git(upstream, "rev-parse", "HEAD~1");
         git(upstream, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "-m", "v4", "v4", "HEAD~1");
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
 
         var guest = prepare(repo(1, "v4"), host);
 
@@ -353,7 +357,7 @@ class RepoClonerShallowTest {
         var tagged = git(upstream, "rev-parse", "HEAD~1");
         git(upstream, "tag", "v4", "HEAD~1");
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
         git(host, "checkout", "-q", "-b", "v4");
         commitBinary(host, "unpushed work");
         git(host, "tag", "host-only");
@@ -379,7 +383,7 @@ class RepoClonerShallowTest {
         // As git clone --branch does: the branch wins over a tag of the same name.
         git(upstream, "tag", "stable", "HEAD~2");
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
 
         for (var depth : new Integer[] {null, 1}) {
             var guest = prepare(repo(depth, "stable"), host);
@@ -391,7 +395,7 @@ class RepoClonerShallowTest {
     @Test
     void aNameOriginHasAsNeitherBranchNorTagSaysSo() throws Exception {
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
 
         for (var depth : new Integer[] {null, 1}) {
             assertEquals(StepState.FAILED, run(repo(depth, "stabel"), host).state(), "the network clone fails too");
@@ -404,7 +408,7 @@ class RepoClonerShallowTest {
     @Test
     void aShallowBranchPinWhoseRemoteCannotBeListedReportsTheRemotesError() throws Exception {
         var host = tmp.resolve("host-releases");
-        git(tmp, "clone", "-q", "--", upstream.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
         var repo = repo(1, "main");
         repo.setUrl(tmp.resolve("gone").toUri().toString());
 
@@ -421,7 +425,7 @@ class RepoClonerShallowTest {
 
     private ImageDef.RepoEntry repo(Integer depth, String branch) {
         var repo = new ImageDef.RepoEntry();
-        repo.setUrl(upstream.toUri().toString());
+        repo.setUrl(server.url(upstream));
         repo.setPath(tmp.resolve("guest-" + ++guests).toString());
         repo.setBranch(branch);
         repo.setDepth(depth);
@@ -438,8 +442,8 @@ class RepoClonerShallowTest {
         }
         new RepoCloner(incus) {
             @Override RepoReference prepareReference(ImageDef.RepoEntry entry, RepoReference planned,
-                                                       AtomicReferenceArray<StepProgress> progress, int index) {
-                var prepared = super.prepareReference(entry, planned, progress, index);
+                                                       AtomicReferenceArray<StepProgress> progress, int index, String advertisement) {
+                var prepared = super.prepareReference(entry, planned, progress, index, advertisement);
                 if (!prepared.hasDevice()) return prepared;
                 return new RepoReference(prepared.deviceName(), prepared.source(), prepared.source(),
                         null, null, prepared.prepared());

@@ -562,6 +562,60 @@ class RepoClonerTest {
     }
 
     @Test
+    void preparedClonesPrimeWhileAnotherHostPreparationIsStillRunning() {
+        var incus = mock(IncusClient.class);
+        var accessChecks = new java.util.concurrent.atomic.AtomicInteger();
+        var primed = new java.util.concurrent.CountDownLatch(1);
+        var slowStarted = new java.util.concurrent.CountDownLatch(1);
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenAnswer(inv -> {
+            String script = inv.getArgument(2);
+            if (script.contains("ls-remote --symref")) accessChecks.incrementAndGet();
+            if (script.contains("echo fast-prime")) {
+                assertEquals(2, accessChecks.get(), "all guest access checks must precede primes");
+                assertTrue(slowStarted.await(5, java.util.concurrent.TimeUnit.SECONDS));
+                primed.countDown();
+            }
+            return OK;
+        });
+        var cmd = cloner(incus);
+        doReturn(2).when(cmd).repoConcurrency(anyInt());
+        var fast = repo("https://example.invalid/fast", "~/fast", "echo fast-prime");
+        var slow = repo("https://example.invalid/slow", "~/slow", null);
+        for (var repo : List.of(fast, slow)) {
+            doReturn(new RepoCloner.RepoReference(repo.getUrl(), "/mnt/ref", null, null,
+                    new dev.incusspawn.git.GitPreparation.Request(repo.getUrl(), null, null), null))
+                    .when(cmd).planReference(eq(repo.getUrl()), any());
+        }
+        doAnswer(inv -> {
+            assertEquals(2, accessChecks.get(), "all guest access checks must precede host preparation");
+            ImageDef.RepoEntry repo = inv.getArgument(0);
+            RepoCloner.RepoReference ref = inv.getArgument(1);
+            if (repo == slow) {
+                slowStarted.countDown();
+                assertTrue(primed.await(5, java.util.concurrent.TimeUnit.SECONDS), "fast prime waited for slow preparation");
+            }
+            return reference(ref.deviceName(), ref.containerPath(), "/owned/snapshot", null);
+        }).when(cmd).prepareReference(any(), any(), any(), anyInt(), any());
+        var def = trusted("tpl-test");
+        def.setRepos(List.of(fast, slow));
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(15),
+                () -> cmd.cloneRepos(new Container(incus, "test"), def, java.util.Map.of(), MachineType.CONTAINER));
+        assertEquals(0, primed.getCount());
+    }
+
+    @Test
+    void localUrlsNeverPlanAHostReference() {
+        var cmd = new RepoCloner(mock(IncusClient.class));
+        var config = new dev.incusspawn.config.SpawnConfig();
+        for (var url : List.of("/home/user/private", "file:///home/user/private", "../private", "ext::cat /private")) {
+            var ref = cmd.planReference(url, config);
+            assertNotNull(ref);
+            assertFalse(ref.hasDevice());
+            assertNull(ref.request());
+        }
+    }
+
+    @Test
     void noPrimeRunsWhileAHostReferenceIsMounted() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
@@ -587,6 +641,7 @@ class RepoClonerTest {
             repo.setUrl("https://github.com/owner/repo" + i + ".git");
             repo.setPath("~/repo" + i);
             repo.setPrime("echo primed");
+            repo.setDepth(1);
             repos.add(repo);
         }
         var imageDef = trusted("tpl-test");
@@ -597,7 +652,7 @@ class RepoClonerTest {
         for (int i = 0; i < 12; i++) {
             if (i % 2 == 1) continue; // half via host reference, half from the network
             var url = repos.get(i).getUrl();
-            doReturn(reference("ref-" + url.hashCode(), "/mnt/ref/" + url.hashCode(), "/host/repo", null))
+            doReturn(new RepoCloner.RepoReference("ref-" + url.hashCode(), "/mnt/ref/" + url.hashCode(), "/host/repo", null))
                     .when(cmd).planReference(eq(url), any());
         }
         doAnswer(inv -> { mounted.incrementAndGet(); return null; })

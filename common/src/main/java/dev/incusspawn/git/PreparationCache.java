@@ -39,8 +39,10 @@ final class PreparationCache {
     }
 
     HostLock writer(String key) {
-        // A bounded set of stable lock inodes: never unlink a lock another process may have open.
-        return HostLock.acquire(root.resolve("locks/" + key.substring(0, 2) + ".lock"), "preparing this Git repository", s -> {});
+        // A stable inode per URL: unrelated preparations never compete for a stripe. Do not unlink
+        // a lock another process may have open. Allow for Git's 15-minute commands and retry/fsck.
+        return HostLock.acquire(root.resolve("locks/" + key + ".lock"), "preparing this Git repository",
+                s -> {}, java.time.Duration.ofHours(2));
     }
 
     private HostLock catalogue() {

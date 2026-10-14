@@ -139,6 +139,10 @@ The scan of the real sysfs is made once per process.
 `CpuInfoTest` pins each source with sysfs fixtures (an i7-12700H, a Ryzen AI 300, an X3D, a three-tier ARM SoC, an RK3588 device-tree layout).
 For full clones, `GitPreparation` selects all advertised remote branches and tags in owned host staging, borrowing objects directly from a matching checkout without copying its packs first.
 It never fetches into or maintains the user's repository.
+Only HTTPS, SSH and Git network URLs qualify, with a protocol allowlist blocking local/file transports and remote helpers, including rewritten URLs.
+SSH uses batch mode unless the user supplied an SSH command or executable.
+The guest checks repository access using the template's accounts, and its complete advertised selection must match the snapshot before mounting.
+All guest access checks finish before any prime can alter guest tools.
 Only that remote's tracking tips are used for negotiation.
 A failed reference clone, dissociation or integrity check discards the partial output and retries once without a reference before publication.
 A warm snapshot requires matching fresh remote heads, tags, default HEAD and object format, plus a valid SHA-256 seal over all repository bytes.
@@ -148,7 +152,7 @@ Fast-forwards, merged branch deletions and HEAD changes can therefore reuse old 
 Removed history, a fetch/verification failure, an advertisement mismatch or more than 32 packs uses a fresh `clone --bare --no-local --reference … --dissociate` instead.
 Failed staging is discarded before the rebuild; it never becomes a reference.
 Bare dissociation avoids older Git's commit-graph/checkout bug, and rebuilt output passes full fsck before publication.
-`PreparationCache` coordinates writers and leased readers, publishes complete generations atomically, and bounds retained snapshots even when a host checkout exists.
+`PreparationCache` uses per-URL writer locks with a two-hour wait for slow preparation, coordinates leased readers, publishes complete generations atomically, and bounds retained snapshots even when a host checkout exists.
 Only the clean prepared bare repository is mounted for `clone --no-hardlinks`; guest SHA-256 checks precede priming, and a failed check falls back to the remote.
 Both prepared and network full clones start with all advertised branches and tags and a broad future-fetch refspec.
 Shallow clones bypass the snapshot cache and report their depth plus guest/attach/detach timings.
@@ -158,15 +162,16 @@ From the network it is `--single-branch --depth`, and its refspec stays narrow (
 Full preparation refuses shallow references and uses a standalone snapshot or the remote.
 The shallow fixup then drops the host checkout's own branch and origin/HEAD, leaving a network clone's refs.
 Clones and `prime` commands use captured (non-streamed) exec so parallel output doesn't garble; progress renders via `util/TerminalProgress.java`, the shared animated braille-spinner display also used by `HostRepoRefresh`'s parallel fetch and by `BuildCommand`'s dnf operations.
-Each repo's `prime` command runs in the same worker once that repo's clone finishes **and every host reference is detached** (Cloning -> Waiting to prime -> Priming within one progress line).
-The shallow path still mounts the host checkout's working tree, so no prime may run next to any reference (#765).
+Each repo's `prime` command runs in the same worker once that repo's clone finishes **and every raw shallow host reference is detached** (Cloning -> Waiting to prime -> Priming within one progress line).
+The shallow path still mounts the host checkout's working tree, so no prime may run next to any raw shallow reference (#765).
+A prepared clone detaches its own clean snapshot before priming, while other clean preparations and copies may continue.
 Which repos have a reference is decided on the host up front (`planReference`).
 Each worker attaches its own just before its clone and detaches it right after (`DeviceMounts`, #826), both under one lock, because a device removal rewrites the whole device map and would drop an attach that landed meanwhile.
 A VM has only 8 PCI hotplug slots, so attaches go through `HotplugSlots`: a budget starting at `min(references, 8)` (unbounded for containers), where an attach Incus refuses for want of a slot (`IncusClient.NoHotplugSlotException`) retires a permit for good and waits for another.
 Only when the budget would reach zero does the repo clone from the network, with a `RepoReference.skipped` note on its line.
 A VM's incus-agent mounts the share some time after the device add returns (#1233), so the reference clone's exec starts with `awaitMount` (`mountpoint -q` under `timeout`, at most `MOUNT_WAIT_SECONDS`, no extra request; skipped where the guest has no `mountpoint`); a share that never appears exits `MOUNT_TIMEOUT_EXIT` and the repo clones from the network.
 A failed clone from a reference also says why on its line (`CloneResult.fallbackReason`): no fallback to the network is silent.
-The `referencesDetached` latch counts *planned* references, each counted down once in a `finally` after its attach is resolved and anything attached is detached.
+The `referencesDetached` latch counts *planned raw shallow* references, each counted down once in a `finally` after its attach is resolved and anything attached is detached.
 A failed detach fails the build, before the count-down.
 Concurrency is bounded by a semaphore in `prepareOne` held around clone and prime separately, never while waiting (`repoConcurrency()`).
 Holding a slot while waiting would deadlock once referenced repos outnumber slots.

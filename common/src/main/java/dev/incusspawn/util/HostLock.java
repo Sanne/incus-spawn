@@ -82,6 +82,11 @@ public final class HostLock implements AutoCloseable {
         return acquire(lockFile, activity, log, TIMEOUT, null);
     }
 
+    /** As {@link #acquire}, with a wait appropriate to a longer-running operation. */
+    public static HostLock acquire(Path lockFile, String activity, Consumer<String> log, Duration timeout) {
+        return acquire(lockFile, activity, log, timeout, null);
+    }
+
     /**
      * As {@link #acquire}, but where the file cannot be locked at all -- a home on NFS without
      * lockd, a read-only or odd filesystem -- warn once and go on holding only the in-process

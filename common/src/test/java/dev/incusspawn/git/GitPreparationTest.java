@@ -29,22 +29,63 @@ class GitPreparationTest {
     private Path host;
     private Path cache;
     private GitPreparation preparation;
+    private GitTestServer server;
 
     @BeforeEach void fixture() throws Exception {
         remote = releasesFixture(tmp);
         git(remote, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "v1", "HEAD~4", "-m", "first");
     }
 
+    @org.junit.jupiter.api.AfterEach void stopServer() throws Exception { if (server != null) server.close(); }
+
     private void start() throws Exception {
+        server = new GitTestServer(tmp);
         host = tmp.resolve("host");
-        git(tmp, "clone", "-q", "--", remote.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(remote), host.toString());
         git(host, "repack", "-a", "-d");
         cache = tmp.resolve("cache");
         preparation = new GitPreparation(cache, GitCacheConfig.DEFAULT);
     }
 
     private GitPreparation.Prepared prepare(Path checkout, String branch) throws IOException {
-        return preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), branch, checkout), s -> {});
+        return preparation.prepare(new GitPreparation.Request(server.url(remote), branch, checkout), s -> {});
+    }
+
+    @Test void hostPathsAndFileUrlsCannotPublishPrivateBranches() throws Exception {
+        git(remote, "branch", "unpushed-secret");
+        var preparation = new GitPreparation(tmp.resolve("blocked-cache"), GitCacheConfig.DEFAULT);
+        for (var url : List.of(remote.toString(), remote.toUri().toString(), "../private", "./private", "~/private",
+                "C:/private", "ext::cat private", "file:private", "https::private")) {
+            assertThrows(IOException.class, () -> preparation.prepare(new GitPreparation.Request(url, null, remote), s -> {}), url);
+        }
+        assertFalse(Files.exists(tmp.resolve("blocked-cache/work")), "reject before creating preparation work");
+        assertFalse(Files.exists(tmp.resolve("blocked-cache/snapshots")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"https://example.com/repo", "ssh://git@example.com/repo", "git://localhost:9418/repo",
+            "git@example.com:owner/repo", "example.com:repo", "git@[::1]:repo"})
+    void supportedRemoteSpellingsPassTransportValidation(String url) {
+        assertTrue(GitPreparation.isRemoteUrl(url), url);
+    }
+
+    @Test void fileTransportIsDeniedEvenAfterAnAllowedUrlIsRewritten() throws Exception {
+        git(remote, "config", "url." + remote.toUri() + ".insteadOf", "https://example.invalid/repo");
+        git(remote, "config", "protocol.file.allow", "always");
+        assertThrows(IOException.class, () -> PreparationGit.git(remote, "ls-remote", "https://example.invalid/repo"));
+    }
+
+    @Test void sshDefaultsToBatchModeAndRespectsExplicitTransports() {
+        var environment = new java.util.HashMap<String, String>();
+        PreparationGit.nonInteractiveSsh(environment);
+        assertEquals("ssh -o BatchMode=yes", environment.get("GIT_SSH_COMMAND"));
+        environment.put("GIT_SSH_COMMAND", "custom-ssh --identity test");
+        PreparationGit.nonInteractiveSsh(environment);
+        assertEquals("custom-ssh --identity test", environment.get("GIT_SSH_COMMAND"));
+        environment.clear();
+        environment.put("GIT_SSH", "/custom/ssh");
+        PreparationGit.nonInteractiveSsh(environment);
+        assertFalse(environment.containsKey("GIT_SSH_COMMAND"));
     }
 
     @Test void cleanSnapshotsAreReusedWithoutChangingOrRequiringTheCheckout() throws Exception {
@@ -126,7 +167,7 @@ class GitPreparationTest {
                 git(remote, "branch", "added-" + i);
                 git(remote, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "release-" + i, "-m", "new tag");
                 var phases = new ArrayList<String>();
-                try (var next = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, host), phases::add)) {
+                try (var next = preparation.prepare(new GitPreparation.Request(server.url(remote), null, host), phases::add)) {
                     assertEquals("incremental clean snapshot", next.strategy());
                     assertFalse(phases.contains("Creating clean Git snapshot"));
                     assertFalse(phases.contains("Verifying Git snapshot"));
@@ -215,7 +256,7 @@ class GitPreparationTest {
             removed.removeAll(reachable(remote));
             assertFalse(removed.isEmpty(), "fixture must remove selected objects, including annotated tag objects");
             var phases = new ArrayList<String>();
-            try (var next = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, null), phases::add)) {
+            try (var next = preparation.prepare(new GitPreparation.Request(server.url(remote), null, null), phases::add)) {
                 assertEquals("reference-seeded clean snapshot", next.strategy());
                 assertTrue(phases.contains("Rebuilding Git snapshot: selected history was removed"));
                 assertTrue(phases.contains("Verifying Git snapshot"));
@@ -233,7 +274,7 @@ class GitPreparationTest {
             var before = contents(first.repository());
             commitBinary(remote, "new objects to corrupt");
             var phases = new ArrayList<String>();
-            try (var next = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, null), phase -> {
+            try (var next = preparation.prepare(new GitPreparation.Request(server.url(remote), null, null), phase -> {
                 phases.add(phase);
                 if (phase.equals("Verifying incremental Git snapshot")) {
                     try {
@@ -267,7 +308,7 @@ class GitPreparationTest {
             var before = contents(published);
             commitBinary(remote, "unavailable during refresh");
             assertThrows(IOException.class, () -> preparation.prepare(
-                    new GitPreparation.Request(remote.toUri().toString(), null, null), phase -> {
+                    new GitPreparation.Request(server.url(remote), null, null), phase -> {
                         if (phase.equals("Fetching incremental Git snapshot")) {
                             try { PreparationGit.delete(remote); }
                             catch (IOException e) { throw new java.io.UncheckedIOException(e); }
@@ -289,7 +330,7 @@ class GitPreparationTest {
         try (var first = prepare(null, null)) { }
         commitBinary(remote, "advertised update");
         var phases = new ArrayList<String>();
-        try (var next = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, null), phase -> {
+        try (var next = preparation.prepare(new GitPreparation.Request(server.url(remote), null, null), phase -> {
             phases.add(phase);
             if (phase.equals("Fetching incremental Git snapshot")) {
                 try { commitBinary(remote, "published after advertisement"); }
@@ -312,7 +353,7 @@ class GitPreparationTest {
         var phases = new ArrayList<String>();
         try {
             assertThrows(IOException.class, () -> preparation.prepare(
-                    new GitPreparation.Request(remote.toUri().toString(), null, null), phase -> {
+                    new GitPreparation.Request(server.url(remote), null, null), phase -> {
                         phases.add(phase);
                         if (phase.equals("Fetching incremental Git snapshot")) Thread.currentThread().interrupt();
                     }));
@@ -333,7 +374,7 @@ class GitPreparationTest {
             for (int i = 0; i < GitPreparation.MAX_INCREMENTAL_PACKS; i++) {
                 git(remote, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "update " + i);
                 var phases = new ArrayList<String>();
-                try (var next = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, null), phases::add)) {
+                try (var next = preparation.prepare(new GitPreparation.Request(server.url(remote), null, null), phases::add)) {
                     assertTrue(packCount(next.repository()) <= GitPreparation.MAX_INCREMENTAL_PACKS);
                     if (i + 1 < GitPreparation.MAX_INCREMENTAL_PACKS) {
                         assertEquals("incremental clean snapshot", next.strategy());
@@ -359,7 +400,7 @@ class GitPreparationTest {
         try (var result = prepare(host, "v1")) {
             var guest = tmp.resolve("guest");
             git(tmp, "clone", "--no-hardlinks", "--branch", "v1", "--", result.repository().toString(), guest.toString());
-            git(guest, "remote", "set-url", "origin", remote.toUri().toString());
+            git(guest, "remote", "set-url", "origin", server.url(remote));
             assertEquals(git(remote, "rev-parse", "v1^{commit}"), git(guest, "rev-parse", "HEAD"));
             assertEquals("", git(guest, "branch", "--show-current"));
             result.close();
@@ -399,7 +440,7 @@ class GitPreparationTest {
     void changedSourceEitherRecoversOrRetriesWithoutAReference(String mutation) throws Exception {
         start();
         var phases = new ArrayList<String>();
-        try (var result = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, host), phase -> {
+        try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, host), phase -> {
             phases.add(phase);
             if (phase.equals("Creating clean Git snapshot") && phases.stream().filter(phase::equals).count() == 1) {
                 try {
@@ -442,7 +483,7 @@ class GitPreparationTest {
         start();
         PreparationGit.delete(host);
         var phases = new ArrayList<String>();
-        try (var result = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, host), phases::add)) {
+        try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, host), phases::add)) {
             assertEquals("new clean snapshot", result.strategy());
             assertTrue(phases.contains("Host reference unavailable; cloning remote"));
             assertEquals(1, phases.stream().filter("Creating clean Git snapshot"::equals).count());
@@ -453,7 +494,7 @@ class GitPreparationTest {
     @Test void failedIntegrityCheckRetriesBeforePublishing() throws Exception {
         start();
         var checks = new java.util.concurrent.atomic.AtomicInteger();
-        try (var result = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, host), phase -> {
+        try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, host), phase -> {
             if (phase.equals("Verifying Git snapshot") && checks.incrementAndGet() == 1) {
                 try {
                     assertTrue(PreparationGit.children(cache.resolve("snapshots")).isEmpty());
@@ -475,7 +516,7 @@ class GitPreparationTest {
         start();
         var attempts = new java.util.concurrent.atomic.AtomicInteger();
         assertThrows(IOException.class, () -> preparation.prepare(
-                new GitPreparation.Request(remote.toUri().toString(), null, host), phase -> {
+                new GitPreparation.Request(server.url(remote), null, host), phase -> {
                     if (phase.equals("Creating clean Git snapshot") && attempts.incrementAndGet() == 1) {
                         try {
                             PreparationGit.delete(host);
@@ -490,7 +531,7 @@ class GitPreparationTest {
 
     @Test void completedDissociationNeedsNoFurtherAccessToTheSource() throws Exception {
         start();
-        try (var result = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, host), phase -> {
+        try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, host), phase -> {
             if (phase.equals("Verifying Git snapshot")) {
                 try { PreparationGit.delete(host); }
                 catch (IOException e) { throw new java.io.UncheckedIOException(e); }
@@ -518,7 +559,7 @@ class GitPreparationTest {
         cache = tmp.resolve("cache ' $(touch unexpected) $literal");
         preparation = new GitPreparation(cache, GitCacheConfig.DEFAULT);
         var before = contents(host.resolve(".git"));
-        try (var result = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, host), phase -> {
+        try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, host), phase -> {
             if (phase.equals("Creating clean Git snapshot")) {
                 try {
                     var work = PreparationGit.children(cache.resolve("work")).getFirst();
@@ -544,6 +585,7 @@ class GitPreparationTest {
         start();
         PreparationGit.delete(host);
         git(tmp, "clone", "-q", "--no-hardlinks", "--", remote.toString(), host.toString());
+        git(host, "remote", "set-url", "origin", server.url(remote));
         assertTrue(PreparationGit.children(host.resolve(".git/objects/pack")).isEmpty());
         var before = contents(host.resolve(".git"));
         try (var result = prepare(host, null)) {
@@ -600,7 +642,7 @@ class GitPreparationTest {
 
     @Test void aRemoteChangeBetweenAdvertisementAndCloneCannotMislabelTheSnapshot() throws Exception {
         start();
-        try (var result = preparation.prepare(new GitPreparation.Request(remote.toUri().toString(), null, host), phase -> {
+        try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, host), phase -> {
             if (phase.equals("Creating clean Git snapshot")) {
                 try { commitBinary(remote, "published after advertisement"); }
                 catch (Exception e) { throw new RuntimeException(e); }
@@ -661,7 +703,7 @@ class GitPreparationTest {
             }
             // A different cache policy can evict every persistent entry, while this reader stays valid.
             var disabled = new GitPreparation(cache, new GitCacheConfig(0, Duration.ZERO));
-            try (var next = disabled.prepare(new GitPreparation.Request(remote.toUri().toString(), null, null), s -> {})) {
+            try (var next = disabled.prepare(new GitPreparation.Request(server.url(remote), null, null), s -> {})) {
                 assertEquals(oldObjects, allObjects(first.repository()));
                 assertEquals(List.of(), PreparationGit.children(cache.resolve("snapshots")));
             }
@@ -753,7 +795,7 @@ class GitPreparationTest {
         var signal = tmp.resolve("ready");
         var process = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin/java").toString(),
                 "-cp", System.getProperty("java.class.path"), Reader.class.getName(), cache.toString(),
-                remote.toUri().toString(), signal.toString()).redirectErrorStream(true)
+                server.url(remote), signal.toString()).redirectErrorStream(true)
                 .redirectOutput(tmp.resolve("reader.log").toFile()).start();
         try {
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);

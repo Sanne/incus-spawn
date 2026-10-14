@@ -31,15 +31,20 @@ class RepoClonerPreparedTest {
     private Path remote;
     private Path host;
     private IncusClient incus;
+    private dev.incusspawn.git.GitTestServer server;
     private final List<String> scripts = new ArrayList<>();
     private final List<Path> mounts = new ArrayList<>();
     private boolean breakCopy;
+    private Path guestConfig;
     private String checksumPrelude = "";
 
+    @org.junit.jupiter.api.AfterEach void stopServer() throws Exception { if (server != null) server.close(); }
+
     @BeforeEach void fixture() throws Exception {
+        server = new dev.incusspawn.git.GitTestServer(tmp);
         remote = releasesFixture(tmp);
         host = tmp.resolve("host");
-        git(tmp, "clone", "-q", "--", remote.toUri().toString(), host.toString());
+        git(tmp, "clone", "-q", "--", server.url(remote), host.toString());
         commitBinary(host, "private work");
         git(host, "repack", "-a", "-d");
         incus = mock(IncusClient.class);
@@ -55,15 +60,17 @@ class RepoClonerPreparedTest {
             }
             var out = tmp.resolve("stdout");
             var err = tmp.resolve("stderr");
-            var process = new ProcessBuilder("sh", "-c", checksumPrelude + script)
-                    .redirectOutput(out.toFile()).redirectError(err.toFile()).start();
+            var builder = new ProcessBuilder("sh", "-c", checksumPrelude + script)
+                    .redirectOutput(out.toFile()).redirectError(err.toFile());
+            if (guestConfig != null) builder.environment().put("GIT_CONFIG_GLOBAL", guestConfig.toString());
+            var process = builder.start();
             return new IncusClient.ExecResult(process.waitFor(), Files.readString(out), Files.readString(err));
         });
     }
 
     private BuildProgress.StepProgress run(String branch) {
         var repo = new ImageDef.RepoEntry();
-        repo.setUrl(remote.toUri().toString());
+        repo.setUrl(server.url(remote));
         repo.setBranch(branch);
         repo.setPath(tmp.resolve("guest").toString());
         repo.setPrime("git fsck --full --no-dangling");
@@ -83,8 +90,40 @@ class RepoClonerPreparedTest {
             }
         };
         new RepoCloner(incus).prepareOne(new Container(incus, "test"), repo, planned, states, 0,
-                new AtomicBoolean(), new java.util.concurrent.Semaphore(1), new java.util.concurrent.CountDownLatch(1), mounts);
+                new AtomicBoolean(), new java.util.concurrent.Semaphore(1), new java.util.concurrent.CountDownLatch(0), mounts);
         return states.get(0);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void deniedTemplateAccountCannotReceiveEvenAWarmHostSnapshot(boolean warm) throws Exception {
+        if (warm) {
+            try (var snapshot = new GitPreparation(dev.incusspawn.config.GitCacheConfig.DEFAULT)
+                    .prepare(new GitPreparation.Request(server.url(remote), null, host), phase -> {})) { }
+        }
+        guestConfig = tmp.resolve("guest.config");
+        git(tmp, "config", "--file", guestConfig.toString(),
+                "url." + server.url(tmp.resolve("denied")) + ".insteadOf", server.url(remote));
+        var result = run(null);
+        assertEquals(BuildProgress.StepState.FAILED, result.state());
+        assertTrue(mounts.isEmpty(), "no prepared data may enter an unauthorized guest");
+        assertFalse(Files.exists(tmp.resolve("guest")));
+        assertTrue(scripts.stream().noneMatch(script -> script.contains("git fsck")), "no prime on denied access");
+    }
+
+    @Test void differentGuestCredentialRefScopeUsesOnlyTheGuestRemote() throws Exception {
+        var visible = tmp.resolve("visible.git");
+        git(tmp, "clone", "--bare", remote.toString(), visible.toString());
+        git(visible, "config", "uploadpack.hideRefs", "refs/heads/stable");
+        guestConfig = tmp.resolve("guest.config");
+        git(tmp, "config", "--file", guestConfig.toString(),
+                "url." + server.url(visible) + ".insteadOf", server.url(remote));
+        var result = run(null);
+        assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
+        assertEquals("template and host repository refs differ", result.note());
+        assertTrue(mounts.isEmpty(), "the wider host selection must never be mounted");
+        assertEquals("", git(tmp.resolve("guest"), "for-each-ref", "refs/remotes/origin/stable"));
+        assertEquals("", git(tmp.resolve("guest"), "fsck", "--full", "--no-dangling"));
     }
 
     @Test void guestIsIndependentAndHasTheSameRefScopeAsAFullNetworkClone() throws Exception {

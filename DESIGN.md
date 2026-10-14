@@ -2456,9 +2456,9 @@ A guest without `mountpoint` is not waited on: the clone runs at once, as it did
 A reference that does not appear in time fails that exec with a status of its own, so its line says it was not mounted rather than quoting git.
 Every way a repo ends up on the network clone instead of its reference says why on its line: no slot, no mount, or the git error of a failed clone from the reference.
 Before the fallback the failed attempt's destination is removed, but only one it created: the clone from the reference first checks that its destination does not exist or is an empty directory (`freshDestination`, exiting 3), and a destination already there is left alone, so the network clone then fails on it rather than a checkout another layer made being deleted (#1394).
-The latch the primes wait on counts *planned* references, each counted down once, in a `finally`, after its attach is resolved and anything attached is detached.
+The latch the primes wait on counts *planned raw shallow* references, each counted down once, in a `finally`, after its attach is resolved and anything attached is detached.
 So a failed or re-queued attach can neither hang the primes nor land after them.
-Each repo's declared `prime` command (also captured, no PTY) runs in the same worker once that repo's clone is done **and every reference has been detached**, so priming still pipelines with the network clones in flight.
+Each repo's declared `prime` command (also captured, no PTY) runs in the same worker once that repo's clone is done **and every raw shallow reference has been detached**, so priming pipelines with other clean preparations and network clones.
 Full-clone mounts contain only prepared public-to-that-remote objects and sanitized repository metadata; the unchanged shallow path can still mount the host checkout's whole working tree.
 A prime command is arbitrary code with network access, and the old "remove all references after everything" order let any repo's prime read every mounted checkout (#765).
 A failed detach fails the build rather than prime next to a mount.
@@ -2476,6 +2476,12 @@ Source removal, corruption or concurrent pruning therefore cannot publish an inc
 A warm reuse requires a fresh authoritative advertisement with identical heads, tags, default HEAD and object format, plus a verified SHA-256 seal covering all cached repository files.
 Branch/tag pins share the full selection and are checked on every request.
 No graph walk, user-checkout access or repack runs on a hit.
+Host preparation allows only HTTPS, SSH and Git network URLs and enforces the transport allowlist in Git, including after URL rewrites.
+Paths, file transports and arbitrary helpers cannot turn a template URL into a host filesystem read.
+SSH defaults to batch mode unless an SSH command or executable was explicitly supplied.
+The guest first checks the remote with its template's accounts, and its full advertised selection must match the prepared snapshot before any bytes are mounted.
+Denied access, different credential-visible refs or a selection race uses the ordinary guest clone path instead.
+All guest access checks finish before any prime runs; host credentials alone never authorize snapshot access, including warm-cache copies.
 Changed refs first fetch incrementally into staging, with separate metadata and hardlinks only to the previous verified generation's owned immutable packs.
 Fetching checks incoming objects, forces packed storage and disables automatic maintenance; new packs also pass `index-pack --verify --strict`, while old pack/index hashes must still match their seal.
 Old refs and HEAD must remain reachable from the new selection, including annotated tag objects; unchanged roots and fast-forward ancestry avoid an object walk, with a reachability difference for the remaining roots.
@@ -2489,7 +2495,8 @@ The guest copies them with `clone --no-hardlinks`, checks their SHA-256 digests,
 A failed preparation, mount or verification falls back to a fresh remote clone before priming.
 Shallow clones bypass this cache and still reconcile with the remote and repack their selected objects for each build.
 Their ready line identifies the depth, and guest/attach/detach timings cover shallow and network clones as well as prepared snapshots.
-`PreparationCache` atomically publishes immutable generations, coordinates writers through stable locks and pins readers in leased work directories across replacement and eviction.
+Only raw shallow references hold up other repositories' primes; each clean clone detaches its own snapshot before priming while other clean preparations may continue.
+`PreparationCache` atomically publishes immutable generations, coordinates writers through stable per-URL locks with a two-hour wait and pins readers in leased work directories across replacement and eviction.
 One size/age budget bounds retained payload and metadata together, including for repositories with a host checkout.
 Per-repo progress reports preparation phases and records their milliseconds alongside guest copy time.
 Project-local definitions still get no host preparation or host mounts.

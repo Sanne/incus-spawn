@@ -47,6 +47,43 @@ class PreparationCacheTest {
         }
     }
 
+    @Test void perUrlWritersWaitBeyondThirtySecondsAcrossProcessesWithoutBlockingOtherUrls() throws Exception {
+        var key = "aa" + "1".repeat(62);
+        var otherKey = "aa" + "2".repeat(62); // collided under the old stripe scheme
+        var ready = root.resolve("ready");
+        var child = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin/java").toString(),
+                "-cp", System.getProperty("java.class.path"), Writer.class.getName(), root.toString(), key,
+                ready.toString()).redirectErrorStream(true).redirectOutput(root.resolve("writer.log").toFile()).start();
+        try (var workers = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+            while (!Files.exists(ready) && child.isAlive() && System.nanoTime() < deadline) Thread.sleep(10);
+            assertTrue(Files.exists(ready), Files.readString(root.resolve("writer.log")));
+            var cache = new PreparationCache(root, GitCacheConfig.DEFAULT);
+            var waiting = workers.submit(() -> { try (var lock = cache.writer(key)) { return true; } });
+            try {
+                assertTimeoutPreemptively(Duration.ofSeconds(5), () -> { try (var lock = cache.writer(otherKey)) { } });
+                assertThrows(java.util.concurrent.TimeoutException.class,
+                        () -> waiting.get(31, java.util.concurrent.TimeUnit.SECONDS));
+            } finally {
+                child.getOutputStream().close(); // EOF releases the child lock
+            }
+            assertTrue(waiting.get(10, java.util.concurrent.TimeUnit.SECONDS));
+        } finally {
+            child.destroyForcibly();
+            child.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
+    public static class Writer {
+        public static void main(String[] args) throws Exception {
+            var cache = new PreparationCache(Path.of(args[0]), GitCacheConfig.DEFAULT);
+            try (var lock = cache.writer(args[1])) {
+                Files.writeString(Path.of(args[2]), "ready");
+                System.in.read();
+            }
+        }
+    }
+
     private static Path staged(Path root, String name, int bytes) throws Exception {
         var dir = Files.createDirectory(root.resolve(name));
         Files.write(dir.resolve("data"), new byte[bytes]);

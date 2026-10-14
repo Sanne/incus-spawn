@@ -20,7 +20,18 @@ They bypass this cache: a shallow host clone is followed by remote reconciliatio
 Depth limits historical objects, but current binary contents still need copying; the ready line identifies the shallow depth, and shallow/network clones also report guest and mount timings.
 Project-local definitions never prepare repositories on the host or mount host references.
 
-A warm hit requires a successful `ls-remote --symref` using the current remote credentials.
+Host preparation accepts HTTPS, SSH (including SCP spelling) and Git network URLs only.
+Paths, `file:` URLs and arbitrary remote helpers are rejected before preparation; Git also runs with an explicit protocol allowlist and `protocol.file.allow=never`, covering URL rewrites.
+SSH defaults to `ssh -o BatchMode=yes` unless the user supplied `GIT_SSH_COMMAND` or `GIT_SSH`.
+
+Before preparing a full snapshot, the guest runs `ls-remote --symref` with the template's own accounts.
+All such checks finish before any prime runs, so primes cannot interfere with another repository's authorization check.
+Denied access skips host preparation and uses the ordinary guest clone path, which must obtain its own access.
+The guest's complete advertised selection must match the prepared snapshot before any prepared bytes are mounted.
+A different account-visible ref scope or a race that changes selection uses the guest's network clone instead; a successful host credential check alone never authorizes a guest copy.
+This applies to warm cache hits as well as new generations.
+
+A warm host-cache hit additionally requires a successful `ls-remote --symref` using the host's current remote credentials.
 The exact URL and selection policy identify the cache entry.
 All heads and tags, the default HEAD target and object ID, and the object format inferred from advertised IDs must match the verified snapshot.
 Different branch/tag pins share the same complete snapshot; each pin is validated separately.
@@ -116,7 +127,9 @@ A snapshot larger than the entire budget is usable for its current build but is 
 Setting either limit to zero disables retention; malformed values use the defaults.
 Active work occupies temporary space in addition to the retained-cache budget.
 
-Writers serialize through 256 stable URL-keyed lock files, which are never unlinked while another process might have them open.
+Writers serialize through one stable lock file per complete URL key, with a two-hour wait covering long Git operations, validation and retry.
+Different URLs never share a writer lock.
+Lock files are never unlinked while another process might have them open.
 A short catalogue lock protects publication, reader pinning and eviction across processes.
 Publication atomically moves a complete generation into place; neither an incremental fetch nor a clean rebuild mutates the previous generation.
 Readers pin owned immutable files through hardlinks in their own leased work directories before eviction can remove a generation.
@@ -128,7 +141,8 @@ The guest uses `clone --no-hardlinks`, sets the real origin, rejects alternates,
 Checksum input uses `-c -`, including the explicit stdin filename required on macOS, with `shasum -a 256 -c -` as the fallback.
 A preparation, mount or copy-verification failure uses the existing remote fallback before priming.
 An already-existing destination is preserved.
-No prime runs while any reference remains mounted, retaining the barrier required by shallow host references.
+No prime runs while any raw shallow checkout remains planned or mounted, retaining the host-private-object barrier.
+Each prepared clone detaches its own clean snapshot before priming; other clean preparations and copies can continue concurrently.
 
 ## Validation and measurements
 
@@ -141,7 +155,7 @@ Existing shallow, project-local, hotplug, timeout and detach-failure tests remai
 
 `bench/GitPreparationBench.java` runs the production preparation code with a fresh cache and reports cold/warm phase timings.
 Measurements and their limits are recorded with the raw dataset linked from `bench/README.md`.
-Build diagnostics report remote selection, snapshot validation, reference selection, incremental fetching, cloning, verification and publication durations alongside guest-copy time.
+Build diagnostics report guest access checks, remote selection, snapshot validation, reference selection, incremental fetching, cloning, verification and publication durations alongside guest-copy time.
 Credential-bearing command lines are not included in failure diagnostics.
 
 The [incremental Quarkus measurements](../bench/data/git-incremental-snapshots-2026-10-13.json) use Git 2.56.0, four packing threads, loopback transport, tmpfs and a warm filesystem cache.
@@ -157,14 +171,14 @@ Each of the two upstream advances adds one commit without changing its tree; new
 
 Incremental generations retain the existing pack bytes and add small packs; independent audits confirm the exact selected physical object inventory and full fsck outside the timed preparation.
 The retained snapshot is about 310 MiB in this fixture.
-These are small-sample JVM host measurements excluding fixture setup, Incus, guest copying and priming.
+These are small-sample JVM host measurements excluding fixture setup, Incus, guest access checks, guest copying and priming.
 They are not a controlled direct comparison with #1400's earlier measurements on a different filesystem.
 
 The [historical pre-incremental dataset](../bench/data/git-clean-snapshots-2026-10-13.json) recorded 20.80 seconds for a one-commit refresh, with about 13.3 seconds in full integrity verification.
 That dataset also includes the former preliminary host-pack copy; source fingerprints identify both measured implementations.
 The current approach still retains a full clean payload and hashes its bytes, but ordinary upstream advances no longer repeat full-history packing and object validation.
 
-Local `mvn package` passed 4,511 tests with one skipped and no failures or errors on Git 2.56.0.
+Before the review changes, local `mvn package` passed 4,511 tests with one skipped and no failures or errors on Git 2.56.0.
 Focused preparation, cache, guest-copy and shallow-diagnostics tests pass with Git 2.54.0 as well as Git 2.56.0.
 A real Incus 6.23 container passed first preparation, cached reuse and incremental refresh after an upstream update.
 Guest checks verified independence after detach, full fsck and exact physical object inventory; the source remained unchanged and no devices were left attached.

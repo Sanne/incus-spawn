@@ -32,7 +32,7 @@ import static dev.incusspawn.util.BuildOutput.BOLD;
 import static dev.incusspawn.util.BuildOutput.styled;
 
 /**
- * Prepares and clones a template's repositories, then primes them after every reference is detached.
+ * Prepares and clones a template's repositories, then primes them after raw host references are detached.
  */
 class RepoCloner {
 
@@ -184,8 +184,8 @@ class RepoCloner {
      * and, on macOS, a vsock tunnel connection budget) with an animated
      * per-repo progress display. Each repo's
      * declared {@code prime} command runs in the same worker once that repo's
-     * clone finishes <em>and</em> every host reference has been detached, so
-     * priming still pipelines with the remaining network clones. A shallow reference is
+     * clone finishes <em>and</em> every raw shallow reference has been detached, so
+     * priming pipelines with other clean preparations and network clones. A shallow reference is
      * the host checkout's whole working tree (untracked files, unpushed work),
      * and a prime command is arbitrary code with network access, so no prime may
      * run while one is mounted (#765). Which repos have a reference is decided
@@ -263,9 +263,10 @@ class RepoCloner {
                     planned = new String[0];
                 }
             }
-            // Counts planned references: each worker counts its own down once its attach
-            // is resolved and anything it attached is detached.
-            var referencesDetached = new java.util.concurrent.CountDownLatch(planned.length);
+            // Only raw shallow checkouts expose host-private objects. Their gate includes planned
+            // mounts, so a prime cannot race a shallow worker that has not attached its checkout yet.
+            int rawReferences = (int) java.util.Arrays.stream(refs).filter(RepoCloner::rawReference).count();
+            var referencesDetached = new java.util.concurrent.CountDownLatch(rawReferences);
             var mounts = new DeviceMounts(container, refs, machineType, planned.length);
 
             // Phase 2 (parallel, bounded): clone each repo from its reference (local)
@@ -281,10 +282,13 @@ class RepoCloner {
             // be detached must not hold a slot, or the clones that detach them could never start.
             var limiter = new java.util.concurrent.Semaphore(concurrency);
             var failureSeen = new AtomicBoolean(false);
+            // Complete guest authorization before any untrusted prime can alter the guest's Git/tools.
+            // Only these short remote checks synchronize; slow host preparation never gates other primes.
+            var accessChecked = new java.util.concurrent.CountDownLatch(repos.size());
             try {
                 TerminalProgress.run(repos.size(), repos.size(),
                         idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx, failureSeen,
-                                limiter, referencesDetached, mounts),
+                                limiter, referencesDetached, mounts, accessChecked),
                         (idx, frame) -> formatStepLine(repoDisplayName(repos.get(idx)),
                                 repos.get(idx).getUrl(), states.get(idx), frame, "Ready"),
                         idx -> plainStepLine(repoDisplayName(repos.get(idx)), states.get(idx), "Ready", "prepare"),
@@ -320,16 +324,37 @@ class RepoCloner {
                     AtomicReferenceArray<StepProgress> states, int idx, AtomicBoolean failureSeen,
                     java.util.concurrent.Semaphore limiter, java.util.concurrent.CountDownLatch referencesDetached,
                     ReferenceMounts mounts) {
+        prepareOne(container, repo, planned, states, idx, failureSeen, limiter, referencesDetached, mounts,
+                new java.util.concurrent.CountDownLatch(1));
+    }
+
+    private void prepareOne(Container container, ImageDef.RepoEntry repo, RepoReference planned,
+                            AtomicReferenceArray<StepProgress> states, int idx, AtomicBoolean failureSeen,
+                            java.util.concurrent.Semaphore limiter, java.util.concurrent.CountDownLatch referencesDetached,
+                            ReferenceMounts mounts, java.util.concurrent.CountDownLatch accessChecked) {
         var clone = CloneResult.FAILED;
         var detachedOk = true;
         var ref = planned;
         var hasReference = planned != null && planned.hasDevice();
+        String advertisement = null;
+        try {
+            if (hasReference && planned.request() != null) {
+                limiter.acquireUninterruptibly();
+                try {
+                    advertisement = checkTemplateAccess(container, repo, states, idx);
+                    if (advertisement == null) ref = RepoReference.skipped("template account could not access the repository");
+                } catch (Exception e) {
+                    ref = RepoReference.skipped("could not check template repository access");
+                } finally { limiter.release(); }
+            }
+        } finally { accessChecked.countDown(); }
+        awaitUninterruptibly(accessChecked);
         try {
             limiter.acquireUninterruptibly();
             try {
                 if (hasReference && planned.prepared() != null) prepared.put(idx, planned.prepared());
-                if (hasReference && planned.request() != null) {
-                    ref = prepareReference(repo, planned, states, idx);
+                if (hasReference && ref.hasDevice() && planned.request() != null) {
+                    ref = prepareReference(repo, planned, states, idx, advertisement);
                     if (ref.prepared() != null) prepared.put(idx, ref.prepared());
                 }
                 if (hasReference && ref.hasDevice() && repo.getDepth() == null && ref.prepared() == null) {
@@ -341,8 +366,9 @@ class RepoCloner {
                 long start = System.nanoTime();
                 clone = cloneOne(container, repo, ref, states, idx);
                 var snapshot = prepared.get(idx);
-                preparationTimings.put(idx, (snapshot == null ? "" : snapshot.timingSummary() + ", ")
-                        + "attach=" + attachMillis + "ms, guest=" + (System.nanoTime() - start) / 1_000_000 + "ms");
+                preparationTimings.merge(idx, (snapshot == null ? "" : snapshot.timingSummary() + ", ")
+                        + "attach=" + attachMillis + "ms, guest=" + (System.nanoTime() - start) / 1_000_000 + "ms",
+                        (a, b) -> a + ", " + b);
             } finally {
                 limiter.release();
             }
@@ -357,7 +383,7 @@ class RepoCloner {
                     // Before the count-down, so a prime woken by it already sees the failure.
                     if (!detachedOk) failureSeen.set(true);
                 } finally {
-                    referencesDetached.countDown();
+                    if (rawReference(planned)) referencesDetached.countDown();
                 }
             }
         }
@@ -409,14 +435,41 @@ class RepoCloner {
         states.set(idx, highlight ? StepProgress.doneHighlight(note) : StepProgress.done(note));
     }
 
-    RepoReference prepareReference(ImageDef.RepoEntry repo, RepoReference ref,
+    private static boolean rawReference(RepoReference ref) {
+        return ref != null && ref.hasDevice() && ref.request() == null && ref.prepared() == null;
+    }
+
+    private String checkTemplateAccess(Container container, ImageDef.RepoEntry repo,
                                    AtomicReferenceArray<StepProgress> states, int idx) {
+        states.set(idx, StepProgress.running("Checking template repository access"));
+        long start = System.nanoTime();
+        var access = container.shAsUser("agentuser", "export GIT_TERMINAL_PROMPT=0; "
+                + "if [ -z \"${GIT_SSH_COMMAND+x}${GIT_SSH+x}\" ]; then export GIT_SSH_COMMAND='ssh -o BatchMode=yes'; fi; "
+                + "git -c protocol.allow=never -c protocol.https.allow=always -c protocol.ssh.allow=always"
+                + " -c protocol.git.allow=always -c protocol.file.allow=never ls-remote --symref -- "
+                + shellQuote(repo.getUrl()) + " HEAD 'refs/heads/*' 'refs/tags/*'");
+        preparationTimings.put(idx, "access=" + (System.nanoTime() - start) / 1_000_000 + "ms");
+        return access.success() ? access.stdout() : null;
+    }
+
+    RepoReference prepareReference(ImageDef.RepoEntry repo, RepoReference ref,
+                                   AtomicReferenceArray<StepProgress> states, int idx, String advertisement) {
         try {
             var request = new GitPreparation.Request(repo.getUrl(), repo.getBranch(), ref.request().checkout());
             var result = new GitPreparation(SpawnConfig.load().gitCache()).prepare(request,
                     phase -> states.set(idx, StepProgress.running(phase)));
-            return new RepoReference(ref.deviceName(), ref.containerPath(),
-                    HostResourceSetup.translateForVm(result.repository().toString()), null, null, result);
+            boolean accepted = false;
+            try {
+                if (!result.matchesAdvertisement(advertisement)) {
+                    return RepoReference.skipped("template and host repository refs differ");
+                }
+                var ready = new RepoReference(ref.deviceName(), ref.containerPath(),
+                        HostResourceSetup.translateForVm(result.repository().toString()), null, null, result);
+                accepted = true;
+                return ready;
+            } finally {
+                if (!accepted) result.close();
+            }
         } catch (Exception e) {
             return RepoReference.skipped("Git preparation unavailable: " + e.getMessage());
         }
@@ -794,6 +847,7 @@ class RepoCloner {
      *  reference, a skipped one saying why there is none, or null where none is configured. */
     RepoReference planReference(String cloneUrl, SpawnConfig config) {
         try {
+            if (!GitPreparation.isRemoteUrl(cloneUrl)) return RepoReference.skipped("host preparation requires a network Git remote");
             var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
             if (repoName.isEmpty()) return null;
 
