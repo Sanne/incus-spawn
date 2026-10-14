@@ -144,13 +144,13 @@ echo ""
 # --- 5. Proxy interception for api.openai.com ---
 # CodexSetup's proxy() registers api.openai.com for Bearer injection from
 # openai.apiKey. The host echo server answers with the headers it received,
-# so this proves the real key is added on the way out.
+# so this proves the current login proof authorizes injection on the way out.
 echo "[5] Proxy Interception (api.openai.com)"
 gateway=$(grep nameserver /etc/resolv.conf | head -1 | cut -d' ' -f2)
 assert "api.openai.com resolves to the proxy gateway" \
     bash -c "getent ahostsv4 api.openai.com | grep -q '$gateway'"
 assert "proxy injects the real Bearer token" \
-    bash -c "curl -sf https://api.openai.com/ | grep -q 'Bearer $REAL_KEY'"
+    su -l agentuser -c "curl -sf -H \"Authorization: Bearer \$OPENAI_API_KEY\" https://api.openai.com/ | grep -Fq 'Bearer $REAL_KEY'"
 echo ""
 
 echo "========================================"
