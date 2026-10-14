@@ -55,6 +55,8 @@ keywords = ["sk-ant-oat01-"]
   # Note: gitleaks matches these against the captured secret, which carries no trailing
   # quote, so the quote-suffixed ones currently match nothing; fixtures rely on the paths above.
   regexes = [
+    # Exact synthetic accounts in the #1107 proxy/passthrough regression tests.
+    '''^(?:Bearer )?(?:tpt_placeholder|inner-account-B|sk-ant-oat01-outer)$''',
     '''sk-ant-api03-[A-Za-z0-9]{1,35}["']''',
     '''sk-ant-oat01-[A-Za-z0-9]{1,35}["']''',
     '''ghp_legacy["']''',
