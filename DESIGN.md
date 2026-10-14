@@ -1486,6 +1486,8 @@ Anthropic entries use relaxed configuration resolution (at least one non-blank c
 Domain collisions between tools are warned at startup (exact-domain conflicts and wildcard-suffix overlaps); tool domains that shadow built-in intercepted domains (registry, Maven, Gradle, npm) are warned during validation since built-in routing takes precedence.
 A `proxy:` entry also declares `placeholders:` -- each an `env` variable the tool reads its credential from and the `prefix` its value must start with -- which every start fills with the instance's proof token for the entry's namespace (see "Proof tokens" below).
 A YAML tool that exports a static placeholder through `env:` declares the same variable here (`typesafe.yaml` does).
+A proxied namespace with no usable placeholder declaration warns once per tool and namespace on proxy configuration load and during tool validation.
+It fails closed for every tool sharing its domains, so the warning names the affected domains and explains how to declare and export the proof variable.
 
 **Dynamic credential setup:** `isx init` builds its credential menu dynamically from tool setups via `ToolDefLoader.allToolSetups()`.
 Tools with proxy configuration are discovered, filtered by `ToolSetup.hasOwnCredentials()` (a tool whose `proxy()` configuration borrows another tool's credential, like `CopilotSetup` reusing `github.token`, overrides this to `false` so it isn't offered as a separately "configurable" entry), and sorted (known tools first: claude, gh, bob, codex; then alphabetically).

@@ -118,8 +118,11 @@ Key design:
   Verification and account resolution use one configuration snapshot across an asynchronous refresh.
   Missing or incorrect proofs relay unchanged, including authentication and destination semantics; unknown addresses never get defaults.
   Valid proofs still obey account selection, including missing-account failures.
+  A proxied namespace without declared placeholders produces a warning once per tool and namespace on configuration load and in tool validation; it blocks injection for every tool sharing that domain.
+  HTTP and WebSocket account refusals log the instance and reason, including the missing pinned account.
   Registry refresh and retry are bounded, shared and off the event loop; a failed listing clears credential verifiers.
   Refusal diagnostics are bounded and deduplicated, contain no authentication values, and do not warn for ordinary independent credentials.
+  The 256-entry request-warning window expires after five minutes so later callers can still be diagnosed.
   `/activity` counts refused injections, including anonymous and independent pass-through.
   The existing guest exec writes proofs and the secret into `/run/isx`, root-owned and readable by group 1000.
   Login profiles replace only isx placeholders or earlier proofs in variables the build exported.

@@ -13,6 +13,37 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ToolDefValidatorTest {
 
+    @Test void authWithoutPlaceholdersWarnsAndDeclaringTheVariableFixesIt(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("custom.yaml");
+        var yaml = """
+                name: custom
+                env:
+                  - name: CUSTOM_TOKEN
+                    value: custom_placeholder
+                proxy:
+                  config-namespace: custom
+                  configuration:
+                    token:
+                      config-path: token
+                      description: Custom token
+                      secret: true
+                  auth:
+                    - domains: [custom.example]
+                      type: bearer
+                      token: '${token}'
+                """;
+        Files.writeString(file, yaml);
+        var result = ToolDefValidator.validate(file);
+        assertFalse(result.hasErrors(), result.errors().toString());
+        assertEquals(1, result.warnings().size());
+        assertTrue(result.warnings().getFirst().contains("namespace 'custom' has no declared placeholders"));
+        Files.writeString(file, yaml.replace("  config-namespace: custom",
+                "  placeholders:\n    - env: CUSTOM_TOKEN\n      prefix: custom_\n  config-namespace: custom"));
+        result = ToolDefValidator.validate(file);
+        assertFalse(result.hasErrors(), result.errors().toString());
+        assertFalse(result.hasWarnings(), result.warnings().toString());
+    }
+
     @Test
     void validToolPasses(@TempDir Path dir) throws Exception {
         var file = dir.resolve("test.yaml");

@@ -55,6 +55,7 @@ class CredentialProofProxyTest {
     volatile String stamp;
     volatile String address = "127.0.0.1";
     volatile String account;
+    String bakedIdentity;
     final AtomicInteger tokenFetches = new AtomicInteger();
     final AtomicInteger listings = new AtomicInteger();
 
@@ -95,6 +96,7 @@ class CredentialProofProxyTest {
                 var config = JqObject.builder(3).put(Metadata.STATIC_IP, address)
                         .put(Metadata.INSTANCE_PROOF_SHA256, stamp);
                 if (account != null) config.put(Metadata.accountKey("claude"), account);
+                if (bakedIdentity != null) config.put(Metadata.accountIdentityKey("claude"), bakedIdentity);
                 return JqValues.parse("[" + JqValues.toPrettyJsonString(JqObject.builder(2)
                         .put("name", "outer-instance").put("config", config.build()).build()) + "]");
             }
@@ -199,13 +201,82 @@ class CredentialProofProxyTest {
         assertEquals(0, tokenFetches.get());
     }
 
-    @Test void aMissingOuterAccountOnlyRefusesAProvenRequest() throws Exception {
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void aMissingOuterAccountOnlyRefusesAProvenRequestAndLogsWhy(boolean websocket) throws Exception {
         account = "removed";
         serve(claude("vertex"));
         assertEquals("Bearer inner-B", request(false, ANTHROPIC, "Authorization", "Bearer inner-B").authorization());
         assertEquals("Bearer inner-B", request(true, ANTHROPIC, "Authorization", "Bearer inner-B").authorization());
-        assertEquals(502, http(ANTHROPIC, "x-api-key", ProofTestSupport.token("claude", "sk-ant-")));
+        var log = refuseProvenRequest(websocket);
+        assertTrue(log.contains("pinned to missing claude account 'removed'"), log);
         assertEquals(0, tokenFetches.get());
+    }
+
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void anUnservableAccountLogsItsReasonForHttpAndWebSockets(boolean websocket) throws Exception {
+        bakedIdentity = "api-key";
+        serve(claude("oauth"));
+        var log = refuseProvenRequest(websocket);
+        assertTrue(log.contains("was built for claude 'api-key'"), log);
+        assertTrue(log.contains("account of type 'oauth'"), log);
+    }
+
+    String refuseProvenRequest(boolean websocket) throws Exception {
+        var logFile = dev.incusspawn.Environment.proxyLifecycleLogFile();
+        var before = Files.exists(logFile) ? Files.readString(logFile).length() : 0;
+        var token = ProofTestSupport.token("claude", "sk-ant-");
+        if (websocket) {
+            received = new CompletableFuture<>();
+            var options = new WebSocketConnectOptions().setHost(ANTHROPIC).setPort(proxy.mitmPort()).setSsl(true)
+                    .setURI("/v1/messages?keep=1").addHeader("x-api-key", token);
+            var error = assertThrows(java.util.concurrent.ExecutionException.class,
+                    () -> client.webSocket(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
+            assertTrue(error.getCause().getMessage().contains("502"), error.toString());
+        } else {
+            assertEquals(502, http(ANTHROPIC, "x-api-key", token));
+        }
+        assertFalse(received.isDone(), "a refused account must never reach the upstream");
+        var log = Files.readString(logFile).substring(before);
+        assertTrue(log.contains((websocket ? "Refusing WebSocket to " : "Refusing ") + ANTHROPIC), log);
+        assertTrue(log.contains("outer-instance"), log);
+        assertFalse(log.contains(token), "diagnostics must never include the proof");
+        return log;
+    }
+
+    @Test void customToolWithoutPlaceholdersWarnsOnLoadAndBlocksSharedDomainInjection() throws Exception {
+        var tools = home.resolve(".config/incus-spawn/tools");
+        Files.createDirectories(tools);
+        var definition = tools.resolve("custom.yaml");
+        Files.writeString(definition, """
+                name: custom
+                proxy:
+                  config-namespace: custom
+                  configuration:
+                    key:
+                      config-path: token
+                      secret: true
+                  auth:
+                    - domains: [api.github.com]
+                      type: header
+                      name: X-Custom-Key
+                      value: '${key}'
+                """);
+        try {
+            var logFile = dev.incusspawn.Environment.proxyLifecycleLogFile();
+            var before = Files.exists(logFile) ? Files.readString(logFile).length() : 0;
+            serve(claude("api-key") + "custom:\n  token: custom-host-credential\n");
+            var proof = "Bearer " + ProofTestSupport.token("github", "gho_");
+            for (var ws : List.of(false, true)) {
+                assertEquals(proof, request(ws, GITHUB, "Authorization", proof).authorization());
+            }
+            var warnings = Files.readString(logFile).substring(before).lines()
+                    .filter(line -> line.contains("namespace 'custom' has no declared placeholders")).toList();
+            assertEquals(1, warnings.size(), "warn on configuration load, never per request");
+            assertTrue(warnings.getFirst().contains(GITHUB));
+            assertTrue(warnings.getFirst().contains("proxy.placeholders"));
+        } finally {
+            Files.deleteIfExists(definition);
+        }
     }
 
     @Test void anUnknownAddressNeverReceivesTheDefaultAccount() throws Exception {

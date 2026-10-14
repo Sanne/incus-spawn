@@ -16,6 +16,35 @@ class ProofCarriersTest {
     static final String SECRET = "12".repeat(32);
     static final String GH = "gho_isx_" + ProofToken.derive(SECRET, "github");
 
+    @Test void missingPlaceholdersWarnOncePerNamespaceAndKeepSharedDomainsClosed() throws Exception {
+        var tool = new YamlToolSetup(Jjq.toolDef("""
+                name: custom
+                proxy:
+                  config-namespace: custom
+                  configuration:
+                    key:
+                      config-path: token
+                  auth:
+                    - domains: [api.github.com]
+                      type: bearer
+                      token: '${key}'
+                    - domains: [other.custom.example]
+                      type: header
+                      name: X-Custom-Key
+                      value: '${key}'
+                """));
+        var carriers = new ProofCarriers(List.of(tool, new GhSetup()));
+        assertEquals(1, carriers.warnings().size());
+        var warning = carriers.warnings().getFirst();
+        for (var detail : List.of("tool 'custom'", "namespace 'custom'", "no declared placeholders",
+                "api.github.com", "other.custom.example", "proxy.placeholders", "env")) {
+            assertTrue(warning.contains(detail), warning);
+        }
+        var presented = carriers.read("api.github.com", name -> List.of("Bearer " + GH));
+        assertEquals(List.of(), presented.digests().get("custom"));
+        assertEquals(List.of(ProofToken.derive(SECRET, "github")), presented.digests().get("github"));
+    }
+
     @Test void proofsInUnrelatedHeadersOrDomainsDoNotAuthorize() {
         var carriers = new ProofCarriers(List.of(new GhSetup(), new ClaudeSetup()));
         assertTrue(carriers.read("api.github.com", name -> name.equals("X-Comment") ? List.of(GH) : List.of())
@@ -50,6 +79,7 @@ class ProofCarriersTest {
                       value: 'Token ${key}'
                 """));
         var carriers = new ProofCarriers(List.of(tool));
+        assertTrue(carriers.warnings().isEmpty());
         var digest = ProofToken.derive(SECRET, "custom");
         var presented = carriers.read("api.custom.example", name -> name.equals("X-Custom-Key")
                 ? List.of("Token ct_isx_" + digest) : List.of());

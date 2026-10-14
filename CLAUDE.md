@@ -141,6 +141,7 @@ A container start, a branch's included, then records its boot (`last_used_at`, r
 A VM's agent probe asks the guest instead (#1024).
 Each start also turns the credential placeholders into proof tokens, an HMAC of that start's secret per namespace (`ProofToken`, #1106).
 Which variables carry them is declared on the tool's `proxy:` entry (`placeholders:`).
+Missing declarations warn on proxy configuration load and during tool validation, since they block injection for every tool sharing the affected domains.
 The proxy checks address and namespace proof before account resolution, HTTP or WebSocket injection, Vertex translation or `inherit` substitution (#1107).
 Missing or incorrect proofs preserve the incoming authentication and destination; unknown addresses get no defaults.
 Verifier hashes rotate with the secret in one metadata write, and credentialed builds receive and revoke their own temporary proofs.

@@ -184,6 +184,9 @@ public class ToolDefValidator {
                             + "' -- a start replaces only the build's own placeholder");
                 }
             }
+            if (errors.isEmpty()) {
+                warnings.addAll(new dev.incusspawn.proxy.ProofCarriers(List.of(new YamlToolSetup(def))).warnings());
+            }
         }
     }
 

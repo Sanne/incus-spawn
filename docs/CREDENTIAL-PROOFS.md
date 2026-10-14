@@ -33,6 +33,9 @@ Incus metadata contains only the secret hash and hashes of namespace digests; me
 Verifier replacement shares the existing secret configuration write on branch, start and recovery, including replacing inherited and removed namespaces.
 The guest delivery version is now `2`, and the container boot marker ends in `proofs-v2`.
 Normal branch/start/shell request-budget tests retain their existing expectations.
+Registry listings share a one-second refresh floor.
+A proof rotated immediately after a listing can therefore reach the upstream without injection on its first request; retrying after that interval refreshes the registry.
+A previous proof can still match a cached verifier for up to the ten-second snapshot lifetime if no refresh has observed its rotation.
 
 Every build now registers an address, including builds using configured defaults.
 Address assignment, account pins and proof verifiers share one configuration write, and proof delivery rides in the readiness exec.
@@ -69,4 +72,8 @@ The integration fixtures use `proof-curl.sh` to send the proofs delivered to the
 `test-build-proofs.sh` checks that published templates retain neither a grant nor a cached Codex build proof.
 
 Refused injections are counted in `/activity` as `refused_injections`.
-Warnings are deduplicated and bounded, and are emitted only for requests claiming an isx proof or placeholder; an ordinary independent credential does not produce a warning.
+Custom tools must declare `proxy.placeholders` and export the credential variable in `env`, as shown in [Custom Tools](../README.md#proxy-credentials).
+The proxy logs missing declarations when loading configuration, and tool validation warns about them.
+Without a declaration, the namespace blocks credential injection for every tool sharing its domains.
+Request warnings are deduplicated and limited to 256 caller/namespace combinations in a five-minute window, so a burst cannot permanently silence later diagnostics.
+They are emitted only for requests claiming an isx proof or placeholder; an ordinary independent credential does not produce a warning.

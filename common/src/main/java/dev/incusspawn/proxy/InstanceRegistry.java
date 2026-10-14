@@ -322,9 +322,9 @@ public final class InstanceRegistry {
             snapshot = new Snapshot(parse(incus.listJsonConfig()), System.currentTimeMillis(), VIEWS.incrementAndGet());
             return true;
         } catch (RuntimeException e) {
-            // Keep serving the previous snapshot: a transient Incus hiccup should not
-            // strip every instance of its pinned account and silently fall back to
-            // defaults. Bump the timestamp so a broken socket is not retried per request.
+            // Retain attribution and account pins, but revoke credential authorization
+            // until a listing succeeds. Bump the timestamp so a broken socket is not
+            // retried per request.
             var previous = snapshot.parsed();
             var withoutProofs = new Parsed(previous.byAddress(), previous.secretByAddress(), previous.mcpCallers(),
                     previous.incarnationByName(), previous.lineageByName(), Map.of());

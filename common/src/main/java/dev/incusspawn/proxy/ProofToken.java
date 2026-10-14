@@ -182,9 +182,10 @@ public final class ProofToken {
     }
 
     /**
-     * {@link #declared()}, read while the caller starts the instance: it reads files, and the
-     * start waits on the guest far longer, so the start path pays nothing for it. A failed read
-     * gives no placeholders -- static ones, which prove nothing -- and a warning.
+     * {@link #declared()}, read asynchronously while the caller prepares the instance.
+     * The caller joins before writing verifier metadata, which must precede the start or
+     * copy, so any unfinished file reads add to preparation time. A failed read gives no
+     * placeholders -- static ones, which prove nothing -- and a warning.
      */
     public static CompletableFuture<List<Placeholder>> declaredInBackground() {
         return CompletableFuture.supplyAsync(ProofToken::declared).exceptionally(e -> {

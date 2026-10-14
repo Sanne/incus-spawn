@@ -877,15 +877,24 @@ env:
 
 Tools can register domains with the [MITM proxy](#credential-isolation) for transparent credential injection. This lets you add authentication to any HTTPS API without exposing secrets inside containers. The built-in `claude`, `gh`, `bob`, `codex`, and `copilot` tools use this mechanism -- but you can declare the same for your own tools.
 
-A `proxy:` block has three parts: a `config-namespace` that scopes config paths (letters, digits, `.`, `-` and `_`, starting with a letter or digit), a `configuration` map that declares what credentials are needed, and `auth` entries that map domains to authentication rules.
+A `proxy:` block declares a `config-namespace`, `configuration`, `auth`, and `placeholders`.
+The namespace scopes config paths and uses letters, digits, `.`, `-` and `_`, starting with a letter or digit.
+The configuration map declares host credentials, auth entries map domains to authentication rules, and placeholders declare the guest variables that carry proofs.
 
 ```yaml
 # ~/.config/incus-spawn/tools/artifactory.yaml
 name: artifactory
 description: JFrog Artifactory
 
+env:
+  - name: ARTIFACTORY_TOKEN
+    value: artifactory_placeholder
+
 proxy:
   config-namespace: artifactory
+  placeholders:
+    - env: ARTIFACTORY_TOKEN
+      prefix: artifactory_
   configuration:
     token:
       config-path: "token"
@@ -898,7 +907,26 @@ proxy:
       token: "${token}"
 ```
 
-After placing this file, `isx init` will prompt for the Artifactory token alongside other credentials. The token is stored in `~/.config/incus-spawn/config.yaml` under `artifactory.token` (the namespace prefixes the config path). Inside containers, HTTPS requests to `artifactory.internal.example.com` get a `Authorization: Bearer <token>` header injected automatically -- no configuration inside the container needed.
+After placing this file, `isx init` will prompt for the Artifactory token alongside other credentials.
+The token is stored in `~/.config/incus-spawn/config.yaml` under the `artifactory` namespace's selected account.
+Add the tool to your template's `tools:` list and rebuild it so the guest exports `ARTIFACTORY_TOKEN`.
+Each start replaces `artifactory_placeholder` with that instance's current proof in a login shell.
+Send it in the declared authentication header:
+
+```shell
+curl -H "Authorization: Bearer $ARTIFACTORY_TOKEN" https://artifactory.internal.example.com/
+```
+
+The proxy verifies that proof and replaces it with the selected host account's real token.
+The `env:` value must start with the declared prefix followed by `placeholder`.
+Tools must read the variable when they run; copying its value into a file during a build leaves a stale proof after the next start.
+Tools that read an auth file must refresh it from the variable at login or launch.
+Place credential-injecting tool definitions in the host's tool search paths, such as `~/.config/incus-spawn/tools/`; project-local definitions cannot grant access to host credentials.
+
+A proxied auth namespace without declared `placeholders:` cannot authorize credential injection.
+The proxy logs a warning when loading its configuration, and tool definition validation reports the missing declaration.
+If another tool shares that domain, its requests must also prove this namespace, so the missing declaration blocks injection for it too.
+Requests without valid proofs are forwarded with their own authentication unchanged.
 
 Three auth types are supported:
 
@@ -911,8 +939,15 @@ Three auth types are supported:
 Auth fields can be literal values (e.g. `username: "deploy-bot"`) or `${configKey}` references resolved against the `configuration` map. A tool with all three types:
 
 ```yaml
+name: my-service
+env:
+  - name: MY_SERVICE_TOKEN
+    value: myservice_placeholder
 proxy:
   config-namespace: myService
+  placeholders:
+    - env: MY_SERVICE_TOKEN
+      prefix: myservice_
   configuration:
     api-key:
       config-path: "apiKey"
@@ -940,6 +975,7 @@ proxy:
 ```
 
 Wildcard domains (`*.internal.myservice.com`) match any subdomain. The most specific wildcard wins when multiple tools register overlapping suffixes.
+In this example, send `$MY_SERVICE_TOKEN` as the bearer token, Basic password, or `X-API-Key` value for the corresponding domain.
 
 Configuration entries can also use `value` for hardcoded literals (no prompt during `isx init`) and `type: confirm` for yes/no prompts like license acceptance.
 

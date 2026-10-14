@@ -227,6 +227,7 @@ public class MitmProxy {
                     new ConcurrentHashMap<>(), new ConcurrentHashMap<>(), hostRoutes,
                     InheritedProof.byNamespace(ProofToken.declaredBy(toolSetups.values())),
                     new ProofCarriers(toolSetups.values()), nested);
+            proofCarriers.warnings().forEach(ProxyLog::warn);
         }
     }
 
@@ -436,10 +437,12 @@ public class MitmProxy {
     }
 
     /** Why a request was refused for {@code e}, for the log: inheriting is never a missing account. */
-    private static String refusal(dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
-        return dev.incusspawn.config.AccountResolver.INHERIT.equals(e.accountName())
-                ? ": " + e.getMessage()
-                : ", pinned to missing " + e.namespace() + " account '" + e.accountName() + "'";
+    private static String refusal(RuntimeException e) {
+        if (e instanceof dev.incusspawn.config.AccountResolver.UnknownAccountException unknown
+                && !dev.incusspawn.config.AccountResolver.INHERIT.equals(unknown.accountName())) {
+            return ", pinned to missing " + unknown.namespace() + " account '" + unknown.accountName() + "'";
+        }
+        return ": " + e.getMessage();
     }
 
     /**
@@ -1150,14 +1153,31 @@ public class MitmProxy {
             handleApiRequest(clientReq, contextFor(state, domain, caller, flow));
         } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
                  | dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
-            ProxyLog.warn("Refusing " + domain + " for " + describeCaller(clientReq) + ": " + e.getMessage());
+            ProxyLog.warn("Refusing " + domain + " for " + describeCaller(clientReq) + refusal(e));
             CallerCheck.refuse(clientReq, 502, e.getMessage());
         } catch (RuntimeException e) {
+            ProxyLog.error("Refusing " + domain + " for " + describeCaller(clientReq) + refusal(e));
             CallerCheck.refuse(clientReq, 502, "Internal proxy error");
         }
     }
 
-    private final Set<String> refusedProofWarnings = ConcurrentHashMap.newKeySet();
+    /** A burst can suppress warnings for five minutes, never for the proxy's whole lifetime. */
+    static final class ProofWarningWindow {
+        static final int LIMIT = 256;
+        static final long WINDOW_NANOS = java.util.concurrent.TimeUnit.MINUTES.toNanos(5);
+        private final Set<String> warned = new HashSet<>();
+        private long startedAt;
+
+        synchronized boolean shouldLog(String key, long now) {
+            if (warned.isEmpty() || now - startedAt >= WINDOW_NANOS) {
+                warned.clear();
+                startedAt = now;
+            }
+            return warned.size() < LIMIT && warned.add(key);
+        }
+    }
+
+    private final ProofWarningWindow refusedProofWarnings = new ProofWarningWindow();
     private Future<Void> proofRefresh;
     private final java.util.concurrent.atomic.AtomicLong refusedInjections = new java.util.concurrent.atomic.AtomicLong();
 
@@ -1206,8 +1226,8 @@ public class MitmProxy {
     private void refusedProof(String address, ProofCarriers.Presented presented) {
         refusedInjections.incrementAndGet();
         var namespaces = presented.digests().keySet();
-        if (presented.claimsProof() && refusedProofWarnings.size() < 256
-                && refusedProofWarnings.add(address + ":" + namespaces)) {
+        if (presented.claimsProof()
+                && refusedProofWarnings.shouldLog(address + ":" + namespaces, System.nanoTime())) {
             ProxyLog.warn("Credential proof refused for " + describeCaller(address) + " ("
                     + String.join(", ", namespaces) + "); relaying unchanged. Open a new login shell;"
                     + " if needed, run isx shell on the host, then isx doctor inside the instance."
@@ -1298,6 +1318,7 @@ public class MitmProxy {
             try {
                 handleWebSocketUpgrade(clientWs, context.get(), flow);
             } catch (RuntimeException e) {
+                ProxyLog.error("Refusing WebSocket to " + domain + " for " + describeCaller(address) + refusal(e));
                 if (!clientWs.isClosed()) clientWs.close((short) 1011, "Proxy error");
                 flow.end();
             }
@@ -1315,8 +1336,10 @@ public class MitmProxy {
                     status.complete(101);
                 } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
                          | dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
+                    ProxyLog.warn("Refusing WebSocket to " + domain + " for " + describeCaller(address) + refusal(e));
                     status.complete(502);
                 } catch (RuntimeException e) {
+                    ProxyLog.error("Refusing WebSocket to " + domain + " for " + describeCaller(address) + refusal(e));
                     status.tryComplete(502);
                 }
             });
