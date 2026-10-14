@@ -2427,6 +2427,7 @@ Full clones select all advertised branches and tags, with the remote's default H
 This is the former local path's scope, now also used by the network fallback; the old network path initially fetched only one branch.
 The normal broad fetch refspec is retained, while shallow clones keep their existing narrow selection and refspec.
 The selection and cache contracts are specified in [Git preparation](docs/GIT-PREPARATION.md).
+Its [clean-snapshot decision table](docs/GIT-PREPARATION.md#when-and-why-we-use-a-clean-snapshot) explains the build's ready-line labels and when snapshots are reused, updated incrementally, rebuilt or bypassed.
 
 **One clone per destination** (#1394): a repo's identity is its destination (`~/x` and `/home/agentuser/x` are one, and the default path comes from the URL), resolved across the whole template chain by `ImageDef.chainRepos`.
 A layer clones only the destinations it declares first; one an ancestor declared is already in the parent copy (or was cloned by that ancestor's layer in a build from scratch), so the build prints `✓ Inherited <repo> (from <template>)` and neither clones nor primes it again, and a repeat within a template is the same clone.

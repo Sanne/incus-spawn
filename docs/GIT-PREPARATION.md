@@ -9,6 +9,35 @@ The guest copies the resulting repository with `--no-hardlinks` and verifies its
 This is the clean-snapshot alternative to the certificate/bitmap implementation in [PR #1400](https://github.com/Sanne/incus-spawn/pull/1400), addressing [#1395](https://github.com/Sanne/incus-spawn/issues/1395).
 The historical dissociation failure and comparative experiments are recorded in [research PR #1398](https://github.com/Sanne/incus-spawn/pull/1398).
 
+## When and why we use a clean snapshot
+
+A user's checkout can contain private branches, stashes and other objects that the template's remote does not expose.
+A clean snapshot contains only objects reachable from the selected remote branches, tags and HEAD, with fresh repository metadata and no dependency on the user's checkout.
+Keeping this independent bare repository lets later builds reuse the validated objects.
+
+The table applies to repositories being cloned in the current template layer; inherited repositories need no new clone.
+Full clones have no depth limit and use snapshots only for eligible network URLs after the guest's template-account access check succeeds.
+
+| Situation | What we do / ready-line label | Why |
+| --- | --- | --- |
+| Full clone, no usable cached snapshot, eligible host checkout available | Create a snapshot by borrowing directly from the checkout with `--reference … --dissociate`: `via reference-seeded clean snapshot` | Reuse local objects while excluding private history and removing the dependency on the checkout. |
+| Full clone, neither a usable cached snapshot nor an eligible reference | Create a snapshot from the remote: `via new clean snapshot` | Establish a validated, independent copy for this build and later reuse. |
+| Full clone, cached bytes verify and all advertised refs, HEAD and object format are unchanged | Reuse it: `via cached clean snapshot` | Avoid another full-history clone, repack and fsck; still check current remote access, selection and cached bytes. |
+| Full clone, upstream changes preserve all previously selected history | Fetch into a new generation, retaining verified old packs: `via incremental clean snapshot` | Ordinary new commits and merges need only the additional objects and their validation, plus checks of retained bytes and reachability. |
+| Full clone, changes remove selected history, incremental validation fails, or the result would exceed 32 packs | Rebuild a clean snapshot, preferably borrowing from the previous verified generation: usually `via reference-seeded clean snapshot` | Drop objects no longer selected, recover from failed validation, or compact accumulated packs. |
+| Reference cloning, dissociation or full validation fails | Discard the partial snapshot and retry from the remote: `via new clean snapshot (reference retry)` | A changing or damaged reference must not produce an incomplete guest repository. |
+| Shallow clone (`depth: N`, including `depth: 1`) | Bypass this cache: `via host reference (shallow, depth N)` or `via remote (shallow, depth N)` | The separate shallow path reconciles with the remote and repacks on every build; limiting history still requires copying current large binaries. |
+| Project-local template, ineligible URL, denied guest access, differing guest/host refs, or preparation/mount/copy-verification failure | Use the ordinary guest clone path | Host preparation must respect the template's trust and access scope; failures must not expose an unchecked snapshot. |
+
+`Cached` means the freshly checked remote selection matches the snapshot; it never means using stale data while the remote is unavailable.
+Guest access and selection checks apply to every snapshot, including cache hits.
+Frequent upstream commits normally take the incremental row, followed by cached reuse on builds that see no further changes.
+A corrupt cached snapshot is discarded and rebuilt without borrowing its damaged bytes.
+
+Every snapshot path still makes and verifies an independent copy for the guest, then detaches the snapshot before priming.
+The cache saves host preparation work; it does not eliminate copying the selected objects into each new guest.
+Snapshots that exceed the retention budget, or builds with retention disabled, can still use a clean snapshot for the active clone without keeping it for the next build.
+
 ## Selection and independence
 
 Every full clone includes all advertised remote branches and tags.
