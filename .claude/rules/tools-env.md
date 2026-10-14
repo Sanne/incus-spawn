@@ -13,7 +13,7 @@ paths:
   Execution order: packages -> downloads -> run -> run_as_user -> files, then `ToolVerifier` runs each `verify` after `writeEnvFile()` -- as `agentuser` in a login shell unless the tool sets `verify_as_root: true` (root-only checks such as `sshd -t`), which then run in root's own environment (`env -i`, `HOME=/root`, root's default `PATH`) **without** `isx-env.sh`, so nothing they do lands in agentuser's home.
   There is no ownership repair afterwards; do not add one back (#931).
   Environment variables are declared via `env:` entries and collected centrally by `GuestProvisioning.writeEnvFile()`.
-- **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `CodexSetup`, `CopilotSetup`, `GhSetup`, `PiSetup`, `BobSetup`).
+- **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `CodexSetup`, `CopilotSetup`, `GhSetup`, `PiSetup`, `BobSetup`, `GeminiSetup`).
   Declare env vars via `envEntries(Map<String,String>)` method.
   Tools can declare a `feature()` to gate themselves behind an opt-in feature flag in `SpawnConfig.features` (no built-in tool does today -- `codex` graduated out of the `openai` flag).
 - npm CLIs install through `NpmGlobalInstall`.
@@ -25,6 +25,15 @@ paths:
   Full access rests on Codex classifying that profile as unsandboxed, which `@openai/codex` upgrades (unpinned, moved by `npm update -g`) can change: re-check it on an upgrade; `test-codex.sh` asserts `codex exec` reports `sandbox: danger-full-access`.
   Codex 0.162.1 renders the profile name verbatim, so its name carries `Running unconstrained in isx [version] [container]` without a patched binary.
   `/etc/profile.d/isx-zz-codex-footer.sh` refreshes that name from `ISX_VERSION` and `ISX_CONTAINER` at login, preserving other settings and any user-selected permission profile.
+
+`GeminiSetup` (`gemini-cli`) installs `@google/gemini-cli` and writes `~/.gemini/settings.json` with optional `model.name`.
+It disables telemetry, usage statistics, self-updates and notifications, startup tips, the banner and home-directory warnings, folder trust prompts, and inner sandboxing.
+It writes `~/.gemini/policies/isx-auto-approve.toml`, a priority-zero allow-all user policy for default, auto-edit, and YOLO modes.
+The policy also applies to direct and headless launches, excludes plan mode, and permits higher-priority user overrides.
+Its action runs plain `gemini`.
+At the end of either build path, `GuestProvisioning.writeAgentContext()` writes the resolved environment instructions to the build-owned `~/.gemini/GEMINI.md` as `agentuser`.
+The tool leaves `context.fileName` unset.
+Authentication and proxy support are intentionally absent from this tool.
 
 Tools can declare an `agent_note:` (exposed uniformly via `ToolSetup.agentNote()`, overridden in `YamlToolSetup`; Java tools may override it too).
 It is an always-true fact that must be known *before* the first relevant action, rendered by the build into `/etc/claude-code/CLAUDE.md` (see `.claude/rules/build.md`).

@@ -296,6 +296,35 @@ class GuestProvisioningTest {
         var written = capturedWrite(incus, "/etc/claude-code/CLAUDE.md");
         assertNotNull(written, "should write to the managed policy location");
         assertTrue(written.contains("built from the `tpl-solo` template"));
+        assertNull(capturedWrite(incus, "/home/agentuser/.gemini/GEMINI.md"));
+    }
+
+    @Test
+    void geminiContextIncludesInheritedNotesAndUsesChildTemplateName() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(eq("test"), any(String[].class))).thenReturn(OK);
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setAgentNote("parent environment instructions");
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setAgentNote("child environment instructions");
+        // allTools includes tools inherited from the parent, even without a child reconfiguration.
+        var tools = List.of(new BuildTools.ResolvedTool("gemini-cli",
+                new dev.incusspawn.tool.GeminiSetup(), Map.of()));
+
+        GuestProvisioning.writeAgentContext(new Container(incus, "test"), child,
+                Map.of("tpl-parent", parent), tools, "tpl-child");
+
+        var path = dev.incusspawn.tool.GeminiSetup.MEMORY_PATH;
+        var gemini = capturedWrite(incus, path);
+        assertEquals(capturedWrite(incus, "/etc/claude-code/CLAUDE.md"), gemini);
+        assertNotNull(gemini);
+        assertTrue(gemini.contains("built from the `tpl-child` template"));
+        assertTrue(gemini.contains("parent environment instructions"));
+        assertTrue(gemini.contains("child environment instructions"));
+        verify(incus).shellExec("test", "chown", "-R", "agentuser:agentuser", path);
     }
 
     @Test

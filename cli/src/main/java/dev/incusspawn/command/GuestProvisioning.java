@@ -15,6 +15,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.CodexSetup;
+import dev.incusspawn.tool.GeminiSetup;
 import dev.incusspawn.tool.ToolVerifier;
 import dev.incusspawn.util.BuildOutput;
 
@@ -295,6 +296,8 @@ public class GuestProvisioning {
      * That layer loads ahead of, and concatenates with, {@code ~/.claude/CLAUDE.md} and
      * any project CLAUDE.md, so isx never merges with or overwrites a file someone else
      * owns. Root ownership is correct here; no chown.
+     * Images containing Gemini CLI also receive this content in its build-owned
+     * {@code ~/.gemini/GEMINI.md}, with agentuser ownership.
      */
     static void writeAgentContext(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
                            List<ResolvedTool> allTools, String canonicalName) {
@@ -320,6 +323,9 @@ public class GuestProvisioning {
 
         var content = AgentContextGenerator.generate(canonicalName, toolNames, repos, notes);
         container.writeFile(ClaudeSetup.MANAGED_MEMORY_PATH, content);
+        if (toolNames.contains("gemini-cli")) {
+            GeminiSetup.writeEnvironmentContext(container, content);
+        }
     }
 
     private static final String AGENTUSER_HOME = "/home/agentuser";

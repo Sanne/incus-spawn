@@ -598,6 +598,43 @@ tools:
 
 `provider` defaults to `anthropic` and also accepts `vertex`/`google`; `model` defaults to `claude-sonnet-4-6`.
 
+### Gemini CLI
+
+Add Google's [Gemini CLI](https://geminicli.com/docs/get-started/installation/) to a template with `tools: [gemini-cli]`:
+
+```yaml
+name: tpl-gemini-dev
+parent: tpl-dev
+tools:
+  - gemini-cli
+default-action: gemini-cli
+```
+
+The tool installs `@google/gemini-cli` and writes `~/.gemini/settings.json`.
+It disables telemetry, usage statistics, automatic updates and update notifications, startup tips, the banner and home-directory warnings, folder trust prompts, and the CLI's inner sandbox.
+The tool writes `~/.gemini/policies/isx-auto-approve.toml` to auto-approve tool calls in normal, auto-edit, and YOLO modes.
+This applies to direct `gemini` launches, headless invocations, and the default action, without extra flags.
+Plan mode retains its normal policy behavior.
+Gemini's shell checks can still require approval for commands outside the workspace or commands it cannot parse; `--yolo` remains available for full YOLO behavior.
+The policy uses priority zero so higher-priority user rules can override it; remove this file to restore upstream approval defaults.
+
+To pin a model, use the native Gemini model ID:
+
+```yaml
+tools:
+  - gemini-cli:
+      model: gemini-4-argon
+```
+
+When `gemini-cli` is installed, every template build writes the generated environment instructions to `~/.gemini/GEMINI.md`, including inherited template notes, installed tools, and cloned repositories.
+This file is owned by `agentuser` and regenerated on rebuild; project `GEMINI.md` files remain separate.
+The tool leaves `context.fileName` unset.
+
+Without `model`, Gemini CLI chooses its own default.
+The model parameter is reconfigurable in child templates without reinstalling the CLI.
+This tool provides installation and configuration only: it does not configure authentication, export credential placeholders, or add proxy rules.
+Authentication must be supplied separately before running coding tasks.
+
 ### Bob Shell
 
 Bob Shell is IBM's AI-powered coding assistant. Add it to any template with `tools: [bob]`:
@@ -762,6 +799,7 @@ These tools ship with incus-spawn and can be referenced by name in a template's 
 | `claude` | Claude Code: AI coding assistant |
 | `gh` | GitHub: PAT for git operations |
 | `pi` | Pi: AI coding assistant |
+| `gemini-cli` | Gemini CLI: Google coding assistant (installation and configuration only) |
 | `bob` | Bob Shell: IBM AI coding assistant |
 | `codex` | Codex CLI: OpenAI coding assistant |
 | `copilot` | GitHub Copilot CLI: AI coding assistant (shares `gh` token) |

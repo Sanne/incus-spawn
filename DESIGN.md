@@ -190,7 +190,7 @@ A definition sets `deprecated: true` or `deprecated: <what to use instead>` (#11
 Removing a template outright was the alternative: every template derived from it would stop building on upgrade, with no warning beforehand.
 
 No coding agent is included in built-in templates by default — users add the ones they need to custom image definitions.
-Available Java tools: `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent, Anthropic or OpenAI provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
+Available Java tools: `gemini-cli` (Gemini CLI, installation and configuration only), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent, Anthropic or OpenAI provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
 
 Each image definition specifies:
 - `name` — container name (required)
@@ -345,6 +345,15 @@ Dependencies are installed before the tools that require them.
   After `npm install -g`, and after the `npm update -g` of `isx update-all` / `isx project update`, a node one-liner run as root resolves the platform package the way the launcher does.
   A missing one is reinstalled once, then fails the step with the failure lines from npm's verbose log.
   The check deliberately does not run the CLI: `copilot --version` unpacks ~165 MB into agentuser's cache and `codex --version` leaves lock files, all of which would be baked into the template.
+
+`GeminiSetup` installs `@google/gemini-cli` through `NpmGlobalInstall` and configures user settings in `~/.gemini/settings.json`.
+It disables telemetry, usage statistics, automatic updates and notifications, startup tips, the banner and home-directory warnings, folder trust prompts, and inner sandboxing.
+It writes a priority-zero allow-all user policy in `~/.gemini/policies/isx-auto-approve.toml` for default, auto-edit, and YOLO modes.
+This makes direct and headless launches auto-approve tool calls while leaving plan mode unaffected and allowing higher-priority user rules to override it.
+Its shell action runs plain `gemini`.
+The policy allows shell redirection, but default-mode shell heuristics still apply to commands outside the workspace and parsing failures; full YOLO still requires its flag.
+The optional, reconfigurable `model` parameter pins `model.name`; otherwise the CLI selects its default.
+This integration declares no authentication settings, environment placeholders, credential namespaces, or proxy rules.
 
 **Resolution order** (later overrides earlier): built-in YAML (`resources/tools/`) → user-defined YAML (`~/.config/incus-spawn/tools/`) → search paths → project-local (`.incus-spawn/tools/`).
 A YAML tool with the same name replaces any earlier definition.
@@ -509,6 +518,10 @@ Generation happens once per build, in both `buildFromScratch` and `buildFromPare
 So it sees the fully resolved image (every ancestor's tools and repos) rather than one layer at a time, and the repos it lists have actually been cloned by the time it is written.
 Do not move the call earlier to sit beside `writeEnvFile`: in `buildFromParent` that is before `cloneRepos`.
 Content comes from `AgentContextGenerator` (module `common`), a pure function that `GuestProvisioning.writeAgentContext()` feeds and writes — the same split as `EnvResolver`/`writeEnvFile`, and the reason the whole format is unit-testable without Incus.
+
+For images containing `gemini-cli`, the same content is also written to `GeminiSetup.MEMORY_PATH` (`/home/agentuser/.gemini/GEMINI.md`) and owned by `agentuser`.
+Both build paths regenerate it after resolving the whole template chain, including when Gemini is inherited without reconfiguration.
+This global Gemini context file is build-owned and replaced on rebuild; project context files are untouched and `context.fileName` stays unset.
 
 **Why the managed-policy layer.**
 That path is Claude Code's *managed policy* memory location on Linux: it loads ahead of the user layer (`~/.claude/CLAUDE.md`) and the project layer (`./CLAUDE.md`), all layers concatenate rather than override, and it cannot be suppressed via `claudeMdExcludes`.

@@ -104,6 +104,10 @@ So it sees the fully resolved image rather than one layer at a time, and the rep
 Content comes from `AgentContextGenerator` (`common/config/`), a pure renderer that takes a template name, tool names, repos and notes, which is what makes the format unit-testable without Incus.
 The path constant lives in `ClaudeSetup.MANAGED_MEMORY_PATH` beside the rest of `/etc/claude-code`, since the generator itself is vendor-neutral.
 
+When the resolved tools include `gemini-cli`, the same content is written to `~/.gemini/GEMINI.md` and owned by `agentuser`.
+This file is build-owned and regenerated for each child template, including when Gemini is inherited without reconfiguration.
+Project context files are untouched and `context.fileName` stays unset.
+
 That path is Claude Code's **managed policy** memory layer: it loads ahead of `~/.claude/CLAUDE.md` and any project `CLAUDE.md`, layers concatenate rather than override, and it can't be suppressed via `claudeMdExcludes`.
 So isx never merges with or overwrites a file a user or template owns -- no marker blocks, no read-modify-write.
 It sits beside the `managed-settings.json`/`statusline.sh` that `ClaudeSetup` already owns there, and root ownership is correct, so **no chown**.

@@ -62,6 +62,12 @@ Headings, tables (a row stays on one line), code, HTML and front matter are exem
 `DocsOneSentencePerLineTest` enforces this in `mvn test`.
 Split a sentence of more than about 40 words where it splits cleanly; `.claude/rules/writing.md` "Splitting a sentence" lists the only word changes a split may make.
 
+The `gemini-cli` tool installs and configures Google Gemini CLI through `GeminiSetup`.
+Its optional `model` parameter leaves the upstream default unpinned, and a user policy auto-approves tools within isx isolation.
+The policy applies to direct launches as well as the action, excludes plan mode, and allows higher-priority user overrides.
+Each build writes the resolved template environment instructions to `~/.gemini/GEMINI.md` when Gemini is installed, leaving `context.fileName` unset.
+It supplies no authentication settings or proxy integration; see `.claude/rules/tools-env.md` for the configuration scope.
+
 ## Build and Test Commands
 
 ```shell
