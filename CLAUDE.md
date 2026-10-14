@@ -141,6 +141,10 @@ A container start, a branch's included, then records its boot (`last_used_at`, r
 A VM's agent probe asks the guest instead (#1024).
 Each start also turns the credential placeholders into proof tokens, an HMAC of that start's secret per namespace (`ProofToken`, #1106).
 Which variables carry them is declared on the tool's `proxy:` entry (`placeholders:`).
+The proxy checks address and namespace proof before account resolution, HTTP or WebSocket injection, Vertex translation or `inherit` substitution (#1107).
+Missing or incorrect proofs preserve the incoming authentication and destination; unknown addresses get no defaults.
+Verifier hashes rotate with the secret in one metadata write, and credentialed builds receive and revoke their own temporary proofs.
+Existing instances refresh verifier delivery on their next isx shell or start; old API-key Claude images may require rebuilding.
 They are written beside the secret in `/run/isx` by the same exec, and the raw secret never enters the environment.
 `isx doctor` inside an instance checks the exported ones against the secret file (`DoctorCommand.instanceCredentialFindings`, #1109); the proofs file's format is read back only by `ProofToken.delivered`, beside `profile`, so the two change together.
 A placeholder token in the guest is read when the tool runs, never fixed by a build (#1108): where a tool reads a file instead of its variable, a login script in `/etc/profile.d/isx-zz-*` rewrites the file from the variable.

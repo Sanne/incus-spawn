@@ -33,7 +33,8 @@ import java.util.Map;
  *       {@code isx shell} notices the reboot and gives it one (#1024). The login
  *       profile exports {@link #FILE_ENV_VAR} pointing at it; the value is not exported, so it
  *       does not travel in the environment of every process or show up in an {@code env} dump.</li>
- *   <li>Never in an image: builds do not get one, and a branch is given its own before its
+ *   <li>Never usable from an image: build secrets are revoked and removed before publication,
+ *       and a branch is given its own before its
  *       first start, replacing whatever hash its source carried.</li>
  *   <li>Beside it, at {@link #PROOFS_PATH}, the proof tokens derived from it ({@link ProofToken}),
  *       which the login profile does export: they take the place of the tools' placeholders.</li>
@@ -80,8 +81,13 @@ public final class InstanceSecret {
      * for the caller to write with whatever else it records -- the one way a start gets its secret.
      */
     public static String stampInto(Map<String, String> config) {
+        return stampInto(config, ProofToken.declared());
+    }
+
+    public static String stampInto(Map<String, String> config, List<ProofToken.Placeholder> placeholders) {
         var secret = generate();
         config.put(Metadata.INSTANCE_SECRET_SHA256, sha256(secret));
+        config.put(Metadata.INSTANCE_PROOF_SHA256, ProofVerifier.stamp(secret, placeholders));
         return secret;
     }
 
@@ -133,6 +139,7 @@ public final class InstanceSecret {
             + " && rm -f " + PROOFS_PATH
             + " && " + writeForInstanceUser("'%s\\n' \"$isx_secret\"", GUEST_PATH)
             + " && " + writeForInstanceUser("'%s' \"$isx_proofs\"", PROOFS_PATH)
+            + " && printf '%s' 2 > " + GUEST_DIR + "/proof-version"
             + " && printf '%s\\n' " + Container.shellQuote("export " + FILE_ENV_VAR + "=" + GUEST_PATH)
             + " " + Container.shellQuote("if [ -r " + PROOFS_PATH + " ]; then . " + PROOFS_PATH + "; fi")
             + " > " + PROFILE_PATH
@@ -162,7 +169,7 @@ public final class InstanceSecret {
      * there, so asking for a new secret on every probe could not help.
      */
     public static final String GUEST_CHECK = RUN_IS_TMPFS + " && { ! [ -s " + GUEST_PATH + " ] || ! [ -e "
-            + PROOFS_PATH + " ]; } && echo " + MISSING + "; true";
+            + PROOFS_PATH + " ] || ! grep -qx 2 " + GUEST_DIR + "/proof-version; } && echo " + MISSING + "; true";
 
     /** Whether the output of a probe running {@link #GUEST_CHECK} says the guest holds no secret. */
     public static boolean missingIn(String stdout) {

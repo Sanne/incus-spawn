@@ -1126,6 +1126,8 @@ public class BuildCommand extends BaseCommand {
     private void promoteToFailedInstance(String buildName, String canonicalName, MachineType machineType) {
         var promotedName = canonicalName + "-failed-build";
         try {
+            BuildAccounts.revoke(incus, buildName);
+            ProxyService.signalAccountRefresh();
             incus.deleteIfExists(promotedName);
             try { new GuestProvisioning(incus).unmountDnfCache(buildName, machineType); } catch (Exception ignored) {}
             if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(buildName))) {
@@ -1282,7 +1284,7 @@ public class BuildCommand extends BaseCommand {
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         var dnfCacheWarning = attachBootDevices(buildName, hostResources, machineType);
         var started = startBuild(buildName, imageDef, defs);
-        incus.waitForReady(buildName, machineType);
+        incus.waitForReady(buildName, machineType, dev.incusspawn.proxy.InstanceSecret.GUEST_SCRIPT, started.guestEnv());
 
         var container = new Container(incus, buildName);
         if (machineType == MachineType.CONTAINER) {
@@ -1327,14 +1329,16 @@ public class BuildCommand extends BaseCommand {
         enablePackageRepos(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
         installAllPackages(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
 
+        var allTools = new ArrayList<>(toolResolution.ancestors());
+        allTools.addAll(toolResolution.effective());
+        // Install hooks can authenticate (gh derives the Git identity here). A login must already
+        // see each tool's placeholder, so the delivered proof profile can replace it.
+        writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         runToolSetup(container, toolResolution.effective(), ImageDef.resolveAccounts(imageDef, defs));
         // After tool setup, not before: a parent without gh still carries a GitHub stamp, and
         // writing an identity first would create the .gitconfig whose absence is how gh's setup
         // knows to write its git defaults.
         var identityStamps = settleIdentities(container, imageDef, defs, started.inheritedIdentities());
-        var allTools = new ArrayList<>(toolResolution.ancestors());
-        allTools.addAll(toolResolution.effective());
-        writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         verifyTools(container, toolResolution.effective());
         // Before the repos' primes, which may use a JDK this layer just installed.
         bindInstalledRuntimes(container);
@@ -1457,7 +1461,7 @@ public class BuildCommand extends BaseCommand {
         });
         var started = launched.started();
         var dnfCacheWarning = launched.dnfCacheWarning();
-        incus.waitForReady(buildName, machineType);
+        incus.waitForReady(buildName, machineType, dev.incusspawn.proxy.InstanceSecret.GUEST_SCRIPT, started.guestEnv());
         BuildOutput.stepDone();
         announceBuildAccounts(imageDef, defs);
         warnDnfCacheUnavailable(dnfCacheWarning);
@@ -1487,7 +1491,7 @@ public class BuildCommand extends BaseCommand {
             incus.stop(buildName);
             incus.deviceAdd(buildName, "tun", "unix-char",
                     "source=/dev/net/tun", "path=/dev/net/tun", "mode=0666");
-            incus.start(buildName);
+            InstanceLifecycle.startForUse(incus, buildName, machineType, BuildOutput::warn);
             incus.waitForSystemd(buildName);
             BuildOutput.stepDone();
             waitForIpv4(container);
@@ -1592,8 +1596,9 @@ public class BuildCommand extends BaseCommand {
             enablePackageRepos(container, layer, toolResolution.effective(), toolResolution.ancestors(), defs);
             installAllPackages(container, layer, toolResolution.effective(), toolResolution.ancestors(), defs);
 
-            runToolSetup(container, toolResolution.effective(), ImageDef.resolveAccounts(imageDef, defs));
             allTools.addAll(toolResolution.effective());
+            writeEnvFile(container, imageDef, defs, allTools, canonicalName);
+            runToolSetup(container, toolResolution.effective(), ImageDef.resolveAccounts(imageDef, defs));
             maskServices(container, layer);
             installSkills(container, layer, defs, toolResolution.effective());
             cloneRepos(container, layer, defs, machineType);
@@ -2228,7 +2233,7 @@ public class BuildCommand extends BaseCommand {
 
     /**
      * Start the stopped build container, first making it known to the proxy as its template
-     * when that template pins any account (#903): see {@link BuildAccounts#start}.
+     * with fresh proofs, for explicit account pins and defaults alike: see {@link BuildAccounts#start}.
      */
     BuildAccounts.Started startBuild(String buildName, ImageDef imageDef, Map<String, ImageDef> defs) {
         return BuildAccounts.start(incus, buildName, ImageDef.resolveAccounts(imageDef, defs),
@@ -2244,6 +2249,9 @@ public class BuildCommand extends BaseCommand {
 
     /** Stop the finished template and give back the address {@link #startBuild} gave it. */
     void stopBuild(String buildName, BuildAccounts.Started started) {
+        BuildAccounts.revoke(incus, buildName);
+        ProxyService.signalAccountRefresh();
+        BuildAccounts.clearGuestProofs(new Container(incus, buildName));
         BuildOutput.stepStart("Stopping image...");
         incus.stop(buildName);
         BuildOutput.stepDone();

@@ -258,10 +258,10 @@ class InstanceSecretRebootTest {
      * (#1106): its boot stamp is the bare boot, so the next shell gives it a secret with its
      * proofs -- once, and from the instance it already read.
      */
-    @Test
-    void aContainerStartedBeforeProofTokensGetsThemAtTheNextShell() {
-        // What isx wrote before proof tokens: the bare boot
-        var daemon = runningContainerStamped(STARTED, STARTED);
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"", " proofs"})
+    void anOlderDeliveryGetsProofsAndVerifiersAtTheNextShell(String oldVersion) {
+        var daemon = runningContainerStamped(STARTED, STARTED + oldVersion);
 
         var envs = new ArrayList<Map<String, String>>();
         var incus = spy(daemon.client());
@@ -276,6 +276,8 @@ class InstanceSecretRebootTest {
         assertTrue(envs.getFirst().get(InstanceSecret.PROOFS_DELIVERY_ENV)
                 .contains(dev.incusspawn.proxy.ProofToken.derive(secret, "github")), envs.getFirst().toString());
         assertEquals(InstanceLifecycle.secretBootStamp(STARTED), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
+        assertEquals(dev.incusspawn.proxy.ProofVerifier.stamp(secret, dev.incusspawn.proxy.ProofToken.declared()),
+                config(daemon, Metadata.INSTANCE_PROOF_SHA256));
 
         envs.clear();
         InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.CONTAINER, msg -> {});

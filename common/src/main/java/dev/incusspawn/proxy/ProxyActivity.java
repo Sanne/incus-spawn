@@ -103,6 +103,11 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
 
     /** The JSON the proxy serves; {@link #parse} reads it back, so the names live only here. */
     public String toJson() {
+        return toJson(0);
+    }
+
+    /** Refused credential injections include anonymous and independently authenticated pass-through. */
+    public String toJson(long refusedInjections) {
         var all = JqObject.builder(instances.size());
         instances.forEach((name, c) -> {
             var n = JqObject.builder(10);
@@ -120,7 +125,8 @@ public record ProxyActivity(Map<String, Instance> instances, Instant unattribute
         });
         var other = JqObject.builder(7);
         if (unattributedSince != null) other.put("counting_since", unattributedSince.toEpochMilli());
-        return JqObject.builder(2)
+        return JqObject.builder(3)
+                .put("refused_injections", refusedInjections)
                 .put("instances", all.build())
                 .put("unattributed", trafficJson(other, unattributed))
                 .build().toJsonString();

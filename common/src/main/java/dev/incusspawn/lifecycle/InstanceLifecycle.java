@@ -504,7 +504,7 @@ public final class InstanceLifecycle {
         // secret makes anyway
         var secret = rotateInstanceSecret(incus, name, machineType == MachineType.VM
                 && !"false".equals(instance.path("config").path(SECURE_BOOT).asText())
-                ? Map.of(SECURE_BOOT, "false") : Map.of());
+                ? Map.of(SECURE_BOOT, "false") : Map.of(), placeholders.join());
         startInstance(incus, name, warn);
         incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
                 InstanceSecret.guestEnv(secret, Metadata.isMcpCaller(instance), placeholders.join()));
@@ -524,7 +524,7 @@ public final class InstanceLifecycle {
         // contend with it. A restart that then fails leaves a guest whose secret no longer
         // matches, which is refused -- the safe way for it to go wrong.
         var placeholders = ProofToken.declaredInBackground();
-        var secret = rotateInstanceSecret(incus, name);
+        var secret = rotateInstanceSecret(incus, name, Map.of(), placeholders.join());
         incus.restart(name);
         incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
                 InstanceSecret.guestEnv(secret, mcpCaller, placeholders.join()));
@@ -542,13 +542,14 @@ public final class InstanceLifecycle {
      * ({@link dev.incusspawn.proxy.InstanceRegistry#identify}).
      */
     static String rotateInstanceSecret(IncusClient incus, String name) {
-        return rotateInstanceSecret(incus, name, Map.of());
+        return rotateInstanceSecret(incus, name, Map.of(), ProofToken.declared());
     }
 
     /** {@link #rotateInstanceSecret}, with {@code alongside} recorded in the same write. */
-    private static String rotateInstanceSecret(IncusClient incus, String name, Map<String, String> alongside) {
+    private static String rotateInstanceSecret(IncusClient incus, String name, Map<String, String> alongside,
+                                                java.util.List<ProofToken.Placeholder> placeholders) {
         var stamp = new HashMap<>(alongside);
-        var secret = InstanceSecret.stampInto(stamp);
+        var secret = InstanceSecret.stampInto(stamp, placeholders);
         incus.configSetAll(name, stamp);
         return secret;
     }
@@ -561,7 +562,7 @@ public final class InstanceLifecycle {
      * instance it already read.
      */
     static String secretBootStamp(String bootedAt) {
-        return bootedAt + " proofs";
+        return bootedAt + " proofs-v2";
     }
 
     /** When Incus last started {@code instance} -- on every start, a reboot included -- or "". */
@@ -608,7 +609,8 @@ public final class InstanceLifecycle {
         try {
             var placeholders = ProofToken.declaredInBackground();
             var secret = rotateInstanceSecret(incus, name,
-                    bootedAt == null ? Map.of() : Map.of(Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(bootedAt)));
+                    bootedAt == null ? Map.of() : Map.of(Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(bootedAt)),
+                    placeholders.join());
             // GUEST_SCRIPT never fails, so the same exec asks whether the secret is now there:
             // a write it skipped would otherwise give a VM a new secret on every shell, silently
             var delivery = incus.shellExec(name, InstanceSecret.guestEnv(secret, mcpCaller, placeholders.join()), "sh", "-c",

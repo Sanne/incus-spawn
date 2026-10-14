@@ -168,6 +168,8 @@ class InstanceSecretTest {
 
         assertTrue(InstanceSecret.missingIn(output(check)), "a secret with no proofs beside it");
         Files.writeString(root.resolve("run/isx/proof-tokens"), "");
+        assertTrue(InstanceSecret.missingIn(output(check)), "pre-enforcement delivery needs verifier metadata");
+        Files.writeString(root.resolve("run/isx/proof-version"), "2");
         assertFalse(InstanceSecret.missingIn(output(check)), "an empty proofs file was still delivered");
     }
 

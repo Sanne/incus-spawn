@@ -35,7 +35,15 @@ class BuildCommandAccountsWiringTest {
 
     @BeforeEach
     void watchTheProxySignal() {
-        cmd.incus = daemon.client();
+        cmd.incus = org.mockito.Mockito.spy(daemon.client());
+        org.mockito.Mockito.doAnswer(call -> {
+            assertEquals("", daemon.instance(BUILD).path("config").path(Metadata.INSTANCE_PROOF_SHA256).asText(""),
+                    "proofs are revoked before guest caches are scrubbed");
+            return new dev.incusspawn.incus.IncusClient.ExecResult(0, "", "");
+        }).when(cmd.incus).execInContainer(org.mockito.ArgumentMatchers.eq(BUILD),
+                org.mockito.ArgumentMatchers.eq("agentuser"), org.mockito.ArgumentMatchers.anyString());
+        org.mockito.Mockito.doReturn(new dev.incusspawn.incus.IncusClient.ExecResult(0, "", ""))
+                .when(cmd.incus).shellExec(org.mockito.ArgumentMatchers.eq(BUILD), org.mockito.ArgumentMatchers.any(String[].class));
         // IsolatedHome swapped the real signal for a counter and puts the real one back after
         ProxyService.replaceAccountRefreshSignal(() -> {
             var instance = daemon.instance(BUILD);
@@ -109,20 +117,17 @@ class BuildCommandAccountsWiringTest {
     }
 
     @Test
-    void aBuildPinningNothingKeepsDhcpAndNeverSignalsTheProxy() {
+    void aBuildUsingDefaultsRegistersProofsAndRevokesThemBeforePublication() {
         var root = new ImageDef();
         root.setName("tpl-child");
-
         var started = cmd.startBuild(BUILD, root, Map.of("tpl-child", root));
+        assertNotNull(started.address());
+        assertFalse(daemon.instance(BUILD).path("config").path(Metadata.INSTANCE_PROOF_SHA256).asText("").isEmpty());
         cmd.requireBuildAddress(BUILD, started);
         cmd.stopBuild(BUILD, started);
-
-        assertNull(started.address());
-        assertEquals(List.of(), seenByTheProxy);
+        assertEquals(2, seenByTheProxy.size(), "register, then revoke");
         assertEquals(List.of(BUILD + " start", BUILD + " stop"), daemon.stateActions());
-        assertFalse(daemon.requests().contains("GET /1.0/instances/" + BUILD + "/state"),
-                "no address to check, so no wait for one: " + daemon.requests());
-        assertFalse(daemon.requests().stream().anyMatch(BuildCommandAccountsWiringTest::isInstanceWrite),
-                "served the defaults either way, it pays for no address writes: " + daemon.requests());
+        assertEquals("", daemon.instance(BUILD).path("config").path(Metadata.INSTANCE_PROOF_SHA256).asText(""));
+        assertFalse(daemon.instance(BUILD).path("config").has(Metadata.STATIC_IP));
     }
 }

@@ -271,7 +271,7 @@ public final class BranchFlow {
         BuildOutput.branchHeader(name, source);
         // Read while the copy runs, as every start does: the tools preflight loaded may include
         // the current directory's own, which must not decide what the branch is given
-        var placeholders = req.start() ? ProofToken.declaredInBackground() : null;
+        var placeholders = ProofToken.declaredInBackground();
 
         // The source as preflight read it: the copy plan, its machine type and every default the request leaves open
         var sourceInstance = preflight.sourceInstance();
@@ -285,7 +285,7 @@ public final class BranchFlow {
         // The branch's own secret, its hash stamped by the copy request: no extra write, and no
         // moment in which the new instance carries the hash of its source's
         var copyConfig = new LinkedHashMap<>(req.extraConfig());
-        var secret = InstanceSecret.stampInto(copyConfig);
+        var secret = InstanceSecret.stampInto(copyConfig, placeholders.join());
         // An instance from the copy on, not its template's base: a branch interrupted before
         // configureBranch would otherwise pass for a template, which isx list -q never shows.
         copyConfig.put(Metadata.TYPE, Metadata.TYPE_CLONE);

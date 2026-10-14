@@ -67,6 +67,8 @@ done
 if $alpine_pulled; then
     assert_eq "rootless podman run with default networking" "hello" \
         su -l agentuser -c "podman run --rm docker.io/library/alpine echo hello"
+    assert "nested credential isolation and deliberate proof sharing" \
+        su -l agentuser -c 'bash /tmp/test-nested-proofs.sh'
 else
     echo "  FAIL: podman pull alpine failed after 3 attempts"
     FAIL=$((FAIL + 1))

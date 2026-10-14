@@ -146,6 +146,7 @@ class ApiRequestBodyTest {
     static MitmProxy startProxy(MitmProxy p) throws Exception {
         p.trustUpstreamCertificate(SpawnConfig.configDir().resolve("ca.crt").toString());
         ContainerTls.startInBackground(p);
+        ProofTestSupport.register(p);
         upstreamPorts.forEach((host, port) -> p.overrideUpstream(host, "127.0.0.1", port));
         return p;
     }
@@ -205,8 +206,8 @@ class ApiRequestBodyTest {
     static String head(String method, String host, String path, String... headers) {
         var sb = new StringBuilder(method + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\n");
         sb.append(host.equals("github.com")
-                ? "Authorization: Basic " + Base64.getEncoder().encodeToString("x-access-token:gho_placeholder".getBytes(StandardCharsets.UTF_8))
-                : "x-api-key: sk-ant-placeholder");
+                ? "Authorization: Basic " + Base64.getEncoder().encodeToString(("x-access-token:" + ProofTestSupport.token("github", "gho_")).getBytes(StandardCharsets.UTF_8))
+                : "x-api-key: " + ProofTestSupport.token("claude", "sk-ant-"));
         sb.append("\r\n");
         for (var h : headers) sb.append(h).append("\r\n");
         return sb.append("Connection: close\r\n\r\n").toString();
@@ -262,7 +263,7 @@ class ApiRequestBodyTest {
     void oauthBearerIsInjectedOnAStreamedUpload() throws Exception {
         var host = "api.anthropic.com";
         var reply = exchange(oauthProxy, host, "POST /v1/messages HTTP/1.1\r\nHost: " + host + "\r\n"
-                + "x-api-key: sk-ant-placeholder\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
+                + "x-api-key: " + ProofTestSupport.token("claude", "sk-ant-") + "\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
         assertTrue(reply.startsWith("HTTP/1.1 200"), reply);
         var got = received.get(host).get(5, TimeUnit.SECONDS);
         assertEquals("Bearer " + REAL_OAUTH, got.header("Authorization"));

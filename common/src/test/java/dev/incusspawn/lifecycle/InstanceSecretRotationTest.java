@@ -159,6 +159,8 @@ class InstanceSecretRotationTest {
         for (var probe : probes) {
             var secret = secretIn(probe);
             assertProofsFor(secret, declared, probe.environment().get(InstanceSecret.PROOFS_DELIVERY_ENV));
+            assertEquals(dev.incusspawn.proxy.ProofVerifier.stamp(secret, declared),
+                    daemon.instance(NAME).path("config").path(Metadata.INSTANCE_PROOF_SHA256).asText());
             assertFalse(String.join(" ", probe.command()).contains(ProofToken.derive(secret, "github")),
                     "a proof opens a credential: it travels in the environment, not on a command line");
         }
@@ -183,6 +185,8 @@ class InstanceSecretRotationTest {
         assertFalse(delivered.isEmpty(), "the branch's setup script carries its secret");
         var secret = delivered.getFirst().get(InstanceSecret.DELIVERY_ENV);
         assertEquals(recordedHash(daemon, "dev-2"), InstanceSecret.sha256(secret));
+        assertEquals(dev.incusspawn.proxy.ProofVerifier.stamp(secret, ProofToken.declared()),
+                daemon.instance("dev-2").path("config").path(Metadata.INSTANCE_PROOF_SHA256).asText());
         assertProofsFor(secret, ProofToken.declared(), delivered.getFirst().get(InstanceSecret.PROOFS_DELIVERY_ENV));
     }
 

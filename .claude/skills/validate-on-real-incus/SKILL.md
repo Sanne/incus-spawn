@@ -63,8 +63,9 @@ What it cannot fix:
   nested container. Test on a plain container instead:
   `incus launch images:fedora/43 <n>`, then push `~/.config/incus-spawn/ca.crt` to
   `/etc/pki/ca-trust/source/anchors/` and run `update-ca-trust`. Its traffic takes the same
-  bridge DNS -> redirect -> proxy path as a branch. The proxy does not know its address, so it
-  gets the default accounts. When the change is in the build itself, a measurement-only patch
+  bridge DNS -> redirect -> proxy path as a branch. It has no registered address or proof, so
+  credential enforcement relays its own authentication without injecting an account.
+  When the change is in the build itself, a measurement-only patch
   that drops both `incus.deviceAdd(buildName, "tun", ...)` calls in `BuildCommand` lets
   templates build here; apply it to both sides identically (see Pitfalls) and never commit it.
 - **Branches do not get a disk size.** Every branch sets its root disk's `size`, which Incus turns

@@ -5,7 +5,13 @@
 # Being a YAML-only tool is part of what is under test -- named accounts are
 # meant to reach a namespace isx has no Java for, with no code of its own.
 name: test-account-tool
+env:
+  - name: TEST_ACCOUNT_TOKEN
+    value: tacct_placeholder
 proxy:
+  placeholders:
+    - env: TEST_ACCOUNT_TOKEN
+      prefix: tacct_
   config-namespace: testAccountTool
   configuration:
     token:

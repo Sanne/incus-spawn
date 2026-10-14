@@ -598,7 +598,7 @@ So the proxy's `InstanceRegistry` no longer lets listing order pick the owner of
 Incus will not start an instance whose NIC address another NIC holds, so the one running claimant owns it, and with none or several running the address maps to nobody (with a warning) rather than to whoever was listed last.
 The lock is on the host rather than in the proxy: the address must be claimed in the branch's one write (#804), full-internet branches need no proxy, and the proxy only rebuilds its view from Incus anyway.
 Templates do not have baked-in addresses — all CoW branches share the template filesystem, so a static address in the template would collide.
-A build container whose template pins an account holds a claimed address only while it builds, so the proxy can serve it its template's accounts, and keeps DHCP in the guest.
+Every build container holds a claimed address only while it builds, so the proxy can serve it its template's accounts, and keeps DHCP in the guest.
 Its claim also skips every address the bridge's DHCP server has leased (see "Builds are served their template's accounts").
 The base image (from `Sanne/incus-spawn-images`) provides `systemd-networkd` and bakes in a connectivity watchdog (30s systemd timer) that detects IP loss after host sleep/wake and restarts `systemd-networkd` to recover; `isx` only supplies the per-branch address.
 
@@ -1566,14 +1566,14 @@ So one `/1.0/instances?recursion=1` call maps every address to an instance and i
 `isx branch` and `isx account set` signal the proxy (SIGHUP) so a change lands immediately rather than at the next poll.
 `RequestContext` carries domain, caller, credentials and routing down the request path in place of the bare domain, and per-selection credentials are cached keyed by the selection itself and cleared on every config reload.
 
-An address that is *not* a known instance — host-side traffic — gets the configured defaults rather than an error, because the proxy serves that too.
-An instance that pins nothing gets the same.
+An address that is not a known instance gets no injected credential; host-side traffic supplies its own authentication.
+A known instance that pins nothing receives the configured default only after proving its namespace.
 
 **Builds are served their template's accounts (#903).**
 A build container used to get a DHCP address, so the proxy could not tell it from host traffic and served every namespace's default, whatever the template's `accounts:` chose.
 `repos:` were cloned and `prime` ran with the user's default token -- for a project-local template, handing that identity to code the cloned repository controls -- and `GhSetup` baked the default account's name next to the template account's email, stamped as the template account so nothing ever repaired it.
 Before its first start, a build container now gets what a branch gets: an address from `StaticIpAllocator` with `security.ipv4_filtering`, and the template's pins (origin `template:<name>`), in one write (`InstanceNetwork.assignBuildAddress`), then a SIGUSR1 so the proxy knows it before anything inside asks (`lifecycle/BuildAccounts.start`).
-Only a build that pins something does: one pinning nothing -- neither its template nor what it was copied with -- is served the defaults either way, so it keeps plain DHCP and skips the round trips.
+Builds using defaults also claim an address and receive fresh proofs before authenticated steps run.
 The `account-identity` stamps a copy carries from its parent are cleared in the same write, all of them and not only the pinned namespaces'.
 They describe the parent's build.
 The proxy refuses an account -- pinned *or* default -- whose auth mode does not match one, so it would refuse this build the account its own template chose, or a default changed since the parent was built.
@@ -1665,73 +1665,56 @@ Only the guest can tell, and `ensureReady` already asks a running VM's agent whe
 Asking the guest the same way for containers was the alternative: one exec on every shell into a running container, where the comparison costs nothing.
 Guessing from the pre-start state was rejected: a stamp written before a start cannot tell the boot it was made for from a later one.
 
-**Proof tokens: the placeholder proves the start (#1106, plan in #1100).**
-The proxy attributes a request to an instance by its source address.
-Everything nested in an instance -- a nested container NAT'd behind it, rootless Podman under pasta, an ssh tunnel -- reaches the proxy from that same address, so it was served the instance's credentials too (#1100).
-What those have not got, unless someone hands it to them, is the instance's login environment.
-So the placeholder each tool already sends in place of its credential becomes a proof of that environment: `ProofToken.derive(secret, namespace)`, an HMAC-SHA256 keyed with this start's secret over the namespace name (128 bits of it, hex), carried as the tool's own prefix plus `isx_` plus the digest -- `gho_isx_…`, `sk-ant-isx_…`, `sk-ant-oat01-isx_…` -- so the tool still accepts its shape and anyone debugging can tell it is isx's.
-It changes on every start, differs per namespace (one namespace's proof opens no other's), and reveals neither the secret, which is what the MCP bridge accepts and so must stay out of `env` dumps, nor the recorded hash.
-Checking the proof before injecting is #1107; until then the proxy replaces whatever it finds, so only the values change.
+**Proof tokens: address and proof authorize credential injection (#1100, #1107).**
+A nested machine shares its parent's apparent source address after NAT, including user-mode networking.
+Every credential request therefore needs the current proof for that address and credential namespace before the proxy can inject the selected account.
+`ProofToken.derive(secret, namespace)` remains an HMAC-SHA256 keyed with the raw per-start secret, truncated to 32 hexadecimal characters.
+Tools declare their token prefixes and environment variables in `proxy.placeholders`; a token is the prefix followed by `isx_` and the digest.
+The host records SHA-256 of each namespace digest in one replaceable `user.incus-spawn.instance-proof-sha256` stamp (`ProofVerifier`).
+The stamp contains neither usable tokens nor the raw secret.
+Re-keying with the secret hash is unsafe because guests can read `user.*` metadata through `/dev/incus`.
+All declared prefixes of one namespace normalize to the same digest, and verifier comparisons use constant-time hash comparison.
 
-*Declared, not listed.*
-Which variables carry a namespace's placeholder, with which prefix, is declared on the tool: `placeholders:` (`env`, `prefix`) on its `proxy:` entry, in the one namespace the tool's credential belongs to (`ToolSetup.credentialNamespaces()`, so Copilot's `COPILOT_GITHUB_TOKEN` is `github`'s), surfaced as `ToolSetup.placeholders()`.
-Pi, which spends Claude's and OpenAI's credentials with no proxy entry of its own, reads `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` as Claude Code and Codex do -- their declarations cover it -- and overrides `placeholders()` only for `ANTHROPIC_OAUTH_TOKEN`, its own name for Claude's OAuth token.
-Claude declares one variable per auth mode: `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, and for Vertex `ISX_VERTEX_ACCESS_TOKEN` (`ya29.isx_…`), which #1108's login script puts in `ANTHROPIC_CUSTOM_HEADERS` and its `gcloud` stub prints: under `CLAUDE_CODE_SKIP_VERTEX_AUTH` Claude Code sends no credential header of its own.
-The set an instance is given is that of the tools the proxy serves (`ToolProxyResolver.proxyToolSetups`: feature-gated tools only when enabled, never a project-local tool's proxy entry), merged by `ProofToken.declaredBy`, which drops a declaration that could not be written into a shell safely (`ToolDefValidator` reports it as an error) and a variable two tools declare differently.
-Guessing which tool the image's variable belongs to could hand it another namespace's proof, and dropping leaves the static placeholder, which proves nothing.
-The start, the proxy's check (#1107) and the in-guest `isx doctor` (#1109) read the same declaration.
+`ProofCarriers` reads authentication carriers from trusted tool declarations, including custom headers and Basic credentials.
+Claude accepts its API-key, OAuth and Vertex prefixes through either `Authorization` or `x-api-key`, independently of the outer account's mode.
+HTTP and WebSocket requests share `MitmProxy.authorize`, before account resolution, compatibility checks, Vertex translation, token acquisition, injection or inheritance substitution.
+Every credential namespace declared for the destination must prove itself.
+The authorization and account resolution use the same configuration snapshot even if a reload finishes during a registry refresh.
+A missing, static, malformed, stale, cross-instance or cross-namespace proof preserves incoming authentication, host, path, query and body semantics.
+An unknown address receives no injected defaults, including host-originated traffic; host tools must use their own credentials.
+A valid proof authorizes account selection but creates no credential grant.
+A valid proof for a missing or incompatible selected account still fails with the existing account diagnostic.
 
-*Delivered with the secret, in the same exec.*
-`InstanceSecret.guestEnv(secret, placeholders)` hands the guest the secret and the proof exports together, both in the exec's environment.
-`GUEST_SCRIPT` writes the exports to `/run/isx/proof-tokens` beside the secret, root-owned and readable by the instance user's group (0440).
-Other users of the guest get neither.
-It removes the previous proofs first, so none outlive the secret they came from.
-`/etc/profile.d/isx-instance-secret.sh`, which the same script writes and which sorts after `isx-env.sh`, sources that file.
-Each line replaces a variable only while it holds the build's own placeholder -- every static one starts with its prefix and `placeholder` (`gho_placeholder`, `ya29.placeholder-for-proxy`; `ToolDefValidator` requires that shape of a YAML tool) -- or an earlier proof: `case "${GH_TOKEN-}" in gho_placeholder*|gho_isx_*) export GH_TOKEN='gho_isx_…' ;; esac`.
-So the build still decides which variables an instance has (an OAuth-configured Claude never grows an `ANTHROPIC_API_KEY`), and a value somebody else put in the variable -- a template's own `env:` pointing `GH_TOKEN` at another service, a `set-if-unset` that kept the user's -- stays theirs.
-Computing the proofs on the host, rather than deriving them in the guest, needs no HMAC tool in the image and gives most instances built before this their proofs at the next start or shell, with no rebuild.
+`InstanceRegistry` reads verifier stamps with its existing listing and binds them to addresses alongside account selection.
+A failed proof can trigger one bounded refresh and retry off the event loop, subject to the existing one-second listing floor.
+Concurrent credential checks share the refresh.
+A failed registry refresh clears credential verifiers while retaining the account snapshot, so unavailable Incus cannot keep authorizing stale proofs indefinitely.
+Warnings about isx placeholders are deduplicated and bounded, never print authentication values, and point to recovery instructions.
+Ordinary independent credentials pass without warnings.
+`/activity` adds `refused_injections`, including anonymous and independently authenticated pass-through requests.
 
-*Except where the tool cannot take a new value on every start.*
-A placeholder may carry a guard, a shell condition its line checks in the guest (`Placeholder.onlyWhen`; code only, never from YAML, since it runs in every login).
-Claude's `ANTHROPIC_API_KEY` has one: Claude Code asks interactively, defaulting to no, about a key whose last 20 characters `~/.claude.json` has not approved, and an image built before #1108's login script (`/etc/profile.d/isx-zz-claude-auth.sh`, which approves each login's key) approves only `sk-ant-placeholder`.
-So the key gets a proof only where that script exists, or where there is no `~/.claude.json` to ask (pi without Claude Code).
-An API-key Claude image built before #1108 keeps the static key, and works as before, until it is rebuilt.
-Once #1107 checks proofs that image's Claude requests carry none, so #1107 has to ask for the rebuild where it refuses them.
-The other namespaces need no guard: gh, Copilot, Bob, pi and Typesafe read the variable on every call, Claude's OAuth token has no approval list, Codex reads `auth.json` (which #1108's script rewrites, and which keeps its build-time key in an older image, where `OPENAI_API_KEY` changes nothing for Codex), and only an image built after #1108 exports `ISX_VERTEX_ACCESS_TOKEN` at all.
-Every path that delivers a secret delivers its proofs: a branch's setup script, `startForUse`, `restartForUse`, `VmAgentRecovery`, and `ensureReady`'s new secret after a reboot isx did not do.
-Nothing is added to the start's Incus requests (`InstanceLifecycleRequestBudgetTest` is unchanged).
-The declarations come from tool definitions on disk (about 160 ms cold on the JVM, a few warm).
-So the start paths, the branch's included, read them in the background while the instance is copied or starts (`ProofToken.declaredInBackground`).
-A failed read gives no proofs and a warning -- the static placeholders, which prove nothing.
-`giveSecretToThisBoot` has only one PATCH to overlap the read with, so on that path -- a reboot isx did not do, or an instance from before proofs, once -- the read is close to synchronous.
-They are read as the proxy reads them, never from the current directory's `.incus-spawn/tools/` (`ToolDefLoader.withoutProjectTools`).
-The tool setups `BranchFlow.preflight` loads do include it.
-A cloned repository that ships its own `gh.yaml` would otherwise leave `GH_TOKEN` without a proof whenever isx runs from it -- untrusted project input deciding what a start delivers (#765).
-A YAML tool's placeholder must be one of its own `env:` entries (`YamlToolSetup.placeholders()` drops any other with a warning, `ToolDefValidator` reports it as an error).
-A start only fills what the build exported, so another name is a typo, or a variable such as `PATH` or `LD_PRELOAD` a proof would clobber in every login shell.
-Proofs live only in `/run`, like the secret, so no image or copy carries one, and a branch gets its own with its own secret before its first start.
-*Reaching instances already running.*
-An instance an older isx started holds its secret but no proofs, and so does one whose proofs write failed after its secret's.
-A VM's agent probe, which runs on every shell, asks for the proofs file as well as the secret (`GUEST_CHECK`; an empty file is a delivery in which no tool declared any), so the next shell delivers both.
-A container has no probe: `ensureReady` compares its boot with the boot stamp, which now records that the delivery carried proofs (`InstanceLifecycle.secretBootStamp`: `<last_used_at> proofs`).
-A stamp an older isx wrote is the bare boot, so it no longer matches.
-The next shell gives the container a new secret with its proofs -- once, from the instance it already read, at no request of its own on every later shell.
-A build keeps the static placeholder in `isx-env.sh`, and a long-lived shell keeps the proofs of the start it was opened in until it is replaced.
-*Checking from inside (#1109).*
-`isx doctor` run inside an instance (its secret file exists, or the profile named one) compares each declared placeholder this shell exports with the proof the secret file derives (`DoctorCommand.instanceCredentialFindings`).
-It compares only the variables the proofs file fills (`ProofToken.delivered`, which reads back what `profile` wrote), against the token it delivered, so a tool the host does not serve, a guard that fails in this image (evaluated as the profile would), or a value somebody else set is never called a mismatch.
-The guest's own declaration (`ProofToken.declared`) is only a cross-check and supplies the guard: where it does not derive the delivered token, as on a guest whose isx or tool definitions differ from the host's, a note names the variable and the shell is still judged by what was delivered, so no warning offers a fix that could not work.
-An earlier start's proof or the build's placeholder in a filled variable is a warning whose fix is a new login shell, then `isx shell` from the host; a missing secret or a secret without proofs asks for `isx shell` or `isx start` from the host.
-Every run inside an instance also notes that credentials reach only what runs in this login environment, with a pointer to README "Credentials reach the login environment".
+Every secret rotation replaces the complete verifier stamp in the same configuration write, clearing removed namespaces and copied state.
+Branch, start, restart, VM recovery and recovery after an uninitiated reboot use the same declarations as guest delivery.
+Declarations exclude project-local tools (`ToolDefLoader.withoutProjectTools`).
+The existing readiness exec delivers the secret and proofs into `/run/isx`, owned by root and readable by group 1000.
+The login profile replaces only declared variables holding an isx placeholder or an earlier proof; user-supplied credentials remain untouched.
+A container's boot stamp now ends in `proofs-v2`, and the VM probe checks `/run/isx/proof-version` for version 2.
+An instance from before verifier enforcement therefore receives fresh metadata and proofs on its next preparation through `isx shell` or `isx run`.
+Old shells and long-running processes retain stale environment values and need a new login or restart.
+`isx doctor` diagnoses missing delivery and drift, and explicitly requests rebuilding an API-key Claude image that lacks the dynamic approval script from #1113.
+Static placeholders never authorize injection.
+Normal lifecycle Incus request budgets are unchanged; tool declarations must be ready before the existing secret write can include verifiers.
 
-*Keyed with the secret, not its hash.*
-The host records only the secret's SHA-256, which a guest can read from `/dev/incus`, so a proof keyed with the hash would be forgeable by any user in the guest.
-Keyed with the secret, nothing the host holds lets anyone derive one.
-The proxy therefore cannot recompute a proof from what it has today: #1107 decides between recording a hash of each namespace's proof at the start (option 1) and re-keying with the hash (option 2, which gives that property up).
+Every build receives a registered address, fresh verifiers and proof delivery, including builds using configured defaults without explicit account pins.
+Tool environment setup precedes install hooks, Git identity lookup, clones and primes, including tools added by later layers.
+A build restart rotates and redelivers proofs.
+Successful builds revoke verifiers, reset the managed Claude and Codex credential caches, remove temporary proof files, stop, and release their address.
+Failed builds are revoked before being retained for inspection; a later start through isx gives them fresh proofs.
+These build paths deliberately pay for source registration and cleanup rather than exempting builds from enforcement.
 
 **Nested isx: nothing is inherited unless its isx says `inherit` (#1110).**
 An isx running inside an isx instance has its own proxy, and its instances present their own proofs, derived from secrets the inner isx gave them.
-The outer proxy cannot verify those, so once it checks proofs (#1107) a nested machine gets none of the outer credentials.
+The outer proxy cannot verify those, so a nested machine gets none of the outer credentials.
 That is the rule: a nested machine gets nothing unless its isx says `inherit`, or the user passes a token in by hand (`podman run -e GH_TOKEN …`).
 `inherit` is a reserved account in every namespace of the inner `config.yaml`, chosen like any other: `isx branch --account github=inherit`, a template's `accounts:`, or `github.default: inherit`.
 For an instance resolved to it, the inner proxy injects nothing of its own for that namespace.
@@ -1739,12 +1722,11 @@ It replaces each proof the request carries for the namespace with the parent ins
 The outer proxy then sees the parent's proof from the parent's address and serves the parent's account, for that namespace only.
 Nothing changes on the outer side: no registration of nested instances, no special mode.
 Keeping the instance's own carrier, rather than writing the credential the way a configured account would, is what lets Claude work in all three auth modes.
-The inner isx does not know which mode the parent uses, and #1107 requires the outer proxy to accept a proof in any of Claude's carriers.
+The inner isx does not know which mode the parent uses, and the outer proxy accepts a proof in any of Claude's carriers.
 Only a whole proof of a declared prefix is swapped.
 A static placeholder proves nothing, and a token the caller supplied stays theirs, so `inherit` never fabricates a credential the instance did not present.
-The swap does not yet check that a proof is the instance's own: that needs the verifiers #1107 records, and #1107's check must run before the swap, as before any injection.
-Until then a process nested in an inheriting instance that sends any proof-shaped token gets the parent's, as it gets an inner account's injected today.
-That reaches one level further down: an isx inside an inheriting instance that does not inherit itself still has its own instances' proofs swapped on their way through, since they come from the inheriting instance's address.
+The inner proxy verifies the calling instance's own proof before constructing the swap.
+A forged proof-shaped token or a deeper descendant's proof cannot obtain the parent's proof.
 The secret is read from `/run/isx/instance-secret` off the event loop: with every config read, every second by the config watcher, and in the background by a request that finds it more than a second old.
 The parent's rotates on every start, which restarts the machine and the inner proxy with it, and when `isx shell` gives a running VM a new one (#1024), so a request may present the previous proof for up to a second.
 Without that file the inner isx is not running nested, and the request fails closed with a 502, as a pin to a missing account does.
@@ -3644,7 +3626,7 @@ A second read ignored the override and failed outright on a bridge with no addre
 The override is written into dnsmasq verbatim, so it must be a unicast IPv4 address in canonical dotted-quad form, and anything else is a configuration error (`EXIT_CONFIG`).
 A hostname, IPv6, link-local, multicast, broadcast or wildcard address would become every intercepted domain's answer, and most of them break the bridge's dnsmasq outright.
 A shorthand such as `10.1`, or an IPv4-mapped `::ffff:10.99.0.1`, parses as the right address in Java, but dnsmasq would not read it the same way: the mapped form becomes an AAAA answer, leaving intercepted domains with no A record.
-The override is also the bind address of the credential-injecting listener, which serves the default accounts to a caller it cannot place, so a LAN or public address would inject the user's credentials into requests from other hosts.
+The override is also the bind address of the proxy listener; credential injection additionally requires a registered source address and its current namespace proof.
 The proxy serves the bridge gateway and nothing else, because that is where every `isx` command looks for it: health checks, auto-restart, `isx list`, doctor and the CLI's bridge DNS writers all resolve the address with `ProxyConfig.resolveGatewayIp()`, the bridge's gateway or, when the bridge cannot be read, the one `isx init` cached.
 A proxy anywhere else was reported down, restarted beside itself, and had its DNS block pointed back at the bridge (#933).
 So on Linux, when Incus reports the bridge's address, the override must equal it (`BridgeAddress.read()`, never the cached one), and anything else is `EXIT_CONFIG`.

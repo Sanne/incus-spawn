@@ -27,22 +27,16 @@ public final class BuildAccounts {
      *
      * @param inheritedIdentities the {@code account-identity} stamps the container was copied
      *                            with, by namespace
-     * @param address             the static address it was given, or null if it keeps DHCP
+     * @param address             the registered static address it was given
      */
-    public record Started(Map<String, String> inheritedIdentities, String address) {}
+    public record Started(Map<String, String> inheritedIdentities, String address, Map<String, String> guestEnv) {}
 
     /**
-     * Start the stopped build container, first making it known to the proxy as its template
-     * when anything is pinned: a static address the proxy identifies it by
-     * ({@link InstanceNetwork#assignBuildAddress}) and the template's pins, in one write, then
-     * {@code proxyRefresh} so the proxy reads them before anything inside can make a request.
-     *
-     * <p>A build that pins nothing -- neither its template nor what it was copied with -- is
-     * served the defaults either way, so it keeps DHCP and skips the address's round trips. The
-     * pins travel to every branch through the CoW copy. A successful build gives the address
-     * back once it has stopped ({@link InstanceNetwork#releaseBuildAddress}). A failed one
-     * keeps it, and its pins, as {@code <template>-failed-build}: started for inspection, it is
-     * served its template's accounts rather than the defaults. Deleting it frees the address.
+     * Register a stopped build before starting it, with its address, account pins and fresh
+     * proof verifiers in one write. Configured defaults require the same proof as explicit pins.
+     * The caller delivers {@link Started#guestEnv} in its readiness exec before any authenticated
+     * step. Successful builds revoke proofs and return the address; retained failures revoke
+     * proofs and receive fresh ones when started for inspection.
      *
      * @param selection the template's resolved {@code accounts:}
      * @param template  the definition's name, which the pins' origin names: a rebuild runs in a
@@ -52,15 +46,35 @@ public final class BuildAccounts {
                                 String template, Runnable proxyRefresh) {
         var read = incus.readInstance(buildName);
         var config = read.metadata().path("config");
-        String address = null;
-        if (!selection.isEmpty() || !AccountSelection.fromConfig(config).isEmpty()) {
-            address = InstanceNetwork.assignBuildAddress(incus, buildName, read,
-                    startConfig(config, selection, template));
-            // Before the start, so the first request from inside already sees the pins
-            proxyRefresh.run();
-        }
+        var placeholders = dev.incusspawn.proxy.ProofToken.declared();
+        var updates = startConfig(config, selection, template);
+        updates.put(Metadata.MCP_CALLER, null);
+        updates.put(Metadata.INSTANCE_SECRET_BOOT, null);
+        var secret = dev.incusspawn.proxy.InstanceSecret.stampInto(updates, placeholders);
+        // Defaults spend credentials too. Every build needs the same address-and-proof identity.
+        var address = InstanceNetwork.assignBuildAddress(incus, buildName, read, updates);
+        proxyRefresh.run();
         InstanceLifecycle.startInstance(incus, buildName);
-        return new Started(inheritedIdentities(config), address);
+        return new Started(inheritedIdentities(config), address,
+                dev.incusspawn.proxy.InstanceSecret.guestEnv(secret, false, placeholders));
+    }
+
+    /** Revoke before publication or inspection. A later isx start delivers fresh proofs. */
+    public static void revoke(IncusClient incus, String name) {
+        incus.configSetAll(name, Map.of(Metadata.INSTANCE_SECRET_SHA256, "",
+                Metadata.INSTANCE_PROOF_SHA256, "", Metadata.INSTANCE_SECRET_BOOT, ""));
+    }
+
+    /** Remove managed tool caches of the build's temporary proof before publishing its rootfs. */
+    public static void clearGuestProofs(dev.incusspawn.incus.Container container) {
+        container.runAsUserQuiet("agentuser", """
+                export ANTHROPIC_API_KEY=sk-ant-placeholder OPENAI_API_KEY=sk-placeholder
+                for script in /etc/profile.d/isx-zz-claude-auth.sh /etc/profile.d/isx-zz-codex-auth.sh; do
+                  if [ -r "$script" ]; then . "$script"; fi
+                done
+                """, "Failed to clear build credential caches");
+        container.sh("rm -f /run/isx/instance-secret /run/isx/proof-tokens /run/isx/proof-version")
+                .assertSuccess("Failed to clear build proofs");
     }
 
     /**

@@ -126,8 +126,9 @@ class InheritedProofProxyTest {
     private void serve(String config, String accounts) throws Exception {
         Files.writeString(tempHome.resolve(".config/incus-spawn/config.yaml"), config);
         listing = """
-                [{"name":"inner-box","config":{"user.incus-spawn.static-ip":"127.0.0.1"%s}}]
-                """.formatted(accounts);
+                [{"name":"inner-box","config":{"user.incus-spawn.static-ip":"127.0.0.1",
+                "user.incus-spawn.instance-proof-sha256":%s%s}}]
+                """.formatted(io.hyperfoil.tools.jjq.value.JqValues.toPrettyJsonString(io.hyperfoil.tools.jjq.value.JqString.of(ProofVerifier.stamp(INSTANCE_SECRET, ProofToken.declared()))), accounts);
         proxy = new MitmProxy(vertx, "127.0.0.1", 0, 0, "127.0.0.1", ConfigFingerprint.load());
         proxy.upstream.upstreamTrustAll = true;
         proxy.upstreamWsPort = apiPort;
@@ -242,6 +243,24 @@ class InheritedProofProxyTest {
 
         assertEquals("token gho_placeholder", received.get("/static"));
         assertEquals("token gho_callersOwnToken", received.get("/own"));
+    }
+
+    @Test
+    void aForgedProofCannotInheritEvenWhenTheParentSecretIsMissing() throws Exception {
+        serve(INNER_ACCOUNT, pinned("inherit"));
+        Files.delete(secretFile);
+        proxy.refreshNesting();
+        var forged = "token gho_isx_" + "00".repeat(16);
+        assertEquals(200, send(API, "/forged", forged));
+        assertEquals(forged, received.get("/forged"));
+        var options = new WebSocketConnectOptions().setHost(API).setPort(proxy.mitmPort()).setSsl(true)
+                .setURI("/forged").addHeader("Authorization", forged);
+        var wsClient = vertx.createHttpClient(new HttpClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
+        try {
+            wsClient.webSocket(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            for (int i = 0; i < 100 && !received.containsKey("ws:/forged"); i++) Thread.sleep(10);
+            assertEquals(forged, received.get("ws:/forged"));
+        } finally { wsClient.close(); }
     }
 
     @Test

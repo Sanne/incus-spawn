@@ -210,7 +210,7 @@ public class MitmProxy {
             Map<InstanceRegistry.InstanceAccounts, Map<String, String>> mismatchesByInstance,
             Map<String, HostRouteRelay.Served> hostRoutes,
             Map<String, List<ProofToken.Placeholder>> placeholders,
-            boolean nested) {
+            ProofCarriers proofCarriers, boolean nested) {
 
         ConfigState(dev.incusspawn.config.SpawnConfig config,
                     io.hyperfoil.tools.jjq.value.JqValue configTree,
@@ -226,7 +226,7 @@ public class MitmProxy {
                     dev.incusspawn.config.AccountSelection.namespacesByDomain(toolSetups),
                     new ConcurrentHashMap<>(), new ConcurrentHashMap<>(), hostRoutes,
                     InheritedProof.byNamespace(ProofToken.declaredBy(toolSetups.values())),
-                    nested);
+                    new ProofCarriers(toolSetups.values()), nested);
         }
     }
 
@@ -255,7 +255,7 @@ public class MitmProxy {
     record RequestContext(String domain, InstanceRegistry.Caller caller,
                           ProxyCredentials creds, ToolProxyRouting routing,
                           boolean usesDefaultCredentials, ApiActivity.Flow flow,
-                          InheritedProof.Swap inherited) {}
+                          InheritedProof.Swap inherited, boolean authorized) {}
 
     /**
      * Credentials plus the routing that indexes them, cached together per selection; or, for
@@ -307,7 +307,8 @@ public class MitmProxy {
     public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
                      String healthBindAddress, ProxyCredentials credentials) {
         this(vertx, bindAddress, mitmPort, healthPort, healthBindAddress, ConfigFingerprint.capture());
-        this.configState = new ConfigState(NO_CONFIG, NO_CONFIG.tree(), Map.of(), credentials,
+        this.configState = new ConfigState(NO_CONFIG, NO_CONFIG.tree(),
+                ToolProxyResolver.proxyToolSetups(NO_CONFIG, dev.incusspawn.tool.ToolDefLoader.withoutProjectTools(NO_CONFIG.getSearchPaths())), credentials,
                 credentials.toolProxies(), Map.of(), false);
     }
 
@@ -348,33 +349,28 @@ public class MitmProxy {
     public void setIncusClient(dev.incusspawn.incus.IncusClient incusClient) {
         var registry = new InstanceRegistry(incusClient);
         this.instanceRegistry = registry;
-        // Populate before serving: an empty snapshot would hand defaults to every pinned
-        // instance until the first refresh landed. Off the event loop -- this runs during
+        // Populate before serving: an empty snapshot cannot authorize any instance.
+        // Off the event loop -- this runs during
         // startup, but keep the blocking call explicit so it stays that way.
         vertx.executeBlocking(() -> { registry.refresh(); return null; })
                 .onFailure(e -> ProxyLog.warn("Initial instance registry load failed: " + e.getMessage()));
     }
 
     /**
-     * Credentials for whoever sent this request.
-     *
-     * <p>An address that is not a known instance -- host-side traffic -- gets the configured
-     * defaults, and so does an instance that pins nothing. A template build that pins an
-     * account is a known instance: it holds a static IP while it builds (#903).
-     * Only an explicit pin diverges, and a pin naming an account that is not configured
-     * raises {@link dev.incusspawn.config.AccountResolver.UnknownAccountException} so the
-     * caller can fail the request instead of spending the wrong credential (#351).
+     * Account resolution in isolation, for tests. A null caller selects the configured defaults
+     * here; live request handlers use {@link #authorize} before calling the private overload,
+     * and never reach account resolution for an unknown address or an unproven request.
      *
      * <p>Never blocks: reads the registry snapshot and schedules a refresh when it is stale.
      */
     RequestContext contextFor(String domain, String sourceAddress) {
-        return contextFor(domain, callerAt(sourceAddress), null);
+        return contextFor(configState, domain, callerAt(sourceAddress), null);
     }
 
     /**
      * The instance at {@code sourceAddress} as the registry has it, null for none (or no
-     * registry). Looked up once per request, for its credentials and its activity alike, so
-     * both name the same incarnation.
+     * registry). Used for traffic attribution. Credential authorization obtains its own caller
+     * from the same immutable listing that verified its proofs.
      */
     private InstanceRegistry.Caller callerAt(String sourceAddress) {
         var registry = instanceRegistry;
@@ -389,8 +385,7 @@ public class MitmProxy {
         return caller;
     }
 
-    private RequestContext contextFor(String domain, InstanceRegistry.Caller caller, ApiActivity.Flow flow) {
-        var state = configState;
+    private RequestContext contextFor(ConfigState state, String domain, InstanceRegistry.Caller caller, ApiActivity.Flow flow) {
         var instance = caller == null ? null : caller.accounts();
 
         if (instance != null && !instance.bakedIdentities().isEmpty()) {
@@ -398,7 +393,7 @@ public class MitmProxy {
         }
         if (instance == null || instance.usesDefaults()) {
             return new RequestContext(domain, caller, state.credentials(), state.routing(), true, flow,
-                    inheritedProofs(state, state.credentials(), domain));
+                    inheritedProofs(state, state.credentials(), domain), true);
         }
         var selection = instance.accountsByNamespace();
         // Plain get() first: this runs on the event loop for every intercepted request, and
@@ -416,7 +411,7 @@ public class MitmProxy {
         }
         if (bundle.unknown() != null) throw bundle.unknown();
         return new RequestContext(domain, caller, bundle.creds(), bundle.routing(), false, flow,
-                inheritedProofs(state, bundle.creds(), domain));
+                inheritedProofs(state, bundle.creds(), domain), true);
     }
 
     /**
@@ -436,9 +431,7 @@ public class MitmProxy {
             throw new dev.incusspawn.config.AccountResolver.UnknownAccountException(namespaces.getFirst(),
                     dev.incusspawn.config.AccountResolver.INHERIT, InheritedProof.notNestedMessage(namespaces.getFirst()));
         }
-        // Unverified until #1107: a nested process presenting any proof-shaped token gets the
-        // parent's, as it gets an inner account's injected today. #1107's check of the instance's
-        // own proof has to come before the swap, as before any injection.
+        // Reached only after the caller has proved every namespace this destination can spend.
         return InheritedProof.Swap.of(secret, namespaces, state.placeholders());
     }
 
@@ -525,7 +518,7 @@ public class MitmProxy {
      * construction and every reload go through. Returns the state it replaced.
      */
     private ConfigState useConfig(dev.incusspawn.config.SpawnConfig config) {
-        var setups = ToolProxyResolver.proxyToolSetups(config);
+        var setups = ToolProxyResolver.proxyToolSetups(config, dev.incusspawn.tool.ToolDefLoader.withoutProjectTools(config.getSearchPaths()));
         var tree = config.tree();
         var previous = configState;
         var nested = InheritedProof.nested();
@@ -1127,23 +1120,16 @@ public class MitmProxy {
                     cache.accept(clientReq);
                 }
             } else if (isInterceptedDomain(domain)) {
-                RequestContext ctx;
-                try {
-                    ctx = contextFor(domain, caller, flow);
-                } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
-                    // Fail closed: this instance is pinned to an account that is gone.
-                    // Falling back to the default would quietly spend another account.
-                    ProxyLog.warn("Refusing " + domain + " for " + describeCaller(clientReq) + refusal(e));
-                    sendError(clientReq.response(), 502, e.getMessage());
-                    return;
-                } catch (dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
-                    // Fail closed too: the account exists, but not of the kind this instance
-                    // was built for, so serving it would hand it a mismatched credential.
-                    ProxyLog.warn("Refusing " + domain + " for " + describeCaller(clientReq) + ": " + e.getMessage());
-                    sendError(clientReq.response(), 502, e.getMessage());
-                    return;
-                }
-                handleApiRequest(clientReq, ctx);
+                clientReq.pause();
+                var state = configState;
+                authorize(state, domain, sourceAddressOf(clientReq), clientReq.headers()).onComplete(result -> {
+                    var proven = result.succeeded() ? result.result() : null;
+                    if (proven == null) {
+                        handleApiRequest(clientReq, passthroughContext(domain, caller, flow));
+                    } else {
+                        serveProvenRequest(state, clientReq, domain, proven, flow);
+                    }
+                });
             } else {
                 // Subdomain of an intercepted domain (e.g. cdn01.quay.io) reached us
                 // via dnsmasq wildcard — relay transparently without auth injection.
@@ -1155,6 +1141,77 @@ public class MitmProxy {
             System.err.println("Unexpected error handling request to " + domain + path + ": " + e.getMessage());
             e.printStackTrace(System.err);
             sendError(clientReq.response(), 502, "Internal proxy error");
+        }
+    }
+
+    private void serveProvenRequest(ConfigState state, HttpServerRequest clientReq, String domain,
+                                     InstanceRegistry.Caller caller, ApiActivity.Flow flow) {
+        try {
+            handleApiRequest(clientReq, contextFor(state, domain, caller, flow));
+        } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
+                 | dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
+            ProxyLog.warn("Refusing " + domain + " for " + describeCaller(clientReq) + ": " + e.getMessage());
+            CallerCheck.refuse(clientReq, 502, e.getMessage());
+        } catch (RuntimeException e) {
+            CallerCheck.refuse(clientReq, 502, "Internal proxy error");
+        }
+    }
+
+    private final Set<String> refusedProofWarnings = ConcurrentHashMap.newKeySet();
+    private Future<Void> proofRefresh;
+    private final java.util.concurrent.atomic.AtomicLong refusedInjections = new java.util.concurrent.atomic.AtomicLong();
+
+    /** The only entry to account-dependent handling, shared by HTTP and WebSockets. */
+    private Future<InstanceRegistry.Caller> authorize(ConfigState state, String domain, String address, io.vertx.core.MultiMap headers) {
+        var registry = instanceRegistry;
+        var presented = state.proofCarriers().read(domain, headers::getAll);
+        var digests = presented.digests();
+        if (digests.isEmpty()) return Future.succeededFuture(null);
+        if (registry == null || digests.values().stream().anyMatch(List::isEmpty)) {
+            refusedProof(address, presented);
+            return Future.succeededFuture(null);
+        }
+        var caller = registry.prove(address, digests);
+        if (caller != null && !registry.isStale()) return Future.succeededFuture(caller);
+        var refreshed = refreshProofs(registry);
+        if (refreshed == null) return Future.succeededFuture(provenOrWarn(registry, address, presented));
+        return refreshed.map(done -> provenOrWarn(registry, address, presented))
+                .recover(error -> {
+                    refusedProof(address, presented);
+                    return Future.succeededFuture(null);
+                });
+    }
+
+    /** Coalesce worker jobs too, including requests arriving on different event loops. */
+    private synchronized Future<Void> refreshProofs(InstanceRegistry registry) {
+        if (proofRefresh != null || !registry.wantsMissRefresh()) return proofRefresh;
+        var refreshed = vertx.<Void>executeBlocking(() -> {
+            registry.refreshAfterNow(CallerCheck.REFRESH_WAIT_MILLIS);
+            return null;
+        }, false);
+        proofRefresh = refreshed;
+        refreshed.onComplete(done -> {
+            synchronized (this) { proofRefresh = null; }
+        });
+        return refreshed;
+    }
+
+    private InstanceRegistry.Caller provenOrWarn(InstanceRegistry registry, String address,
+                                                  ProofCarriers.Presented presented) {
+        var caller = registry.isStale() ? null : registry.prove(address, presented.digests());
+        if (caller == null) refusedProof(address, presented);
+        return caller;
+    }
+
+    private void refusedProof(String address, ProofCarriers.Presented presented) {
+        refusedInjections.incrementAndGet();
+        var namespaces = presented.digests().keySet();
+        if (presented.claimsProof() && refusedProofWarnings.size() < 256
+                && refusedProofWarnings.add(address + ":" + namespaces)) {
+            ProxyLog.warn("Credential proof refused for " + describeCaller(address) + " ("
+                    + String.join(", ", namespaces) + "); relaying unchanged. Open a new login shell;"
+                    + " if needed, run isx shell on the host, then isx doctor inside the instance."
+                    + " Old API-key Claude images may need rebuilding.");
         }
     }
 
@@ -1226,87 +1283,49 @@ public class MitmProxy {
         var host = clientWs.headers().get("Host");
         var colon = host == null ? -1 : host.indexOf(':');
         var domain = colon > 0 ? host.substring(0, colon) : host;
-        var caller = callerAt(sourceAddressOf(clientWs));
-        var flow = trafficFlow(caller, domain);
-        var accepted = false;
-        try {
-            accepted = relayWebSocket(clientWs, domain, caller, flow);
-        } finally {
-            // Until relayWebSocket hands the socket's close the end of the flow, every way out ends it
-            if (!accepted) flow.end();
-        }
-    }
-
-    /** Whether {@code clientWs} was accepted, so that its close ends {@code flow}. */
-    private boolean relayWebSocket(ServerWebSocket clientWs, String domain, InstanceRegistry.Caller caller,
-                                   ApiActivity.Flow flow) {
-        if (domain == null) {
-            clientWs.reject(400);
-            return false;
-        }
-        if (ProxyConfig.MCP_DOMAIN.equals(domain) || HostRouteRelay.claims(configState.hostRoutes(), clientWs)) {
-            // MCP is plain HTTP here, and the name has no upstream to relay a socket to; a host
-            // route carries no WebSocket in this version, and its SNI never carries another name's.
-            clientWs.reject(404);
-            return false;
-        }
-        RequestContext ctx;
-        try {
-            ctx = contextFor(domain, caller, null);
-        } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
-            // Same fail-closed rule as the HTTP path: an instance pinned to an account
-            // that is gone gets an error, never someone else's credential.
-            ProxyLog.warn("Refusing WebSocket to " + domain + " for "
-                    + describeCaller(sourceAddressOf(clientWs)) + refusal(e));
-            clientWs.reject(502);
-            return false;
-        } catch (dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
-            ProxyLog.warn("Refusing WebSocket to " + domain + " for "
-                    + describeCaller(sourceAddressOf(clientWs)) + ": " + e.getMessage());
-            clientWs.reject(502);
-            return false;
-        }
-        if (!completeHandshake(clientWs, domain)) return false;
-        // Until the relay is up, and on its way to a failure; the relay's own replaces it
-        clientWs.closeHandler(v -> flow.end());
-        try {
-            handleWebSocketUpgrade(clientWs, ctx, flow);
-        } catch (RuntimeException e) {
-            // The 101 has gone out, so a refusal can only be a close: a paused socket with
-            // no relay would otherwise hang until the idle timeout
-            ProxyLog.warn("WebSocket relay setup failed (" + domain + "): " + e.getMessage());
-            if (!clientWs.isClosed()) clientWs.close((short) 1011, "Proxy error");
-            flow.end();
-        }
-        return true;
-    }
-
-    /**
-     * Completes the client's handshake, or reports that Netty refused it. Vert.x 4 calls the
-     * WebSocket handler before Netty has validated the request, and would only complete the
-     * handshake once the handler returned; a request Netty then refused (no key, no
-     * {@code Upgrade} token in {@code Connection}, ...) had by then been given a credential
-     * and an upstream socket (#972). A valid client sees no difference: its 101 used to go
-     * out as soon as the handler returned, before the upstream connection was up, too.
-     * <p>
-     * {@code accept()} runs Netty's handshake in this call and throws its refusal, after
-     * Vert.x has answered it with a 400. It is deprecated and gone in Vert.x 5;
-     * {@code WebSocketProxyTest#refusedUpgradeIsAnswered400AndNeverDialled} pins the
-     * behaviour for whatever replaces it.
-     */
-    @SuppressWarnings("deprecation")
-    private boolean completeHandshake(ServerWebSocket clientWs, String domain) {
-        // Paused before the 101, so frames arriving before the upstream connection is
-        // ready are buffered, not dropped
+        var address = sourceAddressOf(clientWs);
+        var flow = trafficFlow(callerAt(address), domain);
         clientWs.pause();
-        try {
-            clientWs.accept();
-            return true;
-        } catch (RuntimeException e) {
-            ProxyLog.warn("Refusing WebSocket to " + domain + " for "
-                    + describeCaller(sourceAddressOf(clientWs)) + ": " + e.getMessage());
-            return false;
+        var status = io.vertx.core.Promise.<Integer>promise();
+        var context = new java.util.concurrent.atomic.AtomicReference<RequestContext>();
+        // Defer Netty's handshake while a stale registry is refreshed. Dial only after it validates.
+        clientWs.setHandshake(status.future()).onComplete(handshake -> {
+            if (handshake.failed() || handshake.result() != 101) {
+                flow.end();
+                return;
+            }
+            clientWs.closeHandler(v -> flow.end());
+            try {
+                handleWebSocketUpgrade(clientWs, context.get(), flow);
+            } catch (RuntimeException e) {
+                if (!clientWs.isClosed()) clientWs.close((short) 1011, "Proxy error");
+                flow.end();
+            }
+        });
+        if (domain == null) {
+            status.complete(400);
+        } else if (ProxyConfig.MCP_DOMAIN.equals(domain) || HostRouteRelay.claims(configState.hostRoutes(), clientWs)) {
+            status.complete(404);
+        } else {
+            var state = configState;
+            authorize(state, domain, address, clientWs.headers()).onComplete(result -> {
+                try {
+                    var proven = result.succeeded() ? result.result() : null;
+                    context.set(proven == null ? passthroughContext(domain, callerAt(address), flow) : contextFor(state, domain, proven, flow));
+                    status.complete(101);
+                } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
+                         | dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
+                    status.complete(502);
+                } catch (RuntimeException e) {
+                    status.tryComplete(502);
+                }
+            });
         }
+    }
+
+    private RequestContext passthroughContext(String domain, InstanceRegistry.Caller caller, ApiActivity.Flow flow) {
+        return new RequestContext(domain, caller, new ProxyCredentials("", "", false, "", "", List.of()),
+                buildRouting(List.of(), List.of(), false), false, flow, null, false);
     }
 
     private void handleWebSocketUpgrade(ServerWebSocket clientWs, RequestContext ctx, ApiActivity.Flow flow) {
@@ -1437,6 +1456,7 @@ public class MitmProxy {
     }
 
     private void injectWebSocketAuth(WebSocketConnectOptions options, RequestContext ctx) {
+        if (!ctx.authorized()) return;
         var domain = ctx.domain();
         var credentials = ctx.creds();
         if (ANTHROPIC_DOMAINS.contains(domain)) {
@@ -1445,6 +1465,7 @@ public class MitmProxy {
                 options.removeHeader("x-api-key");
             } else if (!credentials.anthropicApiKey().isBlank()) {
                 options.putHeader("x-api-key", credentials.anthropicApiKey());
+                options.removeHeader("Authorization");
             }
         } else {
             var tp = findToolProxy(ctx.routing(), domain);
@@ -1870,6 +1891,7 @@ public class MitmProxy {
      */
     private Future<Boolean> injectHeaders(HttpClientRequest upReq, RequestContext ctx,
                                String upstreamHost, boolean isVertexRequest) {
+        if (!ctx.authorized()) return Future.succeededFuture(true);
         var domain = ctx.domain();
         var credentials = ctx.creds();
         upReq.putHeader("Host", upstreamHost);
@@ -1899,6 +1921,7 @@ public class MitmProxy {
                 upReq.headers().remove("x-api-key");
             } else if (!credentials.anthropicApiKey().isBlank()) {
                 upReq.putHeader("x-api-key", credentials.anthropicApiKey());
+                upReq.headers().remove("Authorization");
             } else if (!credentials.inheritedNamespaces().contains(dev.incusspawn.config.SpawnConfig.ClaudeConfig.NAMESPACE)) {
                 // Inherited, it carries the proof presentInheritedProofs swaps
                 upReq.headers().remove("x-api-key");
@@ -1924,7 +1947,7 @@ public class MitmProxy {
      */
     private static void presentInheritedProofs(io.vertx.core.MultiMap headers, RequestContext ctx) {
         var swap = ctx.inherited();
-        if (swap == null || headers == null) return;
+        if (!ctx.authorized() || swap == null || headers == null) return;
         for (var name : Set.copyOf(headers.names())) {
             var values = headers.getAll(name);
             var swapped = values.stream().map(swap::apply).toList();
@@ -2191,7 +2214,7 @@ public class MitmProxy {
         var known = registry == null ? new InstanceRegistry.Incarnations(Map.of(), 0) : registry.incarnations();
         req.response()
                 .putHeader("Content-Type", "application/json")
-                .end(apiActivity.snapshot(known.byName(), known.view()).toJson());
+                .end(apiActivity.snapshot(known.byName(), known.view()).toJson(refusedInjections.get()));
     }
 
     private static boolean isHostCaller(HttpServerRequest req) {

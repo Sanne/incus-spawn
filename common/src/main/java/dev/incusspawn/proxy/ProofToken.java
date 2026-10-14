@@ -39,8 +39,8 @@ import java.util.regex.Pattern;
  * writes them beside it in {@code /run} -- a tmpfs, so they never reach an image or a copy, and
  * readable by the instance user's group only. The login profile sources them after
  * {@code isx-env.sh}, replacing only the variables the build exported: an instance whose Claude
- * is OAuth-configured never grows an {@code ANTHROPIC_API_KEY}. A build, or an instance never
- * started by an isx that knows proofs, keeps the static placeholder {@code isx-env.sh} holds.
+ * is OAuth-configured never grows an {@code ANTHROPIC_API_KEY}. An instance never
+ * started by an isx that knows proofs keeps the static placeholder {@code isx-env.sh} holds.
  */
 public final class ProofToken {
 

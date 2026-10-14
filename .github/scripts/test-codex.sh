@@ -112,10 +112,12 @@ echo ""
 echo "[3] Credential Isolation"
 assert "auth.json uses API-key mode" \
     grep -q '"auth_mode": "apikey"' "$AUTH"
-assert "auth.json holds the placeholder key" \
-    grep -q '"OPENAI_API_KEY": "sk-placeholder"' "$AUTH"
-assert_eq "OPENAI_API_KEY in the login shell is the placeholder" "sk-placeholder" \
-    su -l agentuser -c 'printf "%s" "$OPENAI_API_KEY"'
+# A login refreshes auth.json from this start's environment.
+PROOF=$(su -l agentuser -c 'printf "%s" "$OPENAI_API_KEY"')
+assert "the login shell holds a namespace proof" \
+    bash -c '[[ "$1" =~ ^sk-isx_[0-9a-f]{32}$ ]]' _ "$PROOF"
+assert "auth.json holds the current proof" \
+    grep -Fq "\"OPENAI_API_KEY\": \"$PROOF\"" "$AUTH"
 assert "the real API key is nowhere under ~/.codex" \
     bash -c "! grep -rq '$REAL_KEY' /home/agentuser/.codex"
 assert "the real API key is not in the environment" \

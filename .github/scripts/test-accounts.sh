@@ -53,7 +53,7 @@ assert_eq() {
 
 # The Authorization value the proxy injected, as the upstream saw it.
 injected_token() {
-    curl -sf https://echo-accounts.incus-spawn.test/ \
+    bash /tmp/proof-curl.sh https://echo-accounts.incus-spawn.test/ -sf \
         | tr ',' '\n' | grep -i '"Authorization"' \
         | sed 's/.*Bearer \([^"]*\)".*/\1/'
 }
@@ -72,8 +72,8 @@ assert_eq "injected token belongs to this instance's account" \
     "acct-token-$EXPECTED" injected_token
 
 assert "no other account's token is ever injected here" \
-    bash -c "! curl -sf https://echo-accounts.incus-spawn.test/ | grep -qE 'acct-token-(alpha|beta)' \
-        || curl -sf https://echo-accounts.incus-spawn.test/ | grep -q 'acct-token-$EXPECTED'"
+    bash -c "! bash /tmp/proof-curl.sh https://echo-accounts.incus-spawn.test/ -sf | grep -qE 'acct-token-(alpha|beta)' \
+        || bash /tmp/proof-curl.sh https://echo-accounts.incus-spawn.test/ -sf | grep -q 'acct-token-$EXPECTED'"
 echo ""
 
 # --- 2. The credential never enters the instance ---

@@ -86,11 +86,11 @@ Key design:
   An address two instances claim (a copy made before #815, or by `incus copy`) belongs to the one running claimant -- Incus will not start a second NIC on the same address -- and to nobody when none or several run; never to whichever is listed last.
   `isx branch`/`isx account set` poke it with **SIGUSR1** (`ProxyService.signalAccountRefresh`), not SIGHUP: pinning is instance state, and answering a branch -- the most common operation there is -- with a full reload would re-mint certs and re-push SSL options every time.
   `lookup()` must stay non-blocking (event loop); refreshes go through `executeBlocking` with single-flight, like `resolveHost`/`acquireVertexAccessToken`.
-  Normalize `::ffff:` mapped addresses or every lookup misses and silently serves defaults.
-  An unknown address gets the defaults on purpose: host traffic uses this proxy too.
-  Build containers that pin an account are **not** unknown (#903): `BuildAccounts.start` claims them an address (`InstanceNetwork.assignBuildAddress`, filtering on, guest keeps DHCP, leased addresses skipped) and stamps the template's pins before the first start, clears every `account-identity` stamp copied from the parent (else `refuseIfUnservable` would refuse the build its own template's account, or a changed default) -- reading them first, since `settleIdentities` needs them after tool setup and `BuildAccounts.identityStamps` puts back the ones the build does not re-stamp -- and signals the proxy.
+  Normalize `::ffff:` mapped addresses or every lookup misses and credential proofs fail.
+  An unknown address gets no injected credential; host traffic must supply its own authentication.
+  Build containers are **not** unknown (#903, #1107): `BuildAccounts.start` claims them an address (`InstanceNetwork.assignBuildAddress`, filtering on, guest keeps DHCP, leased addresses skipped) and stamps the template's pins before the first start, clears every `account-identity` stamp copied from the parent (else `refuseIfUnservable` would refuse the build its own template's account, or a changed default) -- reading them first, since `settleIdentities` needs them after tool setup and `BuildAccounts.identityStamps` puts back the ones the build does not re-stamp -- and signals the proxy.
   `releaseBuildAddress` gives the address back once the template is stopped.
-  A build pinning nothing is served the defaults either way and keeps plain DHCP.
+  Builds using configured defaults also need a registered address and fresh proofs before authenticated steps run.
   A new build path must do the same before anything in it goes through the proxy.
 - **The instance secret (#934)** is a second layer on the address, never a replacement: `InstanceRegistry.identify(address, secret)` passes only when both belong to one instance (`InstanceSecret.matches`, constant time; no hash recorded means nothing passes).
   The host holds only the SHA-256 (`Metadata.INSTANCE_SECRET_SHA256`; a guest reads its own `user.*` keys via `/dev/incus`), kept in the snapshot's `secretByAddress`, not in `InstanceAccounts`, which `MitmProxy` caches by value.
@@ -108,21 +108,26 @@ Key design:
   A child build refreshes these files for a tool it only inherits (`ToolSetup.refreshInherited`, from `GuestProvisioning.refreshInheritedTools`), so an older parent's files do not reach it.
   A YAML tool whose `files:` or build steps hold the value of one of its own credential-named env entries is warned about by the loader (`ToolDefValidator.embeddedTokens`).
   Per-tool evidence: DESIGN.md "A placeholder is read when the tool runs".
-- **Proof tokens (#1106, toward #1100).**
-  A started instance's credential placeholders are proofs of its login environment, not constants: `ProofToken.derive(secret, ns)` is HMAC-SHA256 keyed with the per-start secret over the namespace (32 hex), presented as the tool's prefix + `isx_` + digest (`gho_isx_…`).
-  Keyed with the secret, never its hash, which a guest reads from `/dev/incus`.
-  Which variables carry which namespace's proof is declared on the tool -- `placeholders:` (`env`, `prefix`) on its `proxy:` entry, in the tool's one credential namespace (`ToolSetup.credentialNamespaces()`), exposed as `ToolSetup.placeholders()` (pi overrides it for the one variable of its own) -- never listed by name.
-  `ProofToken.declaredBy` drops unsafe declarations and a variable declared two ways (fail closed: the static placeholder proves nothing).
-  The set is `ToolProxyResolver.proxyToolSetups` (no feature-gated-off or project-local proxy tool).
-  `InstanceSecret.guestEnv(secret, placeholders)` carries the exports beside the secret in the same exec.
-  `GUEST_SCRIPT` writes them to `/run/isx/proof-tokens` (0440, group 1000, previous proofs removed first) and `isx-instance-secret.sh` sources it after `isx-env.sh`.
-  Each line replaces a variable only while it holds the build's placeholder (`<prefix>placeholder*`) or an earlier proof (`<prefix>isx_*`), and only where the placeholder's guard holds (`Placeholder.onlyWhen`, code only: Claude's `ANTHROPIC_API_KEY` needs #1108's `isx-zz-claude-auth.sh` or no `~/.claude.json`, so a pre-#1108 Claude image keeps its approved static key until rebuilt).
-  Every secret delivery carries them (branch setup script, `startForUse`, `restartForUse`, `VmAgentRecovery`, `giveSecretToThisBoot`).
-  Each reads the declarations off disk in the background while the instance is copied or starts (`ProofToken.declaredInBackground`), so the request budget is unchanged, and always without the current directory's `.incus-spawn/tools/` (`ToolDefLoader.withoutProjectTools`, as the proxy sees them: never the tool setups `BranchFlow.preflight` loads, which include it).
-  A YAML tool's placeholder must be one of its own `env:` entries.
-  Instances an older isx started get proofs at the next shell.
-  A VM's probe checks the proofs file with the secret (`GUEST_CHECK`), and a container's boot stamp carries a mark that its delivery had proofs (`InstanceLifecycle.secretBootStamp`), so an older stamp no longer matches.
-  A new path that delivers a secret passes placeholders too.
+- **Proof tokens (#1100, #1107).**
+  Every start derives each namespace digest with HMAC keyed by the raw secret, never its `/dev/incus`-readable hash.
+  Tool `placeholders:` declarations supply variables and prefixes; declarations exclude project-local definitions.
+  `ProofVerifier` stores only SHA-256 of each namespace digest in the replaceable `Metadata.INSTANCE_PROOF_SHA256` stamp, alongside secret rotation in the same write.
+  Every prefix of a namespace normalizes to that digest, compared in constant time.
+  `ProofCarriers` derives the authentication headers from tool declarations, including Basic and custom headers; Claude supports API-key, OAuth and Vertex carriers independently of the selected account mode.
+  Both HTTP and WebSocket handling call `authorize` before account resolution, compatibility checks, translation, token acquisition, injection and inheritance substitution.
+  Verification and account resolution use one configuration snapshot across an asynchronous refresh.
+  Missing or incorrect proofs relay unchanged, including authentication and destination semantics; unknown addresses never get defaults.
+  Valid proofs still obey account selection, including missing-account failures.
+  Registry refresh and retry are bounded, shared and off the event loop; a failed listing clears credential verifiers.
+  Refusal diagnostics are bounded and deduplicated, contain no authentication values, and do not warn for ordinary independent credentials.
+  `/activity` counts refused injections, including anonymous and independent pass-through.
+  The existing guest exec writes proofs and the secret into `/run/isx`, root-owned and readable by group 1000.
+  Login profiles replace only isx placeholders or earlier proofs in variables the build exported.
+  Every delivery path replaces verifiers, including copies, VM recovery and uninitiated reboots, without changing normal lifecycle request budgets.
+  A container's `proofs-v2` boot stamp and a VM's version-2 guest delivery marker upgrade instances that already had #1237 proofs but no verifiers.
+  Old shells and long-running tools need a new login or restart; doctor requests a rebuild for old API-key Claude images without #1113's approval script.
+  Every build gets an address and proofs, including unpinned defaults, before tool setup, clones and primes.
+  Successful builds revoke and scrub temporary proof state, including managed Claude and Codex caches, before publication; retained failures are revoked and get fresh proofs on their next isx start.
 - **`<ns>=inherit` (#1110): a nested isx shares its parent instance's grant on purpose.**
   `AccountResolver.INHERIT` is a reserved account, selected by a pin or as `<ns>.default`, that resolves to itself whatever is configured.
   An `accounts:` entry of that name is never served, and `value()` gives nothing for it, not even the flat credential.
@@ -139,15 +144,14 @@ Key design:
   It runs on every request header, HTTP and WebSocket alike, after the normal injection, with a `Basic` credential decoded first.
   The carrier stays the instance's own, so Claude's API-key, OAuth and Vertex forms all work without the inner isx knowing the parent's mode.
   A prefix two swapped namespaces declare is left alone.
-  The swap does not verify the instance's own proof: that needs #1107's verifiers, whose check must run before it.
+  The swap is constructed only after the instance's own proof passes verification.
   A static placeholder or a caller's own token is never swapped, and the Anthropic path does not strip an inherited `x-api-key`.
   Inside an isx instance (`InheritedProof.nested()`: the secret file exists), `resolveAcrossAccounts` adds the domains of every tool declaring a placeholder, credential-free, since a pin is not known when the intercepted domains are decided.
   `ConfigWatcher` asks `MitmProxy.refreshNesting()` every second and reloads when it turns true, as at boot, when the proxy starts before the parent's isx delivers its secret.
   It stays true until a reload completes (`nestingReloadDue`), so the watcher retries every 30 s while reloads fail.
   `AccountSelection.validate` refuses `inherit` outside an instance; `isx init` refuses it as an account name.
   Tests never find the box's own secret: the parent pom points `isx.instance-secret-file` at a missing file, and a test that wants one sets that property.
-  Until #1107, the outer proxy injects whatever comes from the parent's address, so the swap changes nothing upstream yet; #1107's check applies to the swapped proof as to the parent's own.
-  The proxy does not verify them yet (#1107).
+  The outer proxy verifies the swapped proof as it verifies the parent's own; deeper descendants cannot obtain it with forged or unrelated proofs.
   See DESIGN.md "Proof tokens".
 - **`mcp.isx.internal` is answered, not relayed (#915).**
   `routeRequest` hands `ProxyConfig.MCP_DOMAIN` to `McpBridge` before any other domain check (a WebSocket to it is refused): `isx mcp` over MCP's Streamable HTTP for an instance stamped `mcp-caller`, identified by `InstanceRegistry.identifyMcpCaller()` (address + secret + stamp; one throttled refresh on a refusal, as for `identify()`).

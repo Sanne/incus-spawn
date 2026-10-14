@@ -21,7 +21,7 @@ import java.util.function.Function;
  *
  * <h3>Why source address identifies an instance</h3>
  * Every branch is given a static IP on the bridge by {@code InstanceLifecycle.configureBranch},
- * and every template build container that pins an account by
+ * and every template build container by
  * {@code InstanceNetwork.assignBuildAddress} for as long as it builds (#903), recorded as
  * {@link Metadata#STATIC_IP}, and the iptables REDIRECT that sends :443 to the proxy preserves
  * the source address. So the address a connection arrives from is the
@@ -34,11 +34,9 @@ import java.util.function.Function;
  *
  * <h3>Staleness</h3>
  * Lookups never block -- they read a snapshot, and the caller refreshes off the event loop.
- * An address missing from the snapshot resolves to the configured defaults rather than
- * failing: the proxy also serves host-side traffic, which has no account pinning and must keep
- * working. The window where a freshly branched instance or build container is not yet in the
- * snapshot is closed by {@code isx branch} and {@code isx build} signalling the proxy before it
- * starts, with {@link #STALE_AFTER_MS} as the backstop if that signal is missed.
+ * An address missing from the snapshot never authorizes injection. The request's current
+ * namespace proofs are checked against the same listing as its account selection; a refused
+ * proof can refresh and retry off the event loop, with a floor between listings.
  *
  * <p>Note this is deliberately Vert.x-free: {@link IncusClient} calls block, so the proxy
  * drives {@link #refresh} from a worker thread and only ever calls {@link #lookup} on the
@@ -120,8 +118,8 @@ public final class InstanceRegistry {
      */
     record Parsed(Map<String, InstanceAccounts> byAddress, Map<String, String> secretByAddress,
                   java.util.Set<String> mcpCallers, Map<String, String> incarnationByName,
-                  Map<String, Lineage> lineageByName) {
-        static final Parsed EMPTY = new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of(), Map.of());
+                  Map<String, Lineage> lineageByName, Map<String, Map<String, String>> proofsByAddress) {
+        static final Parsed EMPTY = new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of(), Map.of(), Map.of());
     }
 
     /**
@@ -196,6 +194,19 @@ public final class InstanceRegistry {
         var instance = find(current.parsed(), sourceAddress);
         return instance == null ? null : new Caller(instance,
                 current.parsed().incarnationByName().getOrDefault(instance.instanceName(), ""), current.view());
+    }
+
+    /** Address and every requested namespace proof checked against one immutable listing. */
+    public Caller prove(String address, Map<String, java.util.List<String>> digests) {
+        var current = snapshot;
+        var instance = find(current.parsed(), address);
+        if (instance == null || digests.isEmpty()) return null;
+        var hashes = current.parsed().proofsByAddress().getOrDefault(normalize(address), Map.of());
+        for (var entry : digests.entrySet()) {
+            var hash = hashes.get(entry.getKey());
+            if (entry.getValue().stream().noneMatch(digest -> ProofVerifier.matches(digest, hash))) return null;
+        }
+        return new Caller(instance, current.parsed().incarnationByName().getOrDefault(instance.instanceName(), ""), current.view());
     }
 
     /**
@@ -314,7 +325,10 @@ public final class InstanceRegistry {
             // Keep serving the previous snapshot: a transient Incus hiccup should not
             // strip every instance of its pinned account and silently fall back to
             // defaults. Bump the timestamp so a broken socket is not retried per request.
-            snapshot = new Snapshot(snapshot.parsed(), System.currentTimeMillis(), snapshot.view());
+            var previous = snapshot.parsed();
+            var withoutProofs = new Parsed(previous.byAddress(), previous.secretByAddress(), previous.mcpCallers(),
+                    previous.incarnationByName(), previous.lineageByName(), Map.of());
+            snapshot = new Snapshot(withoutProofs, System.currentTimeMillis(), snapshot.view());
             ProxyLog.warn("Instance registry refresh failed: " + e.getMessage());
             return false;
         } finally {
@@ -447,6 +461,7 @@ public final class InstanceRegistry {
         }
         var byAddress = new LinkedHashMap<String, InstanceAccounts>();
         var secretByAddress = new LinkedHashMap<String, String>();
+        var proofsByAddress = new LinkedHashMap<String, Map<String, String>>();
         var mcpCallers = new java.util.HashSet<String>();
         var incarnationByName = new java.util.HashMap<String, String>();
         var lineageByName = new java.util.HashMap<String, Lineage>();
@@ -455,6 +470,7 @@ public final class InstanceRegistry {
             var owner = owner(address, all);
             if (owner == null) return;
             byAddress.put(address, owner.accounts());
+            proofsByAddress.put(address, ProofVerifier.parse(owner.config().pathText(Metadata.INSTANCE_PROOF_SHA256, "")));
             if (!owner.secretSha256().isEmpty()) secretByAddress.put(address, owner.secretSha256());
             if (owner.mcpCaller()) mcpCallers.add(owner.accounts().instanceName());
             incarnationByName.put(owner.accounts().instanceName(), owner.createdAt());
@@ -462,7 +478,7 @@ public final class InstanceRegistry {
             lineageByName.put(owner.accounts().instanceName(), lineageOf(owner.config(), configByName));
         });
         return new Parsed(byAddress, secretByAddress, java.util.Set.copyOf(mcpCallers),
-                Map.copyOf(incarnationByName), Map.copyOf(lineageByName));
+                Map.copyOf(incarnationByName), Map.copyOf(lineageByName), Map.copyOf(proofsByAddress));
     }
 
     private record Claimant(InstanceAccounts accounts, boolean running, String secretSha256, boolean mcpCaller,
@@ -536,7 +552,7 @@ public final class InstanceRegistry {
         // the address to none of them rather than guess, and say so
         if (!running.isEmpty()) {
             ProxyLog.warn("Address " + address + " is claimed by running instances " + names
-                    + "; serving it the defaults until only one holds it");
+                    + "; refusing credential injection until only one holds it");
         }
         return null;
     }
@@ -570,7 +586,7 @@ public final class InstanceRegistry {
     /**
      * Vert.x reports an IPv4 peer over a dual-stack listener as {@code ::ffff:10.0.0.5};
      * Incus records the plain form. Without this every such lookup misses and the instance
-     * silently gets default credentials.
+     * cannot prove its credential grant.
      */
     static String normalize(String address) {
         var trimmed = address.strip();

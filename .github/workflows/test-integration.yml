@@ -668,6 +668,9 @@ jobs:
           sg incus-admin -c "isx build tpl-test-codex --yes"
           sg incus-admin -c "isx build tpl-test-mcp --yes"
 
+      - name: Test published templates have no build credential grant
+        run: sg incus-admin -c "bash .github/scripts/test-build-proofs.sh"
+
       - name: Test CoW branching
         run: sg incus-admin -c "bash .github/scripts/test-cow-branching.sh"
 
@@ -676,8 +679,7 @@ jobs:
 
       - name: Test container
         run: |
-          sg incus-admin -c "isx branch test-container --from tpl-minimal --no-start"
-          sg incus-admin -c "incus start test-container"
+          sg incus-admin -c "isx branch test-container --from tpl-minimal"
           echo "Waiting for container network..."
           sg incus-admin -c "incus exec test-container -- bash -c '
             systemctl start systemd-networkd 2>/dev/null
@@ -685,6 +687,7 @@ jobs:
               ip -4 -o addr show eth0 | grep -q \"inet \" && break
               sleep 0.5
             done'"
+          sg incus-admin -c "incus file push .github/scripts/proof-curl.sh test-container/tmp/"
           sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-container/tmp/"
           sg incus-admin -c "incus exec test-container -- bash /tmp/test-instance.sh"
 
@@ -693,12 +696,11 @@ jobs:
           # Two instances of the same template, differing only in the account
           # they are pinned to -- which is the whole claim: one shared proxy,
           # different real credentials, decided by who asked.
-          sg incus-admin -c "isx branch acct-alpha --from tpl-minimal --no-start \
+          sg incus-admin -c "isx branch acct-alpha --from tpl-minimal \
               --account testAccountTool=alpha"
-          sg incus-admin -c "isx branch acct-beta --from tpl-minimal --no-start \
+          sg incus-admin -c "isx branch acct-beta --from tpl-minimal \
               --account testAccountTool=beta"
           for i in acct-alpha acct-beta; do
-            sg incus-admin -c "incus start $i"
             sg incus-admin -c "incus exec $i -- bash -c '
               systemctl start systemd-networkd 2>/dev/null
               for n in \$(seq 1 30); do
@@ -711,6 +713,7 @@ jobs:
           sg incus-admin -c "isx account show acct-beta"
 
           for i in alpha beta; do
+            sg incus-admin -c "incus file push .github/scripts/proof-curl.sh acct-$i/tmp/"
             sg incus-admin -c "incus file push .github/scripts/test-accounts.sh acct-$i/tmp/"
             sg incus-admin -c "incus exec acct-$i -- bash /tmp/test-accounts.sh $i"
           done
@@ -725,10 +728,7 @@ jobs:
           # which is the case the identity can actually get wrong: the token swaps on
           # the next request, but the identity was baked at build time, so without a
           # re-derive the instance would push as one account and commit as another.
-          # ('isx branch --account' reconciles too, at start; CI cannot drive it
-          # because a branch that starts also attaches a shell.)
-          sg incus-admin -c "isx branch acct-gh --from tpl-test-accounts --no-start"
-          sg incus-admin -c "incus start acct-gh"
+          sg incus-admin -c "isx branch acct-gh --from tpl-test-accounts"
           sg incus-admin -c "incus exec acct-gh -- bash -c '
             systemctl start systemd-networkd 2>/dev/null
             for n in \$(seq 1 30); do
@@ -750,8 +750,7 @@ jobs:
 
       - name: Test rootless podman
         run: |
-          sg incus-admin -c "isx branch test-podman --from tpl-test-podman --no-start"
-          sg incus-admin -c "incus start test-podman"
+          sg incus-admin -c "isx branch test-podman --from tpl-test-podman"
           echo "Waiting for container network..."
           sg incus-admin -c "incus exec test-podman -- bash -c '
             systemctl start systemd-networkd 2>/dev/null
@@ -759,6 +758,7 @@ jobs:
               ip -4 -o addr show eth0 | grep -q \"inet \" && break
               sleep 0.5
             done'"
+          sg incus-admin -c "incus file push .github/scripts/test-nested-proofs.sh test-podman/tmp/"
           sg incus-admin -c "incus file push .github/scripts/test-podman.sh test-podman/tmp/"
           sg incus-admin -c "incus exec test-podman -- bash /tmp/test-podman.sh"
 
@@ -778,8 +778,7 @@ jobs:
 
       - name: Test codex tool
         run: |
-          sg incus-admin -c "isx branch test-codex --from tpl-test-codex --no-start"
-          sg incus-admin -c "incus start test-codex"
+          sg incus-admin -c "isx branch test-codex --from tpl-test-codex"
           echo "Waiting for container network..."
           sg incus-admin -c "incus exec test-codex -- bash -c '
             systemctl start systemd-networkd 2>/dev/null
@@ -798,9 +797,8 @@ jobs:
           # Pinned to an account so the VM path is covered too: a VM reaches the proxy
           # the same way a container does, but its metadata and file pushes go through
           # the incus-agent, which is the part a container can never exercise.
-          sg incus-admin -c "isx branch test-vm --from tpl-test-vm --no-start \
+          sg incus-admin -c "isx branch test-vm --from tpl-test-vm \
               --account testAccountTool=beta"
-          sg incus-admin -c "incus start test-vm"
           echo "Waiting for VM agent..."
           for i in $(seq 1 60); do
             if sg incus-admin -c "incus exec test-vm -- true" 2>/dev/null; then
@@ -813,6 +811,7 @@ jobs:
             fi
             sleep 1
           done
+          sg incus-admin -c "incus file push .github/scripts/proof-curl.sh test-vm/tmp/"
           sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-vm/tmp/"
           sg incus-admin -c "incus exec test-vm -- bash /tmp/test-instance.sh"
           sg incus-admin -c "isx account show test-vm"

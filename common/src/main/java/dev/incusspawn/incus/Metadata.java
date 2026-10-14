@@ -64,6 +64,8 @@ public final class Metadata {
      * keys through {@code /dev/incus}.
      */
     public static final String INSTANCE_SECRET_SHA256 = PREFIX + "instance-secret-sha256";
+    /** Namespace proof verifiers, replaced together on every secret rotation; never usable tokens. */
+    public static final String INSTANCE_PROOF_SHA256 = PREFIX + "instance-proof-sha256";
     /**
      * The {@code last_used_at} of the container boot {@link #INSTANCE_SECRET_SHA256} was made for.
      * Incus sets it on every start, a reboot isx did not do included, which empties the guest's

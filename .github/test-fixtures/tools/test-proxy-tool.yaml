@@ -1,5 +1,11 @@
 name: test-proxy-tool
+env:
+  - name: TEST_PROXY_TOKEN
+    value: tpt_placeholder
 proxy:
+  placeholders:
+    - env: TEST_PROXY_TOKEN
+      prefix: tpt_
   config-namespace: testProxyTool
   configuration:
     token:

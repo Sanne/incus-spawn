@@ -96,12 +96,14 @@ class DoctorInstanceCredentialsTest {
     }
 
     @Test
-    void aPlaceholderWhoseGuardFailsKeepsTheStaticValueWithoutComplaint() throws IOException {
+    void anOldImageWhoseGuardFailsNeedsARebuild() throws IOException {
         var guarded = new ProofToken.Placeholder("ANTHROPIC_API_KEY", "sk-ant-", "claude").onlyWhen("false");
         start(List.of(guarded));
-        assertEquals(List.of(), problems(check(env("ANTHROPIC_API_KEY", "sk-ant-placeholder"),
-                List.of(guarded), guard -> !guard.equals("false"))),
-                "an image whose Claude Code cannot take a new key keeps the placeholder until it is rebuilt");
+        var findings = problems(check(env("ANTHROPIC_API_KEY", "sk-ant-placeholder"),
+                List.of(guarded), guard -> !guard.equals("false")));
+        assertEquals(1, findings.size());
+        assertTrue(findings.getFirst().remediation().description().contains("Rebuild"));
+        assertTrue(findings.getFirst().remediation().description().contains("login alone cannot"));
     }
 
     @Test

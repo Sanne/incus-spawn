@@ -50,8 +50,14 @@ class PinnedAccountDomainProxyTest {
         Files.writeString(configDir.resolve("tools/xt.yaml"), """
                 name: xt
                 description: "A tool whose entry needs a per-account setting"
+                env:
+                  - name: XT_TOKEN
+                    value: xt-placeholder
                 proxy:
                   config-namespace: xt
+                  placeholders:
+                    - env: XT_TOKEN
+                      prefix: xt-
                   configuration:
                     token:
                       config-path: token
@@ -96,8 +102,10 @@ class PinnedAccountDomainProxyTest {
             public io.hyperfoil.tools.jjq.value.JqValue listJsonConfig() {
                 return io.hyperfoil.tools.jjq.value.JqValues.parse("""
                         [{"name":"acme-1","config":{"user.incus-spawn.static-ip":"127.0.0.1",
-                          "user.incus-spawn.account.xt":"full"}}]
-                        """);
+                          "user.incus-spawn.account.xt":"full",
+                          "user.incus-spawn.instance-proof-sha256":%s}}]
+                        """.formatted(io.hyperfoil.tools.jjq.value.JqValues.toPrettyJsonString(
+                                io.hyperfoil.tools.jjq.value.JqString.of(ProofVerifier.stamp(ProofTestSupport.SECRET, ProofToken.declared())))));
             }
         });
         registry.refresh();
@@ -125,7 +133,7 @@ class PinnedAccountDomainProxyTest {
                 .setPort(443)
                 .setURI("/v1/me");
         int status = client.request(options)
-                .compose(req -> req.putHeader("Authorization", "Bearer xt-placeholder").send())
+                .compose(req -> req.putHeader("Authorization", "Bearer " + ProofTestSupport.token("xt", "xt-")).send())
                 .compose(resp -> resp.body().map(b -> resp.statusCode()))
                 .toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
 

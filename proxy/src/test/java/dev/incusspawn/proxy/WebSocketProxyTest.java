@@ -151,6 +151,7 @@ class WebSocketProxyTest {
         proxy.upstream.upstreamTrustAll = true;
 
         ContainerTls.startInBackground(proxy);
+        ProofTestSupport.register(proxy);
         mitmPort = proxy.mitmPort();
 
         clientVertx = Vertx.vertx(new VertxOptions().setAddressResolverOptions(resolver));
@@ -171,6 +172,7 @@ class WebSocketProxyTest {
 
     @BeforeEach
     void clearCaptured() {
+        ProofTestSupport.register(proxy);
         capturedAuthHeaders.clear();
         upstreamDials.clear();
     }
@@ -255,7 +257,7 @@ class WebSocketProxyTest {
         var client = createClient();
         var result = new CompletableFuture<String>();
         var opts = connectOptions("/v1/realtime");
-        opts.addHeader("Authorization", "Bearer sk-placeholder");
+        opts.addHeader("Authorization", "Bearer " + ProofTestSupport.token("openai", "sk-"));
 
         connect(client, opts, ws -> {
             ws.textMessageHandler(result::complete);
@@ -491,7 +493,7 @@ class WebSocketProxyTest {
             var out = socket.getOutputStream();
             out.write(("GET " + path + " HTTP/1.1\r\n"
                     + "Host: api.openai.com\r\n"
-                    + "Authorization: Bearer sk-placeholder\r\n"
+                    + "Authorization: Bearer " + ProofTestSupport.token("openai", "sk-") + "\r\n"
                     + "Upgrade: websocket\r\n"
                     + headers + "\r\n")
                     .getBytes(StandardCharsets.US_ASCII));

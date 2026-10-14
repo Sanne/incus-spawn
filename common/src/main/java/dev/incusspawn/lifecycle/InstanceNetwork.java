@@ -40,8 +40,8 @@ public final class InstanceNetwork {
      * {@code config} (its template's account pins) in the same write, before its first start.
      *
      * <p>The proxy picks credentials by source address, and knows only instances with a
-     * {@link Metadata#STATIC_IP}. A build on a DHCP address would be served every namespace's
-     * default account, whatever its template's {@code accounts:} chose (#903). The address comes
+     * {@link Metadata#STATIC_IP}. An unregistered DHCP address cannot authorize credential
+     * injection, even when the build uses configured defaults (#1107). The address comes
      * from the same allocator as a branch's, with the same {@code security.ipv4_filtering} that
      * makes it trustworthy. Unlike a branch no {@code .network} file is pushed: the build's guest
      * keeps DHCP, and Incus's DHCP server hands out the NIC's {@code ipv4.address}. It will not

@@ -74,7 +74,7 @@ cleanup() {
 # are matched case-insensitively: which case arrives is up to the proxy and curl.
 header_in() {
     local instance="$1" url="$2" header="$3"
-    incus exec "$instance" -- curl -sf "$url" 2>/dev/null | python3 -c "
+    incus exec "$instance" -- bash /tmp/proof-curl.sh "$url" -sf 2>/dev/null | python3 -c "
 import json, sys
 headers = {k.lower(): v for k, v in json.load(sys.stdin)['headers'].items()}
 print(headers.get(sys.argv[1].lower(), ''))" "$header" 2>/dev/null
@@ -143,18 +143,19 @@ done
 echo ""
 
 echo "[2] Instances, unpinned and pinned to 'default'"
-isx branch prev-release-flat --from tpl-minimal --no-start >/dev/null
-if isx branch prev-release-pinned --from tpl-minimal --no-start \
+isx branch prev-release-flat --from tpl-minimal >/dev/null
+if isx branch prev-release-pinned --from tpl-minimal \
         --account claude=default --account github=default \
         --account openai=default --account testProxyTool=default >/dev/null 2>&1; then
     pass "pinning every namespace to 'default' is accepted"
 else
     fail "pinning every namespace to 'default' is accepted" \
-        "$(isx branch prev-release-pinned --from tpl-minimal --no-start --account github=default 2>&1 | tail -1)"
+        "$(isx branch prev-release-pinned --from tpl-minimal --account github=default 2>&1 | tail -1)"
 fi
 for i in prev-release-flat prev-release-pinned; do
     incus info "$i" >/dev/null 2>&1 || continue
-    incus start "$i" && wait_for_network "$i"
+    incus file push .github/scripts/proof-curl.sh "$i/tmp/"
+    wait_for_network "$i"
 done
 echo ""
 

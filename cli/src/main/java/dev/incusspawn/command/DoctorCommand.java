@@ -396,8 +396,15 @@ public class DoctorCommand extends BaseCommand {
             var marker = token.indexOf(ProofToken.MARKER);
             var prefix = marker < 0 ? token : token.substring(0, marker);
             boolean earlier = value.startsWith(prefix + ProofToken.MARKER);
-            boolean build = value.startsWith(prefix + ProofToken.STATIC_MARKER)
-                    && (placeholder == null || placeholder.guard().isEmpty() || guardHolds.test(placeholder.guard()));
+            boolean build = value.startsWith(prefix + ProofToken.STATIC_MARKER);
+            if (build && placeholder != null && !placeholder.guard().isEmpty() && !guardHolds.test(placeholder.guard())) {
+                mismatch = true;
+                findings.add(Finding.warn(name + " requires a rebuilt image",
+                        "(this image cannot refresh its API-key approval; its static placeholder cannot authorize credentials)",
+                        new Remediation("Rebuild this instance's template and branch it again; a new login alone cannot fix this image",
+                                false, null)));
+                continue;
+            }
             if (earlier || build) {
                 mismatch = true;
                 findings.add(Finding.warn(name + " does not match this start's secret",

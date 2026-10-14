@@ -93,22 +93,22 @@ class BuildAccountsTest {
     }
 
     @Test
-    void aBuildPinningNothingKeepsDhcpAndItsStamps() {
+    void aBuildUsingDefaultsAlsoGetsAnAddressAndFreshProofs() {
         var daemon = new FakeIncusDaemon().container("tpl-q-rebuilding",
                 Map.of(Metadata.accountIdentityKey("claude"), "oauth"));
         var refreshes = new ArrayList<String>();
-
         var started = BuildAccounts.start(daemon.client(), "tpl-q-rebuilding", Map.of(), "tpl-q",
                 () -> refreshes.add("refresh"));
-
-        assertNull(started.address());
-        assertEquals(List.of(), refreshes);
-        var instance = daemon.instance("tpl-q-rebuilding");
-        assertFalse(instance.path("config").has(Metadata.STATIC_IP));
-        assertEquals("oauth", instance.path("config").path(Metadata.accountIdentityKey("claude")).asText());
-        assertEquals(List.of("GET /1.0/instances/tpl-q-rebuilding", "PUT /1.0/instances/tpl-q-rebuilding/state"),
-                daemon.requests().stream().filter(r -> !r.startsWith("GET /1.0/operations/")).toList(),
-                "served the defaults either way, it pays for none of the address's round trips");
+        assertNotNull(started.address());
+        assertEquals(List.of("refresh"), refreshes);
+        var config = daemon.instance("tpl-q-rebuilding").path("config");
+        assertFalse(config.has(Metadata.accountIdentityKey("claude")));
+        var secret = started.guestEnv().get(dev.incusspawn.proxy.InstanceSecret.DELIVERY_ENV);
+        assertEquals(dev.incusspawn.proxy.InstanceSecret.sha256(secret), config.path(Metadata.INSTANCE_SECRET_SHA256).asText(""));
+        assertEquals(dev.incusspawn.proxy.ProofVerifier.stamp(secret, dev.incusspawn.proxy.ProofToken.declared()),
+                config.path(Metadata.INSTANCE_PROOF_SHA256).asText(""));
+        BuildAccounts.revoke(daemon.client(), "tpl-q-rebuilding");
+        assertEquals("", daemon.instance("tpl-q-rebuilding").path("config").path(Metadata.INSTANCE_PROOF_SHA256).asText(""));
     }
 
     @Test

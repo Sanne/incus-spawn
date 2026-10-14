@@ -100,8 +100,10 @@ The proxy also caches container image layers and build artifacts on the host —
 Each start also replaces the placeholders with **proof tokens** derived from that start's secret (e.g. `gho_isx_…` in `GH_TOKEN`), exported by the login profile.
 They reach exactly what runs in an instance's login environment.
 A nested container, a sandbox or anything started without that environment gets none, unless you pass one in deliberately, e.g. `podman run -e GH_TOKEN …`.
-This does not yet cover an isx running inside an instance: until the outer proxy checks these tokens ([#1107](https://github.com/Sanne/incus-spawn/issues/1107)), it still serves its credentials to anything that reaches it from the instance's address, the nested isx's instances included. Once it does, they get none of the outer credentials unless the nested isx's config says `inherit` (see [Inheriting the outer instance's account](#inheriting-the-outer-instances-account)).
+The proxy injects a selected credential only when the source instance presents its current proof for that namespace. Nested instances with their own accounts keep their own authentication and destination; those without a proof get no outer credential. Deliberate sharing uses [the reserved `inherit` account](#inheriting-the-outer-instances-account), or explicitly passing the parent's token.
 A shell opened before the last `isx start` or `isx shell` keeps the tokens it was opened with: `isx doctor` run inside the instance compares them with the secret file and says what to do (a new login shell, or `isx shell` again from the host).
+
+After upgrading to proof enforcement, restart the proxy with `isx proxy stop` followed by `isx proxy start`, then run `isx shell <instance>` on the host to refresh existing instances. Open new login shells and restart tools that kept old tokens. An API-key Claude image built before the dynamic approval script needs rebuilding; `isx doctor` inside the instance reports this. Host-side tools now supply their own credentials, and Docker/Podman jobs that used the parent's accounts implicitly need an explicit token pass-through. See [upgrade and validation notes](docs/CREDENTIAL-PROOFS.md).
 
 ### Git Configuration
 
@@ -1260,7 +1262,7 @@ Changing a default moves every instance that follows it; `isx init` lists them f
 
 An isx running inside an isx instance serves its own instances from its own `config.yaml`. To let them use the outer instance's account for one credential instead, choose the reserved account `inherit` for it, like any other account: `isx branch inner-1 --account github=inherit`, `isx account set inner-1 github=inherit`, a template's `accounts:`, or `default: inherit` under `github:` in the inner `config.yaml`. The inner proxy then presents the outer instance's proof token in place of the inner instance's own, so the outer proxy serves the outer instance's account for that credential only. Outside an isx instance, `inherit` is refused when you branch, and so is any request that relies on it. `inherit` cannot be used as the name of an account of your own.
 
-What holds today: the inner proxy presents the outer instance's proof for an instance that inherits, and only for it. Until the outer proxy checks proof tokens ([#1107](https://github.com/Sanne/incus-spawn/issues/1107)), the outer proxy serves its credentials to everything from the outer instance's address anyway, so `inherit` makes no difference yet, and leaving it out does not keep the outer credentials from the nested instances.
+The inner proxy checks its instance's current proof before substituting the outer instance's proof. A nested process with no proof, a forged proof-shaped token, or an independent account gets no inherited credential. CA trust and the outer network policy still apply.
 
 A template whose own `accounts:` says `claude: inherit` builds Claude for an API key, the form the outer proxy turns into whichever account it serves. The git identity of an instance that inherits GitHub is the outer account's when it starts inheriting; if the outer instance later switches GitHub accounts, branch again or run `isx account set` to pick up the new one.
 

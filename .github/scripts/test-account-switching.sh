@@ -45,7 +45,7 @@ assert_eq() {
 
 # The token the proxy injected, as the upstream saw it.
 injected_in() {
-    incus exec "$1" -- curl -sf https://echo-accounts.incus-spawn.test/ 2>/dev/null \
+    incus exec "$1" -- bash /tmp/proof-curl.sh https://echo-accounts.incus-spawn.test/ -sf 2>/dev/null \
         | tr ',' '\n' | grep -i '"Authorization"' \
         | sed 's/.*Bearer \([^"]*\)".*/\1/'
 }
@@ -84,14 +84,14 @@ PROXY_PID="${ISX_PROXY_PID:-$(pgrep -f 'isx-proxy|incus-spawn-proxy' | head -1)}
 [ -n "$PROXY_PID" ] && kill -USR1 "$PROXY_PID" 2>/dev/null
 sleep 2
 
-if incus exec acct-alpha -- curl -sf https://echo-accounts.incus-spawn.test/ >/dev/null 2>&1; then
+if incus exec acct-alpha -- bash /tmp/proof-curl.sh https://echo-accounts.incus-spawn.test/ -sf >/dev/null 2>&1; then
     fail "a request from an instance pinned to a missing account is refused" \
         "the request succeeded, so some other account's credential was served"
 else
     pass "a request from an instance pinned to a missing account is refused"
 fi
 
-BODY=$(incus exec acct-alpha -- curl -s https://echo-accounts.incus-spawn.test/ 2>/dev/null)
+BODY=$(incus exec acct-alpha -- bash /tmp/proof-curl.sh https://echo-accounts.incus-spawn.test/ -s 2>/dev/null)
 case "$BODY" in
     *ghost*) pass "the refusal names the account that is missing" ;;
     *)       fail "the refusal names the account that is missing" "got: $BODY" ;;
@@ -139,7 +139,7 @@ reload_proxy() {
     sleep 3
 }
 claude_body() {
-    incus exec "$1" -- curl -s https://api.anthropic.com/v1/models 2>/dev/null
+    incus exec "$1" -- bash /tmp/proof-curl.sh https://api.anthropic.com/v1/models -s 2>/dev/null
 }
 case "$(claude_body acct-alpha)" in
     *"was built for claude"*) fail "before the change, Claude requests are not refused" ;;

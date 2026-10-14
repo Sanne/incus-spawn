@@ -242,27 +242,36 @@ echo "[9] Tool-contributed proxy credential injection"
 
 # 9a. Test fixture tool — bearer auth
 assert "tool proxy bearer: Authorization header injected" \
-    bash -c "curl -sf https://echo.incus-spawn.test/ | grep -q 'Bearer test-bearer-token-for-ci'"
+    bash -c "bash /tmp/proof-curl.sh https://echo.incus-spawn.test/ -sf | grep -q 'Bearer test-bearer-token-for-ci'"
 
 # 9b. Test fixture tool — basic auth
 assert "tool proxy basic: Authorization header injected" \
-    bash -c "curl -sf https://echo-basic.incus-spawn.test/ | grep -q 'Basic '"
+    bash -c "bash /tmp/proof-curl.sh https://echo-basic.incus-spawn.test/ -sf | grep -q 'Basic '"
 
 # 9c. Test fixture tool — custom header auth
 assert "tool proxy header: X-Custom-Auth header injected" \
-    bash -c "curl -sf https://echo-header.incus-spawn.test/ | grep -q 'Key test-api-key-for-ci'"
+    bash -c "bash /tmp/proof-curl.sh https://echo-header.incus-spawn.test/ -sf | grep -q 'Key test-api-key-for-ci'"
 
 # 9d. Built-in codex tool — bearer auth via config-path
 assert "codex: Bearer token injected for api.openai.com" \
-    bash -c "curl -sf https://api.openai.com/ | grep -q 'Bearer sk-test-openai-key-for-ci'"
+    bash -c "bash /tmp/proof-curl.sh https://api.openai.com/ -sf | grep -q 'Bearer sk-test-openai-key-for-ci'"
 
 # 9e. Built-in Anthropic — x-api-key header (hardcoded handler)
 assert "anthropic: x-api-key header injected for api.anthropic.com" \
-    bash -c "curl -sf https://api.anthropic.com/ | grep -q 'sk-ant-placeholder-for-ci'"
+    bash -c "bash /tmp/proof-curl.sh https://api.anthropic.com/ -sf | grep -q 'sk-ant-placeholder-for-ci'"
 
 # 9f. Built-in gh.yaml — bearer auth via wildcard *.github.com
 assert "github: Bearer token injected for api.github.com (wildcard)" \
-    bash -c "curl -sf https://api.github.com/ | grep -q 'Bearer '"
+    bash -c "bash /tmp/proof-curl.sh https://api.github.com/ -sf | grep -q 'Bearer '"
+
+# A NATed child arrives with this same source address. Address alone must never
+# turn its missing, static or independent credential into the parent's account.
+assert "a request without proof gets no host credential" \
+    bash -c "! curl -sf https://echo.incus-spawn.test/ | grep -q 'test-bearer-token-for-ci'"
+assert "a static placeholder gets no host credential" \
+    bash -c "curl -sf -H 'Authorization: Bearer tpt_placeholder' https://echo.incus-spawn.test/ | grep -q 'Bearer tpt_placeholder'"
+assert "an independent inner credential passes through unchanged" \
+    bash -c "curl -sf -H 'Authorization: Bearer inner-account-B' https://echo.incus-spawn.test/ | grep -q 'Bearer inner-account-B'"
 echo ""
 
 echo "========================================"
