@@ -123,6 +123,63 @@ class HelpChatModalTest {
     }
 
     @Test
+    void wrappedUnicodeQuestionKeepsEveryCharacterAndDeletesAWholeEmoji() {
+        var modal = answering("ok");
+        var question = "日本語の質問は入力欄の幅を超えて折り返されます、家族👨\u200D👩\u200D👧と国旗🇯🇵も分割されません 🙂";
+        type(modal, question);
+        for (int width : new int[] {40, 80}) {
+            var text = TuiSnapshot.toText(TuiSnapshot.render(width, 24, f -> modal.render(f, f.area())));
+            // Wide characters take two columns each, so the question takes several rows at either width.
+            int first = rowOf(text, "日本語の質問");
+            int last = rowOf(text, "🙂");
+            assertTrue(first >= 0 && last > first, text);
+            assertEquals(question.replace(" ", ""), questionRows(text, first, last), text);
+        }
+        modal.handleKey(KeyEvent.ofKey(KeyCode.BACKSPACE));
+        modal.handleKey(KeyEvent.ofKey(KeyCode.BACKSPACE));
+        modal.handleKey(CTRL_S);
+        assertEquals(List.of(question.substring(0, question.length() - " 🙂".length())), questions);
+    }
+
+    private static int rowOf(String text, String needle) {
+        var rows = text.split("\n");
+        for (int i = 0; i < rows.length; i++) if (rows[i].contains(needle)) return i;
+        return -1;
+    }
+
+    /** The question box's rows, without the modal's border, padding and the spaces wrapping consumed. */
+    private static String questionRows(String text, int first, int last) {
+        var rows = text.split("\n");
+        var sb = new StringBuilder();
+        for (int i = first; i <= last; i++) sb.append(rows[i].replaceAll("[║ ]", ""));
+        return sb.toString();
+    }
+
+    @Test
+    void wrappedAnswerLinkKeepsItsUrlIntactAndCannotInjectTerminalCommands() {
+        // ';' and '\' are valid in a URL, and TamboUI 0.5.0 wrote them as "\;" and "\\".
+        // ESC, BEL and the C1 controls (CSI, OSC, ST as single bytes) must never reach the terminal raw.
+        var url = "https://example.com/a;b=1\\c";
+        var modal = answering("This answer is long enough to wrap in the help window at either width, and its link"
+                + " sits past the first row. See [documentation](" + url
+                + "\u001b]0;owned\u0007\u009b31m\u009d0;x\u009c) for details.");
+        type(modal, "?");
+        modal.handleKey(CTRL_S);
+        for (int width : new int[] {40, 80}) {
+            var buffer = TuiSnapshot.render(width, 24, f -> modal.render(f, f.area()));
+            var text = TuiSnapshot.toText(buffer);
+            int first = rowOf(text, "This answer");
+            int link = rowOf(text, "documentation");
+            assertTrue(first >= 0 && link > first, text);
+            var ansi = buffer.toAnsiString();
+            assertTrue(ansi.contains("\u001b]8;;" + url), ansi);
+            assertFalse(ansi.contains("\u001b]0;owned"), ansi);
+            assertFalse(ansi.contains("\u0007"), ansi);
+            assertFalse(ansi.chars().anyMatch(c -> c >= 0x80 && c <= 0x9f), ansi);
+        }
+    }
+
+    @Test
     void multiLineQuestion() {
         var modal = answering(ANSWER);
         type(modal, "Why does this fail?\n\n  Error: proxy CA not trusted\n  at MitmProxy.handshake\n");
