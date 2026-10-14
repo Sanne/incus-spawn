@@ -124,6 +124,8 @@ These defaults bound retained logical file bytes across all repositories, includ
 Least-recently-used entries expire on preparation/publication until the size, age and 128-entry bounds hold.
 There is no background eviction daemon.
 A snapshot larger than the entire budget is usable for its current build but is not retained.
+Publishing an oversized replacement also retires the old generation for that URL, preventing repeated refreshes from a stale retained base.
+Existing readers keep their pinned files.
 Setting either limit to zero disables retention; malformed values use the defaults.
 Active work occupies temporary space in addition to the retained-cache budget.
 
@@ -146,10 +148,13 @@ Each prepared clone detaches its own clean snapshot before priming; other clean 
 
 ## Validation and measurements
 
+Preparation tests serve disposable remotes through `git daemon`, exercising the production transport policy without enabling file transport for tests.
+The daemon executable must be installed (`git-daemon` on Fedora).
 Real-Git tests compare the physical object inventory with the selected remote closure, including mixed private commits, stashes, staged blobs and a forced private delta base.
 They cover ref rewrites/deletions, moved tags, default HEAD changes, branch/tag pins, SHA-256 repositories, empty remotes, source removal, corruption and pruning while borrowing, integrity-failure retry, snapshot corruption and an unavailable remote.
 Incremental tests cover repeated SHA-1/SHA-256 updates, unchanged pack inodes, independent old readers and guest copies, new branches/tags, detached remote HEADs, merged branch deletion, removed history, advertisement races, new/retained pack corruption, failed fetches, cancellation and compaction.
 Concurrency tests cover independent readers, replacement and eviction, cross-process leases and dead-reader reclamation.
+Review regressions cover local paths, rewritten file transports, SSH defaults, denied or narrower guest access, writer waits beyond 30 seconds, unrelated URL locks, prime pipelining and oversized replacement with active readers.
 Guest-command tests exercise independent copies, later fetches, corruption fallback and the macOS checksum-input requirement.
 Existing shallow, project-local, hotplug, timeout and detach-failure tests remain regression coverage.
 
@@ -178,10 +183,11 @@ The [historical pre-incremental dataset](../bench/data/git-clean-snapshots-2026-
 That dataset also includes the former preliminary host-pack copy; source fingerprints identify both measured implementations.
 The current approach still retains a full clean payload and hashes its bytes, but ordinary upstream advances no longer repeat full-history packing and object validation.
 
-Before the review changes, local `mvn package` passed 4,511 tests with one skipped and no failures or errors on Git 2.56.0.
+Local `mvn package` passed 4,527 tests with one skipped and no failures or errors on Git 2.56.0.
 Focused preparation, cache, guest-copy and shallow-diagnostics tests pass with Git 2.54.0 as well as Git 2.56.0.
 A real Incus 6.23 container passed first preparation, cached reuse and incremental refresh after an upstream update.
 Guest checks verified independence after detach, full fsck and exact physical object inventory; the source remained unchanged and no devices were left attached.
+A guest-only denied-remote fixture also failed against a warm host cache without receiving a checkout or snapshot mount.
 The smoke test used an explicit UID mapping in this nested container.
 Its cold/warm checks omitted `shift=` in the test harness, and the incremental copy passed with the unchanged production mount options.
 Earlier validation also exercised the network fallback when the nested kernel refused a shifted mount.

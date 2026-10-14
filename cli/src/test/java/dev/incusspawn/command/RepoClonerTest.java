@@ -20,6 +20,11 @@ class RepoClonerTest {
     private static RepoCloner cloner(IncusClient incus) {
         var cloner = spy(new RepoCloner(incus));
         doReturn(null).when(cloner).planReference(any(), any());
+        doReturn("").when(cloner).checkTemplateAccess(any(), any(), any(), anyInt());
+        doAnswer(inv -> {
+            RepoCloner.RepoReference ref = inv.getArgument(1);
+            return reference(ref.deviceName(), ref.containerPath(), ref.source(), null);
+        }).when(cloner).prepareReference(any(), any(), any(), anyInt(), any());
         return cloner;
     }
 
@@ -29,6 +34,11 @@ class RepoClonerTest {
         when(prepared.strategy()).thenReturn("prepared Git packs");
         when(prepared.timingSummary()).thenReturn("prepare=0ms");
         return new RepoCloner.RepoReference(device, path, source, reason, null, prepared);
+    }
+
+    private static RepoCloner.RepoReference plannedReference(String device, String path, String source, String reason) {
+        return new RepoCloner.RepoReference(device, path, source, reason,
+                new dev.incusspawn.git.GitPreparation.Request("https://example.invalid/repo", null, null), null);
     }
 
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
@@ -163,7 +173,7 @@ class RepoClonerTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = cloner(incus);
-        var ref = reference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        var ref = plannedReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
         doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
@@ -195,7 +205,7 @@ class RepoClonerTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = cloner(incus);
-        var ref = reference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        var ref = plannedReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
         doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
@@ -223,7 +233,7 @@ class RepoClonerTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = cloner(incus);
-        var ref = reference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        var ref = plannedReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
         doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
@@ -253,7 +263,7 @@ class RepoClonerTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = cloner(incus);
-        var ref = reference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        var ref = plannedReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
         doReturn(ref).when(cmd).planReference(eq(repo.getUrl()), any());
 
         cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER);
@@ -401,7 +411,7 @@ class RepoClonerTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = cloner(incus);
-        doReturn(reference("ref-repo", "/mnt/ref/repo", "/host/repo", null))
+        doReturn(plannedReference("ref-repo", "/mnt/ref/repo", "/host/repo", null))
                 .when(cmd).planReference(eq(repo.getUrl()), any());
 
         assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
@@ -472,7 +482,7 @@ class RepoClonerTest {
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/owner/repo.git");
         repo.setPath("~/repo");
-        var ref = reference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
+        var ref = plannedReference("ref-repo", "/mnt/ref/repo", "/host/repo", null);
 
         var states = new java.util.concurrent.atomic.AtomicReferenceArray<BuildProgress.StepProgress>(1);
         cloner(incus).prepareOne(container, repo, ref, states, 0,
@@ -578,6 +588,7 @@ class RepoClonerTest {
             return OK;
         });
         var cmd = cloner(incus);
+        doCallRealMethod().when(cmd).checkTemplateAccess(any(), any(), any(), anyInt());
         doReturn(2).when(cmd).repoConcurrency(anyInt());
         var fast = repo("https://example.invalid/fast", "~/fast", "echo fast-prime");
         var slow = repo("https://example.invalid/slow", "~/slow", null);
@@ -679,7 +690,7 @@ class RepoClonerTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = cloner(incus);
-        doReturn(reference("ref-repo", "/mnt/ref/repo", "/host/repo", null))
+        doReturn(plannedReference("ref-repo", "/mnt/ref/repo", "/host/repo", null))
                 .when(cmd).planReference(eq(repo.getUrl()), any());
 
         assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, java.util.Map.of(), MachineType.CONTAINER));
@@ -705,7 +716,7 @@ class RepoClonerTest {
             repo.setUrl("https://github.com/owner/repo" + i + ".git");
             repo.setPath("~/repo" + i);
             repos.add(repo);
-            doReturn(reference("ref-" + i, "/mnt/ref/" + i, "/host/repo" + i, null))
+            doReturn(plannedReference("ref-" + i, "/mnt/ref/" + i, "/host/repo" + i, null))
                     .when(cmd).planReference(eq(repo.getUrl()), any());
         }
         var imageDef = trusted("tpl-test");

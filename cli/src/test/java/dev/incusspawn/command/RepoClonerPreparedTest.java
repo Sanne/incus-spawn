@@ -31,6 +31,7 @@ class RepoClonerPreparedTest {
     private Path remote;
     private Path host;
     private IncusClient incus;
+    private dev.incusspawn.git.GitPreparation preparation;
     private dev.incusspawn.git.GitTestServer server;
     private final List<String> scripts = new ArrayList<>();
     private final List<Path> mounts = new ArrayList<>();
@@ -47,6 +48,7 @@ class RepoClonerPreparedTest {
         git(tmp, "clone", "-q", "--", server.url(remote), host.toString());
         commitBinary(host, "private work");
         git(host, "repack", "-a", "-d");
+        preparation = new dev.incusspawn.git.GitPreparation(dev.incusspawn.config.GitCacheConfig.DEFAULT);
         incus = mock(IncusClient.class);
         when(incus.execInContainer(eq("test"), eq("agentuser"), anyString())).thenAnswer(inv -> {
             String script = inv.getArgument(2);
@@ -89,7 +91,7 @@ class RepoClonerPreparedTest {
                 return true;
             }
         };
-        new RepoCloner(incus).prepareOne(new Container(incus, "test"), repo, planned, states, 0,
+        new RepoCloner(incus, preparation).prepareOne(new Container(incus, "test"), repo, planned, states, 0,
                 new AtomicBoolean(), new java.util.concurrent.Semaphore(1), new java.util.concurrent.CountDownLatch(0), mounts);
         return states.get(0);
     }

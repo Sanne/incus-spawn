@@ -29,6 +29,21 @@ class PreparationCacheTest {
         }
     }
 
+    @Test void anOversizedReplacementRetiresTheOldSnapshotWithoutInvalidatingReaders() throws Exception {
+        var cache = new PreparationCache(root, new GitCacheConfig(20, Duration.ofDays(1)));
+        try (var lease = cache.lease()) {
+            cache.publishSnapshot("repo", staged(lease.path, "old", 12));
+            var pin = lease.path.resolve("pin");
+            assertTrue(cache.snapshot("repo", pin));
+            var oversized = staged(lease.path, "new", 21);
+            cache.publishSnapshot("repo", oversized);
+            assertFalse(cache.snapshot("repo", lease.path.resolve("stale")));
+            assertTrue(PreparationGit.children(root.resolve("snapshots")).isEmpty());
+            assertEquals(12, Files.size(pin.resolve("data")), "a live reader still owns the old bytes");
+            assertTrue(Files.exists(oversized), "oversized work remains usable by its current caller");
+        }
+    }
+
     @Test void expiryAndAnAliasedCachePathCannotReapALiveLease() throws Exception {
         var cache = new PreparationCache(root, GitCacheConfig.DEFAULT);
         try (var lease = cache.lease()) {

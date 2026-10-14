@@ -118,13 +118,17 @@ final class PreparationCache {
     }
 
     void publishSnapshot(String key, Path staged) throws IOException {
-        if (policy.snapshotBytes() == 0 || policy.maxAge().isZero() || size(staged) > policy.snapshotBytes()) return;
+        boolean retain = policy.snapshotBytes() > 0 && !policy.maxAge().isZero() && size(staged) <= policy.snapshotBytes();
         try (var ignored = catalogue()) {
             var parent = Files.createDirectories(root.resolve("snapshots"));
-            var target = parent.resolve(key + "-" + UUID.randomUUID());
-            // Only complete directories appear in the catalogue. Staging shares the cache filesystem.
-            Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE);
-            touch(target);
+            Path target = null;
+            if (retain) {
+                target = parent.resolve(key + "-" + UUID.randomUUID());
+                // Only complete directories appear in the catalogue. Staging shares the cache filesystem.
+                Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE);
+                touch(target);
+            }
+            // An oversized replacement must retire the old generation too; readers keep their own pins.
             for (var old : children(parent)) {
                 if (!old.equals(target) && old.getFileName().toString().startsWith(key + "-")) delete(old);
             }

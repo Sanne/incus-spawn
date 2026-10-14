@@ -41,6 +41,7 @@ class RepoClonerShallowTest {
     private Path upstream;
     private dev.incusspawn.git.GitTestServer server;
     private IncusClient incus;
+    private dev.incusspawn.git.GitPreparation preparation;
     private Container container;
     private final List<String> stderr = Collections.synchronizedList(new ArrayList<>());
 
@@ -49,6 +50,7 @@ class RepoClonerShallowTest {
         upstream = releasesFixture(tmp);
         server = new dev.incusspawn.git.GitTestServer(tmp);
 
+        preparation = new dev.incusspawn.git.GitPreparation(dev.incusspawn.config.GitCacheConfig.DEFAULT);
         incus = mock(IncusClient.class);
         container = new Container(incus, "test");
         // The guest is this machine; a reference is a plain directory here, so it needs no mount wait.
@@ -440,7 +442,7 @@ class RepoClonerShallowTest {
             ref = new RepoCloner.RepoReference("ref", reference.toString(), reference.toString(), null,
                     new dev.incusspawn.git.GitPreparation.Request(repo.getUrl(), repo.getBranch(), reference), null);
         }
-        new RepoCloner(incus) {
+        new RepoCloner(incus, preparation) {
             @Override RepoReference prepareReference(ImageDef.RepoEntry entry, RepoReference planned,
                                                        AtomicReferenceArray<StepProgress> progress, int index, String advertisement) {
                 var prepared = super.prepareReference(entry, planned, progress, index, advertisement);

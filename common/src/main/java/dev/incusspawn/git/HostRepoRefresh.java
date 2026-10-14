@@ -14,9 +14,6 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Consumer;
 
@@ -44,68 +41,6 @@ public final class HostRepoRefresh {
         if (!classified.toClone.isEmpty()) {
             cloneSequentially(classified.toClone, config);
         }
-    }
-
-    /**
-     * Start an async refresh: clone missing repos synchronously (may prompt), then
-     * fetch existing host repos in background on the provided executor. The returned
-     * handle lets callers latch on the fetch when they actually need the repos.
-     */
-    public static AsyncRefresh refreshAsync(List<ImageDef.RepoEntry> repos, Map<String, Integer> depths,
-                                            SpawnConfig config, boolean cloneMissing, ExecutorService executor) {
-        if (repos.isEmpty()) return AsyncRefresh.COMPLETE;
-        if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return AsyncRefresh.COMPLETE;
-
-        var classified = classify(repos, depths, config, cloneMissing);
-        if (classified.toFetch.isEmpty() && classified.toClone.isEmpty()) return AsyncRefresh.COMPLETE;
-
-        if (!classified.toClone.isEmpty()) {
-            cloneSequentially(classified.toClone, config);
-        }
-
-        if (classified.toFetch.isEmpty()) return AsyncRefresh.COMPLETE;
-
-        var warnings = new CopyOnWriteArrayList<String>();
-        BuildOutput.note("Refreshing " + classified.toFetch.size() + " host "
-                + (classified.toFetch.size() == 1 ? "repo" : "repos") + " in background.");
-        var futures = classified.toFetch.stream()
-                .map(task -> CompletableFuture.runAsync(() -> {
-                    try {
-                        var result = task.fetch();
-                        if (!result.success()) {
-                            warnings.add("Fetch failed for " + task.repoName() + " at " + task.hostPath()
-                                    + ": " + extractGitError(result.output()));
-                        }
-                    } catch (Exception e) {
-                        warnings.add("Fetch failed for " + task.repoName() + " at " + task.hostPath()
-                                + ": " + e.getMessage());
-                    }
-                }, executor))
-                .toArray(CompletableFuture[]::new);
-
-        return new AsyncRefresh(CompletableFuture.allOf(futures), warnings);
-    }
-
-    /**
-     * Handle for an in-flight async host repo refresh. Call {@link #join()} to block
-     * until all background fetches complete, then inspect {@link #warnings()} for
-     * any non-fatal fetch failures.
-     */
-    public static class AsyncRefresh {
-        public static final AsyncRefresh COMPLETE = new AsyncRefresh(
-                CompletableFuture.completedFuture(null), List.of());
-
-        private final CompletableFuture<Void> future;
-        private final List<String> warnings;
-
-        AsyncRefresh(CompletableFuture<Void> future, List<String> warnings) {
-            this.future = future;
-            this.warnings = warnings;
-        }
-
-        public void join() { future.join(); }
-        public boolean isDone() { return future.isDone(); }
-        public List<String> warnings() { return warnings; }
     }
 
     private record ClassifiedRepos(List<FetchTask> toFetch, List<CloneTask> toClone) {}

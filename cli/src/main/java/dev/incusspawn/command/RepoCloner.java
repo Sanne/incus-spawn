@@ -37,11 +37,17 @@ import static dev.incusspawn.util.BuildOutput.styled;
 class RepoCloner {
 
     private final IncusClient incus;
+    private GitPreparation preparation;
     private final java.util.Map<Integer, GitPreparation.Prepared> prepared = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<Integer, String> preparationTimings = new java.util.concurrent.ConcurrentHashMap<>();
 
     RepoCloner(IncusClient incus) {
         this.incus = incus;
+    }
+
+    RepoCloner(IncusClient incus, GitPreparation preparation) {
+        this(incus);
+        this.preparation = preparation;
     }
 
     // 4 WebSocket fds (stdin, stdout, stderr, control) + 1 /wait long-poll per non-PTY exec
@@ -249,6 +255,17 @@ class RepoCloner {
                             r.source(), r.skipReason(), r.request(), r.prepared());
                 }
             }
+            if (java.util.Arrays.stream(refs).anyMatch(r -> r != null && r.request() != null)) {
+                try {
+                    preparation = new GitPreparation(config.gitCache());
+                } catch (Exception e) {
+                    for (int i = 0; i < refs.length; i++) {
+                        if (refs[i] != null && refs[i].request() != null) {
+                            refs[i] = RepoReference.skipped("Git preparation unavailable: " + e.getMessage());
+                        }
+                    }
+                }
+            }
             var planned = java.util.Arrays.stream(refs).filter(r -> r != null && r.hasDevice())
                     .map(RepoReference::containerPath).toArray(String[]::new);
             if (planned.length > 0) {
@@ -352,13 +369,9 @@ class RepoCloner {
         try {
             limiter.acquireUninterruptibly();
             try {
-                if (hasReference && planned.prepared() != null) prepared.put(idx, planned.prepared());
                 if (hasReference && ref.hasDevice() && planned.request() != null) {
                     ref = prepareReference(repo, planned, states, idx, advertisement);
                     if (ref.prepared() != null) prepared.put(idx, ref.prepared());
-                }
-                if (hasReference && ref.hasDevice() && repo.getDepth() == null && ref.prepared() == null) {
-                    ref = RepoReference.skipped("full Git reference was not prepared");
                 }
                 long attaching = System.nanoTime();
                 if (hasReference && ref.hasDevice()) ref = mounts.attach(idx, ref);
@@ -439,7 +452,7 @@ class RepoCloner {
         return ref != null && ref.hasDevice() && ref.request() == null && ref.prepared() == null;
     }
 
-    private String checkTemplateAccess(Container container, ImageDef.RepoEntry repo,
+    String checkTemplateAccess(Container container, ImageDef.RepoEntry repo,
                                    AtomicReferenceArray<StepProgress> states, int idx) {
         states.set(idx, StepProgress.running("Checking template repository access"));
         long start = System.nanoTime();
@@ -456,7 +469,7 @@ class RepoCloner {
                                    AtomicReferenceArray<StepProgress> states, int idx, String advertisement) {
         try {
             var request = new GitPreparation.Request(repo.getUrl(), repo.getBranch(), ref.request().checkout());
-            var result = new GitPreparation(SpawnConfig.load().gitCache()).prepare(request,
+            var result = preparation.prepare(request,
                     phase -> states.set(idx, StepProgress.running(phase)));
             boolean accepted = false;
             try {

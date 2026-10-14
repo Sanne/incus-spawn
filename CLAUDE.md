@@ -82,6 +82,8 @@ Install from the main checkout, never from a worktree you will delete; `--native
 
 To check a change against a real Incus on a disposable Linux host, `scripts/local-incus.sh` sets one up the way CI's `isx-integration-tests-native` job does, and the `validate-on-real-incus` skill (`.claude/skills/`) covers what to exercise and inspect.
 
+Git preparation tests require `git daemon` (`git-daemon` on Fedora) and serve disposable loopback remotes.
+
 ## Tech Stack
 
 - **Java 25**, **Quarkus 3.x** with aesh for CLI commands
