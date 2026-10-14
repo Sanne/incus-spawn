@@ -152,6 +152,35 @@ class TerminalLinkTest {
     }
 
     @Test
+    void linkStripsC1Controls() {
+        // CSI, OSC and ST as single C1 characters start or end a sequence on terminals that honour them.
+        var result = TerminalLink.link("https://example.com/\u009b31m\u009d0;x\u009c", "cl\u0085ick\u009f");
+        assertEquals(OSC8_OPEN + "https://example.com/31m0;x" + ST + "click" + OSC8_CLOSE, result);
+    }
+
+    @Test
+    void parseSegmentsStripsC1Controls() {
+        var segments = TerminalLink.parseSegments("see [cl\u0080ick](https://example.com/\u009dx)");
+        var link = (TerminalLink.Segment.Link) segments.get(1);
+        assertEquals("https://example.com/x", link.url());
+        assertEquals("click", link.label());
+    }
+
+    @Test
+    void linkStripsBidiOverrides() {
+        // U+202E would draw the rest of the label, and the line after it, right to left.
+        var result = TerminalLink.link("https://example.com/", "safe\u202Etxt.exe\u2066");
+        assertEquals(OSC8_OPEN + "https://example.com/" + ST + "safetxt.exe" + OSC8_CLOSE, result);
+    }
+
+    @Test
+    void sanitizeKeepsPrintableNonAscii() {
+        var result = TerminalLink.link("https://example.com/caf\u00e9", "\u00a0caf\u00e9 \u65e5\u672c");
+        assertEquals(OSC8_OPEN + "https://example.com/caf\u00e9" + ST + "\u00a0caf\u00e9 \u65e5\u672c" + OSC8_CLOSE,
+                result);
+    }
+
+    @Test
     void wrapSegmentsKeepsLinkAtomic() {
         var segments = List.<TerminalLink.Segment>of(
                 new TerminalLink.Segment.Text("see "),

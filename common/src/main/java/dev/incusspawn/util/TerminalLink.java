@@ -166,18 +166,11 @@ public final class TerminalLink {
         return end > 0 ? url.substring(0, end) : url;
     }
 
+    /** Drops what a terminal may act on ({@link OutputFormat#isControl}): C1 included, as U+009B is an 8-bit CSI. */
     private static String sanitize(String s) {
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c < 0x20 || c == 0x7f) {
-                var sb = new StringBuilder(s.length());
-                for (int j = 0; j < s.length(); j++) {
-                    c = s.charAt(j);
-                    if (c >= 0x20 && c != 0x7f) sb.append(c);
-                }
-                return sb.toString();
-            }
-        }
-        return s;
+        if (s.codePoints().noneMatch(OutputFormat::isControl)) return s;
+        var sb = new StringBuilder(s.length());
+        s.codePoints().filter(c -> !OutputFormat.isControl(c)).forEach(sb::appendCodePoint);
+        return sb.toString();
     }
 }
