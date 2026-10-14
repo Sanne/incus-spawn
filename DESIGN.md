@@ -190,7 +190,7 @@ A definition sets `deprecated: true` or `deprecated: <what to use instead>` (#11
 Removing a template outright was the alternative: every template derived from it would stop building on upgrade, with no warning beforehand.
 
 No coding agent is included in built-in templates by default — users add the ones they need to custom image definitions.
-Available Java tools: `gemini-cli` (Gemini CLI, installation and configuration only), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent, Anthropic or OpenAI provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
+Available Java tools: `gemini-cli` (Gemini CLI, no login through isx yet, #1409), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent, Anthropic or OpenAI provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
 
 Each image definition specifies:
 - `name` — container name (required)
@@ -350,10 +350,10 @@ Dependencies are installed before the tools that require them.
 It disables telemetry, usage statistics, automatic updates and notifications, startup tips, the banner and home-directory warnings, folder trust prompts, and inner sandboxing.
 It writes a priority-zero allow-all user policy in `~/.gemini/policies/isx-auto-approve.toml` for default, auto-edit, and YOLO modes.
 This makes direct and headless launches auto-approve tool calls while leaving plan mode unaffected and allowing higher-priority user rules to override it.
-Its shell action runs plain `gemini`.
 The policy allows shell redirection, but default-mode shell heuristics still apply to commands outside the workspace and parsing failures; full YOLO still requires its flag.
 The optional, reconfigurable `model` parameter pins `model.name`; otherwise the CLI selects its default.
-This integration declares no authentication settings, environment placeholders, credential namespaces, or proxy rules.
+This integration declares no authentication settings, environment placeholders, credential namespaces, or proxy rules, because the proxy cannot inject a Gemini credential yet (#1409) and none may enter the box.
+Until it can, `gemini` in the box only says so, so the CLI never reaches its own login prompt; `.claude/rules/tools-env.md` has the mechanism.
 
 **Resolution order** (later overrides earlier): built-in YAML (`resources/tools/`) → user-defined YAML (`~/.config/incus-spawn/tools/`) → search paths → project-local (`.incus-spawn/tools/`).
 A YAML tool with the same name replaces any earlier definition.

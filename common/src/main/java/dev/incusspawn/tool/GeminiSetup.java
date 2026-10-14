@@ -6,7 +6,7 @@ import dev.incusspawn.util.BuildOutput;
 import java.util.List;
 import java.util.Map;
 
-/** Installs and configures Gemini CLI; authentication is deliberately left to a separate integration. */
+/** Installs and configures Gemini CLI; login waits for proxy support (#1409). */
 public class GeminiSetup implements ToolSetup {
 
     static final String CONFIG_PATH = "/home/agentuser/.gemini/settings.json";
@@ -21,6 +21,24 @@ public class GeminiSetup implements ToolSetup {
             priority = 0
             modes = ["default", "autoEdit", "yolo"]
             """;
+    static final String UNSUPPORTED_NOTICE_PATH = "/etc/profile.d/isx-gemini-login.sh";
+    static final String LOGIN_ISSUE_URL = "https://github.com/Sanne/incus-spawn/issues/1409";
+
+    /**
+     * Shadows the CLI in every login and interactive shell, so it never reaches its own login
+     * prompt, which asks for a key or token to keep in the box: the proxy cannot inject one yet,
+     * and none may enter the box. Remove once #1409 lands.
+     */
+    static final String UNSUPPORTED_NOTICE_SCRIPT = """
+            # Written by isx: Gemini login through isx is not supported yet (%1$s)
+            gemini() {
+              echo "Gemini login through isx is not supported yet: credentials never enter the box, and the proxy cannot supply a Gemini key yet." >&2
+              echo "See %1$s" >&2
+              return 1
+            }
+            # Exported, so a non-login bash an agent starts finds it too; a failed export ends a POSIX sh
+            if [ -n "${BASH_VERSION:-}" ]; then export -f gemini; fi
+            """.formatted(LOGIN_ISSUE_URL);
 
     @Override
     public String name() { return "gemini-cli"; }
@@ -47,7 +65,8 @@ public class GeminiSetup implements ToolSetup {
         var action = new ToolDef.ActionEntry();
         action.setLabel("Gemini CLI");
         action.setType("shell");
-        action.setCommand("gemini");
+        // A login shell, so the notice in /etc/profile.d also answers when zmx starts the command.
+        action.setCommand("bash -lc gemini");
         action.setAutoReturn(true);
         return List.of(action);
     }
@@ -56,6 +75,7 @@ public class GeminiSetup implements ToolSetup {
     public void install(Container c, Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Installing Gemini CLI...");
         NpmGlobalInstall.install(c, "Gemini CLI", "@google/gemini-cli");
+        c.writeFile(UNSUPPORTED_NOTICE_PATH, UNSUPPORTED_NOTICE_SCRIPT);
         BuildOutput.stepDone();
         configureSettings(c, resolvedParams);
     }

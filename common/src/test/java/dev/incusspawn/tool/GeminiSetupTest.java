@@ -6,6 +6,10 @@ import dev.incusspawn.incus.IncusException;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import io.hyperfoil.tools.jjq.value.JqBoolean;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import java.util.Map;
 
@@ -40,7 +44,7 @@ class GeminiSetupTest {
         assertTrue(tool.credentialNamespaces().isEmpty());
         assertTrue(tool.placeholders().isEmpty());
         assertTrue(tool.envEntries(Map.of()).isEmpty());
-        assertEquals("gemini", tool.actions().getFirst().getCommand());
+        assertEquals("bash -lc gemini", tool.actions().getFirst().getCommand());
     }
 
     @Test
@@ -73,6 +77,9 @@ class GeminiSetupTest {
                 argThat(cmd -> cmd.contains(GeminiSetup.POLICY_PATH)
                         && cmd.contains("decision = \"allow\"") && cmd.contains("priority = 0")
                         && cmd.contains("modes = [\"default\", \"autoEdit\", \"yolo\"]")));
+        verify(incus).shellExec(eq(INSTANCE), eq("sh"), eq("-c"),
+                argThat(cmd -> cmd.contains(GeminiSetup.UNSUPPORTED_NOTICE_PATH)
+                        && cmd.contains("gemini() {") && cmd.contains(GeminiSetup.LOGIN_ISSUE_URL)));
         clearInvocations(incus);
         tool.reconfigure(container, Map.of("model", "gemini-4-argon"));
         verify(incus, never()).shellExec(eq(INSTANCE),
@@ -81,6 +88,27 @@ class GeminiSetupTest {
                 argThat(cmd -> cmd.contains(GeminiSetup.CONFIG_PATH) && cmd.contains("gemini-4-argon")));
         verify(incus).shellExec(eq(INSTANCE), eq("sh"), eq("-c"),
                 argThat(cmd -> cmd.contains(GeminiSetup.POLICY_PATH)));
+    }
+
+    @Test
+    void noticeScriptRefusesInBashAndKeepsAPosixLoginGoing(@TempDir Path dir) throws Exception {
+        var script = dir.resolve("isx-gemini-login.sh");
+        Files.writeString(script, GeminiSetup.UNSUPPORTED_NOTICE_SCRIPT);
+        var bash = run("bash", "-c", ". \"$0\"; bash -c gemini", script.toString());
+        assertEquals(1, bash.exitValue());
+        assertTrue(bash.output().contains("Gemini login through isx is not supported yet"), bash.output());
+        assertTrue(bash.output().contains(GeminiSetup.LOGIN_ISSUE_URL), bash.output());
+        var sh = run("sh", "-c", ". \"$0\"; echo still-running", script.toString());
+        assertEquals(0, sh.exitValue(), sh.output());
+        assertTrue(sh.output().contains("still-running"), sh.output());
+    }
+
+    private record Run(int exitValue, String output) {}
+
+    private static Run run(String... command) throws Exception {
+        var process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        var output = new String(process.getInputStream().readAllBytes());
+        return new Run(process.waitFor(), output);
     }
 
     @Test

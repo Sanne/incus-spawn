@@ -30,10 +30,10 @@ paths:
 It disables telemetry, usage statistics, self-updates and notifications, startup tips, the banner and home-directory warnings, folder trust prompts, and inner sandboxing.
 It writes `~/.gemini/policies/isx-auto-approve.toml`, a priority-zero allow-all user policy for default, auto-edit, and YOLO modes.
 The policy also applies to direct and headless launches, excludes plan mode, and permits higher-priority user overrides.
-Its action runs plain `gemini`.
 At the end of either build path, `GuestProvisioning.writeAgentContext()` writes the resolved environment instructions to the build-owned `~/.gemini/GEMINI.md` as `agentuser`.
 The tool leaves `context.fileName` unset.
-Authentication and proxy support are intentionally absent from this tool.
+It has no authentication or proxy support: the proxy cannot inject a Gemini credential yet (#1409), and none may enter the box.
+Until it can, `/etc/profile.d/isx-gemini-login.sh` shadows `gemini` with an exported shell function that says so and links #1409; the action runs `bash -lc gemini` to reach it through zmx too.
 
 Tools can declare an `agent_note:` (exposed uniformly via `ToolSetup.agentNote()`, overridden in `YamlToolSetup`; Java tools may override it too).
 It is an always-true fact that must be known *before* the first relevant action, rendered by the build into `/etc/claude-code/CLAUDE.md` (see `.claude/rules/build.md`).

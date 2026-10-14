@@ -66,7 +66,7 @@ The `gemini-cli` tool installs and configures Google Gemini CLI through `GeminiS
 Its optional `model` parameter leaves the upstream default unpinned, and a user policy auto-approves tools within isx isolation.
 The policy applies to direct launches as well as the action, excludes plan mode, and allows higher-priority user overrides.
 Each build writes the resolved template environment instructions to `~/.gemini/GEMINI.md` when Gemini is installed, leaving `context.fileName` unset.
-It supplies no authentication settings or proxy integration; see `.claude/rules/tools-env.md` for the configuration scope.
+Gemini login through isx is not supported yet (#1409): `gemini` in the box only says so; see `.claude/rules/tools-env.md`.
 
 ## Build and Test Commands
 

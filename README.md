@@ -610,6 +610,10 @@ tools:
 default-action: gemini-cli
 ```
 
+Gemini login through isx is not supported yet ([#1409](https://github.com/Sanne/incus-spawn/issues/1409)).
+Credentials never enter the box, and the proxy cannot supply a Gemini API key or token yet, so `gemini` in the box and the tool's action only print that and link the issue.
+The settings below take effect once the proxy supports Gemini.
+
 The tool installs `@google/gemini-cli` and writes `~/.gemini/settings.json`.
 It disables telemetry, usage statistics, automatic updates and update notifications, startup tips, the banner and home-directory warnings, folder trust prompts, and the CLI's inner sandbox.
 The tool writes `~/.gemini/policies/isx-auto-approve.toml` to auto-approve tool calls in normal, auto-edit, and YOLO modes.
@@ -632,8 +636,6 @@ The tool leaves `context.fileName` unset.
 
 Without `model`, Gemini CLI chooses its own default.
 The model parameter is reconfigurable in child templates without reinstalling the CLI.
-This tool provides installation and configuration only: it does not configure authentication, export credential placeholders, or add proxy rules.
-Authentication must be supplied separately before running coding tasks.
 
 ### Bob Shell
 
@@ -799,7 +801,7 @@ These tools ship with incus-spawn and can be referenced by name in a template's 
 | `claude` | Claude Code: AI coding assistant |
 | `gh` | GitHub: PAT for git operations |
 | `pi` | Pi: AI coding assistant |
-| `gemini-cli` | Gemini CLI: Google coding assistant (installation and configuration only) |
+| `gemini-cli` | Gemini CLI: Google coding assistant (no login through isx yet, [#1409](https://github.com/Sanne/incus-spawn/issues/1409)) |
 | `bob` | Bob Shell: IBM AI coding assistant |
 | `codex` | Codex CLI: OpenAI coding assistant |
 | `copilot` | GitHub Copilot CLI: AI coding assistant (shares `gh` token) |
