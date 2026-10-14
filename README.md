@@ -1306,10 +1306,21 @@ Resolution order (later sources override earlier ones with the same name):
 3. Search paths (in listed order)
 4. Project-local (`.incus-spawn/`)
 
-The TUI updates live as instances are started, stopped, created or deleted elsewhere. To turn this off:
+The TUI updates live as instances are started, stopped, created or deleted elsewhere.
+To turn this off:
 
 ```yaml
 tui-live-refresh: false
+```
+
+`isx proxy install` waits for the proxy to become healthy after starting the service.
+The default is 5 seconds, which is enough on most machines.
+On a loaded host (freshly provisioned, storage under pressure) the JVM proxy can take longer.
+To raise the timeout:
+
+```yaml
+proxy:
+  install-timeout: 15s    # durations: 5s, 15s, 30s, 1m ...
 ```
 
 ## Scripting isx

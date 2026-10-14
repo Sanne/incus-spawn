@@ -3,6 +3,7 @@ package dev.incusspawn.proxy;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.config.ProxyServiceConfig;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.Platform;
@@ -241,7 +242,7 @@ public final class ProxyService {
         runQuiet("sudo", "loginctl", "enable-linger", System.getProperty("user.name"));
 
         if (isActive()) {
-            if (ProxyHealthCheck.awaitHealthy(5)) {
+            if (ProxyHealthCheck.awaitHealthy(ProxyServiceConfig.installTimeoutFromConfig())) {
                 System.out.println("Proxy service is running.");
                 return true;
             }
@@ -1316,7 +1317,7 @@ public final class ProxyService {
             return false;
         }
         if (isActive()) {
-            if (awaitStarted(5)) {
+            if (awaitStarted(ProxyServiceConfig.installTimeoutFromConfig())) {
                 ProxyLog.info("Service installed and running");
                 System.out.println("  Services installed and running.");
                 return true;
