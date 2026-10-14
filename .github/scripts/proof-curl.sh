@@ -1,5 +1,5 @@
 #!/bin/bash
-# Requests to CI's echo upstreams must present a real per-start namespace proof.
+# Requests to CI's echo upstreams must present a real per-instance namespace proof.
 # Used even in minimal images without the corresponding tool installed.
 set -euo pipefail
 url=${1:?usage: proof-curl.sh URL [curl-options...]}

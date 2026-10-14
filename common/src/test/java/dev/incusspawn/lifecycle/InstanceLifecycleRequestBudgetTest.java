@@ -44,6 +44,12 @@ import static org.mockito.Mockito.spy;
 class InstanceLifecycleRequestBudgetTest {
 
     private static final String NAME = "dev-1";
+
+    private static Map<String, String> stableProofConfig() {
+        var config = new java.util.LinkedHashMap<String, String>();
+        dev.incusspawn.proxy.InstanceSecret.stampInto(config);
+        return config;
+    }
     /** A key a caller stamps on its branch; any key works. */
     private static final String OWNER = Metadata.PREFIX + "owner";
 
@@ -69,7 +75,7 @@ class InstanceLifecycleRequestBudgetTest {
     void aStartForUseAddsOneWriteForItsSecret() {
         // The prep's read, the secret's hash (#934), the start and its wait; the secret itself
         // rides in the readiness probe, which costs nothing it did not cost before.
-        var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
+        var daemon = new FakeIncusDaemon().container(NAME, stableProofConfig()).ipFiltering(NAME, "true");
         assertThrows(IncusException.class, () -> InstanceLifecycle.startForUse(
                 daemon.clientWithShortReadyWait(), NAME, dev.incusspawn.incus.MachineType.CONTAINER, msg -> {}));
         var requests = daemon.requests();
@@ -102,7 +108,7 @@ class InstanceLifecycleRequestBudgetTest {
     void ensureReadyStartsAStoppedInstanceWithoutReadingItAgain() {
         // The shell path already read the instance to see it is stopped: the start's device
         // repairs and its mcp-caller grant (#1182) take that read
-        var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
+        var daemon = new FakeIncusDaemon().container(NAME, stableProofConfig()).ipFiltering(NAME, "true");
         var instance = JacksonTrees.fromJsonNode(daemon.instance(NAME));
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(daemon.clientWithShortReadyWait(),
                 NAME, instance, dev.incusspawn.incus.MachineType.CONTAINER, msg -> {}));
@@ -118,7 +124,7 @@ class InstanceLifecycleRequestBudgetTest {
         // isx shell's and the TUI's start, then their CA check. The start reads the instance once
         // the guest answers, for the boot Incus recorded, and stamps it (#1024); the CA check
         // reuses that read. So the boot costs one PATCH: 6, where it was 5 before #1024.
-        var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
+        var daemon = new FakeIncusDaemon().container(NAME, stableProofConfig()).ipFiltering(NAME, "true");
         var incus = spy(daemon.client());
         doNothing().when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
         var started = InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, msg -> {});

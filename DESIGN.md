@@ -1670,14 +1670,23 @@ Guessing from the pre-start state was rejected: a stamp written before a start c
 **Proof tokens: address and proof authorize credential injection (#1100, #1107).**
 A nested machine shares its parent's apparent source address after NAT, including user-mode networking.
 Every credential request therefore needs the current proof for that address and credential namespace before the proxy can inject the selected account.
-`ProofToken.derive(secret, namespace)` remains an HMAC-SHA256 keyed with the raw per-start secret, truncated to 32 hexadecimal characters.
+`ProofToken.derive(seed, namespace)` is HMAC-SHA256 keyed with a stable credential seed, truncated to 32 hexadecimal characters.
+`CredentialProof` derives the seed with HMAC-SHA256 from a protected host key and a fresh random generation recorded in `user.incus-spawn.instance-proof-id`.
+The host key lives in `~/.config/incus-spawn/credential-proofs/host.key`, with the ownership, permissions and atomic-creation checks used for host-route secrets.
+It must be backed up with the instance state; losing it requires restoring it or explicitly resetting affected instances.
+The generation is public and cannot derive a usable proof without the host key.
+Starts and reboots retain it; branches, replacement instances and explicit reset get fresh generations.
+The separate MCP and host-service secret still rotates on every start.
 Tools declare their token prefixes and environment variables in `proxy.placeholders`; a token is the prefix followed by `isx_` and the digest.
 The host records SHA-256 of each namespace digest in one replaceable `user.incus-spawn.instance-proof-sha256` stamp (`ProofVerifier`).
 The stamp contains neither usable tokens nor the raw secret.
-Re-keying with the secret hash is unsafe because guests can read `user.*` metadata through `/dev/incus`.
+Deriving proofs from a public metadata value alone is unsafe because guests can read `user.*` through `/dev/incus`.
 All declared prefixes of one namespace normalize to the same digest, and verifier comparisons use constant-time hash comparison.
 
 `ProofCarriers` reads authentication carriers from trusted tool declarations, including custom headers and Basic credentials.
+Missing placeholder diagnostics on proxy load consider all trusted tools together.
+Single-tool validation checks only the tool's own namespace, since an absolute config path may borrow another tool's declarations.
+An unscoped credential is diagnosed with instructions to set `config-namespace` before declaring placeholders.
 Claude accepts its API-key, OAuth and Vertex prefixes through either `Authorization` or `x-api-key`, independently of the outer account's mode.
 HTTP and WebSocket requests share `MitmProxy.authorize`, before account resolution, compatibility checks, Vertex translation, token acquisition, injection or inheritance substitution.
 Every credential namespace declared for the destination must prove itself.
@@ -1688,19 +1697,34 @@ A valid proof authorizes account selection but creates no credential grant.
 A valid proof for a missing or incompatible selected account still fails with the existing account diagnostic.
 
 `InstanceRegistry` reads verifier stamps with its existing listing and binds them to addresses alongside account selection.
-A failed proof can trigger one bounded refresh and retry off the event loop, subject to the existing one-second listing floor.
+An unrecognized proof waits asynchronously for the next permitted refresh before verification is retried.
+The shared timer observes the one-second listing floor and bounds the wait even when other registry readers keep refreshing.
+Independent credentials do not wait for proof refresh.
 Concurrent credential checks share the refresh.
 A failed registry refresh clears credential verifiers while retaining the account snapshot, so unavailable Incus cannot keep authorizing stale proofs indefinitely.
 Warnings about isx placeholders are deduplicated and bounded, never print authentication values, and point to recovery instructions.
+Account refusals retain the known account reason.
+Unexpected credential-refusal and WebSocket setup failures log only the exception class because exception messages can contain authentication headers.
+WebSocket setup failures after acceptance are logged as relay failures.
 Ordinary independent credentials pass without warnings.
 `/activity` adds `refused_injections`, including anonymous and independently authenticated pass-through requests.
 
-Every secret rotation replaces the complete verifier stamp in the same configuration write, clearing removed namespaces and copied state.
+An ordinary start keeps credential verifiers while replacing the MCP secret.
+Migration and changed tool declarations re-read under the instance proof lock before updating verifiers in the secret write.
+That extra read prevents an older prefetched listing from restoring a reset grant; the normal start keeps its existing request budget.
+Copies replace the generation and complete verifier stamp in the copy request, clearing inherited state.
+`isx account reset-proofs <instance>` creates a new generation and verifier stamp under the same lock and signals the proxy.
+It polls the host-only, read-only `/credential-proofs` endpoint for both that generation and the expected verifier fingerprint.
+An unavailable or old proxy, a failed listing, or a timeout cannot acknowledge completed revocation.
+A running guest then receives its new proofs without changing its MCP secret; failed guest delivery leaves preparation pending.
+Stopped instances receive their new proofs on their next start.
+Existing authorized requests and WebSockets continue.
 Branch, start, restart, VM recovery and recovery after an uninitiated reboot use the same declarations as guest delivery.
 Declarations exclude project-local tools (`ToolDefLoader.withoutProjectTools`).
-The existing readiness exec delivers the secret and proofs into `/run/isx`, owned by root and readable by group 1000.
+The existing readiness exec delivers the MCP secret, credential seed and proofs into `/run/isx`, owned by root and readable by group 1000.
+The credential seed is `/run/isx/credential-secret`, also used by nested inheritance and doctor.
 The login profile replaces only declared variables holding an isx placeholder or an earlier proof; user-supplied credentials remain untouched.
-A container's boot stamp now ends in `proofs-v2`, and the VM probe checks `/run/isx/proof-version` for version 2.
+A container's boot stamp now ends in `proofs-v3:<generation>`, and the VM probe checks version 3 and `/run/isx/proof-generation`.
 An instance from before verifier enforcement therefore receives fresh metadata and proofs on its next preparation through `isx shell` or `isx run`.
 Old shells and long-running processes retain stale environment values and need a new login or restart.
 `isx doctor` diagnoses missing delivery and drift, and explicitly requests rebuilding an API-key Claude image that lacks the dynamic approval script from #1113.
@@ -1709,7 +1733,7 @@ Normal lifecycle Incus request budgets are unchanged; tool declarations must be 
 
 Every build receives a registered address, fresh verifiers and proof delivery, including builds using configured defaults without explicit account pins.
 Tool environment setup precedes install hooks, Git identity lookup, clones and primes, including tools added by later layers.
-A build restart rotates and redelivers proofs.
+A build restart retains its credential proofs while redelivering them.
 Successful builds revoke verifiers, reset the managed Claude and Codex credential caches, remove temporary proof files, stop, and release their address.
 Failed builds are revoked before being retained for inspection; a later start through isx gives them fresh proofs.
 These build paths deliberately pay for source registration and cleanup rather than exempting builds from enforcement.
@@ -1729,8 +1753,8 @@ Only a whole proof of a declared prefix is swapped.
 A static placeholder proves nothing, and a token the caller supplied stays theirs, so `inherit` never fabricates a credential the instance did not present.
 The inner proxy verifies the calling instance's own proof before constructing the swap.
 A forged proof-shaped token or a deeper descendant's proof cannot obtain the parent's proof.
-The secret is read from `/run/isx/instance-secret` off the event loop: with every config read, every second by the config watcher, and in the background by a request that finds it more than a second old.
-The parent's rotates on every start, which restarts the machine and the inner proxy with it, and when `isx shell` gives a running VM a new one (#1024), so a request may present the previous proof for up to a second.
+The credential seed is read from `/run/isx/credential-secret` off the event loop: with every config read, every second by the config watcher, and in the background by a request that finds it more than a second old.
+The parent's seed survives restarts and changes on explicit reset; the inner proxy can retain its previous seed for up to one second after that reset.
 Without that file the inner isx is not running nested, and the request fails closed with a 502, as a pin to a missing account does.
 `isx branch` refuses `inherit` there up front, a pin or `default: inherit` alike (`CredentialCheck`), and so does `isx account set`.
 Nested, an inherited namespace needs no credential in the inner config.
@@ -4124,7 +4148,7 @@ A started instance's placeholders are proof tokens (`gho_isx_<digest>`, see "Pro
 | GitHub token | Placeholder `gho_placeholder` in `GH_TOKEN` | Proxy replaces `Authorization` header with real token for GitHub domains (Basic auth for `github.com` git HTTP, Bearer for API) |
 
 **A placeholder is read when the tool runs, never fixed at build time (#1108).**
-The placeholders become per-start proofs derived from the instance secret (#1106), which the proxy checks before it injects anything (#1107, #1100).
+The placeholders become stable per-instance proofs derived from the credential seed, which the proxy checks before it injects anything (#1107, #1100).
 A value a build copied into a file would be the wrong one after the next start, and lose the credential.
 So every consumer takes the variable its login exports, and where a tool insists on reading a file, a login script rewrites that file from the variable.
 What each tool reads, checked against its source or binary:

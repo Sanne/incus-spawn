@@ -114,7 +114,7 @@ public final class RuntimeSetup {
      * @param placeholders the variables to give the secret's proof tokens in (#1106)
      */
     public static void setupRuntime(IncusClient incus, String name,
-                                   NetworkMode networkMode, RuntimeConfig prefetched, String secret,
+                                   NetworkMode networkMode, RuntimeConfig prefetched, InstanceSecret.Delivery secret,
                                    boolean mcpCaller, List<ProofToken.Placeholder> placeholders) {
         if (networkMode == NetworkMode.PROXY_ONLY) {
             applyProxyOnlyFirewall(incus, name);

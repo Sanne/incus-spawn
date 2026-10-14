@@ -97,11 +97,17 @@ The proxy also caches container image layers and build artifacts on the host —
 
 ### Credentials reach the login environment
 
-Each start also replaces the placeholders with **proof tokens** derived from that start's secret (e.g. `gho_isx_…` in `GH_TOKEN`), exported by the login profile.
+Each start replaces the placeholders with **proof tokens** unique to the instance and credential namespace (e.g. `gho_isx_…` in `GH_TOKEN`), exported by the login profile.
+These tokens stay the same across stops, starts and reboots, so a nested service explicitly configured with one keeps working.
+A new branch or replacement instance gets different tokens, even if a name or address is reused.
 They reach exactly what runs in an instance's login environment.
+To revoke previously shared tokens, run `isx account reset-proofs <instance>` on the host.
+The command waits for the proxy to confirm the new proof state; a failure to confirm is reported as an error.
+After a reset, open a new login shell and restart tools and nested services with their new tokens.
+Already-authorized requests and established WebSockets continue.
 A nested container, a sandbox or anything started without that environment gets none, unless you pass one in deliberately, e.g. `podman run -e GH_TOKEN …`.
 The proxy injects a selected credential only when the source instance presents its current proof for that namespace. Nested instances with their own accounts keep their own authentication and destination; those without a proof get no outer credential. Deliberate sharing uses [the reserved `inherit` account](#inheriting-the-outer-instances-account), or explicitly passing the parent's token.
-A shell opened before the last `isx start` or `isx shell` keeps the tokens it was opened with: `isx doctor` run inside the instance compares them with the secret file and says what to do (a new login shell, or `isx shell` again from the host).
+A shell opened before an explicit proof reset or an upgrade keeps its previous tokens: `isx doctor` compares them with the delivered credential seed and says how to refresh them.
 
 After upgrading to proof enforcement, restart the proxy with `isx proxy stop` followed by `isx proxy start`, then run `isx shell <instance>` on the host to refresh existing instances. Open new login shells and restart tools that kept old tokens. An API-key Claude image built before the dynamic approval script needs rebuilding; `isx doctor` inside the instance reports this. Host-side tools now supply their own credentials, and Docker/Podman jobs that used the parent's accounts implicitly need an explicit token pass-through. See [upgrade and validation notes](docs/CREDENTIAL-PROOFS.md).
 
@@ -919,12 +925,16 @@ curl -H "Authorization: Bearer $ARTIFACTORY_TOKEN" https://artifactory.internal.
 
 The proxy verifies that proof and replaces it with the selected host account's real token.
 The `env:` value must start with the declared prefix followed by `placeholder`.
-Tools must read the variable when they run; copying its value into a file during a build leaves a stale proof after the next start.
+Tools must read the variable when they run; a build proof is revoked before publication, and an explicit reset replaces an instance's proofs.
 Tools that read an auth file must refresh it from the variable at login or launch.
 Place credential-injecting tool definitions in the host's tool search paths, such as `~/.config/incus-spawn/tools/`; project-local definitions cannot grant access to host credentials.
 
 A proxied auth namespace without declared `placeholders:` cannot authorize credential injection.
-The proxy logs a warning when loading its configuration, and tool definition validation reports the missing declaration.
+The proxy logs a warning when loading its configuration, and tool definition validation reports missing declarations for the tool's own namespace.
+A tool borrowing a namespace through an absolute `config-path`, such as `github.token` without `config-namespace`, can reuse that namespace's proof declarations.
+Install the tool supplying those declarations and send its current proof with each request.
+The proxy checks declarations across all loaded tools and warns if the borrowed namespace has none.
+An unscoped top-level credential needs a `config-namespace` and relative config paths before it can declare placeholders.
 If another tool shares that domain, its requests must also prove this namespace, so the missing declaration blocks injection for it too.
 Requests without valid proofs are forwarded with their own authentication unchanged.
 
@@ -979,7 +989,7 @@ In this example, send `$MY_SERVICE_TOKEN` as the bearer token, Basic password, o
 
 Configuration entries can also use `value` for hardcoded literals (no prompt during `isx init`) and `type: confirm` for yes/no prompts like license acceptance.
 
-If the tool insists on having a token locally before it will send a request, give it a placeholder through `env:` and let it read that variable whenever it runs. Never copy the value into a file with `files:` or a build step: the token an instance presents is tied to the instance and changes on every start, so a copy made at build time goes stale, and isx warns when it finds one.
+If the tool insists on having a token locally before it will send a request, give it a placeholder through `env:` and let it read that variable whenever it runs. Never copy the value into a file with `files:` or a build step: the token is unique to an instance and can be explicitly reset, so a copy made at build time is revoked before publication, and isx warns when it finds one.
 
 Tool YAML files with `proxy:` blocks must be placed in `~/.config/incus-spawn/tools/` or a configured search path -- project-local tools (`.incus-spawn/tools/`) cannot declare proxy rules because the proxy daemon runs independently of any project directory.
 
@@ -1724,6 +1734,7 @@ Show or change which [credential account](#credential-accounts) an instance uses
 | `show <instance>` | The account the instance uses for each credential, and where it comes from |
 | `set <instance> <ns>=<account>...` | Pin the instance to these accounts; takes effect on its next request |
 | `unset <instance> <ns>...` | Remove the pins, so the instance follows the default again |
+| `reset-proofs <instance>` | Revoke shared proofs and deliver replacements; waits for proxy acknowledgement. Restart tools and nested services with the new tokens |
 
 ### `isx project`
 

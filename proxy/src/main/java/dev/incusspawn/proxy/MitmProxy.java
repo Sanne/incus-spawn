@@ -437,12 +437,17 @@ public class MitmProxy {
     }
 
     /** Why a request was refused for {@code e}, for the log: inheriting is never a missing account. */
-    private static String refusal(RuntimeException e) {
+    static String refusal(RuntimeException e) {
         if (e instanceof dev.incusspawn.config.AccountResolver.UnknownAccountException unknown
                 && !dev.incusspawn.config.AccountResolver.INHERIT.equals(unknown.accountName())) {
             return ", pinned to missing " + unknown.namespace() + " account '" + unknown.accountName() + "'";
         }
-        return ": " + e.getMessage();
+        if (e instanceof dev.incusspawn.config.AccountResolver.UnknownAccountException
+                || e instanceof dev.incusspawn.config.AccountSelection.UnservableAccountException) {
+            return ": " + e.getMessage();
+        }
+        // Header-validation exceptions can include authentication values in their messages.
+        return ": " + e.getClass().getSimpleName();
     }
 
     /**
@@ -561,7 +566,7 @@ public class MitmProxy {
     /** Re-read instance pinning now, e.g. after {@code isx account set} signals the proxy. */
     public void refreshInstanceRegistry() {
         var registry = instanceRegistry;
-        if (registry != null) registry.refresh();
+        if (registry != null) registry.refreshAfterNow(CallerCheck.REFRESH_WAIT_MILLIS);
     }
 
     /** Vertex endpoint for one request's account -- the region is part of the account. */
@@ -1194,7 +1199,6 @@ public class MitmProxy {
         var caller = registry.prove(address, digests);
         if (caller != null && !registry.isStale()) return Future.succeededFuture(caller);
         var refreshed = refreshProofs(registry);
-        if (refreshed == null) return Future.succeededFuture(provenOrWarn(registry, address, presented));
         return refreshed.map(done -> provenOrWarn(registry, address, presented))
                 .recover(error -> {
                     refusedProof(address, presented);
@@ -1204,16 +1208,46 @@ public class MitmProxy {
 
     /** Coalesce worker jobs too, including requests arriving on different event loops. */
     private synchronized Future<Void> refreshProofs(InstanceRegistry registry) {
-        if (proofRefresh != null || !registry.wantsMissRefresh()) return proofRefresh;
-        var refreshed = vertx.<Void>executeBlocking(() -> {
+        if (proofRefresh != null) return proofRefresh;
+        var promise = io.vertx.core.Promise.<Void>promise();
+        var refreshed = promise.future();
+        proofRefresh = refreshed;
+        // One timer and one worker for every waiter, with a bounded total wait even if other
+        // registry consumers keep refreshing. Ordinary independent credentials never get here.
+        refreshProofsWhenDue(registry, promise, System.nanoTime()
+                + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(InstanceRegistry.MISS_REFRESH_INTERVAL_MS
+                        + CallerCheck.REFRESH_WAIT_MILLIS));
+        return refreshed;
+    }
+
+    private void refreshProofsWhenDue(InstanceRegistry registry, io.vertx.core.Promise<Void> promise, long deadline) {
+        var delay = registry.missRefreshDelayMillis();
+        if (delay > 0) {
+            if (System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(delay) >= deadline) {
+                promise.tryComplete();
+                releaseProofRefresh(promise);
+            } else {
+                vertx.setTimer(delay, ignored -> refreshProofsWhenDue(registry, promise, deadline));
+            }
+            return;
+        }
+        var remaining = Math.max(1, java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()));
+        var timeout = vertx.setTimer(remaining, ignored -> promise.tryFail("Credential registry refresh timed out"));
+        vertx.<Void>executeBlocking(() -> {
             registry.refreshAfterNow(CallerCheck.REFRESH_WAIT_MILLIS);
             return null;
-        }, false);
-        proofRefresh = refreshed;
-        refreshed.onComplete(done -> {
-            synchronized (this) { proofRefresh = null; }
+        }, false).onComplete(result -> {
+            vertx.cancelTimer(timeout);
+            // Keep coalescing onto even a timed-out waiter while its Incus job still runs.
+            // Otherwise a stalled daemon could accumulate one worker job per request.
+            if (result.succeeded()) promise.tryComplete();
+            else promise.tryFail(result.cause());
+            releaseProofRefresh(promise);
         });
-        return refreshed;
+    }
+
+    private synchronized void releaseProofRefresh(io.vertx.core.Promise<Void> promise) {
+        if (proofRefresh == promise.future()) proofRefresh = null;
     }
 
     private InstanceRegistry.Caller provenOrWarn(InstanceRegistry registry, String address,
@@ -1318,7 +1352,7 @@ public class MitmProxy {
             try {
                 handleWebSocketUpgrade(clientWs, context.get(), flow);
             } catch (RuntimeException e) {
-                ProxyLog.error("Refusing WebSocket to " + domain + " for " + describeCaller(address) + refusal(e));
+                ProxyLog.error("WebSocket relay setup failed for " + domain + " for " + describeCaller(address) + refusal(e));
                 if (!clientWs.isClosed()) clientWs.close((short) 1011, "Proxy error");
                 flow.end();
             }
@@ -2202,7 +2236,7 @@ public class MitmProxy {
     }
 
     /** What the health server answers a request with. */
-    enum HealthRoute { HEALTH, ACTIVITY, NOT_FOUND, METHOD_NOT_ALLOWED }
+    enum HealthRoute { HEALTH, ACTIVITY, CREDENTIAL_PROOFS, NOT_FOUND, METHOD_NOT_ALLOWED }
 
     /**
      * The health server's routing. It only reads: a write to the proxy's state is never one
@@ -2216,6 +2250,7 @@ public class MitmProxy {
         var route = switch (path) {
             case "/health" -> HealthRoute.HEALTH;
             case "/activity" -> hostCaller.getAsBoolean() ? HealthRoute.ACTIVITY : HealthRoute.NOT_FOUND;
+            case "/credential-proofs" -> hostCaller.getAsBoolean() ? HealthRoute.CREDENTIAL_PROOFS : HealthRoute.NOT_FOUND;
             case null, default -> HealthRoute.NOT_FOUND;
         };
         return route == HealthRoute.NOT_FOUND || method == io.vertx.core.http.HttpMethod.GET
@@ -2226,6 +2261,15 @@ public class MitmProxy {
         switch (healthRoute(req.method(), req.path(), () -> isHostCaller(req))) {
             case HEALTH -> handleHealthCheck(req);
             case ACTIVITY -> sendActivity(req);
+            case CREDENTIAL_PROOFS -> {
+                var registry = instanceRegistry;
+                var name = req.getParam("instance");
+                var state = registry == null || name == null ? null : registry.proofState(name);
+                if (state == null) req.response().setStatusCode(404).end();
+                else req.response().putHeader("Content-Type", "application/json").end(
+                        "{\"generation\":\"" + escapeJson(state.generation()) + "\",\"verifierHash\":\""
+                                + escapeJson(state.verifierHash()) + "\"}");
+            }
             case NOT_FOUND -> req.response().setStatusCode(404).end();
             case METHOD_NOT_ALLOWED -> req.response().setStatusCode(405).putHeader("Allow", "GET, HEAD").end();
         }

@@ -89,9 +89,9 @@ public class ToolDefValidator {
             var ns = proxyDef.getConfigNamespace();
 
             boolean hasAuth = proxyDef.getAuth() != null && !proxyDef.getAuth().isEmpty();
-            boolean hasConfigPaths = configMap.values().stream()
-                    .anyMatch(c -> !c.getConfigPath().isBlank());
-            if (hasAuth && hasConfigPaths && (ns == null || ns.isBlank())) {
+            boolean hasUnscopedConfigPaths = configMap.values().stream()
+                    .anyMatch(c -> !c.getConfigPath().isBlank() && proxyDef.namespaceOf(c).isBlank());
+            if (hasAuth && hasUnscopedConfigPaths) {
                 errors.add("proxy for '" + def.getName()
                         + "' has config-path entries but no 'config-namespace'");
             }
@@ -102,7 +102,7 @@ public class ToolDefValidator {
                     errors.add("configuration '" + ce.getKey() + "' in proxy for '"
                             + def.getName() + "' has both 'config-path' and 'value' — use one or the other");
                 }
-                if (!config.getConfigPath().isBlank() && config.getConfigPath().contains(".")) {
+                if (ns != null && !ns.isBlank() && config.getConfigPath().contains(".")) {
                     warnings.add(OutputFormat.oneLine("configuration '" + ce.getKey() + "' in proxy for '"
                             + def.getName() + "': config-path '" + config.getConfigPath()
                             + "' contains a dot — paths are relative to config-namespace, not absolute"));
@@ -185,7 +185,8 @@ public class ToolDefValidator {
                 }
             }
             if (errors.isEmpty()) {
-                warnings.addAll(new dev.incusspawn.proxy.ProofCarriers(List.of(new YamlToolSetup(def))).warnings());
+                warnings.addAll(new dev.incusspawn.proxy.ProofCarriers(List.of(new YamlToolSetup(def)))
+                        .warningsForNamespace(proxyDef.getConfigNamespace()));
             }
         }
     }

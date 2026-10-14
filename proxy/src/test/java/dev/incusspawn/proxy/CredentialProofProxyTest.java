@@ -53,6 +53,10 @@ class CredentialProofProxyTest {
     MitmProxy proxy;
     InstanceRegistry registry;
     volatile String stamp;
+    volatile String generation = "ab".repeat(32);
+    volatile boolean failListings;
+    volatile CompletableFuture<Void> holdListing;
+    final CompletableFuture<Void> listingEntered = new CompletableFuture<>();
     volatile String address = "127.0.0.1";
     volatile String account;
     String bakedIdentity;
@@ -77,7 +81,7 @@ class CredentialProofProxyTest {
                     ws.close();
                 });
         upstreamPort = NpmCacheProxyTest.listen(upstream);
-        client = vertx.createHttpClient(new HttpClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
+        client = vertx.createHttpClient(new HttpClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false).setMaxPoolSize(16));
     }
 
     @AfterAll static void stop() throws Exception {
@@ -87,13 +91,27 @@ class CredentialProofProxyTest {
 
     @AfterEach void stopProxy() { if (proxy != null) proxy.stop(); }
 
+    @Test void unexpectedRefusalsDoNotPrintExceptionMessagesOrCauses() {
+        var header = "Bearer " + ProofTestSupport.token("github", "gho_");
+        var failure = new IllegalArgumentException("invalid header value: " + header,
+                new RuntimeException("credential: " + header));
+        assertEquals(": IllegalArgumentException", MitmProxy.refusal(failure));
+    }
+
     void serve(String claude) throws Exception {
         Files.writeString(home.resolve(".config/incus-spawn/config.yaml"), GITHUB_CONFIG + claude);
         stamp = ProofVerifier.stamp(SECRET, ProofToken.declared());
         registry = new InstanceRegistry(new IncusClient() {
             @Override public JqValue listJsonConfig() {
                 listings.incrementAndGet();
+                var hold = holdListing;
+                if (hold != null) {
+                    listingEntered.complete(null);
+                    hold.join();
+                }
+                if (failListings) throw new IllegalStateException("Incus unavailable");
                 var config = JqObject.builder(3).put(Metadata.STATIC_IP, address)
+                        .put(Metadata.INSTANCE_PROOF_ID, generation)
                         .put(Metadata.INSTANCE_PROOF_SHA256, stamp);
                 if (account != null) config.put(Metadata.accountKey("claude"), account);
                 if (bakedIdentity != null) config.put(Metadata.accountIdentityKey("claude"), bakedIdentity);
@@ -310,16 +328,73 @@ class CredentialProofProxyTest {
                 request(false, "github.com", "Authorization", basic).authorization());
     }
 
-    @Test void theFirstNewProofRefreshesAStaleSnapshotAndOldProofsStayRefused() throws Exception {
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void theFirstNewProofWaitsForTheRefreshFloorAndOldProofsStayRefused(boolean websocket) throws Exception {
         serve(claude("api-key"));
+        registry.refresh();
         var rotated = "66".repeat(32);
         stamp = ProofVerifier.stamp(rotated, ProofToken.declared());
-        Thread.sleep(InstanceRegistry.MISS_REFRESH_INTERVAL_MS + 30);
         var fresh = "Bearer gho_isx_" + ProofToken.derive(rotated, "github");
-        assertEquals("Bearer ghp_outer", request(false, GITHUB, "Authorization", fresh).authorization());
+        assertEquals("Bearer ghp_outer", request(websocket, GITHUB, "Authorization", fresh).authorization());
         var old = "Bearer " + ProofTestSupport.token("github", "gho_");
         int before = listings.get();
-        for (int i = 0; i < 8; i++) assertEquals(old, request(false, GITHUB, "Authorization", old).authorization());
-        assertTrue(listings.get() <= before + 1, "invalid proofs must not list Incus on every request");
+        var requests = java.util.stream.IntStream.range(0, 8).mapToObj(i -> CompletableFuture.supplyAsync(() -> {
+            try { return http(GITHUB, "Authorization", old); }
+            catch (Exception e) { throw new java.util.concurrent.CompletionException(e); }
+        })).toList();
+        for (var result : requests) assertEquals(200, result.get(10, TimeUnit.SECONDS));
+        assertTrue(listings.get() <= before + 1, "a burst of invalid proofs must share a listing");
+        assertEquals(old, received.get(10, TimeUnit.SECONDS).authorization());
+    }
+
+    @Test void aStalledListingBoundsProofWaitsWithoutQueuingMoreWorkersOrDelayingIndependentCredentials() throws Exception {
+        serve(claude("api-key"));
+        holdListing = new CompletableFuture<>();
+        var invalid = "Bearer gho_isx_" + "9".repeat(ProofToken.DIGEST_HEX_CHARS);
+        int before = listings.get();
+        try {
+            var waiting = CompletableFuture.supplyAsync(() -> {
+                try { return http(GITHUB, "Authorization", invalid); }
+                catch (Exception e) { throw new java.util.concurrent.CompletionException(e); }
+            });
+            listingEntered.get(3, TimeUnit.SECONDS);
+            var independent = CompletableFuture.supplyAsync(() -> {
+                try { return request(false, GITHUB, "Authorization", "Bearer own-credential"); }
+                catch (Exception e) { throw new java.util.concurrent.CompletionException(e); }
+            });
+            assertEquals("Bearer own-credential", independent.get(2, TimeUnit.SECONDS).authorization());
+            assertEquals(200, waiting.get(8, TimeUnit.SECONDS));
+            for (int i = 0; i < 3; i++) assertEquals(200, http(GITHUB, "Authorization", invalid));
+            assertEquals(before + 1, listings.get(), "the stalled worker remains shared even after its waiters time out");
+        } finally {
+            holdListing.complete(null);
+        }
+    }
+
+    @Test void resetAcknowledgementReportsOnlyAppliedStateAndFailureClearsIt() throws Exception {
+        serve(claude("api-key"));
+        try (var reader = java.net.http.HttpClient.newHttpClient()) {
+            var query = java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:"
+                    + proxy.healthPort() + "/credential-proofs?instance=outer-instance")).GET().build();
+            var previous = reader.send(query, java.net.http.HttpResponse.BodyHandlers.ofString()).body();
+            var resetSecret = "67".repeat(32);
+            generation = "cd".repeat(32);
+            stamp = ProofVerifier.stamp(resetSecret, ProofToken.declared());
+            assertEquals(previous, reader.send(query, java.net.http.HttpResponse.BodyHandlers.ofString()).body());
+            proxy.refreshInstanceRegistry();
+            var reply = reader.send(query, java.net.http.HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, reply.statusCode());
+            var state = JqValues.parseStrict(reply.body());
+            assertEquals(generation, state.pathText("generation", ""));
+            assertEquals(dev.incusspawn.tool.ToolDef.sha256hex(stamp), state.pathText("verifierHash", ""));
+            assertFalse(reply.body().contains(resetSecret));
+            var old = "Bearer " + ProofTestSupport.token("github", "gho_");
+            assertEquals(old, request(false, GITHUB, "Authorization", old).authorization());
+            var fresh = "Bearer gho_isx_" + ProofToken.derive(resetSecret, "github");
+            assertEquals("Bearer ghp_outer", request(true, GITHUB, "Authorization", fresh).authorization());
+            failListings = true;
+            registry.refresh();
+            assertEquals(404, reader.send(query, java.net.http.HttpResponse.BodyHandlers.ofString()).statusCode());
+        }
     }
 }

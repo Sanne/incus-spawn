@@ -35,7 +35,7 @@ class DoctorInstanceCredentialsTest {
     private String start(List<ProofToken.Placeholder> placeholders) throws IOException {
         var secret = InstanceSecret.generate();
         Files.writeString(secretFile(), secret + "\n");
-        Files.writeString(proofsFile(), InstanceSecret.guestEnv(secret, false, placeholders)
+        Files.writeString(proofsFile(), InstanceSecret.guestEnv(new InstanceSecret.Delivery(secret, secret), false, placeholders)
                 .get(InstanceSecret.PROOFS_DELIVERY_ENV));
         return secret;
     }
@@ -115,12 +115,12 @@ class DoctorInstanceCredentialsTest {
 
     @Test
     void aMissingSecretFileSaysTheProxyInjectsNothingUntilTheHostActs() {
-        var problems = problems(check(env(InstanceSecret.FILE_ENV_VAR, secretFile().toString()), List.of(GH), GUARDS_HOLD));
+        var problems = problems(check(env(dev.incusspawn.proxy.CredentialProof.FILE_ENV_VAR, secretFile().toString()), List.of(GH), GUARDS_HOLD));
         assertEquals(1, problems.size(), problems.toString());
         var missing = problems.get(0);
         assertTrue(missing.label().contains("secret"), missing.label());
         var fix = missing.remediation().description();
-        assertTrue(fix.contains("isx shell") && fix.contains("isx start"), fix);
+        assertTrue(fix.contains("isx shell") && fix.contains("restores its credential proofs"), fix);
     }
 
     @Test
@@ -177,7 +177,7 @@ class DoctorInstanceCredentialsTest {
 
     @Test
     void aBlankProfileVariableOnTheHostIsNotAnInstance() {
-        assertEquals(List.of(), check(env(InstanceSecret.FILE_ENV_VAR, ""), List.of(GH), GUARDS_HOLD));
+        assertEquals(List.of(), check(env(dev.incusspawn.proxy.CredentialProof.FILE_ENV_VAR, ""), List.of(GH), GUARDS_HOLD));
     }
 
     @Test

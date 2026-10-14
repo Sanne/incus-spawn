@@ -305,16 +305,16 @@ public class DoctorCommand extends BaseCommand {
     static final String CREDENTIALS_DOCS = "https://isx.run/docs.html#credentials-reach-the-login-environment";
 
     private List<Finding> checkInstanceCredentials() {
-        return instanceCredentialFindings(System.getenv(), Path.of(InstanceSecret.GUEST_PATH),
+        return instanceCredentialFindings(System.getenv(), Path.of(dev.incusspawn.proxy.CredentialProof.GUEST_PATH),
                 Path.of(InstanceSecret.PROOFS_PATH), ProofToken::declared, DoctorCommand::guardHolds);
     }
 
     /**
      * Inside an instance -- its secret file exists, or the login profile named one -- whether the
      * proof tokens this shell exports are the ones the secret derives ({@link ProofToken}, #1109):
-     * a box rebooted behind isx's back has no secret, and a shell opened before the last
-     * {@code isx start} or {@code isx shell} keeps the proofs, or the build's placeholders, it
-     * was opened with. Only what this start delivered a proof for is compared, against the token it delivered ({@link
+     * a box rebooted behind isx's back has no secret, and a shell opened before a proof reset or
+     * upgrade keeps the proofs, or the build's placeholders, it was opened with.
+     * Only what this start delivered a proof for is compared, against the token it delivered ({@link
      * ProofToken#delivered}): a variable the host's tools leave alone, or whose guard fails in this
      * image, keeps its static placeholder by design, and a value somebody else set is theirs.
      * Nothing outside the instance: on the host, {@code declared} is never read.
@@ -322,15 +322,15 @@ public class DoctorCommand extends BaseCommand {
     static List<Finding> instanceCredentialFindings(Map<String, String> env, Path guestSecret, Path proofsFile,
                                                     Supplier<List<ProofToken.Placeholder>> declared,
                                                     Predicate<String> guardHolds) {
-        var named = env.get(InstanceSecret.FILE_ENV_VAR);
+        var named = env.get(dev.incusspawn.proxy.CredentialProof.FILE_ENV_VAR);
         boolean profileNamedOne = named != null && !named.isBlank();
         var secretFile = profileNamedOne ? Path.of(named) : guestSecret;
-        if (!profileNamedOne && !Files.exists(secretFile)) return List.of();
+        if (!profileNamedOne && !Files.exists(secretFile) && !env.containsKey(InstanceSecret.FILE_ENV_VAR)) return List.of();
 
         var findings = new ArrayList<Finding>();
         findings.add(Finding.note("Credentials", "(reach only processes started from this login environment;"
                 + " a nested container or sandbox gets them only if you pass them in: " + CREDENTIALS_DOCS + ")"));
-        var redeliverText = "run 'isx shell' (or 'isx start') for this instance on the host, which gives it a new secret";
+        var redeliverText = "run 'isx shell' for this instance on the host, which restores its credential proofs";
         var redeliver = new Remediation(redeliverText, false, null);
         String secret;
         try {
@@ -338,18 +338,18 @@ public class DoctorCommand extends BaseCommand {
         } catch (java.nio.file.NoSuchFileException e) {
             secret = ""; // as the guest's own check does (InstanceSecret.GUEST_CHECK): absent and empty are both missing
         } catch (IOException e) {
-            findings.add(Finding.warn("Instance secret unreadable", "(" + secretFile + ": " + e.getMessage()
+            findings.add(Finding.warn("Credential secret unreadable", "(" + secretFile + ": " + e.getMessage()
                     + "; it is readable by the instance user's group only)", null));
             return findings;
         }
         if (secret.isEmpty()) {
-            findings.add(Finding.warn("Instance secret missing", "(" + secretFile
-                    + ": the proxy and the MCP bridge cannot verify this instance, as after a reboot isx did not do)",
+            findings.add(Finding.warn("Credential secret missing", "(" + secretFile
+                    + ": credential proofs cannot be restored in this shell, as after a reboot isx did not do)",
                     redeliver));
             return findings;
         }
         if (!InstanceSecret.isWellFormed(secret)) {
-            findings.add(Finding.warn("Instance secret invalid", "(" + secretFile + " holds no secret isx made)", redeliver));
+            findings.add(Finding.warn("Credential secret invalid", "(" + secretFile + " holds no secret isx made)", redeliver));
             return findings;
         }
         String proofs;

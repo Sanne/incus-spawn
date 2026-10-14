@@ -13,6 +13,27 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ToolDefValidatorTest {
 
+    @Test void borrowedNamespaceDoesNotNeedItsOwnPlaceholderDeclaration(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("borrowed.yaml");
+        Files.writeString(file, """
+                name: borrowed
+                requires: [gh]
+                proxy:
+                  configuration:
+                    token:
+                      config-path: github.token
+                      description: Shared GitHub token
+                      secret: true
+                  auth:
+                    - domains: [custom.example]
+                      type: bearer
+                      token: '${token}'
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertFalse(result.hasErrors(), result.errors().toString());
+        assertFalse(result.hasWarnings(), result.warnings().toString());
+    }
+
     @Test void authWithoutPlaceholdersWarnsAndDeclaringTheVariableFixesIt(@TempDir Path dir) throws Exception {
         var file = dir.resolve("custom.yaml");
         var yaml = """
@@ -375,7 +396,7 @@ class ToolDefValidatorTest {
     @Test
     void dottedConfigPathWarningIsOneLine() {
         var warnings = new ArrayList<String>();
-        ToolDefValidator.validateDef(proxyTool("", "gh.\u001b[2Jx"), new ArrayList<>(), warnings);
+        ToolDefValidator.validateDef(proxyTool("custom", "gh.\u001b[2Jx"), new ArrayList<>(), warnings);
         assertTrue(warnings.stream().anyMatch(w -> w.contains("contains a dot")), warnings.toString());
         assertTrue(warnings.stream().allMatch(w -> w.chars().noneMatch(Character::isISOControl)), warnings.toString());
     }

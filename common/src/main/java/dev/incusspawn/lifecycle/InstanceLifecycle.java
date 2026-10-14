@@ -16,6 +16,7 @@ import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.InstanceSecret;
+import dev.incusspawn.proxy.CredentialProof;
 import dev.incusspawn.proxy.ProofToken;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.util.BuildOutput;
@@ -457,18 +458,18 @@ public final class InstanceLifecycle {
         } else if (machineType == MachineType.VM) {
             // QEMU may reboot a VM in place, which changes nothing the host can see: only the
             // guest can tell, so the agent probe asks it on the way, for no request of its own
-            var probe = probeAgent(incus, name);
+            var probe = probeAgent(incus, name, instance.path("config").pathText(Metadata.INSTANCE_PROOF_ID, ""));
             if (probe == null) {
                 VmAgentRecovery.restartForAgent(incus, name, say);
             } else if (InstanceSecret.missingIn(probe)) {
-                giveSecretToThisBoot(incus, name, null, Metadata.isMcpCaller(instance), say);
+                giveSecretToThisBoot(incus, name, instance, null, Metadata.isMcpCaller(instance), say);
             }
         } else {
             // Every container reboot is a start: the instance already read says which boot it is
             var bootedAt = bootOf(instance);
             if (!bootedAt.isEmpty()
-                    && !secretBootStamp(bootedAt).equals(instance.path("config").path(Metadata.INSTANCE_SECRET_BOOT).asText(""))) {
-                giveSecretToThisBoot(incus, name, bootedAt, Metadata.isMcpCaller(instance), say);
+                    && !secretBootStamp(bootedAt, instance.path("config").pathText(Metadata.INSTANCE_PROOF_ID, "")).equals(instance.path("config").path(Metadata.INSTANCE_SECRET_BOOT).asText(""))) {
+                giveSecretToThisBoot(incus, name, instance, bootedAt, Metadata.isMcpCaller(instance), say);
             }
         }
         // Only a VM is ever marked
@@ -502,13 +503,13 @@ public final class InstanceLifecycle {
         prepareHostDevicesForStart(incus, name, instance, warn);
         // A VM branched or built before #1238 still has Secure Boot on: it goes in the write the
         // secret makes anyway
-        var secret = rotateInstanceSecret(incus, name, machineType == MachineType.VM
+        var secret = rotateInstanceSecret(incus, name, instance, machineType == MachineType.VM
                 && !"false".equals(instance.path("config").path(SECURE_BOOT).asText())
                 ? Map.of(SECURE_BOOT, "false") : Map.of(), placeholders.join());
         startInstance(incus, name, warn);
         incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
                 InstanceSecret.guestEnv(secret, Metadata.isMcpCaller(instance), placeholders.join()));
-        return recordSecretBoot(incus, name, machineType);
+        return recordSecretBoot(incus, name, machineType, secret.proofGeneration());
     }
 
     /**
@@ -524,11 +525,11 @@ public final class InstanceLifecycle {
         // contend with it. A restart that then fails leaves a guest whose secret no longer
         // matches, which is refused -- the safe way for it to go wrong.
         var placeholders = ProofToken.declaredInBackground();
-        var secret = rotateInstanceSecret(incus, name, Map.of(), placeholders.join());
+        var secret = rotateInstanceSecret(incus, name, incus.instanceMetadataOrThrow(name), Map.of(), placeholders.join());
         incus.restart(name);
         incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
                 InstanceSecret.guestEnv(secret, mcpCaller, placeholders.join()));
-        recordSecretBoot(incus, name, machineType);
+        recordSecretBoot(incus, name, machineType, secret.proofGeneration());
     }
 
     /**
@@ -541,17 +542,32 @@ public final class InstanceLifecycle {
      * caller refused on a snapshot taken before the start refreshes and asks again
      * ({@link dev.incusspawn.proxy.InstanceRegistry#identify}).
      */
-    static String rotateInstanceSecret(IncusClient incus, String name) {
-        return rotateInstanceSecret(incus, name, Map.of(), ProofToken.declared());
+    static InstanceSecret.Delivery rotateInstanceSecret(IncusClient incus, String name) {
+        return rotateInstanceSecret(incus, name, incus.instanceMetadataOrThrow(name), Map.of(), ProofToken.declared());
     }
 
     /** {@link #rotateInstanceSecret}, with {@code alongside} recorded in the same write. */
-    private static String rotateInstanceSecret(IncusClient incus, String name, Map<String, String> alongside,
+    static InstanceSecret.Delivery rotateInstanceSecret(IncusClient incus, String name, JqValue instance, Map<String, String> alongside,
                                                 java.util.List<ProofToken.Placeholder> placeholders) {
-        var stamp = new HashMap<>(alongside);
-        var secret = InstanceSecret.stampInto(stamp, placeholders);
-        incus.configSetAll(name, stamp);
-        return secret;
+        try (var ignored = CredentialProof.lock(name)) {
+            // Migration or changed declarations need another read: a prefetched listing must never
+            // replace a generation another start or reset has since installed.
+            var config = instance.path("config");
+            var generation = config.pathText(Metadata.INSTANCE_PROOF_ID, "");
+            if (generation.isBlank() || !dev.incusspawn.proxy.ProofVerifier.stamp(
+                    CredentialProof.retain(generation, config.pathText(Metadata.INSTANCE_PROOF_SHA256, "")).secret(), placeholders)
+                    .equals(config.pathText(Metadata.INSTANCE_PROOF_SHA256, ""))) {
+                instance = incus.instanceMetadataOrThrow(name);
+            }
+            var stamp = new HashMap<>(alongside);
+            var secret = InstanceSecret.retainInto(stamp, instance.path("config"), placeholders);
+            if (stamp.containsKey(Metadata.INSTANCE_SECRET_BOOT)) {
+                var boot = alongside.get(Metadata.INSTANCE_SECRET_BOOT).split(" proofs-v3:", 2)[0];
+                stamp.put(Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(boot, secret.proofGeneration()));
+            }
+            incus.configSetAll(name, stamp);
+            return secret;
+        }
     }
 
     /**
@@ -562,7 +578,11 @@ public final class InstanceLifecycle {
      * instance it already read.
      */
     static String secretBootStamp(String bootedAt) {
-        return bootedAt + " proofs-v2";
+        return secretBootStamp(bootedAt, "");
+    }
+
+    static String secretBootStamp(String bootedAt, String generation) {
+        return bootedAt + " proofs-v3:" + generation;
     }
 
     /** When Incus last started {@code instance} -- on every start, a reboot included -- or "". */
@@ -582,6 +602,10 @@ public final class InstanceLifecycle {
      * @return the instance as read once the guest answered, or null for a VM or a failed read
      */
     static JqValue recordSecretBoot(IncusClient incus, String name, MachineType machineType) {
+        return recordSecretBoot(incus, name, machineType, null);
+    }
+
+    static JqValue recordSecretBoot(IncusClient incus, String name, MachineType machineType, String generation) {
         if (machineType == MachineType.VM) return null;
         try {
             // A failed read must not reach the CA check as an empty instance, which it would
@@ -589,7 +613,8 @@ public final class InstanceLifecycle {
             var instance = incus.instanceMetadataOrThrow(name);
             if (instance == null) return null;
             var bootedAt = bootOf(instance);
-            if (!bootedAt.isEmpty()) incus.configSet(name, Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(bootedAt));
+            if (!bootedAt.isEmpty()) incus.configSet(name, Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(bootedAt,
+                    generation == null ? instance.path("config").pathText(Metadata.INSTANCE_PROOF_ID, "") : generation));
             return instance;
         } catch (RuntimeException e) {
             // The next ensureReady sees an unrecorded boot
@@ -603,12 +628,12 @@ public final class InstanceLifecycle {
      * there is one -- then put in place by the script every start runs. Best-effort, like every
      * delivery: a box left without its secret is refused, and the shell must still open.
      */
-    private static void giveSecretToThisBoot(IncusClient incus, String name, String bootedAt,
+    private static void giveSecretToThisBoot(IncusClient incus, String name, JqValue instance, String bootedAt,
                                              boolean mcpCaller, Consumer<String> say) {
         String failure;
         try {
             var placeholders = ProofToken.declaredInBackground();
-            var secret = rotateInstanceSecret(incus, name,
+            var secret = rotateInstanceSecret(incus, name, instance,
                     bootedAt == null ? Map.of() : Map.of(Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(bootedAt)),
                     placeholders.join());
             // GUEST_SCRIPT never fails, so the same exec asks whether the secret is now there:
@@ -639,9 +664,9 @@ public final class InstanceLifecycle {
      * secret ({@link InstanceSecret#GUEST_CHECK}): what the guest printed, or null if the agent
      * does not answer.
      */
-    private static String probeAgent(IncusClient incus, String name) {
+    private static String probeAgent(IncusClient incus, String name, String generation) {
         try {
-            var result = incus.shellExec(name, "sh", "-c", InstanceSecret.GUEST_CHECK);
+            var result = incus.shellExec(name, "sh", "-c", InstanceSecret.GUEST_CHECK + "\n" + InstanceSecret.generationCheck(generation));
             return result != null && result.success() ? result.stdout() : null;
         } catch (RuntimeException agentDown) {
             return null;

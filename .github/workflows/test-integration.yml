@@ -762,6 +762,9 @@ jobs:
           sg incus-admin -c "incus file push .github/scripts/test-podman.sh test-podman/tmp/"
           sg incus-admin -c "incus exec test-podman -- bash /tmp/test-podman.sh"
 
+      - name: Test stable nested proofs and explicit revocation
+        run: sg incus-admin -c "bash .github/scripts/test-stable-proofs.sh"
+
       - name: Test rootless podman with permissive short-names and compose
         run: |
           sg incus-admin -c "isx branch test-podman-rootless --from tpl-test-podman-rootless --no-start"

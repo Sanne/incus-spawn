@@ -119,7 +119,7 @@ public final class HostRouteSecret {
      * (which may not resolve, or name someone else) nor a directory service is asked. Once per
      * process, so no reload pays for it again. Null where the file system has no uids.
      */
-    private static Integer ownUid(Path configDir) throws IOException {
+    static Integer ownUid(Path configDir) throws IOException {
         if (!hasUids(configDir)) return null;
         var uid = ownUid;
         if (uid == null) {
@@ -190,7 +190,7 @@ public final class HostRouteSecret {
      * must be the proxy's user's alone to write, or anyone could swap a secret, or the directory,
      * for a link, a FIFO or their own between the checks and the open.
      */
-    private static Path ownerOnlyDirectory(Path configDir, Path dir, Integer uid, Integer privateGroup) throws IOException {
+    static Path ownerOnlyDirectory(Path configDir, Path dir, Integer uid, Integer privateGroup) throws IOException {
         if (!Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) {
             Files.createDirectories(dir.getParent());
             try {
@@ -211,7 +211,7 @@ public final class HostRouteSecret {
         return dir;
     }
 
-    private static void create(Path dir, Path file) throws IOException {
+    static void create(Path dir, Path file) throws IOException {
         removeStaleTemporaries(dir);
         // Written whole under another name, owner-only from the start, then linked into place,
         // which never replaces: a controller never reads a half-written file, and two proxies

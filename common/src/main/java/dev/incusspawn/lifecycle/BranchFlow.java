@@ -377,7 +377,7 @@ public final class BranchFlow {
         RuntimeSetup.setupRuntime(incus, name, networkMode, prefetched, secret,
                 Metadata.isMcpCaller(req.extraConfig()), placeholders.join());
         // Or the first shell would take this boot for one isx did not start, and replace its secret
-        var booted = InstanceLifecycle.recordSecretBoot(incus, name, machineType);
+        var booted = InstanceLifecycle.recordSecretBoot(incus, name, machineType, secret.proofGeneration());
         // A VM records no boot; its read after the start answers the same questions: nothing
         // since has written the CA fingerprint or the gateway
         if (booted == null) booted = started;

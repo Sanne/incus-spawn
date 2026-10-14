@@ -24,14 +24,15 @@ import java.util.regex.Pattern;
 
 /**
  * What an instance presents where a tool expects its credential: a proof, derived from the
- * instance's per-start secret ({@link InstanceSecret}) and one credential namespace, that the
- * request comes from a process given this start's login environment (#1106, plan in #1100).
+ * instance's stable credential seed ({@link CredentialProof}) and one credential namespace, that the
+ * request comes from a process given the instance's login environment (#1106, plan in #1100).
  *
  * <p>The value keeps the shape the tool checks -- a prefix its namespace declares, such as
  * {@code gho_} -- and says whose it is to anyone debugging: {@code gho_isx_<digest>}. The digest
- * is an HMAC-SHA256 keyed with the secret, so it changes on every start, differs per namespace,
- * and gives away neither the secret nor another namespace's proof. The raw secret is what the MCP
- * bridge accepts, so it never sits in the environment; a proof does, in every login shell.
+ * is an HMAC-SHA256 keyed with the secret, so it stays stable across starts, differs per namespace,
+ * and gives away neither the secret nor another namespace's proof. The seed is separate from the
+ * rotating secret the MCP bridge accepts; neither seed nor MCP secret is exported into login
+ * environments, while a proof is.
  *
  * <h3>How the guest gets them</h3>
  * Each tool declares which variables carry its placeholder ({@link ToolSetup#placeholders()}). The
@@ -109,7 +110,7 @@ public final class ProofToken {
      * The digest proving an instance holds {@code secret}, for {@code namespace}: hex, the first
      * {@value #DIGEST_HEX_CHARS} characters of HMAC-SHA256 keyed with the secret.
      *
-     * @param secret the per-start secret as {@link InstanceSecret#generate} made it -- the guest's
+     * @param secret the credential seed derived by {@link CredentialProof} -- the guest's
      *               file content, stripped
      */
     public static String derive(String secret, String namespace) {

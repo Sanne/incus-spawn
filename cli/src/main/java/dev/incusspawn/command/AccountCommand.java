@@ -39,10 +39,24 @@ import java.util.Map;
                 AccountCommand.ListSub.class,
                 AccountCommand.Show.class,
                 AccountCommand.Set.class,
-                AccountCommand.Unset.class
+                AccountCommand.Unset.class,
+                AccountCommand.ResetProofs.class
         }
 )
 public class AccountCommand extends BaseCommand {
+
+    @CommandDefinition(name = "reset-proofs", description = "Revoke and replace an instance's shared credential proofs", generateHelp = true)
+    public static class ResetProofs extends BaseCommand {
+        @Argument(description = "Instance name", required = true)
+        String instance;
+
+        @Override protected CommandResult doExecute() {
+            dev.incusspawn.lifecycle.CredentialProofReset.reset(RuntimeServices.incus(), instance);
+            System.out.println("Previous credential proofs for " + instance + " are revoked; the proxy confirmed the reset.");
+            System.out.println("Open a new login shell and restart tools and nested services with the new tokens. Existing requests and WebSockets continue.");
+            return CommandResult.SUCCESS;
+        }
+    }
 
     // Bare, the command is its list, so it takes list's --format.
     @Option(name = "format", description = "Output format: table (default), plain or json")

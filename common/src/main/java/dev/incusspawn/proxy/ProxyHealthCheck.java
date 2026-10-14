@@ -61,6 +61,33 @@ public final class ProxyHealthCheck {
         return info == null ? -1 : info.pid();
     }
 
+    /** Read-only confirmation after the CLI has persisted a reset and signalled the proxy. */
+    public static boolean awaitCredentialProofs(String address, String instance, String generation, String verifierHash) {
+        return awaitCredentialProofs(address, ProxyConfig.DEFAULT_HEALTH_PORT, instance, generation, verifierHash, 5000);
+    }
+
+    static boolean awaitCredentialProofs(String address, int port, String instance, String generation,
+                                         String verifierHash, long timeoutMillis) {
+        var path = "/credential-proofs?instance=" + java.net.URLEncoder.encode(instance, java.nio.charset.StandardCharsets.UTF_8);
+        var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while (System.nanoTime() < deadline) {
+            try {
+                int remaining = (int) Math.max(1, java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()));
+                var answer = get(address, port, path, Math.min(500, remaining));
+                if (answer.status() == 200) {
+                    var state = JqValues.parseStrict(answer.body());
+                    if (generation.equals(state.pathText("generation", ""))
+                            && verifierHash.equals(state.pathText("verifierHash", ""))) return true;
+                }
+            } catch (Exception ignored) {
+                // Unavailable, old, or malformed replies cannot acknowledge revocation.
+            }
+            try { Thread.sleep(50); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); return false; }
+        }
+        return false;
+    }
+
     /** The IP to query for health checks: localhost on macOS, bridge gateway on Linux. */
     public static String healthAddress(IncusClient incus) {
         return dev.incusspawn.Platform.isMacOS()

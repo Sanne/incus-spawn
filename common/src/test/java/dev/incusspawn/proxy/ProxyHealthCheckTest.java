@@ -21,6 +21,33 @@ import static org.mockito.Mockito.*;
 
 class ProxyHealthCheckTest {
 
+    @Test void resetAcknowledgementRequiresBothTheGenerationAndVerifierState() throws Exception {
+        var body = new java.util.concurrent.atomic.AtomicReference<>("{\"generation\":\"new\",\"verifierHash\":\"wrong\"}");
+        var requests = new java.util.concurrent.atomic.AtomicInteger();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/credential-proofs", exchange -> {
+            requests.incrementAndGet();
+            assertEquals("GET", exchange.getRequestMethod());
+            assertEquals("instance=box", exchange.getRequestURI().getQuery());
+            var reply = body.get().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, reply.length);
+            exchange.getResponseBody().write(reply);
+            exchange.close();
+        });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            assertFalse(ProxyHealthCheck.awaitCredentialProofs("127.0.0.1", port, "box", "new", "expected", 150));
+            body.set("{\"generation\":\"old\",\"verifierHash\":\"expected\"}");
+            assertFalse(ProxyHealthCheck.awaitCredentialProofs("127.0.0.1", port, "box", "new", "expected", 150));
+            body.set("{\"generation\":\"new\",\"verifierHash\":\"expected\"}");
+            assertTrue(ProxyHealthCheck.awaitCredentialProofs("127.0.0.1", port, "box", "new", "expected", 500));
+            body.set("not JSON");
+            assertFalse(ProxyHealthCheck.awaitCredentialProofs("127.0.0.1", port, "box", "new", "expected", 150));
+            assertTrue(requests.get() >= 4);
+        } finally { server.stop(0); }
+    }
+
     @AfterEach
     void clearCache() {
         ProxyHealthCheck.invalidateCache();

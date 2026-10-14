@@ -43,8 +43,8 @@ class InstanceSecretTest {
 
     @Test
     void theGuestScriptOnlyEverCarriesASecret() {
-        assertThrows(IllegalArgumentException.class, () -> InstanceSecret.guestEnv("x'; rm -rf / #", false, List.of()));
-        assertThrows(IllegalArgumentException.class, () -> InstanceSecret.guestEnv("", false, List.of()));
+        assertThrows(IllegalArgumentException.class, () -> InstanceSecret.guestEnv(new InstanceSecret.Delivery("x'; rm -rf / #", "00"), false, List.of()));
+        assertThrows(IllegalArgumentException.class, () -> InstanceSecret.guestEnv(new InstanceSecret.Delivery("", "00"), false, List.of()));
     }
 
     /**
@@ -61,7 +61,7 @@ class InstanceSecretTest {
 
         // Twice: it rides in probes and setup scripts that are retried until one answers
         for (int i = 0; i < 2; i++) {
-            var run = run(script + "\necho \"ready${ISX_INSTANCE_SECRET}${isx_secret}${ISX_PROOF_TOKENS}${isx_proofs}\"", secret);
+            var run = run(script + "\necho \"ready${ISX_INSTANCE_SECRET}${isx_secret}${ISX_PROOF_TOKENS}${isx_proofs}${ISX_CREDENTIAL_SECRET}${isx_credential_secret}\"", secret);
             assertEquals("ready", new String(run.getInputStream().readAllBytes()).strip(),
                     "the secret does not outlive the script's own use of it");
             assertEquals(0, run.waitFor());
@@ -74,6 +74,7 @@ class InstanceSecretTest {
         assertFalse(Files.exists(root.resolve("run/isx/instance-secret.new")));
         var proofs = root.resolve("run/isx/proof-tokens");
         assertEquals("export " + InstanceSecret.FILE_ENV_VAR + "=" + file + "\n"
+                        + "export " + CredentialProof.FILE_ENV_VAR + "=" + root.resolve("run/isx/credential-secret") + "\n"
                         + "if [ -r " + proofs + " ]; then . " + proofs + "; fi\n",
                 Files.readString(root.resolve("etc/profile.d/isx-instance-secret.sh")),
                 "the profile names the file; the secret stays out of every process's environment");
@@ -99,7 +100,7 @@ class InstanceSecretTest {
 
         for (var secret : List.of(InstanceSecret.generate(), InstanceSecret.generate())) {
             var start = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true);
-            start.environment().putAll(InstanceSecret.guestEnv(secret, false, placeholders));
+            start.environment().putAll(InstanceSecret.guestEnv(new InstanceSecret.Delivery(secret, secret), false, placeholders));
             assertEquals(0, start.start().waitFor());
 
             var login = new ProcessBuilder("sh", "-c", ". " + envFile + "; . " + root.resolve("etc/profile.d/isx-instance-secret.sh")
@@ -148,7 +149,7 @@ class InstanceSecretTest {
     /** {@code script} run as the guest would, handed {@code secret} the way the exec hands it. */
     private static Process run(String script, String secret) throws Exception {
         var pb = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true);
-        pb.environment().putAll(InstanceSecret.guestEnv(secret, false, PLACEHOLDERS));
+        pb.environment().putAll(InstanceSecret.guestEnv(new InstanceSecret.Delivery(secret, secret), false, PLACEHOLDERS));
         return pb.start();
     }
 
@@ -169,7 +170,8 @@ class InstanceSecretTest {
         assertTrue(InstanceSecret.missingIn(output(check)), "a secret with no proofs beside it");
         Files.writeString(root.resolve("run/isx/proof-tokens"), "");
         assertTrue(InstanceSecret.missingIn(output(check)), "pre-enforcement delivery needs verifier metadata");
-        Files.writeString(root.resolve("run/isx/proof-version"), "2");
+        Files.writeString(root.resolve("run/isx/proof-version"), "3");
+        Files.writeString(root.resolve("run/isx/credential-secret"), InstanceSecret.generate());
         assertFalse(InstanceSecret.missingIn(output(check)), "an empty proofs file was still delivered");
     }
 

@@ -16,12 +16,22 @@ import java.util.regex.Pattern;
 public final class ProofCarriers {
     private record Carrier(String domain, String namespace, String header, List<Pattern> tokens, List<Pattern> claims) {}
     private final List<Carrier> carriers;
-    private final List<String> warnings;
+    private record MissingPlaceholders(String tool, String namespace) {
+        String warning(java.util.Set<String> domains) {
+            var advice = namespace.isBlank()
+                    ? " has no credential namespace: set proxy.config-namespace and use config-path entries relative to it, then declare proxy.placeholders"
+                    : " has no declared placeholders: declare proxy.placeholders";
+            return dev.incusspawn.util.OutputFormat.oneLine("tool '" + tool + "': proxy auth namespace '" + namespace + "'"
+                    + advice + " and export its credential variable in env; send that variable with each request."
+                    + " Credential injection is disabled for " + domains + ", including other tools sharing those domains.");
+        }
+    }
+    private final Map<MissingPlaceholders, java.util.Set<String>> missing;
 
     public ProofCarriers(Collection<? extends ToolSetup> tools) {
         var placeholders = InheritedProof.byNamespace(ProofToken.declaredBy(tools));
         var declared = new ArrayList<Carrier>();
-        var missing = new LinkedHashMap<String, java.util.Set<String>>();
+        missing = new LinkedHashMap<>();
         for (var tool : tools) {
             var proxy = tool.proxy();
             if (proxy == null) continue;
@@ -43,7 +53,7 @@ public final class ProofCarriers {
                 };
                 for (var namespace : namespaces) {
                     if (!placeholders.containsKey(namespace)) {
-                        missing.computeIfAbsent("tool '" + tool.name() + "': proxy auth namespace '" + namespace + "'",
+                        missing.computeIfAbsent(new MissingPlaceholders(tool.name(), namespace),
                                 key -> new java.util.LinkedHashSet<>()).addAll(auth.getDomains());
                     }
                     var patterns = placeholders.getOrDefault(namespace, List.of()).stream()
@@ -60,14 +70,18 @@ public final class ProofCarriers {
             }
         }
         carriers = List.copyOf(declared);
-        warnings = missing.entrySet().stream().map(entry -> dev.incusspawn.util.OutputFormat.oneLine(entry.getKey()
-                + " has no declared placeholders: credential injection is disabled for " + entry.getValue()
-                + ", including other tools sharing those domains. Declare proxy.placeholders"
-                + " and export its credential variable in env; send that variable with each request.")).toList();
     }
 
     /** Configuration diagnostics, emitted once per load, never on the request path. */
-    public List<String> warnings() { return warnings; }
+    public List<String> warnings() {
+        return missing.entrySet().stream().map(entry -> entry.getKey().warning(entry.getValue())).toList();
+    }
+
+    /** A single-tool validator cannot judge declarations supplied by a borrowed namespace's owner. */
+    public List<String> warningsForNamespace(String namespace) {
+        return missing.entrySet().stream().filter(entry -> entry.getKey().namespace().equals(namespace))
+                .map(entry -> entry.getKey().warning(entry.getValue())).toList();
+    }
 
     /** Every namespace the destination can spend must prove itself; empty lists fail closed. */
     public record Presented(Map<String, List<String>> digests, boolean claimsProof) {}

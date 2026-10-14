@@ -36,7 +36,7 @@ import java.util.Map;
  *   <li>Never usable from an image: build secrets are revoked and removed before publication,
  *       and a branch is given its own before its
  *       first start, replacing whatever hash its source carried.</li>
- *   <li>Beside it, at {@link #PROOFS_PATH}, the proof tokens derived from it ({@link ProofToken}),
+ *   <li>Beside it, at {@link #PROOFS_PATH}, the proof tokens derived from the separate stable credential seed ({@link ProofToken}),
  *       which the login profile does export: they take the place of the tools' placeholders.</li>
  * </ul>
  *
@@ -56,6 +56,7 @@ public final class InstanceSecret {
     public static final String DELIVERY_ENV = "ISX_INSTANCE_SECRET";
     /** The exec environment variable {@link #GUEST_SCRIPT} takes this start's proof exports from. */
     public static final String PROOFS_DELIVERY_ENV = "ISX_PROOF_TOKENS";
+    public static final String GENERATION_ENV = "ISX_PROOF_GENERATION";
     /**
      * Where the guest keeps this start's proof exports ({@link ProofToken}), for its login
      * profile to source. In {@code /run} with the secret, so no image or copy carries them.
@@ -78,17 +79,42 @@ public final class InstanceSecret {
 
     /**
      * A new secret, its hash put in {@code config} under {@link Metadata#INSTANCE_SECRET_SHA256}
-     * for the caller to write with whatever else it records -- the one way a start gets its secret.
+     * for the caller to write with whatever else it records, with a fresh credential grant for a new instance.
      */
-    public static String stampInto(Map<String, String> config) {
+    public static Delivery stampInto(Map<String, String> config) {
         return stampInto(config, ProofToken.declared());
     }
 
-    public static String stampInto(Map<String, String> config, List<ProofToken.Placeholder> placeholders) {
+    public static Delivery stampInto(Map<String, String> config, List<ProofToken.Placeholder> placeholders) {
+        return stampInto(config, placeholders, CredentialProof.fresh());
+    }
+
+    public record Delivery(String secret, String proofSecret, String proofGeneration) {
+        public Delivery(String secret, String proofSecret) { this(secret, proofSecret, ""); }
+        @Override public String toString() { return "InstanceSecret.Delivery[redacted]"; }
+    }
+
+    /** An ordinary start leaves an established proof grant alone; changed declarations require a current locked listing. */
+    public static Delivery retainInto(Map<String, String> config, io.hyperfoil.tools.jjq.value.JqValue previous,
+                                       List<ProofToken.Placeholder> placeholders) {
+        var generation = previous.pathText(Metadata.INSTANCE_PROOF_ID, "");
+        if (generation.isBlank()) return stampInto(config, placeholders);
         var secret = generate();
         config.put(Metadata.INSTANCE_SECRET_SHA256, sha256(secret));
-        config.put(Metadata.INSTANCE_PROOF_SHA256, ProofVerifier.stamp(secret, placeholders));
-        return secret;
+        var seed = CredentialProof.retain(generation, previous.pathText(Metadata.INSTANCE_PROOF_SHA256, ""));
+        var verifier = ProofVerifier.stamp(seed.secret(), placeholders);
+        if (!verifier.equals(previous.pathText(Metadata.INSTANCE_PROOF_SHA256, ""))) {
+            CredentialProof.stampInto(config, seed, placeholders);
+        }
+        return new Delivery(secret, seed.secret(), generation);
+    }
+
+    public static Delivery stampInto(Map<String, String> config, List<ProofToken.Placeholder> placeholders,
+                                      CredentialProof.Seed proof) {
+        var secret = generate();
+        config.put(Metadata.INSTANCE_SECRET_SHA256, sha256(secret));
+        CredentialProof.stampInto(config, proof, placeholders);
+        return new Delivery(secret, proof.secret(), proof.generation());
     }
 
     /** What the host records for {@code secret}. */
@@ -133,17 +159,21 @@ public final class InstanceSecret {
      * delivers a secret reconciles it too.
      */
     public static final String GUEST_SCRIPT = "isx_secret=$" + DELIVERY_ENV + "; isx_proofs=$" + PROOFS_DELIVERY_ENV
-            + "; unset " + DELIVERY_ENV + " " + PROOFS_DELIVERY_ENV + "; "
+            + "; isx_credential_secret=$" + CredentialProof.DELIVERY_ENV
+            + "; unset " + DELIVERY_ENV + " " + PROOFS_DELIVERY_ENV + " " + CredentialProof.DELIVERY_ENV + "; "
             + "[ -n \"$isx_secret\" ] && { i=0; until " + RUN_IS_TMPFS + "; do i=$((i+1)); [ $i -ge 60 ] && break; sleep 0.05; done; "
             + RUN_IS_TMPFS + " && install -d -m 755 " + GUEST_DIR
             + " && rm -f " + PROOFS_PATH
             + " && " + writeForInstanceUser("'%s\\n' \"$isx_secret\"", GUEST_PATH)
+            + " && " + writeForInstanceUser("'%s\\n' \"$isx_credential_secret\"", CredentialProof.GUEST_PATH)
             + " && " + writeForInstanceUser("'%s' \"$isx_proofs\"", PROOFS_PATH)
-            + " && printf '%s' 2 > " + GUEST_DIR + "/proof-version"
+            + " && printf '%s' \"$" + GENERATION_ENV + "\" > " + GUEST_DIR + "/proof-generation"
+            + " && printf '%s' 3 > " + GUEST_DIR + "/proof-version"
             + " && printf '%s\\n' " + Container.shellQuote("export " + FILE_ENV_VAR + "=" + GUEST_PATH)
+            + " " + Container.shellQuote("export " + CredentialProof.FILE_ENV_VAR + "=" + CredentialProof.GUEST_PATH)
             + " " + Container.shellQuote("if [ -r " + PROOFS_PATH + " ]; then . " + PROOFS_PATH + "; fi")
             + " > " + PROFILE_PATH
-            + "; } >/dev/null 2>&1; unset isx_secret isx_proofs; true\n"
+            + "; } >/dev/null 2>&1; unset isx_secret isx_proofs isx_credential_secret; true\n"
             + McpClientRegistration.GUEST_SCRIPT;
 
     /**
@@ -169,11 +199,36 @@ public final class InstanceSecret {
      * there, so asking for a new secret on every probe could not help.
      */
     public static final String GUEST_CHECK = RUN_IS_TMPFS + " && { ! [ -s " + GUEST_PATH + " ] || ! [ -e "
-            + PROOFS_PATH + " ] || ! grep -qx 2 " + GUEST_DIR + "/proof-version; } && echo " + MISSING + "; true";
+            + PROOFS_PATH + " ] || ! [ -s " + CredentialProof.GUEST_PATH + " ] || ! grep -qx 3 " + GUEST_DIR + "/proof-version; } && echo " + MISSING + "; true";
+
+    /** Explicit reset updates credential proofs only; an existing MCP session keeps its boot secret. */
+    public static final String RESET_PROOFS_SCRIPT = "isx_credential_secret=$" + CredentialProof.DELIVERY_ENV
+            + "; isx_proofs=$" + PROOFS_DELIVERY_ENV
+            + "; unset " + CredentialProof.DELIVERY_ENV + " " + PROOFS_DELIVERY_ENV + "; "
+            + RUN_IS_TMPFS + " && install -d -m 755 " + GUEST_DIR
+            + " && " + writeForInstanceUser("'%s\\n' \"$isx_credential_secret\"", CredentialProof.GUEST_PATH)
+            + " && " + writeForInstanceUser("'%s' \"$isx_proofs\"", PROOFS_PATH)
+            + " && printf '%s' \"$" + GENERATION_ENV + "\" > " + GUEST_DIR + "/proof-generation"
+            + " && printf '%s' 3 > " + GUEST_DIR + "/proof-version"
+            + " && printf '%s\\n' " + Container.shellQuote("export " + FILE_ENV_VAR + "=" + GUEST_PATH)
+            + " " + Container.shellQuote("export " + CredentialProof.FILE_ENV_VAR + "=" + CredentialProof.GUEST_PATH)
+            + " " + Container.shellQuote("if [ -r " + PROOFS_PATH + " ]; then . " + PROOFS_PATH + "; fi")
+            + " > " + PROFILE_PATH + "; isx_result=$?; unset isx_credential_secret isx_proofs; exit $isx_result";
 
     /** Whether the output of a probe running {@link #GUEST_CHECK} says the guest holds no secret. */
     public static boolean missingIn(String stdout) {
         return stdout != null && stdout.lines().anyMatch(MISSING::equals);
+    }
+
+    /** Detect a reset racing a guest delivery during the VM agent probe that already runs. */
+    public static String generationCheck(String generation) {
+        if (generation == null || !generation.matches("[0-9a-f]{64}")) return "echo " + MISSING;
+        return "grep -qx '" + generation + "' " + GUEST_DIR + "/proof-generation || echo " + MISSING;
+    }
+
+    public static Map<String, String> proofEnv(CredentialProof.Seed seed, List<ProofToken.Placeholder> placeholders) {
+        return Map.of(CredentialProof.DELIVERY_ENV, requireHex(seed.secret()),
+                PROOFS_DELIVERY_ENV, ProofToken.profile(seed.secret(), placeholders), GENERATION_ENV, seed.generation());
     }
 
     /**
@@ -181,12 +236,14 @@ public final class InstanceSecret {
      * the instance holds the {@code mcp-caller} grant ({@link Metadata#isMcpCallerGrant}): the
      * caller reads it from the instance it already holds, never assumes it, since a wrong answer
      * either way would remove a coordinator's registration or leave a copy with one. With them,
-     * the proof tokens {@code secret} derives for {@code placeholders} ({@link ProofToken#declared}).
+     * the proof tokens the stable seed derives for {@code placeholders} ({@link ProofToken#declared}).
      */
-    public static Map<String, String> guestEnv(String secret, boolean mcpCaller,
+    public static Map<String, String> guestEnv(Delivery delivery, boolean mcpCaller,
                                                List<ProofToken.Placeholder> placeholders) {
-        return Map.of(DELIVERY_ENV, requireHex(secret), McpClientRegistration.ENV, mcpCaller ? "1" : "0",
-                PROOFS_DELIVERY_ENV, ProofToken.profile(secret, placeholders));
+        return Map.of(DELIVERY_ENV, requireHex(delivery.secret()), McpClientRegistration.ENV, mcpCaller ? "1" : "0",
+                CredentialProof.DELIVERY_ENV, requireHex(delivery.proofSecret()),
+                GENERATION_ENV, delivery.proofGeneration(),
+                PROOFS_DELIVERY_ENV, ProofToken.profile(delivery.proofSecret(), placeholders));
     }
 
     /** Only what {@link #generate} makes is ever handed to the guest as a secret. */

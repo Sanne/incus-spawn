@@ -37,6 +37,12 @@ class HealthCallerTest {
     void activityIsTheHostsAndNothingOnTheHealthServerWrites() {
         var get = io.vertx.core.http.HttpMethod.GET;
         var post = io.vertx.core.http.HttpMethod.POST;
+        assertEquals(MitmProxy.HealthRoute.CREDENTIAL_PROOFS, MitmProxy.healthRoute(get, "/credential-proofs", () -> true));
+        assertEquals(MitmProxy.HealthRoute.CREDENTIAL_PROOFS,
+                MitmProxy.healthRoute(io.vertx.core.http.HttpMethod.HEAD, "/credential-proofs", () -> true));
+        assertEquals(MitmProxy.HealthRoute.NOT_FOUND, MitmProxy.healthRoute(get, "/credential-proofs", () -> false));
+        assertEquals(MitmProxy.HealthRoute.NOT_FOUND, MitmProxy.healthRoute(post, "/credential-proofs", () -> false));
+        assertEquals(MitmProxy.HealthRoute.METHOD_NOT_ALLOWED, MitmProxy.healthRoute(post, "/credential-proofs", () -> true));
         assertEquals(MitmProxy.HealthRoute.ACTIVITY, MitmProxy.healthRoute(get, "/activity", () -> true));
         assertEquals(MitmProxy.HealthRoute.NOT_FOUND, MitmProxy.healthRoute(get, "/activity", () -> false));
         // A container learns nothing of the path, whatever it sends

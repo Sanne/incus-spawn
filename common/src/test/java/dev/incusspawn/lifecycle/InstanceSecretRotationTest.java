@@ -82,7 +82,7 @@ class InstanceSecretRotationTest {
 
         assertNotEquals(first, second);
         assertNotEquals(firstHash, recordedHash(daemon, NAME));
-        assertEquals(InstanceSecret.sha256(second), recordedHash(daemon, NAME));
+        assertEquals(InstanceSecret.sha256(second.secret()), recordedHash(daemon, NAME));
     }
 
     @Test
@@ -158,8 +158,8 @@ class InstanceSecretRotationTest {
         assertFalse(probes.isEmpty());
         for (var probe : probes) {
             var secret = secretIn(probe);
-            assertProofsFor(secret, declared, probe.environment().get(InstanceSecret.PROOFS_DELIVERY_ENV));
-            assertEquals(dev.incusspawn.proxy.ProofVerifier.stamp(secret, declared),
+            assertProofsFor(probe.environment().get(dev.incusspawn.proxy.CredentialProof.DELIVERY_ENV), declared, probe.environment().get(InstanceSecret.PROOFS_DELIVERY_ENV));
+            assertEquals(dev.incusspawn.proxy.ProofVerifier.stamp(probe.environment().get(dev.incusspawn.proxy.CredentialProof.DELIVERY_ENV), declared),
                     daemon.instance(NAME).path("config").path(Metadata.INSTANCE_PROOF_SHA256).asText());
             assertFalse(String.join(" ", probe.command()).contains(ProofToken.derive(secret, "github")),
                     "a proof opens a credential: it travels in the environment, not on a command line");
@@ -185,9 +185,9 @@ class InstanceSecretRotationTest {
         assertFalse(delivered.isEmpty(), "the branch's setup script carries its secret");
         var secret = delivered.getFirst().get(InstanceSecret.DELIVERY_ENV);
         assertEquals(recordedHash(daemon, "dev-2"), InstanceSecret.sha256(secret));
-        assertEquals(dev.incusspawn.proxy.ProofVerifier.stamp(secret, ProofToken.declared()),
+        assertEquals(dev.incusspawn.proxy.ProofVerifier.stamp(delivered.getFirst().get(dev.incusspawn.proxy.CredentialProof.DELIVERY_ENV), ProofToken.declared()),
                 daemon.instance("dev-2").path("config").path(Metadata.INSTANCE_PROOF_SHA256).asText());
-        assertProofsFor(secret, ProofToken.declared(), delivered.getFirst().get(InstanceSecret.PROOFS_DELIVERY_ENV));
+        assertProofsFor(delivered.getFirst().get(dev.incusspawn.proxy.CredentialProof.DELIVERY_ENV), ProofToken.declared(), delivered.getFirst().get(InstanceSecret.PROOFS_DELIVERY_ENV));
     }
 
     private static void assertProofsFor(String secret, List<ProofToken.Placeholder> declared, String exports) {

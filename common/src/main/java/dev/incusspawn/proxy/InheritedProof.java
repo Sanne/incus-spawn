@@ -19,14 +19,14 @@ import java.util.regex.Pattern;
  * proxy cannot verify, so by default they get none of its credentials (#1107). An instance whose
  * account for a namespace is {@code inherit} has every proof it presents for that namespace
  * replaced by the one the parent instance's own login environment holds -- derived from the
- * secret the outer isx gave it, at {@link InstanceSecret#GUEST_PATH} -- under the same prefix and
+ * credential seed the outer isx gave it, at {@link CredentialProof#GUEST_PATH} -- under the same prefix and
  * in the same header. The outer proxy then sees the parent's proof from the parent's address, and
  * serves the parent's account. Nothing else is swapped: a static placeholder proves nothing, and
  * a token the caller supplied stays theirs.
  *
- * <p>The secret is read again for every request that swaps, since the parent's rotates on every
- * start; a machine without one is not running nested, and such a request is refused, as for an
- * account that is not configured.
+ * <p>The seed is refreshed off the event loop, so an explicit parent proof reset is observed.
+ * A machine without one is not running nested, and such a request is refused, as for an account
+ * that is not configured.
  */
 public final class InheritedProof {
 
@@ -37,7 +37,7 @@ public final class InheritedProof {
 
     /** The parent instance's secret, as its isx delivered it. */
     static Path secretFile() {
-        return Path.of(System.getProperty(SECRET_FILE_PROPERTY, InstanceSecret.GUEST_PATH));
+        return Path.of(System.getProperty(SECRET_FILE_PROPERTY, CredentialProof.GUEST_PATH));
     }
 
     /** Whether this machine is an isx instance, holding a secret its isx gave it. */

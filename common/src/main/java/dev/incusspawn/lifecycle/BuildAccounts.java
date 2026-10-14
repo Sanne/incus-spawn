@@ -62,7 +62,7 @@ public final class BuildAccounts {
     /** Revoke before publication or inspection. A later isx start delivers fresh proofs. */
     public static void revoke(IncusClient incus, String name) {
         incus.configSetAll(name, Map.of(Metadata.INSTANCE_SECRET_SHA256, "",
-                Metadata.INSTANCE_PROOF_SHA256, "", Metadata.INSTANCE_SECRET_BOOT, ""));
+                Metadata.INSTANCE_PROOF_SHA256, "", Metadata.INSTANCE_PROOF_ID, "", Metadata.INSTANCE_SECRET_BOOT, ""));
     }
 
     /** Remove managed tool caches of the build's temporary proof before publishing its rootfs. */
@@ -73,7 +73,7 @@ public final class BuildAccounts {
                   if [ -r "$script" ]; then . "$script"; fi
                 done
                 """, "Failed to clear build credential caches");
-        container.sh("rm -f /run/isx/instance-secret /run/isx/proof-tokens /run/isx/proof-version")
+        container.sh("rm -f /run/isx/instance-secret /run/isx/credential-secret /run/isx/proof-tokens /run/isx/proof-version /run/isx/proof-generation")
                 .assertSuccess("Failed to clear build proofs");
     }
 

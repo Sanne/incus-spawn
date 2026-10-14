@@ -97,37 +97,52 @@ Key design:
   Every isx start rotates it: `BranchFlow.create` (hash on the copy request, secret to `setupRuntime`), `InstanceLifecycle.startForUse`/`restartForUse` (`rotateInstanceSecret` before the start, then the `waitForReady` probe writes `/run/isx/instance-secret`), and `VmAgentRecovery` (the hash in its boot-stamp write).
   A container start also records the boot it went to (`recordSecretBoot`: its `last_used_at`, read once the guest answers, as `Metadata.INSTANCE_SECRET_BOOT`; the read is returned for the CA check, `fixContainerCaIfNeeded(incus, name, instance)`, so the stamp's write is the only request added -- pinned in `InstanceLifecycleRequestBudgetTest`), so `ensureReady` can tell a reboot isx did not do from the instance it already holds and give the box a new secret (#1024).
   A VM is never stamped, since QEMU reboots in place, and its agent probe asks the guest instead (`InstanceSecret.GUEST_CHECK`).
-  A new path that starts or restarts an instance for use goes through these or does the same; builds get none.
+  A new path that starts or restarts an instance for use goes through these or does the same; builds use `BuildAccounts` and revoke their grants before publication.
   The secret reaches the guest in the exec environment (`InstanceSecret.guestEnv` + `GUEST_SCRIPT`), never on a command line, which any guest user can read.
   The same exec reconciles the Claude Code registration of `mcp.isx.internal` with the `mcp-caller` grant every caller passes beside it (`McpClientRegistration`, #1182, see `mcp.md`).
   Rotation does not signal the proxy (cost on every start; a refusal right after a start refreshes and retries, throttled by `wantsMissRefresh()` like a lookup miss).
   See DESIGN.md "A per-start secret".
-- **Guest tools read their placeholder when they run (#1108)**, because it becomes a per-start proof (#1106) the proxy checks (#1107).
+- **Guest tools read their placeholder when they run (#1108)**, because a build proof is revoked before publication and instance proofs can be explicitly reset.
   Nothing a build writes may hold one: `ClaudeSetup` and `CodexSetup` each write an `/etc/profile.d/isx-zz-*-auth.sh` login script (sorted after every `isx-*.sh`) that adapts the exported value to what the tool reads -- Claude Code's `customApiKeyResponses.approved` (last 20 characters of `ANTHROPIC_API_KEY`, else an interactive prompt defaulting to no), `ANTHROPIC_CUSTOM_HEADERS` from `ISX_VERTEX_ACCESS_TOKEN` (under `CLAUDE_CODE_SKIP_VERTEX_AUTH` Claude Code sends no Authorization header of its own), and Codex's `~/.codex/auth.json` (Codex never reads `OPENAI_API_KEY`).
   The `gcloud` stub prints `$ISX_VERTEX_ACCESS_TOKEN`; `GhSetup`'s host-driven `gh api` calls take `GH_TOKEN` from the guest's `/etc/profile` (`GhSetup.LOGIN_TOKEN`). gh, Copilot, Pi and Bob read the variable already.
   A child build refreshes these files for a tool it only inherits (`ToolSetup.refreshInherited`, from `GuestProvisioning.refreshInheritedTools`), so an older parent's files do not reach it.
   A YAML tool whose `files:` or build steps hold the value of one of its own credential-named env entries is warned about by the loader (`ToolDefValidator.embeddedTokens`).
   Per-tool evidence: DESIGN.md "A placeholder is read when the tool runs".
 - **Proof tokens (#1100, #1107).**
-  Every start derives each namespace digest with HMAC keyed by the raw secret, never its `/dev/incus`-readable hash.
+  `CredentialProof` derives a stable seed from a protected host key and a public random generation in `Metadata.INSTANCE_PROOF_ID`.
+  Namespace digests use HMAC keyed by that seed, never a `/dev/incus`-readable value.
+  Starts retain the generation; every branch and explicit reset creates a new one.
+  The host key lives at `~/.config/incus-spawn/credential-proofs/host.key`, checked with the same ownership, permission and atomic-creation rules as host-route secrets.
+  A lost host key fails an ordinary start; restore it or explicitly reset the instance.
   Tool `placeholders:` declarations supply variables and prefixes; declarations exclude project-local definitions.
-  `ProofVerifier` stores only SHA-256 of each namespace digest in the replaceable `Metadata.INSTANCE_PROOF_SHA256` stamp, alongside secret rotation in the same write.
+  `ProofVerifier` stores only SHA-256 of each namespace digest in the replaceable `Metadata.INSTANCE_PROOF_SHA256` stamp.
+  Ordinary starts leave proof metadata alone; migration and changed declarations re-read under the proof lock before updating it.
+  This prevents a prefetched start from restoring a grant an explicit reset replaced.
   Every prefix of a namespace normalizes to that digest, compared in constant time.
   `ProofCarriers` derives the authentication headers from tool declarations, including Basic and custom headers; Claude supports API-key, OAuth and Vertex carriers independently of the selected account mode.
   Both HTTP and WebSocket handling call `authorize` before account resolution, compatibility checks, translation, token acquisition, injection and inheritance substitution.
   Verification and account resolution use one configuration snapshot across an asynchronous refresh.
   Missing or incorrect proofs relay unchanged, including authentication and destination semantics; unknown addresses never get defaults.
   Valid proofs still obey account selection, including missing-account failures.
-  A proxied namespace without declared placeholders produces a warning once per tool and namespace on configuration load and in tool validation; it blocks injection for every tool sharing that domain.
+  A proxied namespace without declared placeholders produces a warning once per tool and namespace on configuration load; it blocks injection for every tool sharing that domain.
+  Single-tool validation checks its own namespace, leaving borrowed declarations to the proxy's combined check; an unscoped credential needs `config-namespace` before placeholders.
   HTTP and WebSocket account refusals log the instance and reason, including the missing pinned account.
-  Registry refresh and retry are bounded, shared and off the event loop; a failed listing clears credential verifiers.
+  Unexpected credential-refusal and WebSocket setup failures log the exception class only, since exception messages can contain authentication values.
+  WebSocket failures after acceptance name relay setup.
+  Unrecognized proofs wait for the next permitted listing on a shared timer and worker, with a bounded wait; independent credentials pass through immediately.
+  A failed listing clears credential verifiers and acknowledgement state.
+  `isx account reset-proofs` writes the new generation and verifiers under the instance proof lock, signals the proxy and polls host-only `GET /credential-proofs?instance=<name>`.
+  Success requires both the expected generation and verifier fingerprint; timeout is an error, and authorized requests and WebSockets continue.
+  A running guest receives the new credential seed and tokens without changing its MCP secret; failed delivery leaves recovery pending.
   Refusal diagnostics are bounded and deduplicated, contain no authentication values, and do not warn for ordinary independent credentials.
   The 256-entry request-warning window expires after five minutes so later callers can still be diagnosed.
   `/activity` counts refused injections, including anonymous and independent pass-through.
   The existing guest exec writes proofs and the secret into `/run/isx`, root-owned and readable by group 1000.
   Login profiles replace only isx placeholders or earlier proofs in variables the build exported.
-  Every delivery path replaces verifiers, including copies, VM recovery and uninitiated reboots, without changing normal lifecycle request budgets.
-  A container's `proofs-v2` boot stamp and a VM's version-2 guest delivery marker upgrade instances that already had #1237 proofs but no verifiers.
+  VM recovery and uninitiated reboots retain credential proofs while replacing the boot secret.
+  Normal lifecycle request budgets stay unchanged; migration or changed declarations add one metadata read under the proof lock.
+  A container's `proofs-v3:<generation>` boot stamp and a VM's version-3 guest marker upgrade previous proof deliveries.
+  The VM probe also checks the delivered generation, so a delivery racing a reset is repaired on the next preparation.
   Old shells and long-running tools need a new login or restart; doctor requests a rebuild for old API-key Claude images without #1113's approval script.
   Every build gets an address and proofs, including unpinned defaults, before tool setup, clones and primes.
   Successful builds revoke and scrub temporary proof state, including managed Claude and Codex caches, before publication; retained failures are revoked and get fresh proofs on their next isx start.
@@ -140,7 +155,7 @@ Key design:
   `CredentialCheck` counts an inherited namespace as supplied (it skips the `credentialProblem` of a tool whose namespaces are all inherited, and `ToolProxyResolver.missingSecrets` skips inherited keys) and refuses the branch outside an instance, `default: inherit` included.
   A Claude build for `inherit` takes the API-key form (`ClaudeSetup.envEntries` with no account).
   `ProxyCredentials.inheritedNamespaces` carries the namespaces resolved to it.
-  `MitmProxy.contextFor` builds an `InheritedProof.Swap` for those a request's domain spends (`namespacesForDomain`), from the parent's secret in `/run/isx/instance-secret`.
+  `MitmProxy.contextFor` builds an `InheritedProof.Swap` for those a request's domain spends (`namespacesForDomain`), from the parent's credential seed in `/run/isx/credential-secret`.
   The secret is read off the event loop: with every config read, every second by `refreshNesting()` on the config watcher's thread, and by `executeBlocking` when a request finds it more than a second old, so it does not depend on the watcher.
   None there is a 502 through `UnknownAccountException`, as for a missing account.
   `presentInheritedProofs` then replaces each whole `<prefix>isx_<32 hex>` of a declared prefix of that namespace with the parent's proof under the same prefix.
@@ -365,7 +380,7 @@ Key design:
   Bytes and last activity move at start and end only.
   A flow in flight keeps an unlisted instance's counters from the prune.
   Fields are only added.
-- **The health server only reads** (`MitmProxy.healthRoute`): `GET` and `HEAD` only (405 otherwise), `/activity` a 404 for non-host callers whatever the method.
+- **The health server only reads** (`MitmProxy.healthRoute`): `GET` and `HEAD` only (405 otherwise), `/activity` and `/credential-proofs` a 404 for non-host callers whatever the method.
   It is the listener every container reaches: never add a write endpoint to it.
 - **The proxy holds no configuration of its own** (DESIGN.md, #935): routing is derived from host config and `user.incus-spawn.*` stamps, so restart and reload rebuild it.
   A new capability is data in one of those stores with a no-inherit copy rule, written by `isx`, then a signal; any future proxy-side write is a stamp `PATCH` from an authenticated host-only surface, and every grant expires.

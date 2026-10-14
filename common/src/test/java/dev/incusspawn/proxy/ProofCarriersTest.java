@@ -16,6 +16,52 @@ class ProofCarriersTest {
     static final String SECRET = "12".repeat(32);
     static final String GH = "gho_isx_" + ProofToken.derive(SECRET, "github");
 
+    @Test void borrowedNamespaceUsesItsOwnersProofDeclarations() throws Exception {
+        var tool = new YamlToolSetup(Jjq.toolDef("""
+                name: custom
+                proxy:
+                  configuration:
+                    token:
+                      config-path: github.token
+                  auth:
+                    - domains: [custom.example]
+                      type: bearer
+                      token: '${token}'
+                """));
+        var alone = new ProofCarriers(List.of(tool));
+        assertTrue(alone.warningsForNamespace(tool.proxy().getConfigNamespace()).isEmpty(),
+                "single-tool validation cannot know whether the namespace owner is installed");
+        assertEquals(1, alone.warnings().size(), "proxy load must still diagnose a missing owner");
+        assertTrue(alone.warnings().getFirst().contains("namespace 'github'"));
+        assertEquals(List.of(), alone.read("custom.example", name -> List.of("Bearer " + GH)).digests().get("github"));
+
+        var together = new ProofCarriers(List.of(tool, new GhSetup()));
+        assertTrue(together.warnings().isEmpty());
+        assertEquals(Map.of("github", List.of(ProofToken.derive(SECRET, "github"))),
+                together.read("custom.example", name -> List.of("Bearer " + GH)).digests());
+    }
+
+    @Test void topLevelCredentialNeedsANamespaceBeforeItCanDeclareProofs() throws Exception {
+        var tool = new YamlToolSetup(Jjq.toolDef("""
+                name: custom
+                proxy:
+                  configuration:
+                    token:
+                      config-path: token
+                  auth:
+                    - domains: [custom.example]
+                      type: bearer
+                      token: '${token}'
+                """));
+        var carriers = new ProofCarriers(List.of(tool));
+        assertEquals(1, carriers.warnings().size());
+        var warning = carriers.warnings().getFirst();
+        assertTrue(warning.contains("set proxy.config-namespace"), warning);
+        assertTrue(warning.contains("config-path entries relative to it"), warning);
+        assertTrue(warning.indexOf("config-namespace") < warning.indexOf("proxy.placeholders"), warning);
+        assertEquals(List.of(), carriers.read("custom.example", name -> List.of("Bearer " + GH)).digests().get(""));
+    }
+
     @Test void missingPlaceholdersWarnOncePerNamespaceAndKeepSharedDomainsClosed() throws Exception {
         var tool = new YamlToolSetup(Jjq.toolDef("""
                 name: custom

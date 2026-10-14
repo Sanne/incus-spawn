@@ -8,6 +8,7 @@ An independent inner credential passes through with its destination, path, query
 ## Upgrade and recovery
 
 Update both `isx` and `isx-proxy`, then restart the proxy with `isx proxy stop` and `isx proxy start`.
+Update nested isx installations too when using `inherit`, so both layers use the separate credential seed.
 The proxy cannot gain enforcement from a CLI update while an older proxy process keeps running.
 From a terminal on the host, run `isx shell <instance>` for each existing instance that needs credentials.
 This detects instances with the earlier proof delivery version and installs fresh proofs and verifier metadata together.
@@ -23,19 +24,32 @@ Unregistered host-originated requests must supply their own credentials.
 For a nested isx that should use its parent's account, select `<namespace>=inherit` as described in the README.
 The inner proxy verifies its child's proof before presenting the parent's proof upstream.
 For Docker or Podman, sharing a current namespace token explicitly grants that namespace's account to the child.
-Restart that child with a new token after its parent's proof rotates.
+The token remains valid across parent stops, starts and reboots.
+Restart that child with a new token only after an explicit proof reset or when moving it to a different isx instance.
 Network restrictions and CA trust are separate from credential authorization.
 
 ## Lifecycle and builds
 
-HMAC derivation remains keyed by the raw per-start secret.
-Incus metadata contains only the secret hash and hashes of namespace digests; metadata readable through `/dev/incus` cannot produce a usable proof.
-Verifier replacement shares the existing secret configuration write on branch, start and recovery, including replacing inherited and removed namespaces.
-The guest delivery version is now `2`, and the container boot marker ends in `proofs-v2`.
+Credential proofs use a stable per-instance seed, separate from the per-start MCP and host-service secret.
+A protected host key at `~/.config/incus-spawn/credential-proofs/host.key` and a public random instance generation derive this seed.
+Back up this key with the instance state; ordinary starts refuse to replace a missing or unusable key silently.
+Incus metadata contains the public generation, the MCP secret hash and hashes of namespace digests; metadata readable through `/dev/incus` cannot produce a usable proof.
+Branches replace inherited proof generations and verifiers in the copy request.
+Ordinary starts and recovery preserve the generation; migration and changed tool declarations update verifiers in the secret write after one additional metadata read under the proof lock.
+The guest delivery version is now `3`, and the container boot marker includes `proofs-v3:<generation>`.
+The credential seed is redelivered to `/run/isx/credential-secret`; it survives reboots through host-side derivation, not through the guest filesystem.
 Normal branch/start/shell request-budget tests retain their existing expectations.
 Registry listings share a one-second refresh floor.
-A proof rotated immediately after a listing can therefore reach the upstream without injection on its first request; retrying after that interval refreshes the registry.
-A previous proof can still match a cached verifier for up to the ten-second snapshot lifetime if no refresh has observed its rotation.
+An unrecognized proof waits asynchronously for the next permitted shared refresh, then verification is retried.
+Waiting is bounded to six seconds, including the refresh floor, and a stalled listing does not accumulate more worker jobs.
+Independent credentials pass through immediately.
+To revoke shared proofs, run `isx account reset-proofs <instance>` on the host.
+It writes a fresh generation and waits up to five seconds for the proxy to acknowledge both the generation and verifier fingerprint.
+An unconfirmed reset exits with an error; check or upgrade the proxy and retry the reset.
+A successful reset invalidates earlier proofs for subsequent authorization checks; requests already authorized and established WebSockets continue.
+Open a new login shell and restart tools and nested services with their new tokens.
+A stopped instance receives its new tokens on its next start.
+Account changes and deletion still use the registry cache and its ten-second snapshot lifetime.
 
 Every build now registers an address, including builds using configured defaults.
 Address assignment, account pins and proof verifiers share one configuration write, and proof delivery rides in the readiness exec.
@@ -45,6 +59,13 @@ Publication adds verifier revocation and two guest execs to reset managed Claude
 Retained failed builds revoke their grant before stopping and receive fresh proofs on their next isx preparation.
 
 ## Validation
+
+The stable-proof revision adds lifecycle tests for restarts, fresh branches, migration, changed declarations, lost host keys and concurrent reset/start snapshots.
+Reset tests cover proxy acknowledgement, failed guest delivery and preserving pending MCP recovery after a raw reboot.
+HTTP and WebSocket tests cover first-call refresh; a stalled-listing test checks bounded waiting and independent-credential passthrough.
+The native integration workflow's `test-stable-proofs.sh` keeps a Podman child's configured token through a managed start and raw reboot recovery, then checks explicit reset revocation, new-token delivery, fresh branches and reused names.
+
+The following 2026-10-14 record describes the original per-start implementation, before the stable-proof design revision.
 
 On 2026-10-14, the JVM build was exercised against a real Incus daemon with a Fedora parent, a plain Alpine child on an inner Incus NAT bridge, and two production proxy processes.
 Both proxies used a local TLS identity upstream with synthetic `outer-A` and `inner-B` accounts; no real GitHub credential was involved.
@@ -60,7 +81,7 @@ The same guest and upstream were checked against base commit `169885e3`.
 | Inner patched isx configured with its own account | Not tested | `inner-B` |
 | Inner patched isx configured with `github=inherit` | Not tested | `outer-A` |
 | Forged child proof through inner inheritance | Not tested | Unauthenticated |
-| Parent's previous proof after a real restart and refresh | Not tested | Unauthenticated |
+| Parent's previous proof after a real restart and refresh (original per-start implementation) | Not tested | Unauthenticated |
 
 The patched production build/lifecycle APIs were also run against a real Fedora container: configured defaults authenticated as `outer-A`, an explicit account authenticated as `inner-B`, publication removed verifier metadata and cached Claude/Codex proofs, and a retained failure acquired fresh proofs while its previous proof stayed invalid.
 These were API-level probes; a complete template build and VM boot were not run locally.
@@ -74,6 +95,10 @@ The integration fixtures use `proof-curl.sh` to send the proofs delivered to the
 Refused injections are counted in `/activity` as `refused_injections`.
 Custom tools must declare `proxy.placeholders` and export the credential variable in `env`, as shown in [Custom Tools](../README.md#proxy-credentials).
 The proxy logs missing declarations when loading configuration, and tool validation warns about them.
+Single-tool validation checks its own namespace; borrowed namespaces are checked against all loaded tools when the proxy loads configuration.
+A top-level credential without a namespace needs `config-namespace` and relative config paths before placeholders can be declared.
 Without a declaration, the namespace blocks credential injection for every tool sharing its domains.
 Request warnings are deduplicated and limited to 256 caller/namespace combinations in a five-minute window, so a burst cannot permanently silence later diagnostics.
 They are emitted only for requests claiming an isx proof or placeholder; an ordinary independent credential does not produce a warning.
+Account refusals retain their known reason.
+Unexpected credential-refusal and WebSocket setup failures log only the exception class to avoid exposing authentication values from exception messages.

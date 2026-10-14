@@ -118,8 +118,18 @@ public final class InstanceRegistry {
      */
     record Parsed(Map<String, InstanceAccounts> byAddress, Map<String, String> secretByAddress,
                   java.util.Set<String> mcpCallers, Map<String, String> incarnationByName,
-                  Map<String, Lineage> lineageByName, Map<String, Map<String, String>> proofsByAddress) {
-        static final Parsed EMPTY = new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of(), Map.of(), Map.of());
+                  Map<String, Lineage> lineageByName, Map<String, Map<String, String>> proofsByAddress,
+                  Map<String, ProofState> proofStates) {
+        static final Parsed EMPTY = new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of(), Map.of(), Map.of(), Map.of());
+    }
+
+    /** Host-only acknowledgement of persisted proof state; contains no usable credential. */
+    public record ProofState(String generation, String verifierHash) {}
+
+    public ProofState proofState(String name) {
+        var current = snapshot;
+        return System.currentTimeMillis() - current.takenAt() > STALE_AFTER_MS
+                ? null : current.parsed().proofStates().get(name);
     }
 
     /**
@@ -305,7 +315,11 @@ public final class InstanceRegistry {
      * normal case for host-side traffic -- would otherwise list every instance each time.
      */
     public boolean wantsMissRefresh() {
-        return System.currentTimeMillis() - snapshot.takenAt() > MISS_REFRESH_INTERVAL_MS;
+        return missRefreshDelayMillis() == 0;
+    }
+
+    public long missRefreshDelayMillis() {
+        return Math.max(0, MISS_REFRESH_INTERVAL_MS + 1 - (System.currentTimeMillis() - snapshot.takenAt()));
     }
 
     /**
@@ -327,7 +341,7 @@ public final class InstanceRegistry {
             // retried per request.
             var previous = snapshot.parsed();
             var withoutProofs = new Parsed(previous.byAddress(), previous.secretByAddress(), previous.mcpCallers(),
-                    previous.incarnationByName(), previous.lineageByName(), Map.of());
+                    previous.incarnationByName(), previous.lineageByName(), Map.of(), Map.of());
             snapshot = new Snapshot(withoutProofs, System.currentTimeMillis(), snapshot.view());
             ProxyLog.warn("Instance registry refresh failed: " + e.getMessage());
             return false;
@@ -466,6 +480,10 @@ public final class InstanceRegistry {
         var incarnationByName = new java.util.HashMap<String, String>();
         var lineageByName = new java.util.HashMap<String, Lineage>();
         var configByName = configsByName(root);
+        var proofStates = new LinkedHashMap<String, ProofState>();
+        configByName.forEach((name, config) -> proofStates.put(name, new ProofState(
+                config.pathText(Metadata.INSTANCE_PROOF_ID, ""),
+                dev.incusspawn.tool.ToolDef.sha256hex(config.pathText(Metadata.INSTANCE_PROOF_SHA256, "")))));
         claimants.forEach((address, all) -> {
             var owner = owner(address, all);
             if (owner == null) return;
@@ -478,7 +496,7 @@ public final class InstanceRegistry {
             lineageByName.put(owner.accounts().instanceName(), lineageOf(owner.config(), configByName));
         });
         return new Parsed(byAddress, secretByAddress, java.util.Set.copyOf(mcpCallers),
-                Map.copyOf(incarnationByName), Map.copyOf(lineageByName), Map.copyOf(proofsByAddress));
+                Map.copyOf(incarnationByName), Map.copyOf(lineageByName), Map.copyOf(proofsByAddress), Map.copyOf(proofStates));
     }
 
     private record Claimant(InstanceAccounts accounts, boolean running, String secretSha256, boolean mcpCaller,

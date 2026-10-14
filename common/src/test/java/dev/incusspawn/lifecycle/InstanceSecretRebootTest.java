@@ -93,7 +93,7 @@ class InstanceSecretRebootTest {
 
         var recorded = config(daemon, Metadata.INSTANCE_SECRET_SHA256);
         assertNotEquals(previous, recorded, "the reboot emptied /run: the box needs a new secret");
-        assertEquals(InstanceLifecycle.secretBootStamp(REBOOTED), config(daemon, Metadata.INSTANCE_SECRET_BOOT), "recorded with the boot it went to");
+        assertEquals(InstanceLifecycle.secretBootStamp(REBOOTED, config(daemon, Metadata.INSTANCE_PROOF_ID)), config(daemon, Metadata.INSTANCE_SECRET_BOOT), "recorded with the boot it went to");
         assertEquals(1, secrets.size(), daemon.requests()::toString);
         assertEquals(recorded, InstanceSecret.sha256(secrets.getFirst()));
     }
@@ -135,7 +135,7 @@ class InstanceSecretRebootTest {
         InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.CONTAINER, msg -> {});
 
         assertEquals(1, secrets.size(), "once per boot, not once per shell");
-        assertEquals(InstanceLifecycle.secretBootStamp(STARTED), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
+        assertEquals(InstanceLifecycle.secretBootStamp(STARTED, config(daemon, Metadata.INSTANCE_PROOF_ID)), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
     }
 
     @Test
@@ -149,7 +149,7 @@ class InstanceSecretRebootTest {
 
         var bootedAt = instance(daemon).pathText("last_used_at", "");
         assertFalse(bootedAt.isEmpty());
-        assertEquals(InstanceLifecycle.secretBootStamp(bootedAt), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
+        assertEquals(InstanceLifecycle.secretBootStamp(bootedAt, config(daemon, Metadata.INSTANCE_PROOF_ID)), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
 
         // So the shell that follows finds nothing to do
         daemon.clearRequests();
@@ -169,7 +169,7 @@ class InstanceSecretRebootTest {
 
         var bootedAt = instance(daemon).pathText("last_used_at", "");
         assertFalse(bootedAt.isEmpty());
-        assertEquals(InstanceLifecycle.secretBootStamp(bootedAt), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
+        assertEquals(InstanceLifecycle.secretBootStamp(bootedAt, config(daemon, Metadata.INSTANCE_PROOF_ID)), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
     }
 
     @Test
@@ -190,7 +190,7 @@ class InstanceSecretRebootTest {
 
         var bootedAt = instance(daemon).pathText("last_used_at", "");
         assertNotEquals(STARTED, bootedAt);
-        assertEquals(InstanceLifecycle.secretBootStamp(bootedAt), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
+        assertEquals(InstanceLifecycle.secretBootStamp(bootedAt, config(daemon, Metadata.INSTANCE_PROOF_ID)), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
     }
 
     /**
@@ -272,10 +272,10 @@ class InstanceSecretRebootTest {
         InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.CONTAINER, msg -> {});
 
         assertEquals(1, envs.size(), daemon.requests()::toString);
-        var secret = envs.getFirst().get(InstanceSecret.DELIVERY_ENV);
+        var secret = envs.getFirst().get(dev.incusspawn.proxy.CredentialProof.DELIVERY_ENV);
         assertTrue(envs.getFirst().get(InstanceSecret.PROOFS_DELIVERY_ENV)
                 .contains(dev.incusspawn.proxy.ProofToken.derive(secret, "github")), envs.getFirst().toString());
-        assertEquals(InstanceLifecycle.secretBootStamp(STARTED), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
+        assertEquals(InstanceLifecycle.secretBootStamp(STARTED, config(daemon, Metadata.INSTANCE_PROOF_ID)), config(daemon, Metadata.INSTANCE_SECRET_BOOT));
         assertEquals(dev.incusspawn.proxy.ProofVerifier.stamp(secret, dev.incusspawn.proxy.ProofToken.declared()),
                 config(daemon, Metadata.INSTANCE_PROOF_SHA256));
 

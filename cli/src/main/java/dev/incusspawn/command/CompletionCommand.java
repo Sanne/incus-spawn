@@ -390,9 +390,10 @@ public class CompletionCommand extends BaseCommand {
                 'show:show the account an instance uses for each credential'
                 'set:point an instance at different credential accounts'
                 'unset:make an instance follow the default account again'
+                'reset-proofs:revoke and replace shared credential proofs'
               )
               case $words[1] in
-                show) _isx_instances ;;
+                show|reset-proofs) _isx_instances ;;
                 set) _arguments '1:instance:_isx_instances' '*:account:_isx_accounts' ;;
                 unset) _arguments '1:instance:_isx_instances' '*:namespace:_isx_account_namespaces' ;;
                 *) _describe -t subcmds 'account subcommand' _account_subcmds ;;
@@ -648,12 +649,12 @@ public class CompletionCommand extends BaseCommand {
                   local j
                   for (( j=i+1; j < cword; j++ )); do
                     case "${words[j]}" in
-                      list|show|set|unset) acct_cmd="${words[j]}"; break ;;
+                      list|show|set|unset|reset-proofs) acct_cmd="${words[j]}"; break ;;
                     esac
                   done
                   case "$acct_cmd" in
-                    "") COMPREPLY=( $(compgen -W "list show set unset --help" -- "$cur") ) ;;
-                    show|set|unset)
+                    "") COMPREPLY=( $(compgen -W "list show set unset reset-proofs --help" -- "$cur") ) ;;
+                    show|set|unset|reset-proofs)
                       if [[ "$prev" == "$acct_cmd" ]]; then
                         COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help" -- "$cur") )
                       elif [[ "$acct_cmd" == set ]]; then
@@ -960,15 +961,17 @@ public class CompletionCommand extends BaseCommand {
 
             # ── account ─────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset)\\b" (commandline -opc)' -a list -d 'List configured accounts per namespace'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset)\\b" (commandline -opc)' -a show -d 'Show the account an instance uses for each credential'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset)\\b" (commandline -opc)' -a set  -d 'Point an instance at different credential accounts'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset)\\b" (commandline -opc)' -a unset -d 'Make an instance follow the default account again'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a list -d 'List configured accounts per namespace'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a show -d 'Show the account an instance uses for each credential'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a set  -d 'Point an instance at different credential accounts'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a unset -d 'Make an instance follow the default account again'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a reset-proofs -d 'Revoke and replace shared credential proofs'
 
             complete -c isx -f -n '__isx_using_subcommand account; and __isx_using_subcommand show' -a '(__isx_instances)' -d 'Instance name'
             complete -c isx -f -n '__isx_account_args set 0'   -a '(__isx_instances)' -d 'Instance name'
             complete -c isx -f -n '__isx_account_args set +'   -a '(__isx_accounts)'
             complete -c isx -f -n '__isx_account_args unset 0' -a '(__isx_instances)' -d 'Instance name'
+            complete -c isx -f -n '__isx_account_args reset-proofs 0' -a '(__isx_instances)' -d 'Instance name'
             complete -c isx -f -n '__isx_account_args unset +' -a '(__isx_account_namespaces)' -d 'Namespace'
 
             # ── tools ────────────────────────────────────────────────────────────────────

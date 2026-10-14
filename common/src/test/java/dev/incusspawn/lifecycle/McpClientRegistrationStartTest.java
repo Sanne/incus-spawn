@@ -137,7 +137,8 @@ class McpClientRegistrationStartTest {
         var incus = spy(daemon.client());
         // The agent probe finds the guest without a secret, as after a reboot inside QEMU
         doReturn(new IncusClient.ExecResult(0, InstanceSecret.MISSING + "\n", ""))
-                .when(incus).shellExec(eq(NAME), eq("sh"), eq("-c"), eq(InstanceSecret.GUEST_CHECK));
+                .when(incus).shellExec(eq(NAME), eq("sh"), eq("-c"),
+                        eq(InstanceSecret.GUEST_CHECK + "\n" + InstanceSecret.generationCheck("")));
 
         InstanceLifecycle.ensureReady(incus, NAME, dev.incusspawn.incus.JacksonTrees.fromJsonNode(daemon.instance(NAME)), MachineType.VM, msg -> {});
 

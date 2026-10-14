@@ -77,10 +77,9 @@ public final class VmAgentRecovery {
         // however the wait ends. The boot's new secret (#934) in the same write: nothing in the
         // guest has it before the probe below puts it there.
         var stamps = new HashMap<String, String>();
-        var secret = InstanceSecret.stampInto(stamps);
         long restarted = incus.pid(name);
         if (restarted > 0) stamps.put(Metadata.AGENT_RESTART_BOOT, Long.toString(restarted));
-        incus.configSetAll(name, stamps);
+        var secret = InstanceLifecycle.rotateInstanceSecret(incus, name, instance, stamps, placeholders.join());
         incus.waitForReady(name, MachineType.VM, InstanceSecret.GUEST_SCRIPT,
                 InstanceSecret.guestEnv(secret, Metadata.isMcpCaller(instance), placeholders.join()));
     }

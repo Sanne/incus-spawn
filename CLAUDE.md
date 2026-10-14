@@ -139,17 +139,21 @@ Its consumers are `isx mcp` for a coordinator in an instance and the host routes
 Only its hash is recorded on the host, and every isx start rotates it, for one PATCH on a stopped start and none on a branch (`InstanceLifecycle.startForUse`).
 A container start, a branch's included, then records its boot (`last_used_at`, read once the guest answers and handed on to the CA check, so the stamp's write is the one request it adds), so `ensureReady` replaces a secret lost to a reboot isx did not do at no cost on the shell path.
 A VM's agent probe asks the guest instead (#1024).
-Each start also turns the credential placeholders into proof tokens, an HMAC of that start's secret per namespace (`ProofToken`, #1106).
+Each start fills credential placeholders with stable per-instance namespace proofs (`CredentialProof`, `ProofToken`).
+A protected host key and a public random generation derive the credential seed; ordinary starts keep it, while branches and `isx account reset-proofs` replace it.
+The seed is separate from the rotating MCP secret and is delivered to `/run/isx/credential-secret`.
 Which variables carry them is declared on the tool's `proxy:` entry (`placeholders:`).
 Missing declarations warn on proxy configuration load and during tool validation, since they block injection for every tool sharing the affected domains.
+Single-tool validation checks its own namespace; the proxy checks borrowed namespaces against all loaded tools.
 The proxy checks address and namespace proof before account resolution, HTTP or WebSocket injection, Vertex translation or `inherit` substitution (#1107).
 Missing or incorrect proofs preserve the incoming authentication and destination; unknown addresses get no defaults.
-Verifier hashes rotate with the secret in one metadata write, and credentialed builds receive and revoke their own temporary proofs.
+Verifier hashes change on creation, explicit reset or declaration changes; credentialed builds receive and revoke their own temporary proofs.
+Unrecognized proofs wait asynchronously for a bounded shared registry refresh; reset waits for host-only acknowledgement before reporting revocation complete.
 Existing instances refresh verifier delivery on their next isx shell or start; old API-key Claude images may require rebuilding.
 They are written beside the secret in `/run/isx` by the same exec, and the raw secret never enters the environment.
 `isx doctor` inside an instance checks the exported ones against the secret file (`DoctorCommand.instanceCredentialFindings`, #1109); the proofs file's format is read back only by `ProofToken.delivered`, beside `profile`, so the two change together.
 A placeholder token in the guest is read when the tool runs, never fixed by a build (#1108): where a tool reads a file instead of its variable, a login script in `/etc/profile.d/isx-zz-*` rewrites the file from the variable.
-An isx running inside an instance shares that instance's grant for a namespace only when its account there is the reserved `inherit` (#1110): its proxy swaps the instance's proofs for the parent's, derived from `/run/isx/instance-secret` (`InheritedProof`).
+An isx running inside an instance shares that instance's grant for a namespace only when its account there is the reserved `inherit` (#1110): its proxy swaps the instance's proofs for the parent's, derived from `/run/isx/credential-secret` (`InheritedProof`).
 See `.claude/rules/proxy.md` and DESIGN.md.
 
 **Host CA propagation** is opt-in via `host-ca: { propagate: true }` in `config.yaml`.
