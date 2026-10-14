@@ -1,8 +1,10 @@
 package dev.incusspawn.git;
 
+import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.function.Consumer;
 
@@ -29,6 +31,18 @@ public final class AutoRemoteService {
             try {
                 var normalizedUrl = GitRemoteUtils.normalizeGitUrl(repo.getUrl());
                 var matchingDirs = urlIndex.getOrDefault(normalizedUrl, java.util.List.of());
+                if (matchingDirs.isEmpty()) {
+                    var repoName = GitRemoteUtils.repoNameFromUrl(repo.getUrl());
+                    if (!repoName.isEmpty()) {
+                        var override = config.getRepoPaths().get(repoName);
+                        if (override != null && !override.isEmpty()) {
+                            var hostPath = Path.of(HostResourceSetup.expandHostTilde(override));
+                            if (Files.isDirectory(hostPath) && GitRemoteUtils.isGitRepo(hostPath)) {
+                                matchingDirs = java.util.List.of(hostPath);
+                            }
+                        }
+                    }
+                }
                 for (var hostPath : matchingDirs) {
                     addRemoteInHostRepo(hostPath, instanceName, repo.getPath(), output, cache);
                 }

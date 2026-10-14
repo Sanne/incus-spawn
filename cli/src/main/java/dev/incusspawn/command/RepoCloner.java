@@ -415,7 +415,8 @@ class RepoCloner {
                 : clone.fallbackReason() != null ? clone.fallbackReason()
                 : ref != null ? ref.skipReason() : null;
         String note = clone.usedReference()
-                ? ref.prepared() == null ? "via host reference (shallow, depth " + repo.getDepth() + ")"
+                ? ref.prepared() == null
+                    ? repo.getDepth() != null ? "via host reference (shallow, depth " + repo.getDepth() + ")" : "via host reference"
                     : "via " + ref.prepared().strategy()
                 : reason != null ? reason : repo.getDepth() != null ? "via remote (shallow, depth " + repo.getDepth() + ")" : null;
         boolean highlight = reason != null;
@@ -541,6 +542,12 @@ class RepoCloner {
                     usedReference = true;
                 } else if (clone.success() && repo.getDepth() != null) {
                     last = container.shAsUser("agentuser", shallowFixupCommand(repo));
+                    usedReference = last.success();
+                } else if (clone.success()) {
+                    // Full clone from raw host reference (file:// URL via repo-paths):
+                    // fix origin to the declared URL so the reference path isn't baked in.
+                    last = container.shAsUser("agentuser",
+                            "git -C " + shellQuote(expandedPath) + " remote set-url origin " + shellQuote(repo.getUrl()));
                     usedReference = last.success();
                 }
                 if (!usedReference) {
@@ -686,9 +693,10 @@ class RepoCloner {
 
     private static String buildCloneCommand(ImageDef.RepoEntry repo, String referencePath) {
         var cmd = new StringBuilder("git clone");
-        if (referencePath != null) {
-            // Only shallow clones use a raw host reference. Full clones use preparedCloneCommand.
+        if (referencePath != null && repo.getDepth() != null) {
             cmd.append(" --no-local --depth ").append(repo.getDepth());
+        } else if (referencePath != null) {
+            cmd.append(" --no-hardlinks");
         } else {
             if (repo.getDepth() != null) cmd.append(" --single-branch");
             if (repo.getDepth() != null) cmd.append(" --depth ").append(repo.getDepth());
@@ -860,20 +868,24 @@ class RepoCloner {
      *  reference, a skipped one saying why there is none, or null where none is configured. */
     RepoReference planReference(String cloneUrl, SpawnConfig config) {
         try {
-            if (!GitPreparation.isRemoteUrl(cloneUrl)) return RepoReference.skipped("host preparation requires a network Git remote");
             var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
             if (repoName.isEmpty()) return null;
+            var explicitMapping = config.getRepoPaths().containsKey(repoName);
+
+            if (!explicitMapping && !GitPreparation.isRemoteUrl(cloneUrl))
+                return RepoReference.skipped("host preparation requires a network Git remote");
 
             var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
             if (hostPath != null && (!Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath)
-                    || !GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl))) {
+                    || (!explicitMapping && !GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl)))) {
                 hostPath = null;
             }
 
+            var isRemote = GitPreparation.isRemoteUrl(cloneUrl);
             return new RepoReference(GitRemoteUtils.referenceDeviceName(repoName, cloneUrl),
                     GitRemoteUtils.referenceContainerPath(repoName, cloneUrl),
                     hostPath == null ? null : HostResourceSetup.translateForVm(hostPath.toString()), null,
-                    new GitPreparation.Request(cloneUrl, null, hostPath), null);
+                    isRemote ? new GitPreparation.Request(cloneUrl, null, hostPath) : null, null);
         } catch (Exception e) {
             System.err.println("Warning: could not set up repo reference: " + e.getMessage());
             return null;

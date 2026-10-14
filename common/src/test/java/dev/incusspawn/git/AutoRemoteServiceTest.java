@@ -173,4 +173,42 @@ class AutoRemoteServiceTest {
                 .contains("my-branch")
                 .contains("isx://my-branch/home/agentuser/camel-quarkus");
     }
+
+    @Test
+    void addRemotesFallsBackToRepoPathsWhenUrlDoesNotMatch() throws IOException, InterruptedException {
+        var repoDir = tempDir.resolve("workspaces/private/my-private-repo");
+        repoDir.toFile().mkdirs();
+        runGit(repoDir, "init");
+        runGit(repoDir, "config", "user.name", "Test User");
+        runGit(repoDir, "config", "user.email", "test@example.com");
+        runGit(repoDir, "commit", "--allow-empty", "-m", "Initial commit");
+        runGit(repoDir, "remote", "add", "origin", "https://gitlab.internal/private/my-private-repo.git");
+
+        var configDir = tempDir.resolve(".config/incus-spawn");
+        configDir.toFile().mkdirs();
+        Files.writeString(configDir.resolve("config.yaml"),
+                "repo-paths:\n  my-private-repo: \"" + repoDir + "\"");
+
+        var imagesDir = configDir.resolve("images");
+        imagesDir.toFile().mkdirs();
+        Files.writeString(imagesDir.resolve("private.yaml"), """
+                name: tpl-private
+                parent: tpl-minimal
+                repos:
+                  - url: file:///home/agentuser/.host-repos/my-private-repo
+                    path: /home/agentuser/my-private-repo
+                """);
+
+        var incus = mock(IncusClient.class);
+        when(incus.configGet(eq("my-fix"), eq(Metadata.PARENT))).thenReturn("tpl-private");
+
+        var messages = new ArrayList<String>();
+        AutoRemoteService.addRemotes(incus, "my-fix", messages::add);
+
+        assertThat(messages).hasSize(1);
+        var remotes = runGit(repoDir, "remote", "-v");
+        assertThat(remotes)
+                .contains("my-fix")
+                .contains("isx://my-fix/home/agentuser/my-private-repo");
+    }
 }

@@ -68,7 +68,7 @@ public final class HostRepoRefresh {
                 var remoteName = GitRemoteUtils.matchingRemoteName(hostPath, repo.getUrl());
                 if (remoteName != null) {
                     toFetch.add(new FetchTask(repoName, hostPath, remoteName, managedDepth(hostPath), depth));
-                } else {
+                } else if (!config.getRepoPaths().containsKey(repoName)) {
                     BuildOutput.note("Host repo " + hostPath + " has no remote matching " + repo.getUrl() + ", skipping.");
                 }
             } else if (cloneMissing) {
