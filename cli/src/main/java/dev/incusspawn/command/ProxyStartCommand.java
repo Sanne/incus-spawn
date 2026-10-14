@@ -82,7 +82,7 @@ public class ProxyStartCommand extends BaseCommand {
             if (serviceActive) {
                 System.err.println("Proxy service is registered but not responding. Restarting...");
                 ProxyService.restart(System.err::println);
-                if (ProxyService.awaitStarted(10)) {
+                if (ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
                     return CommandResult.SUCCESS;
                 }
                 if (ProxyService.failedWithConfigError()) {

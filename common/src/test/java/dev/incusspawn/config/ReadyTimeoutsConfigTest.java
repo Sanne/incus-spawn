@@ -1,9 +1,11 @@
 package dev.incusspawn.config;
 
+import dev.incusspawn.Warnings;
 import dev.incusspawn.incus.IncusClient.ReadyTimeouts;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -99,12 +101,22 @@ class ReadyTimeoutsConfigTest {
     @Test
     void proxySecondsUsesDefaultForUnreadableAndWarns() {
         var config = ReadyTimeoutsConfig.of(Map.of("proxy", "not-a-duration"));
-        assertEquals(30, config.proxySeconds(30));
+        var warnings = new ArrayList<String>();
+        try (var ignored = Warnings.redirect(new Warnings.Channel(warnings::add))) {
+            assertEquals(30, config.proxySeconds(30));
+        }
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.getFirst().contains("not-a-duration"), warnings.getFirst());
     }
 
     @Test
     void proxySecondsUsesDefaultForBareNumberAndWarns() {
         var config = ReadyTimeoutsConfig.of(Map.of("proxy", 15));
-        assertEquals(30, config.proxySeconds(30));
+        var warnings = new ArrayList<String>();
+        try (var ignored = Warnings.redirect(new Warnings.Channel(warnings::add))) {
+            assertEquals(30, config.proxySeconds(30));
+        }
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.getFirst().contains("Durations need a unit"), warnings.getFirst());
     }
 }
