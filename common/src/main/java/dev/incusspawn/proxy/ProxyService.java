@@ -3,7 +3,7 @@ package dev.incusspawn.proxy;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.Container;
-import dev.incusspawn.config.ProxyServiceConfig;
+import dev.incusspawn.config.ReadyTimeoutsConfig;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.Platform;
@@ -106,6 +106,26 @@ public final class ProxyService {
 
     /** launchd's pause between two starts of the proxy job: the plist's {@code ThrottleInterval}. */
     static final int LAUNCHD_THROTTLE_SECONDS = 10;
+
+    /**
+     * How long to wait for a proxy that was just started or installed to become healthy.
+     * {@link ProxyHealthCheck#awaitHealthy} returns as soon as the proxy answers, so a
+     * generous default costs a healthy host nothing. Configurable via
+     * {@code ready-timeouts.proxy} in config.yaml.
+     */
+    static final int DEFAULT_START_WAIT_SECONDS = 30;
+
+    /**
+     * The start/install wait from config.yaml ({@code ready-timeouts.proxy}), or
+     * {@link #DEFAULT_START_WAIT_SECONDS} when absent. Replaceable for tests.
+     */
+    static java.util.function.IntSupplier startWaitSecondsSupplier =
+            () -> ReadyTimeoutsConfig.proxySecondsFromConfig(DEFAULT_START_WAIT_SECONDS);
+
+    /** The configured proxy start/install wait, reading config once per call. */
+    public static int configuredStartWaitSeconds() {
+        return startWaitSecondsSupplier.getAsInt();
+    }
 
     /**
      * How long to wait for a service that was just started or restarted to answer. On macOS a
@@ -242,7 +262,7 @@ public final class ProxyService {
         runQuiet("sudo", "loginctl", "enable-linger", System.getProperty("user.name"));
 
         if (isActive()) {
-            if (ProxyHealthCheck.awaitHealthy(ProxyServiceConfig.installTimeoutFromConfig())) {
+            if (ProxyHealthCheck.awaitHealthy(configuredStartWaitSeconds())) {
                 System.out.println("Proxy service is running.");
                 return true;
             }
@@ -1317,7 +1337,7 @@ public final class ProxyService {
             return false;
         }
         if (isActive()) {
-            if (awaitStarted(ProxyServiceConfig.installTimeoutFromConfig())) {
+            if (awaitStarted(configuredStartWaitSeconds())) {
                 ProxyLog.info("Service installed and running");
                 System.out.println("  Services installed and running.");
                 return true;

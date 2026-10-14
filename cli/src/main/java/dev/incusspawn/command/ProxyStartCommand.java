@@ -96,7 +96,7 @@ public class ProxyStartCommand extends BaseCommand {
             }
             System.out.println("Starting proxy via service manager...");
             if (ProxyService.startService()) {
-                if (ProxyService.awaitStarted(5)) {
+                if (ProxyService.awaitStarted(ProxyService.configuredStartWaitSeconds())) {
                     System.out.println("Proxy service started.");
                     return CommandResult.SUCCESS;
                 }

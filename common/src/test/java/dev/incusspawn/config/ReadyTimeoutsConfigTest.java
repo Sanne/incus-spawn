@@ -21,6 +21,7 @@ class ReadyTimeoutsConfigTest {
         assertNotNull(config);
         assertNull(config.container());
         assertNull(config.vm());
+        assertNull(config.proxy());
     }
 
     @Test
@@ -61,5 +62,49 @@ class ReadyTimeoutsConfigTest {
         var config = ReadyTimeoutsConfig.of(Map.of("container", 0));
         var resolved = config.resolve();
         assertEquals(Duration.ZERO, resolved.container());
+    }
+
+    // --- proxy timeout ---
+
+    @Test
+    void parsesProxy() {
+        var config = ReadyTimeoutsConfig.of(Map.of("proxy", "15s"));
+        assertEquals("15s", config.proxy());
+    }
+
+    @Test
+    void proxySecondsReturnsParsedValue() {
+        var config = ReadyTimeoutsConfig.of(Map.of("proxy", "15s"));
+        assertEquals(15, config.proxySeconds(30));
+    }
+
+    @Test
+    void proxySecondsParsesDurationUnits() {
+        assertEquals(45, ReadyTimeoutsConfig.of(Map.of("proxy", "45s")).proxySeconds(30));
+        assertEquals(120, ReadyTimeoutsConfig.of(Map.of("proxy", "2m")).proxySeconds(30));
+    }
+
+    @Test
+    void proxySecondsUsesDefaultWhenMissing() {
+        var config = ReadyTimeoutsConfig.of(Map.of());
+        assertEquals(30, config.proxySeconds(30));
+    }
+
+    @Test
+    void proxySecondsUsesDefaultForZero() {
+        var config = ReadyTimeoutsConfig.of(Map.of("proxy", "0"));
+        assertEquals(30, config.proxySeconds(30));
+    }
+
+    @Test
+    void proxySecondsUsesDefaultForUnreadableAndWarns() {
+        var config = ReadyTimeoutsConfig.of(Map.of("proxy", "not-a-duration"));
+        assertEquals(30, config.proxySeconds(30));
+    }
+
+    @Test
+    void proxySecondsUsesDefaultForBareNumberAndWarns() {
+        var config = ReadyTimeoutsConfig.of(Map.of("proxy", 15));
+        assertEquals(30, config.proxySeconds(30));
     }
 }

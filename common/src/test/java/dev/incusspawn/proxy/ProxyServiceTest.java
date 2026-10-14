@@ -545,4 +545,22 @@ class ProxyServiceTest {
         assertFalse(block.contains("grep -qw"),
                 "word-boundary match would false-positive on hyphenated group names");
     }
+
+    // --- configurable start wait ------------------------------------------------
+
+    @Test
+    void defaultStartWaitIsThirtySeconds() {
+        assertEquals(30, ProxyService.DEFAULT_START_WAIT_SECONDS);
+    }
+
+    @Test
+    void configuredStartWaitSecondsHonorsSupplier() {
+        var original = ProxyService.startWaitSecondsSupplier;
+        try {
+            ProxyService.startWaitSecondsSupplier = () -> 42;
+            assertEquals(42, ProxyService.configuredStartWaitSeconds());
+        } finally {
+            ProxyService.startWaitSecondsSupplier = original;
+        }
+    }
 }

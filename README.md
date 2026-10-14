@@ -1313,14 +1313,13 @@ To turn this off:
 tui-live-refresh: false
 ```
 
-`isx proxy install` waits for the proxy to become healthy after starting the service.
-The default is 5 seconds, which is enough on most machines.
-On a loaded host (freshly provisioned, storage under pressure) the JVM proxy can take longer.
-To raise the timeout:
+`isx proxy install` and `isx proxy start` wait for the proxy to become healthy after starting the service.
+The default is 30 seconds; a healthy proxy answers at once, so a generous default costs nothing.
+To change it:
 
 ```yaml
-proxy:
-  install-timeout: 15s    # durations: 5s, 15s, 30s, 1m ...
+ready-timeouts:
+  proxy: 1m               # durations: 30s, 1m, 2m ...
 ```
 
 ## Scripting isx

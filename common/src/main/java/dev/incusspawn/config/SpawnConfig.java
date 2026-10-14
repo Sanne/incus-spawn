@@ -89,11 +89,6 @@ public class SpawnConfig {
     @JqName("host-ca")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object hostCa;
-    // Proxy service settings (ProxyServiceConfig). Raw like artifact-cache, so a mistyped
-    // section loads and is written back as it was.
-    @JqName("proxy")
-    @JqInclude(JqInclude.Include.NON_NULL)
-    private Object proxyService;
     // What `isx mcp` lets a local agent do. Null (absent) means nothing is approved, and is
     // never written back.
     @JqName("mcp")
@@ -660,9 +655,6 @@ public class SpawnConfig {
     /** The {@code host-ca:} section, or its defaults (disabled) when absent. */
     public HostCaConfig hostCa() { return HostCaConfig.of(hostCa); }
 
-    /** The {@code proxy:} section, or null when there is none. */
-    public ProxyServiceConfig proxyService() { return ProxyServiceConfig.of(proxyService); }
-
     /** The {@code mcp:} section, or its defaults (no templates approved) when absent. */
     public McpConfig mcp() { return mcp != null ? mcp : new McpConfig(); }
     public void setMcp(McpConfig mcp) { this.mcp = mcp; }
@@ -813,7 +805,6 @@ public class SpawnConfig {
         this.readyTimeouts = other.readyTimeouts;
         this.hostRoutes = other.hostRoutes;
         this.hostCa = other.hostCa;
-        this.proxyService = other.proxyService;
         this.mcp = other.mcp;
         this.extras = other.extras;
     }
