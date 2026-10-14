@@ -25,7 +25,7 @@ esac
 
 instance=test-podman
 copy=isx-proof-copy
-guest() { incus exec "$instance" -- su -l agentuser -c "bash /tmp/test-stable-proofs.sh $1"; }
+guest() { incus exec "$instance" -- su -l agentuser -c "bash /home/agentuser/test-stable-proofs.sh $1"; }
 generation() { incus config get "$1" user.incus-spawn.instance-proof-id; }
 boot_hash() { incus config get "$instance" user.incus-spawn.instance-secret-sha256; }
 prepare() {
@@ -47,16 +47,19 @@ prepare() {
 }
 cleanup() {
     incus exec "$instance" -- su -l agentuser -c 'podman rm -f isx-proof-lifetime' >/dev/null 2>&1 || true
+    incus exec "$instance" -- rm -f /home/agentuser/test-stable-proofs.sh >/dev/null 2>&1 || true
     incus delete -f "$copy" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
-incus file push .github/scripts/test-stable-proofs.sh "$instance/tmp/"
+# /tmp is cleared on reboot; the helper must survive beside Podman's saved configuration.
+incus file push .github/scripts/test-stable-proofs.sh "$instance/home/agentuser/"
 original=$(generation "$instance")
 [[ "$original" =~ ^[0-9a-f]{64}$ ]]
 guest create
 guest authorized
 
 for restart in managed raw; do
+    echo "Checking saved child proof after $restart restart"
     previous_boot=$(boot_hash)
     if [[ "$restart" == managed ]]; then incus stop "$instance"; else incus restart "$instance"; fi
     prepare
