@@ -207,6 +207,13 @@ public final class GitRemoteUtils {
         return repos;
     }
 
+    static List<ImageDef.RepoEntry> collectReposForTemplate(String name) {
+        var defs = ImageDef.loadAll();
+        var template = defs.get(name);
+        return template == null ? List.of() : ImageDef.chainRepos(template, defs).stream()
+                .map(ImageDef.ChainRepo::repo).toList();
+    }
+
     public static boolean isGitRepo(Path dir) {
         return Files.exists(dir.resolve(".git"));
     }

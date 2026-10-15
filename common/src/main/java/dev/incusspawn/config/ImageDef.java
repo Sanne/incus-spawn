@@ -263,6 +263,8 @@ public class ImageDef {
     @JqMapped
     public static class RepoEntry {
         private String url;
+        @JqName("host-source")
+        private String hostSource;
         private String path;
         private String branch;
         @JqConverter(IntegerConverter.class)
@@ -271,10 +273,35 @@ public class ImageDef {
 
         public String getUrl() { return url; }
         public void setUrl(String url) { this.url = url; }
+        public String getHostSource() { return hostSource; }
+        public void setHostSource(String hostSource) { this.hostSource = hostSource; }
+        public boolean isHostSource() { return hostSource != null; }
+        public String sourceDescription() { return isHostSource() ? hostSource : url; }
+        public String sourceName() {
+            if (!isHostSource()) return dev.incusspawn.git.GitRemoteUtils.repoNameFromUrl(url);
+            var filename = Path.of(hostSource).getFileName();
+            var name = filename == null ? "" : filename.toString();
+            return name.endsWith(".git") ? name.substring(0, name.length() - 4) : name;
+        }
+        /** Resolve only explicit, unambiguous host paths; file:// remains a guest URL. */
+        public Path hostSourcePath() {
+            var resolved = Path.of(HostResourceSetup.expandHostTilde(hostSource));
+            if (!resolved.isAbsolute()) throw new IllegalArgumentException("host-source requires an absolute or ~/ path");
+            return resolved.normalize();
+        }
+        public String sourceProblem() {
+            if (!isHostSource()) return null;
+            if (hostSource.isBlank()) return "host-source must not be blank";
+            if (url != null) return "use either url or host-source, not both";
+            if (depth != null) return "host-source exports full branch and tag history; depth is not supported";
+            try { hostSourcePath(); }
+            catch (IllegalArgumentException e) { return e.getMessage(); }
+            return null;
+        }
         public String getPath() {
             if (path != null) return path;
-            if (url == null) return null;
-            var name = dev.incusspawn.git.GitRemoteUtils.repoNameFromUrl(url);
+            if (sourceDescription() == null) return null;
+            var name = sourceName();
             return name.isEmpty() ? null : "~/" + name;
         }
         public void setPath(String path) { this.path = path; }
@@ -390,7 +417,8 @@ public class ImageDef {
                 .forEach(r -> sb.append("repo=").append(r.getUrl()).append(',').append(r.getPath())
                         .append(',').append(r.getBranch()).append(',').append(r.getPrime())
                         // Only when set, so a template without one keeps the fingerprint it was built with.
-                        .append(r.getDepth() != null ? ",depth=" + r.getDepth() : "").append('\n'));
+                        .append(r.getDepth() != null ? ",depth=" + r.getDepth() : "")
+                        .append(r.isHostSource() ? ",host-source=" + r.getHostSource() : "").append('\n'));
         if (skills.getRepo() != null) sb.append("skills-repo=").append(skills.getRepo()).append('\n');
         skills.getList().stream().sorted().forEach(s -> sb.append("skill=").append(s).append('\n'));
         for (var hr : hostResources) {
@@ -534,6 +562,9 @@ public class ImageDef {
 
     private static List<String> repoDifferences(RepoEntry a, RepoEntry b) {
         var differences = new ArrayList<String>();
+        if (!java.util.Objects.equals(a.getHostSource(), b.getHostSource())) {
+            differences.add("host-source (" + shown(a.getHostSource()) + " vs " + shown(b.getHostSource()) + ")");
+        }
         if (!dev.incusspawn.git.GitRemoteUtils.urlsMatch(a.getUrl(), b.getUrl())) {
             differences.add("url (" + shown(a.getUrl()) + " vs " + shown(b.getUrl()) + ")");
         }
@@ -808,6 +839,14 @@ public class ImageDef {
             def.setRepos(def.getRepos().stream().filter(java.util.Objects::nonNull).toList());
         }
         for (var repo : def.getRepos()) {
+            var problem = repo.sourceProblem();
+            if (repo.isHostSource() && def.getProjectRoot() != null) {
+                problem = "project-local templates cannot prepare host repositories; declare host-source in a trusted template";
+            }
+            if (problem != null) {
+                warnings.accept(file + ": " + problem + LayeredDefinitions.REFUSED);
+                return false;
+            }
             if (repo.getDepth() != null && repo.getDepth() < 1) {
                 warnings.accept(file + ": repo " + OutputFormat.oneLine(String.valueOf(repo.getUrl()))
                         + ": 'depth' " + repo.getDepth() + " is not a positive number of commits"

@@ -54,6 +54,18 @@ class HostRepoRefreshTest {
         assertEquals("https://github.com/org/b.git", result.get(2).getUrl());
     }
 
+    @Test void hostSourcesAreNeverRefreshedEvenWithAGlobalMapping(@TempDir Path dir) {
+        var repo = new ImageDef.RepoEntry();
+        repo.setHostSource(dir.resolve("private").toString());
+        var config = new SpawnConfig();
+        config.setRepoPaths(Map.of("private", repo.getHostSource()));
+        assertTrue(HostRepoRefresh.deduplicateByUrl(List.of(repo)).isEmpty());
+        var output = new ArrayList<String>();
+        HostRepoRefresh.refresh(List.of(repo), Map.of(), config, true, output::add);
+        assertTrue(output.isEmpty());
+        assertFalse(java.nio.file.Files.exists(repo.hostSourcePath()));
+    }
+
     // ── resolveCloneTarget ────────────────────────────────────────────────
 
     @Test

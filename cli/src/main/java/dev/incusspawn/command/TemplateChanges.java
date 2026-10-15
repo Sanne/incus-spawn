@@ -37,7 +37,7 @@ public final class TemplateChanges {
                         : toolLabel(x) + " → " + toolLabel(y),
                 tool -> inheritedFrom(tool, now, defs));
         addChanges(changes, "repo", list(built.getRepos()), list(now.getRepos()),
-                r -> r.getUrl() + " → " + r.getPath(), r -> r.getUrl() + " → " + r.getPath(),
+                r -> r.sourceDescription() + " → " + r.getPath(), r -> r.sourceDescription() + " → " + r.getPath(),
                 TemplateChanges::repoSettingsChange, k -> "");
         return changes;
     }
@@ -114,7 +114,7 @@ public final class TemplateChanges {
         if (!Objects.equals(built.getPrime(), now.getPrime())) {
             what.add("prime " + orElse(built.getPrime(), "(none)") + " → " + orElse(now.getPrime(), "(none)"));
         }
-        return what.isEmpty() ? null : now.getUrl() + " → " + now.getPath() + " (" + String.join(", ", what) + ")";
+        return what.isEmpty() ? null : now.sourceDescription() + " → " + now.getPath() + " (" + String.join(", ", what) + ")";
     }
 
     private static String orElse(Object value, String fallback) {

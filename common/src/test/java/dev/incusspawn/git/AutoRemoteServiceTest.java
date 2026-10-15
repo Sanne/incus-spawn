@@ -72,8 +72,8 @@ class AutoRemoteServiceTest {
 
         // Mock IncusClient to return parent template
         var incus = mock(IncusClient.class);
-        when(incus.configGet(eq("test-instance"), eq(Metadata.PARENT)))
-                .thenReturn("tpl-incus-spawn");
+        when(incus.instanceMetadataOrThrow("test-instance"))
+                .thenReturn(instance("tpl-incus-spawn", ""));
 
         // Call AutoRemoteService.addRemotes - this should add the remote despite origin not matching
         AutoRemoteService.addRemotes(incus, "test-instance");
@@ -119,7 +119,7 @@ class AutoRemoteServiceTest {
                 """);
 
         var incus = mock(IncusClient.class);
-        when(incus.configGet(eq("my-fix"), eq(Metadata.PARENT))).thenReturn("tpl-cxf");
+        when(incus.instanceMetadataOrThrow("my-fix")).thenReturn(instance("tpl-cxf", ""));
 
         var messages = new ArrayList<String>();
         AutoRemoteService.addRemotes(incus, "my-fix", messages::add);
@@ -162,7 +162,7 @@ class AutoRemoteServiceTest {
                 """);
 
         var incus = mock(IncusClient.class);
-        when(incus.configGet(eq("my-branch"), eq(Metadata.PARENT))).thenReturn("tpl-cq");
+        when(incus.instanceMetadataOrThrow("my-branch")).thenReturn(instance("tpl-cq", ""));
 
         var messages = new ArrayList<String>();
         AutoRemoteService.addRemotes(incus, "my-branch", messages::add);
@@ -173,4 +173,27 @@ class AutoRemoteServiceTest {
                 .contains("my-branch")
                 .contains("isx://my-branch/home/agentuser/camel-quarkus");
     }
+    private static io.hyperfoil.tools.jjq.value.JqValue instance(String template, String sources) {
+        return io.hyperfoil.tools.jjq.value.JqValues.fromJavaObject(
+                java.util.Map.of("config", java.util.Map.of(Metadata.PARENT, template,
+                        Metadata.HOST_REPOSITORIES, sources)));
+    }
+
+    @Test void hostSourceRemotesNeedNoGlobalMappingAndCleanupSurvivesTemplateRemoval() throws Exception {
+        var host = tempDir.resolve("private");
+        Files.createDirectories(host);
+        runGit(host, "init");
+        runGit(host, "remote", "add", "origin", "ssh://corporate.invalid/private");
+        var incus = mock(IncusClient.class);
+        var sources = io.hyperfoil.tools.jjq.value.JqValues.serialize(io.hyperfoil.tools.jjq.value.JqValues.fromJavaObject(java.util.Map.of("/home/agentuser/private", host.toString())));
+        when(incus.instanceMetadataOrThrow("work")).thenReturn(instance("missing-template", sources));
+        AutoRemoteService.addRemotes(incus, "work", message -> {});
+        assertThat(runGit(host, "remote", "get-url", "work")).contains("isx://work/home/agentuser/private");
+        // Cleanup receives only the name, after Incus has already destroyed the instance.
+        AutoRemoteService.removeRemotes("work", message -> {});
+        assertThat(runGit(host, "remote").strip()).isEqualTo("origin");
+        assertThat(HostRepoSources.cleanupFile("work")).doesNotExist();
+        assertThat(runGit(host, "remote", "get-url", "origin")).contains("corporate.invalid");
+    }
+
 }

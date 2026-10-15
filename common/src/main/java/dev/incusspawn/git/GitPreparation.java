@@ -203,6 +203,80 @@ public final class GitPreparation {
         }
     }
 
+    /**
+     * Export an explicit host source. Only local heads/tags select objects; neither source HEAD,
+     * remote-tracking refs, reflogs nor the index enlarge that selection. No transport is used.
+     * Unlike network snapshots, these exports are ephemeral and never fall back to a remote.
+     */
+    public Prepared prepareHost(Path source, String branch, Phases phase) throws IOException {
+        var lease = cache.lease();
+        boolean success = false;
+        long start = System.nanoTime();
+        try {
+            phase.accept("Exporting host repository");
+            source = source.toRealPath();
+            if (git(source, "rev-parse", "--is-shallow-repository").equals("true")) {
+                throw new IOException("host-source requires a complete repository, not a shallow checkout");
+            }
+            var selected = refMap(source);
+            if (branch != null && !branch.isBlank() && !selected.containsKey("refs/heads/" + branch)
+                    && !selected.containsKey("refs/tags/" + branch)) {
+                throw new IOException("Host source has no requested branch or tag: " + branch);
+            }
+            var result = lease.path.resolve("host.git");
+            init(result, git(source, "rev-parse", "--show-object-format"));
+            // Read objects through fresh metadata, so source config (including promisor remotes,
+            // hooks and replace refs) cannot fetch or change what the selected IDs mean.
+            var objects = Path.of(git(source, "rev-parse", "--path-format=absolute", "--git-path", "objects"));
+            var alternate = result.resolve("objects/info/alternates");
+            Files.writeString(alternate, objects + "\n");
+            if (!selected.isEmpty()) {
+                var roots = lease.path.resolve("roots");
+                Files.write(roots, selected.values());
+                var pack = result.resolve("objects/pack/export.pack");
+                run(result, roots, pack, List.of("-c", "protocol.https.allow=never", "-c", "protocol.ssh.allow=never",
+                        "-c", "protocol.git.allow=never", "pack-objects", "--stdout", "--revs",
+                        "--no-reuse-delta", "--no-reuse-object", "--no-use-bitmap-index"));
+                // index-pack --stdin installs the standard pack-<hash> pair in our owned store.
+                run(result, pack, null, List.of("index-pack", "--stdin", "--strict"));
+                Files.delete(pack);
+                Files.delete(roots);
+            }
+            Files.delete(alternate);
+            var refsInput = lease.path.resolve("refs");
+            Files.write(refsInput, selected.entrySet().stream()
+                    .map(e -> "update " + e.getKey() + " " + e.getValue()).toList());
+            run(result, refsInput, null, List.of("update-ref", "--stdin"));
+            Files.delete(refsInput);
+            var sourceHead = Path.of(git(source, "rev-parse", "--path-format=absolute", "--git-path", "HEAD"));
+            var head = Files.readString(sourceHead).strip();
+            if (branch != null && !branch.isBlank()) {
+                // A requested checkout also works when the host is detached at an unexported commit.
+                head = selected.containsKey("refs/heads/" + branch) ? "ref: refs/heads/" + branch
+                        : selected.containsKey("refs/tags/" + branch)
+                        ? git(result, "rev-parse", "--verify", "refs/tags/" + branch + "^{commit}") : head;
+            }
+            Files.writeString(result.resolve("HEAD"), head + "\n");
+            try {
+                validatePin(result, branch);
+            } catch (GitCommandException e) {
+                if (branch == null || branch.isBlank()) {
+                    throw new IOException("Host source HEAD is outside exported branches and tags; set branch to select a checkout", e);
+                }
+                throw e;
+            }
+            git(result, "fsck", "--full", "--no-dangling");
+            git(result, "pack-refs", "--all");
+            var timings = new LinkedHashMap<String, Long>();
+            elapsed(timings, "export", start);
+            var checksums = objectChecksums(manifest(result));
+            success = true;
+            return new Prepared(lease, result, "host source", checksums, timings);
+        } finally {
+            if (!success) lease.close();
+        }
+    }
+
     private static void elapsed(Map<String, Long> timings, String name, long start) {
         timings.merge(name, (System.nanoTime() - start) / 1_000_000, Long::sum);
     }

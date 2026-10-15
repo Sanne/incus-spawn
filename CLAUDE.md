@@ -6,10 +6,16 @@ Full Git clone acceleration is specified in [Git preparation](docs/GIT-PREPARATI
 Borrow host objects directly, without a preliminary pack copy; a failed reference attempt retries once from the remote before publication.
 Refresh verified snapshots incrementally when their old history remains selected, sharing owned packs and validating new objects; removed history and pack compaction use a clean rebuild.
 Never run build-time fetch or maintenance in a user checkout, or mount its full object store for a full clone.
-Host preparation accepts only HTTPS, SSH and Git network URLs; file transport and remote helpers are blocked even after URL rewrites.
+Network-source preparation accepts only HTTPS, SSH and Git network URLs; file transport and remote helpers are blocked even after URL rewrites.
 Check the guest's template-account access before preparing and match its complete advertised selection before mounting any snapshot, including warm hits.
 Complete all access checks before priming; only raw shallow references gate other repos' primes once preparation begins.
 The shallow transport/fixup path remains separate.
+Explicit `repos[].host-source` uses a separate offline export of local branches/tags and their reachable objects, including unpushed history.
+It never copies the source object store wholesale, fetches its remote, mounts its checkout or falls back to the network.
+Only a leased independent prepared repository enters the guest; checksum verification and detachment precede prime.
+Host sources require full history and trusted templates; project-local definitions remain unable to prepare host repositories.
+Resolved source associations are stamped at build for automatic remotes, with host-owned cleanup records that survive instance or template deletion.
+
 
 ## Project Overview
 

@@ -141,7 +141,7 @@ A physical core is its `core_cpus_list` (`thread_siblings_list` before 5.3), nev
 Whatever leaves the tier in doubt (an unreadable capacity, a capacity on some CPUs only, a missing core list) makes it unknown, which the VM default treats as one tier.
 The scan of the real sysfs is made once per process.
 `CpuInfoTest` pins each source with sysfs fixtures (an i7-12700H, a Ryzen AI 300, an X3D, a three-tier ARM SoC, an RK3588 device-tree layout).
-For full clones, `GitPreparation` selects all advertised remote branches and tags in owned host staging, borrowing objects directly from a matching checkout without copying its packs first.
+For full network clones, `GitPreparation` selects all advertised remote branches and tags in owned host staging, borrowing objects directly from a matching checkout without copying its packs first.
 It never fetches into or maintains the user's repository.
 Only HTTPS, SSH and Git network URLs qualify, with a protocol allowlist blocking local/file transports and remote helpers, including rewritten URLs.
 SSH uses batch mode unless the user supplied an SSH command or executable.
@@ -161,6 +161,11 @@ Only the clean prepared bare repository is mounted for `clone --no-hardlinks`; g
 Both prepared and network full clones start with all advertised branches and tags and a broad future-fetch refspec.
 Shallow clones bypass the snapshot cache and report their depth plus guest/attach/detach timings.
 See [Git preparation](../../docs/GIT-PREPARATION.md) for the selection, retention and failure contracts.
+Explicit `host-source` entries use `GitPreparation.prepareHost`: local branches/tags select an offline pack, with no remote authentication, refresh or fallback.
+They reuse the prepared copy and verification path, retain all branches locally, and remove the temporary origin.
+Only trusted templates may export host repositories, and sources must have complete history.
+Build metadata records canonical source associations for automatic remotes; host-owned cleanup records survive template changes and instance deletion.
+
 A repo with a `depth` never takes the local fast path (it ignores `--depth`): it clones the reference with `--no-local --depth`, then fetches its branch at that depth from the real origin (`shallowFixupCommand`).
 From the network it is `--single-branch --depth`, and its refspec stays narrow (#1344).
 Full preparation refuses shallow references and uses a standalone snapshot or the remote.

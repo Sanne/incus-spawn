@@ -445,6 +445,8 @@ public class TemplatesCommand extends BaseCommand {
             #     branch: main                         # branch or tag to check out; defaults to the repo's default
             #     depth: 1                             # keep only this many commits, on this branch only; omit for all
             #     prime: mvn -B install -DskipTests    # command run in the clone once it is cloned
+            #   - host-source: ~/work/private-repo      # instead of url; local branches/tags, including unpushed work
+            #     path: ~/private-repo                  # trusted templates only; no depth or upstream access
 
             # Agent skills to bake into the image. Without bare names, a plain list of
             # sources works too: skills: [owner/repo@skill-name]

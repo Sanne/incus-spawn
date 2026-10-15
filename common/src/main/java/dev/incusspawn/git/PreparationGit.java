@@ -58,6 +58,7 @@ final class PreparationGit {
             builder.environment().keySet().removeIf(k -> k.startsWith("GIT_") && !TRANSPORT_ENV.contains(k));
             // GitProcess makes it non-interactive (prompts, SSH) and kills the whole tree on a stop.
             builder.environment().put("GIT_OPTIONAL_LOCKS", "0");
+            if (limits == LOCAL) builder.environment().put("GIT_NO_LAZY_FETCH", "1");
             builder.environment().put("LC_ALL", "C");
             builder.redirectInput(input == null ? Path.of("/dev/null").toFile() : input.toFile());
             builder.redirectOutput(stdout.toFile());

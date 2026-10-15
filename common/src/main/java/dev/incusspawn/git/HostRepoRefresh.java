@@ -284,6 +284,7 @@ public final class HostRepoRefresh {
     static List<ImageDef.RepoEntry> deduplicateByUrl(List<ImageDef.RepoEntry> repos) {
         var seen = new LinkedHashMap<String, ImageDef.RepoEntry>();
         for (var repo : repos) {
+            if (repo.isHostSource()) continue; // Upstream access belongs to the user on the host.
             var normalized = GitRemoteUtils.normalizeGitUrl(repo.getUrl());
             seen.putIfAbsent(normalized, repo);
         }

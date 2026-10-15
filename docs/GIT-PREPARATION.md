@@ -9,6 +9,31 @@ The guest copies the resulting repository with `--no-hardlinks` and verifies its
 This is the clean-snapshot alternative to the certificate/bitmap implementation in [PR #1400](https://github.com/Sanne/incus-spawn/pull/1400), addressing [#1395](https://github.com/Sanne/incus-spawn/issues/1395).
 The [dissociation regression note](GIT-DISSOCIATE-REVIEW.md) preserves the historical checkout failure, its reproducer and the reason for bare preparation.
 
+## Explicit host sources
+
+A trusted template can declare `host-source: ~/work/repo` instead of `url`, with the same guest `path`, `branch` and `prime` fields.
+This is a separate source policy: local branches and tags authorize their complete reachable object closure, including unpushed commits.
+Neither remote-tracking refs, stash refs, reflogs, the index nor a detached HEAD add roots to that closure.
+A detached HEAD outside it needs an explicit branch or tag selection.
+Shallow sources and `depth` are refused, because their missing history cannot be supplied without upstream access.
+Project-local templates cannot prepare host sources, including when rebuilding from stored definitions.
+Guest-side `file://` URLs retain their existing meaning and never select this path.
+
+`GitPreparation.prepareHost` reads source refs, then packs their captured object IDs through fresh owned metadata with a temporary alternate pointing at the source object directory.
+Object and delta reuse and bitmap selection are disabled so no extra source objects enter the export.
+Only the resulting pack/index pair, exported heads/tags and chosen HEAD remain; fsck runs after removing the alternate.
+Source hooks, configuration, worktree files and reflogs are never copied.
+The source is never fetched into or maintained, and no remote advertisement or network fallback is involved.
+These exports use the existing preparation lease and guest checksum verification but are ephemeral, with no retained network-cache entry.
+Linux and macOS mount only the independent prepared repository, read-only, and detach it before priming.
+The guest keeps every exported branch locally and removes the temporary clone remote.
+Export, mount, copy or verification failures abort the repository step without contacting an upstream.
+
+The build stamps canonical source paths by guest destination as `host-repositories`, preserving inherited associations when building a child.
+Automatic remotes use this association rather than URL matching or the current template file.
+A host-owned record under the data directory's `git-remotes/` remembers those paths before adding remotes, so cleanup still works after deleting the instance or its template.
+Host-source entries are excluded from `HostRepoRefresh`, including explicit `update-all` refreshes.
+
 ## When and why we use a clean snapshot
 
 A user's checkout can contain private branches, stashes and other objects that the template's remote does not expose.

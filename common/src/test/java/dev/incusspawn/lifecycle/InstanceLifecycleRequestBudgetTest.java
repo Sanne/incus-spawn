@@ -65,6 +65,14 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void hostIntegrationSharesOneMetadataReadAcrossResourcesRemotesAndTools() {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of());
+        InstanceLifecycle.integrateWithHost(daemon.client(), NAME,
+                InstanceType.INSTANCE, MachineType.CONTAINER);
+        assertBudget(1, daemon, "host integration");
+    }
+
+    @Test
     void startCostsOneStateChangeAndItsWait() {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
         InstanceLifecycle.startInstance(daemon.client(), NAME);

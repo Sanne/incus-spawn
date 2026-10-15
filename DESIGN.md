@@ -2492,15 +2492,28 @@ The VM's launch agent has no `KeepAlive` (checked on a Mac in the plists 0.3.9 a
 ### Repo Cloning and Reference Optimization
 
 Repos declared in an image definition are cloned into the container during build as `agentuser`.
-Full clones select all advertised branches and tags, with the remote's default HEAD or the requested branch/tag checked out.
+Full network clones select all advertised branches and tags, with the remote's default HEAD or the requested branch/tag checked out.
 This is the former local path's scope, now also used by the network fallback; the old network path initially fetched only one branch.
 The normal broad fetch refspec is retained, while shallow clones keep their existing narrow selection and refspec.
 The selection and cache contracts are specified in [Git preparation](docs/GIT-PREPARATION.md).
 Its [clean-snapshot decision table](docs/GIT-PREPARATION.md#when-and-why-we-use-a-clean-snapshot) explains the build's ready-line labels and when snapshots are reused, updated incrementally, rebuilt or bypassed.
 
+**Explicit host repositories** (`repos[].host-source`, #756 / #1408) export local branches and tags, including unpushed history, through `GitPreparation.prepareHost`.
+The source is an absolute or tilde-expanded host path in a trusted template; project-local templates remain unable to prepare host repositories.
+`branch` selects the initial checkout without narrowing the export, and `depth` is refused.
+Only objects reachable from the captured branch/tag tips enter a newly packed independent repository, excluding stash-only, reflog-only, remote-tracking-only and unreachable objects, uncommitted files, hooks and configuration.
+No build fetches into or modifies the source, contacts its corporate remote, or mounts the original checkout.
+The prepared export uses the same lease, read-only transfer, independent guest copy and checksum verification on Linux and macOS, with no overlay dependency.
+A failure aborts this repository step without a network fallback.
+The guest preserves all exported branches locally and removes the temporary origin.
+Canonical source associations are stamped by destination as `host-repositories` and inherited with the guest repository.
+Automatic `isx://` remotes use those paths without URL matching or global `repo-paths` entries.
+A host-owned `git-remotes/` record in the data directory makes cleanup independent of the current template definitions and the deleted instance.
+Host sources are excluded from host refresh, and existing guest `file://` URLs retain their meaning.
+
 **One clone per destination** (#1394): a repo's identity is its destination (`~/x` and `/home/agentuser/x` are one, and the default path comes from the URL), resolved across the whole template chain by `ImageDef.chainRepos`.
 A layer clones only the destinations it declares first; one an ancestor declared is already in the parent copy (or was cloned by that ancestor's layer in a build from scratch), so the build prints `✓ Inherited <repo> (from <template>)` and neither clones nor primes it again, and a repeat within a template is the same clone.
-Repeating a declaration is only allowed when it is identical (URL compared via `GitRemoteUtils.urlsMatch`, branch, depth, prime): `ImageDef.repoConflict` refuses the build before any work starts, naming the destination, both templates and the differing fields, because changing an inherited checkout's branch, depth or prime has no defined meaning yet.
+Repeating a declaration is only allowed when it is identical (URL compared via `GitRemoteUtils.urlsMatch`, host source, branch, depth, prime): `ImageDef.repoConflict` refuses the build before any work starts, naming the destination, both templates and the differing fields, because changing an inherited checkout's branch, depth or prime has no defined meaning yet.
 Trust, the agent context and the TUI's chain view list the same resolved repos.
 
 **Parallel cloning**: when a template declares multiple repos they are cloned concurrently, bounded to the host's high-performance ("P") core count (`CpuInfo.highPerfCores()` — `sysctl hw.perflevel0.logicalcpu` on macOS, on Linux the top tier of the sysfs scan described in "VM boot: where the wait goes" (the hybrid PMU's `cpu_core` list, else `cpu_capacity`, else `cpufreq`), falling back to all logical processors).
@@ -2529,7 +2542,7 @@ Before the fallback the failed attempt's destination is removed, but only one it
 The latch the primes wait on counts *planned raw shallow* references, each counted down once, in a `finally`, after its attach is resolved and anything attached is detached.
 So a failed or re-queued attach can neither hang the primes nor land after them.
 Each repo's declared `prime` command (also captured, no PTY) runs in the same worker once that repo's clone is done **and every raw shallow reference has been detached**, so priming pipelines with other clean preparations and network clones.
-Full-clone mounts contain only prepared public-to-that-remote objects and sanitized repository metadata; the unchanged shallow path can still mount the host checkout's whole working tree.
+Full-clone mounts contain only objects authorized by the declared source and sanitized repository metadata; the unchanged shallow path can still mount the host checkout's whole working tree.
 A prime command is arbitrary code with network access, and the old "remove all references after everything" order let any repo's prime read every mounted checkout (#765).
 A failed detach fails the build rather than prime next to a mount.
 The concurrency bound is a semaphore in `prepareOne` taken around the clone and the prime separately, not `TerminalProgress`'s per-task slot.
@@ -2546,7 +2559,7 @@ Source removal, corruption or concurrent pruning therefore cannot publish an inc
 A warm reuse requires a fresh authoritative advertisement with identical heads, tags, default HEAD and object format, plus a verified SHA-256 seal covering all cached repository files.
 Branch/tag pins share the full selection and are checked on every request.
 No graph walk, user-checkout access or repack runs on a hit.
-Host preparation allows only HTTPS, SSH and Git network URLs and enforces the transport allowlist in Git, including after URL rewrites.
+Network-source preparation allows only HTTPS, SSH and Git network URLs and enforces the transport allowlist in Git, including after URL rewrites.
 Paths, file transports and arbitrary helpers cannot turn a template URL into a host filesystem read.
 SSH defaults to batch mode unless an SSH command or executable was explicitly supplied.
 The guest first checks the remote with its template's accounts, and its full advertised selection must match the prepared snapshot before any bytes are mounted.

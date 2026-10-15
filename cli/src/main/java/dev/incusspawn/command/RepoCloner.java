@@ -7,6 +7,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.git.GitCommandException;
 import dev.incusspawn.git.GitPreparation;
+import dev.incusspawn.git.HostRepoSources;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -211,7 +212,7 @@ class RepoCloner {
      * are cloned from the network, since the reference would hand the host
      * checkout to prime commands the cloned repository itself controls.
      *
-     * <p>Full clones mount only a standalone repository prepared from remote-authoritative refs.
+     * <p>Full clones mount only a standalone repository prepared from the declared source's authorized refs.
      * Shallow clones retain the transport/fixup path from a discovered checkout.
      */
     void cloneRepos(Container container, ImageDef imageDef, java.util.Map<String, ImageDef> defs,
@@ -240,8 +241,21 @@ class RepoCloner {
             var refs = new RepoReference[repos.size()];
             var projectLocal = imageDef.getProjectRoot() != null;
             var deviceNames = new java.util.HashSet<String>();
+            var hostSources = new java.util.LinkedHashMap<String, String>();
             for (int i = 0; i < repos.size(); i++) {
-                refs[i] = projectLocal
+                var repo = repos.get(i);
+                if (repo.sourceProblem() != null) throw new IncusException(repo.sourceProblem());
+                if (repo.isHostSource()) {
+                    if (projectLocal) throw new IncusException("project-local templates cannot prepare host repositories");
+                    try {
+                        var source = repo.hostSourcePath().toRealPath();
+                        hostSources.put(ImageDef.repoDestination(repo), source.toString());
+                        refs[i] = new RepoReference("ref-host-" + i, "/mnt/isx-host-repo-" + i,
+                                source.toString(), null);
+                    } catch (java.io.IOException e) {
+                        throw new IncusException("Cannot read host-source " + repo.getHostSource() + ": " + e.getMessage());
+                    }
+                } else refs[i] = projectLocal
                         ? RepoReference.skipped("project-local template, host checkouts are not shared")
                         : planReference(repos.get(i).getUrl(), config);
                 // Shallow selection keeps the established transport/fixup path, with no host fetch.
@@ -259,10 +273,11 @@ class RepoCloner {
                             r.source(), r.skipReason(), r.request(), r.prepared());
                 }
             }
-            if (java.util.Arrays.stream(refs).anyMatch(r -> r != null && r.request() != null)) {
+            if (!hostSources.isEmpty() || java.util.Arrays.stream(refs).anyMatch(r -> r != null && r.request() != null)) {
                 try {
                     preparation = new GitPreparation(config.gitCache(), config.gitTransfer());
                 } catch (Exception e) {
+                    if (!hostSources.isEmpty()) throw new IncusException("Host repository preparation unavailable: " + e.getMessage());
                     for (int i = 0; i < refs.length; i++) {
                         if (refs[i] != null && refs[i].request() != null) {
                             refs[i] = RepoReference.skipped("Git preparation unavailable: " + e.getMessage());
@@ -286,7 +301,8 @@ class RepoCloner {
             }
             // Only raw shallow checkouts expose host-private objects. Their gate includes planned
             // mounts, so a prime cannot race a shallow worker that has not attached its checkout yet.
-            int rawReferences = (int) java.util.Arrays.stream(refs).filter(RepoCloner::rawReference).count();
+            int rawReferences = (int) java.util.stream.IntStream.range(0, refs.length)
+                    .filter(i -> !repos.get(i).isHostSource() && rawReference(refs[i])).count();
             var referencesDetached = new java.util.concurrent.CountDownLatch(rawReferences);
             var mounts = new DeviceMounts(container, refs, machineType, planned.length);
 
@@ -311,7 +327,7 @@ class RepoCloner {
                         idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx, failureSeen,
                                 limiter, referencesDetached, mounts, accessChecked),
                         (idx, frame) -> formatStepLine(repoDisplayName(repos.get(idx)),
-                                repos.get(idx).getUrl(), states.get(idx), frame, "Ready"),
+                                repos.get(idx).sourceDescription(), states.get(idx), frame, "Ready"),
                         idx -> plainStepLine(repoDisplayName(repos.get(idx)), states.get(idx), "Ready", "prepare"),
                         System.out::println);
             } finally {
@@ -322,10 +338,11 @@ class RepoCloner {
             preparationTimings.forEach((idx, timing) -> BuildOutput.note(repoDisplayName(repos.get(idx)) + ": " + timing));
             // isx's words, then Git's quoted: the step lines hold one line each.
             preparationFailures.forEach((idx, failed) -> BuildOutput.warn(repoDisplayName(repos.get(idx))
-                    + ": " + failed.getMessage() + "; falling back to a clone in the guest.",
+                    + ": " + failed.getMessage() + (repos.get(idx).isHostSource() ? "." : "; falling back to a clone in the guest."),
                     failed.details().toArray(String[]::new)));
 
             assertNoStepFailures(repos, states, "prepare");
+            if (!hostSources.isEmpty()) HostRepoSources.record(incus, container.name(), hostSources);
         }
     }
 
@@ -377,7 +394,10 @@ class RepoCloner {
         try {
             limiter.acquireUninterruptibly();
             try {
-                if (hasReference && ref.hasDevice() && planned.request() != null) {
+                if (repo.isHostSource() && hasReference && ref.hasDevice()) {
+                    ref = prepareHostReference(repo, planned, states, idx);
+                    if (ref.prepared() != null) prepared.put(idx, ref.prepared());
+                } else if (hasReference && ref.hasDevice() && planned.request() != null) {
                     ref = prepareReference(repo, planned, states, idx, advertisement);
                     if (ref.prepared() != null) prepared.put(idx, ref.prepared());
                 }
@@ -406,7 +426,7 @@ class RepoCloner {
                     // Before the count-down, so a prime woken by it already sees the failure.
                     if (!detachedOk) failureSeen.set(true);
                 } finally {
-                    if (rawReference(planned)) referencesDetached.countDown();
+                    if (!repo.isHostSource() && rawReference(planned)) referencesDetached.countDown();
                 }
             }
         }
@@ -504,6 +524,19 @@ class RepoCloner {
         }
     }
 
+    private RepoReference prepareHostReference(ImageDef.RepoEntry repo, RepoReference ref,
+                                               AtomicReferenceArray<StepProgress> states, int idx) {
+        try {
+            var result = preparation.prepareHost(java.nio.file.Path.of(ref.source()), repo.getBranch(),
+                    phase -> states.set(idx, StepProgress.running(phase)));
+            return new RepoReference(ref.deviceName(), ref.containerPath(),
+                    HostResourceSetup.translateForVm(result.repository().toString()), null, null, result);
+        } catch (Exception e) {
+            if (e instanceof GitCommandException failed && !failed.details().isEmpty()) preparationFailures.put(idx, failed);
+            return RepoReference.skipped("Host source export failed: " + e.getMessage());
+        }
+    }
+
     private void releasePrepared(int idx) {
         var result = prepared.remove(idx);
         if (result != null) {
@@ -571,6 +604,11 @@ class RepoCloner {
             }
 
             if (!usedReference) {
+                if (repo.isHostSource()) {
+                    states.set(idx, StepProgress.failed(fallbackReason != null ? fallbackReason
+                            : ref != null ? ref.skipReason() : "Host source was not prepared", null));
+                    return CloneResult.FAILED;
+                }
                 var clone = container.shAsUser("agentuser", buildCloneCommand(repo, null));
                 if (!clone.success()) {
                     states.set(idx, StepProgress.failed(gitError(clone), combinedOutput(clone)));
@@ -647,8 +685,8 @@ class RepoCloner {
     }
 
     private static String repoDisplayName(ImageDef.RepoEntry repo) {
-        var name = GitRemoteUtils.repoNameFromUrl(repo.getUrl());
-        return name.isEmpty() ? repo.getUrl() : name;
+        var name = repo.sourceName();
+        return name.isEmpty() ? repo.sourceDescription() : name;
     }
 
     /** Extract a concise error line from a failed git exec (stderr first, then stdout). */
@@ -724,7 +762,7 @@ class RepoCloner {
         var command = new StringBuilder("git clone --no-hardlinks");
         if (repo.hasBranch()) command.append(" --branch ").append(shellQuote(repo.getBranch()));
         command.append(" -- ").append(shellQuote(ref.containerPath())).append(' ').append(path)
-                .append(" && git -C ").append(path).append(" remote set-url origin ").append(shellQuote(repo.getUrl()))
+                .append(repo.isHostSource() ? "" : " && git -C " + path + " remote set-url origin " + shellQuote(repo.getUrl()))
                 .append(" && { g=$(git -C ").append(path).append(" rev-parse --absolute-git-dir) && ")
                 .append("[ ! -e \"$g/objects/info/alternates\" ] && ")
                 .append("{ [ \"$(find \"$g/objects\" -type f | wc -l)\" -eq ")
@@ -740,7 +778,18 @@ class RepoCloner {
                     .append(" else shasum -a 256 -c -; fi; } >/dev/null")
                     .append(" || { echo 'fatal: prepared Git pack checksum failed' >&2; false; }");
         }
-        return command.append("); }").toString();
+        command.append("); }");
+        if (repo.isHostSource()) {
+            // Preserve every exported branch as a local branch before removing the temporary origin.
+            // No remote points at the host mount or at its corporate upstream in the finished guest.
+            var git = "git -C " + path;
+            command.append(" && { for ref in $(").append(git)
+                    .append(" for-each-ref --format='%(refname)' refs/remotes/origin/); do ")
+                    .append("[ \"$ref\" = refs/remotes/origin/HEAD ] && continue; ")
+                    .append(git).append(" update-ref \"refs/heads/${ref#refs/remotes/origin/}\" \"$ref\" || exit 1; done; }")
+                    .append(" && ").append(git).append(" remote remove origin");
+        }
+        return command.toString();
     }
 
     /**

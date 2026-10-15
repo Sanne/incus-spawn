@@ -255,13 +255,13 @@ final class TemplateDetailView {
         } else {
             lines.add(Line.styled("Repos:", labelStyle));
             for (var repo : allRepos) {
-                lines.add(Line.styled("  " + repo.getUrl() + " → " + repo.getPath(), lineStyle));
+                lines.add(Line.styled("  " + repo.sourceDescription() + " → " + repo.getPath(), lineStyle));
                 if (repo.hasPrime()) {
                     lines.add(Line.from(List.of(
                             Span.styled("    prime: ", labelStyle),
                             Span.styled(repo.getPrime(), lineStyle))));
                 }
-                var hostMatch = source.hostRepoMatch(repo.getUrl());
+                var hostMatch = repo.isHostSource() ? repo.getHostSource() : source.hostRepoMatch(repo.getUrl());
                 lines.add(Line.styled(hostMatch != null
                         ? "    Linked to host repository at " + hostMatch
                         : "    No matching host checkout found", dimStyle));
@@ -553,13 +553,13 @@ final class TemplateDetailView {
             for (var repo : def.getRepos()) {
                 lines.add(Line.from(List.of(
                         Span.styled(contentIndent + "Repo: ", labelStyle),
-                        Span.styled(repo.getUrl() + " → " + repo.getPath(), lineStyle))));
+                        Span.styled(repo.sourceDescription() + " → " + repo.getPath(), lineStyle))));
                 if (repo.hasPrime()) {
                     lines.add(Line.from(List.of(
                             Span.styled(contentIndent + "  prime: ", labelStyle),
                             Span.styled(repo.getPrime(), lineStyle))));
                 }
-                var hostMatch = source.hostRepoMatch(repo.getUrl());
+                var hostMatch = repo.isHostSource() ? repo.getHostSource() : source.hostRepoMatch(repo.getUrl());
                 lines.add(Line.styled(contentIndent + (hostMatch != null
                         ? "  Linked to host repository at " + hostMatch
                         : "  No matching host checkout found"), dimStyle));

@@ -93,7 +93,7 @@ public class GitRemoteHelperCommand extends BaseCommand {
         System.err.println("The path '" + path + "' is not a git repository in instance '" + instance + "'.");
         System.err.println("Known repositories:");
         for (var repo : repos) {
-            System.err.println("  " + repo.getPath() + "  (" + repo.getUrl() + ")");
+            System.err.println("  " + repo.getPath() + "  (" + repo.sourceDescription() + ")");
         }
     }
 }

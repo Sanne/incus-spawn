@@ -487,13 +487,37 @@ repos:
 ```
 
 Repo entry fields:
-- `url` (required) -- git clone URL (HTTPS, for proxy compatibility)
+- `url` -- git clone URL (HTTPS, for proxy compatibility); use either `url` or `host-source`
+- `host-source` -- an absolute host repository path or `~/...`, available in trusted templates; exports local branches and tags without contacting its remote
 - `path` (optional) -- target directory (`~` expands to agentuser's home); defaults to `~/<repo name>`
 - `branch` (optional) -- branch or tag to check out; defaults to the repo's default branch
 - `depth` (optional) -- a positive number of commits to keep: the clone is shallow and follows only its branch, for repositories that store release binaries in their history. Omit it for development repositories, which get the full history. In the instance, `git fetch --unshallow && git remote set-branches origin '*' && git fetch` gets all of it.
 - `prime` (optional) -- shell command to run inside the repo directory after cloning, typically to pre-fetch dependencies (e.g. `mvn dependency:go-offline`, `gradle dependencies`)
 
 Declared repos are automatically pre-trusted in `.claude.json` so Claude Code doesn't prompt for trust on first use.
+
+For a repository accessible only on the host, declare its source directly:
+
+```yaml
+name: tpl-private
+parent: tpl-java
+repos:
+  - host-source: ~/work/private-repo
+    path: ~/private-repo
+    branch: my-feature
+```
+
+Build and branch this template as usual.
+The guest receives all local branches and tags with their reachable history, including unpushed commits; `branch` selects the initial branch or tag without removing other branches.
+Stashes, reflog-only and unreachable objects, uncommitted files, source configuration and hooks are excluded unless their contents are reachable from an exported branch or tag.
+The host checkout is read without fetching or modifying it, and the guest copy remains usable after the source is removed.
+The guest has no upstream remote; fetch or update the original repository on the host, then rebuild to export newer work.
+Branching registers an `isx://` remote in the resolved host checkout, so `git fetch <instance-name>` retrieves the instance's work; destroying or renaming the instance cleans up that remote.
+No `repo-paths` entry or `host-resources` overlay is needed, on Linux or macOS.
+Host sources require complete history (`depth` and shallow source repositories are refused), and project-local `.incus-spawn/` templates cannot declare them.
+An unexported detached host HEAD requires an explicit `branch` or tag.
+Existing `url: file:///...` entries still refer to paths inside the guest.
+
 
 ### Shell Defaults
 

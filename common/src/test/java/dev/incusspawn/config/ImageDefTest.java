@@ -1178,4 +1178,54 @@ class ImageDefTest {
                         + " remove one declaration or make them identical (an inherited repo cannot be overridden)",
                 ImageDef.repoConflict(defs.get("tpl-child"), defs));
     }
+    @Test void hostSourceRoundTripsAndChangesFingerprint() throws Exception {
+        var def = Jjq.imageDef("""
+                name: tpl-private
+                parent: tpl-minimal
+                repos:
+                  - host-source: ~/work/private
+                    branch: feature
+                """);
+        var repo = def.getRepos().getFirst();
+        assertNull(repo.getUrl());
+        assertEquals("~/private", repo.getPath());
+        assertNull(repo.sourceProblem());
+        assertEquals("~/work/private", Jjq.imageDef(Jjq.mapper().toJson(def)).getRepos().getFirst().getHostSource());
+        var fingerprint = def.contentFingerprint(Map.of());
+        repo.setHostSource("~/other/private");
+        assertNotEquals(fingerprint, def.contentFingerprint(Map.of()));
+        var named = new ImageDef.RepoEntry();
+        named.setHostSource("/work/private # repo.git");
+        assertEquals("~/private # repo", named.getPath());
+        var parent = Jjq.imageDef("""
+                name: tpl-parent
+                parent: tpl-minimal
+                repos:
+                  - host-source: ~/work/private
+                    branch: feature
+                """);
+        def.setParent("tpl-parent");
+        assertTrue(ImageDef.repoConflict(def, Map.of("tpl-parent", parent)).contains("host-source"));
+    }
+
+    @Test void invalidHostSourcesAreRefusedAtLoad(@TempDir Path dir) throws Exception {
+        var images = Files.createDirectories(dir.resolve("images"));
+        for (var fields : List.of("host-source: relative/path", "host-source: ''",
+                "host-source: /private\n    url: https://example.com/repo",
+                "host-source: /private\n    depth: 1")) {
+            Files.writeString(images.resolve("private.yaml"), "name: tpl-private\nparent: tpl-minimal\nrepos:\n  - " + fields + "\n");
+            var warnings = new java.util.ArrayList<String>();
+            var defs = ImageDef.loadAllWithConflicts(List.of(dir.toString()), warnings::add);
+            assertFalse(defs.defs().containsKey("tpl-private"), fields);
+            assertFalse(warnings.isEmpty(), fields);
+        }
+    }
+
+    @Test void guestFileUrlRetainsItsMeaning() throws Exception {
+        var repo = Jjq.imageDef("name: tpl-local\nrepos:\n  - url: file:///guest/staging/repo\n").getRepos().getFirst();
+        assertFalse(repo.isHostSource());
+        assertNull(repo.sourceProblem());
+        assertEquals("file:///guest/staging/repo", repo.getUrl());
+    }
+
 }
