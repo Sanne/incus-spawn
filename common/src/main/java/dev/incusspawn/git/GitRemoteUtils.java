@@ -379,7 +379,11 @@ public final class GitRemoteUtils {
         if (Files.isDirectory(dotGit)) {
             return dotGit.resolve("config");
         }
-        if (!Files.isRegularFile(dotGit)) return null;
+        if (!Files.isRegularFile(dotGit)) {
+            // Explicit host sources can be bare: their config lives at the repository root.
+            return Files.isRegularFile(repoDir.resolve("HEAD")) && Files.isDirectory(repoDir.resolve("objects"))
+                    ? repoDir.resolve("config") : null;
+        }
         try {
             var content = Files.readString(dotGit, StandardCharsets.UTF_8).strip();
             if (!content.startsWith("gitdir: ")) return null;

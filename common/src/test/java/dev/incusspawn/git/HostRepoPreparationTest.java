@@ -97,6 +97,38 @@ class HostRepoPreparationTest {
         assertThrows(java.io.IOException.class, () -> preparation().prepareHost(host, "missing", phase -> {}));
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"files", "reftable"})
+    void defaultCheckoutUsesGitHeadForSymbolicAndDetachedSources(String refFormat) throws Exception {
+        var host = tmp.resolve("host");
+        if (refFormat.equals("reftable")) {
+            var init = GitRemoteUtils.hostGitExecResult(tmp, "init", "-q", "-b", "main",
+                    "--ref-format=reftable", host.toString());
+            org.junit.jupiter.api.Assumptions.assumeTrue(init.success(),
+                    () -> "Git must support reftable for this test: " + init.output());
+        } else {
+            git(tmp, "init", "-q", "-b", "main", host.toString());
+        }
+        commitBinary(host, "base");
+        git(host, "checkout", "-q", "-b", "unpushed");
+        commitBinary(host, "unpushed");
+        var tip = git(host, "rev-parse", "HEAD");
+        var before = inventory(host);
+        try (var prepared = preparation().prepareHost(host, null, phase -> {})) {
+            assertEquals("refs/heads/unpushed", git(prepared.repository(), "symbolic-ref", "HEAD"));
+            assertEquals(tip, git(prepared.repository(), "rev-parse", "HEAD"));
+            assertEquals(before, inventory(host));
+        }
+        git(host, "checkout", "--detach", "HEAD~1");
+        var detached = git(host, "rev-parse", "HEAD");
+        before = inventory(host);
+        try (var prepared = preparation().prepareHost(host, null, phase -> {})) {
+            assertEquals(detached, git(prepared.repository(), "rev-parse", "HEAD"));
+            assertEquals(detached, Files.readString(prepared.repository().resolve("HEAD")).strip());
+            assertEquals(before, inventory(host));
+        }
+    }
+
     @Test void refusesShallowSourcesWithoutContactingTheirRemote() throws Exception {
         var host = releasesFixture(tmp);
         var shallow = tmp.resolve("shallow");

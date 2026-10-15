@@ -11,13 +11,18 @@ import dev.incusspawn.tool.ToolAction;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.tool.YamlToolAction;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
  * Which tools' actions the TUI offers a template on F9, and picks Enter's default action from.
@@ -75,5 +80,32 @@ class InstanceActionsInstalledToolsTest {
     void aTemplateOnDiskOffersTheToolsItsDefinitionNames() {
         assertEquals(List.of("test-other-868"),
                 offeredTools(Map.of(TEMPLATE, template("test-other-868")), "test-agent-868"));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "vscode-remote, VS Code, vscode://vscode-remote/ssh-remote+tpl-agent/home/agentuser/local",
+            "idea-backend, Gateway, jetbrains-gateway://connect#idePath=%2Fopt%2Fidea&host=tpl-agent&port=22&user=agentuser&type=ssh&deploy=false&projectPath=/home/agentuser/local"
+    })
+    void hostSourcesOfferWorkingEditorActions(String tool, String editor, String expectedUrl) {
+        var def = template(tool);
+        var repo = new ImageDef.RepoEntry();
+        repo.setHostSource("/host/local");
+        repo.setPath("~/local");
+        def.setRepos(List.of(repo));
+        var daemon = new FakeIncusDaemon().container(TEMPLATE, Map.of(
+                Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, TEMPLATE));
+        var instance = InstanceListing.collectEntries(daemon.client().listJson()).getFirst();
+        var loader = new ToolDefLoader(List.of());
+        var actions = new InstanceActions(() -> Map.of(TEMPLATE, def), () -> loader, List::of);
+        var context = actions.buildActionContext(instance);
+        assertNull(context.repos().getFirst().url());
+        var offered = actions.resolveActionsForInstance(instance).stream()
+                .filter(action -> tool.equals(action.toolName())).toList();
+
+        assertEquals(1, offered.size());
+        var action = assertInstanceOf(YamlToolAction.class, offered.getFirst());
+        assertEquals("Open repo 'local' in " + editor, action.label());
+        assertEquals(expectedUrl, action.resolveUrl(context));
     }
 }

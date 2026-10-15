@@ -43,6 +43,23 @@ class YamlToolActionTest {
     }
 
     @Test
+    void absentRepoUrlInterpolatesAsEmptyAndReturnsMissingUrlError() {
+        var entry = new ActionEntry();
+        entry.setLabel("Upstream for ${repo_name}: ${repo_url}");
+        entry.setType("url");
+        entry.setUrl("${repo_url}");
+        var repo = new ActionContext.RepoInfo("local", "/home/agentuser/local", null);
+        var action = new YamlToolAction("test-tool", entry, repo);
+        var context = new ActionContext("work", MachineType.CONTAINER);
+
+        assertEquals("Upstream for local: ", action.label());
+        assertEquals("", action.resolveUrl(context));
+        var result = action.execute(context);
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Missing URL"));
+    }
+
+    @Test
     void testCommandNeedsDeferredExecution() {
         var entry = new ActionEntry();
         entry.setLabel("Run script");

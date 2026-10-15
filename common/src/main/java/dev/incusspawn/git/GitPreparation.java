@@ -248,13 +248,18 @@ public final class GitPreparation {
                     .map(e -> "update " + e.getKey() + " " + e.getValue()).toList());
             run(result, refsInput, null, List.of("update-ref", "--stdin"));
             Files.delete(refsInput);
-            var sourceHead = Path.of(git(source, "rev-parse", "--path-format=absolute", "--git-path", "HEAD"));
-            var head = Files.readString(sourceHead).strip();
+            String head;
             if (branch != null && !branch.isBlank()) {
                 // A requested checkout also works when the host is detached at an unexported commit.
                 head = selected.containsKey("refs/heads/" + branch) ? "ref: refs/heads/" + branch
-                        : selected.containsKey("refs/tags/" + branch)
-                        ? git(result, "rev-parse", "--verify", "refs/tags/" + branch + "^{commit}") : head;
+                        : git(result, "rev-parse", "--verify", "refs/tags/" + branch + "^{commit}");
+            } else {
+                // Git resolves HEAD independently of the source's ref storage (files or reftable).
+                try {
+                    head = "ref: " + git(source, "symbolic-ref", "--quiet", "HEAD");
+                } catch (GitCommandException detached) {
+                    head = git(source, "rev-parse", "--verify", "HEAD");
+                }
             }
             Files.writeString(result.resolve("HEAD"), head + "\n");
             try {

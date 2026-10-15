@@ -6,6 +6,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -179,19 +181,24 @@ class AutoRemoteServiceTest {
                         Metadata.HOST_REPOSITORIES, sources)));
     }
 
-    @Test void hostSourceRemotesNeedNoGlobalMappingAndCleanupSurvivesTemplateRemoval() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void hostSourceRemotesNeedNoGlobalMappingAndCleanupSurvivesTemplateRemoval(boolean bare) throws Exception {
         var host = tempDir.resolve("private");
         Files.createDirectories(host);
-        runGit(host, "init");
+        runGit(host, bare ? new String[]{"init", "--bare"} : new String[]{"init"});
         runGit(host, "remote", "add", "origin", "ssh://corporate.invalid/private");
         var incus = mock(IncusClient.class);
         var sources = io.hyperfoil.tools.jjq.value.JqValues.serialize(io.hyperfoil.tools.jjq.value.JqValues.fromJavaObject(java.util.Map.of("/home/agentuser/private", host.toString())));
         when(incus.instanceMetadataOrThrow("work")).thenReturn(instance("missing-template", sources));
         AutoRemoteService.addRemotes(incus, "work", message -> {});
         assertThat(runGit(host, "remote", "get-url", "work")).contains("isx://work/home/agentuser/private");
+        // Cleanup follows the URL even if the user renamed the remote, and preserves other instances.
+        runGit(host, "remote", "rename", "work", "renamed");
+        runGit(host, "remote", "add", "other", "isx://other/home/agentuser/private");
         // Cleanup receives only the name, after Incus has already destroyed the instance.
         AutoRemoteService.removeRemotes("work", message -> {});
-        assertThat(runGit(host, "remote").strip()).isEqualTo("origin");
+        assertThat(runGit(host, "remote").strip().lines().toList()).containsExactly("origin", "other");
         assertThat(HostRepoSources.cleanupFile("work")).doesNotExist();
         assertThat(runGit(host, "remote", "get-url", "origin")).contains("corporate.invalid");
     }
