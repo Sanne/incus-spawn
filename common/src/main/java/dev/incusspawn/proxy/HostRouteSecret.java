@@ -240,8 +240,12 @@ public final class HostRouteSecret {
         var cutoff = System.currentTimeMillis() - 3_600_000L;
         try (var entries = Files.newDirectoryStream(dir, TEMPORARY + "*.tmp")) {
             for (var entry : entries) {
-                if (Files.getLastModifiedTime(entry, LinkOption.NOFOLLOW_LINKS).toMillis() < cutoff) {
-                    Files.deleteIfExists(entry);
+                try {
+                    if (Files.getLastModifiedTime(entry, LinkOption.NOFOLLOW_LINKS).toMillis() < cutoff) {
+                        Files.deleteIfExists(entry);
+                    }
+                } catch (java.nio.file.NoSuchFileException completed) {
+                    // Another creator removed its temporary between the listing and this stat.
                 }
             }
         }

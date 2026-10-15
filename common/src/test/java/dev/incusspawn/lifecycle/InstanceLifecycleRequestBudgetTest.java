@@ -137,6 +137,17 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void aTuiRestartReusesItsListingWithoutAnotherMetadataReadBeforeRestart() {
+        var daemon = new FakeIncusDaemon().instance(NAME, "container", "Running", stableProofConfig());
+        var listed = JacksonTrees.fromJsonNode(daemon.instance(NAME));
+        var incus = spy(daemon.client());
+        doNothing().when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
+        InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, false, listed);
+        assertEquals("PATCH /1.0/instances/" + NAME, daemon.requests().getFirst());
+        assertBudget(5, daemon, "TUI restart with its listing and guest answering");
+    }
+
+    @Test
     void aBranchsCaCheckReusesTheReadThatRecordsItsBoot() {
         // After the branch's start: the read that finds its boot and the stamp (#1024), then the
         // CA check with nothing of its own, then resolv.conf's exec (which this daemon does not

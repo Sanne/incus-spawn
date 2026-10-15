@@ -26,7 +26,7 @@ class InstanceDetailViewTest {
     private static InstanceInfo instance() {
         return new InstanceInfo("dev-1", "Running", "default", "default", "",
                 "container", "tpl-dev", "4", "8GiB", "20GiB", "10.0.0.5", "", "x86_64",
-                "", "", "instance", "", "", "", -1, -1, "", false, null, false);
+                "", "", "instance", "", "", "", -1, -1, "", false, null, false, null);
     }
 
     @Test
@@ -55,7 +55,7 @@ class InstanceDetailViewTest {
         // Created three hours before the pinned clock, so the age reads "3h ago" on any day.
         var vm = new InstanceInfo("vm-1", "Stopped", "default", "default", "2026-10-11T09:00:00",
                 "virtual-machine", "tpl-dev", "4", "8GiB", "50GiB", "", "", "x86_64",
-                "", "", "instance", "", "", "", -1, -1, "", false, null, false);
+                "", "", "instance", "", "", "", -1, -1, "", false, null, false, null);
         TuiSnapshot.assertMatches("instance-detail-view-vm-80x24",
                 TuiSnapshot.render(80, 24, f -> view().render(f, f.area(), vm, List.of())));
     }

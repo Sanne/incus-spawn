@@ -96,17 +96,15 @@ public final class InstanceSecret {
 
     /** An ordinary start leaves an established proof grant alone; changed declarations require a current locked listing. */
     public static Delivery retainInto(Map<String, String> config, io.hyperfoil.tools.jjq.value.JqValue previous,
-                                       List<ProofToken.Placeholder> placeholders) {
-        var generation = previous.pathText(Metadata.INSTANCE_PROOF_ID, "");
-        if (generation.isBlank()) return stampInto(config, placeholders);
+                                       CredentialProof.Seed seed, String verifier) {
         var secret = generate();
         config.put(Metadata.INSTANCE_SECRET_SHA256, sha256(secret));
-        var seed = CredentialProof.retain(generation, previous.pathText(Metadata.INSTANCE_PROOF_SHA256, ""));
-        var verifier = ProofVerifier.stamp(seed.secret(), placeholders);
-        if (!verifier.equals(previous.pathText(Metadata.INSTANCE_PROOF_SHA256, ""))) {
-            CredentialProof.stampInto(config, seed, placeholders);
+        if (!seed.generation().equals(previous.pathText(Metadata.INSTANCE_PROOF_ID, ""))
+                || !verifier.equals(previous.pathText(Metadata.INSTANCE_PROOF_SHA256, ""))) {
+            config.put(Metadata.INSTANCE_PROOF_ID, seed.generation());
+            config.put(Metadata.INSTANCE_PROOF_SHA256, verifier);
         }
-        return new Delivery(secret, seed.secret(), generation);
+        return new Delivery(secret, seed.secret(), seed.generation());
     }
 
     public static Delivery stampInto(Map<String, String> config, List<ProofToken.Placeholder> placeholders,

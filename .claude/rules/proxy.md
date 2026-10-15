@@ -113,11 +113,15 @@ Key design:
   Namespace digests use HMAC keyed by that seed, never a `/dev/incus`-readable value.
   Starts retain the generation; every branch and explicit reset creates a new one.
   The host key lives at `~/.config/incus-spawn/credential-proofs/host.key`, checked with the same ownership, permission and atomic-creation rules as host-route secrets.
+  A symlinked config directory resolves to a checked target; the key and its immediate directory still cannot be symlinks.
   A lost host key fails an ordinary start; restore it or explicitly reset the instance.
   Tool `placeholders:` declarations supply variables and prefixes; declarations exclude project-local definitions.
   `ProofVerifier` stores only SHA-256 of each namespace digest in the replaceable `Metadata.INSTANCE_PROOF_SHA256` stamp.
   Ordinary starts leave proof metadata alone; migration and changed declarations re-read under the proof lock before updating it.
-  This prevents a prefetched start from restoring a grant an explicit reset replaced.
+  Reset marks the old generation as invalidated under the host lock directory before changing Incus, so stale prefetched listings re-read authoritative metadata.
+  Delivery rechecks invalidation after boot and holds the proof lock through the guest exec and boot stamp; it cannot overwrite a completed reset with revoked proofs.
+  Normal starts derive the seed once, and TUI restarts reuse their listing.
+  Every copy clears inherited generations, verifiers and boot stamps before applying fresh branch overrides.
   Every prefix of a namespace normalizes to that digest, compared in constant time.
   `ProofCarriers` derives the authentication headers from tool declarations, including Basic and custom headers; Claude supports API-key, OAuth and Vertex carriers independently of the selected account mode.
   Both HTTP and WebSocket handling call `authorize` before account resolution, compatibility checks, translation, token acquisition, injection and inheritance substitution.
@@ -146,6 +150,8 @@ Key design:
   Old shells and long-running tools need a new login or restart; doctor requests a rebuild for old API-key Claude images without #1113's approval script.
   Every build gets an address and proofs, including unpinned defaults, before tool setup, clones and primes.
   Successful builds revoke and scrub temporary proof state, including managed Claude and Codex caches, before publication; retained failures are revoked and get fresh proofs on their next isx start.
+  Project create and update use temporary proofs while retaining their account pins, baked-identity checks and untrusted host-route lineage.
+  Their cleanup attempts revocation, scrubbing, shutdown and address release even when an earlier step fails; failed cleanup prevents publication.
 - **`<ns>=inherit` (#1110): a nested isx shares its parent instance's grant on purpose.**
   `AccountResolver.INHERIT` is a reserved account, selected by a pin or as `<ns>.default`, that resolves to itself whatever is configured.
   An `accounts:` entry of that name is never served, and `value()` gives nothing for it, not even the flat credential.

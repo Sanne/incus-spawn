@@ -15,6 +15,9 @@ import json
 import re
 import ssl
 import sys
+import subprocess
+import tempfile
+from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Tokens the proxy injects for an account-scoped test credential.
@@ -39,6 +42,33 @@ def account_from_auth(header):
 
 
 class EchoHandler(BaseHTTPRequestHandler):
+    private_repo = None
+
+    def _private_git(self):
+        """A tiny dumb-HTTP Git remote that requires the project's selected account."""
+        prefix = "/project-private.git/"
+        path = self.path.split("?", 1)[0]
+        if not path.startswith(prefix):
+            return False
+        if self.headers.get("Authorization") != "Bearer acct-token-beta":
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="project fixture"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return True
+        root = self.private_repo.resolve()
+        file = (root / path[len(prefix):]).resolve()
+        if not file.is_relative_to(root) or not file.is_file():
+            self.send_error(404)
+            return True
+        body = file.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def _send(self, payload):
         body = json.dumps(payload).encode()
         self.send_response(200)
@@ -48,6 +78,8 @@ class EchoHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _echo(self):
+        if self._private_git():
+            return
         length = int(self.headers.get("Content-Length", 0))
         if length:
             self.rfile.read(length)
@@ -85,6 +117,16 @@ if __name__ == "__main__":
     cert, key = sys.argv[1], sys.argv[2]
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert, key)
+    # Local fixture only: no GitHub credentials or public repositories are involved.
+    fixture = tempfile.TemporaryDirectory(prefix="isx-private-git-")
+    work = Path(fixture.name) / "work"
+    repo = Path(fixture.name) / "repo.git"
+    subprocess.run(["git", "init", "-q", str(work)], check=True)
+    subprocess.run(["git", "-C", str(work), "-c", "user.name=CI", "-c", "user.email=ci@example.test",
+                    "commit", "-q", "--allow-empty", "-m", "Private project fixture"], check=True)
+    subprocess.run(["git", "clone", "-q", "--bare", str(work), str(repo)], check=True)
+    subprocess.run(["git", "--git-dir", str(repo), "update-server-info"], check=True)
+    EchoHandler.private_repo = repo
     server = HTTPServer(("0.0.0.0", 443), EchoHandler)
     server.socket = ctx.wrap_socket(server.socket, server_side=True)
     server.serve_forever()

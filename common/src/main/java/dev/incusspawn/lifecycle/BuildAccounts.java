@@ -6,6 +6,11 @@ import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.incus.Container;
+import dev.incusspawn.incus.MachineType;
+import dev.incusspawn.proxy.InstanceSecret;
+import dev.incusspawn.proxy.ProofToken;
+import dev.incusspawn.proxy.ProxyService;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -75,6 +80,93 @@ public final class BuildAccounts {
                 """, "Failed to clear build credential caches");
         container.sh("rm -f /run/isx/instance-secret /run/isx/credential-secret /run/isx/proof-tokens /run/isx/proof-version /run/isx/proof-generation")
                 .assertSuccess("Failed to clear build proofs");
+    }
+
+    /**
+     * Temporary credentials for project create/update. Unlike a template rebuild, these
+     * operations keep the parent's tools and baked identities, so keep their compatibility
+     * checks and account pins too. They never acquire trusted host-route lineage.
+     */
+    public static Project project(IncusClient incus, String name) {
+        var read = incus.readInstance(name);
+        if (!"Stopped".equalsIgnoreCase(read.metadata().pathText("status", ""))) {
+            throw new IllegalStateException("Project template " + name + " must be stopped before building or updating it");
+        }
+        return new Project(incus, name, read);
+    }
+
+    public static final class Project implements AutoCloseable {
+        private final IncusClient incus;
+        private final String name;
+        private final IncusClient.InstanceRead read;
+        private boolean grantAttempted;
+        private boolean startAttempted;
+        private String address;
+
+        private Project(IncusClient incus, String name, IncusClient.InstanceRead read) {
+            this.incus = incus;
+            this.name = name;
+            this.read = read;
+        }
+
+        public void start(MachineType machineType) {
+            var placeholders = ProofToken.declared();
+            var updates = new LinkedHashMap<String, String>();
+            updates.put(Metadata.UNTRUSTED_LINEAGE, Metadata.TYPE_PROJECT);
+            updates.put(Metadata.MCP_CALLER, null);
+            updates.put(Metadata.INSTANCE_SECRET_BOOT, null);
+            var secret = InstanceSecret.stampInto(updates, placeholders);
+            grantAttempted = true;
+            address = InstanceNetwork.assignBuildAddress(incus, name, read, updates);
+            ProxyService.signalAccountRefresh();
+            startAttempted = true;
+            InstanceLifecycle.startInstance(incus, name);
+            incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
+                    InstanceSecret.guestEnv(secret, false, placeholders));
+            InstanceNetwork.requireBuildAddress(incus, name, address);
+        }
+
+        /** Try every cleanup step even when an earlier one fails; never publish on failure. */
+        @Override public void close() {
+            if (!grantAttempted) return;
+            RuntimeException failure = cleanup(null, () -> revoke(incus, name));
+            failure = cleanup(failure, ProxyService::signalAccountRefresh);
+            boolean stopped = !startAttempted;
+            if (startAttempted) {
+                failure = cleanup(failure, () -> clearGuestProofs(new Container(incus, name)));
+                try {
+                    incus.stop(name);
+                    stopped = true;
+                } catch (RuntimeException stopFailed) {
+                    failure = combine(failure, stopFailed);
+                    try {
+                        if (!"Stopped".equalsIgnoreCase(incus.instanceMetadataOrThrow(name).pathText("status", ""))) {
+                            incus.forceStop(name);
+                        }
+                        stopped = true;
+                    } catch (RuntimeException forceFailed) {
+                        failure = combine(failure, forceFailed);
+                    }
+                }
+            }
+            // An assignment may have reached Incus before its response was lost.
+            if (stopped) {
+                failure = cleanup(failure, () -> InstanceNetwork.releaseBuildAddress(incus, name));
+            }
+            if (failure != null) throw failure;
+        }
+
+        private static RuntimeException cleanup(RuntimeException failure, Runnable step) {
+            try { step.run(); }
+            catch (RuntimeException e) { return combine(failure, e); }
+            return failure;
+        }
+
+        private static RuntimeException combine(RuntimeException failure, RuntimeException next) {
+            if (failure == null) return next;
+            failure.addSuppressed(next);
+            return failure;
+        }
     }
 
     /**

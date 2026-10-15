@@ -857,7 +857,7 @@ public class Tui {
                     "Restarted " + selected.name(),
                     Metadata.OP_RESTARTING,
                     () -> InstanceLifecycle.restartForUse(incus, selected.name(), selected.machineType(),
-                            selected.mcpCaller()));
+                            selected.mcpCaller(), selected.metadata()));
             return true;
         }
         if (key.isKey(KeyCode.F6)) {

@@ -14,6 +14,20 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @ExtendWith(TempHome.class)
 class CredentialProofTest {
+    @Test void aSymlinkedConfigDirectoryKeepsProofsAndChecksTheTargetPermissions() throws Exception {
+        var seed = CredentialProof.fresh();
+        var config = dev.incusspawn.Environment.configDir();
+        var target = config.resolveSibling("managed-dotfiles");
+        Files.move(config, target);
+        Files.createSymbolicLink(config, target);
+        assertEquals(seed, CredentialProof.retain(seed.generation()));
+        var next = CredentialProof.fresh();
+        assertEquals(next, CredentialProof.retain(next.generation()));
+        Files.setPosixFilePermissions(target, PosixFilePermissions.fromString("rwxrwxrwx"));
+        assertThrows(IllegalStateException.class, CredentialProof::fresh);
+        assertThrows(IllegalStateException.class, () -> CredentialProof.retain(seed.generation()));
+    }
+
     @Test void aGenerationReproducesItsSeedButMetadataCannotDeriveIt() throws Exception {
         var seed = CredentialProof.fresh();
         assertEquals(seed, CredentialProof.retain(seed.generation()));
@@ -46,9 +60,12 @@ class CredentialProofTest {
         assertThrows(IllegalStateException.class, CredentialProof::fresh);
     }
 
-    @Test void concurrentCreatorsShareOneCompleteHostKey() throws Exception {
+    @org.junit.jupiter.api.RepeatedTest(10)
+    void concurrentCreatorsShareOneCompleteHostKey() throws Exception {
         var tasks = java.util.stream.IntStream.range(0, 12)
                 .mapToObj(i -> java.util.concurrent.CompletableFuture.supplyAsync(CredentialProof::fresh)).toList();
+        java.util.concurrent.CompletableFuture.allOf(tasks.toArray(java.util.concurrent.CompletableFuture[]::new))
+                .get(10, java.util.concurrent.TimeUnit.SECONDS);
         for (var task : tasks) {
             var seed = task.get(10, java.util.concurrent.TimeUnit.SECONDS);
             assertEquals(seed, CredentialProof.retain(seed.generation()));

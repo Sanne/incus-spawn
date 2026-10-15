@@ -7,6 +7,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.BuildAccounts;
 import dev.incusspawn.lifecycle.TemplateLock;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
@@ -160,29 +161,26 @@ public class ProjectCommand extends BaseCommand {
          */
         private static boolean build(IncusClient incus, String buildName, String imageName, String parent,
                                      MachineType machineType, ProjectConfig projectConfig) {
-            incus.start(buildName);
-            incus.waitForReady(buildName, machineType);
-            BuildOutput.stepDone();
+            try (var credentials = BuildAccounts.project(incus, buildName)) {
+                credentials.start(machineType);
+                BuildOutput.stepDone();
 
-            // Clone repos
-            if (projectConfig.getRepos() != null) {
-                for (var repo : projectConfig.getRepos()) {
-                    BuildOutput.stepStart("Cloning " + repo + "...");
-                    var cloned = incus.execInContainer(buildName, "agentuser", "git clone " + shellQuote(repo));
-                    if (!GuestUpdate.finish(cloned, "git clone " + repo)) return false;
+                // Clone repos
+                if (projectConfig.getRepos() != null) {
+                    for (var repo : projectConfig.getRepos()) {
+                        BuildOutput.stepStart("Cloning " + repo + "...");
+                        var cloned = incus.execInContainer(buildName, "agentuser", "git clone " + shellQuote(repo));
+                        if (!GuestUpdate.finish(cloned, "git clone " + repo)) return false;
+                    }
                 }
+
+                if (!preBuild(incus, buildName, projectConfig.getPreBuild())) return false;
+
+                InstanceLifecycle.tagMetadata(incus, buildName, Metadata.TYPE_PROJECT, parent);
+                incus.configSet(buildName, Metadata.PROJECT, imageName);
+
+                return true;
             }
-
-            if (!preBuild(incus, buildName, projectConfig.getPreBuild())) return false;
-
-            InstanceLifecycle.tagMetadata(incus, buildName, Metadata.TYPE_PROJECT, parent);
-            incus.configSet(buildName, Metadata.PROJECT, imageName);
-
-            // Stop the template
-            BuildOutput.stepStart("Stopping template...");
-            incus.stop(buildName);
-            BuildOutput.stepDone();
-            return true;
         }
 
         private ProjectConfig loadConfig() {
@@ -237,27 +235,21 @@ public class ProjectCommand extends BaseCommand {
 
             BuildOutput.header("Updating project template " + name);
 
-            // Start if stopped
             var machineType = incus.machineType(name);
-            incus.start(name);
-            incus.waitForReady(name, machineType);
-
             var failedSteps = new ArrayList<String>();
-            if (!GuestUpdate.system(incus, name)) failedSteps.add("system update");
-            // Update globally installed npm packages (coding tools, etc.)
-            if (!NpmUpdate.run(incus, name)) failedSteps.add("npm update");
-            // Git fetch in all repos
-            if (!GuestUpdate.gitRepos(incus, name)) failedSteps.add("git fetch");
+            try (var credentials = BuildAccounts.project(incus, name)) {
+                credentials.start(machineType);
+                if (!GuestUpdate.system(incus, name)) failedSteps.add("system update");
+                // Update globally installed npm packages (coding tools, etc.)
+                if (!NpmUpdate.run(incus, name)) failedSteps.add("npm update");
+                // Git fetch in all repos
+                if (!GuestUpdate.gitRepos(incus, name)) failedSteps.add("git fetch");
 
-            // Re-run pre-build if config available
-            if (projectConfig != null && !preBuild(incus, name, projectConfig.getPreBuild())) {
-                failedSteps.add("pre-build");
+                // Re-run pre-build if config available
+                if (projectConfig != null && !preBuild(incus, name, projectConfig.getPreBuild())) {
+                    failedSteps.add("pre-build");
+                }
             }
-
-            // Stop
-            BuildOutput.stepStart("Stopping template...");
-            incus.stop(name);
-            BuildOutput.stepDone();
 
             if (!failedSteps.isEmpty()) {
                 BuildOutput.warn("Failed: " + String.join(", ", failedSteps) + ". Re-run 'isx project update " + name + "' to retry.");

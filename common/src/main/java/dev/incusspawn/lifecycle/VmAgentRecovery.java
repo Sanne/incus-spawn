@@ -80,8 +80,11 @@ public final class VmAgentRecovery {
         long restarted = incus.pid(name);
         if (restarted > 0) stamps.put(Metadata.AGENT_RESTART_BOOT, Long.toString(restarted));
         var secret = InstanceLifecycle.rotateInstanceSecret(incus, name, instance, stamps, placeholders.join());
-        incus.waitForReady(name, MachineType.VM, InstanceSecret.GUEST_SCRIPT,
-                InstanceSecret.guestEnv(secret, Metadata.isMcpCaller(instance), placeholders.join()));
+        InstanceLifecycle.withCurrentProofs(incus, name, secret, current -> {
+            incus.waitForReady(name, MachineType.VM, InstanceSecret.GUEST_SCRIPT,
+                    InstanceSecret.guestEnv(current, Metadata.isMcpCaller(instance), placeholders.join()));
+            return null;
+        });
     }
 
     private static IncusException refusal(String name, String why) {

@@ -228,7 +228,7 @@ final class ListingLoader {
                                     inst.architecture(), inst.buildVersion(), inst.definitionSha(),
                                     inst.type(), inst.buildSourceJson(), "", inst.defaultAction(),
                                     inst.diskUsage(), inst.referencedBytes(), inst.instanceMode(),
-                                    inst.kvmEnabled(), inst.mcp(), inst.mcpCaller())
+                                    inst.kvmEnabled(), inst.mcp(), inst.mcpCaller(), inst.metadata())
                             : inst)
                     .toList();
         }

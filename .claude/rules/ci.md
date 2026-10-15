@@ -131,6 +131,8 @@ Test scripts live in `.github/scripts/`; a script pushed into a guest cannot use
   Removing an instance device that overrides a profile device only drops the override, so the NIC must be masked with `type: none` instead.
   A fake that drops removed devices from `expanded_devices` passes either way.
 - **`test-podman.sh`**: pushed into the podman container, tests rootless podman (pull, run, build).
+- **`test-project-proofs.sh`**: creates a project from an authenticated Git fixture served by `echo-server.py`, checks its selected account during pre-build and update, and checks revocation, shutdown and address release after success and failure.
+  The fixture rejects clones without the synthetic selected credential, so a public repository cannot hide missing proof delivery.
 - **`test-podman-rootless.sh`**: pushed into the `tpl-test-podman-rootless` container (`mode: rootless`, `short-names: permissive`, `compose: true`), tests that `/run/docker.sock` and `/var/run/docker.sock` point at agentuser's socket with the system `podman.socket` left disabled, that an unqualified name pulls from docker.io without a prompt, that `podman-compose` is installed, and a PostgreSQL container run as agentuser.
   The short-name check pulls `testcontainers/ryuk`, which has no alias in Fedora's `shortnames.conf`; `alpine` and `postgres` do, so pulling them would pass under `enforcing` too.
 - **`test-codex.sh`**: pushed into the codex container, tests the built-in `codex` tool end to end -- that `CodexSetup` installed the CLI and wrote the template's `model`/`effort` parameters and the unattended settings into `~/.codex/config.toml` (including the selected permission profile's full filesystem and network tables).

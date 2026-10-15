@@ -1393,7 +1393,7 @@ public class IncusClient {
         body.put("storage", plan.targetPool());
         // A device in the request replaces the source's whole; an empty config value unsets.
         // The copy keeps no address, on its NIC or in the metadata the proxy identifies it by,
-        // and not its source's instance secret either (#934).
+        // and none of its source's secret, credential grant or delivery stamp (#934, #1107).
         if (!plan.addressedNics().isEmpty()) body.put("devices", plan.addressedNics());
         var config = new LinkedHashMap<String, String>();
         config.put(Metadata.STATIC_IP, "");
@@ -1401,6 +1401,9 @@ public class IncusClient {
         // Owed to the source's guest; the copy gets its own file when it is branched
         config.put(Metadata.NETWORK_PUSH_PENDING, "");
         config.put(Metadata.INSTANCE_SECRET_SHA256, "");
+        config.put(Metadata.INSTANCE_PROOF_ID, "");
+        config.put(Metadata.INSTANCE_PROOF_SHA256, "");
+        config.put(Metadata.INSTANCE_SECRET_BOOT, "");
         config.putAll(configOverrides);
         body.put("config", config);
         var resp = http.requestAndWait("POST", "/1.0/instances", body);

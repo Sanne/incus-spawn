@@ -148,6 +148,10 @@ Single-tool validation checks its own namespace; the proxy checks borrowed names
 The proxy checks address and namespace proof before account resolution, HTTP or WebSocket injection, Vertex translation or `inherit` substitution (#1107).
 Missing or incorrect proofs preserve the incoming authentication and destination; unknown addresses get no defaults.
 Verifier hashes change on creation, explicit reset or declaration changes; credentialed builds receive and revoke their own temporary proofs.
+Project create and update also use temporary proofs, preserving inherited account pins, baked-identity checks and untrusted host-route lineage, with cleanup on success or failure.
+Reset invalidates old prefetched generations before its metadata write, and guest proof delivery holds the same lock through its boot stamp.
+Normal starts derive the seed once; TUI restarts reuse the listing without another pre-restart metadata read.
+Every copy clears inherited proof state, and a symlinked config directory is accepted after checking its resolved target.
 Unrecognized proofs wait asynchronously for a bounded shared registry refresh; reset waits for host-only acknowledgement before reporting revocation complete.
 Existing instances refresh verifier delivery on their next isx shell or start; old API-key Claude images may require rebuilding.
 They are written beside the secret in `/run/isx` by the same exec, and the raw secret never enters the environment.

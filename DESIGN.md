@@ -997,7 +997,7 @@ A branch with network from an airgapped instance writes the profiles' NICs back 
 **API keys and tokens never enter containers.**
 A host-side MITM TLS proxy (`isx proxy`) provides transparent authentication.
 Placeholder values satisfy tools' local auth checks (e.g. `GH_TOKEN`, `ANTHROPIC_API_KEY`), but the proxy replaces them with real credentials before requests reach upstream servers.
-Every start fills them with proof tokens derived from that start's secret (`gho_isx_<digest>`; see "Proof tokens" below).
+Every start fills them with proof tokens derived from the instance's stable credential seed (`gho_isx_<digest>`; see "Proof tokens" below).
 
 **Trust bindings (#713).** isx owns the binding of upstream runtimes to the system store, because a runtime that ships its own root bundle ignores the store that holds the isx CA.
 Two kinds, one table (`GuestProvisioning.TRUST_ENV` for the first, `isx-trust` for the second):
@@ -1673,6 +1673,7 @@ Every credential request therefore needs the current proof for that address and 
 `ProofToken.derive(seed, namespace)` is HMAC-SHA256 keyed with a stable credential seed, truncated to 32 hexadecimal characters.
 `CredentialProof` derives the seed with HMAC-SHA256 from a protected host key and a fresh random generation recorded in `user.incus-spawn.instance-proof-id`.
 The host key lives in `~/.config/incus-spawn/credential-proofs/host.key`, with the ownership, permissions and atomic-creation checks used for host-route secrets.
+The config directory may be a symlink to a target passing those checks; the key and its immediate directory must not be symlinks.
 It must be backed up with the instance state; losing it requires restoring it or explicitly resetting affected instances.
 The generation is public and cannot derive a usable proof without the host key.
 Starts and reboots retain it; branches, replacement instances and explicit reset get fresh generations.
@@ -1711,8 +1712,11 @@ Ordinary independent credentials pass without warnings.
 
 An ordinary start keeps credential verifiers while replacing the MCP secret.
 Migration and changed tool declarations re-read under the instance proof lock before updating verifiers in the secret write.
-That extra read prevents an older prefetched listing from restoring a reset grant; the normal start keeps its existing request budget.
-Copies replace the generation and complete verifier stamp in the copy request, clearing inherited state.
+Before reset writes Incus, it invalidates the old generation with a marker under the host lock directory.
+This marker only forces an old prefetched listing to re-read authoritative metadata; it grants nothing and remains after a failed reset.
+Delivery rechecks that marker after boot and holds the proof lock through the guest exec and boot stamp, so reset cannot finish before an older delivery overwrites its replacement.
+The normal start derives its seed once and keeps its request budget; the TUI restart passes its listing through instead of reading again.
+Every copy clears the generation, complete verifier stamp and boot-delivery stamp in the copy request; branches override them with fresh grants.
 `isx account reset-proofs <instance>` creates a new generation and verifier stamp under the same lock and signals the proxy.
 It polls the host-only, read-only `/credential-proofs` endpoint for both that generation and the expected verifier fingerprint.
 An unavailable or old proxy, a failed listing, or a timeout cannot acknowledge completed revocation.
@@ -1737,6 +1741,9 @@ A build restart retains its credential proofs while redelivering them.
 Successful builds revoke verifiers, reset the managed Claude and Codex credential caches, remove temporary proof files, stop, and release their address.
 Failed builds are revoked before being retained for inspection; a later start through isx gives them fresh proofs.
 These build paths deliberately pay for source registration and cleanup rather than exempting builds from enforcement.
+Project create and update use temporary proofs too, before their repository clones, fetches and pre-build commands.
+They preserve inherited account pins and baked-identity checks, and keep their untrusted host-route lineage.
+Their cleanup attempts revocation, managed-cache scrubbing, shutdown and address release on both success and failure, continuing after individual cleanup errors and refusing publication on failure.
 
 **Nested isx: nothing is inherited unless its isx says `inherit` (#1110).**
 An isx running inside an isx instance has its own proxy, and its instances present their own proofs, derived from secrets the inner isx gave them.

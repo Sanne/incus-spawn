@@ -671,6 +671,9 @@ jobs:
       - name: Test published templates have no build credential grant
         run: sg incus-admin -c "bash .github/scripts/test-build-proofs.sh"
 
+      - name: Test project builds and updates use temporary credentials
+        run: sg incus-admin -c "bash .github/scripts/test-project-proofs.sh"
+
       - name: Test CoW branching
         run: sg incus-admin -c "bash .github/scripts/test-cow-branching.sh"
 

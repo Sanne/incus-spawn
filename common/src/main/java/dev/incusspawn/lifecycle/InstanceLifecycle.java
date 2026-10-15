@@ -507,9 +507,11 @@ public final class InstanceLifecycle {
                 && !"false".equals(instance.path("config").path(SECURE_BOOT).asText())
                 ? Map.of(SECURE_BOOT, "false") : Map.of(), placeholders.join());
         startInstance(incus, name, warn);
-        incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
-                InstanceSecret.guestEnv(secret, Metadata.isMcpCaller(instance), placeholders.join()));
-        return recordSecretBoot(incus, name, machineType, secret.proofGeneration());
+        return withCurrentProofs(incus, name, secret, current -> {
+            incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
+                    InstanceSecret.guestEnv(current, Metadata.isMcpCaller(instance), placeholders.join()));
+            return recordSecretBoot(incus, name, machineType, current.proofGeneration());
+        });
     }
 
     /**
@@ -521,15 +523,23 @@ public final class InstanceLifecycle {
      */
     public static void restartForUse(IncusClient incus, String name, MachineType machineType,
                                      boolean mcpCaller) {
+        restartForUse(incus, name, machineType, mcpCaller, incus.instanceMetadataOrThrow(name));
+    }
+
+    /** Reuses the TUI's listing, including its proof generation and verifiers. */
+    public static void restartForUse(IncusClient incus, String name, MachineType machineType,
+                                     boolean mcpCaller, JqValue instance) {
         // Before, not after: once the restart returns the guest is booting, when Incus API calls
         // contend with it. A restart that then fails leaves a guest whose secret no longer
         // matches, which is refused -- the safe way for it to go wrong.
         var placeholders = ProofToken.declaredInBackground();
-        var secret = rotateInstanceSecret(incus, name, incus.instanceMetadataOrThrow(name), Map.of(), placeholders.join());
+        var secret = rotateInstanceSecret(incus, name, instance, Map.of(), placeholders.join());
         incus.restart(name);
-        incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
-                InstanceSecret.guestEnv(secret, mcpCaller, placeholders.join()));
-        recordSecretBoot(incus, name, machineType, secret.proofGeneration());
+        withCurrentProofs(incus, name, secret, current -> {
+            incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT,
+                    InstanceSecret.guestEnv(current, mcpCaller, placeholders.join()));
+            return recordSecretBoot(incus, name, machineType, current.proofGeneration());
+        });
     }
 
     /**
@@ -550,23 +560,48 @@ public final class InstanceLifecycle {
     static InstanceSecret.Delivery rotateInstanceSecret(IncusClient incus, String name, JqValue instance, Map<String, String> alongside,
                                                 java.util.List<ProofToken.Placeholder> placeholders) {
         try (var ignored = CredentialProof.lock(name)) {
-            // Migration or changed declarations need another read: a prefetched listing must never
-            // replace a generation another start or reset has since installed.
+            // Reset marks the old generation before changing Incus. Only stale listings,
+            // migrations and changed declarations need a read under the lock.
             var config = instance.path("config");
             var generation = config.pathText(Metadata.INSTANCE_PROOF_ID, "");
-            if (generation.isBlank() || !dev.incusspawn.proxy.ProofVerifier.stamp(
-                    CredentialProof.retain(generation, config.pathText(Metadata.INSTANCE_PROOF_SHA256, "")).secret(), placeholders)
-                    .equals(config.pathText(Metadata.INSTANCE_PROOF_SHA256, ""))) {
+            var namespaces = placeholders.stream().filter(p -> p.problem().isEmpty())
+                    .map(ProofToken.Placeholder::namespace).collect(java.util.stream.Collectors.toSet());
+            if (generation.isBlank() || CredentialProof.invalidated(generation)
+                    || !namespaces.equals(dev.incusspawn.proxy.ProofVerifier.parse(
+                            config.pathText(Metadata.INSTANCE_PROOF_SHA256, "")).keySet())) {
                 instance = incus.instanceMetadataOrThrow(name);
+                config = instance.path("config");
             }
+            var seed = CredentialProof.retain(config.pathText(Metadata.INSTANCE_PROOF_ID, ""),
+                    config.pathText(Metadata.INSTANCE_PROOF_SHA256, ""));
+            var verifier = dev.incusspawn.proxy.ProofVerifier.stamp(seed.secret(), placeholders);
             var stamp = new HashMap<>(alongside);
-            var secret = InstanceSecret.retainInto(stamp, instance.path("config"), placeholders);
+            var secret = InstanceSecret.retainInto(stamp, config, seed, verifier);
             if (stamp.containsKey(Metadata.INSTANCE_SECRET_BOOT)) {
                 var boot = alongside.get(Metadata.INSTANCE_SECRET_BOOT).split(" proofs-v3:", 2)[0];
                 stamp.put(Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(boot, secret.proofGeneration()));
             }
             incus.configSetAll(name, stamp);
             return secret;
+        }
+    }
+
+    /**
+     * Serialize guest delivery and its boot stamp with explicit reset. A reset may have
+     * finished while the instance was booting, after its secret was prepared: replace only
+     * that delivery's credential seed, preserving its independent MCP secret.
+     */
+    static <T> T withCurrentProofs(IncusClient incus, String name, InstanceSecret.Delivery planned,
+                                   java.util.function.Function<InstanceSecret.Delivery, T> deliver) {
+        try (var ignored = CredentialProof.lock(name)) {
+            var current = planned;
+            if (CredentialProof.invalidated(planned.proofGeneration())) {
+                var config = incus.instanceMetadataOrThrow(name).path("config");
+                var seed = CredentialProof.retain(config.pathText(Metadata.INSTANCE_PROOF_ID, ""),
+                        config.pathText(Metadata.INSTANCE_PROOF_SHA256, ""));
+                current = new InstanceSecret.Delivery(planned.secret(), seed.secret(), seed.generation());
+            }
+            return deliver.apply(current);
         }
     }
 
@@ -638,8 +673,14 @@ public final class InstanceLifecycle {
                     placeholders.join());
             // GUEST_SCRIPT never fails, so the same exec asks whether the secret is now there:
             // a write it skipped would otherwise give a VM a new secret on every shell, silently
-            var delivery = incus.shellExec(name, InstanceSecret.guestEnv(secret, mcpCaller, placeholders.join()), "sh", "-c",
-                    InstanceSecret.GUEST_SCRIPT + "\n" + InstanceSecret.GUEST_CHECK);
+            var delivery = withCurrentProofs(incus, name, secret, current -> {
+                var result = incus.shellExec(name, InstanceSecret.guestEnv(current, mcpCaller, placeholders.join()), "sh", "-c",
+                        InstanceSecret.GUEST_SCRIPT + "\n" + InstanceSecret.GUEST_CHECK);
+                if (bootedAt != null && !secret.proofGeneration().equals(current.proofGeneration())) {
+                    incus.configSet(name, Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(bootedAt, current.proofGeneration()));
+                }
+                return result;
+            });
             if (delivery.success() && !InstanceSecret.missingIn(delivery.stdout())) return;
             failure = delivery.success() ? "the guest did not keep it" : "exit code " + delivery.exitCode();
         } catch (RuntimeException e) {

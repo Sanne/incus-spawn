@@ -39,6 +39,7 @@ public final class CredentialProofReset {
             CredentialProof.stampInto(updates, seed, placeholders);
             // Keep recovery pending until delivery succeeds; stopped instances receive proofs on start.
             updates.put(Metadata.INSTANCE_SECRET_BOOT, "");
+            CredentialProof.invalidate(config.pathText(Metadata.INSTANCE_PROOF_ID, ""));
             incus.configSetAll(name, updates);
             ProxyService.signalAccountRefresh();
             var hash = ToolDef.sha256hex(updates.get(Metadata.INSTANCE_PROOF_SHA256));

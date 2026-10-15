@@ -33,9 +33,16 @@ Network restrictions and CA trust are separate from credential authorization.
 Credential proofs use a stable per-instance seed, separate from the per-start MCP and host-service secret.
 A protected host key at `~/.config/incus-spawn/credential-proofs/host.key` and a public random instance generation derive this seed.
 Back up this key with the instance state; ordinary starts refuse to replace a missing or unusable key silently.
+The config directory may be a symlink; its resolved target must pass the ownership and permission checks.
+The credential key and its containing `credential-proofs` directory cannot be symlinks.
 Incus metadata contains the public generation, the MCP secret hash and hashes of namespace digests; metadata readable through `/dev/incus` cannot produce a usable proof.
-Branches replace inherited proof generations and verifiers in the copy request.
+Every copy clears inherited proof generations, verifiers and boot-delivery stamps in the copy request; branches supply fresh grants in that same request.
 Ordinary starts and recovery preserve the generation; migration and changed tool declarations update verifiers in the secret write after one additional metadata read under the proof lock.
+Before reset changes Incus, it marks the old generation as invalidated in the host lock directory.
+An old prefetched listing then requires a fresh metadata read; the marker never authorizes credentials.
+Guest proof delivery and its boot stamp hold the same lock as reset, and recheck invalidation after booting.
+This prevents a start from delivering revoked proofs after a concurrent reset completes.
+The ordinary start derives its seed once, and a TUI restart reuses its listing without another pre-restart metadata read.
 The guest delivery version is now `3`, and the container boot marker includes `proofs-v3:<generation>`.
 The credential seed is redelivered to `/run/isx/credential-secret`; it survives reboots through host-side derivation, not through the guest filesystem.
 Normal branch/start/shell request-budget tests retain their existing expectations.
@@ -58,12 +65,18 @@ Tool environments are written before install hooks that authenticate, such as Gi
 Publication adds verifier revocation and two guest execs to reset managed Claude/Codex caches and remove temporary proof files, before stopping and releasing the address.
 Retained failed builds revoke their grant before stopping and receive fresh proofs on their next isx preparation.
 
+`isx project create` and `isx project update` also register an address and deliver temporary proofs before cloning repositories, fetching updates or running pre-build commands.
+They retain inherited account pins and baked-identity compatibility checks, and remain untrusted for host routes.
+On success or failure, cleanup attempts revocation, managed-cache scrubbing, shutdown and address release even if an earlier cleanup step fails.
+A cleanup failure prevents publication; an update keeps the project available for a later retry.
+
 ## Validation
 
 The stable-proof revision adds lifecycle tests for restarts, fresh branches, migration, changed declarations, lost host keys and concurrent reset/start snapshots.
 Reset tests cover proxy acknowledgement, failed guest delivery and preserving pending MCP recovery after a raw reboot.
 HTTP and WebSocket tests cover first-call refresh; a stalled-listing test checks bounded waiting and independent-credential passthrough.
 The native integration workflow's `test-stable-proofs.sh` keeps a Podman child's configured token through a managed start and raw reboot recovery, then checks explicit reset revocation, new-token delivery, fresh branches and reused names.
+`test-project-proofs.sh` clones an authenticated Git fixture during project creation, checks authenticated pre-build and update requests, and checks grant removal after successful and failed operations.
 
 The following 2026-10-14 record describes the original per-start implementation, before the stable-proof design revision.
 

@@ -4,6 +4,7 @@ import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.lifecycle.TemplateLockProbe;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -58,9 +59,21 @@ class ProjectCommandTest {
 
     /** A parent to create from, with every command run as agentuser answered by {@code guest}. */
     private static IncusClient parentWhoseGuestAnswers(IncusClient.ExecResult guest) {
-        var incus = mock(IncusClient.class);
-        when(incus.exists(PARENT)).thenReturn(true);
-        when(incus.execInContainer(eq(BUILD), eq("agentuser"), anyString())).thenReturn(guest);
+        var incus = preparedClient(false);
+        doAnswer(inv -> ((String) inv.getArgument(2)).startsWith("export ANTHROPIC_API_KEY=") ? OK : guest)
+                .when(incus).execInContainer(eq(BUILD), eq("agentuser"), anyString());
+        return incus;
+    }
+
+    private static IncusClient preparedClient(boolean previous) {
+        var daemon = new FakeIncusDaemon().container(PARENT, Map.of(Metadata.TYPE, Metadata.TYPE_BASE));
+        if (previous) daemon.container(NAME, Map.of(Metadata.TYPE, Metadata.TYPE_PROJECT));
+        var incus = spy(daemon.client());
+        doNothing().when(incus).waitForReady(anyString(), any(), anyString(), anyMap());
+        doReturn(OK).when(incus).shellExec(anyString(), any(String[].class));
+        doReturn(OK).when(incus).execInContainer(anyString(), eq("agentuser"), anyString());
+        doAnswer(inv -> List.of(daemon.instance(inv.getArgument(0)).path("config").path(Metadata.STATIC_IP).asText()))
+                .when(incus).ipv4Addresses(anyString());
         return incus;
     }
 
@@ -91,12 +104,91 @@ class ProjectCommandTest {
         verify(incus, never()).delete(eq(NAME), anyBoolean());
     }
 
+    @Test
+    void projectCreateAndUpdateAuthenticateThenRevokeWithoutLosingAccountRestrictions() {
+        var incus = preparedClient(false);
+        incus.configSetAll(PARENT, Map.of(Metadata.accountKey("github"), "project-bot",
+                Metadata.accountIdentityKey("github"), "project-user", Metadata.MCP_CALLER, "true"));
+        var seeds = new java.util.ArrayList<String>();
+        doAnswer(inv -> {
+            String instance = inv.getArgument(0);
+            Map<String, String> env = inv.getArgument(3);
+            var seed = env.get(dev.incusspawn.proxy.CredentialProof.DELIVERY_ENV);
+            seeds.add(seed);
+            var config = incus.instanceMetadata(instance).path("config");
+            assertEquals(dev.incusspawn.proxy.ProofVerifier.stamp(seed, dev.incusspawn.proxy.ProofToken.declared()),
+                    config.pathText(Metadata.INSTANCE_PROOF_SHA256, ""));
+            assertFalse(config.pathText(Metadata.STATIC_IP, "").isBlank());
+            assertEquals("project-bot", config.pathText(Metadata.accountKey("github"), ""));
+            assertEquals("project-user", config.pathText(Metadata.accountIdentityKey("github"), ""));
+            assertEquals(Metadata.TYPE_PROJECT, config.pathText(Metadata.UNTRUSTED_LINEAGE, ""));
+            assertEquals("", config.pathText(Metadata.MCP_CALLER, ""));
+            return null;
+        }).when(incus).waitForReady(anyString(), any(), anyString(), anyMap());
+        doAnswer(inv -> {
+            String instance = inv.getArgument(0);
+            assertFalse(seeds.isEmpty(), "proof delivery precedes authenticated steps");
+            assertFalse(incus.instanceMetadata(instance).path("config").pathText(Metadata.INSTANCE_PROOF_ID, "").isBlank());
+            return OK;
+        }).when(incus).execInContainer(anyString(), eq("agentuser"), eq("check-private-registry"));
+        assertEquals(0, create(incus, config("check-private-registry", "https://github.com/example/private.git")));
+        assertRevoked(incus, NAME);
+        var update = new ProjectCommand.Update();
+        update.name = NAME;
+        assertEquals(0, update.update(incus, config("check-private-registry")));
+        assertRevoked(incus, NAME);
+        assertEquals(2, seeds.size());
+        assertNotEquals(seeds.get(0), seeds.get(1), "each operation gets a fresh temporary grant");
+        var published = incus.instanceMetadata(NAME).path("config");
+        assertEquals("project-bot", published.pathText(Metadata.accountKey("github"), ""));
+        assertEquals("project-user", published.pathText(Metadata.accountIdentityKey("github"), ""));
+        assertEquals(Metadata.TYPE_PROJECT, published.pathText(Metadata.UNTRUSTED_LINEAGE, ""));
+    }
+
+    private static void assertRevoked(IncusClient incus, String name) {
+        var instance = incus.instanceMetadata(name);
+        assertEquals("Stopped", instance.pathText("status", ""));
+        for (var key : List.of(Metadata.INSTANCE_PROOF_ID, Metadata.INSTANCE_PROOF_SHA256,
+                Metadata.INSTANCE_SECRET_SHA256, Metadata.INSTANCE_SECRET_BOOT, Metadata.STATIC_IP)) {
+            assertEquals("", instance.path("config").pathText(key, ""), key);
+        }
+    }
+
+    @Test
+    void failedUpdateRevokesItsProofsAndStopsTheRetainedProject() {
+        var incus = preparedClient(true);
+        doReturn(FAILED).when(incus).execInContainer(NAME, "agentuser", "make");
+        var update = new ProjectCommand.Update();
+        update.name = NAME;
+        assertEquals(1, update.update(incus, config("make")));
+        assertRevoked(incus, NAME);
+    }
+
+    @Test
+    void aCleanupFailureStillRevokesAndStopsWithoutPublishing() {
+        var incus = preparedClient(false);
+        doReturn(FAILED).when(incus).execInContainer(eq(BUILD), eq("agentuser"), startsWith("export ANTHROPIC_API_KEY="));
+        assertThrows(IncusException.class, () -> create(incus, config(null)));
+        verify(incus).stop(BUILD);
+        verify(incus, never()).rename(anyString(), anyString());
+        assertFalse(incus.exists(BUILD));
+    }
+
+    @Test
+    void failedReadinessDuringUpdateStillRevokesAndStops() {
+        var incus = preparedClient(true);
+        doThrow(new IncusException("agent not ready")).when(incus).waitForReady(eq(NAME), any(), anyString(), anyMap());
+        var update = new ProjectCommand.Update();
+        update.name = NAME;
+        assertEquals("agent not ready", assertThrows(IncusException.class,
+                () -> update.update(incus, config(null))).getMessage());
+        assertRevoked(incus, NAME);
+    }
+
     /** Created on the built-in tpl-java, deprecated by #1195: it still works, and says so. */
     @Test
     void createOnADeprecatedParentWarns() {
-        var incus = mock(IncusClient.class);
-        when(incus.exists("tpl-java")).thenReturn(true);
-        when(incus.execInContainer(eq(BUILD), eq("agentuser"), anyString())).thenReturn(OK);
+        var incus = parentWhoseGuestAnswers(OK);
         var config = config(null);
         config.setParent("tpl-java");
         var originalErr = System.err;
@@ -148,7 +240,7 @@ class ProjectCommandTest {
     @Test
     void anExceptionDuringCreateLeavesNoTemplate() {
         var incus = parentWhoseGuestAnswers(OK);
-        doThrow(new IllegalStateException("timed out")).when(incus).waitForReady(eq(BUILD), any());
+        doThrow(new IllegalStateException("timed out")).when(incus).waitForReady(eq(BUILD), any(), anyString(), anyMap());
 
         assertThrows(IllegalStateException.class, () -> create(incus, config(null)));
         // The stale one before the build, and this one after it
@@ -157,11 +249,8 @@ class ProjectCommandTest {
 
     @Test
     void updateUsesAConfigNamedWithConfigWhateverItsName(@TempDir Path dir) {
-        var incus = mock(IncusClient.class);
-        when(incus.exists(NAME)).thenReturn(true);
-        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.shellExec(NAME, "which", "npm")).thenReturn(FAILED);
-        when(incus.execInContainer(eq(NAME), eq("agentuser"), anyString())).thenReturn(OK);
+        var incus = preparedClient(true);
+        doReturn(FAILED).when(incus).shellExec(NAME, "which", "npm");
         var other = config("make");
         other.setName("other");
         var update = new ProjectCommand.Update();
@@ -185,10 +274,9 @@ class ProjectCommandTest {
      * {@code guest} whatever the instance is called: where the create builds is what is under test.
      */
     private static IncusClient previousAndGuestAnswering(IncusClient.ExecResult guest) {
-        var incus = mock(IncusClient.class);
-        when(incus.exists(PARENT)).thenReturn(true);
-        when(incus.exists(NAME)).thenReturn(true);
-        when(incus.execInContainer(anyString(), eq("agentuser"), anyString())).thenReturn(guest);
+        var incus = preparedClient(true);
+        doAnswer(inv -> ((String) inv.getArgument(2)).startsWith("export ANTHROPIC_API_KEY=") ? OK : guest)
+                .when(incus).execInContainer(anyString(), eq("agentuser"), anyString());
         return incus;
     }
 
@@ -207,7 +295,7 @@ class ProjectCommandTest {
     @Test
     void anExceptionDuringAReCreateKeepsThePreviousTemplate() {
         var incus = previousAndGuestAnswering(OK);
-        doThrow(new IncusException("not ready")).when(incus).waitForReady(anyString(), any());
+        doThrow(new IncusException("not ready")).when(incus).waitForReady(anyString(), any(), anyString(), anyMap());
 
         assertThrows(IncusException.class, () -> create(incus, config(null)));
         verify(incus, never()).delete(eq(NAME), anyBoolean());
@@ -242,12 +330,18 @@ class ProjectCommandTest {
     void theParentIsHeldFromItsLookupUntilItIsCopied() {
         var incus = previousAndGuestAnswering(OK);
         var heldAt = new LinkedHashMap<String, Boolean>();
-        when(incus.exists(PARENT)).thenAnswer(inv -> {
+        doAnswer(inv -> {
             heldAt.put("lookup", TemplateLockProbe.held(PARENT));
             return true;
-        });
-        doAnswer(inv -> heldAt.put("copy", TemplateLockProbe.held(PARENT))).when(incus).copy(PARENT, BUILD, ProjectCommand.PROJECT_BUILD);
-        doAnswer(inv -> heldAt.put("start", TemplateLockProbe.held(PARENT))).when(incus).start(BUILD);
+        }).when(incus).exists(PARENT);
+        doAnswer(inv -> {
+            heldAt.put("copy", TemplateLockProbe.held(PARENT));
+            return inv.callRealMethod();
+        }).when(incus).copy(PARENT, BUILD, ProjectCommand.PROJECT_BUILD);
+        doAnswer(inv -> {
+            heldAt.put("start", TemplateLockProbe.held(PARENT));
+            return inv.callRealMethod();
+        }).when(incus).start(BUILD);
 
         assertEquals(0, create(incus, config(null)));
         // A rebuild of the parent waits from the lookup through the copy, and no longer

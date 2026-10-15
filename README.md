@@ -109,6 +109,8 @@ A nested container, a sandbox or anything started without that environment gets 
 The proxy injects a selected credential only when the source instance presents its current proof for that namespace. Nested instances with their own accounts keep their own authentication and destination; those without a proof get no outer credential. Deliberate sharing uses [the reserved `inherit` account](#inheriting-the-outer-instances-account), or explicitly passing the parent's token.
 A shell opened before an explicit proof reset or an upgrade keeps its previous tokens: `isx doctor` compares them with the delivered credential seed and says how to refresh them.
 
+Project creation and updates receive temporary proofs for private repository access and authenticated build commands; those grants are revoked when the operation finishes or fails.
+
 After upgrading to proof enforcement, restart the proxy with `isx proxy stop` followed by `isx proxy start`, then run `isx shell <instance>` on the host to refresh existing instances. Open new login shells and restart tools that kept old tokens. An API-key Claude image built before the dynamic approval script needs rebuilding; `isx doctor` inside the instance reports this. Host-side tools now supply their own credentials, and Docker/Podman jobs that used the parent's accounts implicitly need an explicit token pass-through. See [upgrade and validation notes](docs/CREDENTIAL-PROOFS.md).
 
 ### Git Configuration

@@ -57,13 +57,45 @@ public final class CredentialProof {
                 "updating credential proofs for " + instance, dev.incusspawn.Warnings::warn);
     }
 
+    /**
+     * A reset invalidates prefetched listings before changing Incus. This is only a hint to
+     * re-read authoritative metadata, never an authorization source. Keep the marker even if
+     * the reset fails: a crash between the two writes must not leave an old listing usable.
+     */
+    public static void invalidate(String generation) {
+        // A malformed generation never authorized a proof; reset must still be able to repair it.
+        if (generation == null || !generation.matches("[0-9a-f]{64}")) return;
+        var marker = invalidationFile(generation);
+        try {
+            Files.createDirectories(marker.getParent());
+            try {
+                Files.createFile(marker);
+            } catch (java.nio.file.FileAlreadyExistsException alreadyInvalidated) {
+                // A retry keeps the same invalidation; never follow or overwrite an existing entry.
+            }
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("Cannot invalidate prefetched credential proofs", e);
+        }
+    }
+
+    public static boolean invalidated(String generation) {
+        return generation != null && !generation.isBlank()
+                && !Files.notExists(invalidationFile(generation), LinkOption.NOFOLLOW_LINKS);
+    }
+
+    private static Path invalidationFile(String generation) {
+        if (!generation.matches("[0-9a-f]{64}")) throw new IllegalStateException("Invalid credential proof generation; reset the instance's proofs");
+        return Environment.lockDir().resolve("credential-proofs/invalidated").resolve(generation);
+    }
+
     private static Seed derive(String generation, boolean createKey) {
         if (!generation.matches("[0-9a-f]{64}")) throw new IllegalStateException("Invalid credential proof generation; reset the instance's proofs");
         try {
             var configDir = Environment.configDir();
-            if (Files.isSymbolicLink(configDir)) throw new IllegalStateException("Credential proof config directory must not be a symbolic link");
+            Files.createDirectories(configDir);
+            configDir = configDir.toRealPath();
             var uid = HostRouteSecret.ownUid(configDir);
-            var file = keyFile();
+            var file = configDir.resolve("credential-proofs/host.key");
             var dir = HostRouteSecret.ownerOnlyDirectory(configDir, file.getParent(), uid, uid);
             if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
                 if (!createKey) throw new IllegalStateException("Credential proof host key is missing; restore it or run 'isx account reset-proofs <instance>'");

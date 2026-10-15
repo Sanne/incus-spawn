@@ -6,6 +6,7 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.mcp.McpStanding;
+import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -120,7 +121,7 @@ public final class InstanceListing {
                         config instanceof io.hyperfoil.tools.jjq.value.JqObject configObj
                             && configObj.keys().contains(Metadata.KVM_ENABLED),
                         McpStanding.fromListing(node, callerGrants),
-                        Metadata.isMcpCaller(node)));
+                        Metadata.isMcpCaller(node), node));
             }
             return entryList;
     }
@@ -190,7 +191,7 @@ public final class InstanceListing {
                                 String type, String buildSourceJson, String pendingOp,
                                 String defaultAction, long diskUsage, long referencedBytes,
                                 String instanceMode, boolean kvmEnabled,
-                                McpStanding mcp, boolean mcpCaller) {
+                                McpStanding mcp, boolean mcpCaller, JqValue metadata) {
         public MachineType machineType() { return MachineType.fromIncus(runtime); }
     }
 }

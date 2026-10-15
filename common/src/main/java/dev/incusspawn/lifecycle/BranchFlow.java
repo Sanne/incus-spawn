@@ -374,10 +374,12 @@ public final class BranchFlow {
         }
 
         // The grant is the request's own: a copy never carries its source's (configureBranch)
-        RuntimeSetup.setupRuntime(incus, name, networkMode, prefetched, secret,
-                Metadata.isMcpCaller(req.extraConfig()), placeholders.join());
-        // Or the first shell would take this boot for one isx did not start, and replace its secret
-        var booted = InstanceLifecycle.recordSecretBoot(incus, name, machineType, secret.proofGeneration());
+        var booted = InstanceLifecycle.withCurrentProofs(incus, name, secret, current -> {
+            RuntimeSetup.setupRuntime(incus, name, networkMode, prefetched, current,
+                    Metadata.isMcpCaller(req.extraConfig()), placeholders.join());
+            // Or the first shell would take this boot for one isx did not start.
+            return InstanceLifecycle.recordSecretBoot(incus, name, machineType, current.proofGeneration());
+        });
         // A VM records no boot; its read after the start answers the same questions: nothing
         // since has written the CA fingerprint or the gateway
         if (booted == null) booted = started;
