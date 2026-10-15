@@ -114,6 +114,23 @@ class CredentialPromptsTest {
         prompts.assertFullyConsumed();
     }
 
+    @Test
+    void geminiUsesTheHostCredentialMenuAndPreservesNamedAccounts() {
+        var setup = new CredentialSetup();
+        var tool = new ToolDefLoader().allToolSetups().get("gemini-cli");
+        var first = new ScriptedPrompts().secret("gemini-test-default");
+        setup.setupGenericToolCredentials("gemini-cli", tool, new SpawnConfig(), first);
+        first.assertFullyConsumed();
+        var second = new ScriptedPrompts().line("a", "work").secret("gemini-test-work");
+        setup.setupGenericToolCredentials("gemini-cli", tool, SpawnConfig.load(), second);
+        second.assertFullyConsumed();
+
+        assertEquals("gemini-test-default", saved("gemini.accounts.default.apiKey"));
+        assertEquals("gemini-test-work", saved("gemini.accounts.work.apiKey"));
+        assertEquals("default", saved("gemini.default"));
+        assertEquals("", saved("gemini.apiKey"));
+    }
+
     // ── YAML-declared tool credentials ───────────────────────────────────────────
 
     /**

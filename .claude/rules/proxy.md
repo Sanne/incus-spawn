@@ -71,6 +71,11 @@ Key design:
   **Default changes** move every unpinned instance: `isx init` (`changeDefaultAccount`) names them (`InstanceRegistry.accountStates` includes unpinned instances) and offers switch/keep/cancel; the proxy logs them on reload (`logDefaultChanges`).
   The registry reads `account-identity` stamps (`InstanceAccounts.bakedIdentities`), and `MitmProxy.refuseIfUnservable` fails closed -- `AccountSelection.UnservableAccountException`, 502 -- when the served account (pin or default) needs another Claude auth mode than the instance was built with (`AccountSelection.servingMismatches`), scoped to that credential's domains (`namespacesForDomain`, wildcards included); cached per registry record in the reload's `ConfigState`, so a result computed from the old config lands in a cache nothing reads any more.
   `accountStates` lists branches only -- never templates, whose pins would travel to all their branches.
+- **Gemini API keys (#1409)** use `GeminiSetup`'s generic header route for exactly `generativelanguage.googleapis.com`.
+  `gemini.accounts.<name>.apiKey` stays on the host; the guest exports `GEMINI_API_KEY` with prefix `gemini-` and namespace `gemini`.
+  `ProofCarriers` reads its proof from `x-goog-api-key` before HTTP or WebSocket account resolution and injection.
+  Missing, static, wrong or reset proofs pass through unchanged, as do independent credentials; a valid proof with a missing account pin fails closed.
+  No Google wildcard, OAuth flow or Vertex route is added.
 - **The generic seam is one method.**
   `ProxyDef.accountConfigPath()` builds `<ns>.accounts.<account>.<config-path>` beside the existing `fullConfigPath()`.
   `ToolProxyResolver.resolveConfigValue` prefers it and falls back to the flat path when the namespace has no accounts *or the account omits that key* (a namespace may hold the token per account and other settings globally).

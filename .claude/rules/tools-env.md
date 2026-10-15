@@ -32,8 +32,14 @@ It writes `~/.gemini/policies/isx-auto-approve.toml`, a priority-zero allow-all 
 The policy also applies to direct and headless launches, excludes plan mode, and permits higher-priority user overrides.
 At the end of either build path, `GuestProvisioning.writeAgentContext()` writes the resolved environment instructions to the build-owned `~/.gemini/GEMINI.md` as `agentuser`.
 The tool leaves `context.fileName` unset.
-It has no authentication or proxy support: the proxy cannot inject a Gemini credential yet (#1409), and none may enter the box.
-Until it can, `/etc/profile.d/isx-gemini-login.sh` shadows `gemini` with an exported shell function that says so and links #1409; the action runs `bash -lc gemini` to reach it through zmx too.
+It selects `security.auth.selectedType: gemini-api-key` and exports only `GEMINI_API_KEY=gemini-placeholder` at build time.
+Its `proxy.placeholders` declaration fills that variable with the stable `gemini` namespace proof at login; Gemini reads it when launched, without a credential file or wrapper.
+The generic header route injects the selected host account's `apiKey` into `x-goog-api-key` for exactly `generativelanguage.googleapis.com`, after proof verification.
+The `gemini` namespace uses the generic account menu and config tree, so no typed `SpawnConfig` class or special proxy branch is needed.
+Install, reconfigure and `refreshInherited` remove the old `/etc/profile.d/isx-gemini-login.sh` notice.
+Inherited-tool refresh sets the API-key auth selection while preserving the parent's model and other settings; interactive Gemini requires this selection even with `GEMINI_API_KEY` set.
+Existing instances need a template rebuild and a new branch; the action keeps `bash -lc gemini` so their legacy login notice still guards launches through zmx until then.
+Google OAuth and Vertex remain outside this API-key integration (#1114).
 
 Tools can declare an `agent_note:` (exposed uniformly via `ToolSetup.agentNote()`, overridden in `YamlToolSetup`; Java tools may override it too).
 It is an always-true fact that must be known *before* the first relevant action, rendered by the build into `/etc/claude-code/CLAUDE.md` (see `.claude/rules/build.md`).

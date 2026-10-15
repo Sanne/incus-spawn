@@ -620,9 +620,16 @@ tools:
 default-action: gemini-cli
 ```
 
-Gemini login through isx is not supported yet ([#1409](https://github.com/Sanne/incus-spawn/issues/1409)).
-Credentials never enter the box, and the proxy cannot supply a Gemini API key or token yet, so `gemini` in the box and the tool's action only print that and link the issue.
-The settings below take effect once the proxy supports Gemini.
+Run `isx init` on the host and select Gemini CLI to configure a [Gemini API key](https://aistudio.google.com/apikey).
+Keys are stored in host-side `gemini.accounts.<name>.apiKey`, with `gemini.default` selecting the default account.
+Use `accounts: { gemini: work }` in a template or `isx branch --from tpl-gemini-dev --account gemini=work my-gemini` to select a named account.
+The box receives a `GEMINI_API_KEY` proof placeholder; the proxy verifies it and injects the selected key into requests to `generativelanguage.googleapis.com`.
+Gemini CLI reads the placeholder when launched, so no API key or proof is saved in its settings.
+This integration supports Gemini API keys; Google OAuth and Vertex authentication remain separate work ([#1114](https://github.com/Sanne/incus-spawn/issues/1114)).
+
+After upgrading both `isx` and `isx-proxy`, rebuild existing Gemini templates and branch new instances.
+The build removes the old login notice, including when a child template inherits Gemini, and adds its proof environment.
+An existing instance from an older template keeps its login notice until rebuilt.
 
 The tool installs `@google/gemini-cli` and writes `~/.gemini/settings.json`.
 It disables telemetry, usage statistics, automatic updates and update notifications, startup tips, the banner and home-directory warnings, folder trust prompts, and the CLI's inner sandbox.
@@ -811,7 +818,7 @@ These tools ship with incus-spawn and can be referenced by name in a template's 
 | `claude` | Claude Code: AI coding assistant |
 | `gh` | GitHub: PAT for git operations |
 | `pi` | Pi: AI coding assistant |
-| `gemini-cli` | Gemini CLI: Google coding assistant (no login through isx yet, [#1409](https://github.com/Sanne/incus-spawn/issues/1409)) |
+| `gemini-cli` | Gemini CLI: Google coding assistant (proxied Gemini API key) |
 | `bob` | Bob Shell: IBM AI coding assistant |
 | `codex` | Codex CLI: OpenAI coding assistant |
 | `copilot` | GitHub Copilot CLI: AI coding assistant (shares `gh` token) |
@@ -923,7 +930,7 @@ env:
 
 #### Proxy Credentials
 
-Tools can register domains with the [MITM proxy](#credential-isolation) for transparent credential injection. This lets you add authentication to any HTTPS API without exposing secrets inside containers. The built-in `claude`, `gh`, `bob`, `codex`, and `copilot` tools use this mechanism -- but you can declare the same for your own tools.
+Tools can register domains with the [MITM proxy](#credential-isolation) for transparent credential injection. This lets you add authentication to any HTTPS API without exposing secrets inside containers. The built-in `claude`, `gh`, `bob`, `codex`, `copilot`, and `gemini-cli` tools use this mechanism -- but you can declare the same for your own tools.
 
 A `proxy:` block declares a `config-namespace`, `configuration`, `auth`, and `placeholders`.
 The namespace scopes config paths and uses letters, digits, `.`, `-` and `_`, starting with a letter or digit.

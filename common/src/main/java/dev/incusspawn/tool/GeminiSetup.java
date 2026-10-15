@@ -1,14 +1,19 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.util.BuildOutput;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqString;
+import io.hyperfoil.tools.jjq.value.JqValues;
 
 import java.util.List;
 import java.util.Map;
 
-/** Installs and configures Gemini CLI; login waits for proxy support (#1409). */
+/** Gemini CLI uses a guest placeholder; the proxy holds and injects its API key. */
 public class GeminiSetup implements ToolSetup {
 
+    private static final String PLACEHOLDER_API_KEY = "gemini-placeholder";
     static final String CONFIG_PATH = "/home/agentuser/.gemini/settings.json";
     public static final String MEMORY_PATH = "/home/agentuser/.gemini/GEMINI.md";
     static final String POLICY_PATH = "/home/agentuser/.gemini/policies/isx-auto-approve.toml";
@@ -21,30 +26,42 @@ public class GeminiSetup implements ToolSetup {
             priority = 0
             modes = ["default", "autoEdit", "yolo"]
             """;
-    static final String UNSUPPORTED_NOTICE_PATH = "/etc/profile.d/isx-gemini-login.sh";
-    static final String LOGIN_ISSUE_URL = "https://github.com/Sanne/incus-spawn/issues/1409";
-
-    /**
-     * Shadows the CLI in every login and interactive shell, so it never reaches its own login
-     * prompt, which asks for a key or token to keep in the box: the proxy cannot inject one yet,
-     * and none may enter the box. Remove once #1409 lands.
-     */
-    static final String UNSUPPORTED_NOTICE_SCRIPT = """
-            # Written by isx: Gemini login through isx is not supported yet (%1$s)
-            gemini() {
-              echo "Gemini login through isx is not supported yet: credentials never enter the box, and the proxy cannot supply a Gemini key yet." >&2
-              echo "See %1$s" >&2
-              return 1
-            }
-            # Exported, so a non-login bash an agent starts finds it too; a failed export ends a POSIX sh
-            if [ -n "${BASH_VERSION:-}" ]; then export -f gemini; fi
-            """.formatted(LOGIN_ISSUE_URL);
+    static final String LEGACY_LOGIN_NOTICE_PATH = "/etc/profile.d/isx-gemini-login.sh";
 
     @Override
     public String name() { return "gemini-cli"; }
 
     @Override
     public String description() { return "Gemini CLI — Google coding assistant"; }
+
+    @Override
+    public ToolDef.ProxyDef proxy() {
+        var apiKey = new ToolDef.ConfigEntry();
+        apiKey.setConfigPath("apiKey");
+        apiKey.setDescription("Gemini API key");
+        apiKey.setSecret(true);
+        apiKey.setHelp(List.of("Create a Gemini API key at https://aistudio.google.com/apikey.",
+                "The key stays on this host; the proxy supplies it to Gemini requests."));
+
+        var auth = new ToolDef.AuthDef();
+        auth.setDomains(List.of("generativelanguage.googleapis.com"));
+        auth.setType("header");
+        auth.setName("x-goog-api-key");
+        auth.setValue("${api-key}");
+
+        var proxy = new ToolDef.ProxyDef();
+        proxy.setConfigNamespace("gemini");
+        proxy.setConfiguration(Map.of("api-key", apiKey));
+        proxy.setAuth(List.of(auth));
+        proxy.setPlaceholders(List.of(new ToolDef.PlaceholderDef("GEMINI_API_KEY", "gemini-")));
+        return proxy;
+    }
+
+    @Override
+    public List<EnvEntry> envEntries(Map<String, String> resolvedParams) {
+        // Read by Gemini at launch, never copied into its settings or credential storage.
+        return List.of(EnvEntry.set("GEMINI_API_KEY", PLACEHOLDER_API_KEY));
+    }
 
     @Override
     public List<String> packages() { return List.of("nodejs", "ripgrep"); }
@@ -65,7 +82,7 @@ public class GeminiSetup implements ToolSetup {
         var action = new ToolDef.ActionEntry();
         action.setLabel("Gemini CLI");
         action.setType("shell");
-        // A login shell, so the notice in /etc/profile.d also answers when zmx starts the command.
+        // Actions update before old guests are rebuilt: preserve their login notice through zmx.
         action.setCommand("bash -lc gemini");
         action.setAutoReturn(true);
         return List.of(action);
@@ -75,7 +92,6 @@ public class GeminiSetup implements ToolSetup {
     public void install(Container c, Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Installing Gemini CLI...");
         NpmGlobalInstall.install(c, "Gemini CLI", "@google/gemini-cli");
-        c.writeFile(UNSUPPORTED_NOTICE_PATH, UNSUPPORTED_NOTICE_SCRIPT);
         BuildOutput.stepDone();
         configureSettings(c, resolvedParams);
     }
@@ -83,6 +99,36 @@ public class GeminiSetup implements ToolSetup {
     @Override
     public void reconfigure(Container c, Map<String, String> resolvedParams) {
         configureSettings(c, resolvedParams);
+    }
+
+    @Override
+    public void refreshInherited(Container c) {
+        // Interactive Gemini needs an explicit auth selection even when the environment has
+        // a key. Keep the parent's model and custom settings while upgrading #1407's files.
+        var settings = c.exec("cat", CONFIG_PATH).assertSuccess("Failed to read Gemini settings").stdout();
+        c.writeFile(CONFIG_PATH, selectApiKeyAuth(settings));
+        c.chown(CONFIG_PATH, "agentuser:agentuser");
+        removeLoginNotice(c);
+    }
+
+    static String selectApiKeyAuth(String json) {
+        if (!(JqValues.parseStrict(json) instanceof JqObject root)) {
+            throw new IllegalStateException("Gemini settings must be a JSON object");
+        }
+        var security = objectOrEmpty(root, "security");
+        var auth = objectOrEmpty(security, "auth").with("selectedType", JqString.of("gemini-api-key"));
+        return JqValues.toPrettyJsonString(root.with("security", security.with("auth", auth))) + "\n";
+    }
+
+    private static JqObject objectOrEmpty(JqObject parent, String key) {
+        if (!parent.keys().contains(key)) return JqObject.EMPTY;
+        if (parent.getField(key) instanceof JqObject object) return object;
+        throw new IllegalStateException("Gemini setting '" + key + "' must be a JSON object");
+    }
+
+    private static void removeLoginNotice(Container c) {
+        c.exec("rm", "-f", LEGACY_LOGIN_NOTICE_PATH)
+                .assertSuccess("Failed to remove the old Gemini login notice");
     }
 
     /** Called after all template layers are built, so inherited notes and repositories are included. */
@@ -94,6 +140,7 @@ public class GeminiSetup implements ToolSetup {
 
     private void configureSettings(Container c, Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Configuring Gemini CLI...");
+        removeLoginNotice(c);
         c.sh("mkdir -p /home/agentuser/.gemini/policies");
         c.writeFile(CONFIG_PATH, settingsJson(resolvedParams));
         c.writeFile(POLICY_PATH, AUTO_APPROVE_POLICY);
@@ -112,7 +159,11 @@ public class GeminiSetup implements ToolSetup {
                   },
                   "ui": {"hideTips": true, "hideBanner": true, "showHomeDirectoryWarning": false},
                   "tools": {"sandbox": false},
-                  "security": {"folderTrust": {"enabled": false}, "toolSandboxing": false},
+                  "security": {
+                    "auth": {"selectedType": "gemini-api-key"},
+                    "folderTrust": {"enabled": false},
+                    "toolSandboxing": false
+                  },
                   "privacy": {"usageStatisticsEnabled": false},
                   "telemetry": {"enabled": false}
                 }

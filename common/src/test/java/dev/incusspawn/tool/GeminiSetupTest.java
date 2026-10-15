@@ -6,12 +6,10 @@ import dev.incusspawn.incus.IncusException;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import io.hyperfoil.tools.jjq.value.JqBoolean;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -22,7 +20,7 @@ class GeminiSetupTest {
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
 
     @Test
-    void settingsAreValidJsonWithUnattendedDefaultsAndNoAuthSelection() {
+    void settingsSelectApiKeyAuthWithoutStoringTheKey() {
         var settings = JqValues.parseStrict(GeminiSetup.settingsJson(Map.of("model", "gemini-4-argon")));
         assertEquals("gemini-4-argon", settings.getField("model").pathText("name", null));
         for (var path : new String[][]{
@@ -33,17 +31,21 @@ class GeminiSetupTest {
             assertEquals(JqBoolean.FALSE, settings.getField(path[0]).getField(path[1]));
         }
         assertEquals(JqBoolean.FALSE, settings.getField("security").getField("folderTrust").getField("enabled"));
-        assertFalse(GeminiSetup.settingsJson(Map.of()).contains("\"auth\""));
+        assertEquals("gemini-api-key", settings.getField("security").getField("auth").pathText("selectedType", null));
+        assertFalse(GeminiSetup.settingsJson(Map.of()).contains("gemini-placeholder"));
+        assertFalse(GeminiSetup.settingsJson(Map.of()).contains("GEMINI_API_KEY"));
     }
 
     @Test
-    void toolIsDiscoverableWithoutCredentialIntegration() {
+    void toolDeclaresItsCredentialAndCallTimePlaceholder() {
         var tool = new ToolDefLoader().allToolSetups().get("gemini-cli");
         assertInstanceOf(GeminiSetup.class, tool);
-        assertNull(tool.proxy());
-        assertTrue(tool.credentialNamespaces().isEmpty());
-        assertTrue(tool.placeholders().isEmpty());
-        assertTrue(tool.envEntries(Map.of()).isEmpty());
+        assertEquals(Set.of("gemini"), tool.credentialNamespaces());
+        assertEquals(List.of(new dev.incusspawn.proxy.ProofToken.Placeholder("GEMINI_API_KEY", "gemini-", "gemini")),
+                tool.placeholders());
+        var env = tool.envEntries(Map.of()).getFirst();
+        assertEquals("GEMINI_API_KEY", env.getName());
+        assertEquals("gemini-placeholder", env.getValue());
         assertEquals("bash -lc gemini", tool.actions().getFirst().getCommand());
     }
 
@@ -77,9 +79,7 @@ class GeminiSetupTest {
                 argThat(cmd -> cmd.contains(GeminiSetup.POLICY_PATH)
                         && cmd.contains("decision = \"allow\"") && cmd.contains("priority = 0")
                         && cmd.contains("modes = [\"default\", \"autoEdit\", \"yolo\"]")));
-        verify(incus).shellExec(eq(INSTANCE), eq("sh"), eq("-c"),
-                argThat(cmd -> cmd.contains(GeminiSetup.UNSUPPORTED_NOTICE_PATH)
-                        && cmd.contains("gemini() {") && cmd.contains(GeminiSetup.LOGIN_ISSUE_URL)));
+        verify(incus).shellExec(INSTANCE, "rm", "-f", GeminiSetup.LEGACY_LOGIN_NOTICE_PATH);
         clearInvocations(incus);
         tool.reconfigure(container, Map.of("model", "gemini-4-argon"));
         verify(incus, never()).shellExec(eq(INSTANCE),
@@ -88,27 +88,40 @@ class GeminiSetupTest {
                 argThat(cmd -> cmd.contains(GeminiSetup.CONFIG_PATH) && cmd.contains("gemini-4-argon")));
         verify(incus).shellExec(eq(INSTANCE), eq("sh"), eq("-c"),
                 argThat(cmd -> cmd.contains(GeminiSetup.POLICY_PATH)));
+        verify(incus).shellExec(INSTANCE, "rm", "-f", GeminiSetup.LEGACY_LOGIN_NOTICE_PATH);
     }
 
     @Test
-    void noticeScriptRefusesInBashAndKeepsAPosixLoginGoing(@TempDir Path dir) throws Exception {
-        var script = dir.resolve("isx-gemini-login.sh");
-        Files.writeString(script, GeminiSetup.UNSUPPORTED_NOTICE_SCRIPT);
-        var bash = run("bash", "-c", ". \"$0\"; bash -c gemini", script.toString());
-        assertEquals(1, bash.exitValue());
-        assertTrue(bash.output().contains("Gemini login through isx is not supported yet"), bash.output());
-        assertTrue(bash.output().contains(GeminiSetup.LOGIN_ISSUE_URL), bash.output());
-        var sh = run("sh", "-c", ". \"$0\"; echo still-running", script.toString());
-        assertEquals(0, sh.exitValue(), sh.output());
-        assertTrue(sh.output().contains("still-running"), sh.output());
+    void anInheritedToolLosesTheOldLoginBlockWithoutReinstallingOrReplacingItsModel() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.shellExec(INSTANCE, "cat", GeminiSetup.CONFIG_PATH))
+                .thenReturn(new IncusClient.ExecResult(0, "{\"model\":{\"name\":\"inherited-model\"}}", ""));
+        new GeminiSetup().refreshInherited(new Container(incus, INSTANCE));
+        verify(incus).shellExec(INSTANCE, "cat", GeminiSetup.CONFIG_PATH);
+        verify(incus).shellExec(eq(INSTANCE), eq("sh"), eq("-c"),
+                argThat(cmd -> cmd.contains(GeminiSetup.CONFIG_PATH) && cmd.contains("inherited-model")
+                        && cmd.contains("gemini-api-key")));
+        verify(incus).shellExec(INSTANCE, "chown", "-R", "agentuser:agentuser", GeminiSetup.CONFIG_PATH);
+        verify(incus).shellExec(INSTANCE, "rm", "-f", GeminiSetup.LEGACY_LOGIN_NOTICE_PATH);
+        verifyNoMoreInteractions(incus);
     }
 
-    private record Run(int exitValue, String output) {}
-
-    private static Run run(String... command) throws Exception {
-        var process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        var output = new String(process.getInputStream().readAllBytes());
-        return new Run(process.waitFor(), output);
+    @Test
+    void authSelectionPreservesOtherSettingsAndRejectsCorruptSettings() {
+        var before = JqValues.parseStrict("""
+                {"model":{"name":"custom"},"security":{"folderTrust":{"enabled":false},
+                "auth":{"useExternal":false}},"custom":{"nested":[1,2,3]}}
+                """);
+        var after = JqValues.parseStrict(GeminiSetup.selectApiKeyAuth(before.toJsonString()));
+        assertEquals(before.getField("model"), after.getField("model"));
+        assertEquals(before.getField("custom"), after.getField("custom"));
+        assertEquals(before.getField("security").getField("folderTrust"), after.getField("security").getField("folderTrust"));
+        assertEquals(JqBoolean.FALSE, after.getField("security").getField("auth").getField("useExternal"));
+        assertEquals("gemini-api-key", after.getField("security").getField("auth").pathText("selectedType", null));
+        for (var json : List.of("[]", "null", "{", "{\"security\":false}", "{\"security\":{\"auth\":[]}}")) {
+            assertThrows(RuntimeException.class, () -> GeminiSetup.selectApiKeyAuth(json), json);
+        }
     }
 
     @Test

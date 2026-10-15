@@ -590,6 +590,32 @@ class GuestProvisioningTest {
     // --- refreshInheritedTools ---
 
     @Test
+    void inheritedGeminiGetsAPlaceholderAndLosesTheLoginNotice() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.shellExec("test", "cat", "/home/agentuser/.gemini/settings.json"))
+                .thenReturn(new IncusClient.ExecResult(0, "{\"model\":{\"name\":\"inherited-model\"}}", ""));
+        var container = new Container(incus, "test");
+        var ancestors = List.of(new BuildTools.ResolvedTool("gemini-cli",
+                new dev.incusspawn.tool.GeminiSetup(), Map.of()));
+        var child = new ImageDef();
+        child.setName("tpl-child");
+
+        GuestProvisioning.refreshInheritedTools(container, new BuildTools.ToolResolution(List.of(), ancestors));
+        GuestProvisioning.writeEnvFile(container, child, Map.of(), ancestors, "tpl-child");
+
+        verify(incus).shellExec("test", "rm", "-f", "/etc/profile.d/isx-gemini-login.sh");
+        var environment = capturedWrite(incus, "/etc/profile.d/isx-env.sh");
+        assertNotNull(environment);
+        assertTrue(environment.contains("GEMINI_API_KEY="), environment);
+        assertTrue(environment.contains("gemini-placeholder"), environment);
+        var settings = io.hyperfoil.tools.jjq.value.JqValues.parseStrict(
+                capturedWrite(incus, "/home/agentuser/.gemini/settings.json"));
+        assertEquals("inherited-model", settings.getField("model").pathText("name", null));
+        assertEquals("gemini-api-key", settings.getField("security").getField("auth").pathText("selectedType", null));
+    }
+
+    @Test
     void refreshInheritedToolsRewritesWhatInheritedClaudeAndCodexOwn() {
         // A parent built before #1108 has neither script, and a child that only inherits the
         // tools never runs their setup: without these its model calls present a stale token

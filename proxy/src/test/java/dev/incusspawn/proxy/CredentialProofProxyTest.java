@@ -33,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class CredentialProofProxyTest {
     static final String GITHUB = "api.github.com";
     static final String ANTHROPIC = "api.anthropic.com";
+    static final String GEMINI = "generativelanguage.googleapis.com";
     static final String SECRET = ProofTestSupport.SECRET;
     static final String BODY = "{\"model\":\"claude-test\",\"messages\":[],\"max_tokens\":7}";
     static final String GITHUB_CONFIG = """
@@ -42,6 +43,15 @@ class CredentialProofProxyTest {
                   token: ghp_outer
               default: outer
             """;
+    static final String GEMINI_CONFIG = """
+            gemini:
+              accounts:
+                outer:
+                  apiKey: gemini-test-outer
+                work:
+                  apiKey: gemini-test-work
+              default: outer
+            """;
     @TempDir static Path home;
     static String previousHome;
     static Vertx vertx;
@@ -49,7 +59,7 @@ class CredentialProofProxyTest {
     static HttpClient client;
     static int upstreamPort;
     static volatile CompletableFuture<Received> received;
-    record Received(String uri, String host, String authorization, String key, String body) {}
+    record Received(String uri, String host, String authorization, String key, String googleKey, String body) {}
     MitmProxy proxy;
     InstanceRegistry registry;
     volatile String stamp;
@@ -59,6 +69,7 @@ class CredentialProofProxyTest {
     final CompletableFuture<Void> listingEntered = new CompletableFuture<>();
     volatile String address = "127.0.0.1";
     volatile String account;
+    volatile String geminiAccount;
     String bakedIdentity;
     final AtomicInteger tokenFetches = new AtomicInteger();
     final AtomicInteger listings = new AtomicInteger();
@@ -68,16 +79,16 @@ class CredentialProofProxyTest {
         System.setProperty("user.home", home.toString());
         Files.createDirectories(home.resolve(".config/incus-spawn"));
         vertx = Vertx.vertx(new VertxOptions().setAddressResolverOptions(new AddressResolverOptions()
-                .setHostsValue(Buffer.buffer("127.0.0.1 " + GITHUB + " " + ANTHROPIC + "\n"))));
+                .setHostsValue(Buffer.buffer("127.0.0.1 " + GITHUB + " " + ANTHROPIC + " " + GEMINI + "\n"))));
         upstream = vertx.createHttpServer(new HttpServerOptions().setSsl(true)
                         .setKeyCertOptions(NpmCacheProxyTest.keyCert(CertificateAuthority.loadOrCreate(), ANTHROPIC)))
                 .requestHandler(req -> req.body().onSuccess(body -> {
                     received.complete(new Received(req.uri(), req.getHeader("Host"), req.getHeader("Authorization"),
-                            req.getHeader("x-api-key"), body.toString()));
+                            req.getHeader("x-api-key"), req.getHeader("x-goog-api-key"), body.toString()));
                     req.response().end("{}");
                 })).webSocketHandler(ws -> {
                     received.complete(new Received(ws.uri(), ws.headers().get("Host"), ws.headers().get("Authorization"),
-                            ws.headers().get("x-api-key"), ""));
+                            ws.headers().get("x-api-key"), ws.headers().get("x-goog-api-key"), ""));
                     ws.close();
                 });
         upstreamPort = NpmCacheProxyTest.listen(upstream);
@@ -99,7 +110,7 @@ class CredentialProofProxyTest {
     }
 
     void serve(String claude) throws Exception {
-        Files.writeString(home.resolve(".config/incus-spawn/config.yaml"), GITHUB_CONFIG + claude);
+        Files.writeString(home.resolve(".config/incus-spawn/config.yaml"), GITHUB_CONFIG + GEMINI_CONFIG + claude);
         stamp = ProofVerifier.stamp(SECRET, ProofToken.declared());
         registry = new InstanceRegistry(new IncusClient() {
             @Override public JqValue listJsonConfig() {
@@ -114,6 +125,7 @@ class CredentialProofProxyTest {
                         .put(Metadata.INSTANCE_PROOF_ID, generation)
                         .put(Metadata.INSTANCE_PROOF_SHA256, stamp);
                 if (account != null) config.put(Metadata.accountKey("claude"), account);
+                if (geminiAccount != null) config.put(Metadata.accountKey("gemini"), geminiAccount);
                 if (bakedIdentity != null) config.put(Metadata.accountIdentityKey("claude"), bakedIdentity);
                 return JqValues.parse("[" + JqValues.toPrettyJsonString(JqObject.builder(2)
                         .put("name", "outer-instance").put("config", config.build()).build()) + "]");
@@ -127,7 +139,7 @@ class CredentialProofProxyTest {
         proxy.upstreamWsPort = upstreamPort;
         ContainerTls.startInBackground(proxy);
         proxy.useInstanceRegistry(registry);
-        for (var host : List.of(GITHUB, "github.com", ANTHROPIC, "us-east5-aiplatform.googleapis.com")) {
+        for (var host : List.of(GITHUB, "github.com", ANTHROPIC, GEMINI, "us-east5-aiplatform.googleapis.com")) {
             proxy.overrideUpstream(host, "127.0.0.1", upstreamPort);
         }
     }
@@ -172,10 +184,10 @@ class CredentialProofProxyTest {
     static Stream<Case> matrix() {
         var cases = new java.util.ArrayList<Case>();
         for (var ws : List.of(false, true)) {
-            for (var ns : List.of("github", "claude")) {
-                var prefix = ns.equals("github") ? "gho_" : "sk-ant-";
-                var host = ns.equals("github") ? GITHUB : ANTHROPIC;
-                var header = ns.equals("github") ? "Authorization" : "x-api-key";
+            for (var ns : List.of("github", "claude", "gemini")) {
+                var prefix = switch (ns) { case "github" -> "gho_"; case "gemini" -> "gemini-"; default -> "sk-ant-"; };
+                var host = switch (ns) { case "github" -> GITHUB; case "gemini" -> GEMINI; default -> ANTHROPIC; };
+                var header = switch (ns) { case "github" -> "Authorization"; case "gemini" -> "x-goog-api-key"; default -> "x-api-key"; };
                 var scheme = ns.equals("github") ? "Bearer " : "";
                 var token = ProofTestSupport.token(ns, prefix);
                 cases.add(new Case(ws, host, header, null, false));
@@ -195,12 +207,70 @@ class CredentialProofProxyTest {
     void addressAndCurrentNamespaceProofAreBothRequired(Case c) throws Exception {
         serve(claude("api-key"));
         var got = request(c.websocket(), c.host(), c.header(), c.value());
-        var actual = c.header().equals("Authorization") ? got.authorization() : got.key();
-        assertEquals(c.proven() ? (c.host().equals(GITHUB) ? "Bearer ghp_outer" : "sk-ant-outer") : c.value(), actual);
+        var actual = switch (c.header()) {
+            case "Authorization" -> got.authorization();
+            case "x-goog-api-key" -> got.googleKey();
+            default -> got.key();
+        };
+        var credential = switch (c.host()) {
+            case GITHUB -> "Bearer ghp_outer";
+            case GEMINI -> "gemini-test-outer";
+            default -> "sk-ant-outer";
+        };
+        assertEquals(c.proven() ? credential : c.value(), actual);
         assertEquals("/v1/messages?keep=1", got.uri());
         assertTrue(got.host().startsWith(c.host()));
         if (!c.websocket()) assertEquals(BODY, got.body());
         assertEquals(0, tokenFetches.get());
+    }
+
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void geminiUsesThePinnedAccountAndPreservesIndependentBearerAuth(boolean websocket) throws Exception {
+        geminiAccount = "work";
+        serve(claude("vertex"));
+        var got = request(websocket, GEMINI, "x-goog-api-key", ProofTestSupport.token("gemini", "gemini-"));
+        assertEquals("gemini-test-work", got.googleKey());
+        assertNull(got.authorization());
+        assertNull(got.key());
+        var independent = request(websocket, GEMINI, "Authorization", "Bearer google-inner-account");
+        assertEquals("Bearer google-inner-account", independent.authorization());
+        assertNull(independent.googleKey());
+        assertEquals(0, tokenFetches.get());
+    }
+
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void aMissingGeminiPinNeverFallsBackAndDoesNotBlockIndependentKeys(boolean websocket) throws Exception {
+        geminiAccount = "removed";
+        serve("");
+        assertEquals("gemini-inner-key", request(websocket, GEMINI, "x-goog-api-key", "gemini-inner-key").googleKey());
+        var proof = ProofTestSupport.token("gemini", "gemini-");
+        received = new CompletableFuture<>();
+        if (websocket) {
+            var options = new WebSocketConnectOptions().setHost(GEMINI).setPort(proxy.mitmPort()).setSsl(true)
+                    .setURI("/v1beta/models").addHeader("x-goog-api-key", proof);
+            var error = assertThrows(java.util.concurrent.ExecutionException.class,
+                    () -> client.webSocket(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
+            assertTrue(error.getCause().getMessage().contains("502"), error.toString());
+        } else {
+            assertEquals(502, http(GEMINI, "x-goog-api-key", proof));
+        }
+        assertFalse(received.isDone(), "no default credential may be used for a missing pin");
+    }
+
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void geminiProofsRequireTheRegisteredAddressAndCurrentVerifier(boolean websocket) throws Exception {
+        serve("");
+        var old = ProofTestSupport.token("gemini", "gemini-");
+        assertEquals("gemini-test-outer", request(websocket, GEMINI, "x-goog-api-key", old).googleKey());
+        var reset = "77".repeat(32);
+        stamp = ProofVerifier.stamp(reset, ProofToken.declared());
+        registry.refresh();
+        assertEquals(old, request(websocket, GEMINI, "x-goog-api-key", old).googleKey());
+        var fresh = "gemini-isx_" + ProofToken.derive(reset, "gemini");
+        assertEquals("gemini-test-outer", request(websocket, GEMINI, "x-goog-api-key", fresh).googleKey());
+        address = "127.0.0.2";
+        registry.refresh();
+        assertEquals(fresh, request(websocket, GEMINI, "x-goog-api-key", fresh).googleKey());
     }
 
     static Stream<String> modes() { return Stream.of("api-key", "oauth", "vertex"); }

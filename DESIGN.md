@@ -190,7 +190,7 @@ A definition sets `deprecated: true` or `deprecated: <what to use instead>` (#11
 Removing a template outright was the alternative: every template derived from it would stop building on upgrade, with no warning beforehand.
 
 No coding agent is included in built-in templates by default — users add the ones they need to custom image definitions.
-Available Java tools: `gemini-cli` (Gemini CLI, no login through isx yet, #1409), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent, Anthropic or OpenAI provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
+Available Java tools: `gemini-cli` (Gemini CLI), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent, Anthropic or OpenAI provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
 
 Each image definition specifies:
 - `name` — container name (required)
@@ -352,8 +352,20 @@ It writes a priority-zero allow-all user policy in `~/.gemini/policies/isx-auto-
 This makes direct and headless launches auto-approve tool calls while leaving plan mode unaffected and allowing higher-priority user rules to override it.
 The policy allows shell redirection, but default-mode shell heuristics still apply to commands outside the workspace and parsing failures; full YOLO still requires its flag.
 The optional, reconfigurable `model` parameter pins `model.name`; otherwise the CLI selects its default.
-This integration declares no authentication settings, environment placeholders, credential namespaces, or proxy rules, because the proxy cannot inject a Gemini credential yet (#1409) and none may enter the box.
-Until it can, `gemini` in the box only says so, so the CLI never reaches its own login prompt; `.claude/rules/tools-env.md` has the mechanism.
+Authentication uses a Gemini API key held in host-side `gemini.accounts.<name>.apiKey`, with the ordinary default, template and instance account selection (#1409).
+`GeminiSetup` declares the secret through the generic proxy configuration, so account prompts, persistence, readiness checks, DNS interception and per-instance resolution need no Gemini-specific branches.
+The guest selects `security.auth.selectedType: gemini-api-key` and exports the static build placeholder `GEMINI_API_KEY=gemini-placeholder`.
+Login replaces that placeholder with the stable per-instance proof for namespace `gemini`.
+Gemini reads the environment at launch, so neither settings nor a credential cache holds a build proof.
+The SDK sends it in `x-goog-api-key` to `generativelanguage.googleapis.com`; the existing header carrier verifies it before injecting the selected account's key, for HTTP and WebSockets alike.
+This follows [Gemini CLI's API-key authentication](https://geminicli.com/docs/get-started/authentication/) and the Google SDK's `src/node/_node_auth.ts` header carrier.
+Independent credentials and unproven requests retain their original authentication and destination semantics, including when an account pin is missing.
+The route names the exact Gemini API host, avoiding unrelated Google APIs.
+Google OAuth and Vertex remain separate work (#1114), rather than adding token acquisition and routing to a key-only account.
+Install, reconfigure and inherited-tool refresh remove the old login-notice script from #1407; existing instances need a rebuilt template and a new branch.
+The action retains `bash -lc gemini` so zmx launches in existing instances still reach that login guard until they are rebuilt.
+Inherited-tool refresh sets the API-key auth selection while preserving the parent's model and other settings.
+Interactive Gemini requires this selection even when the environment supplies a key; headless Gemini can infer it from the environment.
 
 **Resolution order** (later overrides earlier): built-in YAML (`resources/tools/`) → user-defined YAML (`~/.config/incus-spawn/tools/`) → search paths → project-local (`.incus-spawn/tools/`).
 A YAML tool with the same name replaces any earlier definition.
