@@ -1526,7 +1526,7 @@ public class MitmProxy {
             }
         } else {
             var tp = findToolProxy(ctx.routing(), domain);
-            if (tp != null) {
+            if (tp != null && tp.matchesPath(options.getURI())) {
                 var headerName = tp.headerName();
                 var headerValue = tp.computeHeaderValue();
                 if (headerName != null && headerValue != null) {
@@ -1985,7 +1985,7 @@ public class MitmProxy {
             }
         } else {
             var tp = findToolProxy(ctx.routing(), domain);
-            if (tp != null) {
+            if (tp != null && tp.matchesPath(upReq.getURI())) {
                 var headerName = tp.headerName();
                 var headerValue = tp.computeHeaderValue();
                 if (headerName != null && headerValue != null) {

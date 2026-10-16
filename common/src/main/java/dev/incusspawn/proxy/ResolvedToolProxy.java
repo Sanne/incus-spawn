@@ -27,6 +27,22 @@ public record ResolvedToolProxy(
     }
 
     /**
+     * Whether the given request URI matches this entry's path scope.
+     * When no paths are declared, every request matches (backward compatible).
+     * When paths are declared, the request path must equal one or start with one followed by '/'.
+     */
+    public boolean matchesPath(String requestUri) {
+        if (auth == null || auth.getPaths().isEmpty()) return true;
+        var path = requestUri;
+        var queryIdx = path.indexOf('?');
+        if (queryIdx >= 0) path = path.substring(0, queryIdx);
+        for (var prefix : auth.getPaths()) {
+            if (path.equals(prefix) || path.startsWith(prefix + "/")) return true;
+        }
+        return false;
+    }
+
+    /**
      * Compute the header value from the auth rule and configuration values.
      * Auth fields use ${configKey} template references resolved against configValues.
      */

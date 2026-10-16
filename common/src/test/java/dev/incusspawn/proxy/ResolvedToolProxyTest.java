@@ -4,6 +4,7 @@ import dev.incusspawn.tool.ToolDef;
 import org.junit.jupiter.api.Test;
 
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -83,5 +84,67 @@ class ResolvedToolProxyTest {
         var proxy = new ResolvedToolProxy("test", "api.example.com", null, Map.of());
         assertNull(proxy.headerName());
         assertNull(proxy.computeHeaderValue());
+    }
+
+    @Test
+    void matchesPathWithNoPaths() {
+        var auth = new ToolDef.AuthDef();
+        auth.setType("bearer");
+        auth.setToken("tok");
+        var proxy = new ResolvedToolProxy("test", "example.com", auth, Map.of());
+
+        assertTrue(proxy.matchesPath("/anything"));
+        assertTrue(proxy.matchesPath("/foo/bar"));
+        assertTrue(proxy.matchesPath("/"));
+    }
+
+    @Test
+    void matchesPathExact() {
+        var auth = new ToolDef.AuthDef();
+        auth.setType("bearer");
+        auth.setToken("tok");
+        auth.setPaths(List.of("/mcp"));
+        var proxy = new ResolvedToolProxy("test", "example.com", auth, Map.of());
+
+        assertTrue(proxy.matchesPath("/mcp"));
+        assertTrue(proxy.matchesPath("/mcp/"));
+        assertTrue(proxy.matchesPath("/mcp/messages"));
+        assertFalse(proxy.matchesPath("/mcpadmin"));
+        assertFalse(proxy.matchesPath("/api/build-scan"));
+        assertFalse(proxy.matchesPath("/"));
+    }
+
+    @Test
+    void matchesPathWithQueryString() {
+        var auth = new ToolDef.AuthDef();
+        auth.setType("bearer");
+        auth.setToken("tok");
+        auth.setPaths(List.of("/mcp"));
+        var proxy = new ResolvedToolProxy("test", "example.com", auth, Map.of());
+
+        assertTrue(proxy.matchesPath("/mcp?query=1"));
+        assertTrue(proxy.matchesPath("/mcp/sub?query=1"));
+        assertFalse(proxy.matchesPath("/api?path=/mcp"));
+    }
+
+    @Test
+    void matchesPathMultiplePrefixes() {
+        var auth = new ToolDef.AuthDef();
+        auth.setType("bearer");
+        auth.setToken("tok");
+        auth.setPaths(List.of("/mcp", "/api/v1"));
+        var proxy = new ResolvedToolProxy("test", "example.com", auth, Map.of());
+
+        assertTrue(proxy.matchesPath("/mcp"));
+        assertTrue(proxy.matchesPath("/api/v1"));
+        assertTrue(proxy.matchesPath("/api/v1/data"));
+        assertFalse(proxy.matchesPath("/api/v2"));
+        assertFalse(proxy.matchesPath("/other"));
+    }
+
+    @Test
+    void matchesPathNullAuth() {
+        var proxy = new ResolvedToolProxy("test", "example.com", null, Map.of());
+        assertTrue(proxy.matchesPath("/anything"));
     }
 }

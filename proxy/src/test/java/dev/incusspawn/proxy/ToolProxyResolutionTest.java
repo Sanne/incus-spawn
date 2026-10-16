@@ -221,6 +221,92 @@ class ToolProxyResolutionTest {
         assertTrue(proxy.allInterceptedDomains().contains("api.anthropic.com"));
     }
 
+    @Test
+    void pathScopedAuthParsesAndFilters() throws Exception {
+        var tool = loadToolSetup("""
+                name: develocity-mcp
+                proxy:
+                  config-namespace: develocity
+                  configuration:
+                    token:
+                      value: "my-token"
+                  auth:
+                    - domains:
+                        - develocity.example.com
+                      paths:
+                        - /mcp
+                      type: bearer
+                      token: "${token}"
+                """);
+        var config = new SpawnConfig();
+        var resolved = ToolProxyResolver.resolve(config, Map.of("develocity-mcp", tool));
+        assertEquals(1, resolved.size());
+
+        var tp = resolved.get(0);
+        assertEquals("develocity.example.com", tp.domain());
+        assertNotNull(tp.auth().getPaths());
+        assertEquals(1, tp.auth().getPaths().size());
+        assertEquals("/mcp", tp.auth().getPaths().get(0));
+
+        assertTrue(tp.matchesPath("/mcp"), "should match exact path");
+        assertTrue(tp.matchesPath("/mcp/sub"), "should match subpath");
+        assertFalse(tp.matchesPath("/api/build-scan"), "should not match unscoped path");
+        assertFalse(tp.matchesPath("/"), "should not match root");
+    }
+
+    @Test
+    void pathScopedAuthDomainStillIntercepted() throws Exception {
+        var tool = loadToolSetup("""
+                name: develocity-mcp
+                proxy:
+                  config-namespace: develocity
+                  configuration:
+                    token:
+                      value: "my-token"
+                  auth:
+                    - domains:
+                        - develocity.example.com
+                      paths:
+                        - /mcp
+                      type: bearer
+                      token: "${token}"
+                """);
+        var config = new SpawnConfig();
+        var resolved = ToolProxyResolver.resolve(config, Map.of("develocity-mcp", tool));
+
+        var creds = new ProxyCredentials("", "", false, "", "", resolved);
+        var proxy = new MitmProxy(null, "127.0.0.1", 18443, 18080, "127.0.0.1", creds);
+
+        assertTrue(proxy.allInterceptedDomains().contains("develocity.example.com"),
+                "domain must be intercepted even when paths are scoped");
+        assertNotNull(proxy.findToolProxy("develocity.example.com"),
+                "domain lookup must still find the proxy entry");
+    }
+
+    @Test
+    void noPathScopeMatchesEverything() throws Exception {
+        var tool = loadToolSetup("""
+                name: gh
+                proxy:
+                  config-namespace: github
+                  configuration:
+                    token:
+                      config-path: "token"
+                  auth:
+                    - domains:
+                        - github.com
+                      type: bearer
+                      token: "${token}"
+                """);
+        var config = new SpawnConfig();
+        config.getGithub().setToken("ghp_test");
+        var resolved = ToolProxyResolver.resolve(config, Map.of("gh", tool));
+        var tp = resolved.get(0);
+
+        assertTrue(tp.matchesPath("/any/path"), "no paths = match everything");
+        assertTrue(tp.matchesPath("/"), "no paths = match root");
+    }
+
     private static ToolSetup loadToolSetup(String yaml) throws Exception {
         var def = ToolDef.loadFromStream(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
         return new YamlToolSetup(def);

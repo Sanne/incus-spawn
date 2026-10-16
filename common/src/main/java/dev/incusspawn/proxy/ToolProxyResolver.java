@@ -375,6 +375,10 @@ public final class ToolProxyResolver {
                         .append(nullSafe(a.getToken())).append('\t')
                         .append(nullSafe(a.getName())).append('\t')
                         .append(nullSafe(a.getValue())).append('\t');
+                if (!a.getPaths().isEmpty()) {
+                    a.getPaths().stream().sorted().forEach(p -> sb.append(p).append(','));
+                    sb.append('\t');
+                }
             }
             new TreeMap<>(tp.configValues()).forEach((k, v) ->
                     sb.append(k).append('=').append(v).append(','));

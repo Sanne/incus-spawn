@@ -367,6 +367,7 @@ public class ToolDef {
     @JqMapped
     public static class AuthDef {
         private List<String> domains = List.of();
+        private List<String> paths = List.of();
         private String type;       // "basic", "bearer", "header", "anthropic"
         private String username;   // for basic: literal or ${configKey} template
         private String password;   // for basic: literal or ${configKey} template
@@ -376,6 +377,8 @@ public class ToolDef {
 
         public List<String> getDomains() { return domains; }
         public void setDomains(List<String> domains) { this.domains = domains != null ? domains : List.of(); }
+        public List<String> getPaths() { return paths; }
+        public void setPaths(List<String> paths) { this.paths = paths != null ? paths : List.of(); }
         public String getType() { return type; }
         public void setType(String type) { this.type = type; }
         public String getUsername() { return username; }
@@ -440,6 +443,10 @@ public class ToolDef {
             for (var ae : proxy.auth) {
                 sb.append("auth=");
                 ae.domains.stream().sorted().forEach(d -> sb.append(d).append(','));
+                if (!ae.paths.isEmpty()) {
+                    sb.append("paths=");
+                    ae.paths.stream().sorted().forEach(p -> sb.append(p).append(','));
+                }
                 sb.append(ae.type != null ? ae.type : "");
                 if (ae.token != null) sb.append(",token=").append(ae.token);
                 if (ae.username != null) sb.append(",user=").append(ae.username);
