@@ -15,6 +15,7 @@ These tools ship with incus-spawn and can be referenced by name in a template's 
 | `bob` | Bob Shell: IBM AI coding assistant |
 | `codex` | Codex CLI: OpenAI coding assistant |
 | `copilot` | GitHub Copilot CLI: AI coding assistant (shares `gh` token) |
+| `atlassian-mcp` | Atlassian MCP server for Jira and Confluence |
 | `maven-3` | Apache Maven |
 | `mvnd` | Apache Maven Daemon |
 | `podman` | Podman container runtime configured for Testcontainers |

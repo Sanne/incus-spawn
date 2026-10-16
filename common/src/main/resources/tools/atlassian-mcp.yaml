@@ -1,0 +1,48 @@
+name: atlassian-mcp
+description: Atlassian MCP server for Jira and Confluence
+requires:
+  - claude
+agent_note: |
+  The Atlassian MCP server uses API tokens scoped to one Atlassian site.
+  The `getAccessibleAtlassianResources` call returns empty with API tokens;
+  pass the site URL directly as `cloudId` (e.g. `https://mysite.atlassian.net`).
+env:
+  - name: ATLASSIAN_MCP_AUTH
+    value: atlassian-placeholder
+proxy:
+  config-namespace: atlassian
+  placeholders:
+    - env: ATLASSIAN_MCP_AUTH
+      prefix: atlassian-
+  configuration:
+    email:
+      config-path: "email"
+      description: "Atlassian account email"
+    api-token:
+      config-path: "apiToken"
+      description: "Atlassian personal API token"
+      secret: true
+      help:
+        - "1. An org admin must enable API token auth at:"
+        - "   admin.atlassian.com > Rovo > Rovo MCP server > Authentication"
+        - ""
+        - "2. Create a token at:"
+        - "   https://id.atlassian.com/manage-profile/security/api-tokens?autofillToken&expiryDays=max&appId=mcp-v2"
+        - "   Select scopes on the creation page. Recommended:"
+        - "     Read-only:  read:jira, search:jira, read:confluence, search:confluence"
+        - "     Add writes: write:jira, write:confluence"
+        - "   Full scope reference:"
+        - "     https://support.atlassian.com/atlassian-ai-gateway/docs/supported-tools/"
+  auth:
+    - domains:
+        - mcp.atlassian.com
+      type: basic
+      username: "${email}"
+      password: "${api-token}"
+run_as_user:
+  - |
+    JSON=$(cat <<'MCPEOF'
+    {"type":"http","url":"https://mcp.atlassian.com/v2/mcp","headersHelper":"printf '{\"Authorization\":\"Bearer %s\"}' \"$ATLASSIAN_MCP_AUTH\""}
+    MCPEOF
+    )
+    claude mcp add-json atlassian "$JSON" --scope user

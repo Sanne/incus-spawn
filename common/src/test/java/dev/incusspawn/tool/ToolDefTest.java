@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.proxy.ProofCarriers;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -975,6 +976,38 @@ class ToolDefTest {
                     "headroom must set ANTHROPIC_BASE_URL");
             assertFalse(envNames.contains("HEADROOM_TLS_STRICT"),
                     "headroom should not set HEADROOM_TLS_STRICT (root cause is fixed in cert generation)");
+        }
+    }
+
+    @Test
+    void builtinAtlassianMcpToolLoads() throws Exception {
+        try (var is = getClass().getClassLoader().getResourceAsStream("tools/atlassian-mcp.yaml")) {
+            assertNotNull(is, "atlassian-mcp.yaml must be on the classpath");
+            var def = ToolDef.loadFromStream(is);
+
+            assertEquals("atlassian-mcp", def.getName());
+            assertEquals(List.of("claude"),
+                    def.getRequires().stream().map(ToolDef.ToolRef::getName).toList());
+            assertNotNull(def.getProxy());
+            assertEquals("atlassian", def.getProxy().getConfigNamespace());
+
+            var configEntries = def.getProxy().getConfiguration();
+            assertTrue(configEntries.containsKey("email"), "must declare email config entry");
+            assertFalse(configEntries.get("email").isSecret(), "email is not secret");
+            assertTrue(configEntries.containsKey("api-token"), "must declare api-token config entry");
+            assertTrue(configEntries.get("api-token").isSecret(), "api-token is secret");
+
+            var authEntries = def.getProxy().getAuth();
+            assertEquals(1, authEntries.size());
+            assertEquals(List.of("mcp.atlassian.com"), authEntries.get(0).getDomains());
+            assertEquals("basic", authEntries.get(0).getType());
+
+            assertNotNull(def.getRunAsUser());
+            assertFalse(def.getRunAsUser().isEmpty());
+
+            var setup = new YamlToolSetup(def);
+            assertEquals(List.of(), new ProofCarriers(List.of(setup)).warnings(),
+                    "credential injection must not be disabled -- declare proxy.placeholders");
         }
     }
 

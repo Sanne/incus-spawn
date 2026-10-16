@@ -180,7 +180,7 @@ class ProofTokenTest {
             }
         }
         assertTrue(exported.containsAll(List.of("GH_TOKEN", "COPILOT_GITHUB_TOKEN", "ANTHROPIC_API_KEY",
-                "OPENAI_API_KEY", "BOBSHELL_API_KEY", "TYPESAFE_API_KEY")), exported.toString());
+                "OPENAI_API_KEY", "BOBSHELL_API_KEY", "TYPESAFE_API_KEY", "ATLASSIAN_MCP_AUTH")), exported.toString());
         exported.removeAll(declared);
         assertEquals(java.util.Set.of(), exported, "exported as a credential placeholder, declared by no tool");
         // The OAuth modes' variables, which a build only exports for an OAuth account,
