@@ -114,8 +114,7 @@ public final class ToolProxyResolver {
                 if (isAnthropic ? allConfigValues.isEmpty() : !allReferenced) continue;
 
                 var spends = namespacesOf(proxyDef, authEntry);
-                for (var domain : authEntry.getDomains()) {
-                    if (domain == null || domain.isBlank()) continue;
+                for (var domain : resolveDomains(authEntry.getDomains(), allConfigValues)) {
                     result.add(new ResolvedToolProxy(toolName, domain, authEntry, Map.copyOf(allConfigValues), spends));
                 }
             }
@@ -279,7 +278,7 @@ public final class ToolProxyResolver {
                 if (auth.getType() == null) continue;
                 var spends = namespacesOf(proxyDef, auth);
                 for (var domain : auth.getDomains()) {
-                    if (!domain.isBlank()) {
+                    if (!domain.isBlank() && !REF_PATTERN.matcher(domain).find()) {
                         result.add(new ResolvedToolProxy(toolName, domain, auth, Map.of(), spends));
                     }
                 }
@@ -593,6 +592,40 @@ public final class ToolProxyResolver {
         while (m.find()) {
             keys.add(m.group(1));
         }
+    }
+
+    /**
+     * Resolve {@code ${configKey}} references in domain entries and split comma-separated
+     * values into individual domains. A domain entry that is a pure literal passes through
+     * unchanged; one containing an unresolvable reference is dropped.
+     */
+    static List<String> resolveDomains(List<String> rawDomains, Map<String, String> configValues) {
+        if (rawDomains == null) return List.of();
+        var result = new ArrayList<String>();
+        for (var domain : rawDomains) {
+            if (domain == null) continue;
+            var resolved = domain;
+            boolean hasUnresolved = false;
+            Matcher m = REF_PATTERN.matcher(domain);
+            while (m.find()) {
+                var value = configValues.get(m.group(1));
+                if (value == null || value.isBlank()) {
+                    hasUnresolved = true;
+                    break;
+                }
+            }
+            if (hasUnresolved) continue;
+            for (var entry : configValues.entrySet()) {
+                resolved = resolved.replace("${" + entry.getKey() + "}", entry.getValue());
+            }
+            for (var part : resolved.split(",")) {
+                var trimmed = part.trim();
+                if (!trimmed.isEmpty()) {
+                    result.add(trimmed);
+                }
+            }
+        }
+        return result;
     }
 
     /** @deprecated use {@link AccountResolver#navigate} -- kept for existing callers. */
