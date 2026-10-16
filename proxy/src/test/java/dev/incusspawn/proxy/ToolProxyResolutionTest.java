@@ -221,6 +221,118 @@ class ToolProxyResolutionTest {
         assertTrue(proxy.allInterceptedDomains().contains("api.anthropic.com"));
     }
 
+    @Test
+    void resolveDynamicDomain() throws Exception {
+        var tool = loadToolSetup("""
+                name: develocity-mcp
+                proxy:
+                  config-namespace: develocity
+                  configuration:
+                    instances:
+                      config-path: "instances"
+                      description: "Develocity instance domains"
+                    access-key:
+                      config-path: "accessKey"
+                      secret: true
+                  auth:
+                    - domains:
+                        - "${instances}"
+                      type: bearer
+                      token: "${access-key}"
+                """);
+        var config = new SpawnConfig();
+        config.setConfigByPath("develocity.instances", "develocity.example.com");
+        config.setConfigByPath("develocity.accessKey", "key123");
+
+        var resolved = ToolProxyResolver.resolve(config, Map.of("develocity-mcp", tool));
+        assertEquals(1, resolved.size());
+        assertEquals("develocity.example.com", resolved.get(0).domain());
+        assertEquals("Bearer key123", resolved.get(0).computeHeaderValue());
+    }
+
+    @Test
+    void resolveDynamicDomainCommaSeparated() throws Exception {
+        var tool = loadToolSetup("""
+                name: develocity-mcp
+                proxy:
+                  config-namespace: develocity
+                  configuration:
+                    instances:
+                      config-path: "instances"
+                    access-key:
+                      config-path: "accessKey"
+                      secret: true
+                  auth:
+                    - domains:
+                        - "${instances}"
+                      type: bearer
+                      token: "${access-key}"
+                """);
+        var config = new SpawnConfig();
+        config.setConfigByPath("develocity.instances", "dev.example.com, prod.example.com");
+        config.setConfigByPath("develocity.accessKey", "key123");
+
+        var resolved = ToolProxyResolver.resolve(config, Map.of("develocity-mcp", tool));
+        assertEquals(2, resolved.size());
+        assertEquals("dev.example.com", resolved.get(0).domain());
+        assertEquals("prod.example.com", resolved.get(1).domain());
+        assertEquals("Bearer key123", resolved.get(0).computeHeaderValue());
+        assertEquals("Bearer key123", resolved.get(1).computeHeaderValue());
+    }
+
+    @Test
+    void resolveMixedStaticAndDynamicDomains() throws Exception {
+        var tool = loadToolSetup("""
+                name: atlassian-mcp
+                proxy:
+                  config-namespace: atlassian
+                  configuration:
+                    email:
+                      config-path: "email"
+                    api-token:
+                      config-path: "apiToken"
+                      secret: true
+                  auth:
+                    - domains:
+                        - mcp.atlassian.com
+                      type: basic
+                      username: "${email}"
+                      password: "${api-token}"
+                """);
+        var config = new SpawnConfig();
+        config.setConfigByPath("atlassian.email", "user@test.com");
+        config.setConfigByPath("atlassian.apiToken", "secret123");
+
+        var resolved = ToolProxyResolver.resolve(config, Map.of("atlassian-mcp", tool));
+        assertEquals(1, resolved.size());
+        assertEquals("mcp.atlassian.com", resolved.get(0).domain());
+    }
+
+    @Test
+    void skipDynamicDomainWithMissingConfig() throws Exception {
+        var tool = loadToolSetup("""
+                name: develocity-mcp
+                proxy:
+                  config-namespace: develocity
+                  configuration:
+                    instances:
+                      config-path: "instances"
+                    access-key:
+                      config-path: "accessKey"
+                      secret: true
+                  auth:
+                    - domains:
+                        - "${instances}"
+                      type: bearer
+                      token: "${access-key}"
+                """);
+        var config = new SpawnConfig();
+        config.setConfigByPath("develocity.accessKey", "key123");
+
+        var resolved = ToolProxyResolver.resolve(config, Map.of("develocity-mcp", tool));
+        assertTrue(resolved.isEmpty());
+    }
+
     private static ToolSetup loadToolSetup(String yaml) throws Exception {
         var def = ToolDef.loadFromStream(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
         return new YamlToolSetup(def);
