@@ -160,6 +160,64 @@ class ToolProxyResolverTest {
         assertEquals("", ToolProxyResolver.navigateConfigPath(tree, "github.nested"));
     }
 
+    // --- resolveDomains tests ---
+
+    @Test
+    void resolveDomainsStaticPassthrough() {
+        var result = ToolProxyResolver.resolveDomains(
+                List.of("api.example.com", "cdn.example.com"), Map.of());
+        assertEquals(List.of("api.example.com", "cdn.example.com"), result);
+    }
+
+    @Test
+    void resolveDomainsSingleReference() {
+        var result = ToolProxyResolver.resolveDomains(
+                List.of("${site}"), Map.of("site", "myorg.atlassian.net"));
+        assertEquals(List.of("myorg.atlassian.net"), result);
+    }
+
+    @Test
+    void resolveDomainsCommaSeparatedValue() {
+        var result = ToolProxyResolver.resolveDomains(
+                List.of("${instances}"),
+                Map.of("instances", "dev.example.com, prod.example.com"));
+        assertEquals(List.of("dev.example.com", "prod.example.com"), result);
+    }
+
+    @Test
+    void resolveDomainsMixedStaticAndDynamic() {
+        var result = ToolProxyResolver.resolveDomains(
+                List.of("api.fixed.com", "${site}"),
+                Map.of("site", "custom.example.com"));
+        assertEquals(List.of("api.fixed.com", "custom.example.com"), result);
+    }
+
+    @Test
+    void resolveDomainsUnresolvedReferenceDropped() {
+        var result = ToolProxyResolver.resolveDomains(
+                List.of("api.fixed.com", "${missing}"), Map.of());
+        assertEquals(List.of("api.fixed.com"), result);
+    }
+
+    @Test
+    void resolveDomainsNullAndBlankSkipped() {
+        var result = ToolProxyResolver.resolveDomains(
+                List.of("api.example.com", "", "   "), Map.of());
+        assertEquals(List.of("api.example.com"), result);
+    }
+
+    @Test
+    void resolveDomainsNullListReturnsEmpty() {
+        assertEquals(List.of(), ToolProxyResolver.resolveDomains(null, Map.of()));
+    }
+
+    @Test
+    void resolveDomainsPrefixSuffixAroundReference() {
+        var result = ToolProxyResolver.resolveDomains(
+                List.of("*.${base}"), Map.of("base", "example.com"));
+        assertEquals(List.of("*.example.com"), result);
+    }
+
     private static ToolDef.AuthDef authDef(String type) {
         var auth = new ToolDef.AuthDef();
         auth.setType(type);
