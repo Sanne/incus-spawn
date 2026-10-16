@@ -530,7 +530,8 @@ isx then gets the same SIGINT and cannot tell a copy from an interrupt, so copyi
 While a build instance exists and isx is at a terminal, `BuildInterrupt` takes the first SIGINT as a warning to press it again, and a second within five seconds goes to the handler that was there before.
 So an interrupt still ends the process with the shutdown hook's "Build interrupted for" report, and outside a build, at a prompt before it starts and off a terminal, Ctrl+C acts at once.
 Git preparing a repository runs in a session of its own (`GitProcess`, #1425), out of the terminal's process group, so the first Ctrl+C does not reach it either.
-Out of that group, the Ctrl+C that does end isx no longer stops Git either, so `OwnSession.start` has a shutdown hook stop it and its helpers, SIGTERM then SIGKILL, as `GitProcess` does after a stall, and stops at once one that a still-running build thread starts meanwhile; a SIGKILL of isx leaves them to finish alone.
+So do the `tar`, `unzip` and `chmod` that tool setup runs on the host (`YamlToolSetup`).
+Out of that group, the Ctrl+C that does end isx no longer stops them, so `OwnSession.start` has a shutdown hook stop them and their helpers, SIGTERM then SIGKILL, as `GitProcess` does after a stall, and stops at once one that a still-running build thread starts meanwhile; a SIGKILL of isx leaves them to finish alone.
 Turning off the terminal's own SIGINT (`stty -isig`) and reading Ctrl+C from stdin was rejected: the bytes are just as ambiguous, and a crash would leave the terminal without Ctrl+C.
 
 ### Agent Context File
