@@ -167,7 +167,9 @@ class ActionResolverDefaultCommandTest {
         repo.setUrl("https://github.com/example/project.git");
         repo.setPath("~/project");
         def.setRepos(List.of(repo));
-        var daemon = new FakeIncusDaemon().container(SOURCE, clone(buildSource("agent")));
+        // A clone's repos are those it was built with (#1445).
+        var built = new BuildSource(Map.of(TEMPLATE, def), Map.of(), Map.of(), Map.of()).toJson();
+        var daemon = new FakeIncusDaemon().container(SOURCE, clone(built));
         assertEquals("cd /home/agentuser/project && run-agent",
                 resolve(daemon, SOURCE, Map.of(TEMPLATE, def), new Tool("agent", null, YamlToolAction.EXPAND_REPOS)));
     }
@@ -232,7 +234,7 @@ class ActionResolverDefaultCommandTest {
                 Map.of(), Map.of(), Map.of()).toJson();
         var resolver = new ActionResolver(null, new ToolDefLoader(List.of()), List.of(),
                 Map.of(TEMPLATE, leaf, "tpl-root", currentRoot));
-        assertEquals(List.of(), resolver.collectRepos(TEMPLATE, record));
+        assertEquals(List.of(), resolver.collectRepos(Metadata.TYPE_BASE, record, TEMPLATE));
     }
 
     @Test

@@ -156,4 +156,30 @@ class InstanceActionsInstalledToolsTest {
                 Map.of("tpl-cx", cx, "tpl-cy", cy), "tpl-cx", yamlTool("pa"), yamlTool("pb")));
         assertEquals(List.of("pb", "pa"), offered);
     }
+
+    @Test
+    void aCloneOffersRepoActionsOnlyForTheReposItWasBuiltWith() {
+        var built = template("vscode-remote");
+        built.setRepos(List.of(repo("~/a")));
+        var onDisk = template("vscode-remote");
+        onDisk.setRepos(List.of(repo("~/a"), repo("~/b")));
+        var daemon = new FakeIncusDaemon().container("dev-1", Map.of(
+                Metadata.TYPE, Metadata.TYPE_CLONE,
+                Metadata.PROFILE, TEMPLATE,
+                Metadata.BUILD_SOURCE, new BuildSource(Map.of(TEMPLATE, built),
+                        Map.of(), Map.of(), Map.of()).toJson()));
+        var instance = InstanceListing.collectEntries(daemon.client().listJson()).getFirst();
+        var loader = new ToolDefLoader(List.of());
+        var actions = new InstanceActions(() -> Map.of(TEMPLATE, onDisk), () -> loader, List::of);
+
+        assertEquals(List.of("Open repo 'a' in VS Code"), actions.resolveActionsForInstance(instance).stream()
+                .filter(action -> "vscode-remote".equals(action.toolName())).map(ToolAction::label).toList());
+    }
+
+    private static ImageDef.RepoEntry repo(String path) {
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/example/" + path.substring(2) + ".git");
+        repo.setPath(path);
+        return repo;
+    }
 }

@@ -102,6 +102,6 @@ final class InstanceActions {
         var template = resolveTemplateName(instance);
         return new Inputs(resolver, template,
                 resolver.collectInstalledTools(instance.type(), instance.buildSourceJson(), template),
-                resolver.collectRepos(template, instance.buildSourceJson()));
+                resolver.collectRepos(instance.type(), instance.buildSourceJson(), template));
     }
 }

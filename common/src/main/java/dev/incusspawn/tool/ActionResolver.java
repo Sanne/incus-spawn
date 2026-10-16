@@ -270,26 +270,30 @@ public class ActionResolver {
     }
 
     /**
-     * Collect repository information from the template inheritance chain.
+     * Collect repository information from the template inheritance chain. Like
+     * {@link #collectInstalledTools}, a clone's come from what it was built with (#1445); a
+     * template's from its YAML, the build record standing in for a layer whose YAML is gone.
      *
-     * @param instance the instance as {@link #readInstance} returned it, whose build record stands
-     *                 in for a layer whose YAML is gone
+     * @param instance the instance as {@link #readInstance} returned it
      */
     public List<ActionContext.RepoInfo> collectRepos(JqValue instance, String parentTemplate) {
-        return collectRepos(parentTemplate, buildSource(instance));
+        return collectRepos(instance.getField("config").pathText(Metadata.TYPE, ""), buildSource(instance),
+                parentTemplate);
     }
 
     /**
-     * {@link #collectRepos(JqValue, String)} from the instance's {@link Metadata#BUILD_SOURCE},
-     * for a caller that already holds it.
+     * {@link #collectRepos(JqValue, String)} from the instance's {@link Metadata#TYPE} and
+     * {@link Metadata#BUILD_SOURCE}, for a caller that already holds them.
      */
-    public List<ActionContext.RepoInfo> collectRepos(String parentTemplate, String buildSourceJson) {
+    public List<ActionContext.RepoInfo> collectRepos(String type, String buildSourceJson, String parentTemplate) {
         var repos = new ArrayList<ActionContext.RepoInfo>();
         if (parentTemplate == null || parentTemplate.isEmpty() || "-".equals(parentTemplate)) {
             return repos;
         }
 
-        var chain = getInheritanceChain(parentTemplate, buildSourceJson);
+        // A clone's repos are those it was built with, like its tools: one added to the YAML since
+        // is a directory the clone does not have (#1445).
+        var chain = getInheritanceChain(parentTemplate, buildSourceJson, !Metadata.TYPE_BASE.equals(type));
         // One per destination, as the build clones them (#1394).
         var seen = new java.util.HashSet<String>();
         for (var def : chain) {
@@ -458,11 +462,19 @@ public class ActionResolver {
      * that name now.
      */
     private List<ImageDef> getInheritanceChain(String templateName, String buildSourceJson) {
+        return getInheritanceChain(templateName, buildSourceJson, false);
+    }
+
+    /**
+     * {@link #getInheritanceChain(String, String)}, from the record from the leaf up when
+     * {@code recordFirst}: what a clone was built with, not what the YAML says now.
+     */
+    private List<ImageDef> getInheritanceChain(String templateName, String buildSourceJson, boolean recordFirst) {
         var chain = new ArrayList<ImageDef>();
         var current = templateName;
         var visited = new java.util.HashSet<String>();
-        Map<String, ImageDef> stored = null;
-        var fromRecord = false;
+        Map<String, ImageDef> stored = recordFirst ? recordedDefinitions(buildSourceJson) : null;
+        var fromRecord = recordFirst;
 
         while (current != null && !current.isEmpty() && !"-".equals(current)) {
             if (visited.contains(current)) break;
@@ -478,9 +490,8 @@ public class ActionResolver {
                 }
             } else {
                 def = imageDefs.get(current);
-                if (def == null && stored == null && buildSourceJson != null && !buildSourceJson.isBlank()) {
-                    var bs = dev.incusspawn.config.BuildSource.fromJson(buildSourceJson);
-                    stored = bs == null ? Map.of() : bs.getDefinitions();
+                if (def == null && buildSourceJson != null && !buildSourceJson.isBlank()) {
+                    if (stored == null) stored = recordedDefinitions(buildSourceJson);
                     def = stored.get(current);
                     fromRecord = def != null;
                 }
@@ -495,6 +506,13 @@ public class ActionResolver {
         // to get "child wins over parent" semantics
         java.util.Collections.reverse(chain);
         return chain;
+    }
+
+    /** The definitions the record holds, empty when there is none or it does not parse. */
+    private static Map<String, ImageDef> recordedDefinitions(String buildSourceJson) {
+        var bs = buildSourceJson == null || buildSourceJson.isBlank() ? null
+                : dev.incusspawn.config.BuildSource.fromJson(buildSourceJson);
+        return bs == null ? Map.of() : bs.getDefinitions();
     }
 
     private void collectTransitiveDeps(String toolName, Set<String> result, Set<String> visited) {
