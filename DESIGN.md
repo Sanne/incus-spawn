@@ -1756,11 +1756,19 @@ Declarations exclude project-local tools (`ToolDefLoader.withoutProjectTools`).
 The existing readiness exec delivers the MCP secret, credential seed and proofs into `/run/isx`, owned by root and readable by group 1000.
 The credential seed is `/run/isx/credential-secret`, also used by nested inheritance and doctor.
 The login profile replaces only declared variables holding an isx placeholder or an earlier proof; user-supplied credentials remain untouched.
-A container's boot stamp now ends in `proofs-v3:<generation>`, and the VM probe checks version 3 and `/run/isx/proof-generation`.
+A container's boot stamp now ends in `proofs-v4:<generation>`, and the VM probe checks version 4 and `/run/isx/proof-generation`.
 An instance from before verifier enforcement therefore receives fresh metadata and proofs on its next preparation through `isx shell` or `isx run`.
 Old shells and long-running processes retain stale environment values and need a new login or restart.
 `isx doctor` diagnoses missing delivery and drift, and explicitly requests rebuilding an API-key Claude image that lacks the dynamic approval script from #1113.
 Static placeholders never authorize injection.
+
+Git does not read `GH_TOKEN`, so guest setup installs a system credential helper scoped to `https://github.com` (`GitHubGitCredential`, #1420).
+It answers Git's HTTPS authentication challenge with `x-access-token` and the current proof from `/run/isx/proof-tokens`, including in non-login processes and after an explicit proof reset.
+The proxy still requires the matching address and namespace proof before substituting the selected account's real token.
+The helper stores no token, ignores store/erase operations, and declines other hosts and protocols.
+An explicit `GH_TOKEN` remains intact, and a user's Git configuration can reset the default helper list.
+Proof delivery installs the helper during builds and starts; the version-4 delivery marker upgrades running instances on their next `isx shell` or `isx run`.
+GitHub tool installation also installs it after packages are available.
 Normal lifecycle Incus request budgets are unchanged; tool declarations must be ready before the existing secret write can include verifiers.
 
 Every build receives a registered address, fresh verifiers and proof delivery, including builds using configured defaults without explicit account pins.

@@ -193,6 +193,7 @@ public class GhSetup implements ToolSetup {
     }
 
     private void configureGit(Container c, SpawnConfig config, String accountName) {
+        c.runQuiet("Could not configure GitHub credentials for Git", "sh", "-c", GitHubGitCredential.INSTALL_SCRIPT);
         boolean existingConfig = c.sh("test -f /home/agentuser/.gitconfig").success();
         configureGitIdentity(c, config, accountName);
         if (!existingConfig) {

@@ -120,10 +120,45 @@ class InstanceSecretTest {
     static String guestScriptUnder(Path root, String mounts) throws Exception {
         Files.createDirectories(root.resolve("etc/profile.d"));
         Files.writeString(root.resolve("mounts"), mounts);
-        return InstanceSecret.GUEST_SCRIPT
+        return guestPathsUnder(InstanceSecret.GUEST_SCRIPT, root);
+    }
+
+    private static String guestPathsUnder(String script, Path root) {
+        return script
                 .replace("/run/isx", root + "/run/isx")
                 .replace("/etc/profile.d", root + "/etc/profile.d")
+                .replace("git config --system", "git config --file " + root + "/etc/gitconfig")
                 .replace("/proc/mounts", root + "/mounts");
+    }
+
+    @Test
+    void explicitResetInstallsTheGitHelperAndKeepsTheMcpSecret(@TempDir Path root) throws Exception {
+        var gid = new String(new ProcessBuilder("id", "-g").start().getInputStream().readAllBytes()).strip();
+        var secret = InstanceSecret.generate();
+        var script = guestScriptUnder(root, "tmpfs /run tmpfs rw 0 0\n")
+                .replace("chgrp 1000 ", "chgrp " + gid + " ");
+        assertEquals(0, run(script, secret).waitFor());
+        Files.delete(root.resolve("etc/gitconfig"));
+        Files.writeString(root.resolve("run/isx/proof-version"), "3");
+
+        var reset = guestPathsUnder(InstanceSecret.RESET_PROOFS_SCRIPT, root)
+                .replace("chgrp 1000 ", "chgrp " + gid + " ");
+        var newSeed = InstanceSecret.generate();
+        assertEquals(0, run(reset, newSeed).waitFor());
+        assertEquals(secret + "\n", Files.readString(root.resolve("run/isx/instance-secret")));
+        assertEquals("4", Files.readString(root.resolve("run/isx/proof-version")));
+
+        var git = new ProcessBuilder("git", "credential", "fill").directory(root.toFile()).redirectErrorStream(true);
+        git.environment().keySet().removeIf(k -> k.startsWith("GIT_") || k.equals("GH_TOKEN"));
+        git.environment().putAll(java.util.Map.of("GIT_CONFIG_SYSTEM", root.resolve("etc/gitconfig").toString(),
+                "GIT_CONFIG_GLOBAL", "/dev/null", "GIT_TERMINAL_PROMPT", "0", "GIT_ASKPASS", "/bin/false"));
+        var process = git.start();
+        try (var stdin = process.getOutputStream()) {
+            stdin.write("url=https://github.com/owner/private.git\n\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        var credential = new String(process.getInputStream().readAllBytes());
+        assertEquals(0, process.waitFor(), credential);
+        assertTrue(credential.contains("password=" + PLACEHOLDERS.getFirst().tokenFor(newSeed) + "\n"));
     }
 
     @Test
@@ -172,6 +207,8 @@ class InstanceSecretTest {
         assertTrue(InstanceSecret.missingIn(output(check)), "pre-enforcement delivery needs verifier metadata");
         Files.writeString(root.resolve("run/isx/proof-version"), "3");
         Files.writeString(root.resolve("run/isx/credential-secret"), InstanceSecret.generate());
+        assertTrue(InstanceSecret.missingIn(output(check)), "pre-helper deliveries need Git credential setup");
+        Files.writeString(root.resolve("run/isx/proof-version"), "4");
         assertFalse(InstanceSecret.missingIn(output(check)), "an empty proofs file was still delivered");
     }
 

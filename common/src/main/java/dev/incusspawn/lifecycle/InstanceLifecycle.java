@@ -578,7 +578,7 @@ public final class InstanceLifecycle {
             var stamp = new HashMap<>(alongside);
             var secret = InstanceSecret.retainInto(stamp, config, seed, verifier);
             if (stamp.containsKey(Metadata.INSTANCE_SECRET_BOOT)) {
-                var boot = alongside.get(Metadata.INSTANCE_SECRET_BOOT).split(" proofs-v3:", 2)[0];
+                var boot = alongside.get(Metadata.INSTANCE_SECRET_BOOT).split(" proofs-v[0-9]+:", 2)[0];
                 stamp.put(Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(boot, secret.proofGeneration()));
             }
             incus.configSetAll(name, stamp);
@@ -610,14 +610,14 @@ public final class InstanceLifecycle {
      * the boot, and that the delivery carried proof tokens (#1106). A stamp written by an isx
      * that predates them is the bare boot, so it no longer matches, and the next shell into a
      * container that isx started then gives it a new secret with its proofs -- once, from the
-     * instance it already read.
+     * instance it already read. Version 4 also installs Git's GitHub proof helper (#1420).
      */
     static String secretBootStamp(String bootedAt) {
         return secretBootStamp(bootedAt, "");
     }
 
     static String secretBootStamp(String bootedAt, String generation) {
-        return bootedAt + " proofs-v3:" + generation;
+        return bootedAt + " proofs-v4:" + generation;
     }
 
     /** When Incus last started {@code instance} -- on every start, a reboot included -- or "". */

@@ -139,6 +139,20 @@ class InstanceSecretRebootTest {
     }
 
     @Test
+    void aContainerFromBeforeGitProofSetupIsUpgradedOnce() {
+        var daemon = runningContainerStamped(STARTED, STARTED + " proofs-v3:");
+        var secrets = new ArrayList<String>();
+        var incus = guestTaking(daemon, secrets);
+
+        InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.CONTAINER, msg -> {});
+        InstanceLifecycle.ensureReady(incus, NAME, instance(daemon), MachineType.CONTAINER, msg -> {});
+
+        assertEquals(1, secrets.size(), "install the Git helper on the next shell, then reuse the delivery");
+        assertEquals(InstanceLifecycle.secretBootStamp(STARTED, config(daemon, Metadata.INSTANCE_PROOF_ID)),
+                config(daemon, Metadata.INSTANCE_SECRET_BOOT));
+    }
+
+    @Test
     void aStoppedStartRecordsTheBootItsSecretWentTo() {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
         var incus = spy(daemon.client());

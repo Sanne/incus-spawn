@@ -2,6 +2,7 @@ package dev.incusspawn.proxy;
 
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.tool.GitHubGitCredential;
 import io.hyperfoil.tools.jjq.value.JqObject;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
@@ -59,6 +60,8 @@ class CredentialProofProxyTest {
     static HttpClient client;
     static int upstreamPort;
     static volatile CompletableFuture<Received> received;
+    static final AtomicInteger gitChallenges = new AtomicInteger();
+    static final String GIT_HEAD = "a".repeat(40);
     record Received(String uri, String host, String authorization, String key, String googleKey, String body) {}
     MitmProxy proxy;
     InstanceRegistry registry;
@@ -83,6 +86,20 @@ class CredentialProofProxyTest {
         upstream = vertx.createHttpServer(new HttpServerOptions().setSsl(true)
                         .setKeyCertOptions(NpmCacheProxyTest.keyCert(CertificateAuthority.loadOrCreate(), ANTHROPIC)))
                 .requestHandler(req -> req.body().onSuccess(body -> {
+                    if (req.path().startsWith("/git-proof-private.git/")) {
+                        var expected = "Basic " + Base64.getEncoder().encodeToString(
+                                "x-access-token:ghp_outer".getBytes(StandardCharsets.UTF_8));
+                        if (!expected.equals(req.getHeader("Authorization"))) {
+                            gitChallenges.incrementAndGet();
+                            req.response().setStatusCode(401).putHeader("WWW-Authenticate", "Basic realm=GitHub").end();
+                            return;
+                        }
+                        received.complete(new Received(req.uri(), req.getHeader("Host"), req.getHeader("Authorization"),
+                                null, null, body.toString()));
+                        req.response().putHeader("Content-Type", "text/plain").end(
+                                req.path().endsWith("/HEAD") ? "ref: refs/heads/main\n" : GIT_HEAD + "\trefs/heads/main\n");
+                        return;
+                    }
                     received.complete(new Received(req.uri(), req.getHeader("Host"), req.getHeader("Authorization"),
                             req.getHeader("x-api-key"), req.getHeader("x-goog-api-key"), body.toString()));
                     req.response().end("{}");
@@ -101,6 +118,57 @@ class CredentialProofProxyTest {
     }
 
     @AfterEach void stopProxy() { if (proxy != null) proxy.stop(); }
+
+    @Test
+    void plainGitAnswersTheChallengeWithTheDeliveredProof(@TempDir Path guest) throws Exception {
+        serve(claude("api-key"));
+        received = new CompletableFuture<>();
+        gitChallenges.set(0);
+        var port = proxy.mitmPort();
+        var config = guest.resolve("gitconfig");
+        var proofs = guest.resolve("proof-tokens");
+        Files.writeString(proofs, InstanceSecret.guestEnv(new InstanceSecret.Delivery(SECRET, SECRET), false,
+                List.of(new ProofToken.Placeholder("GH_TOKEN", "gho_", "github")))
+                .get(InstanceSecret.PROOFS_DELIVERY_ENV));
+        var ca = guest.resolve("ca.crt");
+        Files.writeString(ca, CertificateAuthority.loadOrCreate().caCertPem());
+        var env = Map.of("GIT_CONFIG_SYSTEM", config.toString(), "GIT_CONFIG_GLOBAL", "/dev/null",
+                "GIT_TERMINAL_PROMPT", "0", "GIT_ASKPASS", "/bin/false", "GIT_SSL_CAINFO", ca.toString());
+        var command = List.of("git", "-c", "http.proxy=", "-c",
+                "http.curloptResolve=github.com:" + port + ":127.0.0.1", "ls-remote",
+                "https://github.com:" + port + "/git-proof-private.git", "refs/heads/main");
+        var unauthenticated = gitProcess(command, guest, env);
+        assertNotEquals(0, unauthenticated.exit());
+        assertFalse(received.isDone(), "an anonymous Git request receives no host credential");
+
+        // The fixture listens on an ephemeral port instead of 443; keep its helper scope identical.
+        var install = GitHubGitCredential.INSTALL_SCRIPT.replace("github.com", "github.com:" + port)
+                .replace(InstanceSecret.PROOFS_PATH, proofs.toString());
+        assertEquals(0, gitProcess(List.of("sh", "-c", install), guest, env).exit());
+        var authenticated = gitProcess(command, guest, env);
+        assertEquals(0, authenticated.exit(), authenticated.output());
+        assertEquals(GIT_HEAD + "\trefs/heads/main\n", authenticated.output());
+        assertTrue(gitChallenges.get() >= 2, "both invocations begin anonymously");
+        assertEquals("Basic " + Base64.getEncoder().encodeToString(
+                "x-access-token:ghp_outer".getBytes(StandardCharsets.UTF_8)),
+                received.get(10, TimeUnit.SECONDS).authorization());
+    }
+
+    private record GitResult(int exit, String output) {}
+
+    private static GitResult gitProcess(List<String> command, Path guest, Map<String, String> env) throws Exception {
+        var pb = new ProcessBuilder(command).directory(guest.toFile()).redirectErrorStream(true);
+        pb.environment().keySet().removeIf(k -> k.startsWith("GIT_") || k.equals("GH_TOKEN"));
+        pb.environment().putAll(env);
+        var process = pb.start();
+        process.getOutputStream().close();
+        try {
+            assertTrue(process.waitFor(20, TimeUnit.SECONDS), "Git must not wait for input");
+            return new GitResult(process.exitValue(), new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+        } finally {
+            process.destroyForcibly();
+        }
+    }
 
     @Test void unexpectedRefusalsDoNotPrintExceptionMessagesOrCauses() {
         var header = "Bearer " + ProofTestSupport.token("github", "gho_");

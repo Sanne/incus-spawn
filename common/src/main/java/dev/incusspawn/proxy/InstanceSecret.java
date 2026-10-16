@@ -2,6 +2,7 @@ package dev.incusspawn.proxy;
 
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.tool.GitHubGitCredential;
 import dev.incusspawn.tool.ToolDef;
 
 import java.nio.charset.StandardCharsets;
@@ -152,7 +153,8 @@ public final class InstanceSecret {
      * the tmpfs on /run: a secret written then would land on the rootfs -- hidden by the mount,
      * and carried into copies. The script gives the mount a moment, and skips the write without it.
      *
-     * <p>Then it brings the Claude Code registration of {@code isx mcp} in line with the
+     * <p>The same exec installs Git's GitHub proof helper, including in older images. Then it
+     * brings the Claude Code registration of {@code isx mcp} in line with the
      * instance's {@code mcp-caller} grant ({@link McpClientRegistration}), so every start that
      * delivers a secret reconciles it too.
      */
@@ -166,11 +168,12 @@ public final class InstanceSecret {
             + " && " + writeForInstanceUser("'%s\\n' \"$isx_credential_secret\"", CredentialProof.GUEST_PATH)
             + " && " + writeForInstanceUser("'%s' \"$isx_proofs\"", PROOFS_PATH)
             + " && printf '%s' \"$" + GENERATION_ENV + "\" > " + GUEST_DIR + "/proof-generation"
-            + " && printf '%s' 3 > " + GUEST_DIR + "/proof-version"
             + " && printf '%s\\n' " + Container.shellQuote("export " + FILE_ENV_VAR + "=" + GUEST_PATH)
             + " " + Container.shellQuote("export " + CredentialProof.FILE_ENV_VAR + "=" + CredentialProof.GUEST_PATH)
             + " " + Container.shellQuote("if [ -r " + PROOFS_PATH + " ]; then . " + PROOFS_PATH + "; fi")
             + " > " + PROFILE_PATH
+            + " && " + GitHubGitCredential.INSTALL_SCRIPT
+            + " && printf '%s' 4 > " + GUEST_DIR + "/proof-version"
             + "; } >/dev/null 2>&1; unset isx_secret isx_proofs isx_credential_secret; true\n"
             + McpClientRegistration.GUEST_SCRIPT;
 
@@ -197,7 +200,7 @@ public final class InstanceSecret {
      * there, so asking for a new secret on every probe could not help.
      */
     public static final String GUEST_CHECK = RUN_IS_TMPFS + " && { ! [ -s " + GUEST_PATH + " ] || ! [ -e "
-            + PROOFS_PATH + " ] || ! [ -s " + CredentialProof.GUEST_PATH + " ] || ! grep -qx 3 " + GUEST_DIR + "/proof-version; } && echo " + MISSING + "; true";
+            + PROOFS_PATH + " ] || ! [ -s " + CredentialProof.GUEST_PATH + " ] || ! grep -qx 4 " + GUEST_DIR + "/proof-version; } && echo " + MISSING + "; true";
 
     /** Explicit reset updates credential proofs only; an existing MCP session keeps its boot secret. */
     public static final String RESET_PROOFS_SCRIPT = "isx_credential_secret=$" + CredentialProof.DELIVERY_ENV
@@ -207,11 +210,13 @@ public final class InstanceSecret {
             + " && " + writeForInstanceUser("'%s\\n' \"$isx_credential_secret\"", CredentialProof.GUEST_PATH)
             + " && " + writeForInstanceUser("'%s' \"$isx_proofs\"", PROOFS_PATH)
             + " && printf '%s' \"$" + GENERATION_ENV + "\" > " + GUEST_DIR + "/proof-generation"
-            + " && printf '%s' 3 > " + GUEST_DIR + "/proof-version"
             + " && printf '%s\\n' " + Container.shellQuote("export " + FILE_ENV_VAR + "=" + GUEST_PATH)
             + " " + Container.shellQuote("export " + CredentialProof.FILE_ENV_VAR + "=" + CredentialProof.GUEST_PATH)
             + " " + Container.shellQuote("if [ -r " + PROOFS_PATH + " ]; then . " + PROOFS_PATH + "; fi")
-            + " > " + PROFILE_PATH + "; isx_result=$?; unset isx_credential_secret isx_proofs; exit $isx_result";
+            + " > " + PROFILE_PATH
+            + " && " + GitHubGitCredential.INSTALL_SCRIPT
+            + " && printf '%s' 4 > " + GUEST_DIR + "/proof-version"
+            + "; isx_result=$?; unset isx_credential_secret isx_proofs; exit $isx_result";
 
     /** Whether the output of a probe running {@link #GUEST_CHECK} says the guest holds no secret. */
     public static boolean missingIn(String stdout) {

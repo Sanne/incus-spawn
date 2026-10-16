@@ -150,7 +150,10 @@ Key design:
   Login profiles replace only isx placeholders or earlier proofs in variables the build exported.
   VM recovery and uninitiated reboots retain credential proofs while replacing the boot secret.
   Normal lifecycle request budgets stay unchanged; migration or changed declarations add one metadata read under the proof lock.
-  A container's `proofs-v3:<generation>` boot stamp and a VM's version-3 guest marker upgrade previous proof deliveries.
+  A container's `proofs-v4:<generation>` boot stamp and a VM's version-4 guest marker upgrade previous proof deliveries.
+  Version 4 installs `GitHubGitCredential`, the system Git credential helper for `https://github.com` (#1420), during proof delivery and GitHub tool setup.
+  It reads the current delivered proof at each credential request, so plain Git can authenticate without a login shell and after a proof reset.
+  It stores no token and leaves other hosts, protocols and user configuration alone.
   The VM probe also checks the delivered generation, so a delivery racing a reset is repaired on the next preparation.
   Old shells and long-running tools need a new login or restart; doctor requests a rebuild for old API-key Claude images without #1113's approval script.
   Every build gets an address and proofs, including unpinned defaults, before tool setup, clones and primes.
