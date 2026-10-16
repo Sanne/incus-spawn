@@ -252,7 +252,8 @@ Key design:
   Anthropic auth is declared via `ClaudeSetup.proxy()` with `type: anthropic` but remains hardcoded in `MitmProxy` (too complex for the generic tool proxy system); `buildRouting()` filters `type: anthropic` entries from domain maps
 - GitHub, Bob, and Codex/OpenAI credential injection is handled via tool-contributed proxy entries (see Tool System), not hardcoded.
   `ToolProxyResolver.resolve(SpawnConfig)` resolves configuration from `value`/`config-path`, uses `${configKey}` template substitution in auth fields, and produces a per-domain `ResolvedToolProxy` list.
-  `MitmProxy` stores these in `toolProxyByExactDomain` (exact matches) and `toolProxyWildcardSuffixes` (wildcard suffix matches); `findToolProxy()` does exact-then-wildcard lookup.
+  `MitmProxy` stores these in per-domain candidate lists (`Map<String, List<ResolvedToolProxy>>` for exact domains, grouped list for wildcard suffixes); `findToolProxy(routing, domain, requestUri)` does exact-then-wildcard lookup with path-aware selection: path-scoped entries are tried first, then unscoped entries.
+  Two tools can claim the same domain with non-overlapping `paths:` scopes; an unscoped collision still warns and uses first-wins.
   `isInterceptedDomain()` is an instance method (not static) to include tool proxy domains alongside built-in ones.
   It answers from `allInterceptedDomains` (every account's domains, as bridge DNS and certificates have them), never the default account's entries alone: an instance pinned to an account whose entry the default lacks would be relayed with nothing injected.
   `ProxyCredentials` only has Anthropic-specific fields (`anthropicApiKey`, `oauthToken`, Vertex settings) -- `ghToken`/`bobApiKey`/`openaiApiKey` have been removed

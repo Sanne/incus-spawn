@@ -1502,7 +1502,8 @@ Containers are configured identically to direct API key mode (with `ANTHROPIC_AP
 Unlike Vertex AI tokens, OAuth tokens cannot be refreshed automatically — when a 401 is received, the proxy logs an actionable error directing the user to re-run `isx init`.
 
 **Tool-contributed proxy definitions:** Tools declare proxy entries via a `proxy:` block — either in YAML (`ProxyDef` with `configuration:` and `auth:`) or programmatically via `ToolSetup.proxy()` for CDI tools.
-A `ProxyDef` has shared `configuration:` (a map of `ConfigEntry` entries with `config-path`, `value`, `secret`, `type`, and `description`) and a list of `auth:` entries (`AuthDef`), each with a `domains:` list and an auth type (`basic`, `bearer`, `header`, or `anthropic`).
+A `ProxyDef` has shared `configuration:` (a map of `ConfigEntry` entries with `config-path`, `value`, `secret`, `type`, and `description`) and a list of `auth:` entries (`AuthDef`), each with a `domains:` list, an optional `paths:` list, and an auth type (`basic`, `bearer`, `header`, or `anthropic`).
+When `paths:` is set, the credential is injected only for requests whose path equals a listed prefix or starts with one followed by `/`; query strings are stripped before matching.
 Auth fields use `${configKey}` template references resolved against the shared configuration map — literals like `"x-access-token"` are passed through unchanged.
 Configuration resolution: `value` (hardcoded literal) > `config-path` (dot-path into `config.yaml`, e.g. `"github.token"`).
 User-defined tools use arbitrary config paths (e.g. `"myTool.apiKey"`) stored via `SpawnConfig.setConfigByPath()` and round-tripped through `@JsonAnySetter`/`@JsonAnyGetter`.
@@ -1510,8 +1511,9 @@ Built-in proxy tools are CDI tools declaring `proxy()` directly: `ClaudeSetup` (
 `type: anthropic` means the domain is handled by MitmProxy's hardcoded auth logic (three-way routing: Vertex, OAuth, API key) — the generic tool proxy injection path does not apply.
 Anthropic entries use relaxed configuration resolution (at least one non-blank credential, matching `ClaudeConfig.hasAuth()` semantics) and are excluded from MitmProxy's domain maps in `buildRouting()`; a change to their credentials is still config drift, since it changes `config.yaml`.
 `ToolProxyResolver` (in `common`) handles configuration resolution; `findUnresolved()` returns configuration entries that could not be resolved (excluding `type: anthropic` entries), and `ProxyMain` warns at startup when unresolved entries are found.
-`MitmProxy` stores resolved generic entries in exact-match and wildcard-suffix maps for O(1)/O(n) domain lookup.
-Domain collisions between tools are warned at startup (exact-domain conflicts and wildcard-suffix overlaps); tool domains that shadow built-in intercepted domains (registry, Maven, Gradle, npm) are warned during validation since built-in routing takes precedence.
+`MitmProxy` stores resolved generic entries in per-domain candidate lists for exact domains and wildcard suffixes.
+`findToolProxy(routing, domain, requestUri)` selects among candidates: path-scoped entries are tried first, then unscoped entries, so two tools can claim the same domain with non-overlapping paths.
+Unscoped collisions between tools are warned at startup (exact-domain conflicts and wildcard-suffix overlaps); tool domains that shadow built-in intercepted domains (registry, Maven, Gradle, npm) are warned during validation since built-in routing takes precedence.
 A `proxy:` entry also declares `placeholders:` -- each an `env` variable the tool reads its credential from and the `prefix` its value must start with -- which every start fills with the instance's proof token for the entry's namespace (see "Proof tokens" below).
 A YAML tool that exports a static placeholder through `env:` declares the same variable here (`typesafe.yaml` does).
 A proxied namespace with no usable placeholder declaration warns once per tool and namespace on proxy configuration load and during tool validation.

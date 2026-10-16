@@ -1057,8 +1057,51 @@ proxy:
       value: "${api-key}"
 ```
 
-Wildcard domains (`*.internal.myservice.com`) match any subdomain. The most specific wildcard wins when multiple tools register overlapping suffixes.
+Wildcard domains (`*.internal.myservice.com`) match any subdomain.
+The most specific wildcard wins when multiple tools register overlapping suffixes.
 In this example, send `$MY_SERVICE_TOKEN` as the bearer token, Basic password, or `X-API-Key` value for the corresponding domain.
+
+##### Path-scoped injection
+
+An auth entry can restrict credential injection to specific request paths with `paths:`.
+When set, the proxy injects the credential only for requests whose path equals one of the listed prefixes or starts with one followed by `/`.
+Query strings are stripped before matching.
+When `paths:` is omitted, the credential is injected for every request to the domain, as before.
+
+```yaml
+# Only inject the credential for MCP requests, not for other API paths
+name: develocity-mcp
+description: Develocity MCP server
+
+env:
+  - name: DEVELOCITY_TOKEN
+    value: develocity_placeholder
+
+proxy:
+  config-namespace: develocity
+  placeholders:
+    - env: DEVELOCITY_TOKEN
+      prefix: develocity_
+  configuration:
+    token:
+      config-path: "token"
+      description: "Develocity access key"
+      secret: true
+  auth:
+    - domains:
+        - develocity.example.com
+      paths:
+        - /mcp
+      type: bearer
+      token: "${token}"
+```
+
+Here, a request to `develocity.example.com/mcp` or `develocity.example.com/mcp/messages` receives the credential.
+A request to `develocity.example.com/api/build-scan` does not.
+
+Two tools can register auth entries for the same domain with different path scopes.
+Path-scoped entries are tried first (they are more specific), then unscoped entries.
+When two tools register unscoped entries for the same domain, the first one loaded wins and a warning is logged.
 
 Configuration entries can also use `value` for hardcoded literals (no prompt during `isx init`) and `type: confirm` for yes/no prompts like license acceptance.
 

@@ -80,7 +80,9 @@ The action a new branch opens with is `ActionResolver.defaultCommandForBranch`, 
 It takes the source and its leaf template as `BranchFlow.preflight` read them (`Preflight.sourceInstance`, `Preflight.template`), so it makes no Incus request, and falls back to a plain shell where the ref names a tool the source was not built with.
 
 **Tool-contributed proxy definitions**: Tools declare proxy entries via a `proxy:` block (YAML `ProxyDef` or `ToolSetup.proxy()` for CDI tools) that registers domains with the MITM proxy for credential injection.
-A `ProxyDef` has shared `configuration:` (a map of `ConfigEntry` entries) and a list of `auth:` entries (`AuthDef`), each with a `domains:` list and an auth type (`basic`, `bearer`, `header`, or `anthropic`).
+A `ProxyDef` has shared `configuration:` (a map of `ConfigEntry` entries) and a list of `auth:` entries (`AuthDef`), each with a `domains:` list, an optional `paths:` list, and an auth type (`basic`, `bearer`, `header`, or `anthropic`).
+When `paths:` is set, the credential is injected only for requests whose path equals a listed prefix or starts with one followed by `/`; query strings are stripped before matching.
+Two tools can claim the same domain with non-overlapping `paths:` scopes; an unscoped collision still warns and uses first-wins.
 `ConfigEntry` has `config-path` (dot-path into config.yaml, e.g. `"github.token"`), `value` (hardcoded literal), `secret` (boolean), `type` ("string" or "confirm" for y/n prompts like license acceptance), and `description`.
 Resolution: `value` > `config-path`.
 User-defined tools use arbitrary config paths (e.g. `"myTool.apiKey"`) which are stored via `SpawnConfig.setConfigByPath()` and round-tripped through `@JsonAnySetter`/`@JsonAnyGetter`.
