@@ -248,10 +248,17 @@ class ToolProxyResolutionTest {
         assertEquals(1, tp.auth().getPaths().size());
         assertEquals("/mcp", tp.auth().getPaths().get(0));
 
-        assertTrue(tp.matchesPath("/mcp"), "should match exact path");
-        assertTrue(tp.matchesPath("/mcp/sub"), "should match subpath");
-        assertFalse(tp.matchesPath("/api/build-scan"), "should not match unscoped path");
-        assertFalse(tp.matchesPath("/"), "should not match root");
+        var creds = new ProxyCredentials("", "", false, "", "", resolved);
+        var proxy = new MitmProxy(null, "127.0.0.1", 18443, 18080, "127.0.0.1", creds);
+
+        assertNotNull(proxy.findToolProxy("develocity.example.com", "/mcp"),
+                "should match exact path");
+        assertNotNull(proxy.findToolProxy("develocity.example.com", "/mcp/sub"),
+                "should match subpath");
+        assertNull(proxy.findToolProxy("develocity.example.com", "/api/build-scan"),
+                "should not match unscoped path");
+        assertNull(proxy.findToolProxy("develocity.example.com", "/"),
+                "should not match root");
     }
 
     @Test
@@ -280,7 +287,7 @@ class ToolProxyResolutionTest {
         assertTrue(proxy.allInterceptedDomains().contains("develocity.example.com"),
                 "domain must be intercepted even when paths are scoped");
         assertNotNull(proxy.findToolProxy("develocity.example.com"),
-                "domain lookup must still find the proxy entry");
+                "domain lookup must still find the proxy entry for generic queries");
     }
 
     @Test
@@ -301,10 +308,113 @@ class ToolProxyResolutionTest {
         var config = new SpawnConfig();
         config.getGithub().setToken("ghp_test");
         var resolved = ToolProxyResolver.resolve(config, Map.of("gh", tool));
-        var tp = resolved.get(0);
 
-        assertTrue(tp.matchesPath("/any/path"), "no paths = match everything");
-        assertTrue(tp.matchesPath("/"), "no paths = match root");
+        var creds = new ProxyCredentials("", "", false, "", "", resolved);
+        var proxy = new MitmProxy(null, "127.0.0.1", 18443, 18080, "127.0.0.1", creds);
+
+        assertNotNull(proxy.findToolProxy("github.com", "/any/path"),
+                "no paths = match everything");
+        assertNotNull(proxy.findToolProxy("github.com", "/"),
+                "no paths = match root");
+    }
+
+    @Test
+    void twoToolsSameDomainDifferentPaths() throws Exception {
+        var mcpTool = loadToolSetup("""
+                name: develocity-mcp
+                proxy:
+                  config-namespace: develocity
+                  configuration:
+                    token:
+                      value: "mcp-token"
+                  auth:
+                    - domains:
+                        - develocity.example.com
+                      paths:
+                        - /mcp
+                      type: bearer
+                      token: "${token}"
+                """);
+        var cacheTool = loadToolSetup("""
+                name: develocity-cache
+                proxy:
+                  config-namespace: devcache
+                  configuration:
+                    token:
+                      value: "cache-token"
+                  auth:
+                    - domains:
+                        - develocity.example.com
+                      paths:
+                        - /cache
+                      type: bearer
+                      token: "${token}"
+                """);
+        var config = new SpawnConfig();
+        var resolved = new java.util.ArrayList<>(ToolProxyResolver.resolve(config,
+                Map.of("develocity-mcp", mcpTool, "develocity-cache", cacheTool)));
+
+        var creds = new ProxyCredentials("", "", false, "", "", resolved);
+        var proxy = new MitmProxy(null, "127.0.0.1", 18443, 18080, "127.0.0.1", creds);
+
+        var mcp = proxy.findToolProxy("develocity.example.com", "/mcp");
+        assertNotNull(mcp);
+        assertEquals("Bearer mcp-token", mcp.computeHeaderValue());
+
+        var cache = proxy.findToolProxy("develocity.example.com", "/cache");
+        assertNotNull(cache);
+        assertEquals("Bearer cache-token", cache.computeHeaderValue());
+
+        assertNull(proxy.findToolProxy("develocity.example.com", "/api"),
+                "no entry matches /api");
+    }
+
+    @Test
+    void pathScopedAndUnscopedSameDomain() throws Exception {
+        var mcpTool = loadToolSetup("""
+                name: develocity-mcp
+                proxy:
+                  config-namespace: develocity
+                  configuration:
+                    token:
+                      value: "mcp-token"
+                  auth:
+                    - domains:
+                        - develocity.example.com
+                      paths:
+                        - /mcp
+                      type: bearer
+                      token: "${token}"
+                """);
+        var broadTool = loadToolSetup("""
+                name: develocity-broad
+                proxy:
+                  config-namespace: devbroad
+                  configuration:
+                    token:
+                      value: "broad-token"
+                  auth:
+                    - domains:
+                        - develocity.example.com
+                      type: bearer
+                      token: "${token}"
+                """);
+        var config = new SpawnConfig();
+        var resolved = new java.util.ArrayList<>(ToolProxyResolver.resolve(config,
+                Map.of("develocity-mcp", mcpTool, "develocity-broad", broadTool)));
+
+        var creds = new ProxyCredentials("", "", false, "", "", resolved);
+        var proxy = new MitmProxy(null, "127.0.0.1", 18443, 18080, "127.0.0.1", creds);
+
+        var mcp = proxy.findToolProxy("develocity.example.com", "/mcp");
+        assertNotNull(mcp);
+        assertEquals("Bearer mcp-token", mcp.computeHeaderValue(),
+                "path-scoped entry wins on its path");
+
+        var api = proxy.findToolProxy("develocity.example.com", "/api");
+        assertNotNull(api);
+        assertEquals("Bearer broad-token", api.computeHeaderValue(),
+                "unscoped entry serves the rest");
     }
 
     private static ToolSetup loadToolSetup(String yaml) throws Exception {

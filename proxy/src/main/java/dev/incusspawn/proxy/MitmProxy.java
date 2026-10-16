@@ -123,8 +123,8 @@ public class MitmProxy {
     private final String healthBindAddress;
 
     private record ToolProxyRouting(
-            Map<String, ResolvedToolProxy> exactDomain,
-            List<Map.Entry<String, ResolvedToolProxy>> wildcardSuffixes,
+            Map<String, List<ResolvedToolProxy>> exactDomain,
+            List<Map.Entry<String, List<ResolvedToolProxy>>> wildcardSuffixes,
             Set<String> allInterceptedDomains,
             List<String> suffixes
     ) {}
@@ -590,8 +590,8 @@ public class MitmProxy {
     private static ToolProxyRouting buildRouting(List<ResolvedToolProxy> proxies,
                                                  List<ResolvedToolProxy> domainProxies,
                                                  boolean warn) {
-        var exact = new java.util.LinkedHashMap<String, ResolvedToolProxy>();
-        var wildcards = new ArrayList<Map.Entry<String, ResolvedToolProxy>>();
+        var exact = new java.util.LinkedHashMap<String, List<ResolvedToolProxy>>();
+        var wildcardsBySuffix = new java.util.LinkedHashMap<String, List<ResolvedToolProxy>>();
         var extraDomains = new HashSet<String>();
         var suffixSet = new java.util.LinkedHashSet<String>();
 
@@ -610,58 +610,117 @@ public class MitmProxy {
             if (tp.auth() != null && "anthropic".equals(tp.auth().getType())) continue;
 
             var domain = tp.domain();
+            boolean isPathScoped = tp.auth() != null && !tp.auth().getPaths().isEmpty();
             if (domain.startsWith("*.")) {
                 var suffix = domain.substring(1); // ".example.com"
-                if (warn) {
-                    // Only computed when it can be reported: the per-selection builds pass
-                    // warn=false, and this scan's sole consumer is the message below.
-                    var firstForSuffix = wildcards.stream()
-                            .filter(e -> e.getKey().equals(suffix))
+                var candidates = wildcardsBySuffix.computeIfAbsent(suffix, k -> new ArrayList<>());
+                if (!isPathScoped && warn) {
+                    var existingUnscoped = candidates.stream()
+                            .filter(c -> c.auth() == null || c.auth().getPaths().isEmpty())
                             .findFirst().orElse(null);
-                    if (firstForSuffix != null
-                            && !firstForSuffix.getValue().toolName().equals(tp.toolName())) {
+                    if (existingUnscoped != null
+                            && !existingUnscoped.toolName().equals(tp.toolName())) {
                         ProxyLog.warn("Tool '" + tp.toolName() + "' claims wildcard '" + domain
-                                + "' already registered by tool '" + firstForSuffix.getValue().toolName()
+                                + "' already registered by tool '" + existingUnscoped.toolName()
                                 + "' — first match wins");
                     }
                 }
-                wildcards.add(Map.entry(suffix, tp));
-            } else {
-                var existing = exact.putIfAbsent(domain, tp);
-                if (existing != null) {
-                    if (warn) {
-                        ProxyLog.warn("Tool '" + tp.toolName() + "' claims domain '" + domain
-                                + "' already registered by tool '" + existing.toolName() + "' — skipping");
-                    }
-                    continue;
+                if (isPathScoped || candidates.stream()
+                        .noneMatch(c -> c.auth() == null || c.auth().getPaths().isEmpty()
+                                || !c.toolName().equals(tp.toolName()))) {
+                    candidates.add(tp);
                 }
+            } else {
+                var candidates = exact.computeIfAbsent(domain, k -> new ArrayList<>());
+                if (!isPathScoped) {
+                    var existingUnscoped = candidates.stream()
+                            .filter(c -> c.auth() == null || c.auth().getPaths().isEmpty())
+                            .findFirst().orElse(null);
+                    if (existingUnscoped != null) {
+                        if (warn && !existingUnscoped.toolName().equals(tp.toolName())) {
+                            ProxyLog.warn("Tool '" + tp.toolName() + "' claims domain '" + domain
+                                    + "' already registered by tool '" + existingUnscoped.toolName()
+                                    + "' — skipping");
+                        }
+                        continue;
+                    }
+                }
+                candidates.add(tp);
             }
         }
 
-        wildcards.sort(Comparator.<Map.Entry<String, ResolvedToolProxy>, Integer>comparing(
+        var wildcards = new ArrayList<Map.Entry<String, List<ResolvedToolProxy>>>();
+        for (var e : wildcardsBySuffix.entrySet()) {
+            wildcards.add(Map.entry(e.getKey(), List.copyOf(e.getValue())));
+        }
+        wildcards.sort(Comparator.<Map.Entry<String, List<ResolvedToolProxy>>, Integer>comparing(
                 e -> e.getKey().length()).reversed());
 
+        var immutableExact = new java.util.LinkedHashMap<String, List<ResolvedToolProxy>>();
+        for (var e : exact.entrySet()) {
+            immutableExact.put(e.getKey(), List.copyOf(e.getValue()));
+        }
+
         return new ToolProxyRouting(
-                Map.copyOf(exact),
+                Map.copyOf(immutableExact),
                 List.copyOf(wildcards),
                 ProxyConfig.interceptedDomains(extraDomains),
                 List.copyOf(suffixSet));
     }
 
     ResolvedToolProxy findToolProxy(String domain) {
-        return findToolProxy(configState.routing(), domain);
+        return findAnyToolProxy(configState.routing(), domain);
+    }
+
+    ResolvedToolProxy findToolProxy(String domain, String requestUri) {
+        return findToolProxy(configState.routing(), domain, requestUri);
     }
 
     /**
-     * The tool proxy serving a domain for one request. Routing is global (which domains are
+     * The tool proxy serving a domain and request path. Path-scoped entries are tried first
+     * (they are more specific), then unscoped entries. Routing is global (which domains are
      * intercepted never depends on the account) but the credential inside the entry is not,
      * so a pinned instance looks this up in its own routing.
      */
-    private static ResolvedToolProxy findToolProxy(ToolProxyRouting routing, String domain) {
-        var exact = routing.exactDomain().get(domain);
-        if (exact != null) return exact;
+    private static ResolvedToolProxy findToolProxy(ToolProxyRouting routing, String domain,
+                                                   String requestUri) {
+        var candidates = routing.exactDomain().get(domain);
+        if (candidates != null) {
+            var match = selectByPath(candidates, requestUri);
+            if (match != null) return match;
+        }
         for (var entry : routing.wildcardSuffixes()) {
-            if (domain.endsWith(entry.getKey())) return entry.getValue();
+            if (domain.endsWith(entry.getKey())) {
+                var match = selectByPath(entry.getValue(), requestUri);
+                if (match != null) return match;
+            }
+        }
+        return null;
+    }
+
+    private static ResolvedToolProxy findAnyToolProxy(ToolProxyRouting routing, String domain) {
+        var candidates = routing.exactDomain().get(domain);
+        if (candidates != null && !candidates.isEmpty()) return candidates.get(0);
+        for (var entry : routing.wildcardSuffixes()) {
+            if (domain.endsWith(entry.getKey()) && !entry.getValue().isEmpty()) {
+                return entry.getValue().get(0);
+            }
+        }
+        return null;
+    }
+
+    private static ResolvedToolProxy selectByPath(List<ResolvedToolProxy> candidates,
+                                                  String requestUri) {
+        // Path-scoped entries first: they are more specific than unscoped ones.
+        for (var tp : candidates) {
+            if (tp.auth() != null && !tp.auth().getPaths().isEmpty() && tp.matchesPath(requestUri)) {
+                return tp;
+            }
+        }
+        for (var tp : candidates) {
+            if (tp.auth() == null || tp.auth().getPaths().isEmpty()) {
+                return tp;
+            }
         }
         return null;
     }
@@ -1525,8 +1584,8 @@ public class MitmProxy {
                 options.removeHeader("Authorization");
             }
         } else {
-            var tp = findToolProxy(ctx.routing(), domain);
-            if (tp != null && tp.matchesPath(options.getURI())) {
+            var tp = findToolProxy(ctx.routing(), domain, options.getURI());
+            if (tp != null) {
                 var headerName = tp.headerName();
                 var headerValue = tp.computeHeaderValue();
                 if (headerName != null && headerValue != null) {
@@ -1984,8 +2043,8 @@ public class MitmProxy {
                 upReq.headers().remove("x-api-key");
             }
         } else {
-            var tp = findToolProxy(ctx.routing(), domain);
-            if (tp != null && tp.matchesPath(upReq.getURI())) {
+            var tp = findToolProxy(ctx.routing(), domain, upReq.getURI());
+            if (tp != null) {
                 var headerName = tp.headerName();
                 var headerValue = tp.computeHeaderValue();
                 if (headerName != null && headerValue != null) {
