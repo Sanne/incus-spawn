@@ -181,7 +181,8 @@ final class PreparationGit {
         probe.environment().putAll(environment);
         Process process = null;
         try {
-            process = probe.start();
+            // A build's first Ctrl+C may be a copy: it must not turn this read into "unknown".
+            process = dev.incusspawn.util.OwnSession.start(probe);
             // Wait before reading: one config value fits the pipe.
             if (!process.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) return java.util.Optional.empty();
             return switch (process.exitValue()) {

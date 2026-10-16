@@ -8,6 +8,7 @@ import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.CpuInfo;
 import dev.incusspawn.util.HostLock;
+import dev.incusspawn.util.OwnSession;
 import dev.incusspawn.Platform;
 import dev.incusspawn.Warnings;
 
@@ -941,40 +942,19 @@ public final class VmManager {
         ));
     }
 
-    private static final Path PERL = Path.of("/usr/bin/perl");
-
     /**
-     * The command that runs {@code cmd} as the leader of a new session, under the same pid.
+     * Starts the VM's hypervisor as the leader of a session of its own ({@link OwnSession}), output
+     * and errors appended to {@code log}, and records its pid in {@code pidFile} once it has become
+     * {@code program}, the word {@link #isRunning()} recognises it by (#971, #993).
      * <p>
      * The VM has to outlive the command that starts it. Started as a plain child it stays in
      * that command's process group and on its terminal, and both take it down: closing the
      * terminal hangs up every process on it, Ctrl+C reaches the whole foreground group, and
      * launchd kills whatever is left in a job's process group once the job exits, which is what
-     * the launch agent's {@code isx vm start} does as soon as the VM is up (#971). A session of
-     * its own has no terminal and a process group nobody else is in.
-     * <p>
-     * Java cannot call {@code setsid}, and macOS ships no {@code setsid} command, so perl does it
-     * and then execs the VM in its place: the pid the caller gets is the VM's. Without perl the
-     * command is returned as it is, and the VM starts the way it used to.
-     */
-    static List<String> inOwnSession(List<String> cmd) {
-        if (!Files.isExecutable(PERL)) return cmd;
-        var wrapped = new ArrayList<>(List.of(PERL.toString(), "-MPOSIX=setsid", "-e",
-                "setsid(); exec { $ARGV[0] } @ARGV or die qq(exec $ARGV[0]: $!\\n)", "--"));
-        wrapped.addAll(cmd);
-        return wrapped;
-    }
-
-    /**
-     * Starts the VM's hypervisor through {@link #inOwnSession}, output and errors appended to
-     * {@code log}, and records its pid in {@code pidFile} once it has become {@code program}, the
-     * word {@link #isRunning()} recognises it by (#971, #993).
+     * the launch agent's {@code isx vm start} does as soon as the VM is up (#971).
      */
     static Process launchInOwnSession(List<String> cmd, String program, Path log, Path pidFile) throws IOException {
-        var pb = new ProcessBuilder(inOwnSession(cmd));
-        // The user's perl settings are for their scripts, and can stop the one-liner from loading.
-        pb.environment().remove("PERL5OPT");
-        pb.environment().remove("PERL5LIB");
+        var pb = OwnSession.apply(new ProcessBuilder(cmd));
         pb.redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()));
         pb.redirectErrorStream(true);
         var process = pb.start();
@@ -990,16 +970,16 @@ public final class VmManager {
     }
 
     private static String noSessionNote() {
-        return Files.isExecutable(PERL) ? "" : "; no " + PERL + ", so it stops when the command that started it exits";
+        return OwnSession.available() ? "" : "; no setsid or perl, so it stops when the command that started it exits";
     }
 
     /**
-     * Waits until a process started through {@link #inOwnSession} has become {@code program}.
+     * Waits until a process started through {@link OwnSession} has become {@code program}.
      * <p>
-     * For its first moments the pid is still perl. {@link #isRunning()} takes a recorded pid
-     * whose command is not the VM's for a stale one and removes the VM's files, so the pid must
-     * not be recorded before the exec; and an exec that fails, which {@code ProcessBuilder}
-     * used to report itself, now shows only as perl exiting.
+     * For its first moments the pid is still the wrapper's (setsid or perl). {@link #isRunning()}
+     * takes a recorded pid whose command is not the VM's for a stale one and removes the VM's
+     * files, so the pid must not be recorded before the exec; and an exec that fails, which {@code ProcessBuilder}
+     * used to report itself, now shows only as the wrapper exiting.
      */
     static void awaitExec(Process process, String program) throws IOException {
         Optional<String> last = Optional.empty();
@@ -1017,7 +997,7 @@ public final class VmManager {
             }
         }
         if (last.isPresent()) {
-            // Still perl two seconds in: something is wrong with the exec, not with reading it.
+            // Still the wrapper two seconds in: something is wrong with the exec, not with reading it.
             throw new IOException(program + " did not exec within 2s (still " + last.get() + ")");
         }
         // The command could not be read at all; a live process is the best answer there is.
@@ -1069,7 +1049,7 @@ public final class VmManager {
                 "-append", kernelCmdline(console)
         ));
 
-        // qemu's console is its own stdout, so perl's errors can share its append-mode vm.log.
+        // qemu's console is its own stdout, so the wrapper's errors can share its append-mode vm.log.
         long pid = launchInOwnSession(cmd, "qemu", Environment.vmLogFile(), Environment.vmPidFile()).pid();
         BuildOutput.stepDone("pid=" + pid + noSessionNote());
     }

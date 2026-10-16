@@ -1,6 +1,7 @@
 package dev.incusspawn.git;
 
 import dev.incusspawn.config.GitTransferConfig;
+import dev.incusspawn.util.SessionProbe;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -228,6 +229,28 @@ class GitProcessTest {
         assertEquals("line 4982", lines.getFirst());
         assertEquals("remote: red", lines.get(lines.size() - 2));
         assertEquals(GitProcess.MAX_LINE, lines.getLast().length());
+    }
+
+    /**
+     * A build's Git leads a session of its own: the terminal's Ctrl+C, which may be a copy, reaches isx
+     * alone, and isx decides (#1425). A session leader leads its process group, which ps shows everywhere.
+     */
+    @Test
+    void gitThatCannotPromptIsOutOfTheTerminalsProcessGroup() throws Exception {
+        SessionProbe.assumeSession();
+        var result = GitProcess.run(new ProcessBuilder(SessionProbe.SH).redirectErrorStream(true), null, true, STALL_1S, p -> {});
+        assertEquals(GitProcess.Status.OK, result.status(), result.diagnostics());
+        assertTrue(SessionProbe.leadsItsGroup(result.diagnostics()),
+                "Git shares the process group of isx, so Ctrl+C reaches it: " + result.diagnostics());
+    }
+
+    /** update-all runs the user's own SSH command as it is, which may ask on the terminal: it stays there. */
+    @Test
+    void gitThatMayPromptKeepsTheTerminal(@TempDir Path repo) throws Exception {
+        var result = GitProcess.run(new ProcessBuilder("sh", "-c", "ps -o pgid= -p $$").redirectErrorStream(true),
+                repo, false, STALL_1S, p -> {});
+        assertEquals(GitProcess.Status.OK, result.status(), result.diagnostics());
+        assertEquals(SessionProbe.look(ProcessHandle.current().pid()).processGroup(), result.diagnostics().strip());
     }
 
     private static java.util.stream.Stream<Long> children() {

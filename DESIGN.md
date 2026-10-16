@@ -385,6 +385,7 @@ Builds never fetch into or create user working checkouts for acceleration (#1395
 Explicit `isx update-all` still uses `HostRepoRefresh` to fetch linked checkouts; its existing managed-shallow depth policy remains intact.
 Every host Git command that talks to a remote runs through `GitProcess` (#1343).
 It is non-interactive: `GIT_TERMINAL_PROMPT=0` and stdin `/dev/null`.
+It also leads a session of its own (`OwnSession`, see "The macOS VM outlives whatever started it"), so a build's first Ctrl+C, which may be a copy, reaches isx alone (#1425); only `update-all`'s Git, whose user SSH command may ask on the terminal, stays there.
 It reads Git's `--progress` output on its own thread into a bounded tail: the last 20 lines of up to 200 characters, with terminal escapes, control characters and URL credentials removed, since a remote's text reaches the terminal.
 A `\r` alone ends a progress update; `\r\n`, as ssh ends its messages, ends a whole line that the tail keeps.
 SSH in `update-all` runs `ssh -o BatchMode=yes` unless the environment or `core.sshCommand` picks the command.
@@ -528,7 +529,8 @@ A terminal can send Ctrl+C for Ctrl+Shift+C, its copy shortcut: ptyxis does when
 isx then gets the same SIGINT and cannot tell a copy from an interrupt, so copying a line of the output ended a long build.
 While a build instance exists and isx is at a terminal, `BuildInterrupt` takes the first SIGINT as a warning to press it again, and a second within five seconds goes to the handler that was there before.
 So an interrupt still ends the process with the shutdown hook's "Build interrupted for" report, and outside a build, at a prompt before it starts and off a terminal, Ctrl+C acts at once.
-Host processes the build runs (Git preparing a repository) share the terminal's process group, so the first Ctrl+C still reaches them and can fail that step.
+Git preparing a repository runs in a session of its own (`GitProcess`, #1425), out of the terminal's process group, so the first Ctrl+C does not reach it either.
+Out of that group, the Ctrl+C that does end isx no longer stops Git either, so `OwnSession.start` has a shutdown hook stop it and its helpers, SIGTERM then SIGKILL, as `GitProcess` does after a stall, and stops at once one that a still-running build thread starts meanwhile; a SIGKILL of isx leaves them to finish alone.
 Turning off the terminal's own SIGINT (`stty -isig`) and reading Ctrl+C from stdin was rejected: the bytes are just as ambiguous, and a crash would leave the terminal without Ctrl+C.
 
 ### Agent Context File
@@ -4023,12 +4025,15 @@ Ctrl+C reaches the whole foreground group, so interrupting the command that happ
 And launchd kills whatever is left in a job's process group once the job exits, so the login agent, whose `isx vm start` exits as soon as the VM is up, killed its own VM a few seconds later (#971).
 
 Java has no `setsid`, and macOS ships no `setsid` command, so the VM is started through `/usr/bin/perl -MPOSIX=setsid -e 'setsid(); exec …'`: perl replaces itself with vfkit, so the pid `isx` records is the VM's.
+Linux has util-linux's `setsid`, which execs the command in its own place too when, as a child of the JVM, it is not a process group leader; `OwnSession` prefers it and falls back to perl.
 Ignoring SIGHUP (`nohup`) was rejected because it covers one of the three cases; `AbandonProcessGroup` in the agent's plist covers another one only.
 Launching the app bundle through LaunchServices (`open`) would detach it too, but returns no pid.
 If perl is ever gone from macOS the command is run as before, and this has to be solved again.
+The perl wrapper runs without the user's `PERL5OPT` and `PERL5LIB`, which could stop it from loading, and so does whatever it starts.
 
 QEMU, the Linux path, is started the same way (#993): its exposure to a hangup or Ctrl+C is the same.
-Its console is qemu's own stdout, appended to `vm.log`, so perl's diagnostics share that file without the double-writer problem below.
+Its console is qemu's own stdout, appended to `vm.log`, so the wrapper's diagnostics share that file without the double-writer problem below.
+A build's host Git is started the same way (#1425), but unlike the VM it must not outlive isx: see "A running build takes two Ctrl+C".
 
 vfkit's own stdout/stderr (perl's diagnostics if the exec above fails; otherwise whatever vfkit itself prints) go to `Environment.vfkitLogFile()`, never to `vm.log`: vfkit opens `vm.log` itself, non-append, for the VM's virtio-serial console.
 A second writer appending to the same file corrupts both — vfkit's own periodic lines ("machine awake" on host wake, timesync setup) land at EOF over console bytes `isx vm console` has already read past, and the console's next write lands over those in turn.

@@ -3,6 +3,7 @@ paths:
   - "common/src/main/java/dev/incusspawn/incus/**"
   - "common/src/main/java/dev/incusspawn/vm/**"
   - "common/src/main/java/dev/incusspawn/util/HostLock.java"
+  - "common/src/main/java/dev/incusspawn/util/OwnSession.java"
   - "common/src/main/java/dev/incusspawn/lifecycle/**"
   - "common/src/main/java/dev/incusspawn/ClientLog.java"
   - "appliance/**"
@@ -32,12 +33,12 @@ The transports keep the `ETag` header on `RawResponse`/`ApiResponse`; `FakeIncus
 `Container` is a helper for running commands inside a specific container (`exec`, `runAsUser`, `runInteractive`).
 The `incus` CLI binary is not required at runtime.
 
-**The macOS VM runs in a session of its own** (`VmManager.inOwnSession`, #971): vfkit is started through a perl `setsid(); exec`, so it is the leader of a new session under the pid the caller recorded.
+**The macOS VM runs in a session of its own** (`OwnSession`, #971): vfkit is started through a perl `setsid(); exec` (on Linux, util-linux's `setsid`), so it is the leader of a new session under the pid the caller recorded.
 As a plain child it stayed in the starting command's process group and on its terminal, and died with them.
 Closing the terminal hangs up everything on it, Ctrl+C reaches the foreground group, and launchd kills what is left in a job's process group when the job exits, which is how the login agent's `isx vm start` took its own VM down a few seconds after starting it.
-Anything else that has to outlive the command starting it needs the same.
-QEMU (the Linux/CI path) is started the same way (#993); its console is its own stdout to `vm.log`, so perl's errors go there too.
-Without `/usr/bin/perl` the command is left as it is. vfkit's own stdout/stderr go to `Environment.vfkitLogFile()`, not `vm.log`: vfkit opens `vm.log` itself, non-append, for the VM's virtio-serial console, and a second append-mode writer on the same file corrupts both.
+Anything else that has to outlive the command starting it, or must not get the terminal's Ctrl+C, needs the same: a build's host Git does (`GitProcess`, #1425), through `OwnSession.start`, whose shutdown hook stops it when isx exits first.
+QEMU (the Linux/CI path) is started the same way (#993); its console is its own stdout to `vm.log`, so the wrapper's errors go there too.
+Without `setsid` or `/usr/bin/perl` the command is left as it is. vfkit's own stdout/stderr go to `Environment.vfkitLogFile()`, not `vm.log`: vfkit opens `vm.log` itself, non-append, for the VM's virtio-serial console, and a second append-mode writer on the same file corrupts both.
 
 **vfkit's REST API is on a Unix socket** (`Environment.vmRestSocket()`, `vm.rest.sock`; #1189), never a TCP port.
 A port must be chosen before vfkit binds it, and vfkit exits fatally when its REST address is in use, so a port taken in between meant no VM.
