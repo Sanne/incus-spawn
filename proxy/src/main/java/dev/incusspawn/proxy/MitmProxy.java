@@ -614,22 +614,20 @@ public class MitmProxy {
             if (domain.startsWith("*.")) {
                 var suffix = domain.substring(1); // ".example.com"
                 var candidates = wildcardsBySuffix.computeIfAbsent(suffix, k -> new ArrayList<>());
-                if (!isPathScoped && warn) {
+                if (!isPathScoped) {
                     var existingUnscoped = candidates.stream()
                             .filter(c -> c.auth() == null || c.auth().getPaths().isEmpty())
                             .findFirst().orElse(null);
-                    if (existingUnscoped != null
-                            && !existingUnscoped.toolName().equals(tp.toolName())) {
-                        ProxyLog.warn("Tool '" + tp.toolName() + "' claims wildcard '" + domain
-                                + "' already registered by tool '" + existingUnscoped.toolName()
-                                + "' — first match wins");
+                    if (existingUnscoped != null) {
+                        if (warn && !existingUnscoped.toolName().equals(tp.toolName())) {
+                            ProxyLog.warn("Tool '" + tp.toolName() + "' claims wildcard '" + domain
+                                    + "' already registered by tool '" + existingUnscoped.toolName()
+                                    + "' — first match wins");
+                        }
+                        continue;
                     }
                 }
-                if (isPathScoped || candidates.stream()
-                        .noneMatch(c -> c.auth() == null || c.auth().getPaths().isEmpty()
-                                || !c.toolName().equals(tp.toolName()))) {
-                    candidates.add(tp);
-                }
+                candidates.add(tp);
             } else {
                 var candidates = exact.computeIfAbsent(domain, k -> new ArrayList<>());
                 if (!isPathScoped) {

@@ -36,7 +36,9 @@ public record ResolvedToolProxy(
         var path = requestUri;
         var queryIdx = path.indexOf('?');
         if (queryIdx >= 0) path = path.substring(0, queryIdx);
-        for (var prefix : auth.getPaths()) {
+        for (var raw : auth.getPaths()) {
+            var prefix = raw.endsWith("/") && raw.length() > 1 ? raw.substring(0, raw.length() - 1) : raw;
+            if ("/".equals(prefix)) return true;
             if (path.equals(prefix) || path.startsWith(prefix + "/")) return true;
         }
         return false;

@@ -147,4 +147,31 @@ class ResolvedToolProxyTest {
         var proxy = new ResolvedToolProxy("test", "example.com", null, Map.of());
         assertTrue(proxy.matchesPath("/anything"));
     }
+
+    @Test
+    void matchesPathTrailingSlashPrefix() {
+        var auth = new ToolDef.AuthDef();
+        auth.setType("bearer");
+        auth.setToken("tok");
+        auth.setPaths(List.of("/mcp/"));
+        var proxy = new ResolvedToolProxy("test", "example.com", auth, Map.of());
+
+        assertTrue(proxy.matchesPath("/mcp"), "trailing slash normalized: exact match");
+        assertTrue(proxy.matchesPath("/mcp/"), "trailing slash normalized: with slash");
+        assertTrue(proxy.matchesPath("/mcp/messages"), "trailing slash normalized: subpath");
+        assertFalse(proxy.matchesPath("/mcpadmin"), "trailing slash normalized: no boundary");
+    }
+
+    @Test
+    void matchesPathRootScope() {
+        var auth = new ToolDef.AuthDef();
+        auth.setType("bearer");
+        auth.setToken("tok");
+        auth.setPaths(List.of("/"));
+        var proxy = new ResolvedToolProxy("test", "example.com", auth, Map.of());
+
+        assertTrue(proxy.matchesPath("/"), "root scope matches root");
+        assertTrue(proxy.matchesPath("/foo"), "root scope matches any path");
+        assertTrue(proxy.matchesPath("/foo/bar"), "root scope matches nested path");
+    }
 }

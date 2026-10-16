@@ -417,6 +417,98 @@ class ToolProxyResolutionTest {
                 "unscoped entry serves the rest");
     }
 
+    @Test
+    void wildcardScopedAndUnscopedDifferentTools() throws Exception {
+        var scopedTool = loadToolSetup("""
+                name: scoped-tool
+                proxy:
+                  config-namespace: scoped
+                  configuration:
+                    token:
+                      value: "scoped-token"
+                  auth:
+                    - domains:
+                        - "*.example.com"
+                      paths:
+                        - /mcp
+                      type: bearer
+                      token: "${token}"
+                """);
+        var broadTool = loadToolSetup("""
+                name: broad-tool
+                proxy:
+                  config-namespace: broad
+                  configuration:
+                    token:
+                      value: "broad-token"
+                  auth:
+                    - domains:
+                        - "*.example.com"
+                      type: bearer
+                      token: "${token}"
+                """);
+        var config = new SpawnConfig();
+        var resolved = new java.util.ArrayList<>(ToolProxyResolver.resolve(config,
+                Map.of("scoped-tool", scopedTool, "broad-tool", broadTool)));
+
+        var creds = new ProxyCredentials("", "", false, "", "", resolved);
+        var proxy = new MitmProxy(null, "127.0.0.1", 18443, 18080, "127.0.0.1", creds);
+
+        var mcp = proxy.findToolProxy("api.example.com", "/mcp");
+        assertNotNull(mcp, "scoped entry serves its path");
+        assertEquals("Bearer scoped-token", mcp.computeHeaderValue());
+
+        var api = proxy.findToolProxy("api.example.com", "/api");
+        assertNotNull(api, "unscoped entry serves other paths");
+        assertEquals("Bearer broad-token", api.computeHeaderValue());
+    }
+
+    @Test
+    void wildcardScopedAndUnscopedReverseOrder() throws Exception {
+        var broadTool = loadToolSetup("""
+                name: broad-tool
+                proxy:
+                  config-namespace: broad
+                  configuration:
+                    token:
+                      value: "broad-token"
+                  auth:
+                    - domains:
+                        - "*.example.com"
+                      type: bearer
+                      token: "${token}"
+                """);
+        var scopedTool = loadToolSetup("""
+                name: scoped-tool
+                proxy:
+                  config-namespace: scoped
+                  configuration:
+                    token:
+                      value: "scoped-token"
+                  auth:
+                    - domains:
+                        - "*.example.com"
+                      paths:
+                        - /mcp
+                      type: bearer
+                      token: "${token}"
+                """);
+        var config = new SpawnConfig();
+        var resolved = new java.util.ArrayList<>(ToolProxyResolver.resolve(config,
+                Map.of("broad-tool", broadTool, "scoped-tool", scopedTool)));
+
+        var creds = new ProxyCredentials("", "", false, "", "", resolved);
+        var proxy = new MitmProxy(null, "127.0.0.1", 18443, 18080, "127.0.0.1", creds);
+
+        var mcp = proxy.findToolProxy("api.example.com", "/mcp");
+        assertNotNull(mcp, "scoped entry wins on its path regardless of registration order");
+        assertEquals("Bearer scoped-token", mcp.computeHeaderValue());
+
+        var api = proxy.findToolProxy("api.example.com", "/api");
+        assertNotNull(api, "unscoped entry serves other paths");
+        assertEquals("Bearer broad-token", api.computeHeaderValue());
+    }
+
     private static ToolSetup loadToolSetup(String yaml) throws Exception {
         var def = ToolDef.loadFromStream(new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8)));
         return new YamlToolSetup(def);

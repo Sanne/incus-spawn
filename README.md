@@ -1102,6 +1102,9 @@ A request to `develocity.example.com/api/build-scan` does not.
 Two tools can register auth entries for the same domain with different path scopes.
 Path-scoped entries are tried first (they are more specific), then unscoped entries.
 When two tools register unscoped entries for the same domain, the first one loaded wins and a warning is logged.
+Trailing slashes in prefixes are normalized (`/mcp/` is treated as `/mcp`), and a root scope of `/` matches every path.
+When two tools with different credential namespaces share a domain, credential proof authorization currently requires proofs for all namespaces registered on that domain, not only the one selected by path.
+A single tool scoping paths on a domain it alone claims is not affected.
 
 Configuration entries can also use `value` for hardcoded literals (no prompt during `isx init`) and `type: confirm` for yes/no prompts like license acceptance.
 
