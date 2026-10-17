@@ -490,8 +490,8 @@ public class ActionResolver {
                 }
             } else {
                 def = imageDefs.get(current);
-                if (def == null && buildSourceJson != null && !buildSourceJson.isBlank()) {
-                    if (stored == null) stored = recordedDefinitions(buildSourceJson);
+                if (def == null && stored == null && buildSourceJson != null && !buildSourceJson.isBlank()) {
+                    stored = recordedDefinitions(buildSourceJson);
                     def = stored.get(current);
                     fromRecord = def != null;
                 }
