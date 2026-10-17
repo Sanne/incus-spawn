@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiConsumer;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -40,6 +41,9 @@ class TuiCharacterisationTest {
     private static final KeyEvent DOWN = KeyEvent.ofKey(KeyCode.DOWN);
 
     private TuiRunner runner;
+
+    /** The host firewall's banner title, as the stood-in check reports it; null for a running one. */
+    private String stoppedFirewall;
 
     @BeforeEach
     void runner() throws Exception {
@@ -109,6 +113,12 @@ class TuiCharacterisationTest {
             @Override
             boolean showProxyError() {
                 return false;
+            }
+
+            // The host's firewall neither: the test says whether it is stopped.
+            @Override
+            void warnIfFirewallStopped(BiConsumer<String, String> banner) {
+                if (stoppedFirewall != null) banner.accept(stoppedFirewall, "Fix:\n  sudo systemctl enable --now firewalld");
             }
 
             // A version no build has, so the header and the outdated marks never move with a release.
@@ -364,6 +374,16 @@ class TuiCharacterisationTest {
         press(tui, TAB, KeyEvent.ofKey(KeyCode.F2));
         assertEquals(Tui.PendingAction.SHELL, tui.pendingAction());
         assertFalse(runner.isRunning());
+    }
+
+    @Test
+    void aShellOnAStoppedHostFirewallLogsTheAdvisoryIsxShellPrints() {
+        stoppedFirewall = "firewalld is not running:";
+        var tui = tui();
+        press(tui, TAB, KeyEvent.ofKey(KeyCode.F2));
+        assertEquals(List.of("firewalld is not running:\nFix:\n  sudo systemctl enable --now firewalld"),
+                tui.warningMessages());
+        assertEquals(Tui.PendingAction.SHELL, tui.pendingAction(), "an advisory, so the shell still opens");
     }
 
     @Test

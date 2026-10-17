@@ -77,23 +77,30 @@ public final class FirewallDetector {
      * long-running TUI stops being told it is stopped, and so does one whose probe could not run.
      */
     public static boolean warnIfNotRunning() {
-        return BRANCH_CHECK.warnIfNotRunning();
+        return warnIfNotRunning(BuildOutput::warnBanner);
     }
 
-    private static final Check BRANCH_CHECK = new Check(HOST, BuildOutput::warnBanner);
+    /**
+     * {@link #warnIfNotRunning()} with the banner's title and diagnostic going to {@code banner}
+     * instead of the terminal: the TUI's, which cannot print while it draws, puts them in its
+     * warning log. It shares the process's memory of a check that found nothing.
+     */
+    public static boolean warnIfNotRunning(BiConsumer<String, String> banner) {
+        return BRANCH_CHECK.warnIfNotRunning(banner);
+    }
+
+    private static final Check BRANCH_CHECK = new Check(HOST);
 
     /** Remembers a check that found nothing to warn about; any other outcome runs again next time. */
     static final class Check {
         private final Probes probes;
-        private final BiConsumer<String, String> banner;
         private volatile boolean quiet;
 
-        Check(Probes probes, BiConsumer<String, String> banner) {
+        Check(Probes probes) {
             this.probes = probes;
-            this.banner = banner;
         }
 
-        boolean warnIfNotRunning() {
+        boolean warnIfNotRunning(BiConsumer<String, String> banner) {
             if (quiet) return false;
             Stopped stopped;
             try {

@@ -17,6 +17,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.BridgeSubnetCheck;
+import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.IncusException;
@@ -63,6 +64,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.BiConsumer;
 
 import static dev.incusspawn.tui.DiskUsageModel.hasDescendant;
 import static dev.incusspawn.tui.UsageFormat.bar;
@@ -2658,6 +2660,8 @@ public class Tui {
             var networkModeStr = incus.configGet(target.name(), Metadata.NETWORK_MODE);
             if (NetworkMode.AIRGAP.name().equals(networkModeStr)) return false;
             if (showProxyError()) return true;
+            // As isx shell warns, but into the log: the TUI still owns the terminal here
+            warnIfFirewallStopped((title, diagnostic) -> warningLog.add(title + "\n" + diagnostic));
             shellLaunch.repairBeforeUse(target.name(), target.machineType());
             // After the repairs, which report on the status line too: this is the one to act on
             showSubnetWarning();
@@ -2667,6 +2671,11 @@ public class Tui {
             mode = Mode.ERROR;
             return true;
         }
+    }
+
+    /** The host-firewall advisory {@code isx shell} prints; its own method so a test need not ask the host. */
+    void warnIfFirewallStopped(BiConsumer<String, String> banner) {
+        FirewallDetector.warnIfNotRunning(banner);
     }
 
     private void showSubnetWarning() {

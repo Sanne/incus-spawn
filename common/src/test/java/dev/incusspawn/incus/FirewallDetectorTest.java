@@ -90,8 +90,15 @@ class FirewallDetectorTest {
         @Override public boolean ufwInstalled() { probes.incrementAndGet(); return ufwInstalled; }
     }
 
-    private static FirewallDetector.Check check(FakeProbes probes, List<String> banners) {
-        return new FirewallDetector.Check(probes, (title, diagnostic) -> banners.add(title));
+    /** A check whose banners are collected by title. */
+    private record Collected(FirewallDetector.Check check, List<String> banners) {
+        boolean warnIfNotRunning() {
+            return check.warnIfNotRunning((title, diagnostic) -> banners.add(title));
+        }
+    }
+
+    private static Collected check(FakeProbes probes, List<String> banners) {
+        return new Collected(new FirewallDetector.Check(probes), banners);
     }
 
     @Test
