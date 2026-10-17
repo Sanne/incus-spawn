@@ -587,6 +587,18 @@ tools:
 
 When omitted, Claude Code uses its own default. Model IDs follow the `claude-*` naming convention (e.g. `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`).
 
+To have every interactive Claude Code session in the instance connect to [Remote Control](https://code.claude.com/docs/en/remote-control#enable-remote-control-for-all-sessions), so you can continue it from claude.ai/code or the Claude app, set `remote-control`:
+
+```yaml
+tools:
+  - claude:
+      remote-control: true
+```
+
+This sets `remoteControlAtStartup` in the instance's `~/.claude/settings.json`. `false` turns auto-connect off explicitly; leaving it out keeps Claude Code's default.
+
+**None of isx's credential modes can connect yet.** Remote Control needs a full-scope claude.ai login session, and Claude Code checks for one locally, before contacting anything. It refuses when the credential comes from an API key, Vertex AI, or the `CLAUDE_CODE_OAUTH_TOKEN` variable, which is how an `oauth` account reaches the instance (as a placeholder; the proxy injects the real token). So the refusal is about how isx delivers the credential, not about which token you configured. Sessions still start; Claude Code just reports that Remote Control did not connect. Logging in with `claude auth login` inside the instance would store a real claude.ai credential there, which is what the [credential isolation](#credential-isolation) is meant to prevent.
+
 ### Codex CLI
 
 Codex CLI is OpenAI's coding agent. Add it to any template with `tools: [codex]`:

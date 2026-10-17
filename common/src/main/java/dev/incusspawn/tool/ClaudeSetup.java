@@ -186,6 +186,16 @@ public class ClaudeSetup implements ToolSetup {
         outputStyle.setReconfigurable(true);
         params.put("output-style", outputStyle);
 
+        // Claude Code's remoteControlAtStartup. Claude Code refuses it locally unless it holds a
+        // full-scope claude.ai login; an oauth account reaches it as CLAUDE_CODE_OAUTH_TOKEN, which it
+        // treats as an inference-only long-lived token whatever the proxy injects
+        var remoteControl = new ToolDef.ParameterDef();
+        remoteControl.setType("boolean");
+        remoteControl.setDescription("Connect every interactive session to Remote Control (needs a claude.ai login session, which isx does not provide to instances yet)");
+        remoteControl.setOptional(true);
+        remoteControl.setReconfigurable(true);
+        params.put("remote-control", remoteControl);
+
         return params;
     }
 
@@ -542,6 +552,10 @@ public class ClaudeSetup implements ToolSetup {
         putIfPresent(root, params, "theme", "theme");
         putIfPresent(root, params, "editor-mode", "editorMode");
         putIfPresent(root, params, "output-style", "outputStyle");
+        var remoteControl = params.get("remote-control");
+        if (remoteControl != null) {
+            root.put("remoteControlAtStartup", Boolean.parseBoolean(remoteControl));
+        }
 
         var commitTrailer = params.get("attribution-commit");
         var prAttribution = params.get("attribution-pr");

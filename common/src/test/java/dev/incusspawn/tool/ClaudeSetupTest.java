@@ -6,6 +6,8 @@ import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -212,10 +214,10 @@ class ClaudeSetupTest {
         var params = new ClaudeSetup().parameters();
 
         for (var name : List.of("model", "attribution-commit", "attribution-pr",
-                "theme", "editor-mode", "output-style")) {
+                "theme", "editor-mode", "output-style", "remote-control")) {
             assertTrue(params.containsKey(name), "Should declare parameter: " + name);
             var p = params.get(name);
-            assertEquals("string", p.getType());
+            assertEquals(name.equals("remote-control") ? "boolean" : "string", p.getType());
             assertTrue(p.isOptional(), name + " should be optional");
             assertTrue(p.isReconfigurable(), name + " should be reconfigurable");
         }
@@ -265,6 +267,23 @@ class ClaudeSetupTest {
 
         assertTrue(json.contains("\"commit\": \"Custom trailer\""));
         assertFalse(json.contains("\"pr\""));
+    }
+
+    @ParameterizedTest
+    @CsvSource({"True, true", "false, false"})
+    void remoteControlParameterSetsRemoteControlAtStartup(String value, boolean expected) {
+        var resolved = ParameterResolver.resolve(new ClaudeSetup().parameters(),
+                Map.of("remote-control", value));
+        assertFalse(resolved.hasErrors(), resolved.errors().toString());
+
+        var json = ClaudeSetup.buildUserSettings(resolved.resolvedValues());
+
+        assertTrue(json.contains("\"remoteControlAtStartup\" : " + expected), json);
+    }
+
+    @Test
+    void remoteControlOmittedLeavesClaudeCodesDefault() {
+        assertFalse(ClaudeSetup.buildUserSettings(Map.of()).contains("remoteControlAtStartup"));
     }
 
     @Test
