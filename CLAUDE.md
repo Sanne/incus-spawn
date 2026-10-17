@@ -48,7 +48,7 @@ gh release download <tag> -R Sanne/incus-spawn-images -p SHA256SUMS -O -
 
 Four lines, four fields, and every one has to match the asset it names.
 When the bump moves `vm_image_url` to `-vm-direct.tar.xz` (its PR says `VM image: direct`), the two VM sums come from `SHA256SUMS.v2` instead (`-p SHA256SUMS.v2`), which lists those as well as the four.
-The same applies to a tool download added to `ToolDef` or a tool YAML, to the appliance kernel's `KERNEL_SHA256` in `appliance/kernel/build-kernel.sh` (from kernel.org's signed `sha256sums.asc`), and to `INCUS_SHA512` in `appliance/build.sh` (from Alpine's `incus-feature` APKBUILD): take the checksum from the publisher, never from a build log or another PR.
+The same applies to a tool download added to `ToolDef` or a tool YAML, to the appliance kernel's `KERNEL_SHA256` in `appliance/kernel/build-kernel.sh` (from kernel.org's signed `sha256sums.asc`, which `appliance/kernel/update-kernel-pin.sh` verifies against the committed autosigner key: `bump` writes the pin, and `kernel-pin-signed.yml` fails a wrong one with `main`'s copy of the script and key, never the PR's), and to `INCUS_SHA512` in `appliance/build.sh` (from Alpine's `incus-feature` APKBUILD): take the checksum from the publisher, never from a build log or another PR.
 
 **Latency on the branch/start/shell path is never noise.**
 A container starts in well under a second, so a few milliseconds or a handful of redundant Incus round trips are a real share of the wait.

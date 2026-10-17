@@ -131,6 +131,18 @@ jobs:
       - name: Run the base-image bump's steps on a fake release
         run: bash .github/scripts/test-update-base-image.sh
 
+  # update-kernel.yml only runs on a schedule or by hand, so its bump PR step is run here against a
+  # local remote with gh faked: one PR at a time, refreshed to the newest release (#1355).
+  update-kernel-steps:
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run the kernel bump's PR step on a local remote
+        run: bash .github/scripts/test-update-kernel.sh
+
   # The uber-jars are what JBang users run, and nothing else in CI executes them. Without this the
   # JVM channel can only be found broken by a user: the CLI losing its ability to serve the proxy
   # in-process went unnoticed for six weeks because the released jar was built but never run.
