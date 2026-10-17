@@ -7,7 +7,7 @@ import java.util.regex.Pattern;
 
 /**
  * {@code artifact-cache:} in config.yaml: how long the proxy trusts a cached
- * Maven/Gradle artifact's last confirmation with upstream. Durations are written
+ * Maven/Gradle artifact's or npm tarball's last confirmation with upstream. Durations are written
  * {@code 30m}, {@code 2h}, {@code 7d} (or {@code 0}); a blank or unreadable value
  * means the proxy's default.
  * <p>

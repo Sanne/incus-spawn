@@ -26,6 +26,8 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -322,6 +324,79 @@ class NpmCacheProxyTest {
 
         assertFalse(Files.exists(cached(path)), "the removed version is evicted");
         assertFalse(Files.exists(Path.of(cached(path) + ".shasum")));
+    }
+
+    /**
+     * Cache {@code name@1.0.0} under a stored packument ETag, as after an install that fetched
+     * the packument, then age its last confirmation by {@code age}. The next install from a
+     * lockfile (npm ci) fetches no packument, so that ETag stays the one the tarball was
+     * verified under (#1466).
+     */
+    static String cacheUnderEtag(String name, Duration age) throws Exception {
+        ArtifactCacheHandler.storePackageEtag(name, "\"" + name + "-etag\"");
+        var path = publishAndCache(name);
+        // Both sidecars are written before the tarball, which publishAndCache waits for
+        assertTrue(Files.isRegularFile(Path.of(cached(path) + ".etag")));
+        ArtifactCacheProxyTest.confirmedAgo(Path.of(cached(path) + ".shasum"), age);
+        return path;
+    }
+
+    @Test
+    void freshlyConfirmedTarballIsServedWithoutALookup() throws Exception {
+        var path = cacheUnderEtag("fresh", Duration.ofMinutes(5));
+        routes.clear();
+
+        assertEquals(new Response(200, "tarball of fresh"), get(path, 10));
+
+        assertEquals(1, hits.get("/fresh/1.0.0").get(), "within fresh, the hit is not confirmed again");
+    }
+
+    @Test
+    void lockfileInstallConfirmsAnExpiredTarballBeforeServingIt() throws Exception {
+        // A version removed upstream while the packument ETag still vouches for its tarball
+        var path = cacheUnderEtag("expired", Duration.ofDays(8));
+        routes.clear();
+
+        assertEquals(404, get(path, 10).status());
+
+        assertFalse(Files.exists(cached(path)), "the removed version is evicted");
+    }
+
+    @Test
+    void lockfileInstallConfirmsAStaleTarballInTheBackground() throws Exception {
+        var path = cacheUnderEtag("stale", Duration.ofHours(3));
+        routes.clear();
+
+        assertEquals(new Response(200, "tarball of stale"), get(path, 10));
+
+        ArtifactCacheProxyTest.await("the removed version to be evicted", () -> !Files.exists(cached(path)));
+        assertEquals(404, get(path, 10).status(), "the next request gets upstream's answer");
+    }
+
+    @Test
+    void backgroundConfirmationEvictsATarballChangedUpstream() throws Exception {
+        var path = cacheUnderEtag("changed", Duration.ofHours(3));
+        routes.put("/changed/1.0.0", "{\"dist\":{\"shasum\":\"%s\"}}".formatted("b".repeat(40))
+                .getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(new Response(200, "tarball of changed"), get(path, 10));
+
+        ArtifactCacheProxyTest.await("the changed version to be evicted", () -> !Files.exists(cached(path)));
+        assertFalse(Files.exists(Path.of(cached(path) + ".shasum")), "no sidecar is left for a tarball not stored");
+    }
+
+    @Test
+    void backgroundConfirmationRenewsAStaleTarball() throws Exception {
+        var path = cacheUnderEtag("renewed", Duration.ofHours(3));
+        var shasum = Path.of(cached(path) + ".shasum");
+
+        assertEquals(new Response(200, "tarball of renewed"), get(path, 10));
+
+        ArtifactCacheProxyTest.await("the confirmation to be renewed", () -> Files.getLastModifiedTime(shasum)
+                .toInstant().isAfter(Instant.now().minus(Duration.ofMinutes(1))));
+        assertEquals(new Response(200, "tarball of renewed"), get(path, 10));
+        assertEquals(2, hits.get("/renewed/1.0.0").get(), "the renewed hit is fresh again");
+        assertEquals(1, hits.get(path).get(), "the tarball is never fetched again");
     }
 
     @Test

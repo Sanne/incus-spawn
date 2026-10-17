@@ -9,6 +9,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -310,22 +313,89 @@ class NpmCacheTest {
         return new SidecarAnswer(200, ("{\"dist\":{\"shasum\":\"" + shasum + "\"}}").getBytes(StandardCharsets.UTF_8));
     }
 
-    // --- freshNpmHit: ETag fast path ---
+    // --- npmCacheState: ETag and confirmation age ---
 
-    @Test
-    void cacheHitEtagMatchServesDirectly(@TempDir Path tmp) throws Exception {
+    /** A tarball verified under ETag {@code "abc"}, its shasum last confirmed {@code age} ago. */
+    static Path cachedUnderEtag(Path tmp, Duration age) throws IOException {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
         Files.createDirectories(cacheFile.getParent());
         Files.writeString(cacheFile, "tarball-content");
         Files.writeString(Path.of(cacheFile + ".etag"), "\"abc\"");
-        Files.writeString(Path.of(cacheFile + ".shasum"), "someshasum");
+        var shasum = Path.of(cacheFile + ".shasum");
+        Files.writeString(shasum, "someshasum");
+        Files.setLastModifiedTime(shasum, FileTime.from(NOW.minus(age)));
+        return cacheFile;
+    }
 
-        var result = ArtifactCacheHandler.freshNpmHit(cacheFile, "\"abc\"");
+    static final Instant NOW = Instant.now();
 
+    static ArtifactCacheHandler.NpmCacheState state(Path cacheFile, String packageEtag) throws IOException {
+        return ArtifactCacheHandler.npmCacheState(cacheFile, packageEtag, ArtifactCacheTiers.DEFAULT, NOW);
+    }
+
+    @Test
+    void cacheHitEtagMatchServesDirectly(@TempDir Path tmp) throws Exception {
+        var cacheFile = cachedUnderEtag(tmp, Duration.ofMinutes(5));
+
+        var state = state(cacheFile, "\"abc\"");
+
+        var result = state.hit();
         assertNotNull(result);
         assertTrue(result.cacheHit());
         assertEquals(Files.size(cacheFile), result.size());
         assertNull(result.digest());
+        assertFalse(result.confirmAgain(), "within fresh, nothing is asked upstream");
+    }
+
+    @Test
+    void cacheHitPastFreshIsServedAndConfirmedAgain(@TempDir Path tmp) throws Exception {
+        var state = state(cachedUnderEtag(tmp, Duration.ofHours(3)), "\"abc\"");
+
+        assertTrue(state.hit().confirmAgain());
+    }
+
+    @Test
+    void cacheHitPastMaxStaleIsConfirmedFirstDespiteTheEtag(@TempDir Path tmp) throws Exception {
+        // npm ci fetches no packument, so the ETag alone would vouch for the tarball forever (#1466)
+        var state = state(cachedUnderEtag(tmp, Duration.ofDays(8)), "\"abc\"");
+
+        assertNull(state.hit());
+        assertEquals("\"abc\"", state.packageEtag());
+    }
+
+    @Test
+    void cacheHitConfirmedInTheFutureIsConfirmedFirst(@TempDir Path tmp) throws Exception {
+        assertNull(state(cachedUnderEtag(tmp, Duration.ofHours(-1)), "\"abc\"").hit());
+    }
+
+    @Test
+    void cacheHitWithoutStoredShasumIsConfirmedFirst(@TempDir Path tmp) throws Exception {
+        var cacheFile = cachedUnderEtag(tmp, Duration.ZERO);
+        Files.delete(Path.of(cacheFile + ".shasum"));
+
+        assertNull(state(cacheFile, "\"abc\"").hit());
+    }
+
+    @Test
+    void confirmingEveryHitServesNothingUnconfirmed(@TempDir Path tmp) throws Exception {
+        var cacheFile = cachedUnderEtag(tmp, Duration.ZERO);
+
+        assertNull(ArtifactCacheHandler.npmCacheState(cacheFile, "\"abc\"",
+                ArtifactCacheTiers.CONFIRM_EVERY_HIT, NOW).hit());
+    }
+
+    @Test
+    void matchingShasumRenewsTheConfirmation(@TempDir Path tmp) throws Exception {
+        var cacheFile = cachedUnderEtag(tmp, Duration.ofDays(8));
+        var shasum = Path.of(cacheFile + ".shasum");
+        var aged = Files.getLastModifiedTime(shasum);
+        Files.writeString(shasum, SHASUM);
+        Files.setLastModifiedTime(shasum, aged);
+
+        assertTrue(ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "\"abc\"", "ref", found(SHASUM)).cacheHit());
+
+        assertNotNull(ArtifactCacheHandler.npmCacheState(cacheFile, "\"abc\"", ArtifactCacheTiers.DEFAULT,
+                Instant.now()).hit(), "fresh again after the match");
     }
 
     @Test
@@ -336,7 +406,7 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".etag"), "");
         Files.writeString(Path.of(cacheFile + ".shasum"), SHASUM);
 
-        assertNull(ArtifactCacheHandler.freshNpmHit(cacheFile, ""), "an empty ETag vouches for nothing");
+        assertNull(state(cacheFile, "").hit(), "an empty ETag vouches for nothing");
         var result = ArtifactCacheHandler.checkNpmTarballCache(cacheFile, "", "ref",
                 found(SHASUM));
 

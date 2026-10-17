@@ -8,7 +8,7 @@ import java.time.Duration;
 import java.time.Instant;
 
 /**
- * How long a cached Maven/Gradle artifact's last confirmation with upstream is
+ * How long a cached Maven/Gradle artifact's or npm tarball's last confirmation with upstream is
  * trusted ({@code artifact-cache:} in config.yaml). Younger than {@link #fresh}
  * it is served with no check; younger than {@link #maxStale} it is served at once
  * and confirmed again in the background; older, it is confirmed before it is

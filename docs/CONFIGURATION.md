@@ -163,8 +163,9 @@ Proxy caches (from container traffic):
 - **Container image layers** — OCI blobs from Docker Hub, GHCR, and Quay, keyed by SHA256 content digest
 - **Maven and Gradle artifacts** — release JARs, POMs, and plugins from Maven Central and the Gradle plugin portal, verified against the upstream checksum and re-confirmed with upstream (a `HEAD` on Maven Central, the checksum file elsewhere) as it ages; see below. When the repository is unreachable, cached artifacts are served unconfirmed so builds keep working offline
 - **Gradle distributions** — verified against the upstream `.sha256` sidecar, and re-confirmed against it the same way
+- **npm tarballs** — from `registry.npmjs.org`, verified against the version's published shasum, and re-confirmed against it the same way, so a version removed upstream stops being served
 
-How recently a cached Maven or Gradle artifact must have been confirmed with upstream is configurable. Within `fresh` of its last confirmation it is served straight from the cache. Within `max-stale` it is served at once and confirmed again in the background, and a copy upstream has changed or withdrawn is evicted for the next request. Older than that, it is confirmed before it is served. Gradle Plugin Portal artifacts are always confirmed first, since the portal can delete a published version. The defaults:
+How recently a cached Maven or Gradle artifact, or npm tarball, must have been confirmed with upstream is configurable. Within `fresh` of its last confirmation it is served straight from the cache. Within `max-stale` it is served at once and confirmed again in the background, and a copy upstream has changed or withdrawn is evicted for the next request. Older than that, it is confirmed before it is served. Gradle Plugin Portal artifacts are always confirmed first, since the portal can delete a published version. The defaults:
 
 ```yaml
 artifact-cache:

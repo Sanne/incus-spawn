@@ -1371,11 +1371,14 @@ There is no upload size limit: a body passes as long as the host has disk for it
 - **OCI blobs** — keyed by SHA256 content digest, verified on store
 - **Maven/Gradle artifacts and Gradle distributions** — keyed by repository path, verified on store, confirmed with upstream as recently as `artifact-cache:` asks (see below)
 - **npm tarballs** — keyed by package name and version, with ETag-based verification against the npm registry packument.
-  When the packument ETag is unchanged, cached tarballs are served without re-verification.
-  When the ETag changes, per-version shasum is checked — matching shasum updates the marker, mismatched shasum evicts and re-fetches.
+  A cached tarball is served without a lookup only while the packument ETag is the one it was verified under and its last confirmation is within the same tiers as Maven/Gradle (`artifactCacheTiers`, see "Confirmation tiers" below).
+  The stored shasum's modification time is that confirmation: set when the tarball is stored, renewed by a matching lookup.
+  Within `fresh` the hit asks nothing upstream, within `max-stale` it is served and confirmed in the background (the same single-flight, capped queue), and older it is confirmed first.
+  When the ETag changes or the confirmation is too old, per-version shasum is checked — matching shasum updates the marker, mismatched shasum evicts and re-fetches.
   As for Maven/Gradle, when upstream answers its answer wins (#787): a version document that is gone (`404`/`410`: unpublished, or taken down as malware) evicts the tarball and the client gets upstream's answer, and any other answer without a usable shasum relays the tarball without serving the copy.
   Only an unreachable registry (no connection, `5xx` after its retry, `429`) serves the copy unconfirmed, and logs that it did.
-  `npm ci` with a lockfile fetches no packument, so a tarball verified under the package's stored ETag is served without a lookup and this rule does not reach it.
+  The ETag alone used to vouch for a tarball, but `npm ci` with a lockfile fetches no packument, so the ETag never changed and a version removed upstream stayed served indefinitely (#1466).
+  The age check bounds that: at most `fresh` with no lookup, then the background confirmation evicts it for the next request.
   The per-version shasum is looked up asynchronously through `probeClient`, the same client and verification as Maven/Gradle checksums, so a cold install's lookups run concurrently over shared HTTP/2 connections (#960).
   They used to be a raw `SSLSocket` per tarball inside an *ordered* `executeBlocking`.
   In Vert.x 4.5 an ordered task on a request's duplicated context joins its parent context's single queue, which every MITM connection shares.
@@ -1395,6 +1398,7 @@ Only an unreachable upstream serves an older one.
   Older, it is confirmed before it is served, as below.
   Background confirmations are single-flight per artifact, at most 16 in flight with the rest queued (dropping them would leave copies unconfirmed build after build under a parallel resolver), and confirm nothing during a domain's backoff.
   A domain that can withdraw releases never gets the tiers (`Revalidation.mayWithdraw`: the Plugin Portal), so its every hit is confirmed first.
+  npm tarballs get the same tiers, keyed on the stored shasum's modification time (see "Proxy caching" above).
   `artifact-cache:` is read from the raw YAML value, so a mistyped section (`artifact-cache: 0`) is warned about and ignored instead of failing config.yaml, which would leave the proxy with no credentials.
   The stored checksum goes out as `X-Checksum-SHA1` with bytes the proxy opens by path (Vert.x 4.5 has no `sendFile` from an open handle).
   So just before `sendFile` the path is checked to still be the file the checksum was read with, and a copy replaced meanwhile is confirmed first.

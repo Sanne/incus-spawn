@@ -280,6 +280,7 @@ Key design:
   npm's per-version shasum lookups go through `probeClient` (`fetchNpmVersion` → `fetchSmallBody`) like Maven/Gradle checksums.
   A `5xx` is asked once more (while over half the client's budget is left), since a failed lookup relays the tarball uncached and unresumable (#925).
   A cached tarball whose lookup gives no shasum is served only when the registry is unreachable (`SidecarAnswer.unreachable()`); a `404`/`410` evicts it and anything else relays (`checkNpmTarballCache`, #787).
+  An unchanged packument ETag is not enough to skip the lookup: `npm ci` fetches no packument, so a hit also needs its confirmation (the `.shasum` mtime) within `ArtifactCacheTiers`, and is confirmed in the background past `fresh` (`npmCacheState`, #1466).
   Never wait on the network inside an ordered `executeBlocking` (the default): every MITM connection shares one context and so one ordered queue, and a raw-socket lookup there ran every cold-install lookup one at a time (#960).
   The npm disk checks stay ordered on purpose, behind the packument's ETag write.
   All three commit through `Verification` (`fetchCacheAndServe`): nothing reaches the cache unverified.

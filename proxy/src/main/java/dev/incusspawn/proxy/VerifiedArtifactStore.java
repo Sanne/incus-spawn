@@ -230,9 +230,20 @@ final class VerifiedArtifactStore {
      * first: for a background confirmation that could neither renew nor evict.
      */
     static void expireConfirmation(Path artifact, Sidecar checksum) {
+        expireConfirmation(artifact, checksum.storedFile(artifact));
+    }
+
+    /** {@link #expireConfirmation(Path, Sidecar)} for a checksum stored outside {@link Sidecar}'s layout (npm's {@code .shasum}). */
+    static void expireConfirmation(Path artifact, Path storedChecksum) {
         synchronized (lockFor(artifact)) {
-            var storedFile = checksum.storedFile(artifact);
-            if (Files.isRegularFile(storedFile)) stampConfirmation(storedFile, Instant.EPOCH);
+            if (Files.isRegularFile(storedChecksum)) stampConfirmation(storedChecksum, Instant.EPOCH);
+        }
+    }
+
+    /** Record that upstream confirmed the artifact's stored checksum just now (npm's {@code .shasum}). */
+    static void renewConfirmation(Path artifact, Path storedChecksum) {
+        synchronized (lockFor(artifact)) {
+            stampConfirmation(storedChecksum, Instant.now());
         }
     }
 
@@ -246,7 +257,7 @@ final class VerifiedArtifactStore {
         }
     }
 
-    private static BasicFileAttributes attributesOrNull(Path file) throws IOException {
+    static BasicFileAttributes attributesOrNull(Path file) throws IOException {
         try {
             return Files.readAttributes(file, BasicFileAttributes.class);
         } catch (NoSuchFileException e) {

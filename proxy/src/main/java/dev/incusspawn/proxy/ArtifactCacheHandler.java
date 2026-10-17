@@ -29,6 +29,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 
@@ -115,7 +116,7 @@ class ArtifactCacheHandler {
                 " (domains: " + REGISTRY_DOMAINS + ")");
         System.out.println("Maven cache: " + mavenCacheDir() +
                 " (domains: " + MAVEN_DOMAINS + ")");
-        System.out.println("Maven/Gradle confirmations: " + artifactCacheTiers);
+        System.out.println("Maven/Gradle/npm confirmations: " + artifactCacheTiers);
         System.out.println("Maven .m2 fallback: " +
                 (Files.isDirectory(m2Repository()) ? m2Repository() : "not available"));
         System.out.println("Gradle cache: " + gradleCacheDir() +
@@ -733,8 +734,8 @@ class ArtifactCacheHandler {
      * Three request types:
      * <ul>
      *   <li><b>Tarball</b> ({@code GET /<pkg>/-/<name>-<ver>.tgz}): served from cache when
-     *       the package's ETag hasn't changed since the tarball was verified. When the ETag
-     *       has changed (a new version was published or a version was republished), the
+     *       the package's ETag hasn't changed since the tarball was verified and that
+     *       confirmation is still trusted ({@link #artifactCacheTiers}). Otherwise the
      *       tarball's shasum is re-verified against per-version metadata. Cache misses
      *       are verified on store.</li>
      *   <li><b>Packument</b> ({@code GET /<pkg>}): relayed fresh to upstream. The response's
@@ -820,16 +821,23 @@ class ArtifactCacheHandler {
         }
     }
 
-    record NpmVerifyResult(boolean cacheHit, long size, String digest) {}
+    /** {@code confirmAgain}: a hit served on an aging confirmation, to be confirmed in the background. */
+    record NpmVerifyResult(boolean cacheHit, long size, String digest, boolean confirmAgain) {
+        NpmVerifyResult(boolean cacheHit, long size, String digest) {
+            this(cacheHit, size, digest, false);
+        }
+    }
 
     /**
      * Serve an npm tarball from cache or fetch fresh.
      * <p>
-     * <b>Cache hit + ETag unchanged</b>: serve directly (zero cost — no upstream,
-     * no hash computation). The package's ETag hasn't changed since this tarball was
-     * last verified, so the shasum is guaranteed unchanged.
+     * <b>Cache hit + ETag unchanged</b>: serve directly while the tarball's last
+     * confirmation is within {@link #artifactCacheTiers}' fresh window, and confirm it again
+     * in the background within max-stale. The ETag alone is not enough: a lockfile
+     * install ({@code npm ci}) fetches no packument, so it never changes, and a version
+     * removed upstream would be served forever (#1466).
      * <p>
-     * <b>Cache hit + ETag changed/missing</b>: fetch per-version metadata, compare
+     * <b>Cache hit + ETag changed/missing, or confirmation too old</b>: fetch per-version metadata, compare
      * the upstream shasum with the stored sidecar. Same shasum → update the tarball's
      * ETag marker and serve. Different shasum → evict and re-fetch. No shasum: see
      * {@link #checkNpmTarballCache}; only an unreachable registry serves the copy.
@@ -849,7 +857,7 @@ class ArtifactCacheHandler {
             var etagFile = cacheDir.resolve(packageName).resolve(".etag").normalize();
             var packageEtag = etagFile.startsWith(cacheDir)
                     ? readFileOrNull(etagFile) : null;
-            return new NpmCacheState(packageEtag, freshNpmHit(cacheFile, packageEtag));
+            return npmCacheState(cacheFile, packageEtag, tiersFor(domain), Instant.now());
         }).compose(state -> state.hit() != null
                 ? Future.succeededFuture(state.hit())
                 : fetchNpmVersion(domain, packageName, version, started).compose(answer -> vertx.executeBlocking(
@@ -863,6 +871,9 @@ class ArtifactCacheHandler {
                 System.out.println("npm cache hit: " + ref +
                         " (" + formatSize(result.size()) + ")");
                 serveCachedFile(clientReq.response(), cacheFile, null);
+                if (result.confirmAgain()) {
+                    confirmNpmInBackground(domain, cacheFile, ref, packageName, version);
+                }
             } else {
                 fetchCacheAndServe(clientReq, started, domain, cacheFile, ref,
                         Verification.ofDigest(result.digest()));
@@ -874,18 +885,55 @@ class ArtifactCacheHandler {
         });
     }
 
-    /** The package's stored ETag, and the cached tarball when that ETag vouches for it without a lookup. */
+    /** The package's stored ETag, and the cached tarball when that ETag and its last confirmation vouch for it without a lookup first. */
     record NpmCacheState(String packageEtag, NpmVerifyResult hit) {}
 
-    /** A hit on the cached tarball when the package's ETag is the one it was verified under, else null. */
-    static NpmVerifyResult freshNpmHit(Path cacheFile, String packageEtag) throws IOException {
-        if (packageEtag == null || packageEtag.isEmpty() || !Files.isRegularFile(cacheFile)) return null;
-        return packageEtag.equals(readFileOrNull(Path.of(cacheFile + ".etag")))
-                ? new NpmVerifyResult(true, Files.size(cacheFile), null) : null;
+    /**
+     * A hit on the cached tarball when the package's ETag is the one it was verified under
+     * and {@code tiers} still trusts its last confirmation (the stored shasum's mtime), as
+     * for Maven/Gradle; else no hit, and the tarball is confirmed before it is served.
+     */
+    static NpmCacheState npmCacheState(Path cacheFile, String packageEtag, ArtifactCacheTiers tiers, Instant now)
+            throws IOException {
+        var tarball = VerifiedArtifactStore.attributesOrNull(cacheFile);
+        if (packageEtag == null || packageEtag.isEmpty() || tarball == null || !tarball.isRegularFile()
+                || !packageEtag.equals(readFileOrNull(Path.of(cacheFile + ".etag")))) {
+            return new NpmCacheState(packageEtag, null);
+        }
+        var shasum = VerifiedArtifactStore.attributesOrNull(Path.of(cacheFile + ".shasum"));
+        var tier = tiers.tierOf(shasum == null ? null : shasum.lastModifiedTime(), now);
+        return new NpmCacheState(packageEtag, tier == ArtifactCacheTiers.Tier.EXPIRED ? null
+                : new NpmVerifyResult(true, tarball.size(), null, tier == ArtifactCacheTiers.Tier.STALE));
     }
 
     /**
-     * Settle a tarball that {@link #freshNpmHit} could not serve, given upstream's
+     * Confirm a tarball just served on an aging confirmation, as for Maven/Gradle: a match
+     * renews it, a change or removal evicts it so the next request gets upstream's answer,
+     * and an answer that settles neither expires the confirmation so the next hit is
+     * confirmed first. An unreachable registry, or one in backoff, leaves it as it is.
+     * The tarball's ETag marker already matches the package's, or it would not have been a hit.
+     */
+    private void confirmNpmInBackground(String domain, Path cacheFile, String ref, String packageName,
+                                        String version) {
+        if (inBackoff(domain)) return;
+        // Timed from when it runs, not from the request it followed: no client waits on it
+        inBackground(cacheFile, () -> fetchNpmVersion(domain, packageName, version, System.nanoTime())
+                .compose(answer -> answer.unreachable() ? Future.succeededFuture() : vertx.executeBlocking(() -> {
+                    var result = checkNpmTarballCache(cacheFile, null, ref, answer);
+                    if (result == null) {
+                        VerifiedArtifactStore.expireConfirmation(cacheFile, Path.of(cacheFile + ".shasum"));
+                    } else if (!result.cacheHit()) {
+                        // Changed upstream: nothing downloads the new tarball here, so keep no sidecars for it
+                        evictNpmTarball(cacheFile);
+                    }
+                    return null;
+                }))
+                .onFailure(err -> System.err.println("npm background confirmation error for " + ref
+                        + ": " + err.getMessage())));
+    }
+
+    /**
+     * Settle a tarball that {@link #npmCacheState} could not serve, given upstream's
      * {@code answer} for its version document. Null means relay it uncached.
      * <p>
      * When upstream answers, its answer wins, as for Maven/Gradle (#555): a cached copy is
@@ -915,7 +963,9 @@ class ArtifactCacheHandler {
         }
 
         if (cached) {
-            if (shasum.equals(readFileOrNull(Path.of(cacheFile + ".shasum")))) {
+            var storedShasum = Path.of(cacheFile + ".shasum");
+            if (shasum.equals(readFileOrNull(storedShasum))) {
+                VerifiedArtifactStore.renewConfirmation(cacheFile, storedShasum);
                 if (packageEtag != null) {
                     Files.writeString(Path.of(cacheFile + ".etag"), packageEtag);
                 }
@@ -1179,8 +1229,11 @@ class ArtifactCacheHandler {
      * whose every hit is confirmed first.
      */
     private ArtifactCacheTiers.Tier trustTier(String domain, VerifiedArtifactStore.CachedCopy cached) {
-        var tiers = Revalidation.mayWithdraw(domain) ? ArtifactCacheTiers.CONFIRM_EVERY_HIT : artifactCacheTiers;
-        return tiers.tierOf(cached.confirmedAt(), Instant.now());
+        return tiersFor(domain).tierOf(cached.confirmedAt(), Instant.now());
+    }
+
+    private ArtifactCacheTiers tiersFor(String domain) {
+        return Revalidation.mayWithdraw(domain) ? ArtifactCacheTiers.CONFIRM_EVERY_HIT : artifactCacheTiers;
     }
 
     /**
@@ -1256,8 +1309,7 @@ class ArtifactCacheHandler {
     private void confirmInBackground(String domain, String path, Revalidation revalidation,
                                      ArtifactTarget target, String ref) {
         var artifact = target.artifact();
-        if (!backgroundConfirmations.add(artifact)) return;
-        Runnable confirmation = () -> confirm(domain, path, revalidation, target).onComplete(ar -> {
+        inBackground(artifact, () -> confirm(domain, path, revalidation, target).onComplete(ar -> {
             if (ar.failed()) {
                 System.err.println("Background confirmation error for " + ref + ": " + ar.cause().getMessage());
             } else {
@@ -1271,17 +1323,27 @@ class ArtifactCacheHandler {
                     }, false);
                 }
             }
-            backgroundConfirmations.remove(artifact);
+        }));
+    }
+
+    /**
+     * Run a background confirmation of the cached file {@code key}, unless one is already
+     * queued or in flight for it; past {@link #maxBackgroundConfirmations} it waits its turn.
+     */
+    private void inBackground(Path key, Supplier<Future<?>> confirmation) {
+        if (!backgroundConfirmations.add(key)) return;
+        Runnable run = () -> confirmation.get().onComplete(ar -> {
+            backgroundConfirmations.remove(key);
             startNextConfirmation();
         });
         synchronized (queuedConfirmations) {
             if (confirmationsInFlight >= maxBackgroundConfirmations) {
-                queuedConfirmations.add(confirmation);
+                queuedConfirmations.add(run);
                 return;
             }
             confirmationsInFlight++;
         }
-        confirmation.run();
+        run.run();
     }
 
     private void startNextConfirmation() {
