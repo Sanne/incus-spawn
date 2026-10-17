@@ -3,6 +3,7 @@ package dev.incusspawn.git;
 import dev.incusspawn.config.GitTransferConfig;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.OwnSession;
 
 import java.io.File;
 import java.io.IOException;
@@ -24,7 +25,9 @@ import java.util.regex.Pattern;
 /**
  * One host-side Git process under a {@link GitTransferConfig}: non-interactive, its progress read
  * into a bounded tail, stopped when it stalls or overruns, and its whole process tree killed on the
- * way out, so a stalled helper cannot outlive the wait or hold the caller (#1343).
+ * way out, so a stalled helper cannot outlive the wait or hold the caller (#1343). Unless it may
+ * prompt, it leads a session of its own, out of reach of the terminal's Ctrl+C, and isx stops it
+ * when it exits (#1425).
  */
 final class GitProcess {
     private GitProcess() {}
@@ -59,8 +62,6 @@ final class GitProcess {
      * stall. Quiet work such as resolving deltas runs near 100%.
      */
     static final double BUSY_CPU_SHARE = 0.05;
-    private static final long TERM_MILLIS = 2_000;
-    private static final long REAP_MILLIS = 5_000;
     private static final long READER_MILLIS = 2_000;
     private static final Pattern CSI = Pattern.compile("\u001B\\[[0-9;?]*[ -/]*[@-~]");
 
@@ -70,13 +71,20 @@ final class GitProcess {
      * {@code /dev/null} and a separate stdout is discarded, unless redirected. {@code progress} is called a few times a second while Git runs,
      * on the calling thread. Interruption stops Git, returns {@link Status#INTERRUPTED} and keeps the
      * interrupt flag set.
+     * <p>
+     * Git leads a session of its own ({@link OwnSession}), so the terminal's Ctrl+C reaches isx alone,
+     * and isx decides: a build waits for a second one (#1415, #1425). Only {@code update-all}'s, run
+     * with the user's SSH command as it is ({@code repo} given, not {@code forceNoPrompt}), keeps the
+     * terminal that command may ask on.
      */
     static Result run(ProcessBuilder builder, Path repo, PreparationGit.SshScope scope, GitTransferConfig limits,
                       Consumer<Progress> progress) throws IOException {
         var ssh = nonInteractive(builder, repo, scope);
         var tail = new Tail();
         long start = System.nanoTime();
-        var process = builder.start();
+        // Only update-all's Git runs the user's SSH command as it is, which may ask on the terminal.
+        boolean mayPrompt = !forceNoPrompt && repo != null;
+        var process = mayPrompt ? builder.start() : OwnSession.start(builder);
         var stream = builder.redirectErrorStream() ? process.getInputStream() : process.getErrorStream();
         var reader = Thread.ofPlatform().daemon().name("git-output").start(() -> tail.read(stream));
         Status stopped = null;
@@ -123,7 +131,7 @@ final class GitProcess {
         } finally {
             // Waits below must not be cut short by the interrupt being handled; it is restored after.
             boolean interrupted = Thread.interrupted() || stopped == Status.INTERRUPTED;
-            if (process.isAlive()) interrupted |= kill(process);
+            if (process.isAlive()) interrupted |= OwnSession.stop(List.of(process));
             interrupted |= joinUninterruptibly(reader, READER_MILLIS);
             // An orphaned helper could still hold the pipe open: never let it hold the caller.
             if (reader.isAlive()) closeQuietly(stream);
@@ -244,42 +252,6 @@ final class GitProcess {
             // Not Linux, or the process is gone: CPU time alone decides.
         }
         return bytes;
-    }
-
-    /**
-     * Stops Git and every helper it started, then waits (bounded) until they are gone: a SIGTERM
-     * first, so Git can remove its temporary packs and locks, then a SIGKILL for whatever is left.
-     */
-    static boolean kill(Process process) {
-        var tree = new ArrayList<ProcessHandle>(process.descendants().toList());
-        tree.add(process.toHandle());
-        tree.forEach(ProcessHandle::destroy);
-        boolean interrupted = awaitExit(tree, TERM_MILLIS);
-        // Even after an interrupt: a helper that ignores SIGTERM must not survive.
-        tree.stream().filter(ProcessHandle::isAlive).forEach(ProcessHandle::destroyForcibly);
-        return awaitExit(tree, REAP_MILLIS) | interrupted;
-    }
-
-    /**
-     * Waits up to {@code millis} for all of {@code tree} to exit, through interrupts, and says whether
-     * one came; the caller restores the flag once its cleanup is done.
-     */
-    private static boolean awaitExit(List<ProcessHandle> tree, long millis) {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
-        boolean interrupted = false;
-        for (var handle : tree) {
-            while (true) {
-                try {
-                    handle.onExit().get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
-                    break;
-                } catch (InterruptedException e) {
-                    interrupted = true;
-                } catch (Exception gone) {
-                    break;
-                }
-            }
-        }
-        return interrupted;
     }
 
     /** Joins {@code thread} for up to {@code millis}, through interrupts, and says whether one came. */

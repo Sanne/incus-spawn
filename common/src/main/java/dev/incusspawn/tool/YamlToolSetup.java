@@ -6,10 +6,12 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.OwnSession;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * Adapts a {@link ToolDef} (parsed from YAML) into a {@link ToolSetup}
@@ -426,10 +428,12 @@ public class YamlToolSetup implements ToolSetup {
     }
 
     private static void runProcess(String label, String... command) throws IOException {
+        Process process = null;
         try {
             // Captured, not inherited: this runs under a live step line, which the child's own
-            // terminal output would be drawn over.
-            var process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            // terminal output would be drawn over. In a session of its own: a build's first Ctrl+C
+            // may be a copy, and only isx may take it (#1425).
+            process = OwnSession.start(new ProcessBuilder(command).redirectErrorStream(true));
             var output = new String(process.getInputStream().readAllBytes()).strip();
             int exitCode = process.waitFor();
             if (exitCode != 0) {
@@ -437,6 +441,8 @@ public class YamlToolSetup implements ToolSetup {
                         + (output.isEmpty() ? "" : ": " + output));
             }
         } catch (InterruptedException e) {
+            // Out of the terminal's process group, nothing else would stop it.
+            OwnSession.stop(List.of(process));
             Thread.currentThread().interrupt();
             throw new IOException(label + " interrupted", e);
         }

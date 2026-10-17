@@ -46,6 +46,7 @@ The `--type` CLI flag overrides the definition's type; `effectiveMachineType()` 
 `BuildCommand.InstanceType` (`container`, `vm`, `kvm`) is the CLI/definition-level enum; `MachineType` (`CONTAINER`, `VM`) is the Incus API-level type -- KVM is a container with `/dev/kvm` passthrough, not an Incus VM.
 `ActiveBuild` holds the temp name, canonical name, and resolved `MachineType` for the duration of a build, so `buildFromParent`/`buildFromScratch` and the shutdown hook read it from one place.
 While it is set and isx is at a terminal, the first Ctrl+C only warns and a second within five seconds interrupts (`BuildInterrupt`, #1415): a terminal can send Ctrl+C for Ctrl+Shift+C.
+Host processes a build waits on run in a session of their own, so that first Ctrl+C does not reach them, and a shutdown hook stops them when isx exits (`OwnSession.start`, #1425): Git preparing repositories (`GitProcess`) and tool setup's archive extraction (`YamlToolSetup`).
 
 **VM guest SELinux** (#842): VM builds pin `/etc/selinux/config` to `SELINUX=disabled` before any dnf run (`disableGuestSelinux`, both build paths) and fail at the end if it reads `enforcing` (`assertGuestSelinuxNotEnforcing`).
 The guest filesystem is unlabelled and the targeted policy denies the incus-agent's vsock `listen`, so an enforcing guest builds fine but is unreachable after its next boot.
