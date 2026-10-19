@@ -331,6 +331,12 @@ Manage the incus-spawn VM appliance. macOS only.
 
     isx vm <subcommand>
 
+Run `isx vm --help` to list its commands.
+If the VM is unreachable, try `isx vm restart`, then `isx vm status`.
+Restarting keeps instances and templates, but stops running containers.
+If it is still unreachable, use `isx doctor` for health checks and `isx vm console` to follow the serial console output.
+`isx vm reset` is a destructive last resort: it deletes every instance, template and cached image.
+
 | Subcommand | Description |
 |------------|-------------|
 | `start` | Start the VM (creates disk image on first run) |
