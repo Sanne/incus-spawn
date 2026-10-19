@@ -354,7 +354,7 @@ Windows is not supported.
 **Linux**: `isx init` installs [Incus](https://linuxcontainers.org/incus/) with your package manager.
 
 **macOS**: `isx init` provisions a lightweight Linux VM with [vfkit](https://github.com/crc-org/vfkit), which starts when needed.
-`isx vm start|stop|restart|status|resize|reset|console|check-version` manages it.
+`isx vm start|stop|restart|status|resize|reset|console|check-version` manages it, and [its reference](docs/CLI.md#when-the-vm-stops-answering) says what to do when it stops answering.
 Apple Silicon is supported.
 Intel Macs get a binary built for the same macOS 15 minimum on a best-effort basis: it is released, but not verified on an Intel Mac.
 

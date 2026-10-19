@@ -519,12 +519,26 @@ isx vm <subcommand>
 |------------|--------------|
 | `start` | Start the VM (creates the disk image on first run) |
 | `stop` | Stop the VM with a graceful shutdown |
-| `restart` | Stop and restart the VM (applies pending appliance updates) |
+| `restart` | Stop and restart the VM (keeps instances, stops running containers, applies pending appliance updates) |
 | `status` | Show VM status and system diagnostics |
 | `resize` | Grow the VM data disk that backs the storage pool |
 | `reset` | Wipe the VM data disk: deletes every instance, template and cached image |
 | `console` | Follow VM serial console output |
 | `check-version` | Say whether the running appliance matches the installed version; with `--quiet`, only when a restart would change it |
+
+### When the VM stops answering
+
+When isx cannot reach the VM, run `isx doctor` first.
+It starts a stopped VM, and clears leaked connections in the VM's forwarder without a reboot, so running containers keep going.
+Only when neither is the cause does it offer to restart the VM.
+
+A restart, by doctor or with `isx vm restart`, keeps your instances and templates.
+It stops running containers, and applies any pending appliance update.
+If the VM still does not answer, `isx vm console` follows its serial console, and `isx doctor --bundle` collects a support archive to attach to an issue.
+
+**Last resort: `isx vm reset` deletes every instance, template and cached image in the VM, with any work stored only inside them.**
+It asks first.
+Rebuild your templates afterwards with `isx build --all`.
 
 ### `isx vm stop`
 
@@ -539,7 +553,8 @@ With `--require-clean`, such a stop also exits 4, and a VM isx could not stop ex
 ### `isx vm restart`
 
 Stop and restart the VM, applying any pending appliance updates.
-It stops the running instances.
+It keeps instances and templates, but stops running containers.
+When the VM is not running, it says so and leaves it to `isx vm start`.
 
 ```shell
 isx vm restart [options]
@@ -826,7 +841,7 @@ In a script format, nothing is offered or applied, and `--bundle` cannot be comb
 | Field | Meaning |
 |-------|---------|
 | `appliance_pending` | The installed appliance a restart would apply |
-| `vsock_connections_high` | The in-VM forwarder may be leaking streams; `isx vm restart` clears them |
+| `vsock_connections_high` | The in-VM forwarder may be leaking streams; `isx doctor` clears them without a reboot |
 
 It exits 1 when Incus is unreachable.
 

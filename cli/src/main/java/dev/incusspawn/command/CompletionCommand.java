@@ -430,7 +430,7 @@ public class CompletionCommand extends BaseCommand {
               _vm_subcmds=(
                 'start:start the VM (creates disk image on first run)'
                 'stop:stop the VM (graceful shutdown)'
-                'restart:stop and restart the VM (applies pending appliance updates)'
+                'restart:stop and restart the VM (keeps instances, stops running containers, applies pending appliance updates)'
                 'status:show VM status and system diagnostics'
                 'resize:grow the VM data disk that backs the storage pool'
                 'reset:wipe the VM data disk (deletes every instance, template and cached image)'
@@ -1170,7 +1170,7 @@ public class CompletionCommand extends BaseCommand {
 
             complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a start   -d 'Start the VM (creates disk image on first run)'
             complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a stop    -d 'Stop the VM (graceful shutdown)'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a restart -d 'Stop and restart the VM (applies pending appliance updates)'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a restart -d 'Stop and restart the VM (keeps instances, stops running containers, applies pending appliance updates)'
             complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a status  -d 'Show VM status and system diagnostics'
             complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a resize  -d 'Grow the VM data disk that backs the storage pool'
             complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a reset   -d 'Wipe the VM data disk: deletes every instance, template and cached image'

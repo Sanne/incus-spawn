@@ -89,7 +89,7 @@ public class VmCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "restart",
-            description = "Stop and restart the VM (applies pending appliance updates)",
+            description = "Stop and restart the VM (keeps instances, stops running containers, applies pending appliance updates)",
             generateHelp = true
     )
     public static class Restart extends BaseCommand {
