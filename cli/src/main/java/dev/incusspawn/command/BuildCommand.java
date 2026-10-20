@@ -1255,10 +1255,9 @@ public class BuildCommand extends BaseCommand {
         // Asked only now: Incus may be what failed, and the host report must exist before it is asked
         boolean created = buildContainerExists(buildName);
         var diagnostics = printBuildDiagnostics(buildName, created);
-        var report = errorLine + "\n\n" + diagnostics;
-        if (!stepOutput.isEmpty()) {
-            report += "\n" + stepOutput;
-        }
+        var report = stepOutput.isEmpty()
+                ? errorLine + "\n\n" + diagnostics
+                : errorLine + "\n\n" + stepOutput + diagnostics;
 
         // Update the host report with the full diagnostics. Write to a temp file and move so
         // a failure (e.g. disk full) after truncation cannot erase the initial error-only report.

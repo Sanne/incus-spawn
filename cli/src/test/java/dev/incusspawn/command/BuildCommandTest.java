@@ -318,6 +318,44 @@ class BuildCommandTest {
         });
     }
 
+    @Test
+    void interruptDuringPromotionKeepsStepOutput(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.instanceMetadataOrThrow("tpl-minimal-rebuilding")).thenReturn(instance("container", Map.of()));
+            when(incus.scanSubvolumes()).thenReturn(Optional.empty());
+            when(incus.supportsVirtualMachines()).thenReturn(Optional.of(true));
+
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            doThrow(new IncusException("prime failed")
+                    .withStepOutput("npm ERR! could not resolve\n"))
+                    .when(cmd).buildInto(any(), any(), anyString());
+
+            var called = new AtomicBoolean();
+            doAnswer(invocation -> {
+                if (called.compareAndSet(false, true)) {
+                    cmd.reportInterruptedBuild();
+                }
+                return null;
+            }).when(incus).rename(eq("tpl-minimal-rebuilding"), anyString());
+
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-minimal");
+
+            assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of()));
+
+            var log = Environment.buildFailureLogFile("tpl-minimal");
+            var content = assertDoesNotThrow(() -> Files.readString(log));
+            assertTrue(content.contains("Build interrupted"),
+                    "host log should contain the interrupted-build message");
+            assertTrue(content.contains("npm ERR! could not resolve"),
+                    "host log should still contain step output from the original failure");
+        });
+    }
+
     /**
      * A deprecated template still builds, and so does what derives from it, but each build says
      * so, naming the template built (the deprecated parent's own build, then the user's), and

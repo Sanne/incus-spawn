@@ -685,8 +685,9 @@ class RepoCloner {
                 System.err.println(styled(BOLD, header));
                 System.err.println(progress.log().strip());
                 System.err.println(styled(BOLD, footer));
+                var trimmed = BuildOutput.stripAnsi(BuildOutput.lastLines(progress.log(), 100));
                 output.append(header).append('\n');
-                output.append(progress.log().strip()).append('\n');
+                output.append(trimmed).append('\n');
                 output.append(footer).append("\n\n");
             }
         }
