@@ -71,6 +71,8 @@ Without an id it joins the only task in the instance; with several it lists them
 A task in the middle of a turn is refused until the turn ends.
 Plain `isx shell` into an instance `isx mcp` made prints that command before the prompt.
 
+Copying from an agent inside the instance needs an OSC 52-capable host terminal; use the terminal's paste shortcut, not the agent's clipboard key. See the [FAQ](../README.md#faq).
+
 When the `shell-status-bar` feature is enabled, a two-line status bar is pinned at the bottom of the terminal showing the instance name, template, IP address, and network mode. Press **F12** to open a quick-action menu with shortcuts from tool actions that set `shell_menu: true`. Enable with:
 
 ```yaml

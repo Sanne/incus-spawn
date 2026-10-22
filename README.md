@@ -312,6 +312,10 @@ Use **Ctrl+Shift-click** to open the URL in your host browser. This worked in ou
 
 Codex CLI can intercept URL clicks and try to launch a browser inside the isx instance, producing `Failed to open browser for ...: No valid browsers detected`. This also affects remote SSH sessions and is tracked upstream in [openai/codex#52766](https://github.com/openai/codex/issues/52766). The `tui.link_activation = "disabled"` setting did not resolve it in our testing, and other users report the same limitation in [openai/codex#48886](https://github.com/openai/codex/issues/48886).
 
+### Why doesn't "copied" from an agent reach my host clipboard?
+
+Agents copy with OSC 52, which isx forwards but cannot apply: your host terminal must support it. Apple Terminal and GNOME Terminal/VTE do not support OSC 52. Ghostty, kitty, WezTerm, foot, Alacritty, and iTerm2 support SC 52. In iTerm2 enable **Settings → General → Selection → Applications in terminal may access clipboard**. In tmux set `set -g set-clipboard on` and `set -as terminal-features '*:clipboard'`.
+
 ### Why can't I mount a host directory read-write to follow agent work in my IDE?
 
 A project directory is not just data — it is an implicit code execution channel. Build tools, package managers, and IDEs all trust its contents and execute them with your full host privileges. A read-write mount turns the agent's output into unreviewed host-side code execution, which is exactly the threat model isx exists to prevent.
