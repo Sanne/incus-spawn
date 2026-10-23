@@ -40,6 +40,7 @@ The root image (`tpl-minimal`) uses a custom Fedora base from [`Sanne/incus-spaw
 ```shell
 isx update-base              # interactive — shows versions, prompts for action
 isx update-base --list       # list available versions
+isx update-base --list --format=json  # the same for scripts (plain or json)
 isx update-base --latest     # track the newest release (remove any pin)
 isx update-base fedora-44-v2 # pin to a specific release tag
 ```
@@ -66,10 +67,12 @@ isx ignores a key it does not know, such as `repo:` for `repos:`, with a warning
 # List all available templates
 isx templates list
 isx templates list -v          # with source path and description
+isx templates list --format=json  # for scripts: adds whether each is built and out of sync
 
 # Create a new template (opens in $EDITOR with a skeleton listing every field, commented out)
 isx templates new my-app       # creates ~/.config/incus-spawn/images/my-app.yaml
 isx templates new my-app --project  # creates .incus-spawn/images/my-app.yaml
+isx templates new              # creates new-template.yaml, to be named in the editor
 
 # Edit an existing template
 isx templates edit tpl-java    # opens in $EDITOR, validates on save
@@ -102,7 +105,7 @@ All fields are optional except `name`.
 | `parent` | Parent image name; omit for root images | |
 | `packages` | dnf packages to install | |
 | `remove_packages` | dnf packages to remove before installing | |
-| `package_repos` | Additional package repositories to enable, such as COPR | |
+| `package_repos` | Additional package repositories to enable before installing packages, each with `type: copr` and `name: owner/project`; copr is the only kind | |
 | `tools` | Tool names to run, resolved from YAML or Java (see [Custom Tools](TOOLS.md#custom-tools)) | |
 | `repos` | Git repositories to clone as agentuser (see [Declarative Repos](#declarative-repos)) | |
 | `skills` | Agent skills to bake into the image: a list, or an object with `repo` and `list` sub-fields (see [Agent Skills](AGENTS.md#agent-skills)) | |
@@ -166,12 +169,21 @@ isx build tpl-java --with-parents
 # Rebuild two templates and all their parents, the parents they share once
 isx build tpl-isx tpl-quarkus --with-parents
 
+# Rebuild a template and every template that inherits from it
+isx build tpl-java --with-descendants
+
 # Rebuild out-of-sync templates (changed definitions, older isx version, or a parent rebuilt since)
 isx build --out-of-sync
+
+# Build only the templates that do not exist yet
+isx build --missing
 
 # Rebuild all discovered images from scratch
 isx build --all
 ```
+
+`--with-parents` and `--with-descendants` take one or more template names and rebuild each template once, parents first.
+Both show the batch and ask before rebuilding; `--yes` skips the question.
 
 The TUI marks a template that is out of sync:
 
@@ -183,7 +195,9 @@ The TUI marks a template that is out of sync:
 
 A VM over a container parent is built from the definitions, never copied, so it is never `↑`.
 `isx build --out-of-sync` rebuilds all three, and everything that inherits from what it rebuilds.
-If a build fails, isx promotes the failed build to an inspectable instance, so you can shell in and debug.
+
+If a build fails, isx promotes the failed build to an inspectable instance named `<template>-failed-build`, so you can shell in and debug.
+The previous build of the template, if any, stays in place.
 
 ## Declarative Repos
 
@@ -240,7 +254,7 @@ Stashes, reflog-only and unreachable objects, uncommitted files, source configur
 The instance has no upstream remote: fetch or update the original repository on the host, then rebuild to export newer work.
 
 Branching registers an `isx://` remote in the resolved host checkout, so `git fetch <instance-name>` retrieves the instance's work.
-Destroying or renaming the instance removes that remote.
+Destroying the instance removes that remote, and renaming it re-adds the remote under the new name.
 No `repo-paths` entry or `host-resources` overlay is needed, on Linux or macOS.
 
 Host sources require complete history: `depth` and shallow source repositories are refused.
@@ -309,7 +323,7 @@ The `~/.gitconfig` entry mounts your git configuration read-only, the default mo
 | `overlay` | No | Read-only lower layer from the host plus an ephemeral writable upper layer in the instance. Tools see a normal read-write directory and the host is fully protected. Linux only: macOS does not support it. |
 | `copy` | No | Copied into the instance at build time, so it becomes part of the template. Also supports URL sources. |
 
-`readonly` and `overlay` resources cannot be mounted into system directories such as `/`, `/etc`, `/usr`, `/var` or `/tmp`.
+`readonly` and `overlay` resources cannot be mounted at `/` or into a system directory: `/bin`, `/boot`, `/dev`, `/etc`, `/lib`, `/lib64`, `/proc`, `/run`, `/sbin`, `/sys`, `/tmp`, `/usr` or `/var`.
 Use `/home/agentuser`, `/opt`, `/srv` or `/mnt` instead, or `mode: copy`.
 
 ## Entry fields
@@ -317,7 +331,7 @@ Use `/home/agentuser`, `/opt`, `/srv` or `/mnt` instead, or `mode: copy`.
 | Field | What it does | Default |
 |-------|--------------|---------|
 | `source` | The host file or directory to share | |
-| `path` | Where it appears inside the instance | the same relative path under `/home/agentuser/` |
+| `path` | Where it appears inside the instance; `~` and a relative path are under `/home/agentuser`, and a URL source needs one | the source path, with `~` as `/home/agentuser` |
 | `mode` | `readonly`, `overlay` or `copy` | `readonly` |
 
 isx ignores any other key, such as `target:`, with a warning.
