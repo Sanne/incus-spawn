@@ -7,7 +7,7 @@ Every isx command, with what `--help` does not say.
 ## `isx`
 
 Launch the interactive TUI.
-When stdout is not a terminal, it prints a plain-text listing instead.
+When the TUI cannot open, as when stdout is not a terminal, it prints the instance table instead.
 
 ```shell
 isx
@@ -37,7 +37,7 @@ isx build [<template>...] [options]
 | `--with-parents` | Rebuild the templates and all their parents unconditionally |
 | `--with-descendants` | Rebuild the templates and all templates inheriting from them |
 | `--missing` | Build only templates that do not exist yet. As with several named templates, a failure skips what inherits from it, the rest still build, and the command exits 1 naming what it did not build |
-| `--type <type>` | Instance type: `container`, `vm` or `kvm`, overriding the image definition. `vm` and `kvm` work on Linux only |
+| `--type <type>` | Instance type: `container`, `vm` or `kvm`, overriding the image definition. `vm` needs an Incus that runs VMs, which the macOS appliance cannot, and `kvm` passthrough is off on macOS |
 | `--yes` | Skip interactive confirmations |
 | `--skip-git-refresh` | Accepted for compatibility; builds do not refresh host checkouts |
 
@@ -73,12 +73,13 @@ isx branch <name> [options]
 | `--proxy-only` | Restrict network to the host proxy only |
 | `--inbox <dir>` | Host directory to mount read-only at `~/inbox` inside the instance |
 | `--cpu <N>` | CPU core limit. Default: none for containers; for VMs the host's CPUs minus 2, at most 8, and on a hybrid host at most its top tier's physical cores |
-| `--memory <size>` | Memory limit, such as `8GB` (default: adaptive) |
-| `--disk <size>` | Disk size limit (default: adaptive) |
+| `--memory <size>` | Memory limit, such as `8GB`. Default: 60% of the host's RAM for a container; for a VM a quarter of it, between 4 GiB and 16 GiB |
+| `--disk <size>` | Disk size limit (default: `100GB`, a ceiling on a copy-on-write pool, not an allocation) |
 | `--no-start` | Do not start the instance after creation |
 | `--shell` | Open a plain shell instead of running the default action |
 | `--account <ns>=<account>` | Use this [credential account](CONFIGURATION.md#credential-accounts) instead of the template's or the default; repeatable |
 | `--mcp-client` | Let the instance drive isx over MCP at `https://mcp.isx.internal/mcp`, as a [coordinator in an instance](MCP.md#a-coordinator-in-an-instance). Its copies never inherit it |
+| `--format=<format>` | `table` (the default), or `plain` or `json` to print only the new name, with progress on stderr and no shell opened. See [Scripting isx](#isx-branch-fields) |
 
 ## `isx shell`
 
@@ -101,7 +102,7 @@ Copying from an agent inside the instance needs an OSC 52-capable host terminal.
 See the [FAQ](FAQ.md#why-doesnt-copied-from-an-agent-reach-my-host-clipboard).
 
 With the `shell-status-bar` feature enabled, isx pins a two-line status bar at the bottom of the terminal.
-It shows the instance name, template, IP address and network mode.
+It shows the instance name and template, then its IP address, its network mode unless that is full, and the names of its repositories.
 Press F12 to open a quick-action menu with shortcuts from tool actions that set `shell_menu: true`.
 Enable it with:
 
@@ -173,6 +174,7 @@ isx update-base [<release-tag>] [options]
 |--------|--------------|
 | `--list` | List available versions |
 | `--latest` | Track the latest version (remove any pin) |
+| `--format=<format>` | With `--list` only: `table` (the default), `plain` or `json` |
 
 Pass a release tag, such as `fedora-44-v2`, to pin to that version.
 
@@ -215,6 +217,7 @@ isx templates list [options]
 | Option | What it does |
 |--------|--------------|
 | `-v`, `--verbose` | Show source and description |
+| `--format=<format>` | `table` (the default), `plain` or `json`; bare `isx templates` takes it too |
 
 ### `isx templates new`
 
@@ -261,6 +264,7 @@ isx tools list [options]
 | Option | What it does |
 |--------|--------------|
 | `-v`, `--verbose` | Show source and description |
+| `--format=<format>` | `table` (the default), `plain` or `json`; bare `isx tools` and `isx tools show` take it too |
 
 ### `isx tools show`
 
@@ -401,6 +405,7 @@ isx doctor [options]
 |--------|--------------|
 | `--deep` | Run per-instance checks (DNS, TLS, resolv.conf) |
 | `--bundle` | Collect findings and logs into a support archive (.tar.gz); implies `--deep` |
+| `--format=<format>` | `table` (the default), `plain` or `json`; not with `--bundle` |
 
 Each finding carries a mark:
 
@@ -424,7 +429,7 @@ isx clean <subcommand> [options]
 
 | Subcommand | What it does |
 |------------|--------------|
-| `cache` | Remove cached downloads, registry blobs and build caches |
+| `cache` | Remove cached downloads, registry blobs and build caches, and the DNF cache volume in the storage pool |
 | `state` | Remove VM state, logs and appliance artifacts |
 | `config` | Remove configuration, SSH keys and the CA certificate |
 | `pool` | Reclaim space from the storage pool: failed builds, unused images, DNF cache |
@@ -438,11 +443,13 @@ All subcommands accept these options:
 | `--skip-confirmation` | Skip the confirmation prompt |
 
 On macOS, `isx clean state` keeps the VM's data disk, with every instance, template and image, unless you pass `--delete-instances`.
+It refuses while the VM runs: stop it first with `isx vm stop`.
 Run `isx init` afterwards: the VM needs the appliance again before it boots on the kept disk.
 
 `isx clean pool --base-images` also removes the downloaded base images, which the next build downloads again.
 
 `isx clean all` touches no Incus template or instance unless you pass `--delete-instances`, which on macOS also deletes the VM's data disk.
+Like `isx clean state`, it refuses while the VM runs.
 
 ## `isx reset`
 
@@ -486,7 +493,7 @@ The guest stops Incus and its instances and syncs the disks.
 isx warns when the guest did not shut down and had to be stopped with signals, which loses the writes of the last few minutes.
 That is every stop of an appliance from before the fix for [#881](https://github.com/Sanne/incus-spawn/issues/881), until `isx vm restart` applies a newer one.
 
-With `--require-clean`, such a stop also exits 4.
+With `--require-clean`, such a stop also exits 4, and a VM isx could not stop exits 1.
 
 ### `isx vm restart`
 
@@ -528,7 +535,7 @@ isx vm reset [options]
 | `-y`, `--yes` | Skip the confirmation prompt |
 
 It deletes every instance, template and cached image.
-isx lists them and asks first, or needs `--yes` without a terminal.
+isx starts a stopped VM to list them, asks first, or needs `--yes` without a terminal.
 Rebuild your templates afterwards with `isx build --all`.
 
 ## `isx ask`
