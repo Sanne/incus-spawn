@@ -30,14 +30,27 @@ The key or token stays on the host, and the proxy adds it to Claude Code's reque
 | Parameter | Default | What it does |
 | --- | --- | --- |
 | `model` | Claude Code's own default | The model Claude Code uses |
+| `theme` | Claude Code's own default | Colour theme: `dark`, `light`, `dark-daltonized` or `light-daltonized` |
+| `editor-mode` | Claude Code's own default | Input editor mode: `normal` or `vim` |
+| `output-style` | Claude Code's own default | Response style: `Default`, `Proactive`, `Explanatory` or `Learning` |
+| `attribution-commit` | Claude Code's own default | The trailer Claude Code adds to its commits, such as `Assisted-By: Claude Code <noreply@anthropic.com>` |
+| `attribution-pr` | Claude Code's own default | The text Claude Code adds to its pull requests; an empty string omits it |
 
 Model IDs follow the `claude-*` naming convention: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`.
+A child template can set any of these parameters again without reinstalling Claude Code.
 
 ```yaml
 tools:
   - claude:
       model: claude-sonnet-4-6
 ```
+
+### What the build sets up
+
+The build gives Claude Code bypass-permissions mode with every tool allowed, and turns off auto-update, telemetry, error reporting, the feedback survey and its own sandbox.
+It accepts the onboarding and the trust prompt for the home directory, so the first session starts without questions.
+The footer shows `Running unconstrained in isx [version] [container name]`.
+The default action resumes your most recent session in its directory.
 
 ## Codex CLI
 
@@ -79,7 +92,7 @@ tools:
 
 ### What the build sets up
 
-The build configures Codex for unattended use and trusts the template's repos.
+The build configures Codex for unattended use, turns off its update check and marks the home directory as trusted.
 The default action resumes your most recent session.
 
 The footer shows the model, the current directory and `Running unconstrained in isx [version] [container name]`.
@@ -107,6 +120,7 @@ shell-command: pi
 
 The credential stays on the host, and the proxy adds it to Pi's requests as they leave the instance.
 To use Pi without making it the default shell, omit `shell-command` and launch it manually after `isx shell`.
+With `default-action: pi` instead, the instance opens Pi resuming your most recent session in its directory.
 
 ### Parameters
 
@@ -115,13 +129,15 @@ To use Pi without making it the default shell, omit `shell-command` and launch i
 | `provider` | `anthropic` | The API Pi talks to; also accepts `openai`, `vertex` or `google` |
 | `model` | `claude-sonnet-4-6` | The model Pi uses |
 
+The `vertex` and `google` providers need a Vertex AI Claude account, whose project and region the build exports to Pi.
+
 Pi can also run against OpenAI, using the same key as [Codex CLI](#codex-cli):
 
 ```yaml
 tools:
   - pi:
       provider: openai
-      model: gpt-5.3
+      model: gpt-4.1
 ```
 
 ## Gemini CLI
@@ -210,7 +226,19 @@ An instance holds only a placeholder value.
 
 During `isx init` you are asked to accept the IBM license agreement.
 Accepting pre-configures it in every instance, so Bob Shell does not prompt again.
-The default action launches Bob with `--auto-approve`, which auto-approves all tool calls; running `bob` manually in a shell uses normal approval mode.
+
+The default action resumes your most recent task with `--auto-approve`, which auto-approves all tool calls; running `bob` manually in a shell uses normal approval mode.
+The build trusts the home directory and turns off auto-update and the update reminder.
+
+### Parameters
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `max-session-turns` | Bob's own default | The most turns a session may take; `-1` for unlimited |
+| `compression-threshold` | Bob's own default | The share of the context window, `0.0` to `1.0`, at which Bob compresses the conversation |
+| `checkpointing` | Bob's own default | `true` or `false`: whether Bob keeps safety checkpoints |
+
+A child template can set any of them again without reinstalling Bob.
 
 ## GitHub Copilot CLI
 
@@ -231,6 +259,7 @@ shell-command: copilot
 ```
 
 Run `isx init` to configure your GitHub token if you have not already.
+The build auto-approves every tool call, in interactive and headless runs alike, the same as `--yolo`.
 
 ## Agent Skills
 
@@ -266,16 +295,24 @@ Skill source formats:
 | --- | --- |
 | `owner/repo@skill-name` | One skill from a GitHub repo |
 | `owner/repo` | All skills from a GitHub repo |
+| `https://github.com/owner/repo` | The same as `owner/repo`, with `@skill-name` accepted too |
 | `./local-path` | A local directory, relative to where `isx build` runs |
+| `/absolute/path` | A local directory, by absolute path |
 | `skill-name` | A bare name, resolved against the `skills.repo` field, which bare names require |
+
+A local directory that holds a `SKILL.md` is one skill, named after the directory; otherwise each subdirectory with a `SKILL.md` is one.
+From a GitHub repo, every top-level `<name>/SKILL.md` on `main` or `master` is a skill.
+Only the `SKILL.md` is installed; isx caches the GitHub ones on the host at `~/.cache/incus-spawn/skills/`.
 
 To find available skills, browse [skills.sh](https://skills.sh).
 
 ## Agent Environment Context
 
 Every build writes a short primer to `/etc/claude-code/CLAUDE.md`, so Claude Code starts each session knowing where it is.
-The primer says that the instance is disposable, `sudo` needs no password, the proxy handles credentials, and outward-facing actions such as opening a PR wait until asked.
+The primer says that the instance is disposable, `sudo` needs no password, the proxy handles credentials, `isx-trust` fixes a runtime's own CA bundle, and outward-facing actions such as opening a PR wait until asked.
+
 It also lists the tools and repositories the template provides.
+When Gemini CLI is installed, the same text goes to `~/.gemini/GEMINI.md`.
 
 Your own `~/.claude/CLAUDE.md` and project `CLAUDE.md` files load as usual.
 
