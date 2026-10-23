@@ -129,12 +129,17 @@ How it works:
 
 What the proxy can sign in as:
 
-| Credential | What you give `isx init` |
-|------------|--------------------------|
-| Anthropic API key | the key |
-| Claude Pro or Max | the token from `claude setup-token`; the proxy adds the OAuth bearer token |
-| Vertex AI | your project and region; the proxy translates each request and signs it with the host's GCP credentials, which never enter the instance |
-| GitHub | a token, used by `gh`, `git` and Copilot CLI |
+| Credential | Who uses it in the instance | What you give `isx init` |
+|------------|-----------------------------|--------------------------|
+| Anthropic API key | Claude Code, Pi | the key |
+| Claude Pro or Max | Claude Code, Pi | the token from `claude setup-token`; the proxy adds the OAuth bearer token |
+| Vertex AI | Claude Code, Pi | your project and region; the proxy translates each request and signs it with the host's GCP credentials, which never enter the instance |
+| OpenAI API key | Codex CLI, Pi | the key |
+| Gemini API key | Gemini CLI | the key |
+| IBM API key | Bob Shell | the key |
+| GitHub token | `gh`, `git`, GitHub Copilot CLI | the token |
+| Atlassian API token | the `atlassian-mcp` tool, for Jira and Confluence | your account email and the token |
+| A service of your own | whatever your tool YAML installs | its credential, declared in the YAML's `proxy:` block ([Proxy Credentials](docs/TOOLS.md#proxy-credentials)) |
 
 A credential can have several accounts, for example a personal and a client Claude subscription, or two GitHub identities.
 Each template or instance chooses which one it spends: see [Credential accounts](docs/CONFIGURATION.md#credential-accounts).

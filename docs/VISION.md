@@ -1,7 +1,7 @@
 # isx: Vision
 
 Where the project is going and why.
-[CHARACTER.md](dev/CHARACTER.md) describes what isx is: its mission and design philosophy.
+The project's character, its mission and design philosophy, is what isx is.
 This page describes what it is becoming.
 Nothing here is a committed roadmap: the concrete work is tracked in issues, linked throughout.
 
@@ -104,4 +104,4 @@ These are the priorities, in order: each stage unblocks the next.
    Per-agent domain sets, network modes, and budget caps as dispatch-time knobs.
 
 Throughout, local-first stays the core conviction: your hardware, your network, your repos.
-And the character defined in [CHARACTER.md](dev/CHARACTER.md) holds: strong opinions on the core (security, fidelity, speed), flexibility at the edges (tools, templates, integrations).
+And the project's character holds: strong opinions on the core (security, fidelity, speed), flexibility at the edges (tools, templates, integrations).
