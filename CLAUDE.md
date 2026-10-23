@@ -64,11 +64,12 @@ CLAUDE.md is the quick-reference for contributors; DESIGN.md is the full rationa
 Both must stay current.
 
 **Markdown source: one sentence per line, and short sentences** (#1243).
-This applies to DESIGN.md, this file and `.claude/rules/`, so that a diff shows exactly which sentence changed.
+This applies to README.md, `docs/*.md`, DESIGN.md, this file and `.claude/rules/`, so that a diff shows exactly which sentence changed.
 A sentence never wraps, and a line never holds two sentences.
 In a list item, each sentence after the first goes on its own line, indented to the item's text; in a block quote, each line starts with `> `.
 Headings, tables (a row stays on one line), code, HTML and front matter are exempt.
 `DocsOneSentencePerLineTest` enforces this in `mvn test`.
+README.md and `docs/*.md` also keep to the budgets in `.claude/rules/writing.md` (a paragraph of at most four sentences and 60 words, a sentence of at most 40, no dashes, no issue numbers), enforced by `DocsShapeTest`.
 Split a sentence of more than about 40 words where it splits cleanly; `.claude/rules/writing.md` "Splitting a sentence" lists the only word changes a split may make.
 
 The `gemini-cli` tool installs and configures Google Gemini CLI through `GeminiSetup`.
