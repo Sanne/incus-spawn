@@ -21,6 +21,7 @@ These tools ship with isx; a template's `tools:` list names them.
 | `maven-3` | Apache Maven |
 | `mvnd` | Apache Maven Daemon |
 | `podman` | Podman container runtime configured for Testcontainers |
+| `perf` | Linux perf tools and tracing utilities for performance analysis |
 | `sshd` | OpenSSH server for remote access |
 | `idea-backend` | JetBrains IntelliJ IDEA Remote Development backend |
 | `vscode-remote` | VS Code Remote Development via SSH |
@@ -66,15 +67,20 @@ Every field is optional except `name`.
 
 | Field | What it does |
 |-------|--------------|
+| `description` | One line shown by `isx tools` and in build output |
 | `packages` | dnf packages to install |
+| `package_repos` | Additional package repositories to enable, as in a template |
 | `downloads` | Artifacts to download, cache on the host, and copy or extract into the instance |
-| `requires` | Other tools that must be installed first |
+| `requires` | Other tools that must be installed first; an entry is a name, or a map such as `idea-backend: {memory: "8g"}` to pass parameters |
 | `run` | Shell commands run as root |
 | `run_as_user` | Shell commands run as agentuser |
 | `files` | Files to write, each with an optional `owner` |
 | `env` | Environment variables written to `/etc/profile.d/isx-env.sh` |
 | `verify` | Verification command, logged and non-fatal |
 | `verify_as_root` | `true` when the verify needs root |
+| `ready` | Command each start polls until it succeeds, for up to 15 seconds, before handing the instance over; a tool that is not ready in time only warns |
+| `parameters` | Build-time parameters a template sets in its `tools:` list, see [Tool Parameters](#tool-parameters) |
+| `feature` | A feature flag the tool needs; a build skips the tool, with a warning, until the flag is listed under `features:` in `config.yaml` |
 | `actions` | Runtime actions the TUI offers when the tool is installed, see [Tool Actions](#tool-actions) |
 | `agent_note` | An always-true fact about this tool that an agent must know before acting |
 | `skills` | Skills to install alongside the tool, teaching an agent how to drive it |
@@ -110,7 +116,8 @@ isx skips a tool file without `name:`, or with a blank one, with a warning.
 | `sha256` | SHA-256 checksum; enables cache reuse and verifies integrity |
 | `extract` | Directory in the instance to extract into |
 | `destination_file` | Exact path at which to expose the downloaded file in the instance; `~/` resolves to `/home/agentuser/` |
-| `extract_in_container` | Extract inside the instance instead of on the host |
+| `extract_in_container` | Extract inside the instance with its `tar` instead of on the host; a VM ignores it and always extracts on the host |
+| `arch` | `x86_64` or `aarch64`; isx skips the download when the instance has another architecture |
 | `links` | Map of `source_path: symlink_path` to create after extraction |
 
 Each download must set `extract`, `destination_file`, or both.
@@ -181,7 +188,7 @@ env:
 
 A tool can register domains with the [MITM proxy](../README.md#credential-isolation), which adds the credentials as the requests leave the instance.
 This gives any HTTPS API authentication without a secret inside the instance.
-The built-in `claude`, `gh`, `bob`, `codex`, `copilot` and `gemini-cli` tools use this mechanism, and your own tools can declare the same.
+The built-in `claude`, `gh`, `bob`, `codex`, `copilot`, `gemini-cli` and `atlassian-mcp` tools use this mechanism, and your own tools can declare the same.
 
 A `proxy:` block declares four keys.
 
@@ -196,6 +203,7 @@ The namespace uses letters, digits, `.`, `-` and `_`, starting with a letter or 
 A proof is the per-instance value the guest sends in place of the credential; the proxy recognizes it and swaps in the real one.
 
 A configuration entry can also use `value` for a hardcoded literal, which `isx init` does not prompt for, and `type: confirm` for a yes/no prompt such as license acceptance.
+A `help` list of lines is printed before the prompt in place of the description.
 
 ```yaml
 # ~/.config/incus-spawn/tools/artifactory.yaml
@@ -303,6 +311,7 @@ proxy:
 ```
 
 Wildcard domains (`*.internal.myservice.com`) match any subdomain.
+An entry for the exact domain is tried first.
 The most specific wildcard wins when multiple tools register overlapping suffixes.
 In this example, send `$MY_SERVICE_TOKEN` as the bearer token, Basic password or `X-API-Key` value for the corresponding domain.
 
@@ -373,7 +382,7 @@ Such a request, and a prefix of such a form, are handled by these rules.
   That is an entry unscoped or scoped to `/`, on the domain or else on a wildcard covering it.
   Otherwise the proxy relays the request with its own authentication.
 - Each prefix is a literal path starting with `/`, without a query, wildcard, whitespace, `;`, empty segment, `.`/`..` segment or any other form listed above.
-- A tool definition with any other prefix is skipped with a warning when definitions load.
+- isx refuses a tool definition with any other prefix when definitions load, with a warning, and `isx build` refuses until it is fixed.
   Such a prefix could never match, and servers that drop `;` path parameters would serve another path.
 
 When tools with different credential namespaces share a domain, these rules apply.
@@ -399,9 +408,12 @@ Project-local tools (`.incus-spawn/tools/`) cannot declare proxy rules, because 
 
 Both VS Code and JetBrains IntelliJ can connect to an instance with their UI running natively on the host and all backend processing (indexing, builds, terminals, extensions) running inside the instance.
 
-isx manages the SSH keys: `isx init` generates a dedicated passphraseless key pair at `~/.config/incus-spawn/ssh/`, and each branch injects it into the instance along with your personal `~/.ssh` key.
-The instance's SSH host keys are pre-validated, so `ssh <instance-name>` just works: no passphrase prompt, no host key warning.
-isx removes the entries when it destroys an instance.
+isx manages the SSH keys: `isx init` generates a dedicated passphraseless key pair at `~/.config/incus-spawn/ssh/`.
+Each start of an instance with an SSH server injects it, along with your personal `~/.ssh` key: the first of `id_ed25519.pub`, `id_ecdsa.pub` and `id_rsa.pub`.
+
+isx writes a `Host` entry per instance to `~/.config/incus-spawn/ssh/config`, included from your `~/.ssh/config`, with host key checking off.
+So `ssh <instance-name>` just works: no passphrase prompt, no host key warning.
+isx removes the entry when it destroys an instance.
 
 Both tools declare TUI actions: press F9 on a running instance to open a repo directly in your IDE.
 
@@ -505,7 +517,11 @@ A tool can define parameters for build-time configuration.
 | `boolean` | none |
 | `enum` | `options` |
 
-Use `${param_name}` to reference values in scripts, env, and file content:
+Every parameter also takes `default`, `description`, `optional` and `reconfigurable`.
+A parameter with no value and no default is an error unless it is `optional` or `reconfigurable`.
+A child template may change a `reconfigurable` parameter of a tool an ancestor installed; changing any other one there is an error.
+
+A parameter `memory` is `${param_memory}` in `run`, `run_as_user`, `verify`, env values and file paths and content:
 
 ```yaml
 # tools/my-server.yaml
@@ -529,7 +545,7 @@ From the CLI, `isx run <instance> --action <tool:action-id>` invokes one.
 Running `isx run <instance>` with no `--action` flag executes the template's default action.
 
 Actions can be declared in YAML tool definitions or programmatically by Java/CDI tools.
-The built-in `claude` and `pi` tools contribute shell actions ("Claude Code" and "Pi Coding Agent") when a template's `tools` list includes them.
+The built-in `claude`, `pi`, `gemini-cli`, `bob` and `codex` tools each contribute a shell action that launches the agent when a template's `tools` list includes them.
 
 #### Action entry fields
 
@@ -537,12 +553,12 @@ The built-in `claude` and `pi` tools contribute shell actions ("Claude Code" and
 
 | Field | What it does |
 |-------|--------------|
-| `label` | Display text shown in the F9 menu; supports template variables |
+| `label` | Display text shown in the F9 menu; only the repo variables apply, not `${ip}`, `${name}` or `${parent}` |
 | `type` | One of `url`, `command`, `shell`, `copy-to-clipboard` |
 | `id` | Stable identifier for referencing from `default-action: tool:action-id` |
 | `requires_running` | Whether the instance must be running (default `true`) |
 | `expand` | Set to `repos` to generate one action per declared repository |
-| `auto_return` | Return to the TUI after the action completes (default `false`; only meaningful for `command` and `shell`) |
+| `auto_return` | Return without waiting for a key after the action completes (default `false`); a `shell` action never waits, and the TUI never waits after a `url` or `copy-to-clipboard` action |
 
 Each type takes one field of its own.
 
@@ -556,11 +572,12 @@ Each type takes one field of its own.
 Two fields control where else an action shows.
 
 - `shell_menu`: when `true`, the action also appears in the F12 shell status bar menu during `isx shell` sessions.
+  The menu exists only with the `shell-status-bar` feature enabled in `config.yaml`.
   Only `url` actions can, as they open on the host without taking over the terminal.
 - `shortcut`: the single key that runs the action from that menu.
   It is one printable ASCII character, not shared with another menu action (case-insensitively); an action without a usable one is left out of the menu with a warning.
 
-Template variables available in `label`, `url`, `command`, and `text`: `${ip}`, `${name}`, `${parent}`.
+Template variables available in `url`, `command`, and `text`: `${ip}`, `${name}`, `${parent}`.
 When `expand: repos` is set, repo-specific variables are also available: `${repo_name}`, `${repo_path}`, `${repo_url}`.
 
 ```yaml
