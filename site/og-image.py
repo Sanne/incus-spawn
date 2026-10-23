@@ -14,7 +14,7 @@ from fontTools.varLib import instancer
 from PIL import Image, ImageDraw, ImageFont
 
 SITE = os.path.dirname(os.path.abspath(__file__))
-HEADLINE = "Give your AI coding agents their own machines —"
+HEADLINE = "Give your AI coding agents their own machines,"
 HIGHLIGHT = "not your credentials"
 DOMAIN = "isx.run"
 
