@@ -2,10 +2,11 @@
 
 Each agent is a tool: add it to a template's `tools:` list, and every branch of the template has it, set up for unattended work.
 Its credentials stay on the host, where `isx init` configures them, and the [proxy](../README.md#credential-isolation) adds them to its requests as they leave the instance.
+The sections below cover one agent each.
 
 ## Claude Code
 
-Claude Code is Anthropic's official CLI for Claude.
+Claude Code is Anthropic's official CLI for Claude, and works with all three Claude auth modes: API key, Claude Pro/Max OAuth and Vertex AI.
 Add it to any template with `tools: [claude]`:
 
 ```yaml
@@ -22,9 +23,15 @@ default-action: claude
 ```
 
 The `claude` tool downloads the latest Claude Code binary, configures permissions for unattended agent use, and sets up authentication.
-All three auth modes work transparently — the [MITM proxy](../README.md#credential-isolation) injects credentials so no real API keys or tokens enter the container.
+The key or token stays on the host, and the proxy adds it to Claude Code's requests as they leave the instance.
 
-To preconfigure which model Claude Code uses, pass the `model` parameter:
+### Parameters
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `model` | Claude Code's own default | The model Claude Code uses |
+
+Model IDs follow the `claude-*` naming convention: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`.
 
 ```yaml
 tools:
@@ -32,12 +39,9 @@ tools:
       model: claude-sonnet-4-6
 ```
 
-When omitted, Claude Code uses its own default.
-Model IDs follow the `claude-*` naming convention (e.g. `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`).
-
 ## Codex CLI
 
-Codex CLI is OpenAI's coding agent.
+Codex CLI is OpenAI's coding agent, and signs in with an OpenAI API key.
 Add it to any template with `tools: [codex]`:
 
 ```yaml
@@ -53,16 +57,18 @@ tools:
 default-action: codex
 ```
 
-Codex needs an OpenAI API key ([create one here](https://platform.openai.com/api-keys); API usage needs billing credits, even on free accounts).
-Run `isx init` to configure it: the key stays on the host and the [MITM proxy](../README.md#credential-isolation) injects it.
+Codex needs an OpenAI API key ([create one here](https://platform.openai.com/api-keys)).
+API usage needs billing credits, even on free accounts.
+Run `isx init` to configure the key: it stays on the host, and the proxy adds it to Codex's requests as they leave the instance.
 
-The build configures Codex for unattended use and trusts the template's repos.
-The default action resumes your most recent session.
-The footer shows the model, the current directory and `Running unconstrained in isx [version] [container name]`, the name of a permission profile with full filesystem and network access (and live web search).
-The version and container name refresh at login, including after cloning a template.
-Use `/statusline` to customize the footer; the `permissions` item displays the isx message.
+### Parameters
 
-To pin a model or reasoning effort (by default Codex picks both):
+By default Codex picks both the model and the reasoning effort.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `model` | Codex picks | Any model your OpenAI account can use ([model list](https://platform.openai.com/docs/models)) |
+| `effort` | Codex picks | Reasoning effort: `minimal`, `low`, `medium`, `high` or `xhigh` |
 
 ```yaml
 tools:
@@ -71,11 +77,19 @@ tools:
       effort: high
 ```
 
-`model` is any model your OpenAI account can use ([model list](https://platform.openai.com/docs/models)); `effort` is `minimal`, `low`, `medium`, `high` or `xhigh`.
+### What the build sets up
+
+The build configures Codex for unattended use and trusts the template's repos.
+The default action resumes your most recent session.
+
+The footer shows the model, the current directory and `Running unconstrained in isx [version] [container name]`.
+That is the name of a permission profile with full filesystem and network access, and live web search.
+The version and instance name refresh at login, including after cloning a template.
+Use `/statusline` to customize the footer; the `permissions` item displays the isx message.
 
 ## Pi Coding Agent
 
-Pi is a provider-agnostic CLI coding agent that uses the standard Anthropic API.
+Pi is a provider-agnostic CLI coding agent that uses the standard Anthropic API, and works with all three Anthropic auth modes: API key, Claude Pro/Max OAuth and Vertex AI.
 Add it to any template with `tools: [pi]`:
 
 ```yaml
@@ -91,8 +105,15 @@ tools:
 shell-command: pi
 ```
 
-Pi works out of the box with all three Anthropic auth modes (API key, Claude Pro/Max OAuth, Vertex AI) — the [MITM proxy](../README.md#credential-isolation) injects credentials transparently.
+The credential stays on the host, and the proxy adds it to Pi's requests as they leave the instance.
 To use Pi without making it the default shell, omit `shell-command` and launch it manually after `isx shell`.
+
+### Parameters
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `provider` | `anthropic` | The API Pi talks to; also accepts `openai`, `vertex` or `google` |
+| `model` | `claude-sonnet-4-6` | The model Pi uses |
 
 Pi can also run against OpenAI, using the same key as [Codex CLI](#codex-cli):
 
@@ -103,11 +124,10 @@ tools:
       model: gpt-5.3
 ```
 
-`provider` defaults to `anthropic` and also accepts `vertex`/`google`; `model` defaults to `claude-sonnet-4-6`.
-
 ## Gemini CLI
 
-Add Google's [Gemini CLI](https://geminicli.com/docs/get-started/installation/) to a template with `tools: [gemini-cli]`:
+Google's [Gemini CLI](https://geminicli.com/docs/get-started/installation/) signs in with a [Gemini API key](https://aistudio.google.com/apikey).
+Add it to a template with `tools: [gemini-cli]`:
 
 ```yaml
 name: tpl-gemini-dev
@@ -117,26 +137,26 @@ tools:
 default-action: gemini-cli
 ```
 
-Run `isx init` on the host and select Gemini CLI to configure a [Gemini API key](https://aistudio.google.com/apikey).
-Keys are stored in host-side `gemini.accounts.<name>.apiKey`, with `gemini.default` selecting the default account.
+Run `isx init` on the host and select Gemini CLI to configure the key.
+isx stores keys in host-side `gemini.accounts.<name>.apiKey`, with `gemini.default` selecting the default account.
 Use `accounts: { gemini: work }` in a template or `isx branch --from tpl-gemini-dev --account gemini=work my-gemini` to select a named account.
-The box receives a `GEMINI_API_KEY` proof placeholder; the proxy verifies it and injects the selected key into requests to `generativelanguage.googleapis.com`.
+
+The instance receives a `GEMINI_API_KEY` proof placeholder.
+The proxy verifies it and adds the selected key to requests to `generativelanguage.googleapis.com` as they leave the instance.
 Gemini CLI reads the placeholder when launched, so no API key or proof is saved in its settings.
 This integration supports Gemini API keys; Google OAuth and Vertex authentication remain separate work ([#1114](https://github.com/Sanne/incus-spawn/issues/1114)).
 
 After upgrading both `isx` and `isx-proxy`, rebuild existing Gemini templates and branch new instances.
-The build removes the old login notice, including when a child template inherits Gemini, and adds its proof environment.
-An existing instance from an older template keeps its login notice until rebuilt.
+An instance from an older template keeps a login notice until its template is rebuilt.
+The build removes that notice, including when a child template inherits Gemini, and adds the proof environment.
 
-The tool installs `@google/gemini-cli` and writes `~/.gemini/settings.json`.
-It disables telemetry, usage statistics, automatic updates and update notifications, startup tips, the banner and home-directory warnings, folder trust prompts, and the CLI's inner sandbox.
-The tool writes `~/.gemini/policies/isx-auto-approve.toml` to auto-approve tool calls in normal, auto-edit, and YOLO modes.
-This applies to direct `gemini` launches, headless invocations, and the default action, without extra flags.
-Plan mode retains its normal policy behavior.
-Gemini's shell checks can still require approval for commands outside the workspace or commands it cannot parse; `--yolo` remains available for full YOLO behavior.
-The policy uses priority zero so higher-priority user rules can override it; remove this file to restore upstream approval defaults.
+### Parameters
 
-To pin a model, use the native Gemini model ID:
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `model` | Gemini CLI's own default | The model, as a native Gemini model ID |
+
+A child template can set `model` again without reinstalling the CLI.
 
 ```yaml
 tools:
@@ -144,16 +164,32 @@ tools:
       model: gemini-4-argon
 ```
 
-When `gemini-cli` is installed, every template build writes the generated environment instructions to `~/.gemini/GEMINI.md`, including inherited template notes, installed tools, and cloned repositories.
-This file is owned by `agentuser` and regenerated on rebuild; project `GEMINI.md` files remain separate.
-The tool leaves `context.fileName` unset.
+### What the build sets up
 
-Without `model`, Gemini CLI chooses its own default.
-The model parameter is reconfigurable in child templates without reinstalling the CLI.
+The tool installs `@google/gemini-cli` and writes `~/.gemini/settings.json`, which disables:
+
+- telemetry and usage statistics;
+- automatic updates and update notifications;
+- startup tips, the banner and home-directory warnings;
+- folder trust prompts;
+- the CLI's inner sandbox.
+
+The tool also writes `~/.gemini/policies/isx-auto-approve.toml`, which auto-approves tool calls in normal, auto-edit and YOLO modes.
+The policy applies to direct `gemini` launches, headless invocations and the default action, without extra flags.
+Plan mode retains its normal policy behavior.
+
+Gemini's shell checks can still require approval for commands outside the workspace or commands it cannot parse; `--yolo` remains available for full YOLO behavior.
+
+The policy uses priority zero, so higher-priority user rules can override it.
+Remove the file to restore upstream approval defaults.
+
+When `gemini-cli` is installed, every template build writes the generated environment instructions to `~/.gemini/GEMINI.md`, including inherited template notes, installed tools and cloned repositories.
+The file is owned by `agentuser` and regenerated on rebuild; project `GEMINI.md` files remain separate.
+The tool leaves `context.fileName` unset.
 
 ## Bob Shell
 
-Bob Shell is IBM's AI-powered coding assistant.
+Bob Shell is IBM's AI-powered coding assistant, and signs in with an IBM API key ([create one here](https://bob.ibm.com/docs/ide/account/api-keys#create-an-api-key)).
 Add it to any template with `tools: [bob]`:
 
 ```yaml
@@ -169,15 +205,17 @@ tools:
 default-action: bob
 ```
 
-Bob Shell requires an IBM API key ([create one here](https://bob.ibm.com/docs/ide/account/api-keys#create-an-api-key)).
-Run `isx init` to configure it — the real key stays on the host and the [MITM proxy](../README.md#credential-isolation) injects it transparently.
-Containers only hold a placeholder value.
-During `isx init` you'll be asked to accept the IBM license agreement; accepting pre-configures it in all containers so Bob Shell won't prompt again.
-The default action launches Bob with `--auto-approve` (auto-approve all tool calls); running `bob` manually in a shell uses normal approval mode.
+Run `isx init` to configure the key: it stays on the host, and the proxy adds it to Bob's requests as they leave the instance.
+An instance holds only a placeholder value.
+
+During `isx init` you are asked to accept the IBM license agreement.
+Accepting pre-configures it in every instance, so Bob Shell does not prompt again.
+The default action launches Bob with `--auto-approve`, which auto-approves all tool calls; running `bob` manually in a shell uses normal approval mode.
 
 ## GitHub Copilot CLI
 
-Add GitHub Copilot CLI to a template with `tools: [copilot]`:
+GitHub Copilot CLI signs in with the same GitHub PAT as the `gh` tool; no separate credential is needed.
+Add it to a template with `tools: [copilot]`:
 
 ```yaml
 name: tpl-copilot-dev
@@ -192,13 +230,13 @@ tools:
 shell-command: copilot
 ```
 
-Copilot uses the same GitHub PAT as the `gh` tool -- run `isx init` to configure your GitHub token if you haven't already.
-No separate credential is needed.
+Run `isx init` to configure your GitHub token if you have not already.
 
 ## Agent Skills
 
-Template images can declare [agent skills](https://skills.sh) to bake in at build time.
-Skills are installed once into the template, at `~/.agents/skills`, the shared location any agent can read (Claude Code finds them through `~/.claude/skills`), and inherited by every instance branched from it.
+A template can declare [agent skills](https://skills.sh) to bake in at build time.
+Skills are installed once into the template, at `~/.agents/skills`, the shared location any agent can read, and inherited by every instance branched from it.
+Claude Code finds them through `~/.claude/skills`.
 
 ```yaml
 name: tpl-skills
@@ -213,7 +251,7 @@ skills:
     - myorg/catalog              # all skills from a repo
 ```
 
-There is no implicit default catalog -- `repo` is only needed to resolve bare skill names (like `security-review` above).
+There is no implicit default catalog: `repo` is only needed to resolve bare skill names, such as `security-review` above.
 When all entries use the fully qualified `owner/repo@skill` or `owner/repo` form, you can omit `repo` and use the list shorthand:
 
 ```yaml
@@ -223,17 +261,22 @@ skills:
 ```
 
 Skill source formats:
-- `owner/repo@skill-name` -- specific skill from a GitHub repo
-- `owner/repo` -- all skills from a GitHub repo
-- `./local-path` -- local directory (relative to where `isx build` is run)
-- `skill-name` -- bare name, resolved using the `skills.repo` field (required for bare names)
+
+| Form | What it selects |
+| --- | --- |
+| `owner/repo@skill-name` | One skill from a GitHub repo |
+| `owner/repo` | All skills from a GitHub repo |
+| `./local-path` | A local directory, relative to where `isx build` runs |
+| `skill-name` | A bare name, resolved against the `skills.repo` field, which bare names require |
 
 To find available skills, browse [skills.sh](https://skills.sh).
 
 ## Agent Environment Context
 
-Every build writes a short primer to `/etc/claude-code/CLAUDE.md`, so Claude Code starts each session knowing where it is: the box is disposable, `sudo` needs no password, credentials are handled by the proxy, and outward-facing actions such as opening a PR wait until asked.
+Every build writes a short primer to `/etc/claude-code/CLAUDE.md`, so Claude Code starts each session knowing where it is.
+The primer says that the instance is disposable, `sudo` needs no password, the proxy handles credentials, and outward-facing actions such as opening a PR wait until asked.
 It also lists the tools and repositories the template provides.
+
 Your own `~/.claude/CLAUDE.md` and project `CLAUDE.md` files load as usual.
 
 Templates and tools can add their own lines with `agent_note`:
@@ -263,7 +306,7 @@ skills:
 
 ### When to write a note
 
-Notes are read in every session, so save them for things an agent would otherwise get wrong: a required flag, a version to avoid, an "obvious" fix that isn't.
+The agent reads its notes in every session, so save them for things it would otherwise get wrong: a required flag, a version to avoid, an "obvious" fix that is not one.
 Be specific:
 
 ```yaml
@@ -278,7 +321,7 @@ Some content is better placed elsewhere:
 | Instead of | Use |
 | --- | --- |
 | `agent_note: Maven 3.9 build tool` | `description`, which is what template and tool listings show |
-| `agent_note: maven, podman and jtreg are installed` | Nothing -- the generated file already lists installed tools and cloned repos |
+| `agent_note: maven, podman and jtreg are installed` | Nothing: the generated file already lists installed tools and cloned repos |
 | `agent_note: Build with 'make images', test with 'make test TEST=tier1'` | A [skill](#agent-skills), which loads on demand rather than in every session |
 | `agent_note: Be careful when editing the parser` | A specific constraint, or nothing at all |
 | `agent_note: Follow the Quarkus code style` | The repository's own `CLAUDE.md`, which applies only to work in that repo |
