@@ -1,86 +1,109 @@
 # CLI reference
 
-Every command, with what `--help` does not say.
-`isx <command> --help` lists all of its options.
+Every isx command, with what `--help` does not say.
+`isx <command> --help` lists all of a command's options.
+[Scripting isx](#scripting-isx) covers the `plain` and `json` output formats, the fields each query command prints and the exit codes.
 
 ## `isx`
 
 Launch the interactive TUI.
-Falls back to plain-text listing when stdout is not a terminal.
+When stdout is not a terminal, it prints a plain-text listing instead.
 
-    isx
+```shell
+isx
+```
 
 ## `isx init`
 
-One-time host setup: install Incus, configure credentials and their [accounts](CONFIGURATION.md#credential-accounts), test connectivity.
-Safe to re-run, e.g. to add, rename or remove an account.
+Set up the host once: install Incus, configure credentials and their [accounts](CONFIGURATION.md#credential-accounts), and test connectivity.
+Running it again is safe, and is how you add, rename or remove an account.
 
-    isx init
+```shell
+isx init
+```
 
 ## `isx build`
 
 Build or rebuild a template image.
 
-    isx build [<template>...] [options]
+```shell
+isx build [<template>...] [options]
+```
 
-A template's name may be at most 52 characters, since it is built as `<name>-rebuilding` first and swapped in once built; a longer one is refused before anything is built, its parents included.
-
-Several templates build in one invocation: plainly, each in turn, a named parent before its child (each with any parent that is missing or out of sync, so a parent they share is built once); with `--with-parents` or `--with-descendants`, as one batch with one confirmation, parents before children and every template once.
-An unknown name anywhere in the list builds nothing.
-A target that fails does not stop the others: one that inherits from it is skipped, the rest are built, and the build then exits 1 with one `Some templates failed to build:` line on stderr naming every template it left unbuilt (a parent a target's chain failed on included).
-
-| Option | Description |
-|--------|-------------|
+| Option | What it does |
+|--------|--------------|
 | `--all` | Rebuild all defined templates |
 | `--out-of-sync` | Rebuild templates whose definition or isx version changed, or whose parent was rebuilt after them, with everything inheriting from them |
 | `--with-parents` | Rebuild the templates and all their parents unconditionally |
 | `--with-descendants` | Rebuild the templates and all templates inheriting from them |
-| `--missing` | Build only templates that don't exist yet; like several named templates, a failure skips what inherits from it and the rest are still built, then exits 1 naming what was not |
-| `--type <type>` | Instance type: `container`, `vm`, or `kvm` (overrides image definition); `vm` and `kvm` work on Linux only |
+| `--missing` | Build only templates that do not exist yet. As with several named templates, a failure skips what inherits from it, the rest still build, and the command exits 1 naming what it did not build |
+| `--type <type>` | Instance type: `container`, `vm` or `kvm`, overriding the image definition. `vm` and `kvm` work on Linux only |
 | `--yes` | Skip interactive confirmations |
-| `--skip-git-refresh` | Compatibility option; builds no longer refresh host checkouts |
+| `--skip-git-refresh` | Accepted for compatibility; builds do not refresh host checkouts |
+
+A template's name may be at most 52 characters, since isx builds it as `<name>-rebuilding` first and swaps it in once built.
+isx refuses a longer name before it builds anything, its parents included.
+
+Several templates build in one invocation:
+
+- With plain names, each builds in turn, a named parent before its child.
+  Each gets any parent that is missing or out of sync, so a parent they share builds once.
+- With `--with-parents` or `--with-descendants`, they build as one batch with one confirmation, parents before children and every template once.
+- With an unknown name anywhere in the list, nothing builds.
+
+A target that fails does not stop the others: isx skips what inherits from it and builds the rest.
+The build then exits 1 with one `Some templates failed to build:` line on stderr naming every template it left unbuilt, a parent a target's chain failed on included.
 
 ## `isx branch`
 
-Create a new instance as a copy-on-write clone from a template or existing instance.
+Create a new instance as a copy-on-write clone of a template or of an existing instance.
 
-    isx branch <name> [options]
+```shell
+isx branch <name> [options]
+```
 
-| Option | Description |
-|--------|-------------|
-| `--from <source>` | Source instance to branch from (auto-detected from cwd if omitted) |
-| `--gui` | Enable GUI passthrough (Wayland + GPU + audio); the default for a `gui: true` container template (not a project-local one) when isx runs in a Wayland session |
+| Option | What it does |
+|--------|--------------|
+| `--from <source>` | Source instance to branch from, detected from the current directory if omitted |
+| `--gui` | Enable GUI passthrough: Wayland, GPU and audio. The default for a `gui: true` container template, a project-local one excepted, when isx runs in a Wayland session |
 | `--no-gui` | Disable GUI passthrough even if the template has `gui: true` |
-| `--kvm` | Expose /dev/kvm for nested virtualization (Linux only: refused on macOS) |
+| `--kvm` | Expose `/dev/kvm` for nested virtualization. Linux only: refused on macOS |
 | `--no-kvm` | Disable KVM even if the template was built with `type: kvm` |
 | `--airgap` | No network devices: every NIC, InfiniBand device and outbound `proxy` device is masked, and `pci`/`usb` passthrough is refused |
 | `--proxy-only` | Restrict network to the host proxy only |
-| `--inbox <dir>` | Host directory to mount read-only at ~/inbox inside the instance |
-| `--cpu <N>` | CPU core limit (default: none for containers; for VMs host CPUs minus 2, at most 8, and on a hybrid host at most its top tier's physical cores) |
-| `--memory <size>` | Memory limit, e.g. `8GB` (default: adaptive) |
+| `--inbox <dir>` | Host directory to mount read-only at `~/inbox` inside the instance |
+| `--cpu <N>` | CPU core limit. Default: none for containers; for VMs the host's CPUs minus 2, at most 8, and on a hybrid host at most its top tier's physical cores |
+| `--memory <size>` | Memory limit, such as `8GB` (default: adaptive) |
 | `--disk <size>` | Disk size limit (default: adaptive) |
-| `--no-start` | Don't start the instance after creation |
+| `--no-start` | Do not start the instance after creation |
 | `--shell` | Open a plain shell instead of running the default action |
 | `--account <ns>=<account>` | Use this [credential account](CONFIGURATION.md#credential-accounts) instead of the template's or the default; repeatable |
-| `--mcp-client` | Let the instance drive isx over MCP, at `https://mcp.isx.internal/mcp`: a [coordinator in an instance](MCP.md#a-coordinator-in-an-instance). Never inherited by its copies |
+| `--mcp-client` | Let the instance drive isx over MCP at `https://mcp.isx.internal/mcp`, as a [coordinator in an instance](MCP.md#a-coordinator-in-an-instance). Its copies never inherit it |
 
 ## `isx shell`
 
 Open a shell in an existing instance.
 
-    isx shell <instance> isx shell <instance> --task [<task-id>]
+```shell
+isx shell <instance>
+isx shell <instance> --task [<task-id>]
+```
 
-With `--task`, it opens the conversation of a task an agent [delegated over MCP](MCP.md) instead of a shell: the agent resumes it in the directory it worked in, and leaving it ends the session.
-Without an id it joins the only task in the instance; with several it lists them, each with the command that joins it, and exits.
-A task in the middle of a turn is refused until the turn ends.
+With `--task`, it opens the conversation of a task an agent [delegated over MCP](MCP.md) instead of a shell.
+The agent resumes it in the directory it worked in, and leaving it ends the session.
+Without an id it joins the only task in the instance.
+With several, it lists them, each with the command that joins it, and exits.
+
+isx refuses a task in the middle of a turn until the turn ends.
 Plain `isx shell` into an instance `isx mcp` made prints that command before the prompt.
 
 Copying from an agent inside the instance needs an OSC 52-capable host terminal.
 See the [FAQ](FAQ.md#why-doesnt-copied-from-an-agent-reach-my-host-clipboard).
 
-When the `shell-status-bar` feature is enabled, a two-line status bar is pinned at the bottom of the terminal showing the instance name, template, IP address, and network mode.
-Press **F12** to open a quick-action menu with shortcuts from tool actions that set `shell_menu: true`.
-Enable with:
+With the `shell-status-bar` feature enabled, isx pins a two-line status bar at the bottom of the terminal.
+It shows the instance name, template, IP address and network mode.
+Press F12 to open a quick-action menu with shortcuts from tool actions that set `shell_menu: true`.
+Enable it with:
 
 ```yaml
 # ~/.config/incus-spawn/config.yaml
@@ -92,20 +115,26 @@ features:
 
 Run the default action or a specific action on an instance.
 
-    isx run <instance> [options]
+```shell
+isx run <instance> [options]
+```
 
-| Option | Description |
-|--------|-------------|
+| Option | What it does |
+|--------|--------------|
 | `--action <ref>` | Action to run (`tool-name` or `tool-name:action-id`) |
 
 ## `isx destroy`
 
-Destroy an instance, or bulk-destroy all templates or instances.
+Destroy an instance, or every built template or every instance at once.
 
-    isx destroy <instance> isx destroy --all-templates # destroy all built templates (derived first) isx destroy --all-instances # destroy all instances
+```shell
+isx destroy <instance>
+isx destroy --all-templates      # destroy all built templates (derived first)
+isx destroy --all-instances      # destroy all instances
+```
 
-| Option | Description |
-|--------|-------------|
+| Option | What it does |
+|--------|--------------|
 | `--all-templates` | Destroy all built templates (reverse order, derived first) |
 | `--all-instances` | Destroy all instances |
 | `--skip-confirmation` | Skip the confirmation prompt |
@@ -113,165 +142,216 @@ Destroy an instance, or bulk-destroy all templates or instances.
 ## `isx list`
 
 List the instances isx created, without opening the TUI.
-Templates are not listed: `isx templates` lists those.
-On macOS it starts the VM if it is stopped, except with `-q`, which shell completion runs.
-See [Scripting isx](#scripting-isx) for the `plain` and `json` formats.
 
-    isx list [options]
+```shell
+isx list [options]
+```
 
-| Option | Description |
-|--------|-------------|
+| Option | What it does |
+|--------|--------------|
 | `--format=<format>` | `table` (the default, for people), `plain` or `json` (for scripts) |
-| `--plain` | Same as `--format=plain`. Before this release it was a no-op that printed the table, so a script that skipped a header with it now gets records from the first line |
+| `--plain` | Same as `--format=plain`. There is no header line, so a script that skips one loses its first record |
 | `-q`, `--quiet` | Print instance names only, one per line |
 | `--status=<status>` | Only instances that are `running` or `stopped` |
 
-`isx instances`, which printed the names of every Incus instance not named `tpl-*`, is deprecated and will be removed in a later release; it now runs `isx list -q`.
-Shell completion scripts generated by this release no longer call it.
+It lists no templates: `isx templates` lists those.
+On macOS it starts the VM if it is stopped, except with `-q`, which shell completion runs.
+See [Scripting isx](#scripting-isx) for the `plain` and `json` formats and the fields.
+
+`isx instances` is deprecated and runs `isx list -q`; a later release removes it.
+The shell completion scripts do not call it.
 
 ## `isx update-base`
 
-Check for and install base image updates.
+Check for base image updates and install them.
 
-    isx update-base [<release-tag>] [options]
+```shell
+isx update-base [<release-tag>] [options]
+```
 
-Pass a release tag (e.g. `fedora-44-v2`) to pin to that version.
-
-| Option | Description |
-|--------|-------------|
+| Option | What it does |
+|--------|--------------|
 | `--list` | List available versions |
 | `--latest` | Track the latest version (remove any pin) |
 
+Pass a release tag, such as `fedora-44-v2`, to pin to that version.
+
 ## `isx update-all`
 
-Update system packages, npm globals, and git-fetch repos in all templates.
-Does not re-clone repos or reinstall tools; for that, use `isx build`.
+Update system packages, npm globals and git-fetched repos in all templates.
+It does not re-clone repos or reinstall tools: use `isx build` for that.
 
-    isx update-all [options]
+```shell
+isx update-all [options]
+```
 
-| Option | Description |
-|--------|-------------|
-| `--prime` | Also re-run prime commands (e.g. `mvn install -DskipTests`) for repos that define one |
+| Option | What it does |
+|--------|--------------|
+| `--prime` | Also re-run prime commands, such as `mvn install -DskipTests`, for repos that define one |
 
 ## `isx templates`
 
 Manage template definitions.
-Running bare `isx templates` defaults to `list`.
+Bare `isx templates` runs `list`.
 
-    isx templates <subcommand>
+```shell
+isx templates <subcommand>
+```
 
-| Subcommand | Description |
-|------------|-------------|
+| Subcommand | What it does |
+|------------|--------------|
 | `list` | List available template names |
 | `new` | Create a new template definition |
 | `edit` | Edit a template definition in `$EDITOR` |
 
 ### `isx templates list`
 
-    isx templates list [options]
+List the available template names.
 
-| Option | Description |
-|--------|-------------|
+```shell
+isx templates list [options]
+```
+
+| Option | What it does |
+|--------|--------------|
 | `-v`, `--verbose` | Show source and description |
 
 ### `isx templates new`
 
-    isx templates new [<name>]
+Create a new template definition.
 
-| Option | Description |
-|--------|-------------|
-| `--project` | Create in project-local directory (`.incus-spawn/images/`) |
+```shell
+isx templates new [<name>]
+```
+
+| Option | What it does |
+|--------|--------------|
+| `--project` | Create it in the project-local directory (`.incus-spawn/images/`) |
 
 ### `isx templates edit`
 
-    isx templates edit <name>
+Edit a template definition in `$EDITOR`.
+
+```shell
+isx templates edit <name>
+```
 
 ## `isx tools`
 
-List and inspect available tool definitions.
-Running bare `isx tools` defaults to `list`.
+List and inspect the available tool definitions.
+Bare `isx tools` runs `list`.
 
-    isx tools <subcommand>
+```shell
+isx tools <subcommand>
+```
 
-| Subcommand | Description |
-|------------|-------------|
+| Subcommand | What it does |
+|------------|--------------|
 | `list` | List available tools |
 | `show` | Show details of a tool definition |
 
 ### `isx tools list`
 
-    isx tools list [options]
+List the available tools.
 
-| Option | Description |
-|--------|-------------|
+```shell
+isx tools list [options]
+```
+
+| Option | What it does |
+|--------|--------------|
 | `-v`, `--verbose` | Show source and description |
 
 ### `isx tools show`
 
-    isx tools show <name>
+Show the details of one tool definition.
+
+```shell
+isx tools show <name>
+```
 
 ## `isx account`
 
 Add credentials, and show or change which [credential account](CONFIGURATION.md#credential-accounts) an instance uses.
-Running bare `isx account` defaults to `list`.
+Bare `isx account` runs `list`.
 
-    isx account <subcommand>
+```shell
+isx account <subcommand>
+```
 
-| Subcommand | Description |
-|------------|-------------|
+| Subcommand | What it does |
+|------------|--------------|
 | `list` | Configured accounts per credential, the default, and the instances pinned to each |
-| `add [<credential>]` | Add or replace one credential with the step `isx init` runs for it, and nothing else: no sudo, no other step. Name it by namespace (`github`, `claude`, `openai`) or by tool (`gh`, `codex`); without a name, choose from init's credential menu. Adding a second account goes through the same account menu. The proxy picks the change up by itself |
+| `add [<credential>]` | Add or replace one credential with the step `isx init` runs for it |
 | `show <instance>` | The account the instance uses for each credential, and where it comes from |
 | `set <instance> <ns>=<account>...` | Pin the instance to these accounts; takes effect on its next request |
 | `unset <instance> <ns>...` | Remove the pins, so the instance follows the default again |
-| `reset-proofs <instance>` | Revoke shared proofs and deliver replacements; waits for proxy acknowledgement. Restart tools and nested services with the new tokens |
+| `reset-proofs <instance>` | Revoke shared proofs and deliver replacements, waiting for the proxy to acknowledge. Then restart tools and nested services so they use the new tokens |
+
+`isx account add` runs that one step and nothing else: no sudo, no other step.
+Name the credential by namespace (`github`, `claude`, `openai`) or by tool (`gh`, `codex`); without a name, choose from init's credential menu.
+
+Adding a second account goes through the same account menu.
+The proxy picks the change up by itself.
 
 ## `isx project`
 
 Manage project templates defined by an `incus-spawn.yaml` file.
 
-    isx project <subcommand>
+```shell
+isx project <subcommand>
+```
 
-| Subcommand | Description |
-|------------|-------------|
+| Subcommand | What it does |
+|------------|--------------|
 | `create` | Create a project template from a parent base image |
 | `update` | Update an existing project template (packages, repos, deps) |
 
 ### `isx project create`
 
-    isx project create <name> [options]
+Create a project template from a parent base image.
 
-| Option | Description |
-|--------|-------------|
-| `--config <path>` | Path to `incus-spawn.yaml` (default: auto-detect from cwd) |
+```shell
+isx project create <name> [options]
+```
 
-A project name may be at most 52 characters, since it is built as `<name>-rebuilding` first.
+| Option | What it does |
+|--------|--------------|
+| `--config <path>` | Path to `incus-spawn.yaml` (default: detected from the current directory) |
+
+A project name may be at most 52 characters, since isx builds it as `<name>-rebuilding` first.
 Re-creating an existing template builds the new one alongside it and replaces it only once the build succeeds.
 If a repository fails to clone or the pre-build fails, the command exits non-zero, deletes the incomplete build and keeps the previous template.
 
 ### `isx project update`
 
-    isx project update <name> [options]
+Update an existing project template: its packages, repos and dependencies.
 
-| Option | Description |
-|--------|-------------|
-| `--config <path>` | Path to `incus-spawn.yaml` (default: auto-detect from cwd; a detected file must name this template) |
+```shell
+isx project update <name> [options]
+```
 
-If any step fails (system update, npm update, git fetch, pre-build), the command exits non-zero and the template is kept.
+| Option | What it does |
+|--------|--------------|
+| `--config <path>` | Path to `incus-spawn.yaml` (default: detected from the current directory; a detected file must name this template) |
+
+If any step fails (system update, npm update, git fetch, pre-build), the command exits non-zero and keeps the template.
 
 ## `isx proxy`
 
 Manage the MITM authentication proxy.
 
-    isx proxy <subcommand>
+```shell
+isx proxy <subcommand>
+```
 
-| Subcommand | Description |
-|------------|-------------|
+| Subcommand | What it does |
+|------------|--------------|
 | `start` | Start the proxy |
 | `stop` | Stop the proxy (handles both systemd and manual processes) |
 | `restart` | Restart the proxy service |
 | `status` | Check if the proxy is running |
-| `activity` | What each instance sent through the proxy: requests, in flight, bytes, model calls and tokens (`--by-domain` for one row per domain, `--format=plain\|json` for scripts) |
+| `activity` | What each instance sent through the proxy: requests, in flight, bytes, model calls and tokens. `--by-domain` gives one row per domain, `--format=plain\|json` serves scripts |
 | `install` | Install as a systemd user service (auto-starts on boot) |
 | `uninstall` | Stop and remove the systemd proxy service |
 | `logs` | Follow the proxy log in real time |
@@ -279,84 +359,118 @@ Manage the MITM authentication proxy.
 
 ### `isx proxy start`
 
-    isx proxy start [options]
+Start the proxy.
 
-| Option | Description |
-|--------|-------------|
+```shell
+isx proxy start [options]
+```
+
+| Option | What it does |
+|--------|--------------|
 | `--port <port>` | MITM TLS proxy port (default: `18443`) |
 | `--health-port <port>` | Health check HTTP port (default: `18080`) |
-| `--gateway-ip <ip>` | Incus bridge gateway IP, for when Incus cannot report it. On Linux it must be the bridge's own address, which is where every `isx` command looks for the proxy: when the bridge can be read, exactly its gateway; when not, a private (RFC 1918) or loopback address matching the gateway `isx init` recorded, if any. On macOS, the host's VM-facing bridge address |
+| `--gateway-ip <ip>` | Incus bridge gateway IP, for when Incus cannot report it |
 | `--debug` | Log full request/response details |
+
+On Linux, `--gateway-ip` must be the bridge's own address, which is where every `isx` command looks for the proxy.
+When the bridge can be read, that is exactly its gateway.
+When it cannot, it is a private (RFC 1918) or loopback address matching the gateway `isx init` recorded, if it recorded one.
+On macOS, it is the host's VM-facing bridge address.
 
 ### `isx proxy dump`
 
-    isx proxy dump [options]
+Run a pass-through proxy for host-side traffic capture.
 
-| Option | Description |
-|--------|-------------|
+```shell
+isx proxy dump [options]
+```
+
+| Option | What it does |
+|--------|--------------|
 | `--port <port>` | Local HTTP port (default: `19080`) |
 
 ## `isx doctor`
 
-Diagnose host, proxy, VM, and tunnel health; offers to fix problems found.
+Diagnose host, proxy, VM and tunnel health, and offer to fix the problems found.
 
-    isx doctor [options]
+```shell
+isx doctor [options]
+```
 
-| Option | Description |
-|--------|-------------|
+| Option | What it does |
+|--------|--------------|
 | `--deep` | Run per-instance checks (DNS, TLS, resolv.conf) |
 | `--bundle` | Collect findings and logs into a support archive (.tar.gz); implies `--deep` |
 
-Findings are marked `✓` healthy, `⚠` worth a look, `✗` broken, or `·` for a note.
-Notes don't affect the exit code.
+Each finding carries a mark:
+
+| Mark | Meaning |
+|------|---------|
+| `✓` | Healthy |
+| `⚠` | Worth a look |
+| `✗` | Broken |
+| `·` | A note, which does not affect the exit code |
 
 `--bundle` creates an archive to attach to a GitHub issue.
-Credentials are redacted before anything is written, and `REDACTIONS.txt` in the archive lists what was removed.
+isx redacts credentials before it writes anything, and `REDACTIONS.txt` in the archive lists what it removed.
 
 ## `isx clean`
 
-Remove cached data, state, or configuration.
+Remove cached data, state or configuration.
 
-    isx clean <subcommand> [options]
+```shell
+isx clean <subcommand> [options]
+```
 
-| Subcommand | Description |
-|------------|-------------|
-| `cache` | Remove cached downloads, registry blobs, and build caches |
-| `state` | Remove VM state, logs, and appliance artifacts; on macOS the VM's data disk (every instance, template and image) is kept unless you pass `--delete-instances`. Run `isx init` afterwards: the VM needs the appliance again before it boots on the kept disk |
-| `config` | Remove configuration, SSH keys, and CA certificate |
-| `pool` | Reclaim space from the storage pool (failed builds, unused images, DNF cache); `--base-images` also removes the downloaded base images, which the next build downloads again |
-| `all` | Remove cache, state, and configuration (does not touch Incus templates or instances unless you pass `--delete-instances`, which on macOS also deletes the VM's data disk) |
+| Subcommand | What it does |
+|------------|--------------|
+| `cache` | Remove cached downloads, registry blobs and build caches |
+| `state` | Remove VM state, logs and appliance artifacts |
+| `config` | Remove configuration, SSH keys and the CA certificate |
+| `pool` | Reclaim space from the storage pool: failed builds, unused images, DNF cache |
+| `all` | Remove cache, state and configuration |
 
 All subcommands accept these options:
 
-| Option | Description |
-|--------|-------------|
+| Option | What it does |
+|--------|--------------|
 | `--dry-run` | Show what would be deleted without deleting |
 | `--skip-confirmation` | Skip the confirmation prompt |
+
+On macOS, `isx clean state` keeps the VM's data disk, with every instance, template and image, unless you pass `--delete-instances`.
+Run `isx init` afterwards: the VM needs the appliance again before it boots on the kept disk.
+
+`isx clean pool --base-images` also removes the downloaded base images, which the next build downloads again.
+
+`isx clean all` touches no Incus template or instance unless you pass `--delete-instances`, which on macOS also deletes the VM's data disk.
 
 ## `isx reset`
 
 Return isx to a freshly installed state.
-Removes all instances and templates, cached images and downloads, the proxy service, the VM (macOS) and all configuration, including SSH keys and the CA certificate.
-It shows what will be removed and asks first.
+It removes all instances and templates, cached images and downloads, the proxy service, the VM on macOS, and all configuration, including SSH keys and the CA certificate.
+It shows what it will remove and asks first.
 Run `isx init` afterwards to set up again.
 
-    isx reset
+```shell
+isx reset
+```
 
-| Option | Description |
-|--------|-------------|
+| Option | What it does |
+|--------|--------------|
 | `--skip-confirmation` | Skip the confirmation prompt |
 
 ## `isx vm`
 
-Manage the incus-spawn VM appliance. macOS only.
+Manage the incus-spawn VM appliance, on macOS only.
 
-    isx vm <subcommand>
+```shell
+isx vm <subcommand>
+```
 
-| Subcommand | Description |
-|------------|-------------|
-| `start` | Start the VM (creates disk image on first run) |
-| `stop` | Stop the VM (graceful shutdown). It asks the guest to shut down (Incus and its instances stop, the disks are synced) and waits up to 30 s for it. It warns when the guest did not and had to be stopped with signals, which loses writes of the last few minutes; that is every stop of an appliance from before the fix for [#881](https://github.com/Sanne/incus-spawn/issues/881), until `isx vm restart` applies a newer one; `--require-clean` also exits 4 then |
+| Subcommand | What it does |
+|------------|--------------|
+| `start` | Start the VM (creates the disk image on first run) |
+| `stop` | Stop the VM with a graceful shutdown |
 | `restart` | Stop and restart the VM (applies pending appliance updates) |
 | `status` | Show VM status and system diagnostics |
 | `resize` | Grow the VM data disk that backs the storage pool |
@@ -364,109 +478,174 @@ Manage the incus-spawn VM appliance. macOS only.
 | `console` | Follow VM serial console output |
 | `check-version` | Say whether the running appliance matches the installed version; with `--quiet`, only when a restart would change it |
 
+### `isx vm stop`
+
+Ask the guest to shut down, and wait up to 30 s for it.
+The guest stops Incus and its instances and syncs the disks.
+
+isx warns when the guest did not shut down and had to be stopped with signals, which loses the writes of the last few minutes.
+That is every stop of an appliance from before the fix for [#881](https://github.com/Sanne/incus-spawn/issues/881), until `isx vm restart` applies a newer one.
+
+With `--require-clean`, such a stop also exits 4.
+
 ### `isx vm restart`
 
-    isx vm restart [options]
+Stop and restart the VM, applying any pending appliance updates.
+It stops the running instances.
 
-Stops and restarts the VM, applying any pending appliance updates.
-Running containers will be stopped.
+```shell
+isx vm restart [options]
+```
 
-| Option | Description |
-|--------|-------------|
+| Option | What it does |
+|--------|--------------|
 | `-y`, `--yes` | Skip the confirmation prompt |
 
 ### `isx vm resize`
 
-    isx vm resize <size>
+Grow the VM data disk that backs the storage pool.
 
-Size must be larger than the current disk (grow-only), e.g. `100G`.
+```shell
+isx vm resize <size>
+```
 
-| Option | Description |
-|--------|-------------|
+| Option | What it does |
+|--------|--------------|
 | `-y`, `--yes` | Skip the confirmation prompt |
+
+The size, such as `100G`, must be larger than the current disk: the disk only grows.
 
 ### `isx vm reset`
 
-    isx vm reset [options]
+Wipe the VM's storage pool, for when it is beyond repair, as with orphaned subvolumes reported by `isx doctor`.
 
-Wipes the VM's storage pool, for when it's beyond repair (for example, orphaned subvolumes reported by `isx doctor`).
-Every instance, template and cached image is deleted; isx lists them and asks first, or needs `--yes` without a terminal.
-Rebuild your templates afterwards with `isx build --all`.
+```shell
+isx vm reset [options]
+```
 
-| Option | Description |
-|--------|-------------|
+| Option | What it does |
+|--------|--------------|
 | `-y`, `--yes` | Skip the confirmation prompt |
+
+It deletes every instance, template and cached image.
+isx lists them and asks first, or needs `--yes` without a terminal.
+Rebuild your templates afterwards with `isx build --all`.
 
 ## `isx ask`
 
-AI-powered help.
-Ask any question about incus-spawn (uses AI tokens).
+Ask the AI any question about incus-spawn; it uses AI tokens.
 
-    isx ask <question...>
+```shell
+isx ask <question...>
+```
 
-| Option | Description |
-|--------|-------------|
+| Option | What it does |
+|--------|--------------|
 | `--with-templates` | Include template and tool definitions in the AI context |
 
 ## `isx mcp`
 
-Serve isx to an agent on this machine over the Model Context Protocol (stdio).
-Started by the agent, not by hand:
+Serve isx to an agent on this host over the Model Context Protocol, on stdio.
+The agent starts it, not you:
 
-    claude mcp add isx -- isx mcp
+```shell
+claude mcp add isx -- isx mcp
+```
 
 See [Delegating from an agent on your host](MCP.md#delegating-from-an-agent-on-your-host-mcp) for what it offers and how to approve templates.
 
-`isx mcp --caller-instance <name>` serves an instance branched with `--mcp-client` instead; the proxy runs it for each connection that instance makes to `https://mcp.isx.internal/mcp` ([a coordinator in an instance](MCP.md#a-coordinator-in-an-instance)).
+`isx mcp --caller-instance <name>` serves an instance branched with `--mcp-client` instead.
+The proxy runs it for each connection that instance makes to `https://mcp.isx.internal/mcp`, as [a coordinator in an instance](MCP.md#a-coordinator-in-an-instance).
 
 ## `isx completion`
 
 Print a shell completion script.
 
-    isx completion [<shell>]
+```shell
+isx completion [<shell>]
+```
 
-Supported shells: `bash` (default), `zsh`, `fish`.
+| Option | What it does |
+|--------|--------------|
+| `--install` | Print installation instructions instead of the script |
+
+Supported shells: `bash` (the default), `zsh` and `fish`.
 
 The scripts also complete `<namespace>=<account>` for `isx branch --account` and `isx account set`, and the namespaces for `isx account unset`.
 They read account names from `isx account list --completion`, which prints names only, never credentials.
 
-| Option | Description |
-|--------|-------------|
-| `--install` | Print installation instructions instead of the script |
-
 ## Scripting isx
+
+Query commands print `plain` and `json` output that a script can rely on, and exit codes that say what happened.
 
 Query commands take `--format=table|plain|json`: `isx list`, `isx templates [list]`, `isx tools list`, `isx tools show`, `isx account list`, `isx account show`, `isx proxy status`, `isx proxy activity`, `isx doctor`, `isx vm status` (macOS), `isx update-base --list` and `isx branch`.
 
+### Formats
+
 - `table` is for people.
-  It may change in any release, so don't parse it.
+  It may change in any release, so do not parse it.
 - `plain` prints one record per line, its fields tab-separated, with `-` for an empty field.
   There is no header, padding, colour or glyph, and no results means no output.
-- Neither format lets a value write a control character to your terminal.
-  A value can hold one: an instance stamp set by hand with `incus config set`, say, escape sequence and all.
-  `plain` keeps each record on one line and safe to print, so every control character in a value becomes a space: the C0 controls U+0000 to U+001F (tab, line feed, carriage return, backspace, form feed and ESC among them), DEL, the 8-bit controls U+0080 to U+009F, U+2028/U+2029, and the bidirectional embeddings, overrides and isolates U+202A to U+202E and U+2066 to U+2069, which would make your terminal show the rest of the line out of order.
-  That loses them, so read `json` when you need a value exactly: it keeps every value as it is, writing each of those characters as a JSON escape that any JSON parser turns back into the original: `\t`, `\n`, `\r`, `\b` and `\f` for tab, line feed, carriage return, backspace and form feed, and `\uXXXX` for every other one.
 - `json` prints an array of objects, or one object for a command about one thing (`tools show`, `proxy status`, `vm status`, `branch`).
-  A list value is an array in `json` and its elements joined by `,` in `plain`.
-  An absent value is `null`, and sizes are in bytes.
-  Times are ISO-8601 with their offset: `2026-10-05T12:34:56+02:00`, or `2026-10-05T12:34:56Z` on a host whose zone is UTC, so match both forms.
-  Instances stamped by older isx releases recorded only a date, which prints as an ISO-8601 date (`2026-09-01`).
-  A time isx cannot read is `null` (`-` in `plain`).
-- When isx cannot read what Incus answered, the command fails (exit 1, the reason on stderr).
-  It never prints an empty result.
 - Both `plain` and `json` are stable.
   Fields may be added at the end, but are never renamed, removed or reordered.
+
+### Values
+
+- A list value is an array in `json`, and its elements joined by `,` in `plain`.
+- An absent value is `null` in `json` and `-` in `plain`.
+- Sizes are in bytes.
+- Times are ISO-8601 with their offset: `2026-10-05T12:34:56+02:00`, or `2026-10-05T12:34:56Z` on a host whose zone is UTC, so match both forms.
+- An instance stamped by an older isx release may carry only a date, which prints as an ISO-8601 date (`2026-09-01`).
+  A time isx cannot read is `null`.
+
+### Control characters
+
+Neither format lets a value write a control character to your terminal.
+A value can hold one: an instance stamp set by hand with `incus config set` can carry an escape sequence.
+
+- `plain` keeps each record on one line and safe to print, so every control character in a value becomes a space.
+  That loses them.
+- `json` keeps every value as it is, writing each control character as a JSON escape that any JSON parser turns back into the original.
+  Read `json` when you need a value exactly.
+
+The characters `plain` replaces and `json` escapes:
+
+- the C0 controls U+0000 to U+001F, tab, line feed, carriage return, backspace, form feed and ESC among them;
+- DEL;
+- the 8-bit controls U+0080 to U+009F;
+- U+2028 and U+2029;
+- the bidirectional embeddings, overrides and isolates U+202A to U+202E and U+2066 to U+2069, which would make your terminal show the rest of the line out of order.
+
+`json` writes `\t`, `\n`, `\r`, `\b` and `\f` for tab, line feed, carriage return, backspace and form feed, and `\uXXXX` for every other one.
+
+### Output streams
+
 - Results go to stdout.
   Errors and diagnostics go to stderr, so stdout holds only results.
-  Commands that act (`build`, `branch`, `destroy`, ...) report their steps on stdout and their warnings and notes on stderr.
-  A status command's report is its result in every state: `isx proxy status` prints it on stdout whether or not the proxy is healthy, and the exit code says which.
-- isx writes colour, clickable links and animated progress only when stdout is a terminal.
-  When stdout is redirected or piped, or `NO_COLOR` is set to a non-empty value, neither stdout nor stderr holds escape sequences. isx cannot tell whether stderr alone is a terminal, so `isx build tpl-minimal 2>build.log` run from a terminal still colours the warnings in `build.log`.
-  For a clean log, redirect both streams or set `NO_COLOR=1`.
+- Commands that act (`build`, `branch`, `destroy`, ...) report their steps on stdout and their warnings and notes on stderr.
+- A status command's report is its result in every state: `isx proxy status` prints it on stdout whether or not the proxy is healthy, and the exit code says which.
+- When isx cannot read what Incus answered, the command fails with exit 1 and the reason on stderr.
+  It never prints an empty result.
+
+isx writes colour, clickable links and animated progress only when stdout is a terminal.
+When stdout is redirected or piped, or `NO_COLOR` is set to a non-empty value, neither stdout nor stderr holds escape sequences.
+
+isx cannot tell whether stderr alone is a terminal, so `isx build tpl-minimal 2>build.log` run from a terminal still colours the warnings in `build.log`.
+For a clean log, redirect both streams or set `NO_COLOR=1`.
+
+### Fields of `isx list`
 
 `isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`), `created`, `mcp_state` and `mcp_purpose`, in that order.
 The last two are `null` (`-`) unless an [`isx mcp`](MCP.md#delegating-from-an-agent-on-your-host-mcp) session made the instance.
-`mcp_state` is then `held` (a session holds it), `orphaned` (its session ended and nobody has adopted it yet) or `kept` (an agent handed it to you with `keep_instance`), and `mcp_purpose` is what the agent said the instance is for, or `null`.
+`mcp_purpose` is then what the agent said the instance is for, or `null`, and `mcp_state` is one of:
+
+| `mcp_state` | Meaning |
+|-------------|---------|
+| `held` | A session holds it |
+| `orphaned` | Its session ended and nobody has adopted it yet |
+| `kept` | An agent handed it to you with `keep_instance` |
+
 For names alone, use `isx list -q`:
 
 ```shell
@@ -474,29 +653,144 @@ for name in $(isx list -q --status=stopped); do isx destroy "$name" --skip-confi
 isx list --format=json | jq -r '.[] | select(.parent == "tpl-java") | .name'
 ```
 
-The fields of the other commands, in order:
+### Fields of the other commands
+
+The fields of each command, in order:
 
 | Command | Fields |
 |---------|--------|
-| `isx templates` | `name`, `parent`, `source` (`built-in` or the file), `description`, `built`, `built_at`, `version_outdated` (built by another isx version), `definition_changed` (its definition or a tool it uses changed since), `parent_rebuilt` (its parent was built after it, and it was copied from the parent: never for a VM over a container parent, or the reverse, which is built from the definitions). The staleness flags are `null` for a template that is not built, and everything from `built` on is `null` when Incus could not be asked, with the reason on stderr. `isx build --out-of-sync` builds the templates that are not built, rebuilds those with `version_outdated`, `definition_changed` or `parent_rebuilt`, and rebuilds the descendants of every template it builds |
+| `isx templates` | `name`, `parent`, `source`, `description`, `built`, `built_at`, `version_outdated`, `definition_changed`, `parent_rebuilt` |
 | `isx tools list` | `name`, `source`, `description` |
 | `isx tools show <tool>` | `name`, `description`, `source`, `feature`, `requires`, `packages`, `parameters`, `actions` (labels), `downloads` (URLs), `proxy_domains` |
-| `isx account list` | one record per account: `namespace`, `account`, `description`, `default`, `problem` (`incomplete`, or `not-configured` for an account only a pin names), `pinned_by`, `following` (the instances that follow the default). The last two are `null` when Incus could not be asked, with the reason on stderr; `plain` prints that as `-`, like an empty list, so read `json` to tell them apart |
-| `isx account show <instance>` | one record per namespace: `namespace`, `account`, `description`, `chosen_by` (`default`, `template`, `explicit`, `copied` or `unknown`), `chosen_in` (the template or instance it came from), `template`, `template_account`, `problem`, `identity_pending` (the git identity the instance takes on its next start or shell, from its stamps: one missing from an instance whose template an older isx built is filled in then too, but not listed), `template_problem` (why the template's own choice cannot be used) |
-| `isx proxy status` | `status` (`running`, `waiting_for_dns`, `not_running`, `stale_dns`, `stale_gateway`, or `unknown` when the state could not be checked), `version`, `git_sha`, `runtime`, `dns_overrides`, `drift` (one string), `auth_error`, `health_endpoint`, `mitm_port`, `service_installed`, `managed_by` (`systemd`, `launchd` or `manual`), `restart_helps` (whether restarting clears the drift; `null` without drift), `check_error` (why the state is `unknown`). Printed in every state; the exit code is the table's, so `unknown` exits 1 like `not_running`: read `status` to tell them apart |
-| `isx proxy activity` | one record per instance the proxy knows, by name, then one whose `instance` is `null`: traffic from no known instance (the host, or an address the proxy has not listed). `instance`, `counting_since`, then all traffic, model calls included: `requests`, `in_flight` (an open WebSocket included), `last_activity_at`, `request_bytes`, `response_bytes` (body bytes, counted as each request ends); then model calls alone: `model_requests`, `model_in_flight`, `last_model_request_at`, `last_model_response_at`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, then `identified_by_proof` (its proof or secret alone named it, not its address) (`null` on the unattributed record); then, on the unattributed record alone and `null` on the others, the proxy's `refused_proofs` (checked and matched nothing), `refused_address_misses` (from an address that is no instance, never checked), `registry_stale` (its last instance listing failed, or the one under way has hung), `unplaced_running` (running instances with no traffic attributed) and `last_address_miss_at`. The table ends with the refused proofs and a failed listing when there are any, and the unplaced instances when there are address misses. Subtract two reads only when both carry the same `counting_since`. With `--by-domain`, one record per instance and domain: `instance`, `domain` (an intercepted domain, a subdomain counted under it, or `(other)`), `counting_since`, `requests`, `in_flight`, `last_activity_at`, `request_bytes`, `response_bytes`. Exits 1 when the proxy cannot be read |
-| `isx doctor` | one record per check: `level` (`ok`, `note`, `warn`, `fail`), `label`, `detail`, `remediation`. `detail` and `remediation` are free text for people: key a script on `level` and `label`. Nothing is offered or applied; `--bundle` cannot be combined with it |
-| `isx vm status` | `running`, `pid`, `rest_api`, `log`, `appliance`, `appliance_pending` (the installed appliance a restart would apply), `vsock_connections`, `incus_reachable`, `incus_error`, `vsock_connections_high` (the in-VM forwarder may be leaking streams; `isx vm restart` clears them). Exits 1 when Incus is unreachable |
-| `isx update-base --list` | newest first: `tag`, `date`, `latest`, `current`, `pinned` (the current release is pinned, so builds stay on it), `listed` (`false` for the current base image when it is not among the releases fetched, e.g. older than all of them, unpublished or deleted: it then gets a record of its own, last, with no `date`. That alone says nothing about its age) |
-| `isx branch <name>` | `name`. Progress goes to stderr and no shell is opened, so `name=$(isx branch my-box --from tpl-java --format=plain)` captures it |
+| `isx account list` | one record per account: `namespace`, `account`, `description`, `default`, `problem`, `pinned_by`, `following` |
+| `isx account show <instance>` | one record per namespace: `namespace`, `account`, `description`, `chosen_by`, `chosen_in`, `template`, `template_account`, `problem`, `identity_pending`, `template_problem` |
+| `isx proxy status` | `status`, `version`, `git_sha`, `runtime`, `dns_overrides`, `drift`, `auth_error`, `health_endpoint`, `mitm_port`, `service_installed`, `managed_by`, `restart_helps`, `check_error` |
+| `isx proxy activity` | one record per instance: `instance`, `counting_since`, `requests`, `in_flight`, `last_activity_at`, `request_bytes`, `response_bytes`, `model_requests`, `model_in_flight`, `last_model_request_at`, `last_model_response_at`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `identified_by_proof`, `refused_proofs`, `refused_address_misses`, `registry_stale`, `unplaced_running`, `last_address_miss_at` |
+| `isx doctor` | one record per check: `level`, `label`, `detail`, `remediation` |
+| `isx vm status` | `running`, `pid`, `rest_api`, `log`, `appliance`, `appliance_pending`, `vsock_connections`, `incus_reachable`, `incus_error`, `vsock_connections_high` |
+| `isx update-base --list` | newest first: `tag`, `date`, `latest`, `current`, `pinned`, `listed` |
+| `isx branch <name>` | `name` |
 
-Exit codes:
+The sections below say what the fields that need it mean.
+
+#### `isx templates` fields
+
+| Field | Meaning |
+|-------|---------|
+| `source` | `built-in` or the file |
+| `version_outdated` | Built by another isx version |
+| `definition_changed` | Its definition or a tool it uses changed since |
+| `parent_rebuilt` | Its parent was built after it, and it was copied from the parent |
+
+`parent_rebuilt` is never set for a VM over a container parent, or the reverse, which is built from the definitions.
+The staleness flags are `null` for a template that is not built.
+Everything from `built` on is `null` when Incus could not be asked, with the reason on stderr.
+
+`isx build --out-of-sync` builds the templates that are not built, rebuilds those with `version_outdated`, `definition_changed` or `parent_rebuilt`, and rebuilds the descendants of every template it builds.
+
+#### `isx account list` fields
+
+| Field | Meaning |
+|-------|---------|
+| `problem` | `incomplete`, or `not-configured` for an account only a pin names |
+| `pinned_by` | The instances pinned to the account |
+| `following` | The instances that follow the default |
+
+`pinned_by` and `following` are `null` when Incus could not be asked, with the reason on stderr.
+`plain` prints that as `-`, like an empty list, so read `json` to tell them apart.
+
+#### `isx account show` fields
+
+| Field | Meaning |
+|-------|---------|
+| `chosen_by` | `default`, `template`, `explicit`, `copied` or `unknown` |
+| `chosen_in` | The template or instance it came from |
+| `identity_pending` | The git identity the instance takes on its next start or shell, from its stamps |
+| `template_problem` | Why the template's own choice cannot be used |
+
+An identity missing from an instance whose template an older isx built is filled in then too, but is not listed.
+
+#### `isx proxy status` fields
+
+| Field | Meaning |
+|-------|---------|
+| `status` | `running`, `waiting_for_dns`, `not_running`, `stale_dns`, `stale_gateway`, or `unknown` when the state could not be checked |
+| `drift` | One string |
+| `managed_by` | `systemd`, `launchd` or `manual` |
+| `restart_helps` | Whether restarting clears the drift; `null` without drift |
+| `check_error` | Why the state is `unknown` |
+
+The record is printed in every state, and the exit code follows the [exit codes](#exit-codes) table.
+So `unknown` exits 1 like `not_running`: read `status` to tell them apart.
+
+#### `isx proxy activity` fields
+
+One record per instance the proxy knows, by name, then one whose `instance` is `null`: traffic from no known instance, which is the host or an address the proxy has not listed.
+
+| Field | Meaning |
+|-------|---------|
+| `counting_since` | Subtract two reads only when both carry the same value |
+| `requests`, `in_flight`, `last_activity_at`, `request_bytes`, `response_bytes` | All traffic, model calls included. `in_flight` counts an open WebSocket too; the byte fields are body bytes, counted as each request ends |
+| `model_requests`, `model_in_flight`, `last_model_request_at`, `last_model_response_at`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` | Model calls alone |
+| `identified_by_proof` | Its proof or secret alone named it, not its address; `null` on the unattributed record |
+| `refused_proofs` | Proofs the proxy checked that matched nothing |
+| `refused_address_misses` | Requests from an address that is no instance, never checked |
+| `registry_stale` | The proxy's last instance listing failed, or the one under way has hung |
+| `unplaced_running` | Running instances with no traffic attributed |
+| `last_address_miss_at` | The time of the last address miss |
+
+The last five are the proxy's own: on the unattributed record alone, and `null` on the others.
+The table ends with the refused proofs and a failed listing when there are any, and the unplaced instances when there are address misses.
+
+With `--by-domain`, one record per instance and domain: `instance`, `domain`, `counting_since`, `requests`, `in_flight`, `last_activity_at`, `request_bytes`, `response_bytes`.
+`domain` is an intercepted domain, a subdomain counted under it, or `(other)`.
+
+It exits 1 when the proxy cannot be read.
+
+#### `isx doctor` fields
+
+`level` is `ok`, `note`, `warn` or `fail`.
+`detail` and `remediation` are free text for people: key a script on `level` and `label`.
+In a script format, nothing is offered or applied, and `--bundle` cannot be combined with it.
+
+#### `isx vm status` fields
+
+| Field | Meaning |
+|-------|---------|
+| `appliance_pending` | The installed appliance a restart would apply |
+| `vsock_connections_high` | The in-VM forwarder may be leaking streams; `isx vm restart` clears them |
+
+It exits 1 when Incus is unreachable.
+
+#### `isx update-base --list` fields
+
+| Field | Meaning |
+|-------|---------|
+| `pinned` | The current release is pinned, so builds stay on it |
+| `listed` | `false` for the current base image when it is not among the releases fetched |
+
+The current base image is unlisted when it is older than every release fetched, unpublished or deleted.
+It then gets a record of its own, last, with no `date`.
+That alone says nothing about its age.
+
+#### `isx branch` fields
+
+`isx branch <name>` prints `name`.
+Progress goes to stderr and no shell is opened, so `name=$(isx branch my-box --from tpl-java --format=plain)` captures it.
+
+### Exit codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success, including a listing with no results |
-| 1 | The command failed, with the reason on stderr: a value it rejects (`--format=yaml`, `--status=frozen`), Incus unreachable, ... `isx doctor` also exits 1 when a check fails, `isx vm status` when Incus is unreachable, and `isx proxy status` when the proxy is not running (that report is on stdout) |
-| 2 | The command line could not be parsed (an unknown option, an option missing its value, a stray argument), with the usage on stderr. For `isx proxy status` only, 2 also means the proxy is down but its DNS overrides are still active |
+| 1 | The command failed, with the reason on stderr |
+| 2 | The command line could not be parsed, with the usage on stderr |
 | 3 | `isx proxy status` only: the proxy runs on an old bridge address |
 | 4 | `isx vm stop --require-clean` only: the VM is stopped, but with signals rather than a guest shutdown |
-| 78 | `isx proxy start` cannot run the proxy at all, e.g. `isx-proxy` is not installed |
+| 78 | `isx proxy start` cannot run the proxy at all, such as when `isx-proxy` is not installed |
+
+Exit 1 covers a value the command rejects (`--format=yaml`, `--status=frozen`), Incus unreachable, and the like.
+`isx doctor` also exits 1 when a check fails, `isx vm status` when Incus is unreachable, and `isx proxy status` when the proxy is not running; that report is on stdout.
+
+Exit 2 means an unknown option, an option missing its value or a stray argument.
+For `isx proxy status` only, 2 also means the proxy is down but its DNS overrides are still active.
