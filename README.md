@@ -131,13 +131,13 @@ What the proxy can sign in as:
 
 | Credential | Who uses it in the instance | What you give `isx init` |
 |------------|-----------------------------|--------------------------|
-| Anthropic API key | Claude Code, Pi | the key |
-| Claude Pro or Max | Claude Code, Pi | the token from `claude setup-token`; the proxy adds the OAuth bearer token |
-| Vertex AI | Claude Code, Pi | your project and region; the proxy translates each request and signs it with the host's GCP credentials, which never enter the instance |
-| OpenAI API key | Codex CLI, Pi | the key |
-| Gemini API key | Gemini CLI | the key |
-| IBM API key | Bob Shell | the key |
-| GitHub token | `gh`, `git`, GitHub Copilot CLI | the token |
+| Anthropic API key | Claude Code (`claude`), Pi (`pi`) | the key |
+| Claude Pro or Max | Claude Code (`claude`), Pi (`pi`) | the token from `claude setup-token`; the proxy adds the OAuth bearer token |
+| Vertex AI | Claude Code (`claude`), Pi (`pi`) | your project and region; the proxy translates each request and signs it with the host's GCP credentials, which never enter the instance |
+| OpenAI API key | Codex CLI (`codex`), Pi (`pi`) | the key |
+| Gemini API key | Gemini CLI (`gemini-cli`) | the key |
+| IBM API key | Bob Shell (`bob`) | the key |
+| GitHub token | `gh`, `git`, GitHub Copilot CLI (`copilot`) | the token |
 | Atlassian API token | the `atlassian-mcp` tool, for Jira and Confluence | your account email and the token |
 | A service of your own | whatever your tool YAML installs | its credential, declared in the YAML's `proxy:` block ([Proxy Credentials](docs/TOOLS.md#proxy-credentials)) |
 
@@ -146,7 +146,7 @@ Each template or instance chooses which one it spends: see [Credential accounts]
 Git must use HTTPS URLs, not SSH; `gh` defaults to HTTPS.
 
 The proxy must be running for every instance that has a network.
-`isx init` installs it as a systemd user service, or you run `isx proxy` in a terminal of its own.
+`isx init` installs it as a service, systemd on Linux and launchd on macOS, or you run `isx proxy start` in a terminal of its own.
 isx checks that the proxy is reachable and compatible before a build, a branch or a shell.
 
 The proxy also caches container image layers and build artifacts on the host, so the same dependency is never downloaded twice ([Caching](docs/CONFIGURATION.md#caching)).
@@ -348,7 +348,7 @@ Windows is not supported.
 **Linux**: `isx init` installs [Incus](https://linuxcontainers.org/incus/) with your package manager.
 
 **macOS**: `isx init` provisions a lightweight Linux VM with [vfkit](https://github.com/crc-org/vfkit), which starts when needed.
-`isx vm start|stop|restart|status|resize|reset` manages it.
+`isx vm start|stop|restart|status|resize|reset|console|check-version` manages it.
 Apple Silicon is supported.
 Intel Macs get a binary built for the same macOS 15 minimum on a best-effort basis: it is released, but not verified on an Intel Mac.
 
@@ -384,12 +384,12 @@ isx proxy restart
 | `curl -fsSL https://isx.run \| sh` | the same command again |
 | JBang | both `jbang app install` commands again |
 
-The `curl` script installs a self-contained native binary to `~/.local/bin/isx` (set `INSTALL_DIR` to change it), with no JVM needed.
+The `curl` script installs the `isx` and `isx-proxy` native binaries to `~/.local/bin` (set `INSTALL_DIR` to change it), with no JVM needed.
 JBang installs need both commands, and `jbang` must stay on your PATH.
 
 To uninstall, run `uninstall.sh`:
 
-- It keeps the caches in `~/.cache/incus-spawn/` unless you pass `--purge`.
+- It keeps your configuration in `~/.config/incus-spawn/` and the caches in `~/.cache/incus-spawn/` unless you pass `--purge`.
 - On macOS it keeps the VM's data disk, with every instance and template, unless you pass `--delete-instances`.
 - `--binaries-only` removes only the binaries, to switch install channel, for example from a source build to Homebrew.
 
@@ -414,7 +414,7 @@ Shell completions are available for bash, zsh and fish via `isx completion <shel
 | [`isx account`](docs/CLI.md#isx-account) | Add credentials, and show or change the accounts an instance uses |
 | [`isx project`](docs/CLI.md#isx-project) | Manage project templates |
 | [`isx proxy`](docs/CLI.md#isx-proxy) | Manage the MITM authentication proxy |
-| [`isx doctor`](docs/CLI.md#isx-doctor) | Diagnose host, proxy, VM, and tunnel health |
+| [`isx doctor`](docs/CLI.md#isx-doctor) | Run health checks and offer to fix problems |
 | [`isx clean`](docs/CLI.md#isx-clean) | Remove cached data, state, or configuration |
 | [`isx reset`](docs/CLI.md#isx-reset) | Reset to a clean slate |
 | [`isx vm`](docs/CLI.md#isx-vm) | Manage the VM appliance (macOS only) |
