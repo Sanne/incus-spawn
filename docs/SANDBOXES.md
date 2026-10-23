@@ -20,7 +20,17 @@ A template declares the tools and the repositories, and is built once: the proje
 `isx branch` creates one in about a second, `isx shell` or the TUI gets you in, your editor attaches over SSH, an `isx://` git remote fetches the agent's work, and `isx destroy` ends it.
 
 Below, the other tools are grouped by category, with a note on when each is the better fit.
-[Why full system containers?](../README.md#why-full-system-containers) explains what isx's own choice gives an agent.
+
+## Why full system containers?
+
+**Application containers**, the kind Docker and Podman run by default, are built for shipping applications: a minimal filesystem, one process, fast startup. isx is built for a different job, and the choice that follows from it is what a sandbox *is*.
+An isx sandbox is a workstation, a complete machine: a full [Incus](https://linuxcontainers.org/incus/) **system container**, or a KVM virtual machine (`--vm`), with its own init system, real networking (`ping`, `strace`, nested Podman/Docker), and GUI and audio passthrough (Linux only).
+Templates pre-install your baseline tools and repos, but what the agent gets is a real Linux system, where it can `dnf install`, `pip install`, build from source, or run Docker Compose just like on a workstation.
+This matters for agents in particular, because what you hand an agent is an investigation, and nobody knows at the start what tools it will need.
+An agent on an isx branch installs a tracer, starts a service, or writes a tool of its own as it goes, and if it wrecks the machine, the branch is destroyed and the next one costs a second.
+It works exactly as it would on a developer workstation, because that is what it has.
+The sections below show how this choice plays out against the other sandboxes for agents.
+For the strongest isolation, KVM virtual machines (`--vm`) add a separate kernel and hardware-level separation.
 
 ## A sandboxed process
 

@@ -76,7 +76,7 @@ A task in the middle of a turn is refused until the turn ends.
 Plain `isx shell` into an instance `isx mcp` made prints that command before the prompt.
 
 Copying from an agent inside the instance needs an OSC 52-capable host terminal.
-See the [FAQ](../README.md#why-doesnt-copied-from-an-agent-reach-my-host-clipboard).
+See the [FAQ](FAQ.md#why-doesnt-copied-from-an-agent-reach-my-host-clipboard).
 
 When the `shell-status-bar` feature is enabled, a two-line status bar is pinned at the bottom of the terminal showing the instance name, template, IP address, and network mode.
 Press **F12** to open a quick-action menu with shortcuts from tool actions that set `shell_menu: true`.

@@ -18,10 +18,10 @@ A branch is to a template what a git worktree is to a repository, except that th
 - [Delegating from an agent on your host (MCP)](https://isx.run/docs/mcp): `isx mcp`, approved templates, Claude Code and Codex workers, agent discovery, background commands and delegated tasks
 - [CLI reference](https://isx.run/docs/cli): every command, and the stable output formats for scripts
 - [Compared with other sandboxes](https://isx.run/docs/sandboxes): a sandboxed process, workload or workstation, and where isx and the other agent sandboxes sit
-- [FAQ](https://isx.run/docs#faq)
+- [FAQ](https://isx.run/docs/faq): URL clicks in Codex, the clipboard, and why there is no read-write project mount
 
 ## Optional
 
-- [Why full system containers?](https://isx.run/docs#why-full-system-containers)
+- [Why full system containers?](https://isx.run/docs/sandboxes#why-full-system-containers)
 - [Source code on GitHub](https://github.com/Sanne/incus-spawn)
 - [Issues](https://github.com/Sanne/incus-spawn/issues)

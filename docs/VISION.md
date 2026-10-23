@@ -85,3 +85,11 @@ Priorities, in order — each stage unblocks the next:
    Per-agent domain sets, network modes, and budget caps as dispatch-time knobs.
 
 Throughout: the character defined in [CHARACTER.md](dev/CHARACTER.md) holds — strong opinions on the core (security, fidelity, speed), flexibility at the edges (tools, templates, integrations).
+
+## Roadmap
+
+isx is evolving from a container manager into **mission control for parallel coding agents**.
+Per-instance identities have begun with [credential accounts](CONFIGURATION.md#credential-accounts) — each instance can use its own Claude and GitHub accounts; next come audited commit signing without exposing private keys ([#271](https://github.com/Sanne/incus-spawn/issues/271)), proxy-derived monitoring of agent status and spend, task dispatch, and an in-TUI review lane ([#322](https://github.com/Sanne/incus-spawn/issues/322)).
+Dispatch is also coming to agents themselves: an experimental `isx mcp` server lets an agent on your host create instances from templates you approved, run builds and tests in them, and delegate whole tasks to the agents inside ([#859](https://github.com/Sanne/incus-spawn/issues/859), [#898](https://github.com/Sanne/incus-spawn/issues/898)).
+Local-first stays the core conviction — your hardware, your network, your repos.
+See [docs/VISION.md](VISION.md) for the full direction.

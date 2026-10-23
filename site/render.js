@@ -16,7 +16,7 @@ const tpl = fs.readFileSync(path.join(root, 'site/docs.html'), 'utf8');
 // Every page: its source, relative to the root, and its address on the site. They are listed in
 // reading order: the reference a user looks things up in, any page not named here, then the
 // project's own character and vision.
-const FIRST = ['templates', 'agents', 'tools', 'configuration', 'cli', 'mcp', 'credential-proofs', 'sandboxes', 'fedora'];
+const FIRST = ['templates', 'agents', 'tools', 'configuration', 'cli', 'mcp', 'credential-proofs', 'sandboxes', 'fedora', 'faq'];
 const LAST = ['vision'];
 const rank = name => {
   const first = FIRST.indexOf(name), last = LAST.indexOf(name);
