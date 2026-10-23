@@ -27,7 +27,7 @@ import java.util.Map;
 // exist on Linux at all.
 @CommandDefinition(
         name = "vm",
-        description = "Manage the incus-spawn VM appliance (macOS)",
+        description = "Manage the macOS VM; see 'isx vm --help' for commands",
         generateHelp = true,
         groupCommands = {
                 VmCommand.Start.class,
@@ -89,7 +89,7 @@ public class VmCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "restart",
-            description = "Stop and restart the VM (applies pending appliance updates)",
+            description = "Restart an unreachable VM or apply appliance updates (keeps instances; stops running containers)",
             generateHelp = true
     )
     public static class Restart extends BaseCommand {

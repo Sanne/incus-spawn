@@ -257,7 +257,11 @@ An agent on your machine, Claude Code say, can drive isx through `isx mcp`: bran
 
 ## Installation
 
-isx runs on Linux, and on macOS 15 (Sequoia) or later; Windows is not supported. On Linux, `isx init` installs [Incus](https://linuxcontainers.org/incus/) with your package manager. On macOS it provisions a lightweight Linux VM with [vfkit](https://github.com/crc-org/vfkit), which starts when needed and is managed with `isx vm start|stop|restart|status|resize|reset`. Apple Silicon is supported. Intel Macs get a binary built for the same macOS 15 minimum on a best-effort basis: it is released, but not verified on an Intel Mac.
+isx runs on Linux, and on macOS 15 (Sequoia) or later; Windows is not supported.
+On Linux, `isx init` installs [Incus](https://linuxcontainers.org/incus/) with your package manager.
+On macOS it provisions a lightweight Linux VM with [vfkit](https://github.com/crc-org/vfkit), which starts when needed; see [Managing the VM on macOS](#managing-the-vm-on-macos) for commands and recovery steps.
+Apple Silicon is supported.
+Intel Macs get a binary built for the same macOS 15 minimum on a best-effort basis: it is released, but not verified on an Intel Mac.
 
 On macOS isx runs containers only. VM instances (`type: vm`, `--type vm`), KVM passthrough (`--kvm`, `type: kvm`), GUI and audio passthrough (Wayland + PipeWire) and the `overlay` mode for host resources are Linux-only: use `readonly` or `copy` host resources instead. isx refuses a VM or `--kvm` on macOS before it creates anything, and branches a `type: kvm` template without KVM.
 
@@ -274,6 +278,24 @@ Behind TLS inspection (a corporate proxy that re-signs HTTPS), isx trusts the ho
 The `curl` script installs a self-contained native binary to `~/.local/bin/isx` (set `INSTALL_DIR` to change it), with no JVM needed. To uninstall it, run `uninstall.sh`: it keeps the caches in `~/.cache/incus-spawn/` unless you pass `--purge`, and on macOS the VM's data disk, with every instance and template, unless you pass `--delete-instances`. To switch install channel, e.g. from a source build to Homebrew, `uninstall.sh --binaries-only` removes only the binaries and keeps everything else. JBang installs need both commands, and `jbang` must stay on your PATH.
 
 Shell completions are available for bash, zsh and fish via `isx completion <shell>`.
+
+## Managing the VM on macOS
+
+`isx vm --help` lists the appliance commands: `start`, `stop`, `restart`, `status`, `resize`, `reset`, `console`, and `check-version`.
+If the VM is unreachable, try restarting it, then check its status:
+
+```sh
+isx vm restart
+isx vm status
+```
+
+Restarting preserves your instances and templates, but stops running containers and applies any pending appliance update.
+If it is still unreachable, run `isx doctor` for health checks and `isx vm console` to follow the VM's serial console output.
+
+**Last resort: `isx vm reset` deletes every instance, template, and cached image in the VM, including work stored only inside those instances.**
+It asks for confirmation before deleting the data disk.
+After a reset, rebuild your templates with `isx build --all`.
+See the [VM command reference](docs/CLI.md#isx-vm) for all options.
 
 ## CLI
 
@@ -297,7 +319,7 @@ Shell completions are available for bash, zsh and fish via `isx completion <shel
 | [`isx doctor`](docs/CLI.md#isx-doctor) | Diagnose host, proxy, VM, and tunnel health |
 | [`isx clean`](docs/CLI.md#isx-clean) | Remove cached data, state, or configuration |
 | [`isx reset`](docs/CLI.md#isx-reset) | Reset to a clean slate |
-| [`isx vm`](docs/CLI.md#isx-vm) | Manage the VM appliance (macOS only) |
+| [`isx vm`](docs/CLI.md#isx-vm) | Manage the macOS VM; [restart and recovery steps](#managing-the-vm-on-macos) |
 | [`isx ask`](docs/CLI.md#isx-ask) | AI-powered help |
 | [`isx mcp`](docs/CLI.md#isx-mcp) | Serve isx to a local agent over MCP |
 | [`isx completion`](docs/CLI.md#isx-completion) | Print shell completion script |
