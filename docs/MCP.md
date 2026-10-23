@@ -9,6 +9,8 @@ This page covers setup, the tools, and routes to a program of your own.
 `isx init` offers to set this up; it is experimental, so off by default.
 It registers `isx mcp` with Claude Code for all projects and asks, for each template that installs Claude Code or Codex, whether agents may use it.
 
+The step needs Claude Code installed on the host and a terminal to ask from; without either, `isx init` skips it and says so.
+
 Once it is set up, a re-run of `isx init` asks one question instead: `t` to change the approved templates, `n` to see how to turn it off, Enter to keep everything.
 
 To register it with Claude Code by hand instead:
@@ -63,7 +65,7 @@ A change takes effect on the next call, with no restart.
 
 `max-instances` and `max-concurrent-tasks` are the two knobs to raise for a controller, one session running many tasks at once.
 They are a safety net against runaway creation, not a budget: the only cost of a high number is host memory.
-`list_templates` reports both, under the same names (`max_instances`, `max_concurrent_tasks`).
+`list_templates` reports both, under the same names (`max_instances`, `max_concurrent_tasks`), with `orphan_grace_hours` and, when set, `delegate_max_turns`.
 
 ### If `config.yaml` has an `mcp:` section
 
@@ -203,6 +205,9 @@ When a session ends or dies, its instances become orphans that any later session
 An orphan nobody adopts is destroyed by the next `isx mcp` to start once `orphan-grace-hours` have passed.
 It is never destroyed while someone is in it with `isx shell` or an agent it delegated to is still working, and never once handed to you with `keep_instance`.
 
+One kept past its grace only for a delegate that shows no activity for `dormant-after-hours` is stopped instead, and destroyed `dormant-grace-hours` after that stop.
+`list_instances` reports the stop as `dormant_since`, and `adopt_instance` starts the instance again.
+
 ### Names and the `MCP` column
 
 Instances are named `mcp-<template>-<hint>-<suffix>`.
@@ -293,7 +298,7 @@ List it in `~/.config/incus-spawn/config.yaml`:
 ```yaml
 host-routes:
   work.isx.internal:
-    target: 127.0.0.1:7070       # on this host's loopback: localhost, 127.0.0.1 or [::1]
+    target: 127.0.0.1:7070       # on this host's loopback: localhost, a 127.x.x.x address or [::1]
     templates: [tpl-isx-agent]   # required: only instances of these templates may call it
 ```
 
