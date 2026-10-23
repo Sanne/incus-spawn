@@ -17,7 +17,7 @@ const tpl = fs.readFileSync(path.join(root, 'site/docs.html'), 'utf8');
 // reading order: the reference a user looks things up in, any page not named here, then the
 // project's own character and vision.
 const FIRST = ['templates', 'agents', 'tools', 'configuration', 'cli', 'mcp', 'credential-proofs', 'sandboxes', 'fedora'];
-const LAST = ['character', 'vision'];
+const LAST = ['vision'];
 const rank = name => {
   const first = FIRST.indexOf(name), last = LAST.indexOf(name);
   return first >= 0 ? first : last >= 0 ? FIRST.length + 1 + last : FIRST.length;

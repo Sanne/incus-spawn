@@ -21,7 +21,7 @@ Resolved source associations are stamped at build for automatic remotes, with ho
 
 incus-spawn (`isx`) is a CLI tool for managing isolated Incus-based development environments.
 It creates full Linux system containers (not application containers) with copy-on-write branching, a MITM TLS proxy for credential isolation, and an interactive TUI.
-See README.md and the pages in `docs/` (published on isx.run beside it; maintainer notes are in `docs/dev/`) for user-facing docs, DESIGN.md for architecture rationale, and [docs/CHARACTER.md](docs/CHARACTER.md) for the project's mission and design philosophy.
+See README.md and the pages in `docs/` (published on isx.run beside it; maintainer notes are in `docs/dev/`) for user-facing docs, DESIGN.md for architecture rationale, and [docs/dev/CHARACTER.md](docs/dev/CHARACTER.md) for the project's mission and design philosophy.
 
 **Keep notes in the repository**: the machines this is developed on are wiped regularly, so anything worth remembering between sessions goes in a committed file (this one, `.claude/rules/`, DESIGN.md), never only in local agent memory.
 
