@@ -14,9 +14,11 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * The design documents are reviewed as diffs, so their Markdown source has one sentence per line:
- * a changed sentence is then one changed line, not a rewrapped paragraph (#1243). Headings, tables,
- * code, HTML and front matter are exempt; CLAUDE.md "Markdown source" has the rule.
+ * The documents are reviewed as diffs, so their Markdown source has one sentence per line:
+ * a changed sentence is then one changed line, not a rewrapped paragraph (#1243). The README and the
+ * docs/ pages are covered as well as the design documents, so a 40-word sentence shows as a 300-character
+ * line (.claude/rules/writing.md "Shape"). Headings, tables, code, HTML and front matter are exempt;
+ * CLAUDE.md "Markdown source" has the rule.
  */
 class DocsOneSentencePerLineTest {
 
@@ -117,6 +119,10 @@ class DocsOneSentencePerLineTest {
 
     private static List<Path> documents() throws IOException {
         var files = new ArrayList<Path>();
+        files.add(ROOT.resolve("README.md"));
+        try (Stream<Path> docs = Files.list(ROOT.resolve("docs"))) {
+            docs.filter(f -> f.toString().endsWith(".md")).sorted().forEach(files::add);
+        }
         files.add(ROOT.resolve("DESIGN.md"));
         files.add(ROOT.resolve("CLAUDE.md"));
         try (Stream<Path> rules = Files.list(ROOT.resolve(".claude/rules"))) {

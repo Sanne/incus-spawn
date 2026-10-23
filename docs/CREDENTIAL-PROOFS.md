@@ -18,7 +18,9 @@ The command waits for the proxy to confirm the new proof state; a failure to con
 After a reset, open a new login shell and restart tools and nested services with their new tokens.
 Already-authorized requests and established WebSockets continue.
 A nested container, a sandbox or anything started without that environment gets none, unless you pass one in deliberately, e.g. `podman run -e GH_TOKEN …`.
-The proxy injects a selected credential only when the source instance presents its current proof for that namespace. Nested instances with their own accounts keep their own authentication and destination; those without a proof get no outer credential. Deliberate sharing uses [the reserved `inherit` account](CONFIGURATION.md#inheriting-the-outer-instances-account), or explicitly passing the parent's token.
+The proxy injects a selected credential only when the source instance presents its current proof for that namespace.
+Nested instances with their own accounts keep their own authentication and destination; those without a proof get no outer credential.
+Deliberate sharing uses [the reserved `inherit` account](CONFIGURATION.md#inheriting-the-outer-instances-account), or explicitly passing the parent's token.
 A shell opened before an explicit proof reset or an upgrade keeps its previous tokens: `isx doctor` compares them with the delivered credential seed and says how to refresh them.
 
 Project creation and updates receive temporary proofs for private repository access and authenticated build commands; those grants are revoked when the operation finishes or fails.

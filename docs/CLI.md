@@ -1,16 +1,19 @@
 # CLI reference
 
-Every command, with what `--help` does not say. `isx <command> --help` lists all of its options.
+Every command, with what `--help` does not say.
+`isx <command> --help` lists all of its options.
 
 ## `isx`
 
-Launch the interactive TUI. Falls back to plain-text listing when stdout is not a terminal.
+Launch the interactive TUI.
+Falls back to plain-text listing when stdout is not a terminal.
 
     isx
 
 ## `isx init`
 
-One-time host setup: install Incus, configure credentials and their [accounts](CONFIGURATION.md#credential-accounts), test connectivity. Safe to re-run, e.g. to add, rename or remove an account.
+One-time host setup: install Incus, configure credentials and their [accounts](CONFIGURATION.md#credential-accounts), test connectivity.
+Safe to re-run, e.g. to add, rename or remove an account.
 
     isx init
 
@@ -22,7 +25,9 @@ Build or rebuild a template image.
 
 A template's name may be at most 52 characters, since it is built as `<name>-rebuilding` first and swapped in once built; a longer one is refused before anything is built, its parents included.
 
-Several templates build in one invocation: plainly, each in turn, a named parent before its child (each with any parent that is missing or out of sync, so a parent they share is built once); with `--with-parents` or `--with-descendants`, as one batch with one confirmation, parents before children and every template once. An unknown name anywhere in the list builds nothing. A target that fails does not stop the others: one that inherits from it is skipped, the rest are built, and the build then exits 1 with one `Some templates failed to build:` line on stderr naming every template it left unbuilt (a parent a target's chain failed on included).
+Several templates build in one invocation: plainly, each in turn, a named parent before its child (each with any parent that is missing or out of sync, so a parent they share is built once); with `--with-parents` or `--with-descendants`, as one batch with one confirmation, parents before children and every template once.
+An unknown name anywhere in the list builds nothing.
+A target that fails does not stop the others: one that inherits from it is skipped, the rest are built, and the build then exits 1 with one `Some templates failed to build:` line on stderr naming every template it left unbuilt (a parent a target's chain failed on included).
 
 | Option | Description |
 |--------|-------------|
@@ -63,17 +68,19 @@ Create a new instance as a copy-on-write clone from a template or existing insta
 
 Open a shell in an existing instance.
 
-    isx shell <instance>
-    isx shell <instance> --task [<task-id>]
+    isx shell <instance> isx shell <instance> --task [<task-id>]
 
 With `--task`, it opens the conversation of a task an agent [delegated over MCP](MCP.md) instead of a shell: the agent resumes it in the directory it worked in, and leaving it ends the session.
 Without an id it joins the only task in the instance; with several it lists them, each with the command that joins it, and exits.
 A task in the middle of a turn is refused until the turn ends.
 Plain `isx shell` into an instance `isx mcp` made prints that command before the prompt.
 
-Copying from an agent inside the instance needs an OSC 52-capable host terminal. See the [FAQ](../README.md#why-doesnt-copied-from-an-agent-reach-my-host-clipboard).
+Copying from an agent inside the instance needs an OSC 52-capable host terminal.
+See the [FAQ](../README.md#why-doesnt-copied-from-an-agent-reach-my-host-clipboard).
 
-When the `shell-status-bar` feature is enabled, a two-line status bar is pinned at the bottom of the terminal showing the instance name, template, IP address, and network mode. Press **F12** to open a quick-action menu with shortcuts from tool actions that set `shell_menu: true`. Enable with:
+When the `shell-status-bar` feature is enabled, a two-line status bar is pinned at the bottom of the terminal showing the instance name, template, IP address, and network mode.
+Press **F12** to open a quick-action menu with shortcuts from tool actions that set `shell_menu: true`.
+Enable with:
 
 ```yaml
 # ~/.config/incus-spawn/config.yaml
@@ -95,9 +102,7 @@ Run the default action or a specific action on an instance.
 
 Destroy an instance, or bulk-destroy all templates or instances.
 
-    isx destroy <instance>
-    isx destroy --all-templates      # destroy all built templates (derived first)
-    isx destroy --all-instances      # destroy all instances
+    isx destroy <instance> isx destroy --all-templates # destroy all built templates (derived first) isx destroy --all-instances # destroy all instances
 
 | Option | Description |
 |--------|-------------|
@@ -107,7 +112,10 @@ Destroy an instance, or bulk-destroy all templates or instances.
 
 ## `isx list`
 
-List the instances isx created, without opening the TUI. Templates are not listed: `isx templates` lists those. On macOS it starts the VM if it is stopped, except with `-q`, which shell completion runs. See [Scripting isx](#scripting-isx) for the `plain` and `json` formats.
+List the instances isx created, without opening the TUI.
+Templates are not listed: `isx templates` lists those.
+On macOS it starts the VM if it is stopped, except with `-q`, which shell completion runs.
+See [Scripting isx](#scripting-isx) for the `plain` and `json` formats.
 
     isx list [options]
 
@@ -118,7 +126,8 @@ List the instances isx created, without opening the TUI. Templates are not liste
 | `-q`, `--quiet` | Print instance names only, one per line |
 | `--status=<status>` | Only instances that are `running` or `stopped` |
 
-`isx instances`, which printed the names of every Incus instance not named `tpl-*`, is deprecated and will be removed in a later release; it now runs `isx list -q`. Shell completion scripts generated by this release no longer call it.
+`isx instances`, which printed the names of every Incus instance not named `tpl-*`, is deprecated and will be removed in a later release; it now runs `isx list -q`.
+Shell completion scripts generated by this release no longer call it.
 
 ## `isx update-base`
 
@@ -135,7 +144,8 @@ Pass a release tag (e.g. `fedora-44-v2`) to pin to that version.
 
 ## `isx update-all`
 
-Update system packages, npm globals, and git-fetch repos in all templates. Does not re-clone repos or reinstall tools; for that, use `isx build`.
+Update system packages, npm globals, and git-fetch repos in all templates.
+Does not re-clone repos or reinstall tools; for that, use `isx build`.
 
     isx update-all [options]
 
@@ -145,7 +155,8 @@ Update system packages, npm globals, and git-fetch repos in all templates. Does 
 
 ## `isx templates`
 
-Manage template definitions. Running bare `isx templates` defaults to `list`.
+Manage template definitions.
+Running bare `isx templates` defaults to `list`.
 
     isx templates <subcommand>
 
@@ -177,7 +188,8 @@ Manage template definitions. Running bare `isx templates` defaults to `list`.
 
 ## `isx tools`
 
-List and inspect available tool definitions. Running bare `isx tools` defaults to `list`.
+List and inspect available tool definitions.
+Running bare `isx tools` defaults to `list`.
 
     isx tools <subcommand>
 
@@ -200,7 +212,8 @@ List and inspect available tool definitions. Running bare `isx tools` defaults t
 
 ## `isx account`
 
-Add credentials, and show or change which [credential account](CONFIGURATION.md#credential-accounts) an instance uses. Running bare `isx account` defaults to `list`.
+Add credentials, and show or change which [credential account](CONFIGURATION.md#credential-accounts) an instance uses.
+Running bare `isx account` defaults to `list`.
 
     isx account <subcommand>
 
@@ -232,7 +245,9 @@ Manage project templates defined by an `incus-spawn.yaml` file.
 |--------|-------------|
 | `--config <path>` | Path to `incus-spawn.yaml` (default: auto-detect from cwd) |
 
-A project name may be at most 52 characters, since it is built as `<name>-rebuilding` first. Re-creating an existing template builds the new one alongside it and replaces it only once the build succeeds. If a repository fails to clone or the pre-build fails, the command exits non-zero, deletes the incomplete build and keeps the previous template.
+A project name may be at most 52 characters, since it is built as `<name>-rebuilding` first.
+Re-creating an existing template builds the new one alongside it and replaces it only once the build succeeds.
+If a repository fails to clone or the pre-build fails, the command exits non-zero, deletes the incomplete build and keeps the previous template.
 
 ### `isx project update`
 
@@ -292,9 +307,11 @@ Diagnose host, proxy, VM, and tunnel health; offers to fix problems found.
 | `--deep` | Run per-instance checks (DNS, TLS, resolv.conf) |
 | `--bundle` | Collect findings and logs into a support archive (.tar.gz); implies `--deep` |
 
-Findings are marked `✓` healthy, `⚠` worth a look, `✗` broken, or `·` for a note. Notes don't affect the exit code.
+Findings are marked `✓` healthy, `⚠` worth a look, `✗` broken, or `·` for a note.
+Notes don't affect the exit code.
 
-`--bundle` creates an archive to attach to a GitHub issue. Credentials are redacted before anything is written, and `REDACTIONS.txt` in the archive lists what was removed.
+`--bundle` creates an archive to attach to a GitHub issue.
+Credentials are redacted before anything is written, and `REDACTIONS.txt` in the archive lists what was removed.
 
 ## `isx clean`
 
@@ -319,7 +336,10 @@ All subcommands accept these options:
 
 ## `isx reset`
 
-Return isx to a freshly installed state. Removes all instances and templates, cached images and downloads, the proxy service, the VM (macOS) and all configuration, including SSH keys and the CA certificate. It shows what will be removed and asks first. Run `isx init` afterwards to set up again.
+Return isx to a freshly installed state.
+Removes all instances and templates, cached images and downloads, the proxy service, the VM (macOS) and all configuration, including SSH keys and the CA certificate.
+It shows what will be removed and asks first.
+Run `isx init` afterwards to set up again.
 
     isx reset
 
@@ -348,7 +368,8 @@ Manage the incus-spawn VM appliance. macOS only.
 
     isx vm restart [options]
 
-Stops and restarts the VM, applying any pending appliance updates. Running containers will be stopped.
+Stops and restarts the VM, applying any pending appliance updates.
+Running containers will be stopped.
 
 | Option | Description |
 |--------|-------------|
@@ -368,7 +389,9 @@ Size must be larger than the current disk (grow-only), e.g. `100G`.
 
     isx vm reset [options]
 
-Wipes the VM's storage pool, for when it's beyond repair (for example, orphaned subvolumes reported by `isx doctor`). Every instance, template and cached image is deleted; isx lists them and asks first, or needs `--yes` without a terminal. Rebuild your templates afterwards with `isx build --all`.
+Wipes the VM's storage pool, for when it's beyond repair (for example, orphaned subvolumes reported by `isx doctor`).
+Every instance, template and cached image is deleted; isx lists them and asks first, or needs `--yes` without a terminal.
+Rebuild your templates afterwards with `isx build --all`.
 
 | Option | Description |
 |--------|-------------|
@@ -376,7 +399,8 @@ Wipes the VM's storage pool, for when it's beyond repair (for example, orphaned 
 
 ## `isx ask`
 
-AI-powered help. Ask any question about incus-spawn (uses AI tokens).
+AI-powered help.
+Ask any question about incus-spawn (uses AI tokens).
 
     isx ask <question...>
 
@@ -386,7 +410,8 @@ AI-powered help. Ask any question about incus-spawn (uses AI tokens).
 
 ## `isx mcp`
 
-Serve isx to an agent on this machine over the Model Context Protocol (stdio). Started by the agent, not by hand:
+Serve isx to an agent on this machine over the Model Context Protocol (stdio).
+Started by the agent, not by hand:
 
     claude mcp add isx -- isx mcp
 
@@ -402,7 +427,8 @@ Print a shell completion script.
 
 Supported shells: `bash` (default), `zsh`, `fish`.
 
-The scripts also complete `<namespace>=<account>` for `isx branch --account` and `isx account set`, and the namespaces for `isx account unset`. They read account names from `isx account list --completion`, which prints names only, never credentials.
+The scripts also complete `<namespace>=<account>` for `isx branch --account` and `isx account set`, and the namespaces for `isx account unset`.
+They read account names from `isx account list --completion`, which prints names only, never credentials.
 
 | Option | Description |
 |--------|-------------|
@@ -412,16 +438,36 @@ The scripts also complete `<namespace>=<account>` for `isx branch --account` and
 
 Query commands take `--format=table|plain|json`: `isx list`, `isx templates [list]`, `isx tools list`, `isx tools show`, `isx account list`, `isx account show`, `isx proxy status`, `isx proxy activity`, `isx doctor`, `isx vm status` (macOS), `isx update-base --list` and `isx branch`.
 
-- `table` is for people. It may change in any release, so don't parse it.
-- `plain` prints one record per line, its fields tab-separated, with `-` for an empty field. There is no header, padding, colour or glyph, and no results means no output.
-- Neither format lets a value write a control character to your terminal. A value can hold one: an instance stamp set by hand with `incus config set`, say, escape sequence and all. `plain` keeps each record on one line and safe to print, so every control character in a value becomes a space: the C0 controls U+0000 to U+001F (tab, line feed, carriage return, backspace, form feed and ESC among them), DEL, the 8-bit controls U+0080 to U+009F, U+2028/U+2029, and the bidirectional embeddings, overrides and isolates U+202A to U+202E and U+2066 to U+2069, which would make your terminal show the rest of the line out of order. That loses them, so read `json` when you need a value exactly: it keeps every value as it is, writing each of those characters as a JSON escape that any JSON parser turns back into the original: `\t`, `\n`, `\r`, `\b` and `\f` for tab, line feed, carriage return, backspace and form feed, and `\uXXXX` for every other one.
-- `json` prints an array of objects, or one object for a command about one thing (`tools show`, `proxy status`, `vm status`, `branch`). A list value is an array in `json` and its elements joined by `,` in `plain`. An absent value is `null`, and sizes are in bytes. Times are ISO-8601 with their offset: `2026-10-05T12:34:56+02:00`, or `2026-10-05T12:34:56Z` on a host whose zone is UTC, so match both forms. Instances stamped by older isx releases recorded only a date, which prints as an ISO-8601 date (`2026-09-01`). A time isx cannot read is `null` (`-` in `plain`).
-- When isx cannot read what Incus answered, the command fails (exit 1, the reason on stderr). It never prints an empty result.
-- Both `plain` and `json` are stable. Fields may be added at the end, but are never renamed, removed or reordered.
-- Results go to stdout. Errors and diagnostics go to stderr, so stdout holds only results. Commands that act (`build`, `branch`, `destroy`, ...) report their steps on stdout and their warnings and notes on stderr. A status command's report is its result in every state: `isx proxy status` prints it on stdout whether or not the proxy is healthy, and the exit code says which.
-- isx writes colour, clickable links and animated progress only when stdout is a terminal. When stdout is redirected or piped, or `NO_COLOR` is set to a non-empty value, neither stdout nor stderr holds escape sequences. isx cannot tell whether stderr alone is a terminal, so `isx build tpl-minimal 2>build.log` run from a terminal still colours the warnings in `build.log`. For a clean log, redirect both streams or set `NO_COLOR=1`.
+- `table` is for people.
+  It may change in any release, so don't parse it.
+- `plain` prints one record per line, its fields tab-separated, with `-` for an empty field.
+  There is no header, padding, colour or glyph, and no results means no output.
+- Neither format lets a value write a control character to your terminal.
+  A value can hold one: an instance stamp set by hand with `incus config set`, say, escape sequence and all.
+  `plain` keeps each record on one line and safe to print, so every control character in a value becomes a space: the C0 controls U+0000 to U+001F (tab, line feed, carriage return, backspace, form feed and ESC among them), DEL, the 8-bit controls U+0080 to U+009F, U+2028/U+2029, and the bidirectional embeddings, overrides and isolates U+202A to U+202E and U+2066 to U+2069, which would make your terminal show the rest of the line out of order.
+  That loses them, so read `json` when you need a value exactly: it keeps every value as it is, writing each of those characters as a JSON escape that any JSON parser turns back into the original: `\t`, `\n`, `\r`, `\b` and `\f` for tab, line feed, carriage return, backspace and form feed, and `\uXXXX` for every other one.
+- `json` prints an array of objects, or one object for a command about one thing (`tools show`, `proxy status`, `vm status`, `branch`).
+  A list value is an array in `json` and its elements joined by `,` in `plain`.
+  An absent value is `null`, and sizes are in bytes.
+  Times are ISO-8601 with their offset: `2026-10-05T12:34:56+02:00`, or `2026-10-05T12:34:56Z` on a host whose zone is UTC, so match both forms.
+  Instances stamped by older isx releases recorded only a date, which prints as an ISO-8601 date (`2026-09-01`).
+  A time isx cannot read is `null` (`-` in `plain`).
+- When isx cannot read what Incus answered, the command fails (exit 1, the reason on stderr).
+  It never prints an empty result.
+- Both `plain` and `json` are stable.
+  Fields may be added at the end, but are never renamed, removed or reordered.
+- Results go to stdout.
+  Errors and diagnostics go to stderr, so stdout holds only results.
+  Commands that act (`build`, `branch`, `destroy`, ...) report their steps on stdout and their warnings and notes on stderr.
+  A status command's report is its result in every state: `isx proxy status` prints it on stdout whether or not the proxy is healthy, and the exit code says which.
+- isx writes colour, clickable links and animated progress only when stdout is a terminal.
+  When stdout is redirected or piped, or `NO_COLOR` is set to a non-empty value, neither stdout nor stderr holds escape sequences. isx cannot tell whether stderr alone is a terminal, so `isx build tpl-minimal 2>build.log` run from a terminal still colours the warnings in `build.log`.
+  For a clean log, redirect both streams or set `NO_COLOR=1`.
 
-`isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`), `created`, `mcp_state` and `mcp_purpose`, in that order. The last two are `null` (`-`) unless an [`isx mcp`](MCP.md#delegating-from-an-agent-on-your-host-mcp) session made the instance. `mcp_state` is then `held` (a session holds it), `orphaned` (its session ended and nobody has adopted it yet) or `kept` (an agent handed it to you with `keep_instance`), and `mcp_purpose` is what the agent said the instance is for, or `null`. For names alone, use `isx list -q`:
+`isx list` prints `name`, `status` (`running`, `stopped`, ...), `ipv4`, `parent`, `runtime` (`container` or `virtual-machine`), `created`, `mcp_state` and `mcp_purpose`, in that order.
+The last two are `null` (`-`) unless an [`isx mcp`](MCP.md#delegating-from-an-agent-on-your-host-mcp) session made the instance.
+`mcp_state` is then `held` (a session holds it), `orphaned` (its session ended and nobody has adopted it yet) or `kept` (an agent handed it to you with `keep_instance`), and `mcp_purpose` is what the agent said the instance is for, or `null`.
+For names alone, use `isx list -q`:
 
 ```shell
 for name in $(isx list -q --status=stopped); do isx destroy "$name" --skip-confirmation; done

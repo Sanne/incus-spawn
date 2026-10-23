@@ -1,6 +1,7 @@
 # Templates
 
-Template images are reusable base environments defined in YAML. They can inherit from each other -- building an image automatically builds any missing parents:
+Template images are reusable base environments defined in YAML.
+They can inherit from each other -- building an image automatically builds any missing parents:
 
 ```yaml
 # images/java.yaml
@@ -15,7 +16,12 @@ tools:
   - maven-3
 ```
 
-Three images are built-in (`tpl-minimal`, `tpl-dev`, `tpl-java`). `tpl-dev` and `tpl-java` are deprecated and will be removed from isx: they still build, with a warning. Define your own templates in their place; to start from something, their maintained copies live in [`incus-spawn-templates`](https://github.com/Sanne/incus-spawn-templates) under the same names. Add that checkout to `searchPaths` (or copy its `images/dev.yaml` and `images/java.yaml` into `~/.config/incus-spawn/images/`) and the copies replace the built-ins; the definitions are the same, so nothing already built goes out of sync. The root image (`tpl-minimal`) uses a custom Fedora base from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images). Use `isx update-base` to check for new base image releases, pin a specific version, or track the latest:
+Three images are built-in (`tpl-minimal`, `tpl-dev`, `tpl-java`).
+`tpl-dev` and `tpl-java` are deprecated and will be removed from isx: they still build, with a warning.
+Define your own templates in their place; to start from something, their maintained copies live in [`incus-spawn-templates`](https://github.com/Sanne/incus-spawn-templates) under the same names.
+Add that checkout to `searchPaths` (or copy its `images/dev.yaml` and `images/java.yaml` into `~/.config/incus-spawn/images/`) and the copies replace the built-ins; the definitions are the same, so nothing already built goes out of sync.
+The root image (`tpl-minimal`) uses a custom Fedora base from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images).
+Use `isx update-base` to check for new base image releases, pin a specific version, or track the latest:
 
 ```shell
 isx update-base              # interactive — shows versions, prompts for action
@@ -24,9 +30,13 @@ isx update-base --latest     # track the newest release (remove any pin)
 isx update-base fedora-44-v2 # pin to a specific release tag
 ```
 
-Tracking latest is the default and requires no action: when the base image is unpinned, `isx build tpl-minimal` resolves the newest release at build time and installs it (falling back to the version baked into the binary if it can't reach the release list). Pinning writes a user-level override to `~/.config/incus-spawn/images/minimal.yaml`; `--latest` removes that override to resume tracking. After changing the base image version, rebuild with `isx build tpl-minimal`.
+Tracking latest is the default and requires no action: when the base image is unpinned, `isx build tpl-minimal` resolves the newest release at build time and installs it (falling back to the version baked into the binary if it can't reach the release list).
+Pinning writes a user-level override to `~/.config/incus-spawn/images/minimal.yaml`; `--latest` removes that override to resume tracking.
+After changing the base image version, rebuild with `isx build tpl-minimal`.
 
-Add your own templates by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local). A key isx does not know, such as `repo:` for `repos:`, is ignored with a warning that names where it is and the key it probably meant. You can also point to external directories via `searchPaths` in `config.yaml` (see [Configuration](CONFIGURATION.md#configuration)).
+Add your own templates by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local).
+A key isx does not know, such as `repo:` for `repos:`, is ignored with a warning that names where it is and the key it probably meant.
+You can also point to external directories via `searchPaths` in `config.yaml` (see [Configuration](CONFIGURATION.md#configuration)).
 
 Use `isx templates` to manage templates from the CLI:
 
@@ -43,17 +53,29 @@ isx templates new my-app --project  # creates .incus-spawn/images/my-app.yaml
 isx templates edit tpl-java    # opens in $EDITOR, validates on save
 ```
 
-Editing a built-in template automatically creates a user-level override in `~/.config/incus-spawn/images/`. The override takes precedence over the built-in but will not auto-update with isx upgrades. Templates are validated after editing: YAML syntax, required fields, and parent references are checked.
+Editing a built-in template automatically creates a user-level override in `~/.config/incus-spawn/images/`.
+The override takes precedence over the built-in but will not auto-update with isx upgrades.
+Templates are validated after editing: YAML syntax, required fields, and parent references are checked.
 
-You can also define a custom root image (no `parent`) by specifying `image`, `image_url`, `image_tag`, and `image_sha256` to point at your own pre-baked OS tarball. See the built-in [`minimal.yaml`](../common/src/main/resources/images/minimal.yaml) and the [incus-spawn-images](https://github.com/Sanne/incus-spawn-images) repo for the reference example.
+You can also define a custom root image (no `parent`) by specifying `image`, `image_url`, `image_tag`, and `image_sha256` to point at your own pre-baked OS tarball.
+See the built-in [`minimal.yaml`](../common/src/main/resources/images/minimal.yaml) and the [incus-spawn-images](https://github.com/Sanne/incus-spawn-images) repo for the reference example.
 
 Image schema fields (all optional except `name`; `isx templates new` writes them all into the new file, commented out):
 - `image` -- base OS image, only for root images (default: `images:fedora/44`)
 - `image_url` -- download URL for the base image tarball (supports `{arch}` and `{tag}` placeholders; `file://` works for testing a locally built image)
 - `image_tag` -- release tag identifying the base image version
 - `image_sha256` -- per-architecture SHA256 checksums for integrity verification
-- `type` -- instance type: `container` (default), `vm`, or `kvm`. VMs use a separate kernel for hardware-level isolation. With the built-in base image that is isx's own kernel, which the firmware starts directly (no boot loader, no initrd, no loadable modules). It is pinned: image rebuilds bring Fedora's userspace updates, not kernel updates, which arrive only when isx's kernel pin is bumped. By default dnf in the VM excludes Fedora's kernel packages (`/etc/dnf/libdnf5.conf.d/isx-kernel.conf`); kernel work belongs in a nested VM inside a `--kvm` branch. `kvm` is a container with the host's `/dev/kvm` passed through, so it can run VMs of its own (skip it per branch with `--no-kvm`). `vm` and `kvm` need Linux: macOS runs containers only, and a `kvm` template's branches go without KVM there. Inherits from parent -- a child without `type` inherits its parent's type
-- `vm_image_url` -- download URL for the VM base image (qcow2 tarball). Only used when `type` is `vm`. Supports `{arch}` and `{tag}` placeholders
+- `type` -- instance type: `container` (default), `vm`, or `kvm`.
+  VMs use a separate kernel for hardware-level isolation.
+  With the built-in base image that is isx's own kernel, which the firmware starts directly (no boot loader, no initrd, no loadable modules).
+  It is pinned: image rebuilds bring Fedora's userspace updates, not kernel updates, which arrive only when isx's kernel pin is bumped.
+  By default dnf in the VM excludes Fedora's kernel packages (`/etc/dnf/libdnf5.conf.d/isx-kernel.conf`); kernel work belongs in a nested VM inside a `--kvm` branch.
+  `kvm` is a container with the host's `/dev/kvm` passed through, so it can run VMs of its own (skip it per branch with `--no-kvm`).
+  `vm` and `kvm` need Linux: macOS runs containers only, and a `kvm` template's branches go without KVM there.
+  Inherits from parent -- a child without `type` inherits its parent's type
+- `vm_image_url` -- download URL for the VM base image (qcow2 tarball).
+  Only used when `type` is `vm`.
+  Supports `{arch}` and `{tag}` placeholders
 - `vm_image_sha256` -- per-architecture SHA256 checksums for the VM base image
 - `parent` -- parent image name (omit for root images)
 - `packages` -- dnf packages to install
@@ -95,7 +117,8 @@ isx build --out-of-sync
 isx build --all
 ```
 
-The TUI marks templates with `!` when they were built with a different isx version, `△` when the image or tool definition has changed since the last build, and `↑` when their parent was rebuilt after them (so they were copied from its earlier build; a VM over a container parent is built from the definitions, never copied, so it is never `↑`) — `isx build --out-of-sync` rebuilds all three, and everything that inherits from what it rebuilds. If a build fails, the container is promoted to an inspectable instance so you can shell in and debug.
+The TUI marks templates with `!` when they were built with a different isx version, `△` when the image or tool definition has changed since the last build, and `↑` when their parent was rebuilt after them (so they were copied from its earlier build; a VM over a container parent is built from the definitions, never copied, so it is never `↑`) — `isx build --out-of-sync` rebuilds all three, and everything that inherits from what it rebuilds.
+If a build fails, the container is promoted to an inspectable instance so you can shell in and debug.
 
 ## Declarative Repos
 
@@ -120,7 +143,9 @@ Repo entry fields:
 - `host-source` -- an absolute host repository path or `~/...`, available in trusted templates; exports local branches and tags without contacting its remote
 - `path` (optional) -- target directory (`~` expands to agentuser's home); defaults to `~/<repo name>`
 - `branch` (optional) -- branch or tag to check out; defaults to the repo's default branch
-- `depth` (optional) -- a positive number of commits to keep: the clone is shallow and follows only its branch, for repositories that store release binaries in their history. Omit it for development repositories, which get the full history. In the instance, `git fetch --unshallow && git remote set-branches origin '*' && git fetch` gets all of it.
+- `depth` (optional) -- a positive number of commits to keep: the clone is shallow and follows only its branch, for repositories that store release binaries in their history.
+  Omit it for development repositories, which get the full history.
+  In the instance, `git fetch --unshallow && git remote set-branches origin '*' && git fetch` gets all of it.
 - `prime` (optional) -- shell command to run inside the repo directory after cloning, typically to pre-fetch dependencies (e.g. `mvn dependency:go-offline`, `gradle dependencies`)
 
 Declared repos are automatically pre-trusted in `.claude.json` so Claude Code doesn't prompt for trust on first use.
@@ -163,13 +188,20 @@ workdir: ~/quarkus
 default-action: claude
 ```
 
-- `workdir` -- the directory to `cd` into when opening a shell. Inherits from parent templates (the nearest one that sets it wins), even when a child adds repos of its own; when no template in the chain sets it, defaults to the first repo of the nearest template that declares any.
-- `shell-command` -- a command to run instead of the default login shell (e.g. `claude` or `pi`). Falls back to `bash --login` if it fails to start.
-- `default-action` -- a tool action to run when pressing Enter on an instance in the TUI or when running `isx run <instance>` from the CLI. The value is a tool name (e.g. `claude`) if the tool has a single action, or `tool:action-id` (e.g. `claude:launch`) if the tool has multiple actions (see [Tool Actions](TOOLS.md#tool-actions) for the `id` field). When set, Enter runs the action and F2 opens a shell; when unset, Enter/`isx run` opens a shell. Inherits from parent templates; a child overrides the parent's default action. No rebuild required when changing this field.
+- `workdir` -- the directory to `cd` into when opening a shell.
+  Inherits from parent templates (the nearest one that sets it wins), even when a child adds repos of its own; when no template in the chain sets it, defaults to the first repo of the nearest template that declares any.
+- `shell-command` -- a command to run instead of the default login shell (e.g. `claude` or `pi`).
+  Falls back to `bash --login` if it fails to start.
+- `default-action` -- a tool action to run when pressing Enter on an instance in the TUI or when running `isx run <instance>` from the CLI.
+  The value is a tool name (e.g. `claude`) if the tool has a single action, or `tool:action-id` (e.g. `claude:launch`) if the tool has multiple actions (see [Tool Actions](TOOLS.md#tool-actions) for the `id` field).
+  When set, Enter runs the action and F2 opens a shell; when unset, Enter/`isx run` opens a shell.
+  Inherits from parent templates; a child overrides the parent's default action.
+  No rebuild required when changing this field.
 
 ## Host Resources
 
-Template images can declare host files and directories to make available inside containers. This is useful for sharing configuration files, pre-populating caches, or providing large datasets without copying them into every template.
+Template images can declare host files and directories to make available inside containers.
+This is useful for sharing configuration files, pre-populating caches, or providing large datasets without copying them into every template.
 
 ```yaml
 name: tpl-my-java
@@ -180,7 +212,9 @@ host-resources:
   - source: ~/.gitconfig
 ```
 
-The `~/.m2/repository` entry shares your host Maven cache with the container. With `mode: overlay`, the container sees a normal read-write directory pre-populated with your cached artifacts, but writes go to a container-local layer -- your host cache is never modified. Maven builds that would normally download hundreds of megabytes of dependencies can instead resolve them instantly from the shared cache.
+The `~/.m2/repository` entry shares your host Maven cache with the container.
+With `mode: overlay`, the container sees a normal read-write directory pre-populated with your cached artifacts, but writes go to a container-local layer -- your host cache is never modified.
+Maven builds that would normally download hundreds of megabytes of dependencies can instead resolve them instantly from the shared cache.
 
 The `~/.gitconfig` entry mounts your git configuration read-only (the default mode), so `git` inside the container picks up your name, email, aliases, and other settings (see [Git Configuration](../README.md#git-configuration)).
 
@@ -192,10 +226,16 @@ Three modes are available:
 | `overlay` | No | Read-only lower layer from host + ephemeral writable upper in the container. Tools see a normal read-write directory. Host is fully protected. **Linux only** — not yet supported on macOS. |
 | `copy` | No | Copied into the container at build time. Becomes part of the template. Also supports URL sources. |
 
-`readonly` and `overlay` resources can't be mounted into system directories such as `/`, `/etc`, `/usr`, `/var` or `/tmp`. Use `/home/agentuser`, `/opt`, `/srv` or `/mnt` instead, or `mode: copy`.
+`readonly` and `overlay` resources can't be mounted into system directories such as `/`, `/etc`, `/usr`, `/var` or `/tmp`.
+Use `/home/agentuser`, `/opt`, `/srv` or `/mnt` instead, or `mode: copy`.
 
-If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`. An entry takes only `source`, `path` and `mode`; any other key (such as `target:`) is ignored with a warning. Missing host paths are skipped with a warning, so templates remain portable. Host resources compose across the parent chain, with child entries overriding parent entries matched by container path.
+If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`.
+An entry takes only `source`, `path` and `mode`; any other key (such as `target:`) is ignored with a warning.
+Missing host paths are skipped with a warning, so templates remain portable.
+Host resources compose across the parent chain, with child entries overriding parent entries matched by container path.
 
-**Project-local templates** (`.incus-spawn/images/`) come from whatever repository you cloned, so they can't reach outside it: host resources and `file://` images must point inside the project directory, and their `repos` are always cloned from the network, never from your host checkouts. To give a template you trust wider access, move it to `~/.config/incus-spawn/images/`.
+**Project-local templates** (`.incus-spawn/images/`) come from whatever repository you cloned, so they can't reach outside it: host resources and `file://` images must point inside the project directory, and their `repos` are always cloned from the network, never from your host checkouts.
+To give a template you trust wider access, move it to `~/.config/incus-spawn/images/`.
 
-**VMs** mount host resources via virtiofs. Single-file resources fall back to `copy` mode, since VMs only mount directories.
+**VMs** mount host resources via virtiofs.
+Single-file resources fall back to `copy` mode, since VMs only mount directories.

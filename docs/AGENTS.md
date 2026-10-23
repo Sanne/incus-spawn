@@ -1,10 +1,12 @@
 # Agents
 
-Each agent is a tool: add it to a template's `tools:` list, and every branch of the template has it, set up for unattended work. Its credentials stay on the host, where `isx init` configures them, and the [proxy](../README.md#credential-isolation) adds them to its requests as they leave the instance.
+Each agent is a tool: add it to a template's `tools:` list, and every branch of the template has it, set up for unattended work.
+Its credentials stay on the host, where `isx init` configures them, and the [proxy](../README.md#credential-isolation) adds them to its requests as they leave the instance.
 
 ## Claude Code
 
-Claude Code is Anthropic's official CLI for Claude. Add it to any template with `tools: [claude]`:
+Claude Code is Anthropic's official CLI for Claude.
+Add it to any template with `tools: [claude]`:
 
 ```yaml
 name: tpl-claude-dev
@@ -19,7 +21,8 @@ tools:
 default-action: claude
 ```
 
-The `claude` tool downloads the latest Claude Code binary, configures permissions for unattended agent use, and sets up authentication. All three auth modes work transparently — the [MITM proxy](../README.md#credential-isolation) injects credentials so no real API keys or tokens enter the container.
+The `claude` tool downloads the latest Claude Code binary, configures permissions for unattended agent use, and sets up authentication.
+All three auth modes work transparently — the [MITM proxy](../README.md#credential-isolation) injects credentials so no real API keys or tokens enter the container.
 
 To preconfigure which model Claude Code uses, pass the `model` parameter:
 
@@ -29,11 +32,13 @@ tools:
       model: claude-sonnet-4-6
 ```
 
-When omitted, Claude Code uses its own default. Model IDs follow the `claude-*` naming convention (e.g. `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`).
+When omitted, Claude Code uses its own default.
+Model IDs follow the `claude-*` naming convention (e.g. `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`).
 
 ## Codex CLI
 
-Codex CLI is OpenAI's coding agent. Add it to any template with `tools: [codex]`:
+Codex CLI is OpenAI's coding agent.
+Add it to any template with `tools: [codex]`:
 
 ```yaml
 name: tpl-codex-dev
@@ -48,9 +53,11 @@ tools:
 default-action: codex
 ```
 
-Codex needs an OpenAI API key ([create one here](https://platform.openai.com/api-keys); API usage needs billing credits, even on free accounts). Run `isx init` to configure it: the key stays on the host and the [MITM proxy](../README.md#credential-isolation) injects it.
+Codex needs an OpenAI API key ([create one here](https://platform.openai.com/api-keys); API usage needs billing credits, even on free accounts).
+Run `isx init` to configure it: the key stays on the host and the [MITM proxy](../README.md#credential-isolation) injects it.
 
-The build configures Codex for unattended use and trusts the template's repos. The default action resumes your most recent session.
+The build configures Codex for unattended use and trusts the template's repos.
+The default action resumes your most recent session.
 The footer shows the model, the current directory and `Running unconstrained in isx [version] [container name]`, the name of a permission profile with full filesystem and network access (and live web search).
 The version and container name refresh at login, including after cloning a template.
 Use `/statusline` to customize the footer; the `permissions` item displays the isx message.
@@ -68,7 +75,8 @@ tools:
 
 ## Pi Coding Agent
 
-Pi is a provider-agnostic CLI coding agent that uses the standard Anthropic API. Add it to any template with `tools: [pi]`:
+Pi is a provider-agnostic CLI coding agent that uses the standard Anthropic API.
+Add it to any template with `tools: [pi]`:
 
 ```yaml
 name: tpl-pi-dev
@@ -83,7 +91,8 @@ tools:
 shell-command: pi
 ```
 
-Pi works out of the box with all three Anthropic auth modes (API key, Claude Pro/Max OAuth, Vertex AI) — the [MITM proxy](../README.md#credential-isolation) injects credentials transparently. To use Pi without making it the default shell, omit `shell-command` and launch it manually after `isx shell`.
+Pi works out of the box with all three Anthropic auth modes (API key, Claude Pro/Max OAuth, Vertex AI) — the [MITM proxy](../README.md#credential-isolation) injects credentials transparently.
+To use Pi without making it the default shell, omit `shell-command` and launch it manually after `isx shell`.
 
 Pi can also run against OpenAI, using the same key as [Codex CLI](#codex-cli):
 
@@ -144,7 +153,8 @@ The model parameter is reconfigurable in child templates without reinstalling th
 
 ## Bob Shell
 
-Bob Shell is IBM's AI-powered coding assistant. Add it to any template with `tools: [bob]`:
+Bob Shell is IBM's AI-powered coding assistant.
+Add it to any template with `tools: [bob]`:
 
 ```yaml
 name: tpl-bob-dev
@@ -159,7 +169,11 @@ tools:
 default-action: bob
 ```
 
-Bob Shell requires an IBM API key ([create one here](https://bob.ibm.com/docs/ide/account/api-keys#create-an-api-key)). Run `isx init` to configure it — the real key stays on the host and the [MITM proxy](../README.md#credential-isolation) injects it transparently. Containers only hold a placeholder value. During `isx init` you'll be asked to accept the IBM license agreement; accepting pre-configures it in all containers so Bob Shell won't prompt again. The default action launches Bob with `--auto-approve` (auto-approve all tool calls); running `bob` manually in a shell uses normal approval mode.
+Bob Shell requires an IBM API key ([create one here](https://bob.ibm.com/docs/ide/account/api-keys#create-an-api-key)).
+Run `isx init` to configure it — the real key stays on the host and the [MITM proxy](../README.md#credential-isolation) injects it transparently.
+Containers only hold a placeholder value.
+During `isx init` you'll be asked to accept the IBM license agreement; accepting pre-configures it in all containers so Bob Shell won't prompt again.
+The default action launches Bob with `--auto-approve` (auto-approve all tool calls); running `bob` manually in a shell uses normal approval mode.
 
 ## GitHub Copilot CLI
 
@@ -178,11 +192,13 @@ tools:
 shell-command: copilot
 ```
 
-Copilot uses the same GitHub PAT as the `gh` tool -- run `isx init` to configure your GitHub token if you haven't already. No separate credential is needed.
+Copilot uses the same GitHub PAT as the `gh` tool -- run `isx init` to configure your GitHub token if you haven't already.
+No separate credential is needed.
 
 ## Agent Skills
 
-Template images can declare [agent skills](https://skills.sh) to bake in at build time. Skills are installed once into the template, at `~/.agents/skills`, the shared location any agent can read (Claude Code finds them through `~/.claude/skills`), and inherited by every instance branched from it.
+Template images can declare [agent skills](https://skills.sh) to bake in at build time.
+Skills are installed once into the template, at `~/.agents/skills`, the shared location any agent can read (Claude Code finds them through `~/.claude/skills`), and inherited by every instance branched from it.
 
 ```yaml
 name: tpl-skills
@@ -197,7 +213,8 @@ skills:
     - myorg/catalog              # all skills from a repo
 ```
 
-There is no implicit default catalog -- `repo` is only needed to resolve bare skill names (like `security-review` above). When all entries use the fully qualified `owner/repo@skill` or `owner/repo` form, you can omit `repo` and use the list shorthand:
+There is no implicit default catalog -- `repo` is only needed to resolve bare skill names (like `security-review` above).
+When all entries use the fully qualified `owner/repo@skill` or `owner/repo` form, you can omit `repo` and use the list shorthand:
 
 ```yaml
 skills:
@@ -215,7 +232,9 @@ To find available skills, browse [skills.sh](https://skills.sh).
 
 ## Agent Environment Context
 
-Every build writes a short primer to `/etc/claude-code/CLAUDE.md`, so Claude Code starts each session knowing where it is: the box is disposable, `sudo` needs no password, credentials are handled by the proxy, and outward-facing actions such as opening a PR wait until asked. It also lists the tools and repositories the template provides. Your own `~/.claude/CLAUDE.md` and project `CLAUDE.md` files load as usual.
+Every build writes a short primer to `/etc/claude-code/CLAUDE.md`, so Claude Code starts each session knowing where it is: the box is disposable, `sudo` needs no password, credentials are handled by the proxy, and outward-facing actions such as opening a PR wait until asked.
+It also lists the tools and repositories the template provides.
+Your own `~/.claude/CLAUDE.md` and project `CLAUDE.md` files load as usual.
 
 Templates and tools can add their own lines with `agent_note`:
 
@@ -227,7 +246,8 @@ agent_note: |
   deliberately omits 25.
 ```
 
-A tool's note, and any `skills` it ships, come along to every template that installs the tool. Bare skill names in a tool resolve against the tool's own `skills.repo`:
+A tool's note, and any `skills` it ships, come along to every template that installs the tool.
+Bare skill names in a tool resolve against the tool's own `skills.repo`:
 
 ```yaml
 name: mvnd
@@ -243,7 +263,8 @@ skills:
 
 ### When to write a note
 
-Notes are read in every session, so save them for things an agent would otherwise get wrong: a required flag, a version to avoid, an "obvious" fix that isn't. Be specific:
+Notes are read in every session, so save them for things an agent would otherwise get wrong: a required flag, a version to avoid, an "obvious" fix that isn't.
+Be specific:
 
 ```yaml
 agent_note: |
