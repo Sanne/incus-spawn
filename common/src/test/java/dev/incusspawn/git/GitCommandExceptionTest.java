@@ -55,13 +55,57 @@ class GitCommandExceptionTest {
         assertTrue(note.contains("check its fingerprint") && note.contains("if its key changed, find out why"), note);
     }
 
+    private static final String GITHUB_PROMPT =
+            "fatal: could not read Username for 'https://github.com': terminal prompts disabled";
+
     @Test
     void aCredentialPromptFailureNamesTheSetting() {
-        var note = GitCommandException.promptNote(
-                "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
-                new PreparationGit.SshSetup("x", "y"));
-        assertTrue(note.contains("GIT_TERMINAL_PROMPT=0") && note.contains("credential helper"), note);
+        var note = GitCommandException.promptNote(GITHUB_PROMPT, new PreparationGit.SshSetup("x", "y"),
+                host -> GitCommandException.GhLogin.UNKNOWN);
+        assertEquals("isx ran Git with GIT_TERMINAL_PROMPT=0 and no askpass program, so it could not ask for a"
+                + " username or password. Configure a Git credential helper.", note);
         assertNull(GitCommandException.promptNote("fatal: repository not found", new PreparationGit.SshSetup("x", "y")));
+    }
+
+    @Test
+    void aGitHubCredentialFailureSuggestsTheGitHubCliWhenItIsLoggedIn() {
+        var asked = new java.util.ArrayList<String>();
+        var note = GitCommandException.promptNote(GITHUB_PROMPT, new PreparationGit.SshSetup("x", "y"), host -> {
+            asked.add(host);
+            return GitCommandException.GhLogin.LOGGED_IN;
+        });
+        assertEquals(List.of("github.com"), asked);
+        assertTrue(note.endsWith(" username or password. The GitHub CLI is logged in to github.com:"
+                + " run `gh auth setup-git` to make it Git's credential helper there."), note);
+    }
+
+    @Test
+    void aGitHubCredentialFailureSuggestsLoggingInFirstWhenTheGitHubCliIsNot() {
+        var note = GitCommandException.promptNote(
+                "fatal: could not read Password for 'https://someone@GitHub.com': terminal prompts disabled",
+                new PreparationGit.SshSetup("x", "y"), host -> GitCommandException.GhLogin.LOGGED_OUT);
+        assertTrue(note.endsWith(" username or password. Run `gh auth login`, then `gh auth setup-git`, to make the"
+                + " GitHub CLI Git's credential helper for github.com, or configure another Git credential helper."), note);
+    }
+
+    @Test
+    void anotherHostGetsTheGitHubCliOnlyWhereItIsAlreadyLoggedIn() {
+        var prompt = "fatal: could not read Username for 'https://git.example.com': terminal prompts disabled";
+        var ssh = new PreparationGit.SshSetup("x", "y");
+        assertTrue(GitCommandException.promptNote(prompt, ssh, host -> GitCommandException.GhLogin.LOGGED_IN)
+                .endsWith("run `gh auth setup-git --hostname git.example.com` to make it Git's credential helper there."));
+        assertTrue(GitCommandException.promptNote(prompt, ssh, host -> GitCommandException.GhLogin.LOGGED_OUT)
+                .endsWith(" Configure a Git credential helper."), "gh may know nothing about the host");
+    }
+
+    @Test
+    void theGitHubCliIsNotAskedWithoutAnHttpsHostToAskAbout() {
+        java.util.function.Function<String, GitCommandException.GhLogin> never = host -> fail("asked gh about " + host);
+        var ssh = new PreparationGit.SshSetup("x", "y");
+        for (var output : List.of("fatal: could not read Username for 'http://github.com': terminal prompts disabled",
+                "fatal: could not read Username for x: terminal prompts disabled", "fatal: terminal prompts disabled")) {
+            assertTrue(GitCommandException.promptNote(output, ssh, never).endsWith(" Configure a Git credential helper."), output);
+        }
     }
 
     @ParameterizedTest

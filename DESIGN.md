@@ -438,6 +438,12 @@ The failure note says which of these isx did, and to which command.
 Local preparation steps use no SSH and skip reading `core.sshCommand`.
 A failure keeps isx's words apart from Git's (`GitCommandException.details()`).
 isx's reason comes first, then, for a failure a prompt would have answered, what isx did and what to set up.
+For a credential Git could not get over HTTPS, that advice names the GitHub CLI where it can help, by `gh auth status --hostname` for the host in Git's message.
+A logged-in `gh` gets `gh auth setup-git`, with `--hostname` for a host other than github.com.
+For github.com, a `gh` that is not logged in gets `gh auth login` first.
+Otherwise, including when `gh` is missing or takes over 10 seconds, the note just says to configure a credential helper.
+`gh` runs only after such a failure, so it costs a successful fetch nothing.
+isx does not use a template's GitHub account for these host fetches: host-side Git authenticates as the user, and a checkout is shared by every template naming its URL.
 Then comes `Git's output:`, with each of Git's lines quoted as `| …` and URL credentials scrubbed, an HTTP(S) URL's whole userinfo included.
 isx's own text, such as a reason it stopped Git or could not run it, never goes under that header.
 The exception message names only the Git command, never its URL or output.
