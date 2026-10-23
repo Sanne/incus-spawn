@@ -40,6 +40,9 @@ The tokens reach exactly what runs in an instance's login environment.
 The proxy injects a selected credential only when the source instance presents its current proof for that namespace.
 A nested container, a sandbox or anything started without that environment gets none, unless you pass one in deliberately, as `podman run -e GH_TOKEN …` does.
 
+Plain Git is the one exception: for HTTPS requests to `github.com` it presents the GitHub proof through a credential helper isx installs system-wide, so a clone of a private repository works without `gh`.
+The helper reads the current proof on every request, outside login shells and after a reset too, and stores nothing.
+
 ### Sharing a token
 
 Nested instances with their own accounts keep their own authentication and destination; those without a proof get no outer credential.
@@ -105,7 +108,7 @@ Metadata readable through `/dev/incus` cannot produce a usable proof.
 
 isx delivers the credential seed to `/run/isx/credential-secret`.
 It survives reboots through host-side derivation, not through the guest filesystem.
-The guest delivery version is `3`, and the container boot marker includes `proofs-v3:<generation>`.
+The guest delivery version is `4`, and the container boot marker includes `proofs-v4:<generation>`.
 
 ### Copies, starts and resets
 
@@ -166,6 +169,9 @@ Refused injections are counted in `/activity`.
 | `refused_proofs` | Refused requests that carried a proof: the proxy checked it and it matched nothing. |
 | `refused_address_misses` | Refused requests that carried a proof from an address that is no instance; the proof was never checked. |
 
+The last two count only refusals the proxy's current listing stands behind.
+When its last listing failed or hung, `registry_stale` is true and such refusals go in neither.
+
 ### Placeholder declarations
 
 Custom tools must declare `proxy.placeholders` and export the credential variable in `env`, as shown in [Custom Tools](TOOLS.md#proxy-credentials).
@@ -194,7 +200,7 @@ The workflow exercises full template builds, publication cleanup, containers, VM
   A stalled-listing test checks bounded waiting and independent-credential passthrough.
 - **`test-stable-proofs.sh`** keeps a Podman child's configured token through a managed start and raw reboot recovery, then checks explicit reset revocation, new-token delivery, fresh branches and reused names.
 - **`test-project-proofs.sh`** clones an authenticated Git fixture during project creation, checks authenticated pre-build and update requests, and checks grant removal after successful and failed operations.
-- **`test-podman.sh`** checks a plain nested child, an independent credential and deliberate sharing with TLS verification disabled.
+- **`test-podman.sh`** checks, through `test-nested-proofs.sh`, a plain nested child, an independent credential and deliberate sharing with TLS verification disabled.
   The integration fixtures use `proof-curl.sh` to send the proofs delivered to the guest.
 - **`test-build-proofs.sh`** checks that published templates retain neither a grant nor a cached Codex build proof.
 

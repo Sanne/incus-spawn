@@ -7,7 +7,7 @@ This page says where they live, how a credential gets several accounts that temp
 | --- | --- |
 | `~/.config/incus-spawn/config.yaml` | Auth credentials and global settings, including `host-routes:` |
 | `~/.config/incus-spawn/mcp.yaml` | What `isx mcp` lets agents do (see [Delegating from an agent](MCP.md#delegating-from-an-agent-on-your-host-mcp)) |
-| `~/.config/incus-spawn/ssh/` | The managed SSH key pair, per-instance config, and known_hosts |
+| `~/.config/incus-spawn/ssh/` | The managed SSH key pair and the per-instance SSH config |
 | `~/.config/incus-spawn/images/*.yaml` | User-level template definitions |
 | `~/.config/incus-spawn/tools/*.yaml` | User-level tool definitions |
 | `.incus-spawn/images/*.yaml` | Project-local template definitions |
@@ -93,7 +93,8 @@ isx account unset review-1 github       # follow the default again
 In the TUI, F3 on an instance shows its accounts and the `a` key changes them.
 The branch dialog (F4) lets you pick accounts too.
 
-Changes take effect on the instance's next request, with no restart, and switching GitHub accounts also updates its git identity.
+Changes take effect on the instance's next request, with no restart.
+An instance switched to another GitHub account takes that account's git identity on its next start or shell.
 The exception is switching between Claude auth modes (Pro/Max, API key, Vertex), which needs a template built for that mode ([#866](https://github.com/Sanne/incus-spawn/issues/866)).
 
 Changing a default moves every instance that follows it; `isx init` lists them first and lets you keep them where they are.
@@ -214,6 +215,18 @@ Resolution order, later sources overriding earlier ones with the same name:
 3. Search paths (in listed order)
 4. Project-local (`.incus-spawn/`)
 
+## Host CA propagation
+
+By default an instance trusts the isx CA beside Fedora's roots and nothing else.
+On a host behind TLS inspection, or for an isx inside another isx, you can have the host's own CA anchors installed in every instance too:
+
+```yaml
+host-ca:
+  propagate: true
+```
+
+See [Host CAs](FEDORA.md#host-cas-opt-in) for what it installs and where.
+
 ## TUI live refresh
 
 The TUI updates live as instances are started, stopped, created or deleted elsewhere.
@@ -233,6 +246,9 @@ To change it:
 ready-timeouts:
   proxy: 1m               # durations: 30s, 1m, 2m ...
 ```
+
+The same section holds `container` and `vm`: how long a start waits for the instance to answer before it fails.
+Their defaults are 30s and 2m.
 
 ## Caching
 
@@ -271,5 +287,6 @@ Build-time caches:
 - **DNF packages**, shared by every build, so builds reuse each other's downloads.
 - **Tool downloads**, reused by rebuilds.
 
-All caches live under `~/.cache/incus-spawn/`.
+The DNF cache is a volume in the Incus storage pool; every other cache lives under `~/.cache/incus-spawn/`.
+`isx clean cache` removes them all.
 Nothing expires by age or size; an artifact is dropped only when upstream changes or withdraws it.
