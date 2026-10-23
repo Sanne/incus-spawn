@@ -14,6 +14,8 @@ Every rule here serves that reader.
 The home page (`site/index.html`) is the reference example of the shape and the voice.
 
 The Shape and Voice rules are checked by `DocsShapeTest` and `DocsOneSentencePerLineTest` (`cli`) on `README.md` and `docs/*.md`.
+`DocsListsTest` checks that the pages' lists mirror the code's: top-level commands, built-in tools, and tools with a proxy credential.
+A fact that is a list in the code is a list in the docs, and the test is what keeps them equal.
 `docs/dev/` is maintainer notes and is exempt from the budgets, and DESIGN.md keeps its own register.
 
 ## Shape

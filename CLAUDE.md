@@ -70,6 +70,8 @@ In a list item, each sentence after the first goes on its own line, indented to 
 Headings, tables (a row stays on one line), code, HTML and front matter are exempt.
 `DocsOneSentencePerLineTest` enforces this in `mvn test`.
 README.md and `docs/*.md` also keep to the budgets in `.claude/rules/writing.md` (a paragraph of at most four sentences and 60 words, a sentence of at most 40, no dashes, no issue numbers), enforced by `DocsShapeTest`.
+Their lists mirror the code's: every top-level command in the README's CLI table and `docs/CLI.md`, every built-in tool in the Tools page's table, every tool with a proxy credential in the README's credential table (`DocsListsTest`).
+A new command or tool fails that test until its page names it.
 Split a sentence of more than about 40 words where it splits cleanly; `.claude/rules/writing.md` "Splitting a sentence" lists the only word changes a split may make.
 
 The `gemini-cli` tool installs and configures Google Gemini CLI through `GeminiSetup`.
