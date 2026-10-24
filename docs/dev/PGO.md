@@ -6,7 +6,7 @@ Each phase records its outcome in [PERFORMANCE-NOTES.md](PERFORMANCE-NOTES.md) w
 
 ## Goal
 
-The released `isx` and `isx-proxy` binaries are built with the profiles, on every platform, by the release workflow.
+The released `isx` and `isx-proxy` binaries are built with profiles collected in the same release run, on every platform.
 Collecting profiles that only a benchmark build uses is not the goal.
 
 The release artifacts come out of it measurably better on three axes, in this order of importance:
@@ -43,7 +43,7 @@ No toolchain change is needed.
   Name each with `-XX:ProfilesDumpFile=<flow>-<n>.iprof`, pass them all to `--pgo`, and have the optimized build write the merged result with `-H:PGODumpLoadedIprofPath`.
   Counts add up, so the mix of runs is the weighting.
 - `-H:+PGOPrintProfileQuality` prints relevance and applicability at the optimized build.
-  That is the gate for stale and cross-platform profiles.
+  That is the gate for cross-platform profiles.
 - An unrepresentative profile is worse than none: PGO optimizes what the counters call hot and compiles the rest for size.
   A profile from `--help` would penalize the branch and shell paths.
 - Instrumented binaries are slow and large.
@@ -105,35 +105,38 @@ RSS is the noisiest of these figures, as the notes record, so it is measured wit
 The PR that turns PGO on for releases carries the evidence for each axis of the goal, in this order:
 
 1. The phase 2 A/B tables, added to the performance notes, with the conditions they were measured under.
-2. The `PGOPrintProfileQuality` output of the optimized build on each of the four release platforms, from a `workflow_dispatch` run of the release build job on the PR's commit, so a macOS build failure or an unusable profile is found before a tag.
+2. The `PGOPrintProfileQuality` output of the optimized build on each of the four release platforms, from a `workflow_dispatch` run of the release's `profiles` and `build` jobs on the PR's commit, so a collection failure, a macOS build failure or an unusable profile is found before a tag.
 3. The binary sizes from that run beside the previous release's, for both binaries and all four platforms.
 4. The release smoke test passing on the PGO binaries.
 
-A later PR that changes build flags, bumps GraalVM or refreshes the profiles repeats items 2 and 3, and item 1 when it claims a speed or memory change.
+A later PR that changes build flags, bumps GraalVM or changes the collection flows repeats items 2 and 3, and item 1 when it claims a speed or memory change.
 
-## Phase 3: shipping profiles
+## Phase 3: collecting and applying profiles in the release run
 
-Commit to profiles collected ahead of a release, never collected during one.
-Release build time stays the same, the macOS runners have no Incus, and a release never depends on a benchmark run.
+Profiles are produced inside the release workflow and never stored anywhere else.
+Releases are infrequent, so the extra minutes cost little, and the profile always matches the commit being released exactly.
+Nothing goes stale, no repository grows, and no asset or cache needs a checksum.
 
-The release workflow is the consumer: its native build steps download the pinned profile asset, verify its checksum, and build both binaries with `--pgo` on every platform.
-A release build that cannot apply the profile fails rather than silently shipping an unprofiled binary, the same rule as a base-image checksum.
+The release workflow gains a `profiles` job that the four platform `build` jobs depend on:
+
+1. On the Linux amd64 runner, set up Incus the way the integration workflow does.
+2. Build both binaries instrumented, run the phase 1 collection flows against them, and merge the per-process dumps into one profile per binary.
+3. Upload the two merged profiles as a workflow artifact, kept long enough for a local build to fetch them.
+
+Each `build` job then downloads the artifact and builds both binaries once, with `--pgo` and `-H:+PGOPrintProfileQuality`.
 
 - Collect on Linux x86_64 and apply to all four platforms.
   Profiles key on methods, so OS-specific code falls back to inferred profiles.
   Print applicability per platform in the build log and fail under a floor.
 - The Intel macOS build runs GraalVM 25.0, so its profile version may mismatch.
   Use `PGOIgnoreVersionCheck` there or skip PGO on that legacy platform.
-- A merged profile is tens of megabytes of JSON that diffs poorly.
-  Publish it as a release asset and pin its SHA-256 the way base images are pinned, rather than committing it.
-- Activate `--pgo` through a Maven profile that triggers on the file's presence, so a Community Edition build from source still works.
+- A release whose collection fails, fails.
+  There is no older profile to fall back on, and shipping an unprofiled binary silently would defeat the goal.
+  A flaky collection step is fixed, not tolerated, and the job can be rerun.
+- Activate `--pgo` through a Maven property that is empty by default, so a local or Community Edition build from source still works and stays unprofiled unless given a profile.
   PGO is Oracle-only, like G1 on macOS.
+  A local build that wants PGO downloads a release run's artifact and passes it.
 
-## Phase 4: keeping profiles fresh
-
-A workflow like the base-image bump, monthly or on demand, collects on a Linux runner and opens a PR carrying the new asset's checksum and the quality metrics.
-A PR build step prints applicability so drift is visible before it costs anything.
-
-## Phase 5: docs in the same PR
+## Phase 4: docs in the same PR
 
 Performance notes, a DESIGN.md subsection beside "Native image CPU baseline", the module lines in CLAUDE.md that describe `-O3` as ML-inferred PGO, `bench/README.md` and `.claude/rules/native-image.md`.
