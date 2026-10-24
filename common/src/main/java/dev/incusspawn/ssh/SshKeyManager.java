@@ -1,7 +1,9 @@
 package dev.incusspawn.ssh;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.Warnings;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.HostLock;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -17,6 +19,9 @@ import java.util.concurrent.TimeUnit;
  * for seamless container access without passphrase prompts or host key warnings.
  */
 public final class SshKeyManager {
+
+    /** Test seam: runs between reading the managed config and writing it back. */
+    static volatile Runnable afterConfigRead = () -> {};
 
     private static final String INCLUDE_LINE = "Include ~/.config/incus-spawn/ssh/config";
     private static final String CONFIG_HEADER = "# Auto-managed by incus-spawn -- do not edit\n";
@@ -177,12 +182,12 @@ public final class SshKeyManager {
      * @param hostname optional IP/hostname for clients that don't support ProxyCommand
      */
     public static boolean addHostEntry(String instanceName, String hostname) {
-        try {
+        var isxPath = resolveIsxPath(); // a subprocess: not under the lock
+        try (var lock = lockManagedConfig()) {
             ensureManagedConfigExists();
             var content = Files.readString(Environment.sshConfigFile());
+            afterConfigRead.run();
             var blocks = parseWithoutHostBlocks(content, instanceName);
-
-            var isxPath = resolveIsxPath();
 
             blocks.add("");
             blocks.add("Host " + instanceName);
@@ -199,8 +204,8 @@ public final class SshKeyManager {
 
             writeAtomically(Environment.sshConfigFile(), String.join("\n", blocks));
             return true;
-        } catch (IOException e) {
-            System.err.println("  Warning: failed to update SSH config: " + e.getMessage());
+        } catch (IOException | HostLock.HostLockException e) {
+            Warnings.warn("Failed to update SSH config: " + e.getMessage());
             return false;
         }
     }
@@ -210,12 +215,13 @@ public final class SshKeyManager {
      */
     public static void removeHostEntry(String instanceName) {
         if (!Files.exists(Environment.sshConfigFile())) return;
-        try {
+        try (var lock = lockManagedConfig()) {
             var content = Files.readString(Environment.sshConfigFile());
+            afterConfigRead.run();
             var blocks = parseWithoutHostBlocks(content, instanceName);
             writeAtomically(Environment.sshConfigFile(), String.join("\n", blocks));
-        } catch (IOException e) {
-            System.err.println("  Warning: failed to update SSH config: " + e.getMessage());
+        } catch (IOException | HostLock.HostLockException e) {
+            Warnings.warn("Failed to update SSH config: " + e.getMessage());
         }
     }
 
@@ -224,6 +230,16 @@ public final class SshKeyManager {
      */
     public static void cleanupInstance(String instanceName) {
         removeHostEntry(instanceName);
+    }
+
+    /**
+     * Held from reading the managed config to writing it back, so that two isx processes -- the
+     * CLI starting one instance while the TUI clones another -- cannot each rewrite it from the
+     * same old copy and silently drop the other's Host block.
+     */
+    private static HostLock lockManagedConfig() {
+        return HostLock.acquireOrDegrade(Environment.lockDir().resolve("ssh-config.lock"),
+                "updating the SSH config", Warnings::warn, Warnings::warn);
     }
 
     /**

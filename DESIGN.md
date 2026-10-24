@@ -1100,6 +1100,7 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
   `harvestHostKey` regenerates them before harvesting to give each instance a unique key.
 - **Both keys injected**: the managed key (passphraseless) ensures tools always work, while the user's personal key is also injected so interactive SSH sessions can use their preferred key.
 - **Atomic writes**: all config and known_hosts updates use temp-file-then-rename with restrictive permissions to avoid partial writes.
+  A rename does not stop two isx processes from each rewriting the managed config from the same old copy, so a Host block is added or removed under a `HostLock` (`ssh-config.lock`), held from the read to the rename (#1632).
 - **Non-fatal**: SSH setup failures never block init or branching — they warn and fall back to manual `ssh agentuser@<ip>`.
 
 ### Remote IDE Access

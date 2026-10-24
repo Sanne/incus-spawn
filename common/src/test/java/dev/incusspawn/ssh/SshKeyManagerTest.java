@@ -1,5 +1,6 @@
 package dev.incusspawn.ssh;
 
+import dev.incusspawn.util.HostLock;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -204,4 +206,50 @@ class SshKeyManagerTest {
         assertDoesNotThrow(() -> SshKeyManager.cleanupInstance("nonexistent"));
     }
 
+    @Test
+    void concurrentWritersKeepEachOthersHostBlock() throws Exception {
+        whileFirstWriterHoldsConfig(() -> SshKeyManager.addHostEntry("first"),
+                () -> SshKeyManager.addHostEntry("second"));
+
+        var config = Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config"));
+        assertTrue(config.contains("Host first"), config);
+        assertTrue(config.contains("Host second"), config);
+    }
+
+    @Test
+    void concurrentRemoveKeepsAnotherWritersHostBlock() throws Exception {
+        SshKeyManager.addHostEntry("gone");
+        whileFirstWriterHoldsConfig(() -> SshKeyManager.removeHostEntry("gone"),
+                () -> SshKeyManager.addHostEntry("kept"));
+
+        var config = Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config"));
+        assertFalse(config.contains("Host gone"), config);
+        assertTrue(config.contains("Host kept"), config);
+    }
+
+    /** Runs {@code second} once {@code first} has read the config, before it writes it back. */
+    private static void whileFirstWriterHoldsConfig(Runnable first, Runnable second) throws Exception {
+        var secondThread = new Thread(second);
+        // The second writer now writes, or waits for the first one to finish
+        SshKeyManager.afterConfigRead = () -> {
+            SshKeyManager.afterConfigRead = () -> {};
+            secondThread.start();
+            while (secondThread.isAlive() && !waitingForHostLock(secondThread)) {
+                Thread.onSpinWait();
+            }
+        };
+        try {
+            first.run();
+            secondThread.join();
+        } finally {
+            SshKeyManager.afterConfigRead = () -> {};
+        }
+    }
+
+    private static boolean waitingForHostLock(Thread thread) {
+        var state = thread.getState();
+        return (state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING)
+                && Arrays.stream(thread.getStackTrace())
+                        .anyMatch(frame -> frame.getClassName().equals(HostLock.class.getName()));
+    }
 }
