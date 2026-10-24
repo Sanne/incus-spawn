@@ -1079,7 +1079,6 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
     id_ed25519          # managed private key (mode 600, no passphrase)
     id_ed25519.pub      # managed public key
     config              # per-instance Host blocks (managed by isx)
-    known_hosts         # container host keys (isolated from ~/.ssh/known_hosts)
 ```
 
 **Lifecycle:**
@@ -1087,27 +1086,34 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
 1. **`isx init`** generates the ed25519 key pair (via `ssh-keygen`) and prepends an `Include ~/.config/incus-spawn/ssh/config` directive to `~/.ssh/config` (idempotent, resolves symlinks for dotfile managers).
    The key pair is also created lazily at first branch for users upgrading from older versions.
 2. **`isx branch`** (via `RuntimeSetup.injectSshKeyIfAvailable`): injects both the managed public key and any personal `~/.ssh/*.pub` key into the container's `authorized_keys`.
-   Then regenerates the container's SSH host keys (`ssh-keygen -A` + sshd restart) so CoW-branched instances get unique keys, harvests the new host public key into the managed `known_hosts`, and writes a `Host <instance-name>` block to the managed config with `HostName`, `User agentuser`, `IdentityFile`, `IdentitiesOnly yes`, `UserKnownHostsFile`, and `StrictHostKeyChecking yes`.
+   Then, once the instance has an address (`RuntimeSetup.configureSshHostEntry`), it writes a `Host <instance-name>` block to the managed config with `Hostname <address>`, `ProxyCommand isx ssh-proxy <instance-name>`, `User agentuser`, `IdentityFile`, `IdentitiesOnly yes`, `StrictHostKeyChecking no` and `UserKnownHostsFile /dev/null`.
    After this, `ssh <instance-name>` just works.
-3. **`isx destroy`** (and TUI delete): removes the Host block from the managed config and the host key entry from the managed known_hosts.
+3. **`isx destroy`** (and TUI delete): removes the Host block from the managed config.
 
 **Design decisions:**
 
-- **Dual known_hosts**: the primary store is `~/.config/incus-spawn/ssh/known_hosts`, referenced via `UserKnownHostsFile` in the managed SSH config.
-  Host keys are also written to `~/.ssh/known_hosts` because IntelliJ's built-in SSH client does not honor `UserKnownHostsFile` or `Include` directives — without the standard-file entry, IntelliJ Gateway prompts for host key confirmation on every connection.
-  Entries in both files are cleaned up on instance destroy.
-- **Host key regeneration**: CoW clones inherit the template's host keys, so all branches would share the same host key.
-  `harvestHostKey` regenerates them before harvesting to give each instance a unique key.
+- **`ProxyCommand` through the exec API** (a1086a1e, #128): `isx ssh-proxy` pipes the connection to `nc localhost 22` in the instance, so a client needs no route to the instance's address.
+  That is what makes it work on macOS, where the address is inside the appliance VM.
+- **`Hostname` as a label** (4e271acb, #211): JetBrains Gateway resolves the host before it runs the `ProxyCommand`, and without the line it reported the instance name as not resolvable.
+  It never dials that address: Gateway 2026.2 runs the `ProxyCommand` on macOS too, and logs the connection as `<Hostname>:<Port>` (#1600).
+- **No host key checking**: the host key is not harvested or pinned.
+  Every branch of a template shares the host keys the template's build generated (`ssh-keygen -A` in the `sshd` tool), and the `ProxyCommand` reaches the instance by name through Incus, which authenticates the channel.
+  An earlier design kept a managed `known_hosts` and copied entries into `~/.ssh/known_hosts`, on the belief that Gateway honoured neither `Include` nor `UserKnownHostsFile`; a1086a1e removed it, and Gateway 2026.2 honours both.
 - **Both keys injected**: the managed key (passphraseless) ensures tools always work, while the user's personal key is also injected so interactive SSH sessions can use their preferred key.
-- **Atomic writes**: all config and known_hosts updates use temp-file-then-rename with restrictive permissions to avoid partial writes.
-- **Non-fatal**: SSH setup failures never block init or branching — they warn and fall back to manual `ssh agentuser@<ip>`.
+- **Atomic writes**: config updates use temp-file-then-rename with restrictive permissions to avoid partial writes, and a config that would not change is not rewritten.
+- **Non-fatal**: SSH setup failures never block init or branching.
+  They are reported through `Warnings` and fall back to manual `ssh agentuser@<ip>`.
 
 ### Remote IDE Access
 
 The built-in `idea-backend` tool installs the JetBrains IntelliJ IDEA remote development backend and registers the container for JetBrains Gateway discovery.
 It uses the `requires` field to automatically pull in the `sshd` tool, which configures an OpenSSH server with pubkey-only authentication.
-SSH key injection and host key validation are handled automatically by the SSH key management subsystem (see above), so Gateway connections work without any manual key setup.
+SSH key injection is handled automatically by the SSH key management subsystem (see above), so Gateway connections work without any manual key setup.
 This enables IDE-based development inside containers: Gateway connects over SSH and runs the IntelliJ backend process inside the container, with the full project available.
+
+The Gateway action's URL names the instance (`host=${name}`), never its address.
+Gateway matches that host against the `Host` lines of `~/.ssh/config`, which name instances, so it takes `User`, `IdentityFile` and the `ProxyCommand` from the instance's block.
+A host that names no block, such as the instance's IP typed into Gateway's connection dialog, gets none of them: Gateway dials it directly, which on macOS times out inside the appliance VM (#1600).
 
 ### GUI and Audio Passthrough
 
