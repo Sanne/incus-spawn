@@ -3754,8 +3754,8 @@ The VM base image isx uses (`-vm-direct.tar.xz`, from the first incus-spawn-imag
   The stock-based image (`-vm.tar.xz`, for older isx) still takes kernel upgrades, and from incus-spawn-images#27 on boots the newest one: its later kernels' boot entries share the image's own entry id (`KERNEL_INSTALL_MACHINE_ID` in `/etc/machine-info`), so GRUB's order no longer depends on the template build's random machine-id (#1217).
   **Kernel fixes do not arrive with the ten-day rebuild.**
   The image is rebuilt every ten days, which brings Fedora's userspace updates, but its kernel is the version `KERNEL_VERSION` and `KERNEL_SHA256` in `appliance/kernel/build-kernel.sh` name, at the incus-spawn commit `ISX_REF` pins in the images repo, and the images CI caches the built kernel by that pin: every rebuild ships the same kernel until both are bumped.
-  Nothing bumps either automatically.
-  A kernel security fix reaches VMs only when someone bumps `KERNEL_VERSION` (and its checksum, from kernel.org's signed `sha256sums.asc`) here, then `ISX_REF` in the images repo, and an images release follows; the stock-based image got Fedora's kernel updates with every rebuild, so this is a step back that has to be done by hand.
+  The stock-based image got Fedora's kernel updates with every rebuild, so this would be a step back if nothing moved the pin; `update-kernel.yml` does, daily (#1355, "Kernel updates" below).
+  A kernel security fix reaches VMs when that bump merges, then `ISX_REF` in the images repo follows, and an images release ships it.
   The same pin builds the macOS appliance's kernel, which already works this way.
   Kernel development happens in a nested VM inside a `--kvm` branch, never by replacing the box's own kernel.
   What a template needs from the kernel goes into `vm.config` when a template asks for it, and the `vm` build fails when an option there stops applying.
@@ -3767,6 +3767,29 @@ The VM base image isx uses (`-vm-direct.tar.xz`, from the first incus-spawn-imag
 Measured under nested KVM in an isx VM (the same host as above, Incus 6.23, 8 vCPUs, 4 GiB), three runs each, from the start request until an exec answers: 21.8 s on the stock-based image, 11.9 s on this one; through `isx branch` (`bench/vm-boot.sh --isx`), 22 s and 12.6 s.
 In plain QEMU with the boot test, firmware to `basic.target` took 4.2 s under the same nesting (median of three, on the image incus-spawn-images#22 built, reported there); at one level of virtualization #1255 measured 2.4 s, against 6.0 s for the stock-based image with Secure Boot off.
 The firmware, about 1 s at one level of virtualization, is what remains; a trimmed OVMF measured 0.26 s less under nested KVM, which suggests about 0.1 s at one level, and is not shipped (below).
+
+#### Kernel updates (#1355)
+
+The VM base image and the macOS appliance build one kernel, the version `appliance/kernel/build-kernel.sh` pins, and a stable fix reaches neither until that pin moves.
+`update-kernel.yml` moves it, daily, as a proposal: `appliance/kernel/update-kernel-pin.sh bump` takes the newest point release of the pinned series and its sum from kernel.org's `sha256sums.asc`, and the job keeps one PR, `bot/kernel-bump`, on it.
+A newer release replaces that PR's commit and title rather than opening a second PR, so a stale bump never waits beside a current one; a release whose PR was closed unmerged is not proposed again; a PR that `main` has overtaken is closed.
+The job reads what the open PR proposes from its branch, and a declined release from a marker in the closed PR's body, so editing a title changes nothing; the branch is pushed again only for a newer release or when `main`'s `build-kernel.sh` has changed under it, since each push discards the PR's Mac boot; the PR is marked pending before the push and names the release only after it, so a failure in between never leaves a PR naming one release over another's commit.
+A new series is never proposed: when kernel.org ends the pinned one, the job opens `[kernel] <series> is EOL`, since its fragments, both boot paths and the Mac boot need a person, and closes it once the pin is on a live series.
+A failed run opens `[kernel] update check failing`, which the next good run closes, so a failure is not only in an Actions log.
+Nothing merges by itself: the bump goes through CI and a Mac boot (ci.md, #791), and Sanne merges it.
+
+**Where the sum comes from.**
+`update-kernel-pin.sh` verifies `sha256sums.asc` with `gpgv` against `appliance/kernel/kernel.org-autosigner.asc`, the kernel.org checksum autosigner's key, and also requires the one valid signature to be by `AUTOSIGNER_FPR`, the same key's fingerprint pinned in the script.
+It reads only the text gpgv reports as signed, so a line added after the signature never counts.
+The pin moves only forward, within its series.
+`check` re-derives the pinned version's sum and fails on any other, and `kernel-pin-signed.yml` runs `main`'s copy, with `main`'s key, on the pin of every PR that changes `appliance/kernel/`, so a bump by hand meets the same rule as the bot's, and a PR that swapped the key and the script along with the pin cannot vouch for itself.
+**Alternatives:** `releases.json` or git tags with the downloaded tarball's own hash, which is trust on download, what #1128 removed; the key fetched from WKD or a keyserver on every run, which would accept a rotated or spoofed key without anyone seeing it; automerge on green, which would leave no person between kernel.org and the kernel every macOS container runs on.
+
+**The key is committed, and changed only by hand.**
+It was taken from the signed `pgpkeys.git` on git.kernel.org, and the same fingerprint, `B8868C80BA62A1FFFAF5FDA9632D3A06589DA6B1`, is served by kernel.org's WKD (`gpg --locate-keys autosigner@kernel.org`) and keys.openpgp.org; kernel.org's signature page describes the autosigner without printing it.
+A change is a two-place edit, the key file and `AUTOSIGNER_FPR`, made only after the new fingerprint has been checked against those three sources; `KernelPinUpdateTest` fails when the two places disagree or the file holds another key.
+The key has no expiry today.
+When kernel.org rotates it, the daily job fails closed and opens its issue.
 
 #### The VM base image's own kernel (#1255)
 

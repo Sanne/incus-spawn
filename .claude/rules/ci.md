@@ -46,6 +46,23 @@ It builds the VM base image's kernel with `build-kernel.sh vm` and boots it with
 x86_64 boots under KVM, aarch64 under TCG; the console logs and `systemd-analyze plot`s are uploaded.
 It shares the kernel-source cache key with `build-appliance.yml`, and depends on no image release.
 
+**`signed kernel pin`** (`.github/workflows/kernel-pin-signed.yml`, #1355) runs on a change under `appliance/kernel/`: `main`'s `appliance/kernel/update-kernel-pin.sh check <file>`, with `main`'s key and `AUTOSIGNER_FPR`, on the PR head's `build-kernel.sh`, and fails unless its `KERNEL_SHA256` is the sum in kernel.org's `sha256sums.asc`, and unless the file sets `KERNEL_VERSION` and `KERNEL_SHA256` once each, as `NAME="value"` lines (a second assignment would be the one the build uses).
+That catches the plain forms only: a PR that changes how `build-kernel.sh` uses its pin still needs a person to read it.
+It runs on `pull_request_target` and checks out the default branch whatever the PR's base, because a PR that changed the key, the fingerprint or the script along with the pin would pass its own copy; the PR's file is read as data, and nothing of the PR runs.
+The head, not the merge: a clean merge carries the head's pin when the PR changed it and `main`'s otherwise, and a conflicting one cannot merge until it is rebased and checked again.
+Every edit re-runs it, a change of base included: a run whose job was skipped would show as passing over a failed one on the same head.
+A PR that rotates the key therefore fails it until merged, which is the deliberate review the three-source check asks for.
+
+`.github/workflows/update-kernel.yml` runs daily and on `workflow_dispatch`, in `Sanne/incus-spawn` and from `main` only, since it runs with `BOT_TOKEN` and builds the bump from the ref it runs on; the checkout keeps no credentials, and the PR step pushes through `gh auth setup-git`.
+`update-kernel-pin.sh bump` moves the pin to the newest point release of its series, and the job keeps one PR on `bot/kernel-bump`, opened with `BOT_TOKEN` so CI runs on it and labelled `env:macos` for the Mac boot.
+A newer release, or a `main` whose `build-kernel.sh` moved under the branch, rebuilds it in three steps: the PR is renamed and marked pending (its body says not to boot or review it, carries a pending marker instead of the release's, and loses `env:macos`), the fresh commit on `main` is pushed with a lease on the branch as the run read it, and only then is the PR told the old Mac boot no longer applies and given the release's marker and `env:macos` again; a failure at any step leaves a PR that claims nothing its branch lacks, and the next run finishes the refresh.
+A branch that already carries the release, on a base (GitHub's merge base with `main`) whose pin is `main`'s, keeps its commit, whatever else was merged into it; its PR is finished if a refresh left it pending, and otherwise left alone, a body edited by hand included.
+A release whose PR was closed unmerged is skipped (by the marker in the PR body, pending or not, not its title, stripped when the job closes a PR itself); a PR `main` has caught up with is closed, but not one proposing a newer release than the signed sums now list; a failed read of the PR's body, or a branch whose pin cannot be read, fails the run before anything is edited.
+A commit on the branch the job did not make stops any push or close (the run fails instead), as does one pushed while the run is going (the lease), and only this repository's own `bot/kernel-bump` counts, never a fork's branch of that name.
+It opens `[kernel] <series> is EOL` when kernel.org ends the series (closed once the pin is on a live one; checked when the PR step failed too), and `[kernel] update check failing` when a run fails (a signature that does not verify fails closed), closed by the next good run.
+The **`update-kernel-steps`** job in `test-integration.yml` runs `.github/scripts/test-update-kernel.sh`: the PR step against a local remote, with a fake `gh` that applies each `--jq` filter to fixture JSON.
+`KernelPinUpdateTest` covers the script itself offline, with a throwaway signing key.
+
 `scripts/local-incus.sh` reproduces the `isx-integration-tests-native` setup (packages, `sg incus-admin -c "isx init </dev/null"`, the default profile on the `cow` pool) on a local host, for the `validate-on-real-incus` skill.
 A change to how that job prepares Incus belongs in the script too.
 The script also installs `virtiofsd`, which Fedora's `incus` package does not pull in: without it Incus shares VM disks over 9p, which cannot be hot-plugged (#853).
