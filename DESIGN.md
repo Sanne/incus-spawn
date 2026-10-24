@@ -1109,6 +1109,12 @@ It uses the `requires` field to automatically pull in the `sshd` tool, which con
 SSH key injection and host key validation are handled automatically by the SSH key management subsystem (see above), so Gateway connections work without any manual key setup.
 This enables IDE-based development inside containers: Gateway connects over SSH and runs the IntelliJ backend process inside the container, with the full project available.
 
+Its `index-mcp` parameter (default `false`) installs the third-party IDE Index MCP Server plugin and registers it in Claude Code at user scope as `intellij-index` (`http://127.0.0.1:29170/index-mcp/streamable-http`).
+It is opt-in because it is a third-party download every build would otherwise depend on: the Marketplace's build-matched URL it first used began answering 404, which failed every `idea-backend` build.
+The plugin comes from the author's GitHub release, pinned to the sha256 GitHub publishes for that asset; the Marketplace publishes no checksum, and its copy is re-signed, so it differs.
+`mcp-plugin.xml` pins `serverPort` to the port the registration names, so the two agree by construction rather than through the plugin's per-IDE default.
+The registration is a build step, not start-time reconciliation like `McpClientRegistration`: `ClaudeSetup` rewrites `~/.claude.json` whole, so Claude Code must already be installed (a parent template or earlier in the tool list), and the step fails the build rather than skip it, since `run_as_user` output is discarded on success and a skip would go unseen.
+
 ### GUI and Audio Passthrough
 
 Enables GUI applications and audio inside containers.
