@@ -439,6 +439,12 @@ It declares `requires: [sshd]`, so the SSH server is installed automatically.
 
 On the host, install [JetBrains Gateway](https://www.jetbrains.com/remote-development/gateway/).
 
+Press F9 on a running instance and choose **Open repo in Gateway** to open one of its repositories.
+Gateway connects with isx's managed SSH key through the instance's entry in `~/.ssh/config`, so no key or host setup is needed.
+
+If Gateway shows its connection dialog, keep the instance name as the host.
+The instance's IP matches no entry, and on macOS the host cannot reach it.
+
 ```yaml
 name: tpl-java-ide
 parent: tpl-java
@@ -585,7 +591,7 @@ actions:
   - label: "Open repo '${repo_name}' in Gateway"
     type: url
     expand: repos
-    url: "jetbrains-gateway://connect#host=${ip}&projectPath=${repo_path}"
+    url: "jetbrains-gateway://connect#host=${name}&port=22&user=agentuser&type=ssh&projectPath=${repo_path}"
   - label: "Launch agent"
     id: launch
     type: shell
