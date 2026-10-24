@@ -1,6 +1,7 @@
 package dev.incusspawn.ssh;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.Warnings;
 import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
@@ -147,7 +148,7 @@ public final class SshKeyManager {
             writeAtomically(resolvedConfig, newContent);
             return true;
         } catch (IOException e) {
-            System.err.println("  Warning: failed to update ~/.ssh/config: " + e.getMessage());
+            Warnings.warn("failed to update ~/.ssh/config: " + e.getMessage());
             return false;
         }
     }
@@ -197,10 +198,10 @@ public final class SshKeyManager {
             blocks.add("    UserKnownHostsFile /dev/null");
             blocks.add("");
 
-            writeAtomically(Environment.sshConfigFile(), String.join("\n", blocks));
+            writeIfChanged(content, String.join("\n", blocks));
             return true;
         } catch (IOException e) {
-            System.err.println("  Warning: failed to update SSH config: " + e.getMessage());
+            Warnings.warn("failed to update SSH config: " + e.getMessage());
             return false;
         }
     }
@@ -213,9 +214,17 @@ public final class SshKeyManager {
         try {
             var content = Files.readString(Environment.sshConfigFile());
             var blocks = parseWithoutHostBlocks(content, instanceName);
-            writeAtomically(Environment.sshConfigFile(), String.join("\n", blocks));
+            writeIfChanged(content, String.join("\n", blocks));
         } catch (IOException e) {
-            System.err.println("  Warning: failed to update SSH config: " + e.getMessage());
+            Warnings.warn("failed to update SSH config: " + e.getMessage());
+        }
+    }
+
+    /** Write the managed config only when it changes, so destroying an instance without a Host block leaves it alone. */
+    private static void writeIfChanged(String content, String updated) throws IOException {
+        // Removing drops the trailing newline adding writes, which is no change to ssh.
+        if (!updated.stripTrailing().equals(content.stripTrailing())) {
+            writeAtomically(Environment.sshConfigFile(), updated);
         }
     }
 
