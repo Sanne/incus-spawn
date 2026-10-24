@@ -455,6 +455,20 @@ tools:
       memory: "8g"
 ```
 
+The `index-mcp` parameter gives the agent the IDE's code intelligence: find references, go to definition and diagnostics.
+With `index-mcp: true`, isx installs the [IDE Index MCP Server](https://plugins.jetbrains.com/plugin/29174-ide-index-mcp-server) plugin and registers it in Claude Code as `intellij-index`.
+The server runs while the IDE backend runs, which is while a Gateway session is open.
+It defaults to `false`.
+
+```yaml
+tools:
+  - claude
+  - idea-backend:
+      index-mcp: true
+```
+
+Claude Code must be installed first, in a parent template or earlier in the list, or the build fails.
+
 ### Terminal Session Persistence (zmx)
 
 [zmx](https://zmx.sh) provides session attach/detach for the terminal: persistent shell sessions that survive disconnections, with native scrollback and multi-client support.

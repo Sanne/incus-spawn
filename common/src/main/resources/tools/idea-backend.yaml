@@ -1,10 +1,11 @@
 name: idea-backend
-description: JetBrains IntelliJ IDEA Remote Development backend 2026.1.3
+description: JetBrains IntelliJ IDEA Remote Development backend 2026.2.3
 requires:
   - sshd
 
 packages:
   - tar
+  - unzip
 
 parameters:
   memory:
@@ -12,15 +13,19 @@ parameters:
     default: "2g"
     description: "JVM heap size (e.g. 2g, 4g, 8g)"
     pattern: "^[0-9]+[gGmM]$"
+  index-mcp:
+    type: boolean
+    default: "false"
+    description: "Install the IDE Index MCP Server plugin and register it in Claude Code"
 
 downloads:
-  - url: https://download.jetbrains.com/idea/idea-2026.1.3.tar.gz
-    sha256: a6f049716da1d09d9e0ec1500c60bf01a5ff8a0fe2419178dd1ff2fdb2b77563
+  - url: https://download.jetbrains.com/idea/idea-2026.2.3.tar.gz
+    sha256: 68751c8ae4d49407251cd197df795fbed91b6fdc85d10c73c4649a99e496ab37
     extract: /opt
     extract_in_container: true
     arch: x86_64
-  - url: https://download.jetbrains.com/idea/idea-2026.1.3-aarch64.tar.gz
-    sha256: 7659e791609233c3e6bf67c1bfcc86f5fa1176477ca5815ae6125b0eae84a88b
+  - url: https://download.jetbrains.com/idea/idea-2026.2.3-aarch64.tar.gz
+    sha256: 873286dd6406971a2311827edd66c56060c345582a4a6b1774e3925183b02ec5
     extract: /opt
     extract_in_container: true
     arch: aarch64
@@ -35,25 +40,34 @@ run_as_user:
     printf -- '\n-Xmx${param_memory}\n' >> "$IJ_CFG_DIR/idea64.vmoptions"
   - /opt/idea/bin/remote-dev-server.sh registerBackendLocationForGateway
   - |
-    IJ_DATA_DIR=~/.local/share/JetBrains/$(grep -o '"dataDirectoryName": "[^"]*"' /opt/idea/product-info.json | head -1 | cut -d'"' -f4)
-    IJ_CFG_DIR=~/.config/JetBrains/$(grep -o '"dataDirectoryName": "[^"]*"' /opt/idea/product-info.json | head -1 | cut -d'"' -f4)
-    IJ_BUILD=$(grep -o '"buildNumber": "[^"]*"' /opt/idea/product-info.json | head -1 | cut -d'"' -f4)
-    PLUGIN_DIR="$IJ_DATA_DIR/plugins"
-    mkdir -p "$PLUGIN_DIR" "$IJ_CFG_DIR/options"
-    curl -fSL -o /tmp/index-mcp-plugin.zip "https://plugins.jetbrains.com/plugin/download?pluginId=29174&build=$IJ_BUILD"
-    unzip -qo /tmp/index-mcp-plugin.zip -d "$PLUGIN_DIR"
-    rm -f /tmp/index-mcp-plugin.zip
-    cat > "$IJ_CFG_DIR/options/mcp-plugin.xml" << 'MCPCFG'
+    set -e
+    if [ "${param_index-mcp}" = "true" ]; then
+      if ! command -v claude >/dev/null 2>&1; then
+        echo "idea-backend index-mcp: true registers the IDE Index MCP Server in Claude Code, which is not installed yet: install claude in a parent template or list it before idea-backend" >&2
+        exit 1
+      fi
+      IJ_DATA_DIR=~/.local/share/JetBrains/$(grep -o '"dataDirectoryName": "[^"]*"' /opt/idea/product-info.json | head -1 | cut -d'"' -f4)
+      IJ_CFG_DIR=~/.config/JetBrains/$(grep -o '"dataDirectoryName": "[^"]*"' /opt/idea/product-info.json | head -1 | cut -d'"' -f4)
+      PLUGIN_DIR="$IJ_DATA_DIR/plugins"
+      mkdir -p "$PLUGIN_DIR" "$IJ_CFG_DIR/options"
+      curl -fSL -o /tmp/index-mcp-plugin.zip https://github.com/hechtcarmel/jetbrains-index-mcp-plugin/releases/download/5.20.3/jetbrains-index-mcp-plugin-5.20.3-signed.zip
+      echo "5a9aa89721817bf349e2d2f942af59c402feee9ab02f4fae2ad9361713fd1465  /tmp/index-mcp-plugin.zip" | sha256sum -c --quiet
+      unzip -qo /tmp/index-mcp-plugin.zip -d "$PLUGIN_DIR"
+      rm -f /tmp/index-mcp-plugin.zip
+      cat > "$IJ_CFG_DIR/options/mcp-plugin.xml" << 'MCPCFG'
     <application>
       <component name="McpPluginSettings">
+        <option name="serverPort" value="29170" />
         <option name="disabledTools">
           <set />
         </option>
       </component>
     </application>
     MCPCFG
+      claude mcp add --transport http --scope user intellij-index http://127.0.0.1:29170/index-mcp/streamable-http
+    fi
 
-verify: test -x /opt/idea/bin/remote-dev-server.sh
+verify: test -x /opt/idea/bin/remote-dev-server.sh && if [ "${param_index-mcp}" = "true" ]; then ls -d ~/.local/share/JetBrains/*/plugins/jetbrains-index-mcp-plugin >/dev/null; fi
 
 actions:
   - label: "Open repo '${repo_name}' in Gateway"
