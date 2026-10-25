@@ -434,7 +434,7 @@ The `pgo-profiles` artifact is 4.3 MB.
 
 The CLI's figures match every earlier dispatch within 0.05 points.
 The proxy's are 1.2 points above the Phase 3 dispatch because the npm and WebSocket loads of #1651 joined the collection in between: against the dispatch that followed them (run 40215545458, 21.63% / 21.60% / 21.16%), the release is about 0.4 points lower per platform.
-The lowest figures a floor has to stay below are unchanged: 15.04% applicability (the macOS aarch64 CLI, here as in the dispatches) and 97.04% relevance (the macOS aarch64 proxy in the Phase 3 dispatch, run 40186966586); this release's 97.23% is above it.
+The lowest figures a floor has to stay below are unchanged: 15.04% applicability (the macOS aarch64 CLI, here and in dispatch run 40183611322; 15.05% in the Phase 3 dispatch) and 97.04% relevance (the macOS aarch64 proxy in the Phase 3 dispatch, run 40186966586); this release's 97.23% is above it.
 
 ## Measurement caveats worth remembering
 
