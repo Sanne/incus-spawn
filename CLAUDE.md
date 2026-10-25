@@ -24,6 +24,7 @@ It creates full Linux system containers (not application containers) with copy-o
 See README.md and the pages in `docs/` (published on isx.run beside it; maintainer notes are in `docs/dev/`) for user-facing docs, DESIGN.md for architecture rationale, and [docs/dev/CHARACTER.md](docs/dev/CHARACTER.md) for the project's mission and design philosophy.
 
 **Keep notes in the repository**: the machines this is developed on are wiped regularly, so anything worth remembering between sessions goes in a committed file (this one, `.claude/rules/`, DESIGN.md), never only in local agent memory.
+Changes an existing host needs by hand, such as moving the CoW pool off a loop file, go in [docs/dev/MIGRATIONS.md](docs/dev/MIGRATIONS.md).
 
 **List every divergence from stock Fedora in [docs/FEDORA.md](docs/FEDORA.md)** (published as isx.run/docs/fedora), in the same change that makes it.
 That covers a masked unit, a changed default or a replaced file, whether it comes from isx, a built-in template or the base images.
