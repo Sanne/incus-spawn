@@ -17,7 +17,8 @@ Where the implementation differs from the plan, this page says so beside the pla
 Still open:
 
 - **Done:** the quality floors in `.github/scripts/check-pgo-quality.sh` are 12% applicability and 90% relevance.
-  The lowest figures measured are 15.04% and 97.23% (macOS aarch64, release v0.5.0-dev.1), so a genuine failure, a profile that did not apply or fit, still fails, while ordinary drift between releases does not fail a tag.
+  The lowest figures measured are 15.04% applicability (the macOS aarch64 CLI, in every dispatch and in v0.5.0-dev.1) and 97.04% relevance (the macOS aarch64 proxy, Phase 3 dispatch run 40186966586).
+  That leaves 3 points of applicability and 7 of relevance for drift between releases, while a profile that did not apply or fit, which reads near zero, still fails.
 - Host routes and the MCP bridge have no load, so they compile as cold code.
   **Done (#1651):** the npm path and the WebSocket relay now have loads (`--load=npm`, `--load=websocket`) and are in the release profile, collected at a lighter weight so they do not outweigh the rest.
   Throughput on both is unchanged on the measuring host, since TLS and the network bound them, for about 1.5 MB more proxy; see the performance notes, "The npm and WebSocket paths".

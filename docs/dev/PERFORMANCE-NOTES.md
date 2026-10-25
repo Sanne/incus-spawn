@@ -323,7 +323,8 @@ A profile is fully relevant on the platform that collected it.
 Profiles collected on Linux x86_64 fit the other platforms almost as well: relevance is 97% at the lowest, macOS's proxy.
 Every profiled platform's proxy is about half its released size; the unprofiled Intel macOS build is unchanged.
 The release smoke test passed on every build, and the keychain smoke on both macOS builds.
-The floors in `.github/scripts/check-pgo-quality.sh` were 10% applicability and 80% relevance for this release, and are 12% and 90% since: wide enough under the lowest figures seen (15.04% and 97.04%) that drift between releases never fails a tag, while a profile that did not apply still does.
+The floors in `.github/scripts/check-pgo-quality.sh` were 10% applicability and 80% relevance for this dispatch and for v0.5.0-dev.1, and are 12% and 90% since.
+That leaves 3 points of applicability and 7 of relevance under the lowest figures seen (15.04% and 97.04%): room for drift between releases, while a profile that did not apply or fit, which reads near zero, still fails.
 Two earlier dispatches of this change (runs 40180623569 and 40183611322, before rebases) gave the same figures within 0.02 points.
 
 ### The npm and WebSocket paths (issue #1651)
@@ -431,8 +432,9 @@ The `pgo-profiles` artifact is 4.3 MB.
 | macOS aarch64 | 39,526,904 → 40,220,800 B | 15.04% / 98.49% | 79,463,872 → 40,567,576 B | 20.77% / 97.23% |
 | macOS x86_64 (unprofiled) | 38,511,200 → 38,659,056 B | | 83,309,152 → 84,559,552 B | |
 
-The figures match the dispatch above within a point; the proxy's applicability is a point higher, on a `main` that had moved by 133 commits since v0.4.2.
-The lowest figures a floor has to stay below are still the macOS aarch64 CLI's 15.04% applicability and its proxy's 97.23% relevance.
+The CLI's figures match every earlier dispatch within 0.05 points.
+The proxy's are 1.2 points above the Phase 3 dispatch because the npm and WebSocket loads of #1651 joined the collection in between: against the dispatch that followed them (run 40215545458, 21.63% / 21.60% / 21.16%), the release is about 0.4 points lower per platform.
+The lowest figures a floor has to stay below are unchanged: 15.04% applicability (the macOS aarch64 CLI, here as in the dispatches) and 97.04% relevance (the macOS aarch64 proxy in the Phase 3 dispatch, run 40186966586); this release's 97.23% is above it.
 
 ## Measurement caveats worth remembering
 
