@@ -1,6 +1,6 @@
 # Migrating incus-spawn to Quarkus 4
 
-This document records the migration of incus-spawn from Quarkus 3.40.0.CR1 to **Quarkus 4.0.0.Beta1** (released 2026-10-01). We treat Beta1 as we would a final release. Every problem we hit, and every doubt we could not settle from documentation alone, is written down here. Part of it is meant to go back to the Quarkus and Vert.x teams as feedback.
+This document records the migration of incus-spawn from Quarkus 3.40.0.CR1 to **Quarkus 4.0.0.Beta1** (released 2026-10-01). The work started on a `main` from early October and was rebased on 2026-10-25 onto a `main` that had meanwhile moved to Quarkus 3.40.1.1 (Vert.x 4.5.35, Netty 4.1.139) and replaced Jackson with jjq (#1263); the comparisons below were made against 3.40.0.CR1 unless a row says otherwise. We treat Beta1 as we would a final release. Every problem we hit, and every doubt we could not settle from documentation alone, is written down here. Part of it is meant to go back to the Quarkus and Vert.x teams as feedback.
 
 Versions compared:
 
@@ -8,7 +8,7 @@ Versions compared:
 |---|---|---|
 | Vert.x | 4.5.34 | 5.1.8 |
 | Netty | 4.1.138 | 4.2.18 |
-| Jackson | 2.22.2 | 3.1.4 (Jackson 2.22.2 still managed) |
+| Jackson | 2.22.2 | 3.1.4 (Jackson 2.22.2 still managed). Since #1263 our code uses neither at run time: Jackson 2 is test-scoped, and only Jackson 3 core reaches the proxy, through `vertx-core`. |
 | CDI API | `jakarta.enterprise` | `jakarta.cdi` 5.0.0 |
 | SmallRye Config | 3.x | 4.0.0 |
 | GraalVM minimum | 25.0 | 25.0 |
@@ -17,46 +17,49 @@ Versions compared:
 
 | Area | State |
 |---|---|
-| JVM build and unit tests | Green: 1636 (common) + 650 (cli) + 225 (proxy, 1 skipped on purpose, see V-W1) |
-| Native build, both binaries | Green with local GraalVM 25.0.4.1, x86_64 |
-| Native smoke test | CLI parses every tool and template identically to 3.40. The proxy does a CA reload, proxies Maven over TLS (miss and hit), relays an Anthropic request, and answers `/health`. |
-| Startup time | Unchanged (CLI 4.58 ms vs 4.58 ms, proxy 3.70 ms vs 3.54 ms) |
-| Native size | CLI 34.3 MB, same as before. Proxy 92.8 MB to 98.5 MB, see Q-3 and Q-4. |
+| JVM build and unit tests | Green after the rebase (2026-10-25): 2966 (common) + 1808 (cli) + 816 (proxy). Skipped: 7 macOS-only in common, 7 in cli (`TaskScriptsTest`), and 2 in proxy, the V-W1 test on purpose and a `JitWorkaroundTest` check that needs the Graal JIT, both as on `main`. |
+| Native build, both binaries | Green with local Oracle GraalVM 25.0.4.1, x86_64 |
+| Native smoke test | `isx --version` and `isx tools show maven-3` work. The proxy answers `/health`, proxies Maven over TLS (miss, then a byte-identical hit), mints a leaf for a name two labels under an intercepted domain (the SNI lookup now on a worker thread), relays to Anthropic, and serves leaves of the new CA after a CA-rotating SIGHUP reload. Since #1402 a caller that is not a known instance gets no credential injected, so the Anthropic request now comes back 401 from upstream, on `main` as here. |
+| Startup time | Unchanged. Against 3.40.0.CR1: CLI 4.58 ms vs 4.58 ms, proxy 3.70 ms vs 3.54 ms. After the rebase, `--version` against `main` (3.40.1.1, hyperfine, 300 runs): CLI 2.3 ms vs 2.2 ms, proxy 3.3 ms vs 3.6 ms. |
+| Native size | Against 3.40.0.CR1: CLI 34.3 MB, same as before; proxy 92.8 MB to 98.5 MB, see Q-3 and Q-4. After the rebase, against `main` (3.40.1.1, same GraalVM): CLI 37.9 MB on both (the image grows by 2 KB); proxy 99.4 MB to 104.1 MB (10^6 bytes; +3.6 MB code, +1.1 MB image heap). |
 | Not yet validated | Real Incus (`validate-on-real-incus`), proxy throughput and latency (`bench/run.sh`), macOS, aarch64, the CI release matrix |
-| Not yet done | Jackson 3 migration of our own code (decision D-1) |
+| Not yet done | Upstream issues not yet filed (Q-*, V-*) |
 
 ## What we changed, and why
 
-The work is on branch `try-quarkus-4`, one concern per commit.
+The work is on branch `quarkus-4`, one concern per commit. Changes 2 and 7 were merged into `main` ahead of the upgrade (see below), so they are no longer part of the branch.
 
-1. **Version bump and Vert.x 5 port of the proxy** (`MitmProxy`, two tests). Every change here is mechanical:
+1. **Version bump and Vert.x 5 port of the proxy** (`MitmProxy`, `Upstream`, `HostRouteRelay`, `ArtifactCacheHandler`, and the tests that build their own Vert.x clients). Every change here is mechanical:
    - `HttpClientOptions.setMaxPoolSize`/`setHttp2MaxPoolSize` became `PoolOptions.setHttp1MaxSize`/`setHttp2MaxSize`. We traced Vert.x 4.5 and confirmed it built a `PoolOptions` from those setters itself, so the mapping is exact.
    - The WebSocket upstream moved from `HttpClient.webSocket` to `WebSocketClient.connect` with `WebSocketClientOptions`; their defaults are identical.
-   - `webSocketHandler(ServerWebSocket)` became `webSocketHandshakeHandler(ServerWebSocketHandshake)`, using `reject(status)` for routing failures and `accept()` to proceed.
+   - `webSocketHandler(ServerWebSocket)` became `webSocketHandshakeHandler(ServerWebSocketHandshake)`, using `reject(status)` for routing failures and `accept()` to proceed. On `main`, #972 had the handler defer Vert.x 4's handshake with `setHandshake(Future<Integer>)` until the caller's account was resolved, and dial upstream only once Netty accepted it. That maps one to one: the same future now ends in `reject(status)` or `accept()`, and the relay is wired once `accept()` succeeds.
+   - `HttpClientRequest.sendHead()`, which `main`'s relay of upstream's 100 Continue uses, is deprecated for removal in Vert.x 6; it is now `writeHead()`. This one compiles, so only a `-Xlint:deprecation` build finds it.
+   - `WriteStream.write(Buffer, Handler)` and `end(Handler)` are gone (a test double in `BodySpoolTest`), and `HttpServerRequest.host()` became `authority()` (a test server).
    - `updateSSLOptions` now takes `ServerSSLOptions`.
    - `HttpClientRequest.getHost()/getPort()` became `authority().host()/port()`. This is the request's own host and port (the `Host` header), never the `setServer()` target, so redirects and download resumes behave as before. A new test covers a relative redirect.
-2. **Dropped `quarkus-jackson`** from `cli` and `proxy`. Under Quarkus 4 it is the Jackson 3 extension, and we never injected its `ObjectMapper`. All of our Jackson-mapped classes carry `@RegisterForReflection`, so native mapping does not depend on it; we verified this on the native CLI.
+2. **Dropped `quarkus-jackson`** from `cli` and `proxy` (merged as #1025). Under Quarkus 4 it is the Jackson 3 extension, and we never injected its `ObjectMapper`. All of our Jackson-mapped classes carry `@RegisterForReflection`, so native mapping does not depend on it; we verified this on the native CLI.
 3. **Excluded Jackson 3 `jackson-databind` from `quarkus-vertx`** in `proxy`. Without the exclusion the native proxy grows from 92.8 MB to 118 MB, see Q-2.
 4. **MITM server SSL engine on worker threads** (`JdkSSLEngineOptions.setUseWorkerThread(true)`). Without it, our SNI certificate lookup runs on the event loop, and it may generate an RSA key and write a file. See V-T1. `MitmTlsTest` pins this.
 5. **Cert reload builds its `ServerSSLOptions` from the server's own options** instead of a bare object. `updateSSLOptions` replaces client auth, protocols and ciphers but silently keeps SNI, ALPN and the handshake timeout from listen time (V-T4). Starting from a bare object would silently reset any of the former. A test reloads the certificates and checks that per-SNI certificates, TLS version, ALPN and cipher stay as they were.
 6. **Every WebSocket handshake is decided.** Vert.x 5 leaves a handshake that is neither accepted nor rejected hanging until the idle timeout; in 4.5 it auto-completed. An unexpected exception now rejects with 502. A failed `accept()` is logged instead of ignored. A failure wiring the relay closes the client with 1011. The accepted socket is paused first thing.
-7. **Experimental native-image options are bracketed** in `-H:+UnlockExperimentalVMOptions … -H:-UnlockExperimentalVMOptions`, as Quarkus does, which removes our own native-image warnings.
+7. **Experimental native-image options are bracketed** (merged as #964) in `-H:+UnlockExperimentalVMOptions … -H:-UnlockExperimentalVMOptions`, as Quarkus does, which removes our own native-image warnings.
 8. **`VertxDnsSubstitutions`** substitutes `AddressResolverProvider.factory` so Netty's async DNS resolver stays out of the native proxy (-1.2 MB). Quarkus 3 had this substitution and its Vert.x 5 port dropped it (Q-1). It is safe because Quarkus forces `vertx.disableDnsResolver=true` in every native image (`VertxCoreProcessor`).
 9. **Docs** (CLAUDE.md, DESIGN.md, `.claude/rules/proxy.md`) now name the Vert.x 5 APIs and the rules that the compiler does not enforce.
 
 ## Split out ahead of the upgrade
 
-These parts need no Quarkus 4, so they go to `main` as separate PRs, which keeps this branch smaller:
-- #964: experimental native-image options wrapped in unlock/lock (change 7).
+These parts need no Quarkus 4, so they went to `main` as separate PRs, which keeps this branch smaller. All are merged:
 - #961: relative-redirect test (pins the `authority()` switch).
-- #962: `MitmTlsTest` (pins V-T1 and the reload behaviour; fails on the Vert.x 5 port without change 4).
-- #963: WebSocket early-frame tests (the pipelined-frame test passes on 4.5 and fails on 5.1.8, see V-W1).
+- #962: `MitmTlsTest` (pins V-T1 and the reload behaviour; fails on the Vert.x 5 port without change 4). The branch uses `main`'s version unchanged: it watches the real server `MitmProxy.start()` builds through the mint's log line. The branch's earlier variant, which wrapped the key manager and checked every lookup's thread on a server built from `mitmServerOptions()`, was dropped, since it tested a copy of the options rather than the running server.
+- #963: WebSocket early-frame tests. The pipelined-frame test passes on 4.5 and fails on 5.1.8 (V-W1), so the branch disables it.
+- #964: experimental native-image options wrapped in unlock/lock (change 7).
+- #1025: dropping `quarkus-jackson` (change 2).
 
-Being split out: dropping `quarkus-jackson` (change 2). Still to split out: the `PoolOptions` and `WebSocketClient` parts of change 1, which both exist in Vert.x 4.5.
+In flight: a PR moving the proxy to `PoolOptions` and `WebSocketClient` on Vert.x 4.5, the parts of change 1 that need no Vert.x 5. Once it lands, change 1 shrinks to the handshake handler, `ServerSSLOptions` and `authority()`.
 
 ## Open decisions for us
 
-- **D-1: Migrate our own code to Jackson 3 now?** We recommend yes, because Beta1 is to be treated as final and the BOM calls Jackson 2 transitional. The scope was measured by running OpenRewrite `UpgradeJackson_2_3` on a scratch branch:
+- **D-1: Migrate our own code to Jackson 3 now?** *Mostly settled by `main`*: #1263 replaced Jackson with jjq for every YAML and JSON path, so no Jackson 2 runs in either binary any more. What is left is test code: the test doubles and fixtures in all three modules still use Jackson 2 (`jackson-databind` and `jackson-dataformat-yaml`, test scope), which the Quarkus 4 BOM still manages. They can move to jjq or Jackson 3 whenever Jackson 2 leaves the BOM; nothing ships with it. The measurement below was made before #1263 and is kept for the Quarkus feedback (Q-6, Q-9). The scope was measured by running OpenRewrite `UpgradeJackson_2_3` on a scratch branch:
   - 82 files change.
   - Three hand fixes are needed: two `IOException` signatures, and one `catch` rewrite that breaks a try-with-resources (Q-6).
   - 7 tests then fail in common, all in YAML error handling: exceptions become unchecked, and the duplicate-key message changed.
@@ -65,7 +68,7 @@ Being split out: dropping `quarkus-jackson` (change 2). Still to split out: the 
 - **D-2: Connect upstream before accepting a client WebSocket?** The handshake split now allows it, and it would pass upstream's 401/403/429 on as a real HTTP status instead of a 101 followed by close 1011. It is not complete yet: `reject(int)` cannot carry headers or a body, and `accept()` cannot choose the sub-protocol (V-W4). We suggest a follow-up, not part of this migration.
 - **D-3: Netty allocator.** Netty 4.2 defaults to `AdaptiveByteBufAllocator`, and Quarkus 4 sets `io.netty.noUnsafe=true` in native (Q-7). A quick JVM-mode test of four 32 MB TLS relays measured peak RSS of 625 MB on Vert.x 4, 533 MB on Vert.x 5 with the pooled allocator, and 448 MB on Vert.x 5 with the adaptive one. The adaptive allocator kept 68 MB of direct memory after the burst, against 8 MB with the pooled one. The native proxy runs with `-R:MaxRAM=256m`, so `bench/run.sh` on the native binary has to decide whether we pin an allocator.
 - **D-4: Use `sendFile(FileChannel)`?** It is new in Vert.x 5. It would close the stat-then-open window in `serveTrusted` and move the blocking open off the event loop. It is marked unstable and works over HTTP/1 only. Revisit once it is stable.
-- **D-6: Possibly flaky test under Vert.x 5.** `ArtifactCacheProxyTest.clientThatStopsReadingIsNotTakenForAStalledUpstream` failed once on this branch during a full class run and passed on reruns. It has not been seen failing on `main`. We need to find out whether this is load noise or a Vert.x 5 backpressure timing change.
+- **D-6: Possibly flaky test under Vert.x 5.** `ArtifactCacheProxyTest.clientThatStopsReadingIsNotTakenForAStalledUpstream` failed once on this branch during a full class run and passed on reruns. It has not been seen failing on `main`. After the rebase (2026-10-25) it did not fail again: `ArtifactCacheProxyTest` (93 tests) and `WebSocketProxyTest` (14) passed 5 runs out of 5 each on their own, plus the full `mvn package` run. `main` has reworked the relay's stall handling since (#1058, #1325, #1533), so the single failure may have been the old code under load. We keep this open until CI has run the branch a few times.
 - **D-5: Reconsider `InterceptedCertOptions.MAX_SERVED_NAMES`.** This one predates the migration. Its javadoc and DESIGN.md say Vert.x caches an `SslContext` per SNI name forever, but both 4.5 and 5 keep a 16-entry LRU (`SslContextProvider.DEFAULT_SNI_CACHE_SIZE`). The cap therefore guards nothing on Vert.x's side. The real cost runs the other way: with more than 16 hot names, every miss rebuilds an `SslContext`.
 
 ## Feedback for the Quarkus team
@@ -158,8 +161,8 @@ None of these are regressions, and none is fixed here.
 
 - Each changed API was traced in the Vert.x 4.5.34 and 5.1.8 sources and in Netty 4.2.18. Quarkus behaviour was checked at tags `3.40.0.CR1` and `4.0.0.Beta1`.
 - New tests:
-  - `MitmTlsTest`: SNI lookup off the event loop; reload keeps per-SNI certs, protocol and ALPN.
-  - `WebSocketProxyTest`: handshake failures, frames sent immediately after the handshake, plus the disabled V-W1 test.
+  - `MitmTlsTest` (now on `main`): SNI lookup off the event loop; reload keeps per-SNI certs, protocol and ALPN. Without `setUseWorkerThread(true)` it fails on the branch (`vert.x-eventloop-thread-2`).
+  - `WebSocketProxyTest` (now on `main`): refused handshakes answered 400 and never dialled, frames sent immediately after the handshake, plus the V-W1 test, disabled on this branch. The branch adds a check that each refused handshake's failed `accept()` is logged.
   - `ArtifactCacheProxyTest`: relative redirect and resume through `authority()`.
 - Dependency trees and native build reports (`-H:+BuildReport`) were compared module by module against `main`.
-- A `-Xlint:deprecation` compile of the proxy shows no deprecated Vert.x or Quarkus API in use.
+- A `-Xlint:deprecation` compile of the proxy shows no deprecated Vert.x or Quarkus API in use (rechecked after the rebase, which brought in a `sendHead()`).
