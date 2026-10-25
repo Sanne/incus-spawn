@@ -7,6 +7,7 @@ import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.http.PoolOptions;
 import io.vertx.core.http.RequestOptions;
 
 import java.util.Locale;
@@ -283,9 +284,9 @@ final class HostRouteRelay {
             // Long-polls and event streams each hold a connection: room for several instances at once,
             // and nothing held past the MITM server's own idle timeout, which ends the client side anyway
             client = vertx.createHttpClient(new HttpClientOptions().setConnectTimeout(CONNECT_TIMEOUT_MILLIS)
-                    .setMaxPoolSize(MAX_CONNECTIONS_PER_ROUTE)
                     .setIdleTimeout(MitmProxy.MITM_IDLE_TIMEOUT_SECONDS)
-                    .setIdleTimeoutUnit(java.util.concurrent.TimeUnit.SECONDS));
+                    .setIdleTimeoutUnit(java.util.concurrent.TimeUnit.SECONDS),
+                    new PoolOptions().setHttp1MaxSize(MAX_CONNECTIONS_PER_ROUTE));
         }
         return client;
     }

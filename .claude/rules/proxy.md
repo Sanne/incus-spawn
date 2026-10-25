@@ -356,7 +356,7 @@ Key design:
   Send every `probeClient` request through `Upstream.sendProbe()`, with `probeReadIdleSeconds` below `probeOptions()`' request timeout: it closes a connection with nothing read since the request, the only thing that evicts a silently dead h2 connection (a request timeout resets just its stream).
   Don't give `probeClient` a read-idle or all-idle timeout instead: Netty ticks the first from the last read, cutting a request just sent on a long-pooled connection, and requests' writes restart the second (#1007).
   `Upstream.resolveHost` keeps the expired entry's address while the refreshed answer still lists it, since connections pool per address; `requestWithAsyncDns` drops it on a failed connect so the stickiness never pins a dead address (#862).
-  Keep `setHttp2MaxPoolSize` above 1, or bursts to HTTP/1.1-only or unreachable hosts serialize.
+  Keep `PoolOptions.setHttp2MaxSize` above 1, or bursts to HTTP/1.1-only or unreachable hosts serialize.
   `~/.m2` imports copy/reflink, never hardlink.
   Commit/reconcile/evict go through `VerifiedArtifactStore`'s striped lock; don't touch the cache files around it
 - **Proxy lifecycle locking**: `ProxyService` guards mutating operations (`restart`, `stop`, `install`, `uninstall`, `startService`, `reinstallIfChanged`, `upgradeIfNeeded`) with a `HostLock` (`proxy.lock` in `configDir()`).

@@ -13,6 +13,7 @@ import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.http.PoolOptions;
 import io.vertx.core.http.RequestOptions;
 import io.vertx.core.net.PemKeyCertOptions;
 import io.vertx.core.net.SocketAddress;
@@ -111,7 +112,8 @@ class NpmCacheProxyTest {
 
         clientContext = vertx.getOrCreateContext();
         client = vertx.createHttpClient(new HttpClientOptions()
-                .setSsl(true).setTrustAll(true).setVerifyHost(false).setKeepAlive(false).setMaxPoolSize(16));
+                .setSsl(true).setTrustAll(true).setVerifyHost(false).setKeepAlive(false),
+                new PoolOptions().setHttp1MaxSize(16));
     }
 
     static PemKeyCertOptions keyCert(CertificateAuthority ca, String name) throws Exception {

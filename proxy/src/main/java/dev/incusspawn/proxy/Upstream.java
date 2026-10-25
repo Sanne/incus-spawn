@@ -16,7 +16,10 @@ import io.vertx.core.http.HttpConnection;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.http.HttpVersion;
+import io.vertx.core.http.PoolOptions;
 import io.vertx.core.http.RequestOptions;
+import io.vertx.core.http.WebSocketClient;
+import io.vertx.core.http.WebSocketClientOptions;
 import io.vertx.core.net.SocketAddress;
 
 import java.net.UnknownHostException;
@@ -53,7 +56,7 @@ class Upstream {
     // Cache confirmations (HEADs, sidecars) get their own pool, so a cache hit never
     // queues behind large downloads on upstreamClient's
     HttpClient probeClient;
-    HttpClient wsUpstreamClient;
+    WebSocketClient wsUpstreamClient;
 
     // Overridable for tests
     long dnsCacheTtlMillis = 60_000;
@@ -132,7 +135,6 @@ class Upstream {
                 .setSsl(true)
                 .setVerifyHost(!upstreamTrustAll)
                 .setTrustAll(upstreamTrustAll)
-                .setMaxPoolSize(20)
                 .setKeepAliveTimeout(30)
                 .setConnectTimeout(UPSTREAM_CONNECT_TIMEOUT_MILLIS)
                 // Outlasts the MITM server's idle timeout: a stalled relay or wait for the cache is
@@ -141,14 +143,14 @@ class Upstream {
                 .setReadIdleTimeout(300);
         var upstreamTrust = upstreamTrust();
         if (upstreamTrust != null) clientOptions.setTrustOptions(upstreamTrust);
-        upstreamClient = vertx.createHttpClient(clientOptions);
+        upstreamClient = vertx.createHttpClient(clientOptions, new PoolOptions().setHttp1MaxSize(20));
 
         // Every cache hit waits on one of these: h2 (via ALPN) shares a connection.
         // No read-idle timeout: Netty's ticks from the connection's last read, so it would
         // cut a pooled connection just after a request went out on it; sendProbe() times
         // the dead-connection check from the request instead.
-        // A few h2 connections per host, so a burst to a host that falls back to
-        // HTTP/1.1, or does not answer at all, is not handled one connect at a time.
+        // A few h2 connections per host (PoolOptions.setHttp2MaxSize), so a burst to a host
+        // that falls back to HTTP/1.1, or does not answer at all, is not handled one connect at a time.
         var probeOptions = new HttpClientOptions()
                 .setSsl(true)
                 .setVerifyHost(!upstreamTrustAll)
@@ -156,26 +158,26 @@ class Upstream {
                 .setProtocolVersion(HttpVersion.HTTP_2)
                 .setUseAlpn(true)
                 .setHttp2KeepAliveTimeout(PROBE_KEEP_ALIVE_SECONDS)
-                .setHttp2MaxPoolSize(4)
-                .setMaxPoolSize(32)
                 .setKeepAliveTimeout(PROBE_KEEP_ALIVE_SECONDS)
                 .setConnectTimeout(10_000);
         if (upstreamTrust != null) probeOptions.setTrustOptions(upstreamTrust);
-        probeClient = vertx.createHttpClient(probeOptions);
+        probeClient = vertx.createHttpClient(probeOptions,
+                new PoolOptions().setHttp2MaxSize(4).setHttp1MaxSize(32));
 
         // Separate client for WebSocket: no read-idle timeout (WebSocket
         // connections are long-lived and may be idle between prompts) and
         // no connection pooling (each WebSocket is its own connection).
-        var wsClientOptions = new HttpClientOptions()
+        // A WebSocketClient: HttpClient.webSocket() is deprecated in Vert.x 4.5 and gone in 5.
+        var wsClientOptions = new WebSocketClientOptions()
                 .setSsl(true)
                 .setVerifyHost(!upstreamTrustAll)
                 .setTrustAll(upstreamTrustAll)
                 .setConnectTimeout(30_000)
                 .setReadIdleTimeout(0)
-                .setMaxWebSocketFrameSize(1024 * 1024)
-                .setMaxWebSocketMessageSize(16 * 1024 * 1024);
+                .setMaxFrameSize(1024 * 1024)
+                .setMaxMessageSize(16 * 1024 * 1024);
         if (upstreamTrust != null) wsClientOptions.setTrustOptions(upstreamTrust);
-        wsUpstreamClient = vertx.createHttpClient(wsClientOptions);
+        wsUpstreamClient = vertx.createWebSocketClient(wsClientOptions);
     }
 
     /** Closes the upstream clients, as {@link MitmProxy#stop} does. */

@@ -10,11 +10,11 @@ import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.dns.AddressResolverOptions;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.http.WebSocket;
+import io.vertx.core.http.WebSocketClient;
+import io.vertx.core.http.WebSocketClientOptions;
 import io.vertx.core.http.WebSocketConnectOptions;
 import io.vertx.core.net.PemKeyCertOptions;
 
@@ -185,8 +185,8 @@ class WebSocketProxyTest {
                 .setURI(path);
     }
 
-    private HttpClient createClient() {
-        return clientVertx.createHttpClient(new HttpClientOptions()
+    private WebSocketClient createClient() {
+        return clientVertx.createWebSocketClient(new WebSocketClientOptions()
                 .setSsl(true).setTrustAll(true).setVerifyHost(false));
     }
 
@@ -211,15 +211,15 @@ class WebSocketProxyTest {
      * Opens a WebSocket and runs {@code setup} on it in the same event-loop turn, so its
      * handlers are in place before any frame can arrive.
      */
-    private static WebSocket connect(HttpClient client, WebSocketConnectOptions options,
+    private static WebSocket connect(WebSocketClient client, WebSocketConnectOptions options,
             Consumer<WebSocket> setup) throws Exception {
-        return await(onClient(() -> client.webSocket(options).map(ws -> {
+        return await(onClient(() -> client.connect(options).map(ws -> {
             setup.accept(ws);
             return ws;
         })), 5);
     }
 
-    private static void close(HttpClient client) throws Exception {
+    private static void close(WebSocketClient client) throws Exception {
         await(onClient(client::close), 2);
     }
 
@@ -430,7 +430,7 @@ class WebSocketProxyTest {
             for (int i = 0; i < sockets; i++) {
                 var message = "burst-" + i;
                 expected.add(message + " <- echo:" + message);
-                opened.add(onClient(() -> client.webSocket(connectOptions("/v1/burst")).map(ws -> {
+                opened.add(onClient(() -> client.connect(connectOptions("/v1/burst")).map(ws -> {
                     ws.textMessageHandler(msg -> {
                         echoes.add(message + " <- " + msg);
                         allEchoed.countDown();

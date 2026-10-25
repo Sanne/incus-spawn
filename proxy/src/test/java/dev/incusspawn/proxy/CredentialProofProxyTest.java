@@ -60,6 +60,7 @@ class CredentialProofProxyTest {
     static Vertx vertx;
     static HttpServer upstream;
     static HttpClient client;
+    static WebSocketClient wsClient;
     static int upstreamPort;
     static volatile CompletableFuture<Received> received;
     static final AtomicInteger gitChallenges = new AtomicInteger();
@@ -111,7 +112,9 @@ class CredentialProofProxyTest {
                     ws.close();
                 });
         upstreamPort = NpmCacheProxyTest.listen(upstream);
-        client = vertx.createHttpClient(new HttpClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false).setMaxPoolSize(16));
+        client = vertx.createHttpClient(new HttpClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false),
+                new PoolOptions().setHttp1MaxSize(16));
+        wsClient = vertx.createWebSocketClient(new WebSocketClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
     }
 
     @AfterAll static void stop() throws Exception {
@@ -240,7 +243,7 @@ class CredentialProofProxyTest {
             var options = new WebSocketConnectOptions().setHost(host).setPort(proxy.mitmPort()).setSsl(true)
                     .setURI("/v1/messages?keep=1");
             if (value != null) options.addHeader(header, value);
-            var ws = client.webSocket(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            var ws = wsClient.connect(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
             // Leave the connection alive until the upstream has received its headers.
             var result = received.get(10, TimeUnit.SECONDS);
             ws.close();
@@ -319,7 +322,7 @@ class CredentialProofProxyTest {
             var options = new WebSocketConnectOptions().setHost(GEMINI).setPort(proxy.mitmPort()).setSsl(true)
                     .setURI("/v1beta/models").addHeader("x-goog-api-key", proof);
             var error = assertThrows(java.util.concurrent.ExecutionException.class,
-                    () -> client.webSocket(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
+                    () -> wsClient.connect(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
             assertTrue(error.getCause().getMessage().contains("502"), error.toString());
         } else {
             assertEquals(502, http(GEMINI, "x-goog-api-key", proof));
@@ -388,7 +391,7 @@ class CredentialProofProxyTest {
             var options = new WebSocketConnectOptions().setHost(ANTHROPIC).setPort(proxy.mitmPort()).setSsl(true)
                     .setURI("/v1/messages?keep=1").addHeader("x-api-key", token);
             var error = assertThrows(java.util.concurrent.ExecutionException.class,
-                    () -> client.webSocket(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
+                    () -> wsClient.connect(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS));
             assertTrue(error.getCause().getMessage().contains("502"), error.toString());
         } else {
             assertEquals(502, http(ANTHROPIC, "x-api-key", token));

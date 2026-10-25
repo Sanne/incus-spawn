@@ -1726,7 +1726,7 @@ public class MitmProxy {
 
     /** Opens the upstream leg of a relayed WebSocket; overridable so tests can see every dial. */
     Future<WebSocket> connectUpstreamWebSocket(WebSocketConnectOptions options) {
-        return upstream.wsUpstreamClient.webSocket(options);
+        return upstream.wsUpstreamClient.connect(options);
     }
 
     private void injectWebSocketAuth(WebSocketConnectOptions options, RequestContext ctx) {
