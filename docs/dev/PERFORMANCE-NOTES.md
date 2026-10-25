@@ -418,6 +418,22 @@ Release builds are now `-O3` + PGO (phase 3), and these figures are not theirs.
 The change removes work rather than compiling it better, so a similar gain is expected there, but it was not measured.
 `ssh <instance> true` is unchanged (113 against 117 ms, twenty runs each).
 
+### First release with profiles, v0.5.0-dev.1 (2026-10-25)
+
+Run 40229855170 on `Sanne/incus-spawn`, commit `c09f6dd9`, the first release built by the merged workflow.
+The whole run took 37 minutes: the profiles job 19.5 (instrumented builds 7.3, collection 6.7, merge 4.5), each platform build 6.5 to 9.3 after it, and the release job 7.6.
+The `pgo-profiles` artifact is 4.3 MB.
+
+| Platform | `isx` (v0.4.2 → v0.5.0-dev.1) | CLI applicability / relevance | `isx-proxy` (v0.4.2 → v0.5.0-dev.1) | Proxy applicability / relevance |
+|---|---|---|---|---|
+| Linux amd64 | 37,882,184 → 38,668,616 B | 15.20% / 100.00% | 99,093,024 → 43,321,888 B | 21.24% / 100.00% |
+| Linux aarch64 | 39,389,296 → 40,044,656 B | 15.15% / 99.75% | 89,590,168 → 43,911,576 B | 21.20% / 99.96% |
+| macOS aarch64 | 39,526,904 → 40,220,800 B | 15.04% / 98.49% | 79,463,872 → 40,567,576 B | 20.77% / 97.23% |
+| macOS x86_64 (unprofiled) | 38,511,200 → 38,659,056 B | | 83,309,152 → 84,559,552 B | |
+
+The figures match the dispatch above within a point; the proxy's applicability is a point higher, on a `main` that had moved by 133 commits since v0.4.2.
+The lowest figures a floor has to stay below are still the macOS aarch64 CLI's 15.04% applicability and its proxy's 97.23% relevance.
+
 ## Measurement caveats worth remembering
 
 - **Native builds are not byte-reproducible here.** The same commit and toolchain produced

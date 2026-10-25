@@ -11,7 +11,7 @@ Where the implementation differs from the plan, this page says so beside the pla
 | 0, feasibility | Done (#1639) |
 | 1, workloads | Done (#1639) |
 | 2, measurement | Done (#1641): adopt PGO for both binaries |
-| 3, release wiring | Done in #1642, verified by a `workflow_dispatch`, not yet released |
+| 3, release wiring | Done in #1642; first released as v0.5.0-dev.1 on 2026-10-25 (PERFORMANCE-NOTES.md, "First release with profiles") |
 | 4, docs | Done in #1642 |
 
 Still open:
