@@ -1,0 +1,182 @@
+{
+ "rounds": 10,
+ "runs": 60,
+ "builds": {
+  "v042": "/tmp/claude-1000/-home-agentuser-incus-spawn/efdd88d4-84d2-4205-b043-aa5a2631fa99/scratchpad/pgo/bins/v0.4.2/incus-spawn-linux-amd64",
+  "pgo": "/tmp/claude-1000/-home-agentuser-incus-spawn/efdd88d4-84d2-4205-b043-aa5a2631fa99/scratchpad/pgo/bins/v0.5.0-dev.1/incus-spawn-linux-amd64"
+ },
+ "sizes": {
+  "v042": 37882184,
+  "pgo": 38668616
+ },
+ "samples": {
+  "v042": {
+   "startup": [
+    2.5,
+    2.9,
+    2.8,
+    2.8,
+    2.8,
+    2.8,
+    2.9,
+    2.6,
+    2.9,
+    2.9
+   ],
+   "instances": [
+    3.9,
+    4.1,
+    4.1,
+    4.0,
+    4.1,
+    4.1,
+    4.2,
+    4.1,
+    4.1,
+    4.1
+   ],
+   "accountShow": [
+    5.9,
+    6.1,
+    6.1,
+    6.0,
+    6.1,
+    6.2,
+    6.1,
+    6.0,
+    6.1,
+    6.2
+   ],
+   "sshTrue": [
+    91.4,
+    92.1,
+    93.8,
+    96.7,
+    95.0,
+    98.3,
+    96.8,
+    95.7,
+    93.8,
+    90.9
+   ],
+   "scpUploadMs": [
+    600.9,
+    570.3,
+    524.1,
+    553.5,
+    496.8,
+    581.5,
+    580.9,
+    575.0,
+    506.2,
+    490.6
+   ],
+   "scpMiBPerSec": [
+    426.0,
+    448.9,
+    488.5,
+    462.5,
+    515.3,
+    440.2,
+    440.7,
+    445.2,
+    505.7,
+    521.8
+   ]
+  },
+  "pgo": {
+   "startup": [
+    2.3,
+    2.3,
+    2.0,
+    2.3,
+    2.3,
+    2.1,
+    2.3,
+    2.1,
+    2.4,
+    2.3
+   ],
+   "instances": [
+    3.4,
+    3.4,
+    3.1,
+    3.4,
+    3.3,
+    3.6,
+    3.3,
+    3.5,
+    3.4,
+    3.4
+   ],
+   "accountShow": [
+    4.8,
+    4.8,
+    4.7,
+    4.8,
+    4.9,
+    4.7,
+    5.1,
+    5.0,
+    4.8,
+    4.7
+   ],
+   "sshTrue": [
+    90.2,
+    91.6,
+    92.2,
+    95.4,
+    95.3,
+    94.6,
+    96.0,
+    98.8,
+    92.9,
+    91.9
+   ],
+   "scpUploadMs": [
+    352.3,
+    355.8,
+    361.2,
+    375.1,
+    412.5,
+    412.8,
+    426.8,
+    498.3,
+    381.0,
+    367.8
+   ],
+   "scpMiBPerSec": [
+    726.7,
+    719.5,
+    708.7,
+    682.5,
+    620.6,
+    620.2,
+    599.8,
+    513.7,
+    671.9,
+    696.0
+   ]
+  }
+ },
+ "medians": {
+  "v042": {
+   "startup": 2.8,
+   "instances": 4.1,
+   "accountShow": 6.1,
+   "sshTrue": 94.4,
+   "scpUploadMs": 561.9,
+   "scpMiBPerSec": 455.7
+  },
+  "pgo": {
+   "startup": 2.3,
+   "instances": 3.4,
+   "accountShow": 4.8,
+   "sshTrue": 93.8,
+   "scpUploadMs": 378.1,
+   "scpMiBPerSec": 677.2
+  }
+ },
+ "minutes": 2.8,
+ "note": "nested host; driver branches, released CLIs are timed"
+}

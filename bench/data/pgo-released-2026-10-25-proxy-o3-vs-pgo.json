@@ -1,0 +1,803 @@
+{
+  "timestamp": "2026-10-25T22:26:22Z",
+  "side": "proxy",
+  "rounds": 3,
+  "builds": {
+    "o3": "/tmp/claude-1000/-home-agentuser-incus-spawn/efdd88d4-84d2-4205-b043-aa5a2631fa99/scratchpad/pgo/bins/o3/isx-proxy-linux-amd64",
+    "pgo": "/tmp/claude-1000/-home-agentuser-incus-spawn/efdd88d4-84d2-4205-b043-aa5a2631fa99/scratchpad/pgo/bins/v0.5.0-dev.1/isx-proxy-linux-amd64"
+  },
+  "provenance": {
+    "checkout": {
+      "commit": "d079565007874aab074b2ad8ae763da4a2ea9597",
+      "dirty": false,
+      "nativeImageOnPath": "native-image 25.0.4.1.1 2026-08-18\nGraalVM Runtime Environment Oracle GraalVM 25.4.4.1.1+1.1 (build 25.0.4.1.1+1-LTS-jvmci-25.4-b23)\nSubstrate VM Oracle GraalVM 25.4.4.1.1+1.1 (build 25.0.4.1.1+1-LTS, serial gc, compressed references)"
+    },
+    "builds": {
+      "o3": {
+        "sha256": "83eb31b11759d5b91f29b7bbf8c7fae1128bce71ad7407eb8a44d6f230adfb87",
+        "bytes": 101518624,
+        "version": "isx-proxy 0.5.0-dev.1 (c09f6dd90084a20897427041e4cc6fde9f9082d5)",
+        "commit": "c09f6dd90084a20897427041e4cc6fde9f9082d5",
+        "graalvm": "25.4.4.1.1",
+        "buildReport": "/tmp/claude-1000/-home-agentuser-incus-spawn/efdd88d4-84d2-4205-b043-aa5a2631fa99/scratchpad/pgo/bins/o3/isx-proxy-linux-amd64-build-output-stats.json",
+        "graalCompiler": {
+          "pgo": [
+            "ML-inferred"
+          ],
+          "march": "haswell",
+          "optimization_level": "3"
+        },
+        "garbageCollector": "G1 GC",
+        "cCompiler": "gcc (redhat, x86_64, 16.2.1)"
+      },
+      "pgo": {
+        "sha256": "52685250effedb4a1230793e497fd2f13affa5a909cf1865585f7f444615d827",
+        "bytes": 43321888,
+        "version": "isx-proxy 0.5.0-dev.1 (c09f6dd90084a20897427041e4cc6fde9f9082d5)",
+        "commit": "c09f6dd90084a20897427041e4cc6fde9f9082d5",
+        "graalvm": "25.4.4.1.1",
+        "buildReport": null,
+        "graalCompiler": null,
+        "garbageCollector": null,
+        "cCompiler": null
+      }
+    },
+    "host": {
+      "os": "Fedora Linux 44 (Forty Four)",
+      "kernel": "7.2.11-200.fc44.x86_64",
+      "arch": "x86_64",
+      "cpu": "AMD Ryzen 9 9950X3D2 16-Core Processor",
+      "cores": 32,
+      "memoryKb": 53710936,
+      "vm": false,
+      "container": "lxc"
+    }
+  },
+  "minutes": 27.1,
+  "medians": {
+    "anthropic": {
+      "o3": {
+        "binaryBytes": 101518624,
+        "startupMs": 260,
+        "idleRssKb": 62464,
+        "peakRssKb": 108940,
+        "bestReqPerSec": 7621.4,
+        "c004ReqPerSec": 7316.4,
+        "c004P50Us": 497.7,
+        "c016ReqPerSec": 7221.4,
+        "c016P50Us": 2056.2,
+        "c032ReqPerSec": 7557.5,
+        "c032P50Us": 4063.2
+      },
+      "pgo": {
+        "binaryBytes": 43321888,
+        "startupMs": 260,
+        "idleRssKb": 38420,
+        "peakRssKb": 77516,
+        "bestReqPerSec": 9432.4,
+        "c004ReqPerSec": 8946.8,
+        "c004P50Us": 409.6,
+        "c016ReqPerSec": 8782.8,
+        "c016P50Us": 1671.2,
+        "c032ReqPerSec": 9432.4,
+        "c032P50Us": 3211.3
+      }
+    },
+    "vertex": {
+      "o3": {
+        "binaryBytes": 101518624,
+        "startupMs": 263,
+        "idleRssKb": 65016,
+        "peakRssKb": 105984,
+        "bestReqPerSec": 2510.8,
+        "c004ReqPerSec": 2409.8,
+        "c004P50Us": 1564.7,
+        "c016ReqPerSec": 2408.3,
+        "c016P50Us": 6160.4,
+        "c032ReqPerSec": 2510.8,
+        "c032P50Us": 12320.8
+      },
+      "pgo": {
+        "binaryBytes": 43321888,
+        "startupMs": 263,
+        "idleRssKb": 38548,
+        "peakRssKb": 81768,
+        "bestReqPerSec": 4749.5,
+        "c004ReqPerSec": 4505.3,
+        "c004P50Us": 819.2,
+        "c016ReqPerSec": 4749.5,
+        "c016P50Us": 3211.3,
+        "c032ReqPerSec": 4525.1,
+        "c032P50Us": 6586.4
+      }
+    },
+    "websocket": {
+      "o3": {
+        "binaryBytes": 101518624,
+        "startupMs": 260,
+        "idleRssKb": 62464,
+        "peakRssKb": 113264,
+        "bestReqPerSec": 3708.7,
+        "c004ReqPerSec": 501.0,
+        "c004P50Us": 207.2,
+        "c016ReqPerSec": 2899.2,
+        "c016P50Us": 441.8,
+        "c032ReqPerSec": 3708.7,
+        "c032P50Us": 3217.8
+      },
+      "pgo": {
+        "binaryBytes": 43321888,
+        "startupMs": 261,
+        "idleRssKb": 38324,
+        "peakRssKb": 83044,
+        "bestReqPerSec": 4122.7,
+        "c004ReqPerSec": 506.3,
+        "c004P50Us": 195.1,
+        "c016ReqPerSec": 2852.9,
+        "c016P50Us": 437.8,
+        "c032ReqPerSec": 4122.7,
+        "c032P50Us": 2525.4
+      }
+    },
+    "maven": {
+      "o3": {
+        "binaryBytes": 101518624,
+        "startupMs": 261,
+        "idleRssKb": 64520,
+        "peakRssKb": 139432,
+        "bestReqPerSec": 1603.7,
+        "c008ReqPerSec": 1570.6,
+        "c008P50Us": 4784.1,
+        "c032ReqPerSec": 1603.7,
+        "c032P50Us": 19791.9,
+        "c064ReqPerSec": 1363.6,
+        "c064P50Us": 45350.9
+      },
+      "pgo": {
+        "binaryBytes": 43321888,
+        "startupMs": 260,
+        "idleRssKb": 36328,
+        "peakRssKb": 103700,
+        "bestReqPerSec": 1713.5,
+        "c008ReqPerSec": 1700.2,
+        "c008P50Us": 4292.6,
+        "c032ReqPerSec": 1702.3,
+        "c032P50Us": 18481.2,
+        "c064ReqPerSec": 1707.1,
+        "c064P50Us": 36962.3
+      }
+    },
+    "npm": {
+      "o3": {
+        "binaryBytes": 101518624,
+        "startupMs": 261,
+        "idleRssKb": 64624,
+        "peakRssKb": 150344,
+        "bestReqPerSec": 1497.9,
+        "c008ReqPerSec": 1454.1,
+        "c008P50Us": 2949.1,
+        "c032ReqPerSec": 1462.2,
+        "c032P50Us": 11075.6,
+        "c064ReqPerSec": 1497.9,
+        "c064P50Us": 20447.2
+      },
+      "pgo": {
+        "binaryBytes": 43321888,
+        "startupMs": 260,
+        "idleRssKb": 36228,
+        "peakRssKb": 82684,
+        "bestReqPerSec": 1591.4,
+        "c008ReqPerSec": 1580.0,
+        "c008P50Us": 2572.3,
+        "c032ReqPerSec": 1574.0,
+        "c032P50Us": 10420.2,
+        "c064ReqPerSec": 1583.9,
+        "c064P50Us": 19136.5
+      }
+    }
+  },
+  "samples": {
+    "anthropic": {
+      "o3": [
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 260,
+          "idleRssKb": 62708,
+          "peakRssKb": 132884,
+          "bestReqPerSec": 7621.4,
+          "c004ReqPerSec": 7621.4,
+          "c004P50Us": 485.4,
+          "c016ReqPerSec": 7221.4,
+          "c016P50Us": 2039.8,
+          "c032ReqPerSec": 7125.2,
+          "c032P50Us": 4177.9
+        },
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 260,
+          "idleRssKb": 62408,
+          "peakRssKb": 108940,
+          "bestReqPerSec": 7744.9,
+          "c004ReqPerSec": 6889.3,
+          "c004P50Us": 522.2,
+          "c016ReqPerSec": 7159.0,
+          "c016P50Us": 2089.0,
+          "c032ReqPerSec": 7744.9,
+          "c032P50Us": 3981.3
+        },
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 261,
+          "idleRssKb": 62464,
+          "peakRssKb": 108800,
+          "bestReqPerSec": 7557.5,
+          "c004ReqPerSec": 7316.4,
+          "c004P50Us": 497.7,
+          "c016ReqPerSec": 7383.6,
+          "c016P50Us": 2056.2,
+          "c032ReqPerSec": 7557.5,
+          "c032P50Us": 4063.2
+        }
+      ],
+      "pgo": [
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 260,
+          "idleRssKb": 38420,
+          "peakRssKb": 77516,
+          "bestReqPerSec": 9922.8,
+          "c004ReqPerSec": 9438.6,
+          "c004P50Us": 391.2,
+          "c016ReqPerSec": 9635.5,
+          "c016P50Us": 1531.9,
+          "c032ReqPerSec": 9922.8,
+          "c032P50Us": 3063.8
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 261,
+          "idleRssKb": 38308,
+          "peakRssKb": 86964,
+          "bestReqPerSec": 9090.5,
+          "c004ReqPerSec": 8946.8,
+          "c004P50Us": 409.6,
+          "c016ReqPerSec": 8490.4,
+          "c016P50Us": 1736.7,
+          "c032ReqPerSec": 9090.5,
+          "c032P50Us": 3260.4
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 260,
+          "idleRssKb": 38468,
+          "peakRssKb": 72576,
+          "bestReqPerSec": 9432.4,
+          "c004ReqPerSec": 8463.2,
+          "c004P50Us": 415.7,
+          "c016ReqPerSec": 8782.8,
+          "c016P50Us": 1671.2,
+          "c032ReqPerSec": 9432.4,
+          "c032P50Us": 3211.3
+        }
+      ]
+    },
+    "vertex": {
+      "o3": [
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 263,
+          "idleRssKb": 65160,
+          "peakRssKb": 105852,
+          "bestReqPerSec": 2470.4,
+          "c004ReqPerSec": 2352.5,
+          "c004P50Us": 1589.2,
+          "c016ReqPerSec": 2353.0,
+          "c016P50Us": 6160.4,
+          "c032ReqPerSec": 2470.4,
+          "c032P50Us": 12386.3
+        },
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 263,
+          "idleRssKb": 65016,
+          "peakRssKb": 105984,
+          "bestReqPerSec": 2556.7,
+          "c004ReqPerSec": 2415.0,
+          "c004P50Us": 1564.7,
+          "c016ReqPerSec": 2466.7,
+          "c016P50Us": 6160.4,
+          "c032ReqPerSec": 2556.7,
+          "c032P50Us": 12124.2
+        },
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 262,
+          "idleRssKb": 62416,
+          "peakRssKb": 106172,
+          "bestReqPerSec": 2510.8,
+          "c004ReqPerSec": 2409.8,
+          "c004P50Us": 1564.7,
+          "c016ReqPerSec": 2408.3,
+          "c016P50Us": 6225.9,
+          "c032ReqPerSec": 2510.8,
+          "c032P50Us": 12320.8
+        }
+      ],
+      "pgo": [
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 263,
+          "idleRssKb": 38512,
+          "peakRssKb": 68680,
+          "bestReqPerSec": 4811.7,
+          "c004ReqPerSec": 4584.7,
+          "c004P50Us": 806.9,
+          "c016ReqPerSec": 4794.4,
+          "c016P50Us": 3178.5,
+          "c032ReqPerSec": 4811.7,
+          "c032P50Us": 6422.5
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 263,
+          "idleRssKb": 38584,
+          "peakRssKb": 88204,
+          "bestReqPerSec": 4348.8,
+          "c004ReqPerSec": 4348.8,
+          "c004P50Us": 827.4,
+          "c016ReqPerSec": 3904.1,
+          "c016P50Us": 3620.9,
+          "c032ReqPerSec": 4171.2,
+          "c032P50Us": 7012.4
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 263,
+          "idleRssKb": 38548,
+          "peakRssKb": 81768,
+          "bestReqPerSec": 4749.5,
+          "c004ReqPerSec": 4505.3,
+          "c004P50Us": 819.2,
+          "c016ReqPerSec": 4749.5,
+          "c016P50Us": 3211.3,
+          "c032ReqPerSec": 4525.1,
+          "c032P50Us": 6586.4
+        }
+      ]
+    },
+    "websocket": {
+      "o3": [
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 261,
+          "idleRssKb": 62464,
+          "peakRssKb": 122908,
+          "bestReqPerSec": 3708.7,
+          "c004ReqPerSec": 501.0,
+          "c004P50Us": 254.9,
+          "c016ReqPerSec": 2899.2,
+          "c016P50Us": 390.8,
+          "c032ReqPerSec": 3708.7,
+          "c032P50Us": 3062.3
+        },
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 260,
+          "idleRssKb": 62292,
+          "peakRssKb": 111348,
+          "bestReqPerSec": 3782.6,
+          "c004ReqPerSec": 492.8,
+          "c004P50Us": 207.2,
+          "c016ReqPerSec": 2844.6,
+          "c016P50Us": 492.6,
+          "c032ReqPerSec": 3782.6,
+          "c032P50Us": 3217.8
+        },
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 260,
+          "idleRssKb": 62480,
+          "peakRssKb": 113264,
+          "bestReqPerSec": 3594.3,
+          "c004ReqPerSec": 502.4,
+          "c004P50Us": 203.3,
+          "c016ReqPerSec": 2987.9,
+          "c016P50Us": 441.8,
+          "c032ReqPerSec": 3594.3,
+          "c032P50Us": 3325.0
+        }
+      ],
+      "pgo": [
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 261,
+          "idleRssKb": 38324,
+          "peakRssKb": 100048,
+          "bestReqPerSec": 3837.0,
+          "c004ReqPerSec": 506.3,
+          "c004P50Us": 195.1,
+          "c016ReqPerSec": 2852.9,
+          "c016P50Us": 485.7,
+          "c032ReqPerSec": 3837.0,
+          "c032P50Us": 2966.9
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 261,
+          "idleRssKb": 38384,
+          "peakRssKb": 75212,
+          "bestReqPerSec": 4122.7,
+          "c004ReqPerSec": 486.7,
+          "c004P50Us": 182.4,
+          "c016ReqPerSec": 2803.2,
+          "c016P50Us": 437.8,
+          "c032ReqPerSec": 4122.7,
+          "c032P50Us": 2525.4
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 261,
+          "idleRssKb": 36320,
+          "peakRssKb": 83044,
+          "bestReqPerSec": 4311.2,
+          "c004ReqPerSec": 528.0,
+          "c004P50Us": 199.5,
+          "c016ReqPerSec": 3046.0,
+          "c016P50Us": 375.3,
+          "c032ReqPerSec": 4311.2,
+          "c032P50Us": 2286.6
+        }
+      ]
+    },
+    "maven": {
+      "o3": [
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 262,
+          "idleRssKb": 64520,
+          "peakRssKb": 139432,
+          "bestReqPerSec": 1647.0,
+          "c008ReqPerSec": 1647.0,
+          "c008P50Us": 4423.7,
+          "c032ReqPerSec": 1610.0,
+          "c032P50Us": 19529.7,
+          "c064ReqPerSec": 1490.4,
+          "c064P50Us": 39845.9
+        },
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 261,
+          "idleRssKb": 64848,
+          "peakRssKb": 142648,
+          "bestReqPerSec": 1463.2,
+          "c008ReqPerSec": 1463.2,
+          "c008P50Us": 4915.2,
+          "c032ReqPerSec": 1369.9,
+          "c032P50Us": 22282.2,
+          "c064ReqPerSec": 1148.3,
+          "c064P50Us": 55574.5
+        },
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 260,
+          "idleRssKb": 62820,
+          "peakRssKb": 128124,
+          "bestReqPerSec": 1603.7,
+          "c008ReqPerSec": 1570.6,
+          "c008P50Us": 4784.1,
+          "c032ReqPerSec": 1603.7,
+          "c032P50Us": 19791.9,
+          "c064ReqPerSec": 1363.6,
+          "c064P50Us": 45350.9
+        }
+      ],
+      "pgo": [
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 263,
+          "idleRssKb": 36328,
+          "peakRssKb": 102444,
+          "bestReqPerSec": 1702.3,
+          "c008ReqPerSec": 1700.2,
+          "c008P50Us": 4292.6,
+          "c032ReqPerSec": 1702.3,
+          "c032P50Us": 18612.2,
+          "c064ReqPerSec": 1697.1,
+          "c064P50Us": 36962.3
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 260,
+          "idleRssKb": 36236,
+          "peakRssKb": 114488,
+          "bestReqPerSec": 1713.5,
+          "c008ReqPerSec": 1545.7,
+          "c008P50Us": 4915.2,
+          "c032ReqPerSec": 1678.2,
+          "c032P50Us": 18481.2,
+          "c064ReqPerSec": 1713.5,
+          "c064P50Us": 36962.3
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 260,
+          "idleRssKb": 36392,
+          "peakRssKb": 103700,
+          "bestReqPerSec": 1730.7,
+          "c008ReqPerSec": 1718.3,
+          "c008P50Us": 4227.1,
+          "c032ReqPerSec": 1730.7,
+          "c032P50Us": 18219.0,
+          "c064ReqPerSec": 1707.1,
+          "c064P50Us": 36962.3
+        }
+      ]
+    },
+    "npm": {
+      "o3": [
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 261,
+          "idleRssKb": 64600,
+          "peakRssKb": 150344,
+          "bestReqPerSec": 1497.9,
+          "c008ReqPerSec": 1454.1,
+          "c008P50Us": 2949.1,
+          "c032ReqPerSec": 1462.2,
+          "c032P50Us": 11075.6,
+          "c064ReqPerSec": 1497.9,
+          "c064P50Us": 20447.2
+        },
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 262,
+          "idleRssKb": 64624,
+          "peakRssKb": 166168,
+          "bestReqPerSec": 909.1,
+          "c008ReqPerSec": 908.8,
+          "c008P50Us": 4325.4,
+          "c032ReqPerSec": 909.1,
+          "c032P50Us": 16777.2,
+          "c064ReqPerSec": 905.4,
+          "c064P50Us": 32243.7
+        },
+        {
+          "binaryBytes": 101518624,
+          "startupMs": 261,
+          "idleRssKb": 64632,
+          "peakRssKb": 129572,
+          "bestReqPerSec": 1524.3,
+          "c008ReqPerSec": 1480.8,
+          "c008P50Us": 2703.4,
+          "c032ReqPerSec": 1504.9,
+          "c032P50Us": 10747.9,
+          "c064ReqPerSec": 1524.3,
+          "c064P50Us": 20054.0
+        }
+      ],
+      "pgo": [
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 260,
+          "idleRssKb": 36240,
+          "peakRssKb": 86088,
+          "bestReqPerSec": 1591.4,
+          "c008ReqPerSec": 1580.0,
+          "c008P50Us": 2588.7,
+          "c032ReqPerSec": 1591.4,
+          "c032P50Us": 10223.6,
+          "c064ReqPerSec": 1583.9,
+          "c064P50Us": 19267.6
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 261,
+          "idleRssKb": 36228,
+          "peakRssKb": 77492,
+          "bestReqPerSec": 1580.5,
+          "c008ReqPerSec": 1565.9,
+          "c008P50Us": 2572.3,
+          "c032ReqPerSec": 1574.0,
+          "c032P50Us": 10420.2,
+          "c064ReqPerSec": 1580.5,
+          "c064P50Us": 19136.5
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 260,
+          "idleRssKb": 36192,
+          "peakRssKb": 82684,
+          "bestReqPerSec": 1596.0,
+          "c008ReqPerSec": 1593.8,
+          "c008P50Us": 2539.5,
+          "c032ReqPerSec": 1553.2,
+          "c032P50Us": 10485.8,
+          "c064ReqPerSec": 1596.0,
+          "c064P50Us": 19136.5
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "build": "o3",
+      "round": 1,
+      "series": "anthropic",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-220003.json"
+    },
+    {
+      "build": "o3",
+      "round": 1,
+      "series": "vertex",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-220052.json"
+    },
+    {
+      "build": "o3",
+      "round": 1,
+      "series": "websocket",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-220145.json"
+    },
+    {
+      "build": "o3",
+      "round": 1,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-220245.json"
+    },
+    {
+      "build": "o3",
+      "round": 1,
+      "series": "npm",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-220345.json"
+    },
+    {
+      "build": "pgo",
+      "round": 1,
+      "series": "anthropic",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-220433.json"
+    },
+    {
+      "build": "pgo",
+      "round": 1,
+      "series": "vertex",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-220522.json"
+    },
+    {
+      "build": "pgo",
+      "round": 1,
+      "series": "websocket",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-220615.json"
+    },
+    {
+      "build": "pgo",
+      "round": 1,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-220715.json"
+    },
+    {
+      "build": "pgo",
+      "round": 1,
+      "series": "npm",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-220815.json"
+    },
+    {
+      "build": "pgo",
+      "round": 2,
+      "series": "anthropic",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-220904.json"
+    },
+    {
+      "build": "pgo",
+      "round": 2,
+      "series": "vertex",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-220954.json"
+    },
+    {
+      "build": "pgo",
+      "round": 2,
+      "series": "websocket",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-221047.json"
+    },
+    {
+      "build": "pgo",
+      "round": 2,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-221147.json"
+    },
+    {
+      "build": "pgo",
+      "round": 2,
+      "series": "npm",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-221247.json"
+    },
+    {
+      "build": "o3",
+      "round": 2,
+      "series": "anthropic",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-221336.json"
+    },
+    {
+      "build": "o3",
+      "round": 2,
+      "series": "vertex",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-221425.json"
+    },
+    {
+      "build": "o3",
+      "round": 2,
+      "series": "websocket",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-221517.json"
+    },
+    {
+      "build": "o3",
+      "round": 2,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-221617.json"
+    },
+    {
+      "build": "o3",
+      "round": 2,
+      "series": "npm",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-221718.json"
+    },
+    {
+      "build": "o3",
+      "round": 3,
+      "series": "anthropic",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-221807.json"
+    },
+    {
+      "build": "o3",
+      "round": 3,
+      "series": "vertex",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-221856.json"
+    },
+    {
+      "build": "o3",
+      "round": 3,
+      "series": "websocket",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-221948.json"
+    },
+    {
+      "build": "o3",
+      "round": 3,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-222050.json"
+    },
+    {
+      "build": "o3",
+      "round": 3,
+      "series": "npm",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-222150.json"
+    },
+    {
+      "build": "pgo",
+      "round": 3,
+      "series": "anthropic",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-222239.json"
+    },
+    {
+      "build": "pgo",
+      "round": 3,
+      "series": "vertex",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-222328.json"
+    },
+    {
+      "build": "pgo",
+      "round": 3,
+      "series": "websocket",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-222421.json"
+    },
+    {
+      "build": "pgo",
+      "round": 3,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-222522.json"
+    },
+    {
+      "build": "pgo",
+      "round": 3,
+      "series": "npm",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-222621.json"
+    }
+  ]
+}

@@ -436,6 +436,62 @@ The CLI's figures match every earlier dispatch within 0.05 points.
 The proxy's are 1.2 points above the Phase 3 dispatch because the npm and WebSocket loads of #1651 joined the collection in between: against the dispatch that followed them (run 40215545458, 21.63% / 21.60% / 21.16%), the release is about 0.4 points lower per platform.
 The lowest figures a floor has to stay below are unchanged: 15.04% applicability (the macOS aarch64 CLI, here and in dispatch run 40183611322; 15.05% in the Phase 3 dispatch) and 97.04% relevance (the macOS aarch64 proxy in the Phase 3 dispatch, run 40186966586); this release's 97.23% is above it.
 
+### The released binaries, v0.4.2 against v0.5.0-dev.1 (2026-10-25)
+
+The goal of the plan is measurably better release artifacts, so the shipped Linux amd64 binaries of both releases were measured against each other, downloaded from their GitHub releases.
+Host: a nested isx instance (an LXC container, 32 usable cores of an AMD Ryzen 9 9950X3D2, 51 GB), with Incus brought up by `scripts/local-incus.sh`; the throughput figures are comparable only with each other.
+Interleaved A/B with `bench/ab.py` for the proxy, and for the CLI a script of the same shape over `bench/cli.sh`'s operations, since the nested kernel refuses the stock CLI's branches: a measurement-only patched driver built from `main` did the one branch, and the released binaries were timed.
+On a host that is not nested, `bench/ab.py cli` reproduces it.
+The raw runs are in `bench/data/pgo-released-2026-10-25-*.json`.
+
+**The credential paths cannot be driven on the v0.4.2 proxy** by today's harness: it predates `ISX_BENCH_CONFIG`, so it saw no bench account and answered 401.
+Instead an unprofiled `-O3` proxy of the release commit `c09f6dd9` was built on this host with the same Oracle GraalVM 25.4.4.1.1 the release used, and compared with the shipped PGO proxy, three rounds, all five loads ([pgo-released-2026-10-25-proxy-o3-vs-pgo.json](../../bench/data/pgo-released-2026-10-25-proxy-o3-vs-pgo.json)):
+
+| Same commit | `-O3`, no profile | Shipped PGO | Delta |
+|---|---|---|---|
+| Binary | 101.5 MB | 43.3 MB | −57% |
+| Startup | 260 ms | 260 ms | 0 |
+| Idle RSS | 62 to 65 MB | 36 to 39 MB | −39 to −44% |
+| Peak RSS | 106 to 150 MB | 78 to 104 MB | −23 to −45% |
+| `anthropic`, best rung | 7,621 req/s | 9,432 req/s | +24% |
+| `vertex`, best rung | 2,511 req/s | 4,750 req/s | +89% |
+| `websocket`, best rung | 3,709 turns/s | 4,123 turns/s | +11% (flat at 4 and 16 connections) |
+| `maven`, best rung | 1,604 req/s | 1,714 req/s | +7% |
+| `npm`, best rung | 1,498 req/s | 1,591 req/s | +6% |
+
+Every round of every load went the same way, and the figures match phase 2's on another host.
+
+**Shipped against shipped**, v0.4.2 against v0.5.0-dev.1, on the loads that need no credential: six rounds over two sessions ([v042-vs-pgo](../../bench/data/pgo-released-2026-10-25-proxy-v042-vs-pgo.json), [rerun](../../bench/data/pgo-released-2026-10-25-proxy-v042-vs-pgo-rerun.json)).
+The first session's cache loads swung by 30% within a build and in both directions, so the second added three rounds; the six-round medians are what the table gives.
+
+| Shipped | v0.4.2 | v0.5.0-dev.1 | Delta |
+|---|---|---|---|
+| Binary | 99.1 MB | 43.3 MB | −56% |
+| Startup | 261 to 263 ms | 260 to 261 ms | 0 |
+| Idle RSS | 60 MB | 36 MB | −40% |
+| Peak RSS, `maven` | 142 to 146 MB | 85 to 113 MB | −23 to −40% |
+| Peak RSS, `npm` | 141 to 143 MB | 83 to 135 MB | −6 to −41% |
+| `maven`, best rung | 1,521 req/s | 1,609 req/s | +6%, within this host's noise |
+| `npm`, best rung | 1,451 req/s | 1,387 req/s | −4%, within this host's noise |
+| `saturate`, best rung (3 rounds) | 101,609 req/s | 116,819 req/s | +15% |
+
+The cache paths are bound by TLS and the socket, as the AES note above says, so flat throughput there is the expected result; what changed on them is memory and size.
+
+**The CLIs**, v0.4.2 against v0.5.0-dev.1, ten alternating rounds of sixty runs each ([pgo-released-2026-10-25-cli-v042-vs-pgo.json](../../bench/data/pgo-released-2026-10-25-cli-v042-vs-pgo.json)).
+A first run of three rounds of twenty drifted by a factor of two between rounds for both builds and is not quoted; the ten-round run is steady.
+
+| CLI | v0.4.2 | v0.5.0-dev.1 | Delta | Rounds won |
+|---|---|---|---|---|
+| Binary | 37,882,184 B | 38,668,616 B | +2.1% | |
+| `isx --help` | 2.8 ms | 2.3 ms | −18 to −20% | 10 of 10 |
+| `isx list -q` | 4.1 ms | 3.4 ms | −17% | 10 of 10 |
+| `isx account show` | 6.1 ms | 4.8 ms | −21% | 10 of 10 |
+| `ssh <instance> true` through `ssh-proxy` | 94.4 ms | 93.8 ms | −1%, flat | 7 of 10 |
+| `scp` 256 MiB through `ssh-proxy` | 456 MiB/s | 677 MiB/s | +39 to +49% | 10 of 10 |
+
+**Against the plan's goal**, on shipped artifacts: faster on every compiled-code path (model calls, CLI startup, the relay loop), with TLS-bound cache serving flat; leaner, with proxy idle RSS down 40% and peak RSS down on every load; and smaller, with the proxy at 44% of its size and the CLI 2% larger.
+The short ssh connection is flat because it is dominated by the exec setup in Incus, not by the CLI.
+
 ## Measurement caveats worth remembering
 
 - **Native builds are not byte-reproducible here.** The same commit and toolchain produced

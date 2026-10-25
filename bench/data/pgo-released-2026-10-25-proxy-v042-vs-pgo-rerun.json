@@ -1,0 +1,353 @@
+{
+  "timestamp": "2026-10-25T22:40:15Z",
+  "side": "proxy",
+  "rounds": 3,
+  "builds": {
+    "v042": "/tmp/claude-1000/-home-agentuser-incus-spawn/efdd88d4-84d2-4205-b043-aa5a2631fa99/scratchpad/pgo/bins/v0.4.2/isx-proxy-linux-amd64",
+    "pgo": "/tmp/claude-1000/-home-agentuser-incus-spawn/efdd88d4-84d2-4205-b043-aa5a2631fa99/scratchpad/pgo/bins/v0.5.0-dev.1/isx-proxy-linux-amd64"
+  },
+  "provenance": {
+    "checkout": {
+      "commit": "d079565007874aab074b2ad8ae763da4a2ea9597",
+      "dirty": false,
+      "nativeImageOnPath": "native-image 25.0.4.1.1 2026-08-18\nGraalVM Runtime Environment Oracle GraalVM 25.4.4.1.1+1.1 (build 25.0.4.1.1+1-LTS-jvmci-25.4-b23)\nSubstrate VM Oracle GraalVM 25.4.4.1.1+1.1 (build 25.0.4.1.1+1-LTS, serial gc, compressed references)"
+    },
+    "builds": {
+      "v042": {
+        "sha256": "1b9042bcf1f3289ed438ac9fecb4da6516088eba103dae82a9819172bf8efe2d",
+        "bytes": 99093024,
+        "version": "isx-proxy 0.4.2 (d4d03137be8338aa518e4ecb95e4cf79eb521c2e)",
+        "commit": "d4d03137be8338aa518e4ecb95e4cf79eb521c2e",
+        "graalvm": "25.4.4.1.1",
+        "buildReport": null,
+        "graalCompiler": null,
+        "garbageCollector": null,
+        "cCompiler": null
+      },
+      "pgo": {
+        "sha256": "52685250effedb4a1230793e497fd2f13affa5a909cf1865585f7f444615d827",
+        "bytes": 43321888,
+        "version": "isx-proxy 0.5.0-dev.1 (c09f6dd90084a20897427041e4cc6fde9f9082d5)",
+        "commit": "c09f6dd90084a20897427041e4cc6fde9f9082d5",
+        "graalvm": "25.4.4.1.1",
+        "buildReport": null,
+        "graalCompiler": null,
+        "garbageCollector": null,
+        "cCompiler": null
+      }
+    },
+    "host": {
+      "os": "Fedora Linux 44 (Forty Four)",
+      "kernel": "7.2.11-200.fc44.x86_64",
+      "arch": "x86_64",
+      "cpu": "AMD Ryzen 9 9950X3D2 16-Core Processor",
+      "cores": 32,
+      "memoryKb": 53710936,
+      "vm": false,
+      "container": "lxc"
+    }
+  },
+  "minutes": 12.1,
+  "medians": {
+    "maven": {
+      "v042": {
+        "binaryBytes": 99093024,
+        "startupMs": 261,
+        "idleRssKb": 60332,
+        "peakRssKb": 142424,
+        "bestReqPerSec": 1612.8,
+        "c008ReqPerSec": 1612.8,
+        "c008P50Us": 4489.2,
+        "c032ReqPerSec": 1603.5,
+        "c032P50Us": 19660.8,
+        "c064ReqPerSec": 1595.2,
+        "c064P50Us": 39583.7
+      },
+      "pgo": {
+        "binaryBytes": 43321888,
+        "startupMs": 261,
+        "idleRssKb": 36284,
+        "peakRssKb": 85320,
+        "bestReqPerSec": 1682.0,
+        "c008ReqPerSec": 1625.8,
+        "c008P50Us": 4587.5,
+        "c032ReqPerSec": 1682.0,
+        "c032P50Us": 18219.0,
+        "c064ReqPerSec": 1660.0,
+        "c064P50Us": 37224.4
+      }
+    },
+    "npm": {
+      "v042": {
+        "binaryBytes": 99093024,
+        "startupMs": 261,
+        "idleRssKb": 60380,
+        "peakRssKb": 141344,
+        "bestReqPerSec": 1503.5,
+        "c008ReqPerSec": 1378.2,
+        "c008P50Us": 3047.4,
+        "c032ReqPerSec": 1483.7,
+        "c032P50Us": 10944.5,
+        "c064ReqPerSec": 1503.5,
+        "c064P50Us": 20316.2
+      },
+      "pgo": {
+        "binaryBytes": 43321888,
+        "startupMs": 260,
+        "idleRssKb": 36280,
+        "peakRssKb": 83192,
+        "bestReqPerSec": 1536.5,
+        "c008ReqPerSec": 1395.9,
+        "c008P50Us": 2965.5,
+        "c032ReqPerSec": 1536.5,
+        "c032P50Us": 10616.8,
+        "c064ReqPerSec": 1534.0,
+        "c064P50Us": 19660.8
+      }
+    }
+  },
+  "samples": {
+    "maven": {
+      "v042": [
+        {
+          "binaryBytes": 99093024,
+          "startupMs": 261,
+          "idleRssKb": 60384,
+          "peakRssKb": 128808,
+          "bestReqPerSec": 1529.3,
+          "c008ReqPerSec": 1529.3,
+          "c008P50Us": 4751.4,
+          "c032ReqPerSec": 1480.3,
+          "c032P50Us": 20185.1,
+          "c064ReqPerSec": 1322.4,
+          "c064P50Us": 47448.1
+        },
+        {
+          "binaryBytes": 99093024,
+          "startupMs": 261,
+          "idleRssKb": 60332,
+          "peakRssKb": 143996,
+          "bestReqPerSec": 1612.8,
+          "c008ReqPerSec": 1612.8,
+          "c008P50Us": 4489.2,
+          "c032ReqPerSec": 1610.5,
+          "c032P50Us": 19529.7,
+          "c064ReqPerSec": 1602.6,
+          "c064P50Us": 39059.5
+        },
+        {
+          "binaryBytes": 99093024,
+          "startupMs": 261,
+          "idleRssKb": 59976,
+          "peakRssKb": 142424,
+          "bestReqPerSec": 1622.4,
+          "c008ReqPerSec": 1622.4,
+          "c008P50Us": 4489.2,
+          "c032ReqPerSec": 1603.5,
+          "c032P50Us": 19660.8,
+          "c064ReqPerSec": 1595.2,
+          "c064P50Us": 39583.7
+        }
+      ],
+      "pgo": [
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 260,
+          "idleRssKb": 36284,
+          "peakRssKb": 88320,
+          "bestReqPerSec": 1704.6,
+          "c008ReqPerSec": 1704.6,
+          "c008P50Us": 4096.0,
+          "c032ReqPerSec": 1695.8,
+          "c032P50Us": 18087.9,
+          "c064ReqPerSec": 1691.6,
+          "c064P50Us": 36700.2
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 261,
+          "idleRssKb": 36136,
+          "peakRssKb": 77980,
+          "bestReqPerSec": 1596.4,
+          "c008ReqPerSec": 1596.4,
+          "c008P50Us": 4587.5,
+          "c032ReqPerSec": 1558.3,
+          "c032P50Us": 19005.4,
+          "c064ReqPerSec": 1587.5,
+          "c064P50Us": 37486.6
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 261,
+          "idleRssKb": 38364,
+          "peakRssKb": 85320,
+          "bestReqPerSec": 1682.0,
+          "c008ReqPerSec": 1625.8,
+          "c008P50Us": 4587.5,
+          "c032ReqPerSec": 1682.0,
+          "c032P50Us": 18219.0,
+          "c064ReqPerSec": 1660.0,
+          "c064P50Us": 37224.4
+        }
+      ]
+    },
+    "npm": {
+      "v042": [
+        {
+          "binaryBytes": 99093024,
+          "startupMs": 262,
+          "idleRssKb": 60380,
+          "peakRssKb": 145804,
+          "bestReqPerSec": 1215.4,
+          "c008ReqPerSec": 1153.9,
+          "c008P50Us": 3588.1,
+          "c032ReqPerSec": 1112.1,
+          "c032P50Us": 14155.8,
+          "c064ReqPerSec": 1215.4,
+          "c064P50Us": 24510.5
+        },
+        {
+          "binaryBytes": 99093024,
+          "startupMs": 261,
+          "idleRssKb": 60448,
+          "peakRssKb": 141344,
+          "bestReqPerSec": 1516.4,
+          "c008ReqPerSec": 1505.1,
+          "c008P50Us": 2736.1,
+          "c032ReqPerSec": 1510.4,
+          "c032P50Us": 10813.4,
+          "c064ReqPerSec": 1516.4,
+          "c064P50Us": 20185.1
+        },
+        {
+          "binaryBytes": 99093024,
+          "startupMs": 260,
+          "idleRssKb": 60076,
+          "peakRssKb": 132188,
+          "bestReqPerSec": 1503.5,
+          "c008ReqPerSec": 1378.2,
+          "c008P50Us": 3047.4,
+          "c032ReqPerSec": 1483.7,
+          "c032P50Us": 10944.5,
+          "c064ReqPerSec": 1503.5,
+          "c064P50Us": 20316.2
+        }
+      ],
+      "pgo": [
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 260,
+          "idleRssKb": 36240,
+          "peakRssKb": 83192,
+          "bestReqPerSec": 1536.5,
+          "c008ReqPerSec": 1472.0,
+          "c008P50Us": 2900.0,
+          "c032ReqPerSec": 1536.5,
+          "c032P50Us": 10616.8,
+          "c064ReqPerSec": 1534.0,
+          "c064P50Us": 19660.8
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 260,
+          "idleRssKb": 36280,
+          "peakRssKb": 82288,
+          "bestReqPerSec": 1604.5,
+          "c008ReqPerSec": 1395.9,
+          "c008P50Us": 2965.5,
+          "c032ReqPerSec": 1573.4,
+          "c032P50Us": 10420.2,
+          "c064ReqPerSec": 1604.5,
+          "c064P50Us": 19136.5
+        },
+        {
+          "binaryBytes": 43321888,
+          "startupMs": 260,
+          "idleRssKb": 36352,
+          "peakRssKb": 102012,
+          "bestReqPerSec": 1335.5,
+          "c008ReqPerSec": 1335.5,
+          "c008P50Us": 2965.5,
+          "c032ReqPerSec": 1016.8,
+          "c032P50Us": 11927.6,
+          "c064ReqPerSec": 675.2,
+          "c064P50Us": 25952.3
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "build": "v042",
+      "round": 1,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-222911.json"
+    },
+    {
+      "build": "v042",
+      "round": 1,
+      "series": "npm",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-223013.json"
+    },
+    {
+      "build": "pgo",
+      "round": 1,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-223113.json"
+    },
+    {
+      "build": "pgo",
+      "round": 1,
+      "series": "npm",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-223213.json"
+    },
+    {
+      "build": "pgo",
+      "round": 2,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-223313.json"
+    },
+    {
+      "build": "pgo",
+      "round": 2,
+      "series": "npm",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-223413.json"
+    },
+    {
+      "build": "v042",
+      "round": 2,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-223513.json"
+    },
+    {
+      "build": "v042",
+      "round": 2,
+      "series": "npm",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-223613.json"
+    },
+    {
+      "build": "v042",
+      "round": 3,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-223713.json"
+    },
+    {
+      "build": "v042",
+      "round": 3,
+      "series": "npm",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-223813.json"
+    },
+    {
+      "build": "pgo",
+      "round": 3,
+      "series": "maven",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-223913.json"
+    },
+    {
+      "build": "pgo",
+      "round": 3,
+      "series": "npm",
+      "file": "/home/agentuser/incus-spawn/bench/results/d0795650-20261025-224014.json"
+    }
+  ]
+}
