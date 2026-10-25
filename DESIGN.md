@@ -1596,6 +1596,9 @@ Vert.x then fell back to an arbitrary keystore entry.
 The container was offered `*.api.openai.com` for a GitHub host, an error that points at the wrong domain entirely.
 `InterceptedCertOptions` (proxy module) now implements Vert.x's `KeyCertOptions.keyManagerFactoryMapper`: `certNameFor()` maps the SNI name to the exact domain, or to a wildcard for the name's own parent (`*.actions.githubusercontent.com`), minted through `CertStore` on first use and so persisted like every other leaf.
 Vert.x runs this mapping on a worker thread, so the RSA key generation never blocks the event loop.
+Vert.x 4 does so regardless, while Vert.x 5 runs it wherever the SSL engine's delegated tasks run, so `MitmProxy.mitmServerOptions()` sets `useWorkerThread` on the engine.
+On Vert.x 4 the flag still changes something: the rest of every handshake's delegated tasks move from the event loop to the worker pool as well.
+A reload builds its SSL options from those same server options, because the update replaces the server's whole SSL configuration.
 The `<domain>`/`*.<domain>` certs are still pre-minted at start.
 Because the container picks the names, two bounds apply.
 `MAX_ON_DEMAND_CERTS` limits on-demand certs *stored on the host*: it is counted from the cert directory at construction, so neither a reload nor a restart grants a fresh batch.

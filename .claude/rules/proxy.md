@@ -30,7 +30,7 @@ Key design:
   The proxy is relaunched frequently (macOS launchd `KeepAlive`), and re-minting on a host whose clock has jumped ahead of a lagging container clock (e.g. an Incus VM after macOS resume) produced certs the container rejected as "not yet valid".
   Certs are keyed by domain, never by container (a leaf is a function of `(domain, CA)`), so this composes with future per-container interception, which is a routing/DNS concern.
   `CertificateAuthority.BACKDATE_MS` backdates `notBefore` as a skew margin for the rare fresh-mint moments.
-- **Certs are chosen per SNI name** by `InterceptedCertOptions` (Vert.x `keyManagerFactoryMapper`, run on a worker thread), not by a fixed keystore.
+- **Certs are chosen per SNI name** by `InterceptedCertOptions` (Vert.x `keyManagerFactoryMapper`, run on a worker thread: `MitmProxy.mitmServerOptions()` sets the SSL engine's `useWorkerThread`, which Vert.x 5 needs for that), not by a fixed keystore.
   dnsmasq sends names at *any* depth under an intercepted domain, but a wildcard SAN covers one label, so `certNameFor()` gives the exact domain or a wildcard for the name's own parent, minted on demand through `CertStore`.
   Two bounds, because the container picks the names: `MAX_ON_DEMAND_CERTS` counts on-demand certs **on disk** (so reloads/restarts don't reset it), and `MAX_SERVED_NAMES` counts distinct SNI names answered, since Vert.x caches an `SslContext` per answered name forever.
   With the old `<domain>`/`*.<domain>` JKS, a deeper name matched no alias and Vert.x served an arbitrary entry: `*.api.openai.com` for a GitHub host (#783).

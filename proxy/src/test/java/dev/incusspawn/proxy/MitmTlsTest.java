@@ -38,8 +38,8 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * The MITM server's TLS setup as a container sees it: one certificate per SNI name, no ALPN,
  * a reload that swaps the certificates without touching the rest, and an SNI lookup -- which
- * can mint a leaf -- that never runs on an event loop. Both drive the real {@link MitmProxy},
- * so they pin the options it listens and reloads with, not a copy of them.
+ * can mint a leaf -- that never runs on an event loop. They drive the real {@link MitmProxy}
+ * or read its own options, so they pin what it listens and reloads with, not a copy of it.
  */
 class MitmTlsTest {
 
@@ -140,6 +140,19 @@ class MitmTlsTest {
 
         assertTrue(mints.get() > 0, "the SNI lookup never minted a leaf for a.b.quay.io");
         assertEquals(Set.of(), mintedOnEventLoop, "SNI lookup minted on these event-loop threads");
+    }
+
+    /**
+     * What keeps the SNI lookup off the event loop under Vert.x 5. Vert.x 4 runs the lookup on a
+     * worker whatever the engine is told, so {@link #theSniLookupRunsOffTheEventLoop} passes
+     * without the flag until the upgrade: this pins the flag itself until then. It reads the
+     * options {@link MitmProxy#start} and {@link MitmProxy#reload} both take, not the bound
+     * server, which exposes no engine options.
+     */
+    @Test
+    void theSslEngineRunsItsDelegatedTasksOnWorkers() {
+        var engine = MitmProxy.mitmServerOptions().getSslEngineOptions();
+        assertTrue(engine.getUseWorkerThread(), "the MITM server's SSL engine runs on the event loop");
     }
 
     /**

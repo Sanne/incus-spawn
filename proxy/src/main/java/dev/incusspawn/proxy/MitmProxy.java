@@ -834,8 +834,12 @@ public class MitmProxy {
             var keyCertOptions = buildKeyCertOptions();
             mitmCertOptions = keyCertOptions;
             if (mitmServer != null) {
-                var sslOptions = new io.vertx.core.net.SSLOptions()
-                        .setKeyCertOptions(keyCertOptions);
+                // From the options the server listens with, not a bare SSLOptions: the update
+                // replaces the server's whole SSL configuration (protocols, cipher suites and
+                // ALPN), so a fresh object would quietly reset any of those the server sets.
+                // The engine options are not among it: they live on TCPSSLOptions, so the
+                // update leaves them as start() set them.
+                var sslOptions = mitmServerOptions().setKeyCertOptions(keyCertOptions).getSslOptions();
                 mitmServer.updateSSLOptions(sslOptions)
                         .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
             }
@@ -886,6 +890,30 @@ public class MitmProxy {
     }
 
     /**
+     * The MITM TLS server's options, without its address, which {@link #start} adds, or its
+     * certificates, which {@link #mitmCertOptions} chooses per SNI name. {@link #start} listens
+     * with them and {@link #reload} rebuilds its SSL options from them, so the two cannot drift
+     * apart.
+     * <p>
+     * The SSL engine runs its delegated tasks on worker threads, because the SNI lookup can mint
+     * a leaf (an RSA key generation and a file write). Vert.x 4 runs that lookup on a worker
+     * regardless; Vert.x 5 runs it wherever the engine's delegated tasks run, which is the event
+     * loop unless {@code useWorkerThread} is set. {@code MitmTlsTest} pins the flag, since on
+     * Vert.x 4 the lookup's own thread does not depend on it.
+     */
+    static HttpServerOptions mitmServerOptions() {
+        return new HttpServerOptions()
+                .setSsl(true)
+                .setSni(true)
+                .setSslEngineOptions(new io.vertx.core.net.JdkSSLEngineOptions().setUseWorkerThread(true))
+                .setIdleTimeout(MITM_IDLE_TIMEOUT_SECONDS)
+                .setIdleTimeoutUnit(TimeUnit.SECONDS)
+                .setAlpnVersions(List.of(HttpVersion.HTTP_1_1))
+                .setMaxWebSocketFrameSize(1024 * 1024)
+                .setMaxWebSocketMessageSize(16 * 1024 * 1024);
+    }
+
+    /**
      * Start the MITM proxy and health server. Blocks until {@link #stop()} is called.
      *
      * @param onReady called after both servers are listening, before blocking on the stop latch.
@@ -917,16 +945,7 @@ public class MitmProxy {
         }
 
         // MITM TLS server with SNI
-        var serverOptions = new HttpServerOptions()
-                .setHost(bindAddress)
-                .setPort(requestedMitmPort)
-                .setSsl(true)
-                .setSni(true)
-                .setIdleTimeout(MITM_IDLE_TIMEOUT_SECONDS)
-                .setIdleTimeoutUnit(TimeUnit.SECONDS)
-                .setAlpnVersions(List.of(HttpVersion.HTTP_1_1))
-                .setMaxWebSocketFrameSize(1024 * 1024)
-                .setMaxWebSocketMessageSize(16 * 1024 * 1024);
+        var serverOptions = mitmServerOptions().setHost(bindAddress).setPort(requestedMitmPort);
 
         synchronized (lifecycleLock) {
             // Under the lock, so a stop() that reads none of these has made start() return here.
