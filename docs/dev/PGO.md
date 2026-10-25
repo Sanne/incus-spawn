@@ -16,7 +16,8 @@ Where the implementation differs from the plan, this page says so beside the pla
 
 Still open:
 
-- The quality floors in `.github/scripts/check-pgo-quality.sh` are 10% applicability and 80% relevance, pending Sanne's choice of 14% and 95%, just below the lowest figures measured: 15.04% applicability (the macOS aarch64 CLI in dispatch run 40183611322; 15.05% in the table below) and 97.04% relevance (the macOS aarch64 proxy).
+- **Done:** the quality floors in `.github/scripts/check-pgo-quality.sh` are 12% applicability and 90% relevance.
+  The lowest figures measured are 15.04% and 97.23% (macOS aarch64, release v0.5.0-dev.1), so a genuine failure, a profile that did not apply or fit, still fails, while ordinary drift between releases does not fail a tag.
 - Host routes and the MCP bridge have no load, so they compile as cold code.
   **Done (#1651):** the npm path and the WebSocket relay now have loads (`--load=npm`, `--load=websocket`) and are in the release profile, collected at a lighter weight so they do not outweigh the rest.
   Throughput on both is unchanged on the measuring host, since TLS and the network bound them, for about 1.5 MB more proxy; see the performance notes, "The npm and WebSocket paths".
@@ -186,7 +187,7 @@ Each `build` job then downloads the artifact and builds both binaries once, with
 - Collect on Linux x86_64 and apply to all four platforms.
   Profiles key on methods, so OS-specific code falls back to inferred profiles.
   Print applicability per platform in the build log and fail under a floor.
-  **Implemented:** `.github/scripts/check-pgo-quality.sh` fails a build unless both binaries print their quality line at or above 10% applicability and 80% relevance; the floors are provisional, pending the choice under "Status".
+  **Implemented:** `.github/scripts/check-pgo-quality.sh` fails a build unless both binaries print their quality line at or above 12% applicability and 90% relevance.
   Each build also refuses profiles collected from another commit (the artifact's `commit` file).
 - The Intel macOS build runs GraalVM 25.0, so its profile version may mismatch.
   Use `PGOIgnoreVersionCheck` there or skip PGO on that legacy platform.

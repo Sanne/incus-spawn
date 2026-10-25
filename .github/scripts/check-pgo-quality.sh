@@ -13,8 +13,8 @@ set -euo pipefail
 
 LOG=$1
 EXPECTED=${2:-2}
-MIN_APPLICABILITY=${PGO_MIN_APPLICABILITY:-10}
-MIN_RELEVANCE=${PGO_MIN_RELEVANCE:-80}
+MIN_APPLICABILITY=${PGO_MIN_APPLICABILITY:-12}
+MIN_RELEVANCE=${PGO_MIN_RELEVANCE:-90}
 
 lines=$(grep -E 'Info: \[PGO\]: Profile applicability is [0-9.]+%\. Profile relevance is [0-9.]+%\.' "$LOG" || true)
 count=$(printf '%s' "$lines" | grep -c . || true)
