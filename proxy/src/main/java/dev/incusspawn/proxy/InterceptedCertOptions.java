@@ -24,8 +24,9 @@ import java.util.function.Function;
  * <p>
  * So the certificate is picked by {@link #certNameFor}: the domain itself for an exact
  * match, otherwise a wildcard for the name's parent, which is minted on first use through
- * {@link CertStore} (and so persisted like every other leaf). Vert.x runs the SNI mapping on
- * a worker thread, so minting there does not block the event loop.
+ * {@link CertStore} (and so persisted like every other leaf). The MITM server runs its SSL
+ * engine on worker threads ({@link MitmProxy#mitmServerOptions}), which is where Vert.x 5 runs
+ * the SNI mapping, so minting there does not block the event loop.
  * <p>
  * Everything else -- a name outside every intercepted domain, which DNS never sends here,
  * or a client that sends no SNI at all -- gets the default key manager, which holds
