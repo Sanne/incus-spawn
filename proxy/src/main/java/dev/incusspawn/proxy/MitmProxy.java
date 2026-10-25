@@ -19,6 +19,7 @@ import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.core.http.RequestOptions;
 import io.vertx.core.http.ServerWebSocket;
+import io.vertx.core.http.ServerWebSocketHandshake;
 import io.vertx.core.http.WebSocket;
 import io.vertx.core.http.WebSocketConnectOptions;
 
@@ -833,11 +834,12 @@ public class MitmProxy {
             var keyCertOptions = buildKeyCertOptions();
             mitmCertOptions = keyCertOptions;
             if (mitmServer != null) {
-                // From the options the server listens with, not a bare SSLOptions: the update
-                // replaces the server's whole SSL configuration (protocols, cipher suites and
-                // ALPN), so a fresh object would quietly reset any of those the server sets.
-                // The engine options are not among it: they live on TCPSSLOptions, so the
-                // update leaves them as start() set them.
+                // From the options the server listens with, not a bare ServerSSLOptions: the
+                // update takes client auth, protocols and cipher suites (SNI, ALPN and the
+                // handshake timeout stay as at listen), so a fresh object would quietly reset
+                // any of those the server sets. Vert.x only rebuilds when the key/cert options
+                // differ by equals(), which a fresh InterceptedCertOptions always does. The
+                // engine options live on TCPSSLOptions, so the update leaves them as start() set them.
                 var sslOptions = mitmServerOptions().setKeyCertOptions(keyCertOptions).getSslOptions();
                 mitmServer.updateSSLOptions(sslOptions)
                         .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
@@ -892,7 +894,7 @@ public class MitmProxy {
      * apart.
      * <p>
      * The SSL engine runs its delegated tasks on worker threads, because the SNI lookup can mint
-     * a leaf (an RSA key generation and a file write). Vert.x 4 runs that lookup on a worker
+     * a leaf (an RSA key generation and a file write). Vert.x 4 ran that lookup on a worker
      * regardless; Vert.x 5 runs it wherever the engine's delegated tasks run, which is the event
      * loop unless {@code useWorkerThread} is set. {@code MitmTlsTest} pins the flag, since on
      * Vert.x 4 the lookup's own thread does not depend on it.
@@ -1086,7 +1088,7 @@ public class MitmProxy {
             ProxyLog.trace("MITM server error: " + err.getMessage(), err);
         });
         mitmServer.requestHandler(this::routeRequest);
-        mitmServer.webSocketHandler(this::routeWebSocket);
+        mitmServer.webSocketHandshakeHandler(this::routeWebSocket);
         return listenOrClose(mitmServer, mitmServer.listen());
     }
 
@@ -1519,7 +1521,7 @@ public class MitmProxy {
         return hostAddressOf(req.remoteAddress());
     }
 
-    private static String sourceAddressOf(ServerWebSocket ws) {
+    private static String sourceAddressOf(ServerWebSocketHandshake ws) {
         return hostAddressOf(ws.remoteAddress());
     }
 
@@ -1553,62 +1555,109 @@ public class MitmProxy {
 
     // --- WebSocket passthrough ---
 
-    private void routeWebSocket(ServerWebSocket clientWs) {
-        var host = clientWs.headers().get("Host");
-        var colon = host == null ? -1 : host.indexOf(':');
-        var domain = colon > 0 ? host.substring(0, colon) : host;
-        var address = sourceAddressOf(clientWs);
-        var caller = callerAt(address);
-        var authorizes = domain != null && !ProxyConfig.MCP_DOMAIN.equals(domain)
-                && !HostRouteRelay.claims(configState.hostRoutes(), clientWs);
-        var byProofAlone = authorizes && caller == null
-                && proofIdentifiesCaller(clientWs.remoteAddress(), clientWs.localAddress());
-        // A caller only its proof can name is counted once authorize has checked it
-        var flow = byProofAlone ? apiActivity.proofFlow(trafficDomain(domain)) : trafficFlow(caller, domain);
-        clientWs.pause();
-        var status = io.vertx.core.Promise.<Integer>promise();
-        var context = new java.util.concurrent.atomic.AtomicReference<RequestContext>();
+    /**
+     * Decides the handshake once the caller's account is resolved, and dials upstream only once
+     * Netty has accepted it. Every path must {@code accept()} or {@code reject()}: Vert.x 5 leaves
+     * an undecided handshake (one whose handler threw, say) hanging until the MITM server's idle
+     * timeout, where Vert.x 4 completed it when the handler returned.
+     */
+    private void routeWebSocket(ServerWebSocketHandshake handshake) {
+        var status = Promise.<Integer>promise();
+        var flowRef = new AtomicReference<ApiActivity.Flow>();
+        var context = new AtomicReference<RequestContext>();
         // Who authorize found: on macOS the proof's instance, which the address does not name
-        var who = new java.util.concurrent.atomic.AtomicReference<InstanceRegistry.Caller>();
-        // Defer Netty's handshake while a stale registry is refreshed. Dial only after it validates.
-        clientWs.setHandshake(status.future()).onComplete(handshake -> {
-            if (handshake.failed() || handshake.result() != 101) {
-                flow.end();
+        var who = new AtomicReference<InstanceRegistry.Caller>();
+        var address = sourceAddressOf(handshake);
+        var domainRef = new AtomicReference<String>();
+        status.future().onComplete(decided -> {
+            var flow = flowRef.get();
+            int code = decided.succeeded() ? decided.result() : 502;
+            if (code != 101) {
+                handshake.reject(code);
+                if (flow != null) flow.end();
                 return;
             }
-            clientWs.closeHandler(v -> flow.end());
-            try {
-                handleWebSocketUpgrade(clientWs, context.get(), flow);
-            } catch (RuntimeException e) {
-                ProxyLog.error("WebSocket relay setup failed for " + domain + " for " + describe(who.get(), address) + refusal(e));
-                if (!clientWs.isClosed()) clientWs.close((short) 1011, "Proxy error");
-                flow.end();
-            }
-        });
-        if (domain == null) {
-            status.complete(400);
-        } else if (!authorizes) {
-            status.complete(404);
-        } else {
-            var state = configState;
-            authorize(state, domain, address, byProofAlone, clientWs.headers()).onComplete(result -> {
+            // accept() fails when Netty refuses the handshake (Vert.x has then answered 400) or the
+            // 101 cannot be written because the client left. Nothing of ours is allocated yet.
+            handshake.accept().onComplete(accepted -> {
+                if (accepted.failed()) {
+                    if (ProxyLog.isDebugEnabled()) {
+                        ProxyLog.debug("WebSocket handshake to " + domainRef.get() + " failed for "
+                                + describe(who.get(), address) + ": " + accepted.cause());
+                    }
+                    flow.end();
+                    return;
+                }
+                var clientWs = accepted.result();
+                // First thing: an accepted ServerWebSocket starts flowing, and a frame delivered
+                // before the relay is wired would be dropped. Vert.x 4 handed us the socket before
+                // writing the 101, so pausing anywhere in the handler was early enough; Vert.x 5
+                // hands it over only once accept() completes. When the 101 is written at once, as
+                // it is in practice, that is the same event-loop turn as the accept, so no read
+                // comes before this. Should the write complete later, Vert.x completes the future
+                // in a queued task and a read could slip in first; there is no API to pause before
+                // accept(), so that window is Vert.x's to close. A frame pipelined with the upgrade
+                // request itself is lost inside Vert.x 5 before we ever see the socket (RFC 6455
+                // 4.1 forbids sending one).
+                clientWs.pause();
+                clientWs.closeHandler(v -> flow.end());
                 try {
-                    var proven = result.succeeded() ? result.result() : null;
-                    who.set(proven == null ? caller : proven.caller());
-                    begin(flow, who.get());
-                    context.set(proven == null ? passthroughContext(domain, caller, flow)
-                            : contextFor(state, domain, proven.caller(), proven.namespaces(), flow));
-                    status.complete(101);
-                } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
-                         | dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
-                    ProxyLog.warn("Refusing WebSocket to " + domain + " for " + describe(who.get(), address) + refusal(e));
-                    status.complete(502);
+                    handleWebSocketUpgrade(clientWs, context.get(), flow);
                 } catch (RuntimeException e) {
-                    ProxyLog.error("Refusing WebSocket to " + domain + " for " + describe(who.get(), address) + refusal(e));
-                    status.tryComplete(502);
+                    ProxyLog.error("WebSocket relay setup failed for " + domainRef.get() + " for "
+                            + describe(who.get(), address) + refusal(e));
+                    if (!clientWs.isClosed()) clientWs.close((short) 1011, "Proxy error");
+                    flow.end();
                 }
             });
+        });
+        int refused = 0;
+        try {
+            var host = handshake.headers().get("Host");
+            var colon = host == null ? -1 : host.indexOf(':');
+            var domain = colon > 0 ? host.substring(0, colon) : host;
+            domainRef.set(domain);
+            var caller = callerAt(address);
+            var authorizes = domain != null && !ProxyConfig.MCP_DOMAIN.equals(domain)
+                    && !HostRouteRelay.claims(configState.hostRoutes(), handshake);
+            var byProofAlone = authorizes && caller == null
+                    && proofIdentifiesCaller(handshake.remoteAddress(), handshake.localAddress());
+            // A caller only its proof can name is counted once authorize has checked it
+            var flow = byProofAlone ? apiActivity.proofFlow(trafficDomain(domain)) : trafficFlow(caller, domain);
+            flowRef.set(flow);
+            if (domain == null) {
+                refused = 400;
+            } else if (!authorizes) {
+                refused = 404;
+            } else {
+                var state = configState;
+                authorize(state, domain, address, byProofAlone, handshake.headers()).onComplete(result -> {
+                    int decided;
+                    try {
+                        var proven = result.succeeded() ? result.result() : null;
+                        who.set(proven == null ? caller : proven.caller());
+                        begin(flow, who.get());
+                        context.set(proven == null ? passthroughContext(domain, caller, flow)
+                                : contextFor(state, domain, proven.caller(), proven.namespaces(), flow));
+                        decided = 101;
+                    } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException
+                             | dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
+                        ProxyLog.warn("Refusing WebSocket to " + domain + " for " + describe(who.get(), address) + refusal(e));
+                        decided = 502;
+                    } catch (RuntimeException e) {
+                        ProxyLog.error("Refusing WebSocket to " + domain + " for " + describe(who.get(), address) + refusal(e));
+                        decided = 502;
+                    }
+                    // Outside the try: completing runs accept() or reject() here, and what they
+                    // throw is no refusal of ours
+                    status.tryComplete(decided);
+                });
+            }
+        } catch (RuntimeException e) {
+            ProxyLog.error("Refusing WebSocket to " + domainRef.get() + " for " + describeCaller(address) + refusal(e));
+            refused = 502;
         }
+        if (refused != 0) status.tryComplete(refused);
     }
 
     private RequestContext passthroughContext(String domain, InstanceRegistry.Caller caller, ApiActivity.Flow flow) {
@@ -1651,9 +1700,14 @@ public class MitmProxy {
         injectWebSocketAuth(wsOptions, ctx);
         presentInheritedProofs(wsOptions.getHeaders(), ctx);
 
+        // The client socket stays paused (see routeWebSocket) until the upstream
+        // connection is ready, so frames sent meanwhile are buffered, not dropped.
+        //
         // Let Vert.x resolve DNS via its built-in resolver (configured on the
-        // Vertx instance).  Unlike HTTP requests, WebSocket ignores setServer(),
-        // so manual resolveHost() + setHost(ip) would break TLS SNI (the
+        // Vertx instance).  Unlike HTTP requests, WebSocketClient dials host:port and
+        // reads setServer() only as a fallback when no host is set (Vert.x 5
+        // WebSocketClientImpl.getHost/getPort), so it cannot pin the address the way
+        // the HTTP path does; manual resolveHost() + setHost(ip) would break TLS SNI (the
         // benchmark override above is the exception: its stub expects that).
         // Uses wsUpstreamClient which has no read-idle timeout (WebSocket
         // sessions can be idle between prompts for minutes).
