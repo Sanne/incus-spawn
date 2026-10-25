@@ -1690,9 +1690,14 @@ public class MitmProxy {
         injectWebSocketAuth(wsOptions, ctx);
         presentInheritedProofs(wsOptions.getHeaders(), ctx);
 
+        // The client socket stays paused (see routeWebSocket) until the upstream
+        // connection is ready, so frames sent meanwhile are buffered, not dropped.
+        //
         // Let Vert.x resolve DNS via its built-in resolver (configured on the
-        // Vertx instance).  Unlike HTTP requests, WebSocket ignores setServer(),
-        // so manual resolveHost() + setHost(ip) would break TLS SNI.
+        // Vertx instance).  Unlike HTTP requests, WebSocketClient dials host:port and
+        // reads setServer() only as a fallback when no host is set (Vert.x 5
+        // WebSocketClientImpl.getHost/getPort), so it cannot pin the address the way
+        // the HTTP path does; manual resolveHost() + setHost(ip) would break TLS SNI.
         // Uses wsUpstreamClient which has no read-idle timeout (WebSocket
         // sessions can be idle between prompts for minutes).
         connectUpstreamWebSocket(wsOptions).onSuccess(upstreamWs -> {
