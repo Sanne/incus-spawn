@@ -306,8 +306,15 @@ Key design:
   `ProxyCredentials` only has Anthropic-specific fields (`anthropicApiKey`, `oauthToken`, Vertex settings) -- `ghToken`/`bobApiKey`/`openaiApiKey` have been removed
 - WebSocket passthrough: handles Upgrade requests by establishing an upstream WebSocket connection (with credential injection via both Anthropic auth and tool proxy lookup), then relaying frames bidirectionally with keepalive pings and close-code propagation.
   A host that `ISX_BENCH_UPSTREAM` overrides is dialled at the override's address, with the real host in the `Host` header (Vert.x ignores `setServer` for a WebSocket), so `bench/run.sh --load=websocket` reaches its stub.
-  `routeWebSocket` completes the client's handshake (`completeHandshake`, the deprecated `ServerWebSocket.accept()` on purpose) before injecting anything or dialling, because the handler runs before Netty validates the handshake (#972); keep any new rejection (e.g. `reject(502)`) before it.
+  `routeWebSocket` is the `webSocketHandshakeHandler`: it decides the `ServerWebSocketHandshake` once the caller's account is resolved, and dials only once `accept()` has succeeded, i.e. Netty validated the handshake (#972); keep any new rejection (e.g. `reject(502)`) before the `accept()`.
   Used by Codex CLI for `api.openai.com`
+- **Vert.x 5 rules that the compiler does not enforce** (full record in `docs/dev/QUARKUS-4.md`):
+  - Every path through `routeWebSocket` must `accept()` or `reject()` the `ServerWebSocketHandshake`: Vert.x 5 leaves an undecided one, even one whose handler threw, hanging until the MITM idle timeout.
+  - `pause()` must stay the first call on the accepted socket.
+    The disabled test in `WebSocketProxyTest` documents a frame pipelined with the upgrade request, which Vert.x 5 drops before we see the socket.
+  - Cert reloads build their `ServerSSLOptions` from `mitmServerOptions()`, never a bare object, because the update replaces client auth, protocols and ciphers.
+  - `HttpClientRequest.authority()` is the request's own `Host`, not the `setServer()` target, which is what the redirect and resume paths want.
+    That holds because every upstream request sets a host: without one, Vert.x falls back to the server address.
 - Caches OCI blobs by SHA256, Maven/Gradle artifacts by repository path (confirmed with upstream per `ArtifactCacheTiers`, see below), and npm tarballs from `registry.npmjs.org` with ETag-based packument verification.
   The caching lives in `ArtifactCacheHandler`, built only from `Upstream` (the upstream clients, async DNS, backoff, relay and response helpers it shares with `MitmProxy`) and given no `RequestContext`, so by its types it cannot inject a credential; keep it that way.
   npm's per-version digest lookups go through `probeClient` (`fetchNpmVersion` → `fetchSmallBody`) like Maven/Gradle checksums.
