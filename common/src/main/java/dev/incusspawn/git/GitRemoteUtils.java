@@ -61,6 +61,7 @@ public final class GitRemoteUtils {
         var instance = rest.substring(0, slashIdx);
         var path = rest.substring(slashIdx);
         if (instance.isEmpty() || path.isEmpty()) return null;
+        if (path.startsWith("//")) path = path.substring(1);
         path = expandContainerTilde(path);
         return new IsxUrl(instance, path);
     }

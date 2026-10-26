@@ -88,7 +88,7 @@ class AutoRemoteServiceTest {
         assertThat(remotes)
                 .as("Remote 'test-instance' should have been added")
                 .contains("test-instance")
-                .contains("isx://test-instance/home/agentuser/incus-spawn");
+                .contains("isx://test-instance//home/agentuser/incus-spawn");
     }
 
     @Test
@@ -136,7 +136,7 @@ class AutoRemoteServiceTest {
             assertThat(remotes)
                     .as("Remote 'my-fix' should have been added in " + dir)
                     .contains("my-fix")
-                    .contains("isx://my-fix/home/agentuser/cxf");
+                    .contains("isx://my-fix//home/agentuser/cxf");
         }
     }
 
@@ -176,7 +176,7 @@ class AutoRemoteServiceTest {
         var remotes = runGit(repoDir, "remote", "-v");
         assertThat(remotes)
                 .contains("my-branch")
-                .contains("isx://my-branch/home/agentuser/camel-quarkus");
+                .contains("isx://my-branch//home/agentuser/camel-quarkus");
     }
 
     @Test
@@ -200,7 +200,7 @@ class AutoRemoteServiceTest {
         assertThat(stderr.toString(StandardCharsets.UTF_8)).isEmpty();
         assertThat(output).isEmpty();
         assertThat(warnings).containsExactly("remote 'work' already exists in " + repoDir
-                + "; to add it manually: git -C " + repoDir + " remote add <name> isx://work/home/agentuser/app");
+                + "; to add it manually: git -C " + repoDir + " remote add <name> isx://work//home/agentuser/app");
     }
 
     @Test
@@ -214,7 +214,7 @@ class AutoRemoteServiceTest {
         AutoRemoteService.addRemotes(incus, "work", message -> {}, warnings::add);
 
         assertThat(warnings).hasSize(1);
-        assertThat(warnings.getFirst()).endsWith("isx://work/home/agentuser/ ]0;pwned  [2Japp");
+        assertThat(warnings.getFirst()).endsWith("isx://work//home/agentuser/ ]0;pwned  [2Japp");
     }
 
     /** A host checkout of a template's repository that already has a remote named {@code work}. */
@@ -239,6 +239,23 @@ class AutoRemoteServiceTest {
         return repoDir;
     }
 
+    @Test
+    void removeRemotesFindsOldStyleSingleSlashAbsoluteUrls() throws Exception {
+        var host = tempDir.resolve("repo");
+        Files.createDirectories(host);
+        runGit(host, "init");
+        runGit(host, "remote", "add", "origin", "https://github.com/owner/repo.git");
+        // Old-style single-slash absolute URL
+        runGit(host, "remote", "add", "old-inst", "isx://old-inst/home/agentuser/repo");
+        var configDir = tempDir.resolve(".config/incus-spawn");
+        configDir.toFile().mkdirs();
+        Files.writeString(configDir.resolve("config.yaml"), "host-path: \"" + tempDir + "\"");
+
+        AutoRemoteService.removeRemotes("old-inst", message -> {});
+
+        assertThat(runGit(host, "remote").strip().lines().toList()).containsExactly("origin");
+    }
+
     private static io.hyperfoil.tools.jjq.value.JqValue instance(String template, String sources) {
         return io.hyperfoil.tools.jjq.value.JqValues.fromJavaObject(
                 java.util.Map.of("config", java.util.Map.of(Metadata.PARENT, template,
@@ -256,10 +273,10 @@ class AutoRemoteServiceTest {
         var sources = io.hyperfoil.tools.jjq.value.JqValues.serialize(io.hyperfoil.tools.jjq.value.JqValues.fromJavaObject(java.util.Map.of("/home/agentuser/private", host.toString())));
         when(incus.instanceMetadataOrThrow("work")).thenReturn(instance("missing-template", sources));
         AutoRemoteService.addRemotes(incus, "work", message -> {}, warning -> {});
-        assertThat(runGit(host, "remote", "get-url", "work")).contains("isx://work/home/agentuser/private");
+        assertThat(runGit(host, "remote", "get-url", "work")).contains("isx://work//home/agentuser/private");
         // Cleanup follows the URL even if the user renamed the remote, and preserves other instances.
         runGit(host, "remote", "rename", "work", "renamed");
-        runGit(host, "remote", "add", "other", "isx://other/home/agentuser/private");
+        runGit(host, "remote", "add", "other", "isx://other//home/agentuser/private");
         // Cleanup receives only the name, after Incus has already destroyed the instance.
         AutoRemoteService.removeRemotes("work", message -> {});
         assertThat(runGit(host, "remote").strip().lines().toList()).containsExactly("origin", "other");

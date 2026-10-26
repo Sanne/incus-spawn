@@ -19,7 +19,15 @@ class GitRemoteUtilsTest {
     // ── parseIsxUrl ────────────────────────────────────────────────────────
 
     @Test
-    void parseValidUrl() {
+    void parseAbsoluteUrl() {
+        var result = GitRemoteUtils.parseIsxUrl("isx://my-instance//home/user/project");
+        assertNotNull(result);
+        assertEquals("my-instance", result.instance());
+        assertEquals("/home/user/project", result.path());
+    }
+
+    @Test
+    void parseOldStyleAbsoluteUrl() {
         var result = GitRemoteUtils.parseIsxUrl("isx://my-instance/home/user/project");
         assertNotNull(result);
         assertEquals("my-instance", result.instance());

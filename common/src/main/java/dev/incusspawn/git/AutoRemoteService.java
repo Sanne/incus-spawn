@@ -64,9 +64,7 @@ public final class AutoRemoteService {
     private static void addRemoteInHostRepo(Path hostPath, String instanceName,
                                              String containerPath, Consumer<String> output,
                                              Consumer<String> warn, GitRemoteUtils.ConfigCache cache) {
-        var isxUrl = containerPath.startsWith("/")
-                ? "isx://" + instanceName + containerPath
-                : "isx://" + instanceName + "/" + containerPath;
+        var isxUrl = "isx://" + instanceName + "/" + containerPath;
 
         var hasRemote = cache.remotes(hostPath).stream()
                 .anyMatch(r -> r.name().equals(instanceName));

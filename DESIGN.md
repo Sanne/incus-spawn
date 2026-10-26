@@ -3149,7 +3149,9 @@ The hints quote each repository's path and URL, and the requested path, through 
 
 **URL scheme**
 
-`isx://<instance-name>/<path-to-repo>` — for example, `isx://fix-auth/home/agentuser/quarkus` or `isx://fix-auth/~/quarkus` (tilde expands to `/home/agentuser`).
+`isx://<instance-name>/<path-to-repo>` where a double slash marks an absolute path and tilde expands to `/home/agentuser`.
+For example, `isx://fix-auth//home/agentuser/quarkus` or `isx://fix-auth/~/quarkus`.
+Old-style URLs with a single slash before an absolute path (`isx://fix-auth/home/agentuser/quarkus`) are still accepted by the parser and matched by cleanup.
 
 **Auto-remote management**
 
