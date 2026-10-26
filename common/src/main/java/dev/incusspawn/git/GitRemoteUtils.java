@@ -61,6 +61,10 @@ public final class GitRemoteUtils {
         var instance = rest.substring(0, slashIdx);
         var path = rest.substring(slashIdx);
         if (instance.isEmpty() || path.isEmpty()) return null;
+        // isx:// URLs encode absolute paths with a double slash (isx://inst//abs/path),
+        // where the first slash separates the instance name and the second is the path's own
+        // leading slash.  Old-style URLs used a single slash even for absolute paths
+        // (isx://inst/abs/path); both forms converge here to a normal "/abs/path".
         if (path.startsWith("//")) path = path.substring(1);
         path = expandContainerTilde(path);
         return new IsxUrl(instance, path);

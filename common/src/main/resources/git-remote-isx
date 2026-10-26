@@ -6,6 +6,10 @@ url="$2"
 instance="${url#isx://}"
 path="/${instance#*/}"
 instance="${instance%%/*}"
+# An absolute in-instance path produces a double slash in the URL
+# (isx://inst//abs/path — separator slash + the path's own leading slash).
+# Strip the encoding back to a single leading slash for the exec.
+# Old-style single-slash URLs already have a plain /abs/path here.
 [[ "$path" == //* ]] && path="${path:1}"
 while IFS= read -r line; do
     case "$line" in
