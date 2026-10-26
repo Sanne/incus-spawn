@@ -5,7 +5,8 @@
 # of them in every file and nothing else. Also checks that no path but the vendored ruleset file is
 # allowlisted, that nothing suppresses by stopword, commit, inline allow comment or ignore file,
 # retargets the regexes, or disables or replaces a base rule, and holds every allowlist regex to
-# the ^...$ anchors .claude/rules/ci.md requires, with no unbounded repetition, and that
+# the ^...$ anchors .claude/rules/ci.md requires, with no unbounded repetition, that the root
+# config's global allowlist holds every regex the leaktk one does, and that
 # gitleaks.yml sets GITLEAKS_VERSION once, at the top, to the gitleaks this runs with.
 # Needs bash, git, python3 (3.11+, for tomllib) and gitleaks, given as $1 or found on PATH.
 set -euo pipefail
@@ -164,6 +165,21 @@ for regex in (r for t in tables for r in t.get("regexes", [])):
 sys.exit(0 if ok else 1)
 EOF
 done
+
+# rh-gitleaks runs leaktk-style rules but reads only the default-named .gitleaks.toml, so the root
+# config's global allowlist holds every value the leaktk one does, beside the stock rules' own.
+python3 -I - "${CONFIGS[@]}" <<'EOF' || fail=1
+import sys, tomllib
+def regexes(path):  # viper ignores the case of keys
+    with open(path, "rb") as f:
+        table = {k.lower(): v for k, v in tomllib.load(f).items()}.get("allowlist", {})
+    return {k.lower(): v for k, v in table.items()}.get("regexes", [])
+root, leaktk = sys.argv[1:3]
+missing = [r for r in regexes(leaktk) if r not in regexes(root)]
+for regex in missing:
+    print(f"FAIL: {leaktk} allowlists {regex}, which {root} does not: rh-gitleaks reads only {root}")
+sys.exit(1 if missing else 0)
+EOF
 
 # Text files only (gitleaks skips binaries, so a key appended to one would never be reported), and
 # no symlinks, which an append would follow out of the copy.

@@ -223,12 +223,12 @@ This shipped once and failed on the very first PR.
 Each config carries its own `[allowlist]`, not shared via a common file.
 The root `.gitleaks.toml` also repeats the leaktk config's fixture values, which the stock rules never flag.
 The internal `rh-gitleaks` scanner runs a leaktk-style ruleset but reads only that default-named config, so without them it reported the config-compat fixtures' `sk-ant-oat01-fixture` as a Generic Secret.
-A fixture value added to `.gitleaks-leaktk.toml` goes in both.
+A fixture value added to `.gitleaks-leaktk.toml` goes in both, and `test-gitleaks-allowlist.sh` fails when the root config lacks one.
 Test fixtures are allowlisted by **value**, never by path (#1484): a path entry hides every secret in that file from every rule, a real key pasted into a fixture included.
 The only path entry is `^\.gitleaks/leaktk-gitleaks-[0-9.]+\.toml$` in both, the vendored ruleset file alone, so a new file under `.gitleaks/` is still scanned: the vendored leaktk ruleset's own rule definitions and example regex fragments look like credentials to a scanner.
-The value lists differ on purpose: each lists the fixture values that config's rules actually flag (leaktk's Generic Secret rule captures the short `sk-ant-api03-xyz`-style keys of the credential tests and the `config-compat/` YAMLs; the stock rules flag a fake PEM block and a short `ghp_` token in the redaction tests).
+The root config holds the union of both value lists, and the leaktk config holds only the fixture values its own rules flag (leaktk's Generic Secret rule captures the short `sk-ant-api03-xyz`-style keys of the credential tests and the `config-compat/` YAMLs; the stock rules flag a fake PEM block and a short `ghp_` token in the redaction tests).
 Entries are exact values, or a shape no service issues (the `isx_` proof tokens); never a prefix net such as `sk-ant-api03-` plus a few characters, which would hide a short real secret in any file.
-A new test fixture with a fake credential needs its exact captured value (the report's `Secret`) added to whichever `.toml` file's scan flags it (run both scans locally; do not add a value a scan does not need), or it (rightly) fails the PR check the first time.
+A new test fixture with a fake credential needs its exact captured value (the report's `Secret`) added to the root config, and to the leaktk config too when its scan flags it (run both scans locally; the leaktk config takes no value its scan does not need), or it (rightly) fails the PR check the first time.
 `.github/scripts/test-gitleaks-allowlist.sh` (job **`allowlist-test`**) holds both configs to this, on a copy of the tracked tree.
 It plants one real-shaped key per credential shape the allowlists name exact values under: `sk-ant-api03-` and `sk-ant-oat01-` keys, 36-character `ghp_` and `gho_` tokens, an RSA private key block, and a Basic auth header carrying a `ghp_` token, each at real length with a mixed-case body.
 The header is required of leaktk only: its Authorization Header rule is what captures the value, and gitleaks' defaults have no such rule.
