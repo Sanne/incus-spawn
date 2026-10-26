@@ -74,6 +74,31 @@ The final `isx init` rewrites the disk-accounting sudoers rule, which names the 
 It takes the first btrfs, zfs or lvm pool Incus lists, so with another CoW pool still present, check that `/etc/sudoers.d/incus-spawn-btrfs` names `storage-pools/cow2`.
 If SELinux denies Incus the new path, `sudo restorecon -R /var/lib/incus/storage-pools`.
 Do not defragment `cow.img` in place instead: it would write the whole file once and fragment again immediately.
+A member of `incus-admin` needs no `sudo` for the `incus` commands above.
+
+Two leftovers can stop the move loop or the pool deletion; both were met on a host migrated on 2026-10-26.
+
+An instance last started before a reboot or logout can refuse to move with `Missing source path "/run/user/<uid>/zmx/containers/<name>" for disk "zmx-sockets"`.
+Its `zmx-sockets` device points at a directory on a tmpfs that is gone.
+isx recreates it before a start (`ZmxSocketForward.ensureHostDirForStart`), but a move never reaches that repair.
+Recreate it by hand and move again:
+
+```shell
+mkdir -p /run/user/$(id -u)/zmx/containers/<name> && incus move <name> --storage cow2
+```
+
+A failed `isx build` can leave a container volume with no instance behind it, such as `tpl-quarkus-failed-build` beside an instance record in state ERROR.
+`isx doctor` reports the record as an instance without storage, and `incus delete` removes it.
+The volume stays in the pool's `used_by` and blocks `incus storage delete`.
+The storage API refuses to delete a container volume (`Storage volumes of type "container" cannot be deleted with the storage API`), so the row goes out of the database directly, after checking that no instance of that name exists:
+
+```shell
+incus admin sql global "SELECT id, name FROM instances WHERE name = '<volume>'"          # must be empty
+incus admin sql global "SELECT id FROM storage_volumes WHERE name = '<volume>'"
+incus admin sql global "DELETE FROM storage_volumes WHERE id = <id> AND name = '<volume>'"
+```
+
+Its data lives in the old pool and goes with it.
 
 ### Pool mount options where a loop stays
 
