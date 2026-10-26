@@ -221,6 +221,9 @@ They must be two **jobs**, not two steps in one job.
 This shipped once and failed on the very first PR.
 
 Each config carries its own `[allowlist]`, not shared via a common file.
+The root `.gitleaks.toml` also repeats the leaktk config's fixture values, which the stock rules never flag.
+The internal `rh-gitleaks` scanner runs a leaktk-style ruleset but reads only that default-named config, so without them it reported the config-compat fixtures' `sk-ant-oat01-fixture` as a Generic Secret.
+A fixture value added to `.gitleaks-leaktk.toml` goes in both.
 Test fixtures are allowlisted by **value**, never by path (#1484): a path entry hides every secret in that file from every rule, a real key pasted into a fixture included.
 The only path entry is `^\.gitleaks/leaktk-gitleaks-[0-9.]+\.toml$` in both, the vendored ruleset file alone, so a new file under `.gitleaks/` is still scanned: the vendored leaktk ruleset's own rule definitions and example regex fragments look like credentials to a scanner.
 The value lists differ on purpose: each lists the fixture values that config's rules actually flag (leaktk's Generic Secret rule captures the short `sk-ant-api03-xyz`-style keys of the credential tests and the `config-compat/` YAMLs; the stock rules flag a fake PEM block and a short `ghp_` token in the redaction tests).

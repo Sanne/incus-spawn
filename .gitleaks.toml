@@ -43,6 +43,12 @@ keywords = ["sk-ant-oat01-"]
   regexes = [
     # Exact synthetic accounts in the #1107 proxy/passthrough regression tests.
     '''^(?:Bearer )?(?:tpt_placeholder|inner-account-B|sk-ant-oat01-outer)$''',
+    # Mirrored from .gitleaks-leaktk.toml, which the stock rules never need: rh-gitleaks runs a
+    # leaktk-style ruleset but reads only this default-named config, so its Generic Secret rule
+    # flagged these fixture values despite the leaktk scan allowlisting them.
+    '''^sk-ant-api03-(?:fixture|flat|found|good|old|personal|real|stale|work|xyz)$''',
+    '''^sk-ant-oat01-(?:fixture|legacy|real)$''',
+    '''^eC1hY2Nlc3MtdG9rZW46Z2hwXw==$''',
     # Per-start proof tokens in the guest-script tests (#1108): a tool's placeholder prefix,
     # then isx_ and hex. Not a credential shape any service issues, and capped at 40 hex.
     '''^(?:gho_|sk-ant-|sk-|ya29\.)isx_[0-9a-f]{8,40}$''',
