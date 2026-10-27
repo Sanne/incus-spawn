@@ -387,6 +387,12 @@ public class CompletionCommand extends BaseCommand {
             }
 
             _isx_account() {
+              local state line; typeset -A opt_args
+              _arguments -C \\
+                '(-h --help)'{-h,--help}'[Show help]' \\
+                '1: :->subcmd' \\
+                '*:: :->args'
+
               local -a _account_subcmds
               _account_subcmds=(
                 'list:list configured accounts per namespace'
@@ -396,12 +402,16 @@ public class CompletionCommand extends BaseCommand {
                 'unset:make an instance follow the default account again'
                 'reset-proofs:revoke and replace shared credential proofs'
               )
-              case $words[1] in
-                show|reset-proofs) _isx_instances ;;
-                set) _arguments '1:instance:_isx_instances' '*:account:_isx_accounts' ;;
-                unset) _arguments '1:instance:_isx_instances' '*:namespace:_isx_account_namespaces' ;;
-                add) _arguments '1:namespace:_isx_account_namespaces' ;;
-                *) _describe -t subcmds 'account subcommand' _account_subcmds ;;
+
+              case $state in
+                subcmd) _describe -t subcmds 'account subcommand' _account_subcmds ;;
+                args)
+                  case $line[1] in
+                    show|reset-proofs) _isx_instances ;;
+                    set) _arguments '1:instance:_isx_instances' '*:account:_isx_accounts' ;;
+                    unset) _arguments '1:instance:_isx_instances' '*:namespace:_isx_account_namespaces' ;;
+                    add) _arguments '1:namespace:_isx_account_namespaces' ;;
+                  esac ;;
               esac
             }
 
@@ -466,9 +476,12 @@ public class CompletionCommand extends BaseCommand {
                   )
                   _describe -t commands 'isx command' cmds ;;
                 args)
+                  # `_arguments -C` already dropped the command from `words` and decremented
+                  # `CURRENT`, so a helper's `_arguments` sees its subcommand as the command
+                  # and completes positional arguments from `words[2]`. Shifting again here
+                  # left the empty word being completed as the command, so no helper offered
+                  # a positional value (`isx destroy <TAB>` listed nothing).
                   local cmd=$line[1]
-                  (( CURRENT-- ))
-                  shift words
                   case $cmd in
                     branch)     _isx_branch ;;
                     build)      _isx_build ;;

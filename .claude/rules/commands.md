@@ -23,6 +23,12 @@ Account values: `isx account list --completion` (names only, never credentials) 
 Names holding a control character are skipped.
 Keep it free of Incus and secrets: it runs on every TAB.
 
+The zsh script dispatches through `_arguments -C`, which already removes the command from `words` and decrements `CURRENT`.
+A helper therefore sees its subcommand as the command and completes positional values from `words[2]`.
+Never shift `words` or decrement `CURRENT` again in the dispatcher: that made the word being completed the command, so `isx destroy <TAB>` listed nothing.
+A helper with subcommands parses them with its own `_arguments -C` and `case $line[1]`, as `_isx_account` does, never from `$words[1]`.
+`ZshCompletionTest` types each line into a real interactive zsh through `zpty` and pins the buffer TAB leaves behind, so the whole dispatcher is exercised; `CompletionCommandTest` keeps a cheap structural guard for machines without zsh.
+
 `isx account add [<ns>|<tool>]` is `InitCommand.addCredential`: init's step for that one credential, or with no argument its Credential Setup menu, under the same `[n/N]` headers (#1469).
 The credential steps read `InitCommand.credentialPrompts()`, which tests override.
 Every message naming a missing credential's remedy takes it from `CredentialCheck.Missing.command()`, so it names `isx account add <ns>` only when a step owns that namespace.

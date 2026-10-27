@@ -41,6 +41,32 @@ class CompletionCommandTest {
     // --- zsh ---
 
     @Test
+    void zshLeavesTheWordsArgumentsAdjustedAlone() {
+        // `_arguments -C` already removes the command from `words` and decrements `CURRENT`.
+        // Shifting again left the empty word being completed as the command name, so no helper
+        // offered a positional value and `isx destroy <TAB>` listed nothing (see ZshCompletionTest).
+        String zsh = CompletionCommand.rawScript(CompletionCommand.Shell.zsh);
+        assertFalse(zsh.contains("shift words"), "the dispatcher must not shift the words _arguments adjusted");
+        assertFalse(zsh.contains("CURRENT--"), "the dispatcher must not decrement CURRENT again");
+        assertTrue(zsh.contains("local cmd=$line[1]"), "the subcommand still comes from $line[1]");
+    }
+
+    @Test
+    void zshAccountDispatchOwnsItsSubcommandParsing() {
+        // _isx_account used the shifted $words[1], so it needs its own _arguments -C like the
+        // other subcommand helpers now that the dispatcher leaves words alone.
+        String account = CompletionCommand.rawScript(CompletionCommand.Shell.zsh)
+                .lines()
+                .dropWhile(l -> !l.startsWith("_isx_account()"))
+                .takeWhile(l -> !l.equals("}"))
+                .reduce("", (a, b) -> a + "\n" + b);
+        assertTrue(account.contains("_arguments -C"), "account must parse its subcommand with _arguments -C");
+        assertTrue(account.contains("case $line[1] in"), "account must dispatch on $line[1]");
+        assertFalse(account.contains("case $words[1] in"), "account must not dispatch on the shifted words");
+        assertTrue(account.contains("set) _arguments '1:instance:_isx_instances' '*:account:_isx_accounts'"));
+    }
+
+    @Test
     void zshDropsVmCommandAndDispatch() {
         String linux = linux(CompletionCommand.Shell.zsh);
         assertFalse(linux.contains("'vm:manage the incus-spawn VM appliance'"));
