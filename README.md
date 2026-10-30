@@ -338,6 +338,7 @@ An agent on your host, Claude Code say, can drive isx through `isx mcp`: branch 
 It is off by default, since it hands an agent that power; `isx init` offers to set it up.
 
 [Delegating from an agent on your host](docs/MCP.md) says what such an agent can and cannot do, and how to run the coordinating agent in an instance of its own, branched with `isx branch --mcp-client`.
+[Driving `isx mcp` from a program](docs/MCP-PROTOCOL.md) is the reference for a controller of your own.
 
 ## Configuration
 

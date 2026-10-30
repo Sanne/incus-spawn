@@ -50,9 +50,13 @@ Not an em-dash, not an en-dash, not a spaced double hyphen.
 A full stop or a colon takes its place.
 A hyphen still joins words (copy-on-write), and a range is written "9 to 10".
 
-**Bold only for a defined term or a list item's lead-in.**
+**Styling is rare: bold only for a defined term, code font only for what the reader types or reads back.**
 Never bold or italic for emphasis inside a sentence.
 If a sentence needs emphasis, it needs rewriting.
+A list item's lead-in may be bold when the list defines terms; a list of plain statements needs none, the line break already sets each off.
+Code font marks a command, a flag, a key, a file name or a value the reader will see verbatim.
+A concept ("orphan", "session", "the proxy") is a word, never a code span, and a UI label ("tick MCP control") is plain text.
+A page where every line carries a code span or a bold run reads like a log, and the eye has nothing to rest on.
 
 **One word per concept.**
 - *template*: the image you prepare once (`isx build`).
@@ -102,6 +106,18 @@ Argument, reference and history go to a `docs/` page.
 **A `docs/` page** is a reference.
 Its reader arrived from a search with a question and wants the answer, not the story.
 An opener, sections with one-sentence openers, tables for the enumerable.
+
+**One page, one reader.**
+A person setting something up, a programmer writing against an interface, and a maintainer wanting to know why are three readers, and a page serves one of them.
+`docs/MCP.md` is for the person; `docs/MCP-PROTOCOL.md` is for the programmer; DESIGN.md is for the maintainer.
+A fact the page's reader never acts on does not belong on it: a header name, a file under `/run`, a lock, a helper's name, how a registration reads its secret.
+If a reader would never type it or read it back, it goes to the programmer's page or to DESIGN.md.
+
+**Re-read the page when a feature appends a section.**
+The shape tests pass sentence by sentence while a page drifts into a second register, which is how `docs/MCP.md` grew past 3,800 words with a Python snippet and protocol field tables.
+After adding a section, read the page's opener and ask whether its reader wanted the section.
+A page over about 2,000 words of prose has usually gained a second reader and wants splitting.
+A release note ("after upgrading, restart", "before downgrading") is never a user page's business; it goes to `docs/dev/`.
 
 **`docs/dev/`** is maintainer notes and is not published.
 DESIGN.md is the record of why, and the one place for issue numbers and internals.

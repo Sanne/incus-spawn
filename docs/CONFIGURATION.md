@@ -5,7 +5,7 @@ This page says where they live, how a credential gets several accounts that temp
 
 | File | What it holds |
 | --- | --- |
-| `~/.config/incus-spawn/config.yaml` | Auth credentials and global settings, including `host-routes:` and `drivers:` |
+| `~/.config/incus-spawn/config.yaml` | Auth credentials and global settings, including [`host-routes:`](INTEGRATIONS.md#a-controller-on-the-host) and `drivers:` |
 | `~/.config/incus-spawn/mcp.yaml` | What `isx mcp` lets agents do (see [Delegating from an agent](MCP.md#delegating-from-an-agent-on-your-host-mcp)) |
 | `~/.config/incus-spawn/ssh/` | The managed SSH key pair and the per-instance SSH config |
 | `~/.config/incus-spawn/images/*.yaml` | User-level template definitions |
