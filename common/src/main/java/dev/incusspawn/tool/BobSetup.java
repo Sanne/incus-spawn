@@ -136,33 +136,42 @@ public class BobSetup implements ToolSetup {
         BuildOutput.stepStart("Configuring Bob Shell");
         var bobConfig = SpawnConfig.load().getBob();
 
-        var userSettings = new StringBuilder();
-        userSettings.append("{\"security\":{\"auth\":{\"selectedType\":\"api-key\"}}");
-        if (bobConfig.isLicenseConsent()) {
-            userSettings.append(",\"ibm\":{\"licenseConsent\":true}");
-        }
-        userSettings.append("}");
-
-        c.sh("mkdir -p /home/agentuser/.bob");
-        c.writeFile("/home/agentuser/.bob/settings.json", userSettings.toString());
+        c.sh("mkdir -p /home/agentuser/.bob/settings");
+        c.writeFile("/home/agentuser/.bob/settings/settings.json",
+                buildUserSettings(resolvedParams, bobConfig));
         c.writeFile("/home/agentuser/.bob/trustedFolders.json",
-                "{\"/home/agentuser\":\"TRUST_FOLDER\"}");
+                "{\"version\":1,\"folders\":{\"/home/agentuser\":\"TRUST_FOLDER\"}}");
         c.chown("/home/agentuser/.bob", "agentuser:agentuser");
-
-        c.sh("mkdir -p /etc/bobshell");
-        c.writeFile("/etc/bobshell/settings.json", buildSystemSettings(resolvedParams));
         BuildOutput.stepDone();
     }
 
-    static String buildSystemSettings(Map<String, String> params) {
-        var general = JqObject.builder(3)
-                .put("disableAutoUpdate", true)
-                .put("disableUpdateNag", true);
+    static String buildUserSettings(Map<String, String> params,
+                                    SpawnConfig.BobConfig bobConfig) {
+        var security = JqObject.builder(2)
+                .put("auth", JqObject.builder(1)
+                        .put("selectedType", "api-key").build())
+                .put("folderTrust", JqObject.builder(1)
+                        .put("enabled", false).build());
+
+        var bobShell = JqObject.builder(1)
+                .put("autoUpdate", false);
+
+        var root = JqObject.builder(5)
+                .put("security", security.build())
+                .put("bobShell", bobShell.build());
+
+        if (bobConfig.isLicenseConsent()) {
+            root.put("licenseConsent", true);
+        }
+
         var checkpointing = params.get("checkpointing");
         if (checkpointing != null) {
-            general.put("checkpointing", JqObject.builder(1)
-                    .put("enabled", Boolean.parseBoolean(checkpointing)).build());
+            root.put("general", JqObject.builder(1)
+                    .put("checkpointing", JqObject.builder(1)
+                            .put("enabled", Boolean.parseBoolean(checkpointing)).build())
+                    .build());
         }
+
         var model = JqObject.builder(2);
         boolean hasModel = false;
         var maxTurns = params.get("max-session-turns");
@@ -176,8 +185,8 @@ public class BobSetup implements ToolSetup {
                     .put("contextPercentageThreshold", Double.parseDouble(compression)).build());
             hasModel = true;
         }
-        var root = JqObject.builder(hasModel ? 2 : 1).put("general", general.build());
         if (hasModel) root.put("model", model.build());
+
         return io.hyperfoil.tools.jjq.value.JqValues.toPrettyJsonString(root.build()) + "\n";
     }
 }

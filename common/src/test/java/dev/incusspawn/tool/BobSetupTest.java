@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.Test;
@@ -17,34 +18,39 @@ class BobSetupTest {
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
     private static final String CONTAINER = "test-container";
 
-    // --- buildSystemSettings unit tests ---
+    // --- buildUserSettings unit tests ---
 
     @Test
-    void buildSystemSettingsDefaults() {
-        var json = BobSetup.buildSystemSettings(Map.of());
+    void buildUserSettingsDefaults() {
+        var json = BobSetup.buildUserSettings(Map.of(), new SpawnConfig.BobConfig());
 
-        assertTrue(json.contains("\"disableAutoUpdate\": true"));
-        assertTrue(json.contains("\"disableUpdateNag\": true"));
+        assertTrue(json.contains("\"autoUpdate\": false"));
+        assertTrue(json.contains("\"folderTrust\""));
+        assertTrue(json.contains("\"enabled\": false"));
+        assertTrue(json.contains("\"selectedType\": \"api-key\""));
         assertFalse(json.contains("\"model\""));
         assertFalse(json.contains("\"checkpointing\""));
+        assertFalse(json.contains("licenseConsent"));
     }
 
     @Test
-    void buildSystemSettingsWithAllOptions() {
-        var json = BobSetup.buildSystemSettings(Map.of(
+    void buildUserSettingsWithAllOptions() {
+        var json = BobSetup.buildUserSettings(Map.of(
                 "max-session-turns", "-1",
                 "compression-threshold", "0.6",
-                "checkpointing", "true"));
+                "checkpointing", "true"), new SpawnConfig.BobConfig());
 
-        assertTrue(json.contains("\"disableAutoUpdate\": true"));
+        assertTrue(json.contains("\"autoUpdate\": false"));
         assertTrue(json.contains("\"maxSessionTurns\": -1"));
         assertTrue(json.contains("\"contextPercentageThreshold\": 0.6"));
-        assertTrue(json.contains("\"enabled\": true"));
+        assertTrue(json.contains("\"enabled\": true"),
+                "checkpointing should be enabled");
     }
 
     @Test
-    void buildSystemSettingsWithOnlyTurns() {
-        var json = BobSetup.buildSystemSettings(Map.of("max-session-turns", "50"));
+    void buildUserSettingsWithOnlyTurns() {
+        var json = BobSetup.buildUserSettings(Map.of("max-session-turns", "50"),
+                new SpawnConfig.BobConfig());
 
         assertTrue(json.contains("\"maxSessionTurns\": 50"));
         assertFalse(json.contains("\"chatCompression\""));
@@ -52,8 +58,9 @@ class BobSetupTest {
     }
 
     @Test
-    void buildSystemSettingsWithOnlyCompression() {
-        var json = BobSetup.buildSystemSettings(Map.of("compression-threshold", "0.8"));
+    void buildUserSettingsWithOnlyCompression() {
+        var json = BobSetup.buildUserSettings(Map.of("compression-threshold", "0.8"),
+                new SpawnConfig.BobConfig());
 
         assertTrue(json.contains("\"contextPercentageThreshold\": 0.8"));
         assertFalse(json.contains("\"maxSessionTurns\""));
@@ -61,10 +68,23 @@ class BobSetupTest {
     }
 
     @Test
-    void buildSystemSettingsCheckpointingDisabled() {
-        var json = BobSetup.buildSystemSettings(Map.of("checkpointing", "false"));
+    void buildUserSettingsCheckpointingDisabled() {
+        var json = BobSetup.buildUserSettings(Map.of("checkpointing", "false"),
+                new SpawnConfig.BobConfig());
 
-        assertTrue(json.contains("\"enabled\": false"));
+        assertTrue(json.contains("\"checkpointing\""));
+        assertFalse(json.contains("\"enabled\": true"),
+                "checkpointing should not be enabled");
+    }
+
+    @Test
+    void buildUserSettingsWithLicenseConsent() {
+        var bobConfig = new SpawnConfig.BobConfig();
+        bobConfig.setLicenseConsent(true);
+        var json = BobSetup.buildUserSettings(Map.of(), bobConfig);
+
+        assertTrue(json.contains("\"licenseConsent\": true"));
+        assertFalse(json.contains("\"ibm\""));
     }
 
     @Test
@@ -106,7 +126,7 @@ class BobSetupTest {
     // --- mocked-container wiring tests ---
 
     @Test
-    void installWritesSystemSettingsWithParams() {
+    void installWritesUserSettingsWithParams() {
         System.setProperty("user.home", "/tmp/bob-test-home");
         try {
             var incus = mock(IncusClient.class);
@@ -120,21 +140,23 @@ class BobSetupTest {
             verify(incus, atLeastOnce()).shellExec(eq(CONTAINER),
                     eq("sh"), eq("-c"), captor.capture());
 
-            var systemWrite = captor.getAllValues().stream()
-                    .filter(cmd -> cmd.contains("/etc/bobshell/settings.json"))
+            var userWrite = captor.getAllValues().stream()
+                    .filter(cmd -> cmd.contains(".bob/settings/settings.json"))
                     .findFirst().orElseThrow(() ->
-                            new AssertionError("Should write /etc/bobshell/settings.json"));
-            assertTrue(systemWrite.contains("maxSessionTurns"),
-                    "System settings should contain maxSessionTurns");
-            assertTrue(systemWrite.contains("checkpointing"),
-                    "System settings should contain checkpointing");
+                            new AssertionError("Should write ~/.bob/settings/settings.json"));
+            assertTrue(userWrite.contains("maxSessionTurns"),
+                    "User settings should contain maxSessionTurns");
+            assertTrue(userWrite.contains("checkpointing"),
+                    "User settings should contain checkpointing");
+            assertTrue(userWrite.contains("autoUpdate"),
+                    "User settings should contain autoUpdate");
         } finally {
             System.clearProperty("user.home");
         }
     }
 
     @Test
-    void reconfigureWritesSystemSettingsWithParams() {
+    void reconfigureWritesUserSettingsWithParams() {
         System.setProperty("user.home", "/tmp/bob-test-home");
         try {
             var incus = mock(IncusClient.class);
@@ -148,19 +170,19 @@ class BobSetupTest {
             verify(incus, atLeastOnce()).shellExec(eq(CONTAINER),
                     eq("sh"), eq("-c"), captor.capture());
 
-            var systemWrite = captor.getAllValues().stream()
-                    .filter(cmd -> cmd.contains("/etc/bobshell/settings.json"))
+            var userWrite = captor.getAllValues().stream()
+                    .filter(cmd -> cmd.contains(".bob/settings/settings.json"))
                     .findFirst().orElseThrow(() ->
-                            new AssertionError("reconfigure should write /etc/bobshell/settings.json"));
-            assertTrue(systemWrite.contains("contextPercentageThreshold"),
-                    "System settings should contain compression threshold");
+                            new AssertionError("reconfigure should write ~/.bob/settings/settings.json"));
+            assertTrue(userWrite.contains("contextPercentageThreshold"),
+                    "User settings should contain compression threshold");
         } finally {
             System.clearProperty("user.home");
         }
     }
 
     @Test
-    void installWithNoParamsWritesDefaultSystemSettings() {
+    void installWithNoParamsWritesDefaultSettings() {
         System.setProperty("user.home", "/tmp/bob-test-home");
         try {
             var incus = mock(IncusClient.class);
@@ -173,12 +195,34 @@ class BobSetupTest {
             verify(incus, atLeastOnce()).shellExec(eq(CONTAINER),
                     eq("sh"), eq("-c"), captor.capture());
 
-            var systemWrite = captor.getAllValues().stream()
-                    .filter(cmd -> cmd.contains("/etc/bobshell/settings.json"))
+            var userWrite = captor.getAllValues().stream()
+                    .filter(cmd -> cmd.contains(".bob/settings/settings.json"))
                     .findFirst().orElseThrow();
-            assertTrue(systemWrite.contains("disableAutoUpdate"));
-            assertFalse(systemWrite.contains("maxSessionTurns"),
+            assertTrue(userWrite.contains("autoUpdate"));
+            assertFalse(userWrite.contains("maxSessionTurns"),
                     "Should not contain maxSessionTurns when param not set");
+        } finally {
+            System.clearProperty("user.home");
+        }
+    }
+
+    @Test
+    void noEtcBobshellSettingsWritten() {
+        System.setProperty("user.home", "/tmp/bob-test-home");
+        try {
+            var incus = mock(IncusClient.class);
+            when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+            var setup = new BobSetup();
+            setup.configureSettings(new Container(incus, CONTAINER), Map.of());
+
+            var captor = org.mockito.ArgumentCaptor.forClass(String.class);
+            verify(incus, atLeastOnce()).shellExec(eq(CONTAINER),
+                    eq("sh"), eq("-c"), captor.capture());
+
+            assertFalse(captor.getAllValues().stream()
+                    .anyMatch(cmd -> cmd.contains("/etc/bobshell")),
+                    "Should not write to /etc/bobshell (dead config)");
         } finally {
             System.clearProperty("user.home");
         }
