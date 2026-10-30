@@ -7,31 +7,14 @@ import dev.incusspawn.util.BuildOutput;
 
 import io.hyperfoil.tools.jjq.value.JqObject;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 public class BobSetup implements ToolSetup {
 
     private static final String PLACEHOLDER_API_KEY = "bob-placeholder";
-    private static final String VERSION_URL =
-            "https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell/bobshell2-version.txt";
-    private static final String BASE_URL =
-            "https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell/bobshell-";
-    private static final Pattern VERSION_PATTERN = Pattern.compile("^\\d+\\.\\d+\\.\\d+$");
-
-    private final DownloadCache downloadCache;
-
-    public BobSetup() {
-        this(new DownloadCache());
-    }
-
-    BobSetup(DownloadCache downloadCache) {
-        this.downloadCache = downloadCache;
-    }
+    private static final String NPM_PACKAGE = "@ibm/bob";
 
     @Override
     public String name() {
@@ -145,29 +128,8 @@ public class BobSetup implements ToolSetup {
 
     private void installBinary(Container c) {
         BuildOutput.stepStart("Installing Bob Shell");
-
-        try {
-            var version = Files.readString(
-                    downloadCache.download(VERSION_URL, null)).strip();
-            if (!VERSION_PATTERN.matcher(version).matches()) {
-                throw new IOException("Unexpected version format: " + version);
-            }
-
-            var tarballUrl = BASE_URL + version + ".tgz";
-            var sha256 = Files.readString(
-                    downloadCache.download(tarballUrl + ".sha256", null)).strip();
-            var cached = downloadCache.download(tarballUrl, sha256);
-
-            var containerTarball = "/tmp/bobshell-" + version + ".tgz";
-            c.filePush(cached.toString(), containerTarball);
-            c.exec("npm", "install", "-g", containerTarball)
-                    .assertSuccess("Failed to npm install Bob Shell");
-            c.exec("rm", "-f", containerTarball);
-            BuildOutput.stepDone();
-            BuildOutput.stepNote("Bob Shell " + version);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to install Bob Shell: " + e.getMessage(), e);
-        }
+        NpmGlobalInstall.install(c, "Bob Shell", NPM_PACKAGE);
+        BuildOutput.stepDone();
     }
 
     void configureSettings(Container c, Map<String, String> resolvedParams) {
@@ -216,8 +178,6 @@ public class BobSetup implements ToolSetup {
         }
         var root = JqObject.builder(hasModel ? 2 : 1).put("general", general.build());
         if (hasModel) root.put("model", model.build());
-        // Pretty style differs from Jackson's ("k": v vs "k" : v); this file is
-        // machine-read inside the container, so only the parsed shape matters.
         return io.hyperfoil.tools.jjq.value.JqValues.toPrettyJsonString(root.build()) + "\n";
     }
 }

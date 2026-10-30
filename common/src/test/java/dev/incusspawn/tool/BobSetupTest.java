@@ -3,9 +3,7 @@ package dev.incusspawn.tool;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -70,8 +68,8 @@ class BobSetupTest {
     }
 
     @Test
-    void parametersDeclaresAllSettingsAsOptionalReconfigurable(@TempDir Path home) {
-        var params = new BobSetup(new DownloadCache(home)).parameters();
+    void parametersDeclaresAllSettingsAsOptionalReconfigurable() {
+        var params = new BobSetup().parameters();
 
         for (var name : List.of("max-session-turns", "compression-threshold", "checkpointing")) {
             assertTrue(params.containsKey(name), "Should declare parameter: " + name);
@@ -84,8 +82,8 @@ class BobSetupTest {
     // --- compression-threshold pattern boundary tests ---
 
     @Test
-    void compressionThresholdPatternAcceptsValidValues(@TempDir Path home) {
-        var pattern = Pattern.compile(new BobSetup(new DownloadCache(home)).parameters()
+    void compressionThresholdPatternAcceptsValidValues() {
+        var pattern = Pattern.compile(new BobSetup().parameters()
                 .get("compression-threshold").getPattern());
 
         for (var valid : List.of("0.0", "0.5", "0.6", ".5", ".99", "1.0", "0.12")) {
@@ -95,8 +93,8 @@ class BobSetupTest {
     }
 
     @Test
-    void compressionThresholdPatternRejectsInvalidValues(@TempDir Path home) {
-        var pattern = Pattern.compile(new BobSetup(new DownloadCache(home)).parameters()
+    void compressionThresholdPatternRejectsInvalidValues() {
+        var pattern = Pattern.compile(new BobSetup().parameters()
                 .get("compression-threshold").getPattern());
 
         for (var invalid : List.of("1.1", "1.5", "1.6", "2.0", "10.0", "abc")) {
@@ -108,13 +106,13 @@ class BobSetupTest {
     // --- mocked-container wiring tests ---
 
     @Test
-    void installWritesSystemSettingsWithParams(@TempDir Path home) {
-        System.setProperty("user.home", home.toString());
+    void installWritesSystemSettingsWithParams() {
+        System.setProperty("user.home", "/tmp/bob-test-home");
         try {
             var incus = mock(IncusClient.class);
             when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
-            var setup = new BobSetup(new DownloadCache(home));
+            var setup = new BobSetup();
             setup.configureSettings(new Container(incus, CONTAINER),
                     Map.of("max-session-turns", "-1", "checkpointing", "true"));
 
@@ -136,13 +134,13 @@ class BobSetupTest {
     }
 
     @Test
-    void reconfigureWritesSystemSettingsWithParams(@TempDir Path home) {
-        System.setProperty("user.home", home.toString());
+    void reconfigureWritesSystemSettingsWithParams() {
+        System.setProperty("user.home", "/tmp/bob-test-home");
         try {
             var incus = mock(IncusClient.class);
             when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
-            var setup = new BobSetup(new DownloadCache(home));
+            var setup = new BobSetup();
             setup.reconfigure(new Container(incus, CONTAINER),
                     Map.of("compression-threshold", "0.6"));
 
@@ -162,13 +160,13 @@ class BobSetupTest {
     }
 
     @Test
-    void installWithNoParamsWritesDefaultSystemSettings(@TempDir Path home) {
-        System.setProperty("user.home", home.toString());
+    void installWithNoParamsWritesDefaultSystemSettings() {
+        System.setProperty("user.home", "/tmp/bob-test-home");
         try {
             var incus = mock(IncusClient.class);
             when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
-            var setup = new BobSetup(new DownloadCache(home));
+            var setup = new BobSetup();
             setup.configureSettings(new Container(incus, CONTAINER), Map.of());
 
             var captor = org.mockito.ArgumentCaptor.forClass(String.class);

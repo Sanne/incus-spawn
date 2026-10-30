@@ -4385,7 +4385,7 @@ Everywhere else, call the `Environment` method rather than storing its result.
 
 Deferring the class that *resolves* the path is not sufficient on its own — the **holder** must be deferred too, which is why `CDI_TOOLS` lives in `RuntimeConstants`.
 GraalVM does not reject a build-time initializer that touches a run-time-initialized class; it initializes it early and folds the value, with no error (what `Environment`'s header comment warns about, confirmed by building it both ways).
-That is how this shipped: `DownloadCache` resolves `RuntimeConstants.DOWNLOAD_CACHE_DIR` in its constructor and `ClaudeSetup`/`BobSetup` each hold one.
+That is how this shipped: `DownloadCache` resolves `RuntimeConstants.DOWNLOAD_CACHE_DIR` in its constructor and `ClaudeSetup` holds one.
 Those instances used to be created in `RuntimeServices`, and commit 08a8ea0 (2026-08-26) moved the list into `ToolDefLoader`, which is not on the flag.
 So the binary carried `/root/.cache/incus-spawn/downloads` as a constant and `isx build` failed on any template with a `claude` or `bob` tool.
 The diagnosis was a bare path: `Failed to install Claude Code: /root/.cache/incus-spawn`, an `AccessDeniedException` message from `Files.createDirectories` walking into a directory only root can read.
