@@ -8,6 +8,9 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 
+import java.util.ArrayList;
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -267,6 +270,146 @@ class McpConfigTest {
         } finally {
             System.setProperty("user.home", previous);
         }
+    }
+
+    // --- host-tools ---
+
+    private static Map<String, McpConfig.HostTool> hostTools(String yaml) {
+        var warnings = new ArrayList<String>();
+        var tools = parse(yaml).hostTools(warnings::add);
+        assertTrue(warnings.isEmpty(), "unexpected warnings: " + warnings);
+        return tools;
+    }
+
+    private static List<String> hostToolWarnings(String yaml) {
+        var warnings = new ArrayList<String>();
+        parse(yaml).hostTools(warnings::add);
+        return warnings;
+    }
+
+    @Test
+    void hostToolsLoadFromConfig() {
+        var tools = hostTools("""
+                host-tools:
+                  instance-inventory:
+                    command: ~/scripts/inventory.sh
+                    description: Read-only inventory
+                    timeout: 300
+                    min-interval: 5
+                """);
+        assertEquals(1, tools.size());
+        var tool = tools.get("instance-inventory");
+        assertEquals("instance-inventory", tool.name());
+        assertEquals("instance_inventory", tool.toolName());
+        assertEquals("~/scripts/inventory.sh", tool.command());
+        assertEquals("Read-only inventory", tool.description());
+        assertEquals(300, tool.timeout());
+        assertEquals(5, tool.minInterval());
+    }
+
+    @Test
+    void hostToolsUseDefaults() {
+        var tools = hostTools("""
+                host-tools:
+                  check:
+                    command: echo ok
+                    description: A check
+                """);
+        var tool = tools.get("check");
+        assertEquals(McpConfig.HostTool.DEFAULT_TIMEOUT, tool.timeout());
+        assertEquals(McpConfig.HostTool.DEFAULT_MIN_INTERVAL, tool.minInterval());
+    }
+
+    @Test
+    void noHostToolsSectionReturnsEmpty() {
+        assertEquals(Map.of(), hostTools("templates: [tpl-dev]\n"));
+    }
+
+    @Test
+    void hostToolMissingCommandIsDropped() {
+        var warnings = hostToolWarnings("""
+                host-tools:
+                  broken:
+                    description: No command
+                """);
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("command:"), warnings.get(0));
+    }
+
+    @Test
+    void hostToolMissingDescriptionIsDropped() {
+        var warnings = hostToolWarnings("""
+                host-tools:
+                  broken:
+                    command: echo ok
+                """);
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("description:"), warnings.get(0));
+    }
+
+    @Test
+    void hostToolUnknownKeyDropsTheEntry() {
+        var warnings = hostToolWarnings("""
+                host-tools:
+                  broken:
+                    command: echo ok
+                    description: A tool
+                    runs-as: root
+                """);
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("unknown key 'runs-as'"), warnings.get(0));
+    }
+
+    @Test
+    void hostToolBadNameIsDropped() {
+        var warnings = hostToolWarnings("""
+                host-tools:
+                  9-starts-with-digit:
+                    command: echo ok
+                    description: A tool
+                """);
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("letter"), warnings.get(0));
+    }
+
+    @Test
+    void hostToolBadTimeoutIsDropped() {
+        var warnings = hostToolWarnings("""
+                host-tools:
+                  slow:
+                    command: sleep 1000
+                    description: A slow tool
+                    timeout: 9999
+                """);
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("timeout"), warnings.get(0));
+    }
+
+    @Test
+    void hostToolsDoNotMakeUnknownKeysRefuseTheFile() {
+        var mcp = parse("""
+                templates: [tpl-dev]
+                host-tools:
+                  check:
+                    command: echo ok
+                    description: A check
+                """);
+        assertEquals(List.of("tpl-dev"), mcp.templates());
+    }
+
+    @Test
+    void hostToolsSurviveASave() {
+        var yaml = """
+                host-tools:
+                  check:
+                    command: echo ok
+                    description: A check
+                    timeout: 120
+                """;
+        var mcp = parse(yaml);
+        var out = Jjq.toYaml(mcp);
+        assertTrue(out.contains("host-tools"), out);
+        assertTrue(out.contains("echo ok"), out);
     }
 
     @Test

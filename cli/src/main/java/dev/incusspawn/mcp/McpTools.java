@@ -22,8 +22,10 @@ import java.util.regex.Pattern;
 
 /**
  * The tools {@code isx mcp} offers. Every tool naming an instance checks that this session holds
- * it first; none can build, define or reconfigure templates, change {@code config.yaml} or {@code mcp.yaml}, touch
- * the host's files or run anything on the host.
+ * it first; none can build, define or reconfigure templates, change {@code config.yaml} or
+ * {@code mcp.yaml}, or touch the host's files -- except user-defined host tools from
+ * {@code host-tools:} in {@code mcp.yaml}, whose commands the user wrote and the agent cannot
+ * influence.
  */
 final class McpTools {
 
@@ -57,6 +59,7 @@ final class McpTools {
     private final TemplatePolicy policy;
     private final Tasks tasks;
     private final ModelCheck modelCheck;
+    private final HostToolRunner hostToolRunner;
     private final AtomicLong runs = new AtomicLong();
 
     McpTools(McpSession session, InstanceBackend backend, TemplatePolicy policy, Tasks tasks) {
@@ -65,6 +68,7 @@ final class McpTools {
         this.policy = policy;
         this.tasks = tasks;
         this.modelCheck = new ModelCheck(backend);
+        this.hostToolRunner = new HostToolRunner();
     }
 
     List<McpTool> all() {
@@ -321,7 +325,69 @@ final class McpTools {
                 OutputSchemas.keepInstance(),
                 McpTool.annotations(false, false, true),
                 (args, ctx) -> keepInstance(args)));
+        addHostTools(tools);
         return tools;
+    }
+
+    private void addHostTools(List<McpTool> tools) {
+        var builtInNames = new java.util.HashSet<String>();
+        for (var t : tools) builtInNames.add(t.name());
+        java.util.Map<String, dev.incusspawn.config.McpConfig.HostTool> hostTools;
+        try {
+            hostTools = session.config().hostTools(msg -> BuildOutput.warn(msg));
+        } catch (RuntimeException e) {
+            BuildOutput.warn("isx mcp: could not load host-tools from mcp.yaml: " + e.getMessage());
+            return;
+        }
+        for (var entry : hostTools.entrySet()) {
+            var tool = entry.getValue();
+            if (builtInNames.contains(tool.toolName())) {
+                throw new IllegalStateException("mcp.yaml: host tool '" + entry.getKey()
+                        + "' has tool name '" + tool.toolName() + "' which conflicts with a built-in tool");
+            }
+            tools.add(new McpTool(tool.toolName(),
+                    tool.description(),
+                    Schema.object().build(),
+                    OutputSchemas.hostTool(),
+                    McpTool.annotations(false, false, true),
+                    (args, ctx) -> runHostTool(tool)));
+        }
+    }
+
+    private ToolResult runHostTool(dev.incusspawn.config.McpConfig.HostTool tool) {
+        var result = hostToolRunner.run(tool);
+        McpAuditLog.record(session.id, "host_tool:" + tool.toolName(), null, tool.command(), result.durationMs(),
+                "exit=" + result.exitCode());
+        var node = io.hyperfoil.tools.jjq.value.JqObject.builder()
+                .put("exit_code", result.exitCode())
+                .put("stdout", result.stdout())
+                .put("stderr", result.stderr())
+                .put("stdout_bytes", result.stdoutBytes())
+                .put("stderr_bytes", result.stderrBytes())
+                .put("duration_ms", result.durationMs())
+                .put("timed_out", result.timedOut())
+                .put("truncated", result.truncated());
+        var sb = new StringBuilder();
+        sb.append("exit_code: ").append(result.exitCode());
+        if (result.timedOut()) sb.append(" (killed: timeout of ").append(tool.timeout()).append("s reached)");
+        sb.append("\nduration_ms: ").append(result.durationMs()).append('\n');
+        appendStream(sb, "stdout", result.stdout(), result.stdoutBytes(), result.truncated());
+        appendStream(sb, "stderr", result.stderr(), result.stderrBytes(), result.truncated());
+        return ToolResult.text(sb.toString(), node.build());
+    }
+
+    private static void appendStream(StringBuilder sb, String label, String text, long totalBytes, boolean truncated) {
+        if (totalBytes == 0) {
+            sb.append("--- ").append(label).append(": (empty) ---\n");
+            return;
+        }
+        sb.append("--- ").append(label);
+        if (truncated) {
+            sb.append(" (last ").append(text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length)
+                    .append(" of ").append(totalBytes).append(" bytes)");
+        }
+        sb.append(" ---\n").append(text);
+        if (!text.endsWith("\n")) sb.append('\n');
     }
 
     private ToolResult listTemplates() {

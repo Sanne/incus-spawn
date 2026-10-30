@@ -329,4 +329,17 @@ final class OutputSchemas {
                 .string("instance", null, true)
                 .build();
     }
+
+    static JqObject hostTool() {
+        return Schema.object()
+                .integer("exit_code", null, true)
+                .string("stdout", "The end of it", true)
+                .string("stderr", "The end of it", true)
+                .integer("stdout_bytes", "Its whole length", true)
+                .integer("stderr_bytes", "Its whole length", true)
+                .integer("duration_ms", null, true)
+                .bool("timed_out", "Killed by the tool's timeout", true)
+                .bool("truncated", "stdout or stderr is only the end of it", true)
+                .build();
+    }
 }

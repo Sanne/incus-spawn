@@ -31,6 +31,12 @@ Agents never can: `isx mcp` reads this file on every call and has no way to writ
 ```yaml
 templates: [tpl-java, tpl-dev]
 max-instances: 8
+host-tools:
+  instance-inventory:
+    command: ~/scripts/instance-inventory.sh
+    description: Read-only inventory of stopped isx instances
+    timeout: 300
+    min-interval: 10
 ```
 
 | Key | Default | What it does |
@@ -47,6 +53,7 @@ max-instances: 8
 | `dormant-after-hours` | 24 | Past the orphan grace, an instance kept only for a delegate that shows no activity this long is stopped instead. |
 | `dormant-grace-hours` | 168 | How long after that stop the instance is destroyed. |
 | `summary-model` | `haiku` | The model that answers the tools' `ask` inside the instance. |
+| `host-tools` | none | User-defined MCP tools that run a command on the host. Each key is a tool name with `command:`, `description:`, optional `timeout:` (default 60, max 600, 0 = no limit) and `min-interval:` (default 10, 0 = block instead of refuse). |
 
 A missing or empty file approves nothing.
 A file `isx mcp` cannot use refuses every call that depends on it, naming `mcp.yaml` and what is wrong, until you fix it.
@@ -121,8 +128,9 @@ What an agent gets is deliberately narrow.
   Credentials stay in the host proxy as always; a delegate pushes with the GitHub account you pinned on the template.
 - Its own instances, one session at a time.
   Every instance is stamped with your host user, an optional purpose (`#870 implement`) and the session holding it; every tool checks that stamp.
-- No host access.
-  Nothing runs on the host and no host files are read or written.
+- No host access, except host tools.
+  Nothing runs on the host unless you defined it in `host-tools:` in `mcp.yaml`.
+  The agent can trigger those commands but cannot influence the command string.
   Results come back as text, and `get_diff` returns a patch rather than touching your checkout.
 - An audit trail.
   Every call is logged, with credentials scrubbed, to `~/.local/state/incus-spawn/mcp.log`.

@@ -35,7 +35,7 @@ class McpNoWritePathTest {
             Map.entry("setTemplates(", Set.of()),
             Map.entry("setMaxInstances(", Set.of()),
             Map.entry("setMcp(", Set.of()),
-            Map.entry("ProcessBuilder", Set.of()),
+            Map.entry("ProcessBuilder", Set.of("HostToolRunner.java")),
             Map.entry("Runtime.getRuntime().exec", Set.of()),
             Map.entry("filePush", Set.of()),
             Map.entry("Files.write", Set.of("McpAuditLog.java")),

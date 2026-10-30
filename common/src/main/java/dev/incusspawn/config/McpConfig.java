@@ -14,8 +14,12 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /**
@@ -36,6 +40,12 @@ import java.util.regex.Pattern;
  *                                  # activity this long is stopped, not destroyed
  * dormant-grace-hours: 168         # and destroyed this long after it was stopped
  * summary-model: haiku             # the model that answers a tool's `ask`, inside the instance
+ * host-tools:                      # user-defined MCP tools that run a command on the host
+ *   instance-inventory:
+ *     command: ~/incus-spawn/scripts/instance-inventory.sh
+ *     description: Read-only inventory of stopped isx instances
+ *     timeout: 300                 # seconds; default 60, 0 = no limit
+ *     min-interval: 10             # seconds between invocations; default 10, 0 = no limit
  * </pre>
  *
  * A missing or empty file approves nothing. One that cannot be read, does not parse, or holds
@@ -107,6 +117,10 @@ public class McpConfig {
     @JqName("codex")
     private Codex codex;
 
+    @JqName("host-tools")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private Object hostToolsRaw;
+
     // Keys isx does not know, only to refuse them: never written back.
     private final List<String> unknown = new ArrayList<>();
 
@@ -127,6 +141,119 @@ public class McpConfig {
 
         @JqAnySetter
         public void setUnknown(String key, Object value) { unknown.add(key); }
+    }
+
+    /**
+     * A user-defined host tool: a command the user wrote, exposed as an MCP tool an agent can
+     * trigger.
+     * The agent has no influence on the command string (v1 has no arguments).
+     *
+     * @param name the YAML key (hyphens allowed); the MCP tool name replaces hyphens with underscores
+     * @param command run via {@code bash -c}; tilde expansion works
+     * @param description shown to the model
+     * @param timeout seconds; 0 = no limit
+     * @param minInterval seconds between invocations; 0 = no limit.
+     *                    A positive interval also forbids concurrent invocations.
+     */
+    public record HostTool(String name, String command, String description,
+                           int timeout, int minInterval) {
+        public static final int DEFAULT_TIMEOUT = 60;
+        public static final int MAX_TIMEOUT = 600;
+        public static final int DEFAULT_MIN_INTERVAL = 10;
+        public static final int MAX_MIN_INTERVAL = 3600;
+
+        public String toolName() {
+            return name.replace('-', '_');
+        }
+    }
+
+    private static final Pattern HOST_TOOL_KEY = Pattern.compile("[a-z][a-z0-9-]{0,39}");
+    private static final Set<String> HOST_TOOL_KEYS = Set.of(
+            "command", "description", "timeout", "min-interval");
+
+    /**
+     * The host tools from {@code host-tools:}, each checked on its own; a wrong entry is dropped
+     * with a warning naming it, so one typo never widens what a tool does.
+     * Keyed by the YAML key (hyphens), not the MCP tool name (underscores).
+     */
+    public Map<String, HostTool> hostTools(Consumer<String> warn) {
+        if (hostToolsRaw == null) return Map.of();
+        if (!(hostToolsRaw instanceof Map<?, ?> map)) {
+            warn.accept("Ignoring host-tools: in mcp.yaml (expected a name per tool, each with command: and description:)");
+            return Map.of();
+        }
+        var result = new LinkedHashMap<String, HostTool>();
+        map.forEach((key, value) -> {
+            var tool = hostTool(String.valueOf(key), value, warn);
+            if (tool != null) {
+                if (result.containsKey(tool.name())) {
+                    warn.accept(ignoringHostTool(tool.name()) + ": it is written more than once");
+                } else {
+                    result.put(tool.name(), tool);
+                }
+            }
+        });
+        return java.util.Collections.unmodifiableMap(result);
+    }
+
+    private static HostTool hostTool(String key, Object value, Consumer<String> warn) {
+        var name = key.strip().toLowerCase(Locale.ROOT);
+        if (!HOST_TOOL_KEY.matcher(name).matches()) {
+            warn.accept(ignoringHostTool(key) + ": a host-tool name is 1-40 lowercase letters, digits and hyphens, "
+                    + "starting with a letter");
+            return null;
+        }
+        if (!(value instanceof Map<?, ?> fields)) {
+            warn.accept(ignoringHostTool(key) + ": expected command: and description: under it");
+            return null;
+        }
+        for (var field : fields.keySet()) {
+            if (!HOST_TOOL_KEYS.contains(String.valueOf(field))) {
+                warn.accept(ignoringHostTool(key) + ": unknown key '" + field + "'");
+                return null;
+            }
+        }
+        var command = fields.get("command");
+        if (!(command instanceof String cmd) || cmd.isBlank()) {
+            warn.accept(ignoringHostTool(key) + ": command: is required and must be a non-empty string");
+            return null;
+        }
+        var description = fields.get("description");
+        if (!(description instanceof String desc) || desc.isBlank()) {
+            warn.accept(ignoringHostTool(key) + ": description: is required and must be a non-empty string");
+            return null;
+        }
+        int timeout = HostTool.DEFAULT_TIMEOUT;
+        if (fields.containsKey("timeout")) {
+            var t = asPositiveInt(fields.get("timeout"));
+            if (t == null || (t > HostTool.MAX_TIMEOUT && t != 0)) {
+                warn.accept(ignoringHostTool(key) + ": timeout must be 0 (no limit) or 1-" + HostTool.MAX_TIMEOUT);
+                return null;
+            }
+            timeout = t;
+        }
+        int minInterval = HostTool.DEFAULT_MIN_INTERVAL;
+        if (fields.containsKey("min-interval")) {
+            var mi = asPositiveInt(fields.get("min-interval"));
+            if (mi == null || (mi > HostTool.MAX_MIN_INTERVAL && mi != 0)) {
+                warn.accept(ignoringHostTool(key) + ": min-interval must be 0 (no limit) or 1-" + HostTool.MAX_MIN_INTERVAL);
+                return null;
+            }
+            minInterval = mi;
+        }
+        return new HostTool(name, cmd.strip(), desc.strip(), timeout, minInterval);
+    }
+
+    private static Integer asPositiveInt(Object value) {
+        if (value instanceof Number n) {
+            var i = n.intValue();
+            return i >= 0 ? i : null;
+        }
+        return null;
+    }
+
+    private static String ignoringHostTool(String name) {
+        return "Ignoring host tool '" + name + "' in mcp.yaml";
     }
 
     public static Path file() {

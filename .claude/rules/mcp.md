@@ -61,6 +61,11 @@ Every tool naming an instance calls `McpSession.requireOwned()` (registry *and* 
 `metadata()` and `mcpInstances()` carry the Incus status as `InstanceBackend.STATUS` from the same read; every task goes through `Tasks.require()`.
 The only ways into the registry besides creating are `McpSession.resume()` (an instance session taking back what its own stamp names, below) and `McpSession.adopt()`: same `mcp-owner`, not kept, not busy, template still approved, holder dead (or released it, `Orphans.releasedByHolder`) unless `force`, and the stamp read back after writing it.
 `McpNoWritePathTest` forbids config/definition writes, builds, account changes, host processes and host file writes (except the audit log) in the package -- a change that needs one of those changes the trust model and should have to edit that test.
+The one deliberate exception is `HostToolRunner.java`, which may use `ProcessBuilder` to run user-defined commands from `host-tools:` in `mcp.yaml`.
+The agent has no influence on the command string: it can only trigger a tool, never pass arguments to it.
+When `min-interval` is positive (default 10s), concurrent invocations and calls that come too soon are refused.
+When `min-interval` is 0, concurrent calls block until the running one finishes.
+A tool name that conflicts with a built-in refuses the config.
 
 **Every result is structured too (#1010).**
 Each `McpTool` declares an `outputSchema` (built in `OutputSchemas`, closed objects, shared field names: `instance`, `template`, `task_id`, `state`, `exit_code`, `run`; a task `state` only from `TASK_STATES` and only where it is known (`list_instances` gives `Tasks.Task.state`, as last seen, after the same probe of running tasks `wait_any` makes: `unknown` when nothing read how it ended, e.g. after a `cancel`), `already` for a no-op lifecycle call, `max_turns` as the run gets it, no placeholder values), and every successful result is `ToolResult.text(text, structured)` or `ToolResult.json(structured[, note])`; the text for the model stays prose.
