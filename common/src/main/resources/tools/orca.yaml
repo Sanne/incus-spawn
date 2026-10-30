@@ -3,7 +3,7 @@ description: What the Orca agent orchestrator needs to run its server and agents
 requires:
   - sshd
 
-# Orca installs its own server and a pinned Node over SSH on the first connect. It unpacks the
+# By default Orca installs its server and a pinned Node over SSH on the first connect. It unpacks the
 # Node archive with tar and checks the installed server's hash through awk, and a base image
 # has neither: without them the first connect, or the first after a restart, fails.
 packages:
@@ -11,3 +11,46 @@ packages:
   - gawk
 
 verify: tar --version >/dev/null && awk --version >/dev/null
+
+# Import only reusable installation directories, never the source machine's .orca state or
+# .orca-remote ownership/activation records. The cache must match the desktop build and guest ABI.
+parameters:
+  server-cache:
+    type: string
+    default: ""
+    pattern: "^(/[-A-Za-z0-9_./ ]+)?$"
+    description: "Guest path to an exported Orca server cache; empty lets Orca install on first connection"
+
+run_as_user:
+  - |
+    set -eu
+    cache='${param_server-cache}'
+    if [ -n "$cache" ]; then
+      [ -d "$cache" ] || { echo "orca: server-cache directory is missing: $cache" >&2; exit 1; }
+      slots=0
+      for slot in "$cache"/orcad-*; do
+        [ -d "$slot" ] || continue
+        for marker in .version .runtime-node .install-complete; do
+          [ -f "$slot/$marker" ] || { echo "orca: incomplete server cache: $slot/$marker is missing" >&2; exit 1; }
+        done
+        [ ! -e "$slot/.install-lock" ] || { echo "orca: server installation is locked: $slot; export again after installation finishes" >&2; exit 1; }
+        slots=$((slots + 1))
+      done
+      [ "$slots" -gt 0 ] || { echo "orca: server-cache contains no orcad installation" >&2; exit 1; }
+      runtimes=0
+      for runtime in "$cache"/runtimes/node-*; do
+        [ -d "$runtime" ] || continue
+        [ -f "$runtime/.verified" ] && [ -x "$runtime/bin/node" ] || {
+          echo "orca: incomplete Node runtime: $runtime" >&2; exit 1;
+        }
+        runtimes=$((runtimes + 1))
+      done
+      [ "$runtimes" -gt 0 ] || { echo "orca: server-cache contains no Node runtime" >&2; exit 1; }
+      mkdir -p "$HOME/.orca-remote/runtimes"
+      for slot in "$cache"/orcad-*; do
+        [ ! -d "$slot" ] || cp -a "$slot" "$HOME/.orca-remote/"
+      done
+      for runtime in "$cache"/runtimes/node-*; do
+        [ ! -d "$runtime" ] || cp -a "$runtime" "$HOME/.orca-remote/runtimes/"
+      done
+    fi

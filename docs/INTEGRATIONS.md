@@ -67,9 +67,12 @@ This is a first version: setting it up takes a few steps, which later releases w
    It needs `bash`, `jq`, and `sha256sum` or `shasum`:
 
    ```shell
+   mkdir -p ~/.local/bin
    curl -fsSLo ~/.local/bin/isx-orca-recipe https://raw.githubusercontent.com/Sanne/incus-spawn/v<version>/integrations/orca/isx-orca-recipe
    chmod +x ~/.local/bin/isx-orca-recipe
    ```
+
+   Make sure `~/.local/bin` is on the PATH of the Orca desktop app.
 
 4. Add a recipe to your repository's `orca.yaml`, naming the template:
 
@@ -83,9 +86,57 @@ This is a first version: setting it up takes a few steps, which later releases w
        destroy: isx-orca-recipe destroy
    ```
 
+5. In Orca, enable **Settings → Experimental → Cloud VM**.
+   Check that **isx sandbox** appears under **Recipes**, then select it under **Run on** when creating a worktree.
+   If it does not appear, make sure `orca.yaml` is in your repository's main checkout, not only in a worktree.
+
+   To check the setup without creating an instance:
+
+   ```shell
+   orca vm recipe doctor isx --repo-path /absolute/path/to/your/repo --json
+   ```
+
 Each workspace then gets an instance named after Orca's runtime, such as `orca-3f2a6c1e0b5d`.
 Orca reaches it over SSH, adds its worktree under the template's workdir, and runs its agents there.
 The recipe supports Orca's worktree mode only, in which Orca makes the worktree itself.
+
+### Faster first connections (experimental)
+
+On the first connection to each new instance, Orca uploads its server and installs Node.
+You can include them in your template instead, so new instances skip that step.
+
+1. Let Orca finish connecting to one instance.
+   In that instance, save Orca's installed server to an archive:
+
+   ```shell
+   cd ~/.orca-remote && tar -czf ~/orca-server-cache.tar.gz orcad-* runtimes/node-*
+   ```
+
+2. On your computer, copy the archive out and unpack it, replacing `INSTANCE` with that instance's name:
+
+   ```shell
+   scp INSTANCE:/home/agentuser/orca-server-cache.tar.gz .
+   mkdir -p ~/.cache/incus-spawn/orca-server-cache
+   tar -xzf orca-server-cache.tar.gz -C ~/.cache/incus-spawn/orca-server-cache
+   ```
+
+3. Run `isx templates edit tpl-orca` and change its `- orca` tool entry to the one below, adding the host resource:
+
+   ```yaml
+   tools:
+     - orca:
+         server-cache: /home/agentuser/orca-server-cache
+   host-resources:
+     - source: ~/.cache/incus-spawn/orca-server-cache
+       path: /home/agentuser/orca-server-cache
+       mode: copy
+   ```
+
+4. Run `isx build tpl-orca`.
+
+The saved server only works with the Orca version it came from.
+After you update Orca, repeat these steps.
+To go back to the default, remove `server-cache` and the host resource, then rebuild.
 
 ## Any other tool
 
@@ -93,10 +144,28 @@ A tool with commands to create and destroy a machine can use isx the same way as
 
 | Step | Command |
 |------|---------|
-| Create | `isx branch <name> --from <template> --owner <tool> --owner-id <its id> --format=json` |
+| Create | `isx branch <name> --from <template> --owner <tool> --owner-id <workspace-id> --format=json` |
 | Suspend | `isx stop <name>` |
 | Resume | `isx start <name>` |
-| Destroy | `isx destroy <name> --owner <tool> --owner-id <its id>` |
+| Destroy | `isx destroy <name> --owner <tool> --owner-id <workspace-id>` |
+
+`<tool>` is a stable name for the orchestrator, such as `my-runner`.
+`<workspace-id>` is that tool's identifier for this particular workspace or runtime, not the tool's name or an isx-generated value.
+Use the tool's existing workspace ID, or generate a unique ID when allocating a workspace and save it for later lifecycle calls.
+
+Pass the same value to create and destroy; isx records it on the instance and checks it before deleting.
+It must contain 1 to 128 letters, digits, or `.`, `_`, `:`, `-`.
+
+For example, a runner creating its workspace `job-42` could use:
+
+```shell
+isx branch runner-job-42 --from tpl-java --owner my-runner --owner-id job-42 --format=json
+# Later, when deleting that workspace:
+isx destroy runner-job-42 --owner my-runner --owner-id job-42
+```
+
+That example also needs `drivers: {my-runner: {destroy: true}}` in the isx configuration.
+The Orca recipe passes these for you.
 
 `isx branch --format=json` prints how to reach the instance over SSH, including a `ProxyCommand` that starts a stopped instance.
 The [CLI reference](CLI.md#isx-branch-fields) lists its fields.
