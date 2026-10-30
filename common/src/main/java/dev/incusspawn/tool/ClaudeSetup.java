@@ -433,7 +433,8 @@ public class ClaudeSetup implements ToolSetup {
                     "DISABLE_ERROR_REPORTING": "1",
                     "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
                     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
-                    "CLAUDE_CODE_SKIP_AUTO_UPDATE": "1"
+                    "CLAUDE_CODE_SKIP_AUTO_UPDATE": "1",
+                    "CLAUDE_CODE_SANDBOXED": "true"
                   },
                   "skipDangerousModePermissionPrompt": true,
                   "sandbox": {
