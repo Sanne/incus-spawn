@@ -5232,6 +5232,8 @@ Only terminals that speak the protocol do this, which is why Esc worked in one t
 `LegacyKeyboardBackend` pushes kitty flags of zero on the TUI's alternate screen and pops them before it leaves, never touching the main screen's stack.
 What still arrives encoded, from a terminal that ignores the push or a multiplexer that keeps its own mode, `KeyboardProtocol` turns back into legacy bytes before tamboui parses them.
 It decodes `CSI code;mods u` and `CSI 27;mods;code ~`, drops key releases and keys with no legacy byte, and hands every other sequence on byte for byte.
+Shift with a key that reports its shifted form (kitty's alternate keys, which Pi turns on) becomes that form, so Alt+Shift+1 is Alt+`!` as on a legacy terminal, never Alt+1 (Shift+F1).
+A dropped key reads as a timeout rather than a second wait, since a release follows every press under Pi's flags and would hold back the runner's tick.
 `ShiftTabBindings` no longer takes an unknown key for Shift+Tab: tamboui reads `CSI Z` itself now, and the old fallback turned an undecoded Esc into focus moving back.
 `KeyboardProtocolTest` runs each encoding through tamboui's own parser.
 

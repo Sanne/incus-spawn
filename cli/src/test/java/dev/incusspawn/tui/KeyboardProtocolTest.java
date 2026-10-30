@@ -61,7 +61,12 @@ class KeyboardProtocolTest {
         }
 
         List<Event> events() throws IOException {
+            // A dropped key reads as a timeout, so read on until the input is spent
             var events = new ArrayList<Event>();
+            while (!bytes.isEmpty()) {
+                var event = EventParser.readEvent(this, 0, BindingSets.defaults());
+                if (event != null) events.add(event);
+            }
             Event event;
             while ((event = EventParser.readEvent(this, 0, BindingSets.defaults())) != null) events.add(event);
             return events;
@@ -102,6 +107,28 @@ class KeyboardProtocolTest {
         assertTrue(onlyKey("\u001b[13u").isKey(KeyCode.ENTER));
         assertTrue(onlyKey("\u001b[127u").isKey(KeyCode.BACKSPACE));
         assertTrue(onlyKey("\u001b[233u").isChar('é'));
+    }
+
+    @Test
+    void shiftWithAShiftedFormIsThatForm() throws IOException {
+        var altBang = onlyKey("\u001b[49:33;4u");
+        assertTrue(altBang.isChar('!') && altBang.hasAlt() && !altBang.hasShift(), altBang.toString());
+        assertTrue(onlyKey("\u001b[49:33;2u").isChar('!'));
+        assertTrue(onlyKey("\u001b[97:65;2u").isChar('A'));
+        assertTrue(onlyKey("\u001b[49:33:49;2u").isChar('!'), "with a base layout key");
+        assertTrue(onlyKey("\u001b[49:33;3u").isChar('1'), "no Shift: the base key");
+        assertTrue(DigitKeys.asFunctionKey(onlyKey("\u001b[49:33;4u")).isChar('!'), "not Shift+F1");
+    }
+
+    @Test
+    void aDroppedKeyIsATimeoutNotASecondWait() throws IOException {
+        var typed = new Typed("\u001b[27;1:3u");
+        assertEquals(-2, typed.read(100));
+        assertEquals(0, typed.timeouts, "the release alone, then no further read of the input");
+        typed = new Typed("\u001b[27u\u001b[27;1:3u");
+        assertTrue(((KeyEvent) EventParser.readEvent(typed, 100, BindingSets.defaults())).isKey(KeyCode.ESCAPE));
+        assertEquals(null, EventParser.readEvent(typed, 100, BindingSets.defaults()));
+        assertEquals(0, typed.timeouts);
     }
 
     @Test

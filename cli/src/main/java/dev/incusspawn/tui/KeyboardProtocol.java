@@ -49,10 +49,13 @@ final class KeyboardProtocol {
 
     int read(int timeoutMs) throws IOException {
         loneEscape = false;
-        while (pending.isEmpty()) {
+        if (pending.isEmpty()) {
             int c = input.read(timeoutMs);
             if (c != ESC) return c;
             decodeEscape();
+            // A dropped key (a release follows every press under Pi's flags) is a timeout, never a
+            // second wait of the caller's whole timeout, which would hold back the runner's tick
+            if (pending.isEmpty()) return TIMEOUT;
         }
         int c = pending.poll();
         loneEscape = c == ESC && pending.isEmpty() && nothingAfter;
@@ -109,14 +112,20 @@ final class KeyboardProtocol {
         } else {
             return null;
         }
-        // kitty: the code may carry its shifted and base keys, the modifiers an event type
-        int key = number(code.split(":", -1)[0]);
+        // kitty: the code may carry its shifted and base layout keys, the modifiers an event type
+        var codeParts = code.split(":", -1);
+        int key = number(codeParts[0]);
+        int shifted = codeParts.length > 1 && !codeParts[1].isEmpty() ? number(codeParts[1]) : 0;
         var modParts = mods.split(":", -1);
         int modifiers = modParts[0].isEmpty() ? 1 : number(modParts[0]);
         int event = modParts.length > 1 ? number(modParts[1]) : 1;
-        if (key < 0 || modifiers < 1 || event < 0) return null;
+        if (key < 0 || shifted < 0 || modifiers < 1 || event < 0) return null;
         if (event == RELEASE) return new int[0];
-        return legacy(key, (modifiers - 1) & ~LOCKS);
+        modifiers = (modifiers - 1) & ~LOCKS;
+        // Shift with a key that has a shifted form is that form, as a legacy terminal sends it:
+        // Alt+Shift+1 is Esc then '!', not Alt+1
+        if ((modifiers & SHIFT) != 0 && shifted > 0) return legacy(shifted, modifiers & ~SHIFT);
+        return legacy(key, modifiers);
     }
 
     private static int[] legacy(int key, int modifiers) {
