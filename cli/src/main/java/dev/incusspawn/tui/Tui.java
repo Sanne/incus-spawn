@@ -44,7 +44,6 @@ import dev.incusspawn.tool.ToolAction;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolAction;
-import dev.tamboui.backend.panama.PanamaBackend;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.style.Style;
@@ -387,7 +386,6 @@ public class Tui {
     /** The runner's settings, less its backend. */
     static TuiConfig.Builder runnerConfig() {
         return TuiConfig.builder()
-                .bindings(ShiftTabBindings.createWithBacktab())
                 .tickRate(Duration.ofMillis(100));
     }
 
@@ -496,7 +494,7 @@ public class Tui {
 
             ProxyLog.setSuppressStderr(true);
             try (var ignored = BuildOutput.bind(drawing);
-                 var runner = openRunner(runnerConfig().backend(new PanamaBackend()).build())) {
+                 var runner = openRunner(runnerConfig().backend(new LegacyKeyboardBackend()).build())) {
                 runner.run(this::handleEvent, this::render);
             } catch (Exception e) {
                 // The runner is closed and the drawing binding with it: this reaches the terminal

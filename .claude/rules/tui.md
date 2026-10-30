@@ -45,6 +45,8 @@ Of these, only `Tui.run` (for `IncusSpawn`) and `InstanceDetailView.mcpDetailRow
 `ListingLoader` loads what the TUI shows (`reloadData`, `mergeInstances`, the disk model and its accounting checks, the pool gauge, the proxy and appliance status) and writes the rows into `Tui`, which keeps the selection and the live refresh.
 `isx list` is `ListCommand`, which prints the listing and never opens the TUI; both parse the Incus listing through `InstanceListing`.
 Two-panel layout (Templates + Instances) with modal dialogs for branching, renaming, and building.
+The runner's backend is `LegacyKeyboardBackend`, never a bare `PanamaBackend`: it keeps keys in their legacy encoding when a program left the kitty keyboard protocol or `modifyOtherKeys` on, so Esc and Ctrl+C still close a dialog (`KeyboardProtocol`, DESIGN.md "Keys are read in their legacy encoding").
+An unknown key is never Shift+Tab (`ShiftTabBindings.isShiftTab` is Tab with Shift alone).
 
 **Staying current (live refresh).**
 The TUI is often left open for days, so it follows Incus rather than waiting for `r`.

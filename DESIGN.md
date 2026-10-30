@@ -5224,6 +5224,17 @@ The dark theme's dialogs lose their slight blue tint and become grey.
 It is used everywhere rather than when `COLORTERM` is unset, because SSH does not pass `COLORTERM` on, so most remote sessions would lose it anyway.
 `TuiThemeTest` fails on an RGB colour in either theme.
 
+**Keys are read in their legacy encoding.**
+Pi and Claude Code turn on the kitty keyboard protocol, and Pi also xterm's `modifyOtherKeys`.
+One that does not exit cleanly, or a multiplexer between, leaves the terminal sending Esc as `CSI 27 u` and Ctrl+C as `CSI 99;5 u`.
+tamboui reads neither, so Esc and Ctrl+C did nothing, and a dialog that closes only on them could not be left.
+Only terminals that speak the protocol do this, which is why Esc worked in one terminal and not another.
+`LegacyKeyboardBackend` pushes kitty flags of zero on the TUI's alternate screen and pops them before it leaves, never touching the main screen's stack.
+What still arrives encoded, from a terminal that ignores the push or a multiplexer that keeps its own mode, `KeyboardProtocol` turns back into legacy bytes before tamboui parses them.
+It decodes `CSI code;mods u` and `CSI 27;mods;code ~`, drops key releases and keys with no legacy byte, and hands every other sequence on byte for byte.
+`ShiftTabBindings` no longer takes an unknown key for Shift+Tab: tamboui reads `CSI Z` itself now, and the old fallback turned an undecoded Esc into focus moving back.
+`KeyboardProtocolTest` runs each encoding through tamboui's own parser.
+
 **Keyboards without F-keys** (#1824).
 Many keyboards have no F row, or give it to media keys, as MacBooks and 60% boards do.
 So a digit is its F-key, 0 being F10, and Alt with a digit is Shift with that F-key.
@@ -5231,7 +5242,7 @@ The key bar keeps its F-key labels and draws each one's digit bold, and the cont
 The F1 dialog lists both forms of every key, and on macOS how to make Option send Alt.
 The rule is the same on every keyboard layout.
 A terminal sends a digit as the digit however the layout types it, and Alt as an Esc before it, which tamboui reports as `ALT`.
-It never reports Shift on a digit, only the layout's own symbol above it (`@` on US, `"` on UK and German), and tamboui speaks neither the Kitty keyboard protocol nor `modifyOtherKeys`, the only ways a terminal says more.
+It never reports Shift on a digit, only the layout's own symbol above it (`@` on US, `"` on UK and German), and the TUI reads keys in their legacy encoding, without the Kitty keyboard protocol or `modifyOtherKeys`, the only ways a terminal says more.
 Shift+digit as the US symbols `!@#$%^&*()` was rejected as confusing everywhere else (Sanne): on AZERTY `&` is the unshifted 1 key, and would restart a row at once.
 `Tui.handleEvent` translates the key once, before the mode dispatch (`DigitKeys`), so every F-key check in every dialog takes it and none changes.
 A mode that reads digits itself says so on its `Mode` constant, which every constant must: the text fields (branch, rename, new template, AI Help) and the build menu, whose options are numbered.
