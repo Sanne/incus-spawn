@@ -1,0 +1,44 @@
+name: Kernel Mac verification
+
+# The kernel-mac-verified check (#1355, ci.md): a PR that changes the macOS appliance kernel's
+# inputs merges only with a Mac boot recorded for exactly those inputs, since no CI runner can
+# boot under vfkit (#791). It runs on every PR, so it can be a required check, and passes at once
+# when the kernel is untouched.
+#
+# pull_request_target, not pull_request: a required check must not run the PR's own copy of
+# itself. This runs the base branch's workflow and script, with a read-only token and no secrets,
+# and reads the PR only as git trees (the merge ref) and through the API. Never add a step here
+# that runs, builds or sources anything from the PR.
+
+on:
+  pull_request_target:
+    # edited: a retargeted PR is checked against its new base. Every edit runs it, since a skipped
+    # run would show as passing over a failed one on the same head.
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: read
+
+jobs:
+  kernel-mac-verified:
+    name: kernel-mac-verified
+    runs-on: ubuntu-latest
+    steps:
+      # main's gate and fingerprint script, whatever the PR's base, and never the PR's head: a base
+      # branch could carry its own.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Check for a Mac boot of the appliance kernel's inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          # Who may record a Mac boot: Sanne, and the bot account the Mac runner uses.
+          VERIFIERS: Sanne Sanne-ai-bot
+        run: .github/scripts/kernel-mac-gate.sh
