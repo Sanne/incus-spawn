@@ -19,6 +19,7 @@ import org.aesh.command.option.Option;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 import static dev.incusspawn.incus.Container.shellQuote;
@@ -93,7 +94,19 @@ public class ProjectCommand extends BaseCommand {
                 return 1;
             }
             if (BuildCommand.reportNameTooLong(imageName)) return 1;
+            // No other isx works under the build's name meanwhile: each deletes what it finds there (#1760)
+            var building = TemplateLock.building(imageName);
+            if (building.isEmpty()) {
+                BuildOutput.error("Another isx is building or updating " + imageName + ".", "Create it once that is done.");
+                return 1;
+            }
+            try (var held = building.get()) {
+                return createHeld(incus, projectConfig, imageName);
+            }
+        }
 
+        /** {@link #create} once this process alone works under the build's name ({@link TemplateLock#building}). */
+        private static int createHeld(IncusClient incus, ProjectConfig projectConfig, String imageName) {
             var parent = projectConfig.getParent();
             // Read before the parent is locked: loading definitions is I/O the lock need not wait for
             var deprecation = deprecationWarning(imageName, parent);
@@ -218,7 +231,8 @@ public class ProjectCommand extends BaseCommand {
 
         /**
          * Updates the template, re-running {@code projectConfig}'s pre-build when there is one,
-         * and returns the exit code. A config found in the working directory rather than named
+         * in a copy that replaces it only once every step succeeded, and returns the exit code. A
+         * config found in the working directory rather than named
          * with --config must name this template, or it may be another project's pre-build.
          */
         int update(IncusClient incus, ProjectConfig projectConfig) {
@@ -234,34 +248,44 @@ public class ProjectCommand extends BaseCommand {
 
             BuildOutput.header("Updating project template " + name);
 
-            var machineType = incus.machineType(name);
             var failedSteps = new ArrayList<String>();
-            try (var credentials = BuildAccounts.project(incus, name)) {
-                credentials.start(machineType);
-                // Every step below needs the network: without one, each would only fail the same way
-                if (!GuestUpdate.network(incus, name, machineType)) {
-                    failedSteps.add("network wait");
-                } else {
-                    if (!GuestUpdate.system(incus, name)) failedSteps.add("system update");
-                    // Update globally installed npm packages (coding tools, etc.)
-                    if (!NpmUpdate.run(incus, name)) failedSteps.add("npm update");
-                    // Git fetch in all repos
-                    if (!GuestUpdate.gitRepos(incus, name)) failedSteps.add("git fetch");
-
-                    // Re-run pre-build if config available
-                    if (projectConfig != null && !preBuild(incus, name, projectConfig.getPreBuild())) {
-                        failedSteps.add("pre-build");
-                    }
-                }
-                GuestUpdate.emptyTmp(incus, name);
-            }
+            // In a copy that replaces the template only once every step succeeded (#1760)
+            var result = TemplateUpdate.run(incus, name, incus.readInstance(name), copy -> {
+                runSteps(incus, copy, projectConfig, failedSteps);
+                return failedSteps.isEmpty();
+            });
 
             if (!failedSteps.isEmpty()) {
                 BuildOutput.warn("Failed: " + String.join(", ", failedSteps) + ". Re-run 'isx project update " + name + "' to retry.");
                 return 1;
             }
+            if (result != TemplateUpdate.Result.UPDATED) return 1;
             BuildOutput.success("Project template " + name + " updated");
             return 0;
+        }
+
+        /** Runs the update's steps in {@code copy}, adding each that failed to {@code failedSteps}. */
+        private static void runSteps(IncusClient incus, String copy, ProjectConfig projectConfig, List<String> failedSteps) {
+            var machineType = incus.machineType(copy);
+            try (var credentials = BuildAccounts.project(incus, copy)) {
+                credentials.start(machineType);
+                // Every step below needs the network: without one, each would only fail the same way
+                if (!GuestUpdate.network(incus, copy, machineType)) {
+                    failedSteps.add("network wait");
+                } else {
+                    if (!GuestUpdate.system(incus, copy)) failedSteps.add("system update");
+                    // Update globally installed npm packages (coding tools, etc.)
+                    if (!NpmUpdate.run(incus, copy)) failedSteps.add("npm update");
+                    // Git fetch in all repos
+                    if (!GuestUpdate.gitRepos(incus, copy)) failedSteps.add("git fetch");
+
+                    // Re-run pre-build if config available
+                    if (projectConfig != null && !preBuild(incus, copy, projectConfig.getPreBuild())) {
+                        failedSteps.add("pre-build");
+                    }
+                }
+                GuestUpdate.emptyTmp(incus, copy);
+            }
         }
 
     }

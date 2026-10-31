@@ -9,6 +9,8 @@ import dev.incusspawn.util.HostLock;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Optional;
+import java.util.function.BooleanSupplier;
 
 /**
  * Replacing a template while other isx processes copy from it (#1212). A rebuild is made under a
@@ -46,6 +48,27 @@ public final class TemplateLock {
     }
 
     /**
+     * Held for as long as one isx process builds or updates {@code template} under its temporary
+     * build name (#1760), so that no two use that name at once: each deletes what it finds there
+     * first, which would be the other's work. Never waits: a build or update takes minutes.
+     * A lock file that cannot be used at all degrades to none, warning.
+     *
+     * @return the hold, released by closing it; empty when another isx process or thread holds it
+     */
+    public static Optional<Held> building(String template) {
+        // As for reading: no instance has such a name, so no other build can be under way on it
+        if (!InstanceNames.isValid(template)) return Optional.of(() -> {});
+        var file = Environment.lockDir().resolve("template-builds").resolve(template + ".lock");
+        try {
+            Held held = HostLock.acquireOrDegrade(file, "building or updating template '" + template + "'",
+                    message -> {}, Warnings::warn, Duration.ZERO)::close;
+            return Optional.of(held);
+        } catch (HostLock.HostLockException e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
      * Hold {@code template} in place until closed: a {@link #replace} waits for it. Take it before
      * looking the template up, and keep it until the copy from it is made. A name no instance can
      * have is held by nothing: the lookup will find nothing to copy.
@@ -76,11 +99,25 @@ public final class TemplateLock {
      */
     public static void replace(IncusClient incus, String built, String template, Output out,
                                Runnable afterSwap) {
+        replaceIf(incus, built, template, out, () -> true, afterSwap);
+    }
+
+    /**
+     * As above, once {@code stillCurrent} says, under the lock, that the template is still the
+     * one {@code built} was made from: an update copies the template and runs in the copy (#1760),
+     * and a rebuild swapped in meanwhile must not be replaced by an update of what it replaced.
+     *
+     * @return whether it was replaced; when not, {@code built} is left as it was
+     */
+    public static boolean replaceIf(IncusClient incus, String built, String template, Output out,
+                                    BooleanSupplier stillCurrent, Runnable afterSwap) {
         try (var lock = HostLock.acquireOrDegrade(lockFile(template), "copying from template '" + template + "'",
                 out::note, Warnings::warn, SWAP_TIMEOUT)) {
+            if (!stillCurrent.getAsBoolean()) return false;
             incus.deleteIfExists(template);
             incus.rename(built, template);
             afterSwap.run();
+            return true;
         }
     }
 }

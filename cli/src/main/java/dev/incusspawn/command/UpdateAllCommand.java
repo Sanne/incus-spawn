@@ -53,6 +53,8 @@ public class UpdateAllCommand extends BaseCommand {
         // Collect base images first, then project images (order matters for dependencies)
         for (var instance : instances) {
             var name = instance.get("name");
+            // A build's or an update's copy, which the update of its template deletes (#1760)
+            if (name.endsWith(BuildCommand.REBUILDING_SUFFIX)) continue;
             var type = Metadata.getType(incus, name);
             if (Metadata.TYPE_BASE.equals(type)) {
                 templates.add(0, name); // bases first
@@ -84,13 +86,13 @@ public class UpdateAllCommand extends BaseCommand {
         BuildOutput.section("Updating " + resolved.size() + " template(s).");
 
         boolean primesSkipped = false;
-        boolean leftRunning = false;
+        boolean refused = false;
         var failedSteps = new LinkedHashSet<String>();
         for (var entry : resolved.entrySet()) {
             BuildOutput.header("Updating " + entry.getKey());
             var result = updateImage(incus, entry.getKey(), entry.getValue());
             primesSkipped |= result.primesSkipped();
-            leftRunning |= result.leftRunning();
+            refused |= result.refused();
             failedSteps.addAll(result.failedSteps());
         }
 
@@ -98,8 +100,8 @@ public class UpdateAllCommand extends BaseCommand {
             BuildOutput.warn("Some " + String.join(", ", failedSteps)
                     + " failed; re-run 'isx update-all" + (prime ? " --prime" : "") + "' to retry them.");
         }
-        // A re-run cannot retry a stop: each template left running was warned about on its own
-        if (!failedSteps.isEmpty() || leftRunning) return 1;
+        // A re-run is refused the same way: each refused template was reported on its own
+        if (!failedSteps.isEmpty() || refused) return 1;
         BuildOutput.success("All templates updated");
         if (primesSkipped) {
             BuildOutput.note("Use --prime to re-run prime commands.");
@@ -127,58 +129,73 @@ public class UpdateAllCommand extends BaseCommand {
     }
 
     /**
-     * {@code failedSteps} names each failed step in plural, for one summary line; {@code leftRunning}
-     * is a template that could not be stopped, or was refused for not being stopped.
+     * {@code failedSteps} names each failed step in plural, for one summary line; {@code refused}
+     * is a template that was refused before its update began (not stopped, or {@link TemplateUpdate.Result#REFUSED}), which a re-run cannot retry.
      */
-    private record UpdateResult(boolean primesSkipped, Set<String> failedSteps, boolean leftRunning) {}
+    private record UpdateResult(boolean primesSkipped, Set<String> failedSteps, boolean refused) {}
 
+    /**
+     * Updates {@code name} in a copy that replaces it only once every step succeeded (#1760): one
+     * that fails leaves the template as it was ({@link TemplateUpdate}).
+     */
     private UpdateResult updateImage(IncusClient incus, String name, ImageDef imageDef) {
         var read = incus.readInstance(name);
-        var machineType = IncusClient.machineType(read.metadata());
-        // Before the try: a template refused here was not started, so is not this update's to stop
-        try {
-            InstanceLifecycle.requireStoppedTemplate(name, read);
-        } catch (RuntimeException e) {
-            // As one left running: a re-run cannot retry it, so the summary does not offer one
-            BuildOutput.stepFail(e.getMessage());
-            return new UpdateResult(false, Set.of(), true);
-        }
-        // Stopped however the update ends, even when its start failed: a template left running
-        // fails the next update-all's start
         var failedSteps = new LinkedHashSet<String>();
-        boolean primesSkipped = false;
-        boolean leftRunning;
+        var primesSkipped = new boolean[1];
+        var result = TemplateUpdate.run(incus, name, read, copy -> {
+            boolean stopped = runSteps(incus, copy, imageDef, failedSteps, primesSkipped);
+            if (!stopped) failedSteps.add("stops");
+            return failedSteps.isEmpty();
+        });
+        // A refusal (not a stopped template, among others) was reported on its own: a re-run meets it again
+        if (result == TemplateUpdate.Result.REFUSED) return new UpdateResult(false, Set.of(), true);
+        if (result == TemplateUpdate.Result.DISCARDED && failedSteps.isEmpty()) failedSteps.add("template replacements");
+        return new UpdateResult(primesSkipped[0], failedSteps, false);
+    }
+
+    /**
+     * Runs the update's steps in {@code copy}, adding each that failed to {@code failedSteps}, and
+     * stops it however they end.
+     *
+     * @return whether {@code copy} is stopped
+     */
+    private boolean runSteps(IncusClient incus, String copy, ImageDef imageDef, Set<String> failedSteps,
+                             boolean[] primesSkipped) {
+        var read = incus.readInstance(copy);
+        var machineType = IncusClient.machineType(read.metadata());
+        // Stopped however the update ends, even when its start failed: only a stopped copy is swapped in
+        boolean stopped;
         boolean answered = false;
         try {
             // Pinned, filtered and granted its accounts as a build is, since it runs the same prime commands (#1743)
-            var started = InstanceLifecycle.startTemplate(incus, name, read, BuildOutput.bound());
-            incus.waitForReady(name, machineType, InstanceSecret.GUEST_SCRIPT, started.guestEnv());
+            var started = InstanceLifecycle.startTemplate(incus, copy, read, BuildOutput.bound());
+            incus.waitForReady(copy, machineType, InstanceSecret.GUEST_SCRIPT, started.guestEnv());
             answered = true;
 
             // Every step below needs the network: without one, each would only fail the same way
-            if (!holdsItsAddress(incus, name, started.address())) {
+            if (!holdsItsAddress(incus, copy, started.address())) {
                 failedSteps.add("address checks");
-            } else if (!GuestUpdate.network(incus, name, machineType)) {
+            } else if (!GuestUpdate.network(incus, copy, machineType)) {
                 failedSteps.add("network waits");
             } else {
-                if (!GuestUpdate.system(incus, name)) failedSteps.add("system updates");
+                if (!GuestUpdate.system(incus, copy)) failedSteps.add("system updates");
                 // Update globally installed npm packages (coding tools, etc.)
-                if (!NpmUpdate.run(incus, name)) failedSteps.add("npm updates");
+                if (!NpmUpdate.run(incus, copy)) failedSteps.add("npm updates");
                 // Git fetch in all repos (for project images)
-                if (!GuestUpdate.gitRepos(incus, name)) failedSteps.add("git fetches");
-                var primeResult = handlePrimeCommands(incus, name, imageDef);
+                if (!GuestUpdate.gitRepos(incus, copy)) failedSteps.add("git fetches");
+                var primeResult = handlePrimeCommands(incus, copy, imageDef);
                 if (primeResult.failed) failedSteps.add("prime commands");
-                primesSkipped = primeResult.skipped;
+                primesSkipped[0] = primeResult.skipped;
             }
-            GuestUpdate.emptyTmp(incus, name);
+            GuestUpdate.emptyTmp(incus, copy);
         } finally {
             // Before the stop, and whether or not the grant reached Incus: its write may have
-            failedSteps.addAll(revokeGrant(incus, name, answered));
-            leftRunning = !stop(incus, name);
+            failedSteps.addAll(revokeGrant(incus, copy, answered));
+            stopped = stop(incus, copy);
             // Only once stopped, and even after a failed claim: its write may have reached Incus
-            if (!leftRunning) InstanceNetwork.releaseBuildAddressOrWarn(incus, name, BuildOutput.bound());
+            if (stopped) InstanceNetwork.releaseBuildAddressOrWarn(incus, copy, BuildOutput.bound());
         }
-        return new UpdateResult(primesSkipped, failedSteps, leftRunning);
+        return stopped;
     }
 
     /**
@@ -196,7 +213,7 @@ public class UpdateAllCommand extends BaseCommand {
             ProxyService.signalAccountRefresh();
         } catch (RuntimeException e) {
             BuildOutput.warn("Could not revoke " + name + "'s update credentials: " + e.getMessage(),
-                    "They stay valid while it runs; its next update or build replaces them.");
+                    "The update is discarded, and its copy with them.");
             failed.add("credential revocations");
         }
         if (!answered) return failed;
@@ -204,7 +221,7 @@ public class UpdateAllCommand extends BaseCommand {
             BuildAccounts.clearGuestProofs(new Container(incus, name));
         } catch (RuntimeException e) {
             BuildOutput.warn("Could not clear " + name + "'s update credentials from the guest: " + e.getMessage(),
-                    "Branches start with fresh proofs of their own; rebuild the template to remove the stale cache.");
+                    "The update is discarded, so no branch copies them.");
             failed.add("proof cache cleanups");
         }
         return failed;
@@ -225,11 +242,11 @@ public class UpdateAllCommand extends BaseCommand {
     }
 
     /**
-     * Stop the template, forcing it when its guest ignores the shutdown, as one whose agent never
+     * Stop the update's copy, forcing it when its guest ignores the shutdown, as one whose agent never
      * answered may. One that died on its own is already stopped, which Incus refuses to stop again.
      * Never throws: from a {@code finally}, that would replace why the update failed.
      *
-     * @return whether the template is stopped
+     * @return whether the copy is stopped
      */
     private static boolean stop(IncusClient incus, String name) {
         try {
@@ -243,13 +260,13 @@ public class UpdateAllCommand extends BaseCommand {
                 return true;
             } catch (RuntimeException forced) {
                 BuildOutput.warn("Could not stop " + name + ": " + e.getMessage() + "; forcing it: " + forced.getMessage(),
-                        "The next update-all cannot start it until it is stopped.");
+                        "The update is discarded; a running copy cannot replace the template.");
                 return false;
             }
         }
     }
 
-    /** Whether Incus says the template is stopped or no longer there; a read that fails says neither. */
+    /** Whether Incus says the copy is stopped or no longer there; a read that fails says neither. */
     private static boolean isStoppedOrGone(IncusClient incus, String name) {
         try {
             var instance = incus.instanceMetadataOrThrow(name);

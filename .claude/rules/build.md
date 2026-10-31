@@ -9,6 +9,8 @@ paths:
   - "cli/src/main/java/dev/incusspawn/command/CleanCommand.java"
   - "cli/src/main/java/dev/incusspawn/command/BranchCommand.java"
   - "cli/src/main/java/dev/incusspawn/command/ProjectCommand.java"
+  - "cli/src/main/java/dev/incusspawn/command/UpdateAllCommand.java"
+  - "cli/src/main/java/dev/incusspawn/command/TemplateUpdate.java"
   - "common/src/main/java/dev/incusspawn/lifecycle/TemplateLock.java"
   - "cli/src/main/java/dev/incusspawn/command/UpdateBaseCommand.java"
   - "cli/src/main/java/dev/incusspawn/baseimage/**"
@@ -62,6 +64,8 @@ The swap's `IncusClient.rename` checks that the record and the subvolume both mo
 Everything that copies from a template holds it shared (`TemplateLock.reading`) from looking the template up until the copy is made, through the start for a branch: `isx branch`, the TUI's branch, `isx mcp`'s `create_instance(template)` and `delegate(template)` (`InstanceBackend.holdTemplate`), `buildFromParent`, `isx build`'s missing-or-outdated check of a parent and of the parent's own parent (`parentNeedsBuild`), its rebuild confirmation's lookup of the chain and `isx project create` from its parent lookup to the copy.
 A new path that copies a template takes `TemplateLock.reading` the same way.
 `isx project create` builds under `<name>-rebuilding` too and swaps through the same call, so a failed re-create keeps the previous template (a failed swap keeps the build).
+`isx update-all` and `isx project update` run in a copy under the same name and swap it in with `TemplateLock.replaceIf` only when every step succeeded and both the template and the copy are still the instances it started with, by `created_at` (`TemplateUpdate`, #1760); any failure deletes the copy and keeps the template.
+Builds, `isx project create` and updates of one template are serialized by `TemplateLock.building`, which never waits: they share `<name>-rebuilding`, and each deletes what it finds there.
 Only names Incus accepts get a lock file (a project-local `name:` or an agent's argument is untrusted), and `isx mcp` takes the hold only after `TemplatePolicy.requireListed`.
 
 Package deduplication: `BuildCommand` collects all ancestor packages and subtracts them from the install list so derived images only install what's new.

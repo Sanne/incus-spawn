@@ -826,6 +826,20 @@ public class BuildCommand extends BaseCommand {
 
         // Once the build is certain to go ahead: a refused or declined build built nothing on it
         warnDeprecated(imageDef, defs);
+        // No other isx works under tempName meanwhile: each deletes what it finds there (#1760)
+        var building = TemplateLock.building(canonicalName);
+        if (building.isEmpty()) {
+            BuildOutput.error("Another isx is building or updating " + shown(canonicalName) + ".",
+                    "Build it once that is done.");
+            throw new BuildFailedException(canonicalName);
+        }
+        try (var held = building.get()) {
+            buildHeld(imageDef, defs, canonicalName, tempName);
+        }
+    }
+
+    /** {@link #buildSingleImage} once this process alone works under {@code tempName} ({@link TemplateLock#building}). */
+    private void buildHeld(ImageDef imageDef, Map<String, ImageDef> defs, String canonicalName, String tempName) {
         incus.deleteIfExists(tempName);
         var build = new ActiveBuild(tempName, canonicalName, effectiveMachineType(imageDef));
         activeBuild = build;
@@ -842,13 +856,13 @@ public class BuildCommand extends BaseCommand {
             // (every template ~0, a shrunken base on the root). tempName's rfer is exactly what
             // canonicalName reports after the rename: rfer is per-subvolume, unaffected by renaming it or
             // by deleting a sibling subvolume.
-            referenced = probeReferencedSize(tempName);
+            referenced = probeReferencedSize(incus, tempName);
 
             // The swap is part of the build: when it fails the build has not produced a template, so it
             // must go through the same report-and-promote path as any other failure.
             // Trusted inside the swap's lock: a branch or an isx mcp delegate waiting on this rebuild
             // copies the template only after, and would otherwise keep its taint for good
-            TemplateLock.replace(incus, tempName, canonicalName, BuildOutput.bound(), () -> trustBuilt(canonicalName));
+            TemplateLock.replace(incus, tempName, canonicalName, BuildOutput.bound(), () -> trustBuilt(incus, canonicalName));
             activeBuild = null;
             buildDone(canonicalName);
         } catch (Exception e) {
@@ -868,7 +882,7 @@ public class BuildCommand extends BaseCommand {
 
         // Outside the try: the template is in place, so nothing here may fail its build
         endBuildLog();
-        stampReferencedSize(canonicalName, referenced);
+        stampReferencedSize(incus, canonicalName, referenced);
     }
 
     /**
@@ -945,7 +959,7 @@ public class BuildCommand extends BaseCommand {
      * forces a filesystem sync (see {@link dev.incusspawn.incus.BtrfsUsage}) so the final, otherwise
      * uncommitted, build writes are accounted for.
      */
-    private long probeReferencedSize(String name) {
+    static long probeReferencedSize(IncusClient incus, String name) {
         try {
             var probe = incus.probeCowPool();
             if (probe.poolName() == null || !probe.isBtrfs()) return -1;
@@ -988,7 +1002,7 @@ public class BuildCommand extends BaseCommand {
      * {@link #probeReferencedSize}) is simply not stamped and the TUI falls back to exclusive-usage
      * display. Must run after the rename to the canonical name (the subvolume path btrfs reports).
      */
-    private void stampReferencedSize(String canonicalName, long referenced) {
+    static void stampReferencedSize(IncusClient incus, String canonicalName, long referenced) {
         if (referenced <= 0) return;
         try {
             incus.configSet(canonicalName, Metadata.DISK_REFERENCED, String.valueOf(referenced));
@@ -1218,7 +1232,7 @@ public class BuildCommand extends BaseCommand {
      * it set. Should this write fail, the template stays untrusted, which {@link #isImageOutdated}
      * counts, so the next {@code isx build} of it or of a template built on it rebuilds it.
      */
-    void trustBuilt(String template) {
+    static void trustBuilt(IncusClient incus, String template) {
         try {
             incus.configUnset(template, Metadata.UNTRUSTED_LINEAGE);
         } catch (RuntimeException e) {

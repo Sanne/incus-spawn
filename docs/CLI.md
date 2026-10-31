@@ -26,6 +26,7 @@ isx init
 ## `isx build`
 
 Build or rebuild a template image.
+While another isx builds or updates the same template, the build is refused.
 
 ```shell
 isx build [<template>...] [options]
@@ -220,6 +221,8 @@ The pin is written to `~/.config/incus-spawn/base-image-pin.yaml` and changes on
 
 Update system packages, npm globals and git-fetched repos in all templates.
 It does not re-clone repos or reinstall tools: use `isx build` for that.
+Each template is updated in a copy that replaces it only once every step succeeded.
+If a step fails, the command exits non-zero and that template stays as it was.
 
 ```shell
 isx update-all [options]
@@ -377,7 +380,8 @@ isx project update <name> [options]
 |--------|--------------|
 | `--config <path>` | Path to `incus-spawn.yaml` (default: detected from the current directory; a detected file must name this template) |
 
-If any step fails (system update, npm update, git fetch, pre-build), the command exits non-zero and keeps the template.
+The update runs in a copy that replaces the template only once every step succeeded.
+If any step fails (system update, npm update, git fetch, pre-build), the command exits non-zero and keeps the template as it was.
 
 ## `isx proxy`
 

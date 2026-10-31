@@ -17,6 +17,25 @@ import static org.mockito.Mockito.*;
 @ExtendWith(TempHome.class)
 class TemplateLockTest {
 
+    /** One build or update of a template at a time (#1760), refused rather than waited for, and free again once done. */
+    @Test
+    void aSecondBuildOfTheSameTemplateIsRefusedWithoutWaiting() throws Exception {
+        try (var pool = Executors.newSingleThreadExecutor()) {
+            var first = TemplateLock.building("tpl").orElseThrow();
+            try {
+                assertTrue(pool.submit(() -> TemplateLock.building("tpl").isEmpty()).get(5, TimeUnit.SECONDS));
+                var other = pool.submit(() -> TemplateLock.building("tpl-other")).get(5, TimeUnit.SECONDS);
+                assertTrue(other.isPresent(), "another template builds meanwhile");
+                pool.submit(() -> other.get().close()).get(5, TimeUnit.SECONDS);
+            } finally {
+                first.close();
+            }
+            var again = pool.submit(() -> TemplateLock.building("tpl")).get(5, TimeUnit.SECONDS);
+            assertTrue(again.isPresent());
+            pool.submit(() -> again.get().close()).get(5, TimeUnit.SECONDS);
+        }
+    }
+
     @Test
     void theSwapWaitsForACopyUnderWay() throws Exception {
         var incus = mock(IncusClient.class);
