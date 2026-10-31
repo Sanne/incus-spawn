@@ -50,6 +50,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
@@ -60,6 +61,10 @@ class WebSocketProxyTest {
 
     @TempDir
     static Path tempHome;
+
+    // How long to wait for something that should happen. Idle, a close takes a few ms; on
+    // a loaded box it took over 2 s (#1887). Waiting longer costs only a test that fails.
+    private static final long WAIT_SECONDS = 30;
 
     static String origHome;
     static Vertx serverVertx;
@@ -129,7 +134,7 @@ class WebSocketProxyTest {
             var path = ws.path();
             ws.closeHandler(v -> upstreamCloses.computeIfAbsent(path, p -> new AtomicInteger()).incrementAndGet());
         });
-        int mockPort = await(mockUpstream.listen(0, "127.0.0.1"), 5).actualPort();
+        int mockPort = await(mockUpstream.listen(0, "127.0.0.1")).actualPort();
 
         var openaiAuth = new ToolDef.AuthDef();
         openaiAuth.setType("bearer");
@@ -162,9 +167,9 @@ class WebSocketProxyTest {
     static void stopProxy() throws Exception {
         try {
             if (proxy != null) proxy.stop();
-            if (mockUpstream != null) await(mockUpstream.close(), 2);
-            if (clientVertx != null) await(clientVertx.close(), 2);
-            if (serverVertx != null) await(serverVertx.close(), 2);
+            if (mockUpstream != null) await(mockUpstream.close());
+            if (clientVertx != null) await(clientVertx.close());
+            if (serverVertx != null) await(serverVertx.close());
         } finally {
             System.setProperty("user.home", origHome);
         }
@@ -203,8 +208,15 @@ class WebSocketProxyTest {
         return result.future();
     }
 
-    private static <T> T await(Future<T> future, long seconds) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(seconds, TimeUnit.SECONDS);
+    private static <T> T await(Future<T> future) throws Exception {
+        return future.toCompletionStage().toCompletableFuture().get(WAIT_SECONDS, TimeUnit.SECONDS);
+    }
+
+    /** Polls {@code done} until it holds or {@link #WAIT_SECONDS} pass, whichever is first. */
+    private static void waitUntil(BooleanSupplier done) throws InterruptedException {
+        for (int i = 0; i < WAIT_SECONDS * 10 && !done.getAsBoolean(); i++) {
+            Thread.sleep(100);
+        }
     }
 
     /**
@@ -216,11 +228,11 @@ class WebSocketProxyTest {
         return await(onClient(() -> client.connect(options).map(ws -> {
             setup.accept(ws);
             return ws;
-        })), 5);
+        })));
     }
 
     private static void close(WebSocketClient client) throws Exception {
-        await(onClient(client::close), 2);
+        await(onClient(client::close));
     }
 
     @Test
@@ -233,7 +245,7 @@ class WebSocketProxyTest {
             ws.writeTextMessage("hello-ws");
         });
 
-        assertEquals("echo:hello-ws", result.get(5, TimeUnit.SECONDS));
+        assertEquals("echo:hello-ws", result.get(WAIT_SECONDS, TimeUnit.SECONDS));
         close(client);
     }
 
@@ -252,7 +264,7 @@ class WebSocketProxyTest {
                 ws.textMessageHandler(result::complete);
                 ws.writeTextMessage("via-override");
             });
-            assertEquals("echo:via-override", result.get(5, TimeUnit.SECONDS));
+            assertEquals("echo:via-override", result.get(WAIT_SECONDS, TimeUnit.SECONDS));
             var dial = upstreamDials.stream().filter(o -> "/v1/bench-override".equals(o.getURI())).findFirst().orElseThrow();
             assertEquals("127.0.0.1", dial.getHost(), "dialled at the override's address");
             assertEquals("api.openai.com", dial.getHeaders().get("Host"), "the Host header still names the real host");
@@ -274,7 +286,7 @@ class WebSocketProxyTest {
         });
 
         var expected = Buffer.buffer("echo:").appendBytes(new byte[]{0x01, 0x02, 0x03});
-        assertEquals(expected, result.get(5, TimeUnit.SECONDS));
+        assertEquals(expected, result.get(WAIT_SECONDS, TimeUnit.SECONDS));
         close(client);
     }
 
@@ -290,7 +302,7 @@ class WebSocketProxyTest {
             ws.writeTextMessage("ping");
         });
 
-        result.get(5, TimeUnit.SECONDS);
+        result.get(WAIT_SECONDS, TimeUnit.SECONDS);
 
         assertFalse(capturedAuthHeaders.isEmpty(),
                 "Mock upstream should have received an auth header");
@@ -324,17 +336,15 @@ class WebSocketProxyTest {
                 socket.textMessageHandler(echo::complete);
                 socket.writeTextMessage("hello-ws");
             });
-            assertEquals("echo:hello-ws", echo.get(5, TimeUnit.SECONDS));
+            assertEquals("echo:hello-ws", echo.get(WAIT_SECONDS, TimeUnit.SECONDS));
 
             var open = traffic.get();
             assertEquals(1, open.total().requests());
             assertEquals(1, open.total().inFlight());
             assertEquals(1, open.byDomain().get("api.openai.com").inFlight());
 
-            await(onClient(ws::close), 2);
-            for (int i = 0; i < 50 && traffic.get().total().inFlight() > 0; i++) {
-                Thread.sleep(100);
-            }
+            await(onClient(ws::close));
+            waitUntil(() -> traffic.get().total().inFlight() == 0);
             var closed = traffic.get().total();
             assertEquals(0, closed.inFlight());
             assertEquals("hello-ws".length(), closed.requestBytes());
@@ -357,13 +367,11 @@ class WebSocketProxyTest {
             socket.textMessageHandler(echo::complete);
             socket.writeTextMessage("hi");
         });
-        assertEquals("echo:hi", echo.get(5, TimeUnit.SECONDS));
+        assertEquals("echo:hi", echo.get(WAIT_SECONDS, TimeUnit.SECONDS));
 
-        await(onClient(ws::close), 2);
+        await(onClient(ws::close));
 
-        for (int i = 0; i < 50 && closes.get() <= countBefore; i++) {
-            Thread.sleep(100);
-        }
+        waitUntil(() -> closes.get() > countBefore);
         assertTrue(closes.get() > countBefore,
                 "Upstream WebSocket should close when client disconnects");
         close(client);
@@ -379,7 +387,7 @@ class WebSocketProxyTest {
             ws.writeTextMessage("close-with-4008");
         });
 
-        assertEquals((short) 4008, closeCode.get(5, TimeUnit.SECONDS),
+        assertEquals((short) 4008, closeCode.get(WAIT_SECONDS, TimeUnit.SECONDS),
                 "Upstream close status code should propagate through the proxy");
         close(client);
     }
@@ -397,8 +405,8 @@ class WebSocketProxyTest {
 
         System.setErr(captureErr);
         try {
-            await(onClient(() -> ws.writeTextMessage("close-with-4008")), 2);
-            closed.get(5, TimeUnit.SECONDS);
+            await(onClient(() -> ws.writeTextMessage("close-with-4008")));
+            closed.get(WAIT_SECONDS, TimeUnit.SECONDS);
             // Wait for any async exception handlers on the server event loop
             // to fire while stderr is still captured.
             Thread.sleep(500);
@@ -427,9 +435,9 @@ class WebSocketProxyTest {
         }));
 
         // The proxy sends keepalive pings every 30s. The periodic timer
-        // starts on connect, so we wait up to 35s.
-        pingReceived.get(35, TimeUnit.SECONDS);
-        await(onClient(ws::close), 2);
+        // starts on connect, so we wait that long and then as long as for anything else.
+        pingReceived.get(30 + WAIT_SECONDS, TimeUnit.SECONDS);
+        await(onClient(ws::close));
         close(client);
     }
 
@@ -465,8 +473,8 @@ class WebSocketProxyTest {
                     return ws;
                 })));
             }
-            for (var f : opened) await(f, 10);
-            assertTrue(allEchoed.await(10, TimeUnit.SECONDS),
+            for (var f : opened) await(f);
+            assertTrue(allEchoed.await(WAIT_SECONDS, TimeUnit.SECONDS),
                     "Every frame sent right after the handshake should be relayed, got " + echoes);
             // Each socket got its own echo: nothing cross-routed or dropped
             assertEquals(expected.stream().sorted().toList(), echoes.stream().sorted().toList());
@@ -487,7 +495,7 @@ class WebSocketProxyTest {
 
         connect(client, connectOptions("/v1/greet"), ws -> ws.textMessageHandler(greeting::complete));
 
-        assertEquals("greeting", greeting.get(5, TimeUnit.SECONDS));
+        assertEquals("greeting", greeting.get(WAIT_SECONDS, TimeUnit.SECONDS));
         close(client);
     }
 
@@ -592,7 +600,7 @@ class WebSocketProxyTest {
         var params = socket.getSSLParameters();
         params.setServerNames(List.of(new SNIHostName("api.openai.com")));
         socket.setSSLParameters(params);
-        socket.setSoTimeout(5_000);
+        socket.setSoTimeout((int) TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
         socket.startHandshake();
         return socket;
     }
