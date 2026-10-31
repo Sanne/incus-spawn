@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -121,7 +120,10 @@ class PiSetupTest {
     @Test
     void installLeavesModelToPiForAnotherProviderWithoutModel() {
         // Pi picks a model the provider serves; claude-sonnet-4-6 sent to Vertex's Gemini path is a 404 (#1918).
-        for (var provider : List.of("vertex", "google", "google-vertex", "openai")) {
+        // Pi's own provider names, literally: isx's vertex is Pi's google-vertex
+        var written = Map.of("vertex", "google-vertex", "google", "google",
+                "google-vertex", "google-vertex", "openai", "openai");
+        written.forEach((provider, piProvider) -> {
             var incus = mock(IncusClient.class);
             when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
             var params = ParameterResolver.resolve(new PiSetup().parameters(), Map.of("provider", provider));
@@ -130,17 +132,19 @@ class PiSetupTest {
 
             verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg ->
                     arg.contains("/home/agentuser/.pi/agent/settings.json")
-                            && arg.contains("\"defaultProvider\": \"" + provider + "\"")
+                            && arg.contains("\"defaultProvider\": \"" + piProvider + "\"")
                             && !arg.contains("defaultModel")));
-        }
+        });
     }
 
+    /** A model the template names is kept for any provider, even the anthropic default; isx never checks it. */
     @Test
     void installKeepsExplicitClaudeModelForAnotherProvider() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        // Pi's opencode provider serves claude-sonnet-4-6 under that very id
         var params = ParameterResolver.resolve(new PiSetup().parameters(),
-                Map.of("provider", "vertex", "model", "claude-sonnet-4-6"));
+                Map.of("provider", "opencode", "model", "claude-sonnet-4-6"));
 
         new PiSetup().install(new Container(incus, CONTAINER), params.resolvedValues());
 
@@ -158,8 +162,20 @@ class PiSetupTest {
 
         verify(incus).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), argThat(arg ->
-                        arg.contains("\"defaultProvider\": \"vertex\"") &&
+                        arg.contains("\"defaultProvider\": \"google-vertex\"") &&
                         arg.contains("\"defaultModel\": \"gemini-3.7-flash\"")));
+    }
+
+    /** Pi has no provider named vertex: isx's name for it is written as Pi's own. */
+    @Test
+    void installWritesPisOwnNameForEitherVertexSpelling() {
+        for (var provider : java.util.List.of("vertex", "google-vertex")) {
+            var incus = mock(IncusClient.class);
+            when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+            new PiSetup().install(new Container(incus, CONTAINER), Map.of("provider", provider));
+            verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"),
+                    argThat(arg -> arg.contains("\"defaultProvider\": \"google-vertex\"")));
+        }
     }
 
     @Test
@@ -225,37 +241,47 @@ class PiSetupTest {
                 "Should not set ANTHROPIC_API_KEY for google provider");
     }
 
+    /**
+     * Pi's google-vertex provider takes an API key, which the proxy swaps for the host's gcloud
+     * token: the variable carries the claude namespace's proof, filled at login.
+     */
     @Test
-    void envEntriesSetsGcpVarsForVertexProviderWhenVertexConfigured() {
-        var config = SpawnConfig.load();
-        config.getClaude().setUseVertex(true);
-        config.getClaude().setVertexProjectId("my-project");
-        config.getClaude().setCloudMlRegion("us-central1");
-        config.save();
-
-        var entries = new PiSetup().envEntries(Map.of("provider", "vertex"));
-
-        assertTrue(entries.stream().anyMatch(e ->
-                        "GOOGLE_CLOUD_PROJECT".equals(e.getName()) && "my-project".equals(e.getValue())),
-                "Should set GOOGLE_CLOUD_PROJECT from Vertex config");
-        assertTrue(entries.stream().anyMatch(e ->
-                        "GOOGLE_CLOUD_LOCATION".equals(e.getName()) && "us-central1".equals(e.getValue())),
-                "Should set GOOGLE_CLOUD_LOCATION from Vertex config");
+    void envEntriesSetsAVertexKeyPlaceholderForEitherVertexSpelling() {
+        for (var provider : java.util.List.of("vertex", "google-vertex")) {
+            var entries = new PiSetup().envEntries(Map.of("provider", provider));
+            assertTrue(entries.stream().anyMatch(e ->
+                            "GOOGLE_CLOUD_API_KEY".equals(e.getName()) && "AIzaplaceholder".equals(e.getValue())),
+                    provider + ": " + entries);
+            assertFalse(entries.stream().anyMatch(e -> "GEMINI_API_KEY".equals(e.getName())), provider);
+        }
     }
 
     @Test
-    void envEntriesSetsGcpVarsForGoogleProviderWhenVertexConfigured() {
-        var config = SpawnConfig.load();
-        config.getClaude().setUseVertex(true);
-        config.getClaude().setVertexProjectId("my-project");
-        config.getClaude().setCloudMlRegion("europe-west1");
-        config.save();
+    void theVertexKeyCarriesTheClaudeNamespacesProof() {
+        var placeholder = new PiSetup().placeholders().stream()
+                .filter(p -> p.env().equals("GOOGLE_CLOUD_API_KEY")).findFirst().orElseThrow();
+        assertEquals("AIza", placeholder.prefix());
+        assertEquals(SpawnConfig.ClaudeConfig.NAMESPACE, placeholder.namespace());
+        assertEquals("", placeholder.problem());
+    }
 
+    /** Pi's google provider is the Gemini API: it spends the gemini namespace's key, as Gemini CLI does. */
+    @Test
+    void envEntriesSetsTheGeminiPlaceholderForGoogleProvider() {
         var entries = new PiSetup().envEntries(Map.of("provider", "google"));
-
         assertTrue(entries.stream().anyMatch(e ->
-                        "GOOGLE_CLOUD_PROJECT".equals(e.getName()) && "my-project".equals(e.getValue())),
-                "google provider should also set GOOGLE_CLOUD_PROJECT from Vertex config");
+                "GEMINI_API_KEY".equals(e.getName()) && "gemini-placeholder".equals(e.getValue())), entries.toString());
+        assertFalse(entries.stream().anyMatch(e -> e.getName().startsWith("GOOGLE_CLOUD_")), entries.toString());
+        assertEquals(java.util.Set.of("gemini"), new PiSetup().credentialNamespaces(Map.of("provider", "google")));
+        assertTrue(new PiSetup().credentialNamespaces().contains("gemini"));
+    }
+
+    @Test
+    void bothVertexSpellingsSpendTheClaudeAccount() {
+        for (var provider : java.util.List.of("vertex", "google-vertex")) {
+            assertEquals(java.util.Set.of(SpawnConfig.ClaudeConfig.NAMESPACE),
+                    new PiSetup().credentialNamespaces(Map.of("provider", provider)), provider);
+        }
     }
 
     @Test

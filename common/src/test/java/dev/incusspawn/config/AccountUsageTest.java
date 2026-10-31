@@ -164,7 +164,7 @@ class AccountUsageTest {
         var child = ImageDef.parseYaml("name: tpl-ai\nparent: tpl-dev\ntools:\n  - pi\n");
         Map<String, ToolSetup> tools = Map.of("gh", new GhSetup(), "pi", new dev.incusspawn.tool.PiSetup());
         var defs = Map.of("tpl-dev", base, "tpl-ai", child);
-        assertEquals(java.util.Set.of("github", "claude", "openai"),
+        assertEquals(java.util.Set.of("github", "claude", "openai", "gemini"),
                 AccountSelection.templateNamespaces(child, defs, tools::get));
     }
 

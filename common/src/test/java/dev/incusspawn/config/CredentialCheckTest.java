@@ -356,7 +356,14 @@ class CredentialCheckTest {
                 check("{}", template("[pi]")));
         assertEquals("Missing credentials: Vertex AI configuration."
                 + " Run 'isx account add claude' to configure it."
-                + " Pi needs a Vertex AI Claude account for its provider 'google'." + PI_NOTE_TAIL,
+                + " Pi needs a Vertex AI Claude account for its provider 'google-vertex'." + PI_NOTE_TAIL,
+                check("{}", piTemplate("google-vertex")));
+    }
+
+    /** Pi's google provider is the Gemini API, which spends the gemini namespace's key. */
+    @Test
+    void piOnTheGeminiApiNeedsAGeminiKey() throws Exception {
+        assertEquals("Missing credentials: Gemini API key. Run 'isx account add gemini' to configure it.",
                 check("{}", piTemplate("google")));
     }
 
@@ -411,7 +418,7 @@ class CredentialCheckTest {
     void piTemplatesOnDifferentProvidersShareOneEntry() throws Exception {
         var all = tools();
         var defs = Map.of("tpl-vertex", ImageDef.parseYaml(piTemplate("vertex").replace("tpl-pi", "tpl-vertex")),
-                "tpl-google", ImageDef.parseYaml(piTemplate("google").replace("tpl-pi", "tpl-google")));
+                "tpl-google", ImageDef.parseYaml(piTemplate("google-vertex").replace("tpl-pi", "tpl-google")));
         var missing = CredentialCheck.missingByCredential(Jjq.spawnConfig("{}"), List.of("tpl-vertex", "tpl-google"),
                 defs, all, all);
         assertEquals(1, missing.size(), missing.toString());
@@ -419,7 +426,7 @@ class CredentialCheckTest {
         var notes = missing.keySet().iterator().next().notes();
         assertEquals(3, notes.size(), notes.toString());
         assertTrue(notes.stream().anyMatch(n -> n.endsWith("'vertex'."))
-                && notes.stream().anyMatch(n -> n.endsWith("'google'.")), notes.toString());
+                && notes.stream().anyMatch(n -> n.endsWith("'google-vertex'.")), notes.toString());
     }
 
     @Test

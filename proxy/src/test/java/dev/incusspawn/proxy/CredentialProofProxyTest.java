@@ -37,6 +37,9 @@ class CredentialProofProxyTest {
     static final String GITHUB = "api.github.com";
     static final String ANTHROPIC = "api.anthropic.com";
     static final String GEMINI = "generativelanguage.googleapis.com";
+    static final String VERTEX = "aiplatform.googleapis.com";
+    /** What Pi's google-vertex provider sends with an API key: Vertex's express form, no project. */
+    static final String EXPRESS_CALL = "/v1/publishers/google/models/gemini-3.7-flash:streamGenerateContent?alt=sse";
     static final String SECRET = ProofTestSupport.SECRET;
     static final String BODY = "{\"model\":\"claude-test\",\"messages\":[],\"max_tokens\":7}";
     static final String GITHUB_CONFIG = """
@@ -66,6 +69,10 @@ class CredentialProofProxyTest {
     static final AtomicInteger gitChallenges = new AtomicInteger();
     static final String GIT_HEAD = "a".repeat(40);
     record Received(String uri, String host, String authorization, String key, String googleKey, String body) {}
+    /** The head of the last plain HTTP request upstream received, for headers {@link Received} does not name. */
+    static volatile io.vertx.core.MultiMap receivedHeaders;
+    /** Sent with every {@link #http} request beside its own header. */
+    volatile Map<String, String> extraHeaders = Map.of();
     MitmProxy proxy;
     InstanceRegistry registry;
     volatile String stamp;
@@ -85,7 +92,7 @@ class CredentialProofProxyTest {
         System.setProperty("user.home", home.toString());
         Files.createDirectories(home.resolve(".config/incus-spawn"));
         vertx = Vertx.vertx(new VertxOptions().setAddressResolverOptions(new AddressResolverOptions()
-                .setHostsValue(Buffer.buffer("127.0.0.1 " + GITHUB + " " + ANTHROPIC + " " + GEMINI + "\n"))));
+                .setHostsValue(Buffer.buffer("127.0.0.1 " + GITHUB + " " + ANTHROPIC + " " + GEMINI + " " + VERTEX + "\n"))));
         upstream = vertx.createHttpServer(new HttpServerOptions().setSsl(true)
                         .setKeyCertOptions(NpmCacheProxyTest.keyCert(CertificateAuthority.loadOrCreate(), ANTHROPIC)))
                 .requestHandler(req -> req.body().onSuccess(body -> {
@@ -103,6 +110,7 @@ class CredentialProofProxyTest {
                                 req.path().endsWith("/HEAD") ? "ref: refs/heads/main\n" : GIT_HEAD + "\trefs/heads/main\n");
                         return;
                     }
+                    receivedHeaders = io.vertx.core.MultiMap.caseInsensitiveMultiMap().addAll(req.headers());
                     received.complete(new Received(req.uri(), req.getHeader("Host"), req.getHeader("Authorization"),
                             req.getHeader("x-api-key"), req.getHeader("x-goog-api-key"), body.toString()));
                     req.response().end("{}");
@@ -212,7 +220,7 @@ class CredentialProofProxyTest {
         proxy.upstreamWsPort = upstreamPort;
         ContainerTls.startInBackground(proxy);
         proxy.useInstanceRegistry(registry);
-        for (var host : List.of(GITHUB, "github.com", ANTHROPIC, GEMINI, "us-east5-aiplatform.googleapis.com")) {
+        for (var host : List.of(GITHUB, "github.com", ANTHROPIC, GEMINI, VERTEX, "us-east5-aiplatform.googleapis.com")) {
             proxy.overrideUpstream(host, "127.0.0.1", upstreamPort);
         }
     }
@@ -224,12 +232,17 @@ class CredentialProofProxyTest {
     }
 
     int http(String host, String header, String value) throws Exception {
+        return http(HttpMethod.POST, host, "/v1/messages?keep=1", header, value);
+    }
+
+    int http(HttpMethod method, String host, String uri, String header, String value) throws Exception {
         received = new CompletableFuture<>();
-        var options = new RequestOptions().setMethod(HttpMethod.POST)
+        var options = new RequestOptions().setMethod(method)
                 .setServer(SocketAddress.inetSocketAddress(proxy.mitmPort(), "127.0.0.1"))
-                .setHost(host).setPort(443).setURI("/v1/messages?keep=1");
+                .setHost(host).setPort(443).setURI(uri);
         return client.request(options).compose(req -> {
             if (value != null) req.putHeader(header, value);
+            extraHeaders.forEach(req::putHeader);
             return req.send(BODY);
         }).compose(resp -> resp.body().map(b -> resp.statusCode()))
                 .toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
@@ -344,6 +357,114 @@ class CredentialProofProxyTest {
         address = "127.0.0.2";
         registry.refresh();
         assertEquals(fresh, request(websocket, GEMINI, "x-goog-api-key", fresh).googleKey());
+    }
+
+    /** Pi's google-vertex provider: its proof buys a Gemini call in the Vertex account's project, signed on the host. */
+    @Test void geminiOnVertexSpendsTheVertexAccountWithTheHostsGcloudToken() throws Exception {
+        serve(claude("vertex"));
+        assertEquals(200, http(HttpMethod.POST, VERTEX, EXPRESS_CALL, "x-goog-api-key", ProofTestSupport.token("claude", "AIza")));
+        var got = received.get(10, TimeUnit.SECONDS);
+        assertEquals("/v1/projects/outer-project/locations/us-east5/publishers/google/models/gemini-3.7-flash"
+                + ":streamGenerateContent?alt=sse", got.uri());
+        assertEquals("us-east5-aiplatform.googleapis.com", got.host());
+        assertEquals("Bearer ya29.outer", got.authorization());
+        assertNull(got.googleKey(), "the proof never leaves the proxy");
+        assertEquals(BODY, got.body());
+        assertEquals(1, tokenFetches.get());
+    }
+
+    /** Only the route names the project the token is charged to: no quota project, query or method override of the guest's. */
+    @Test void geminiOnVertexKeepsOnlyTheResponseFormatFromTheGuestsQueryAndNoBillingHeaders() throws Exception {
+        serve(claude("vertex"));
+        extraHeaders = Map.of("x-goog-user-project", "someone-else", "X-HTTP-Method-Override", "DELETE");
+        assertEquals(200, http(HttpMethod.POST, VERTEX, "/v1/publishers/google/models/gemini-3.7-flash:streamGenerateContent"
+                + "?userProject=someone-else&alt=sse&key=AIza-other&%24alt=json&alt=sse",
+                "x-goog-api-key", ProofTestSupport.token("claude", "AIza")));
+        var got = received.get(10, TimeUnit.SECONDS);
+        assertEquals("/v1/projects/outer-project/locations/us-east5/publishers/google/models/gemini-3.7-flash"
+                + ":streamGenerateContent?alt=sse&alt=sse", got.uri());
+        assertNull(receivedHeaders.get("x-goog-user-project"));
+        assertNull(receivedHeaders.get("X-HTTP-Method-Override"));
+        assertEquals("Bearer ya29.outer", got.authorization());
+    }
+
+    /** Without the instance's own claude proof, the request keeps its authentication and its destination. */
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "", "AIza-a-real-inner-key", "AIzaplaceholder", "AIzaisx_bad"})
+    void geminiOnVertexWithoutAClaudeProofIsRelayedUnchanged(String value) throws Exception {
+        serve(claude("vertex"));
+        var key = value.isEmpty() ? null : value;
+        for (var presented : java.util.Arrays.asList(key, ProofTestSupport.token("gemini", "AIza"),
+                "AIzaisx_" + ProofToken.derive("55".repeat(32), "claude"))) {
+            assertEquals(200, http(HttpMethod.POST, VERTEX, EXPRESS_CALL, "x-goog-api-key", presented));
+            var got = received.get(10, TimeUnit.SECONDS);
+            assertEquals(EXPRESS_CALL, got.uri());
+            assertTrue(got.host().startsWith(VERTEX), got.host());
+            assertEquals(presented, got.googleKey());
+            assertNull(got.authorization());
+        }
+        assertEquals(0, tokenFetches.get());
+    }
+
+    /** A proven call on an account that is not Vertex AI, or that is no model call, never reaches Google. */
+    @Test void geminiOnVertexRefusesWhatTheAccountOrTheRouteDoesNotServe() throws Exception {
+        var proof = ProofTestSupport.token("claude", "AIza");
+        serve(claude("api-key"));
+        assertEquals(502, http(HttpMethod.POST, VERTEX, EXPRESS_CALL, "x-goog-api-key", proof));
+        assertFalse(received.isDone());
+        proxy.stop();
+        serve(claude("vertex"));
+        for (var call : List.of(
+                Map.entry(HttpMethod.POST, "/v1/projects/someone-else/locations/us-east5/publishers/google/models/g:generateContent"),
+                Map.entry(HttpMethod.POST, "/v1/projects/outer-project/locations/us-east5/endpoints"),
+                Map.entry(HttpMethod.DELETE, "/v1/publishers/google/models/gemini-3.7-flash:generateContent"),
+                Map.entry(HttpMethod.POST, "/v1/publishers/google/models/gemini-3.7-flash:predict"),
+                Map.entry(HttpMethod.POST, "/v1/publishers/anthropic/models/claude:streamRawPredict"),
+                Map.entry(HttpMethod.POST, "/v1/publishers/google/models/../../projects/x:generateContent"),
+                Map.entry(HttpMethod.GET, "/v1/publishers/google/models"))) {
+            assertEquals(403, http(call.getKey(), VERTEX, call.getValue(), "x-goog-api-key", proof), call.toString());
+            assertFalse(received.isDone(), call.toString());
+        }
+        assertEquals(0, tokenFetches.get());
+    }
+
+    /** Another namespace's proof at the Vertex domain buys that tool's own entry, never the Claude Vertex account. */
+    @Test void geminiOnVertexNeedsTheClaudeProofItselfNotAnotherNamespaces() throws Exception {
+        var tools = home.resolve(".config/incus-spawn/tools");
+        Files.createDirectories(tools);
+        var definition = tools.resolve("vertex-key.yaml");
+        Files.writeString(definition, """
+                name: vertex-key
+                env:
+                  - name: GCP_API_KEY
+                    value: gcp-placeholder
+                proxy:
+                  config-namespace: gcp
+                  placeholders:
+                    - env: GCP_API_KEY
+                      prefix: gcp-
+                  configuration:
+                    key:
+                      config-path: apiKey
+                      secret: true
+                  auth:
+                    - domains: [aiplatform.googleapis.com]
+                      type: header
+                      name: x-goog-api-key
+                      value: '${key}'
+                """);
+        try {
+            serve(claude("vertex") + "gcp:\n  apiKey: gcp-host-key\n");
+            assertEquals(200, http(HttpMethod.POST, VERTEX, EXPRESS_CALL, "x-goog-api-key",
+                    ProofTestSupport.token("gcp", "gcp-")));
+            var got = received.get(10, TimeUnit.SECONDS);
+            assertEquals(EXPRESS_CALL, got.uri());
+            assertEquals("gcp-host-key", got.googleKey());
+            assertNull(got.authorization());
+            assertEquals(0, tokenFetches.get());
+        } finally {
+            Files.deleteIfExists(definition);
+        }
     }
 
     static Stream<String> modes() { return Stream.of("api-key", "oauth", "vertex"); }

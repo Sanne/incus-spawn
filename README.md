@@ -139,7 +139,7 @@ What the proxy can sign in as:
 | Claude Pro or Max | Claude Code (`claude`), Pi (`pi`) | the token from `claude setup-token`; the proxy adds the OAuth bearer token |
 | Vertex AI | Claude Code (`claude`), Pi (`pi`) | your project and region; the proxy translates each request and signs it with the host's GCP credentials, which never enter the instance |
 | OpenAI API key | Codex CLI (`codex`), Pi (`pi`) | the key |
-| Gemini API key | Gemini CLI (`gemini-cli`) | the key |
+| Gemini API key | Gemini CLI (`gemini-cli`), Pi (`pi`) | the key |
 | IBM API key | Bob Shell (`bob`) | the key |
 | GitHub token | `gh`, `git`, GitHub Copilot CLI (`copilot`) | the token |
 | Atlassian API token | the `atlassian-mcp` tool, for Jira and Confluence | your account email and the token |

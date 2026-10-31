@@ -29,6 +29,12 @@ public final class ProxyConfig {
     public static final int DEFAULT_HEALTH_PORT = 18080;
 
     public static final Set<String> ANTHROPIC_DOMAINS = Set.of("api.anthropic.com");
+    /**
+     * Where Pi's google-vertex provider sends Gemini calls with an API key (Vertex's express form).
+     * The key is the instance's claude proof, which the proxy swaps for the host's gcloud token,
+     * in the Vertex account's project and region (#1114).
+     */
+    public static final Set<String> GOOGLE_VERTEX_DOMAINS = Set.of("aiplatform.googleapis.com");
     public static final Set<String> REGISTRY_DOMAINS = Set.of(
             "registry-1.docker.io", "auth.docker.io",
             "ghcr.io", "quay.io"
@@ -51,6 +57,7 @@ public final class ProxyConfig {
     static {
         var all = new HashSet<String>();
         all.addAll(ANTHROPIC_DOMAINS);
+        all.addAll(GOOGLE_VERTEX_DOMAINS);
         all.addAll(REGISTRY_DOMAINS);
         all.addAll(MAVEN_DOMAINS);
         all.addAll(GRADLE_DOMAINS);

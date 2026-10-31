@@ -1800,7 +1800,10 @@ public class MitmProxy {
         if (!ctx.authorized()) return;
         var domain = ctx.domain();
         var credentials = ctx.creds();
-        if (ANTHROPIC_DOMAINS.contains(domain)) {
+        if (servesGeminiOnVertex(ctx)) {
+            // Only model calls are served there (relayGeminiOnVertex); the proof never leaves either way
+            options.removeHeader("x-goog-api-key");
+        } else if (ANTHROPIC_DOMAINS.contains(domain)) {
             if (!credentials.oauthToken().isBlank()) {
                 options.putHeader("Authorization", "Bearer " + credentials.oauthToken());
                 options.removeHeader("x-api-key");
@@ -1828,11 +1831,26 @@ public class MitmProxy {
      * a 401, so its body is held in a {@link BodySpool} until it has been sent for good (#1315).
      */
     private void handleApiRequest(HttpServerRequest clientReq, RequestContext ctx, long started) {
+        if (servesGeminiOnVertex(ctx)) {
+            relayGeminiOnVertex(clientReq, ctx, started);
+            return;
+        }
         if (!isVertexModelRequest(clientReq, ctx)) {
             streamApiRequest(clientReq, ctx, started);
             return;
         }
         retainVertexRequest(clientReq, ctx);
+    }
+
+    /**
+     * Whether the request is Pi's google-vertex call on this instance's own Claude account (#1114):
+     * the claude proof itself verified, not merely some other namespace's proof for the same domain,
+     * and not inherited, where the parent's proxy serves it instead.
+     */
+    private static boolean servesGeminiOnVertex(RequestContext ctx) {
+        var claude = dev.incusspawn.config.SpawnConfig.ClaudeConfig.NAMESPACE;
+        return ProxyConfig.GOOGLE_VERTEX_DOMAINS.contains(ctx.domain()) && ctx.proven().contains(claude)
+                && !ctx.creds().inheritedNamespaces().contains(claude);
     }
 
     private static boolean isVertexModelRequest(HttpServerRequest clientReq, RequestContext ctx) {
@@ -1875,6 +1893,51 @@ public class MitmProxy {
             }
             return ok;
         });
+    }
+
+    /**
+     * A Gemini call from Pi's google-vertex provider whose key was the instance's claude proof
+     * (#1114): sent in the Vertex account's project and region, signed with the host's gcloud token
+     * as Claude's Vertex calls are ({@link GeminiOnVertex}). It is streamed, never held, so a 401
+     * is not sent again: it drops the cached token, and the next call fetches a new one.
+     */
+    private void relayGeminiOnVertex(HttpServerRequest clientReq, RequestContext ctx, long started) {
+        var credentials = ctx.creds();
+        if (!credentials.useVertex() || credentials.vertexProjectId().isBlank() || credentials.vertexRegion().isBlank()) {
+            refuseGeminiOnVertex(clientReq, ctx, 502, "Pi's google-vertex provider needs a Vertex AI Claude account"
+                    + " with a project and region; this instance's Claude account is not one");
+            return;
+        }
+        var uri = GeminiOnVertex.projectUri(clientReq.method(), clientReq.uri(),
+                credentials.vertexProjectId(), credentials.vertexRegion());
+        if (uri == null) {
+            refuseGeminiOnVertex(clientReq, ctx, 403, "Only Gemini model calls are served with the Vertex AI account");
+            return;
+        }
+        var upstreamHost = vertexHost(credentials);
+        var debug = debugExchange(clientReq, null);
+        upstream.relayRequest(clientReq, upstreamHost, uri, new Upstream.RelayHooks(
+                upReq -> {
+                    var head = prepareApiHead(clientReq, upReq, ctx, upstreamHost, true, null);
+                    // After the client's head is copied in, and before any of it leaves
+                    GeminiOnVertex.CLIENT_OVERRIDES.forEach(upReq.headers()::remove);
+                    return head;
+                },
+                upResp -> {
+                    if (upResp.statusCode() == 401) invalidateVertexToken();
+                    if (debug != null) debug.logAtEnd(upResp);
+                },
+                debug == null ? null : chunk -> capture(debug.original, chunk),
+                responseTap(null, debug)), started);
+    }
+
+    private void refuseGeminiOnVertex(HttpServerRequest clientReq, RequestContext ctx, int status, String message) {
+        var caller = ctx.caller() == null ? "an unknown caller" : "instance '" + ctx.caller().accounts().instanceName() + "'";
+        if (refusedProofWarnings.shouldLog(caller + ":gemini-on-vertex:" + status, System.nanoTime())) {
+            ProxyLog.warn("Refusing " + clientReq.method() + " " + ctx.domain() + clientReq.path() + " for " + caller
+                    + ": " + message);
+        }
+        CallerCheck.refuse(clientReq, status, message);
     }
 
     /** What the proxy notes of an upstream answer's head, before relaying it. */
@@ -2297,6 +2360,8 @@ public class MitmProxy {
                         if (ctx.usesDefaultCredentials()) clearAuthError();
                         upReq.putHeader("Authorization", "Bearer " + token);
                         upReq.headers().remove("x-api-key");
+                        // Pi's google-vertex provider carries its proof here (#1114)
+                        upReq.headers().remove("x-goog-api-key");
                         upReq.headers().remove("anthropic-beta");
                         upReq.headers().remove("anthropic-version");
                         upReq.headers().remove("anthropic-dangerous-direct-browser-access");
