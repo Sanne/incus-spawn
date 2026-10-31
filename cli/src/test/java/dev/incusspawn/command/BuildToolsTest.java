@@ -6,6 +6,7 @@ import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolSetup;
+import dev.incusspawn.util.RecordingOutput;
 
 import org.junit.jupiter.api.Test;
 
@@ -425,7 +426,7 @@ class BuildToolsTest {
         second.setName("tpl-two");
         second.setTools(List.of(new ToolDef.ToolRef("nonesuch")));
 
-        var recorded = dev.incusspawn.util.RecordingOutput.during(() -> {
+        var recorded = RecordingOutput.during(() -> {
             assertTrue(BuildTools.resolveTools(first, toolDefLoader, false).isEmpty());
             assertTrue(BuildTools.resolveTools(second, toolDefLoader, false).isEmpty());
         });
@@ -465,10 +466,200 @@ class BuildToolsTest {
             new ToolDef.ToolRef("claude", java.util.Map.of("model", "claude-opus-4-6"))
         ));
 
-        var recorded = dev.incusspawn.util.RecordingOutput.during(() ->
+        var recorded = RecordingOutput.during(() ->
                 assertEquals(2, BuildTools.resolveTools(imageDef, toolDefLoader, false).size()));
         assertTrue(recorded.warnings().stream().anyMatch(w -> w.contains("overriding")),
             "Should warn when explicit overrides transitive dep with params");
+    }
+
+    @Test
+    void aDependencySharedByTwoToolsIsNotedOnce() {
+        var child = new ImageDef();
+        child.setTools(List.of(new ToolDef.ToolRef("herdr"), new ToolDef.ToolRef("orca")));
+        var herdr = tool("herdr", List.of(), List.of("sshd"));
+        assertEquals(List.of("Auto-adding dependency: sshd (required by herdr, orca)"),
+                autoAddNotes(new ImageDef(), child, SSHD, herdr, ORCA));
+    }
+
+    @Test
+    void aDependencyAnAncestorInstalledIsNotAnnouncedAsAdded() {
+        var sshd = BuildCommandTest.simpleToolSetup("sshd");
+        var git = BuildCommandTest.simpleToolSetup("git");
+        var herdr = tool("herdr", List.of(), List.of("sshd"));
+        var orca = tool("orca", List.of(), List.of("sshd", "git"));
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("sshd")).thenReturn(sshd);
+        when(toolDefLoader.find("git")).thenReturn(git);
+        when(toolDefLoader.find("herdr")).thenReturn(herdr);
+        when(toolDefLoader.find("orca")).thenReturn(orca);
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setTools(List.of(new ToolDef.ToolRef("herdr")));
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setTools(List.of(new ToolDef.ToolRef("orca")));
+
+        var defs = Map.of("tpl-parent", parent, "tpl-child", child);
+        var recorded = RecordingOutput.during(() -> {
+            var result = BuildTools.collectEffectiveTools(child, defs, toolDefLoader, List.of());
+            assertEquals(List.of("git", "orca"), result.effective().stream().map(t -> t.name()).toList());
+        });
+        var notes = recorded.events(RecordingOutput.Kind.NOTE).stream()
+                .map(e -> e.msg()).toList();
+        assertEquals(List.of("Auto-adding dependency: git (required by orca)"), notes,
+            "sshd is inherited from tpl-parent, so only git is added");
+    }
+
+    /** A tool whose one parameter, {@code model}, is reconfigurable. */
+    private static ToolSetup reconfigurable(String name) {
+        var modelParam = new ToolDef.ParameterDef();
+        modelParam.setType("string");
+        modelParam.setOptional(true);
+        modelParam.setReconfigurable(true);
+        return new ToolSetup() {
+            @Override public String name() { return name; }
+            @Override public void install(Container container, Map<String, String> params) {}
+            @Override public Map<String, ToolDef.ParameterDef> parameters() {
+                return Map.of("model", modelParam);
+            }
+        };
+    }
+
+    /** sshd is reconfigured, but orca is re-listed unchanged from the parent: this build does not set it up, so the note leaves it out. */
+    @Test
+    void aReconfiguredDependencyNamesOnlyTheDependentsThisBuildSetsUp() {
+        var sshd = reconfigurable("sshd");
+        var orca = tool("orca", List.of(), List.of("sshd"));
+        var headroom = tool("headroom", List.of(), List.of("sshd"));
+        var parent = new ImageDef();
+        parent.setTools(List.of(new ToolDef.ToolRef("sshd", Map.of("model", "pinned")),
+                new ToolDef.ToolRef("orca")));
+        var child = new ImageDef();
+        child.setTools(List.of(new ToolDef.ToolRef("orca"), new ToolDef.ToolRef("headroom")));
+        assertEquals(List.of("Auto-adding dependency: sshd (required by headroom)"),
+                autoAddNotes(parent, child, sshd, orca, headroom));
+    }
+
+    /** When none of a reconfigured dependency's dependents is set up, the note still says why it is added. */
+    @Test
+    void aReconfiguredDependencyWithNoDependentSetUpNamesThemAll() {
+        var orca = tool("orca", List.of(), List.of("sshd"));
+        var parent = new ImageDef();
+        parent.setTools(List.of(new ToolDef.ToolRef("sshd", Map.of("model", "pinned")),
+                new ToolDef.ToolRef("orca")));
+        var child = new ImageDef();
+        child.setTools(List.of(new ToolDef.ToolRef("orca")));
+        assertEquals(List.of("Auto-adding dependency: sshd (required by orca)"),
+                autoAddNotes(parent, child, reconfigurable("sshd"), orca));
+    }
+
+    /** The edge that closes a cycle is skipped, so it does not name a dependent. */
+    @Test
+    void aCycleBackEdgeIsNotNamedAsRequiringTheDependency() {
+        var herdr = tool("herdr", List.of(), List.of("sshd"));
+        var sshd = tool("sshd", List.of(), List.of("git"));
+        var git = tool("git", List.of(), List.of("sshd"));
+        var child = new ImageDef();
+        child.setTools(List.of(new ToolDef.ToolRef("herdr")));
+        assertEquals(List.of("Auto-adding dependency: sshd (required by herdr)",
+                        "Auto-adding dependency: git (required by sshd)"),
+                autoAddNotes(new ImageDef(), child, herdr, sshd, git));
+    }
+
+    private static ToolSetup tool(String name, List<String> packages, List<String> requires) {
+        return new ToolSetup() {
+            @Override public String name() { return name; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public List<String> packages() { return packages; }
+            @Override public List<String> requires() { return requires; }
+        };
+    }
+
+    /** The notes {@code collectEffectiveTools} prints for {@code child} (parent: {@code tpl-parent}). */
+    private static List<String> autoAddNotes(ImageDef parent, ImageDef child, ToolSetup... tools) {
+        var toolDefLoader = mock(ToolDefLoader.class);
+        for (var tool : tools) when(toolDefLoader.find(tool.name())).thenReturn(tool);
+        parent.setName("tpl-parent");
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        var defs = Map.of("tpl-parent", parent, "tpl-child", child);
+        var recorded = RecordingOutput.during(() ->
+                BuildTools.collectEffectiveTools(child, defs, toolDefLoader, List.of()));
+        return recorded.events(RecordingOutput.Kind.NOTE).stream()
+                .map(e -> e.msg()).toList();
+    }
+
+    private static final ToolSetup SSHD = tool("sshd", List.of("openssh-server", "nmap-ncat"), List.of());
+    private static final ToolSetup ORCA = tool("orca", List.of("tar", "gawk"), List.of("sshd"));
+
+    /** sshd is still added and its setup still enables an SSH server, so the note stays true. */
+    @Test
+    void aDependencyWhosePackagesAreInstalledAnywayIsStillAnnounced() {
+        var parent = new ImageDef();
+        parent.setPackages(List.of("nmap-ncat", "openssh-server"));
+        var child = new ImageDef();
+        child.setTools(List.of(new ToolDef.ToolRef("orca")));
+        assertEquals(List.of("Auto-adding dependency: sshd (required by orca)"),
+                autoAddNotes(parent, child, SSHD, ORCA));
+    }
+
+    /** Reconfiguring a parent's tool runs its setup again, so the dependency is still added. */
+    @Test
+    void aDependencyAParentInstalledWithOtherParametersIsAnnouncedWhenReconfigured() {
+        var claude = reconfigurable("claude");
+        var headroomDef = new ToolDef();
+        headroomDef.setName("headroom");
+        headroomDef.setRequires(List.of(new ToolDef.ToolRef("claude", Map.of("model", "dep-model"))));
+        var parent = new ImageDef();
+        parent.setTools(List.of(new ToolDef.ToolRef("claude")));
+        var child = new ImageDef();
+        child.setTools(List.of(new ToolDef.ToolRef("headroom")));
+        assertEquals(List.of("Auto-adding dependency: claude (required by headroom)"),
+                autoAddNotes(parent, child, claude, new YamlToolSetup(headroomDef)));
+    }
+
+    @Test
+    void anUnresolvedDependencyIsWarnedAboutNotAnnouncedAsAdded() {
+        var herdr = tool("herdr", List.of(), List.of("no-such-tool"));
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("herdr")).thenReturn(herdr);
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-unresolved-dep");
+        imageDef.setTools(List.of(new ToolDef.ToolRef("herdr")));
+
+        var recorded = RecordingOutput.during(() -> assertEquals(1,
+                BuildTools.collectEffectiveTools(imageDef, Map.of(), toolDefLoader, List.of()).effective().size()));
+        assertTrue(recorded.events(RecordingOutput.Kind.NOTE).isEmpty(),
+            "a dependency that did not resolve must not be announced as added");
+        assertTrue(recorded.warnings().stream().anyMatch(w -> w.contains("no-such-tool")));
+    }
+
+    @Test
+    void recordingTheBuildSourceDoesNotRepeatTheDependencyNotes() {
+        var sshd = BuildCommandTest.simpleToolSetup("sshd");
+        var herdr = tool("herdr", List.of(), List.of("sshd"));
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("sshd")).thenReturn(sshd);
+        when(toolDefLoader.find("herdr")).thenReturn(herdr);
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setTools(List.of(new ToolDef.ToolRef("herdr")));
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setTools(List.of(new ToolDef.ToolRef("herdr")));
+
+        var cmd = new BuildCommand();
+        cmd.toolDefLoader = toolDefLoader;
+        cmd.toolSetups = List.of();
+        var recorded = RecordingOutput.during(() ->
+                cmd.collectBuildSource(child, Map.of("tpl-parent", parent, "tpl-child", child)));
+        assertTrue(recorded.events(RecordingOutput.Kind.NOTE).isEmpty(),
+            "the build already reported its dependencies; stamping must not repeat them");
     }
 
     @Test
@@ -501,7 +692,7 @@ class BuildToolsTest {
             new ToolDef.ToolRef("claude", java.util.Map.of("model", "claude-opus-4-6"))
         ));
 
-        var recorded = dev.incusspawn.util.RecordingOutput.during(() ->
+        var recorded = RecordingOutput.during(() ->
                 assertEquals(2, BuildTools.resolveTools(imageDef, toolDefLoader, false).size()));
         assertFalse(recorded.warnings().stream().anyMatch(w -> w.contains("overriding")),
             "Should not warn when transitive dep has no explicit params");

@@ -2434,7 +2434,7 @@ public class BuildCommand extends BaseCommand {
         if (!identityStamps.isEmpty()) incus.configSetAll(container, identityStamps);
     }
 
-    private BuildSource collectBuildSource(ImageDef imageDef, Map<String, ImageDef> defs) {
+    BuildSource collectBuildSource(ImageDef imageDef, Map<String, ImageDef> defs) {
         var definitions = new LinkedHashMap<String, ImageDef>();
         var tools = new LinkedHashMap<String, dev.incusspawn.tool.ToolDef>();
         var toolInstances = new LinkedHashMap<String, BuildSource.ToolInstance>();

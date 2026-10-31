@@ -48,8 +48,19 @@ public final class BuildTools {
         return resolveTools(imageDef, toolDefLoader, List.of(), quiet);
     }
 
+    /**
+     * {@code quiet} silences the warnings. Auto-added dependencies are never announced here:
+     * only {@link #collectEffectiveTools} does, once per build.
+     */
     static List<ResolvedTool> resolveTools(ImageDef imageDef, ToolDefLoader toolDefLoader,
                                                       Iterable<ToolSetup> cdiTools, boolean quiet) {
+        return resolveTools(imageDef, toolDefLoader, cdiTools, quiet, new LinkedHashMap<>());
+    }
+
+    /** Resolve, collecting into {@code autoAdded} each auto-added dependency with the tools that required it. */
+    private static List<ResolvedTool> resolveTools(ImageDef imageDef, ToolDefLoader toolDefLoader,
+                                                   Iterable<ToolSetup> cdiTools, boolean quiet,
+                                                   Map<String, LinkedHashSet<String>> autoAdded) {
         var explicit = new LinkedHashSet<String>();
         for (var toolRef : imageDef.getTools()) {
             explicit.add(toolRef.getName());
@@ -60,21 +71,45 @@ public final class BuildTools {
         for (var toolRef : imageDef.getTools()) {
             resolveWithDeps(toolRef.getName(), toolRef.getParams(), resolved,
                 new LinkedHashSet<>(), explicit, explicitlyResolved, true,
-                toolDefLoader, cdiTools, quiet ? null : java.util.Objects.toString(imageDef.getName(), ""));
+                toolDefLoader, cdiTools, quiet ? null : java.util.Objects.toString(imageDef.getName(), ""),
+                autoAdded);
         }
         return new ArrayList<>(resolved.values());
+    }
+
+    /**
+     * One note per dependency added implicitly, naming every tool that required it, so a
+     * dependency shared by several tools is reported once. Only a dependency this build sets up
+     * ({@code effective}, a reconfigure of an ancestor's included) is announced: not one that did
+     * not resolve (unknown or feature-gated: already warned about) or that an ancestor template
+     * installed as is. Packages the build installs anyway do not matter: the tool is still added
+     * and its setup still runs. The note names only the dependents this build sets up, unless
+     * none is (then all of them, so it still says why).
+     */
+    private static void noteAutoAdded(Map<String, LinkedHashSet<String>> autoAdded,
+                                      List<ResolvedTool> effective) {
+        var names = new HashSet<String>();
+        for (var tool : effective) names.add(tool.name());
+        autoAdded.forEach((dep, dependents) -> {
+            if (!names.contains(dep)) return;
+            var setUp = dependents.stream().filter(names::contains).toList();
+            BuildOutput.note("Auto-adding dependency: " + dep
+                + " (required by " + String.join(", ", setUp.isEmpty() ? dependents : setUp) + ")");
+        });
     }
 
     /**
      * {@code template} names the template being resolved in each warning (empty: unnamed), or is
      * null for a quiet resolution: {@link Warnings#warn} says a message once, so without the name a second
      * template's unknown tool would go unreported in a build of several.
+     * {@code autoAdded} collects each implicitly added dependency with the tools that required it.
      */
     private static void resolveWithDeps(String name, Map<String, String> params,
                                   LinkedHashMap<String, ResolvedTool> resolved,
                                   LinkedHashSet<String> visiting, Set<String> explicit,
                                   Set<String> explicitlyResolved, boolean isExplicit,
-                                  ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools, String template) {
+                                  ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools, String template,
+                                  Map<String, LinkedHashSet<String>> autoAdded) {
         var quiet = template == null;
         var in = quiet || template.isEmpty() ? "" : " in template '" + OutputFormat.oneLine(template) + "'";
         if (!visiting.add(name)) {
@@ -156,17 +191,17 @@ public final class BuildTools {
         // Recursively resolve dependencies with their parameters
         if (tool instanceof dev.incusspawn.tool.YamlToolSetup yts) {
             for (var depRef : yts.toolDef().getRequires()) {
-                if (!quiet && !explicit.contains(depRef.getName())) {
-                    BuildOutput.note("Auto-adding dependency: " + depRef.getName() + " (required by " + name + ")");
+                if (!explicit.contains(depRef.getName()) && !visiting.contains(depRef.getName())) {
+                    autoAdded.computeIfAbsent(depRef.getName(), k -> new LinkedHashSet<>()).add(name);
                 }
-                resolveWithDeps(depRef.getName(), depRef.getParams(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, template);
+                resolveWithDeps(depRef.getName(), depRef.getParams(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, template, autoAdded);
             }
         } else {
             for (var dep : tool.requires()) {
-                if (!quiet && !explicit.contains(dep)) {
-                    BuildOutput.note("Auto-adding dependency: " + dep + " (required by " + name + ")");
+                if (!explicit.contains(dep) && !visiting.contains(dep)) {
+                    autoAdded.computeIfAbsent(dep, k -> new LinkedHashSet<>()).add(name);
                 }
-                resolveWithDeps(dep, Map.of(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, template);
+                resolveWithDeps(dep, Map.of(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, template, autoAdded);
             }
         }
 
@@ -224,7 +259,8 @@ public final class BuildTools {
     static ToolResolution collectEffectiveTools(ImageDef imageDef, Map<String, ImageDef> defs,
                                                  ToolDefLoader toolDefLoader,
                                                  Iterable<ToolSetup> cdiTools) {
-        var tools = resolveTools(imageDef, toolDefLoader, cdiTools, false);
+        var autoAdded = new LinkedHashMap<String, LinkedHashSet<String>>();
+        var tools = resolveTools(imageDef, toolDefLoader, cdiTools, false, autoAdded);
 
         var ancestorToolsMap = new LinkedHashMap<String, ResolvedTool>();
         var ancestorTemplateNames = new LinkedHashMap<String, String>();
@@ -284,6 +320,7 @@ public final class BuildTools {
                 }
             }
         }
+        noteAutoAdded(autoAdded, effective);
         return new ToolResolution(effective, ancestorTools);
     }
 }

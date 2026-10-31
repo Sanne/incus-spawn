@@ -450,7 +450,11 @@ YAML cannot set that flag, and an expanded `$HOME` and a literal `$HOME` count a
 **Transitive dependency resolution** (`requires`): Tools can declare dependencies on other tools.
 During build, `resolveWithDeps()` performs a recursive depth-first traversal to build the full dependency graph.
 Circular dependencies are detected and reported.
-Auto-added dependencies are logged: "Auto-adding dependency: sshd (required by idea-backend)".
+Auto-added dependencies are logged once each, naming every tool that requires them: "Auto-adding dependency: sshd (required by herdr, orca)".
+A required tool that cannot be found is warned about, and one a parent template already installed is inherited; neither is announced as added.
+One a parent installed with other, reconfigurable parameters is set up again, so it is announced.
+Its note names only the dependents this build sets up, or all of them when it sets up none.
+Packages the build installs anyway do not silence the note, since the tool is still added and its setup still runs.
 Dependencies are installed before the tools that require them.
 
 **Java tools** (fallback) — for tools needing programmatic logic beyond what YAML supports:
