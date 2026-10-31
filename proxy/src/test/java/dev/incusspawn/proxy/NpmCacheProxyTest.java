@@ -530,7 +530,10 @@ class NpmCacheProxyTest {
         assertEquals(new Response(200, "tarball of changed"), get(path, 10));
 
         ArtifactCacheProxyTest.await("the changed version to be evicted", () -> !Files.exists(cached(path)));
+        // The tarball goes first and its sidecars after it, so the eviction is over only once the confirmation is (#1910)
+        ArtifactCacheProxyTest.awaitBackgroundConfirmations(proxy);
         assertFalse(Files.exists(Path.of(cached(path) + ".shasum")), "no sidecar is left for a tarball not stored");
+        assertFalse(Files.exists(Path.of(cached(path) + ".etag")), "nor its ETag marker, the last to go");
     }
 
     @Test
