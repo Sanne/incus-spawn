@@ -1,5 +1,7 @@
 package dev.incusspawn.tui;
 
+import dev.tamboui.widgets.checkbox.CheckboxState;
+import dev.tamboui.widgets.select.SelectState;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -34,6 +36,22 @@ class ModalRendererTest {
         // A confirm dialog widens for a word its 48 cells cannot hold.
         assertShowsWhole(TuiSnapshot.render(100, 24, f -> modal.renderConfirmModal(
                 f, f.area(), " Confirm ", "Delete " + WIDE + "?", THEME.modalWarn(), "Delete", "y")));
+    }
+
+    @Test
+    void aToggleNoteStartsAfterTheCellsItsLabelTakes() {
+        var modal = new ModalRenderer(THEME);
+        var text = TuiSnapshot.toText(TuiSnapshot.render(100, 1, f -> modal.renderToggle(
+                f, f.area(), WIDE, new CheckboxState(false), false, "why")));
+        assertTrue(text.replace(" ", "").contains(WIDE + "—why"), text);
+    }
+
+    @Test
+    void aSelectStartsAfterTheCellsItsLabelTakes() {
+        var modal = new ModalRenderer(THEME);
+        var text = TuiSnapshot.toText(TuiSnapshot.render(100, 1, f -> modal.renderSelect(
+                f, f.area(), WIDE, new SelectState("pick"), false)));
+        assertTrue(text.replace(" ", "").contains(WIDE), text);
     }
 
     private static void assertShowsWhole(dev.tamboui.buffer.Buffer buffer) {

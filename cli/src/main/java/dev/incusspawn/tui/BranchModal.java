@@ -85,6 +85,7 @@ final class BranchModal {
     private static final int FIELD_LINES = 10;
 
     private static final String MCP_LABEL = "MCP control (isx mcp)";
+    private static final String INBOX_LABEL = "Inbox";
 
     /** A VM's CPU, memory and disk limits as the dialog first shows them; empty for a container. */
     record VmLimits(String cpu, String memory, String disk) {
@@ -417,11 +418,11 @@ final class BranchModal {
         boolean toggleFocused = branchFieldIndex == inboxFieldIndex();
         boolean pathFocused = branchFieldIndex == inboxPathFieldIndex();
 
-        int toggleWidth = 3 + modal.checkbox().width() + 1 + 6;
+        int toggleWidth = modal.toggleLabelColumn() + INBOX_LABEL.length() + 1;
         var cols = Layout.horizontal()
                 .constraints(Constraint.length(toggleWidth), Constraint.fill())
                 .split(area);
-        modal.renderToggle(frame, cols.get(0), "Inbox", branchInboxCheck, toggleFocused);
+        modal.renderToggle(frame, cols.get(0), INBOX_LABEL, branchInboxCheck, toggleFocused);
 
         var pathArea = cols.get(1);
         if (pathFocused && branchInboxCheck.isChecked()) {

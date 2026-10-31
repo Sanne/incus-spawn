@@ -148,7 +148,7 @@ final class ModalRenderer {
     void renderToggle(Frame frame, Rect area,
                               String label, CheckboxState state, boolean focused) {
         var cols = Layout.horizontal()
-                .constraints(Constraint.length(FIELD_PREFIX), Constraint.length(checkbox.width() + 1), Constraint.fill())
+                .constraints(Constraint.length(FIELD_PREFIX), Constraint.length(toggleLabelColumn() - FIELD_PREFIX), Constraint.fill())
                 .split(area);
         var prefix = focused ? "▸" : " ";
         var labelColor = focused ? theme.focusedLabel() : theme.modalFg();
@@ -164,7 +164,7 @@ final class ModalRenderer {
         renderToggle(frame, area, label, state, focused);
         if (note == null) return;
         var cols = Layout.horizontal()
-                .constraints(Constraint.length(FIELD_PREFIX + checkbox.width() + 1 + label.length()), Constraint.fill())
+                .constraints(Constraint.length(toggleLabelColumn() + CharWidth.of(label)), Constraint.fill())
                 .split(area);
         frame.renderWidget(Paragraph.from(Line.styled(" — " + note,
                 Style.EMPTY.fg(theme.textDim()).bg(theme.modalBg()))), cols.get(1));
@@ -172,7 +172,7 @@ final class ModalRenderer {
 
     void renderDisabledLine(Frame frame, Rect area, String label, String reason) {
         var cols = Layout.horizontal()
-                .constraints(Constraint.length(FIELD_PREFIX), Constraint.length(checkbox.width() + 1), Constraint.fill())
+                .constraints(Constraint.length(FIELD_PREFIX), Constraint.length(toggleLabelColumn() - FIELD_PREFIX), Constraint.fill())
                 .split(area);
         frame.renderWidget(Paragraph.from(Line.styled(label + " — " + reason,
                 Style.EMPTY.fg(theme.textDim()).bg(theme.modalBg()))), cols.get(2));
@@ -181,7 +181,7 @@ final class ModalRenderer {
     void renderSelect(Frame frame, Rect area,
                               String label, SelectState state, boolean focused) {
         var cols = Layout.horizontal()
-                .constraints(Constraint.length(FIELD_PREFIX), Constraint.length(label.length() + 1), Constraint.fill())
+                .constraints(Constraint.length(FIELD_PREFIX), Constraint.length(CharWidth.of(label) + 1), Constraint.fill())
                 .split(area);
         var prefix = focused ? "▸" : " ";
         var labelColor = focused ? theme.focusedLabel() : theme.modalFg();
