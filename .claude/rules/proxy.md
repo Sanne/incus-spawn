@@ -331,6 +331,8 @@ Key design:
   Both rules, the validator (`HttpValidator.strong`) and the whole continuation check (`HttpValidator.continues`), live in `common`, shared with `DownloadCache`, so the two paths cannot drift apart again.
   A connect timeout cut short to fit the budget does not start the unreachable backoff (`requestWithAsyncDns`).
   Plain relays get the same budget with no resume (`RelayWatchdog` in `relayRequest`, #929): counted from the client's last byte, not while its body streams, so uploads are not cut while the client sends.
+  A bodyless GET, HEAD or OPTIONS whose upstream connection closes before any answer is sent once more on a new request, through the same `prepare` (`Upstream.mayResend`, #1914): an upstream closing an idle pooled connection as the relay sends on it otherwise gives the guest a 502.
+  Never resend a request with a body: it has gone and is not held.
   The cache handlers' own relays (an error answer to a fetch or a redirect, and `CachingDownload`'s uncached fallback after a cache write error) go through `relayResponse` (`relayBody` for the fallback, under the download's own head), a `RelayWatchdog` counting from `started` or the client's last byte, not from relay entry (#1192).
   `relayRequest` has no default clock: every caller passes `since`, `routeRequest`'s `started`, so the wait for `authorize` on the API path and a cache handler's own lookups before it falls back to a relay are counted too (#1059).
   A Vertex model call gets one once its body is in (`Upstream.watch`, #1059), through the token fetch, a 401's retry and the answer; it passes its `ended` handler (spool and exchange) as `onEnd`, since the watchdog takes the response's end and close handlers and a later handler replaces an earlier one.
