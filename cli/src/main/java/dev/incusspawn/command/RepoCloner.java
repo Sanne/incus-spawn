@@ -714,7 +714,8 @@ class RepoCloner {
         var both = first.strip() + "\n--- isx-trust ran; the prime's second run ---\n" + second;
         return GuestProvisioning.untrustedCertificate(second)
                 ? new PrimeRun(false, command, both.strip() + "\n--- isx ---\n" + UNTRUSTED_AFTER_BIND, STILL_UNTRUSTED, true, true)
-                : PrimeRun.failed(command, both, lastNonEmptyLine(second), true);
+                // The label is the second run's last line, from the log it ends, scrubbed whole (#1893 review)
+                : PrimeRun.failed(command, both, second.isBlank() ? "" : lastNonEmptyLine(both), true);
     }
 
     /** Run a repo's prime commands in turn, stopping at the first that fails. Returns true on

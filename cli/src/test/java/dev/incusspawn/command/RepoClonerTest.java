@@ -697,6 +697,22 @@ class RepoClonerTest {
     }
 
     @Test
+    void aSecondPrimeRunsLabelIsScrubbedAsItsLogIs() {
+        // update-all quotes the label with no StepProgress: a key the first run began and the
+        // second continued is marked in the log, so it is in the label too
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        var armour = "-----";
+        primeAnswers(incus, new IncusClient.ExecResult(1, PKIX + "\n" + armour + "BEGIN PRIVATE KEY" + armour + "\nMIIEfirst", ""),
+                new IncusClient.ExecResult(1, "MIIElast-body", ""));
+
+        var run = RepoCloner.runPrime(container, repo("https://github.com/owner/app.git", "~/app", "./fetch-deps"), () -> {});
+
+        assertFalse(run.success());
+        assertEquals("<isx:redacted:private-key>", run.label());
+    }
+
+    @Test
     void aTemplateWithoutTheHelperIsNotPrimedAgainAsIfItHadBound() {
         // isx update-all --prime on a template built before isx-trust existed.
         var incus = mock(IncusClient.class);
