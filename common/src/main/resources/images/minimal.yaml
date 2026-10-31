@@ -5,10 +5,10 @@ mask_services: [tmp.mount]
 image: fedora-44-base
 image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}.tar.xz
 vm_image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}-vm-direct.tar.xz
-image_tag: fedora-44-20261021
+image_tag: fedora-44-20261031
 image_sha256:
-  x86_64: 2da19553f30dda54f8c727a4e9f3be0807395058d282aa00e8d65078d7936922
-  aarch64: b56e25760c173c238cddbc664b7e2faed87ce543fe16eeafceecb49196c42f0d
+  x86_64: 69e97fdf45c11fd2b142b36c86819e1b54c3cce618b644eec09f3f8a906e067e
+  aarch64: 2c3eb9750ca148c4ec3ecab6a7da81f84e8962a90d1ece416a8cbf1ce6f93271
 vm_image_sha256:
-  x86_64: c4c266188fdd8558823bdc65f84777c2549f3becb8269c1773f665be1cde5afa
-  aarch64: 10bda1be84aa8a72e12fc1d753ba6a5b57dbf31253ea64c5ac01791adb7e7b1a
+  x86_64: 11468acf19544391a446e9eb600624c5f58dcc3e2f321348d0d8690b8b734424
+  aarch64: 76fb9cb6c54eb2dc6ef305aeb8a9cf64c4eec970bd8db127c1283ffc00a91b7a
