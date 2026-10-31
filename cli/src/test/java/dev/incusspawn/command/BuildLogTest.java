@@ -99,6 +99,20 @@ class BuildLogTest {
     }
 
     @Test
+    void anEntryKeepsNoTokenACursorMoveJoinsOnTheScreen() {
+        // A cursor-left sequence lets the B overwrite the dash, and a zero-width space draws no
+        // cell: a terminal shows each token whole, so neither half is kept (#1900)
+        var head = "ghp_" + "A".repeat(10);
+        var tail = "B".repeat(10);
+        for (var printed : new String[] {head + "-\u001b[1D" + tail, head + "\u200b" + tail + tail}) {
+            var entry = BuildLog.entry("s", "c",
+                    new IncusClient.ExecResult(0, "x " + printed + "\n", ""), Duration.ZERO);
+            assertFalse(entry.contains(head) || entry.contains(tail), entry);
+            assertTrue(entry.contains("x <isx:redacted:github-token>"), entry);
+        }
+    }
+
+    @Test
     void anEntryKeepsNoTokenColourSplitsAfterItsPrefix() {
         // The raw pass alone would stop the token at the escape and keep the digest's second half
         var half = "0123456789abcdef";

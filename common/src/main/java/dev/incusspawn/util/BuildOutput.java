@@ -94,6 +94,19 @@ public final class BuildOutput {
      */
     public record Shown(String text, int[] source) {}
 
+    /**
+     * The control strings, sequences and escapes {@link #guestText} drops whole from {@code raw},
+     * for a reader that must know what each did to the cursor (#1900).
+     */
+    public static java.util.regex.Matcher guestControls(CharSequence raw) {
+        return GUEST_CONTROL_PATTERN.matcher(raw);
+    }
+
+    /** Whether {@link #guestText} spaces {@code c}: a control other than a line feed or a tab. */
+    public static boolean actsOnTerminal(int c) {
+        return TerminalLink.actsOnTerminal(c);
+    }
+
     /** Whether {@link #guestText} shows {@code text} as printed: it holds nothing a terminal acts on. */
     public static boolean showsAsPrinted(String text) {
         return text.codePoints().noneMatch(TerminalLink::actsOnTerminal);
