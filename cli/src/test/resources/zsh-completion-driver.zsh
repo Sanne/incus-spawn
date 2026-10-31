@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 # Drive one completion in a real interactive zsh and write the buffer it leaves behind to <out-file>.
 #
-# Usage: zsh -f zsh-completion-driver.zsh <fake-bin-dir> <completion-script> <line> <out-file>
+# Usage: zsh -f zsh-completion-driver.zsh <fake-bin-dir> <completion-script-or-fpath-dir> <line> <out-file>
 #
 # zsh only runs completion inside zle, so this borrows the zpty approach from zsh's own test
 # suite: type <line>, press TAB, and let a widget write $BUFFER to <out-file>. The fake isx on
@@ -30,9 +30,11 @@ trap 'kill $watchdog 2>/dev/null; zpty -d z 2>/dev/null' EXIT
 setup=${out:h}/zsh-completion-setup.zsh
 cat > $setup <<EOF
 PATH=${(q)fake}:\$PATH
+# A directory is put on fpath, as the install instructions' saved _isx is; a file is sourced.
+[[ -d ${(q)script} ]] && fpath=(${(q)script} \$fpath)
 autoload -Uz compinit
 compinit -u -D
-source ${(q)script}
+[[ -d ${(q)script} ]] || source ${(q)script}
 dump_buffer() { print -r -- "\$BUFFER" > ${(q)out}; BUFFER=; zle -M ISXDONE }
 zle -N dump_buffer
 # ^X is a prefix key in the default emacs keymap, so bind the two-key sequence.

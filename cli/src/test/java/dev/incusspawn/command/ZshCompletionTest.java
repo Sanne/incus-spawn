@@ -46,6 +46,19 @@ class ZshCompletionTest {
         }
     }
 
+    /**
+     * Saved as {@code _isx} on fpath, as {@code isx completion --install} suggests, the file is
+     * the body compinit autoloads on the first TAB: that TAB must complete too, not only define
+     * {@code _isx} for the next one.
+     */
+    @Test
+    void theFirstTabCompletesWhenAutoloadedFromFpath() throws Exception {
+        var fpath = Files.createDirectories(dir.resolve("fpath"));
+        Files.copy(script, fpath.resolve("_isx"));
+        script = fpath;
+        assertEquals("isx shell box1 ", completeWith("isx shell bo", "box1\n"));
+    }
+
     /** Completes {@code line} against what isx answers for it; returns the buffer, a space zsh added included. */
     private String complete(String line) throws Exception {
         var buffer = type(line);

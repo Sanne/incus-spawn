@@ -157,7 +157,8 @@ public class CompletionCommand extends BaseCommand {
               return $ret
             }
 
-            compdef _isx isx 2>/dev/null
+            # Autoloaded from fpath, this file is _isx's body: complete this first TAB too.
+            if [[ $funcstack[1] == _isx ]]; then _isx "$@"; else compdef _isx isx 2>/dev/null; fi
             """;
 
     // ── Bash completion ─────────────────────────────────────────────────────────
