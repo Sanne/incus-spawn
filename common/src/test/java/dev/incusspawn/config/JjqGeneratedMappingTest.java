@@ -1,6 +1,7 @@
 package dev.incusspawn.config;
 
 import dev.incusspawn.tool.ToolDef;
+import io.hyperfoil.tools.jjq.mapper.JqAnySetter;
 import io.hyperfoil.tools.jjq.mapper.JqConverter;
 import io.hyperfoil.tools.jjq.mapper.JqIgnore;
 import io.hyperfoil.tools.jjq.mapper.JqMapper;
@@ -32,7 +33,7 @@ class JjqGeneratedMappingTest {
 
     private static final List<Class<?>> ROOTS = List.of(
             ImageDef.class, ToolDef.class, SpawnConfig.class, ProjectConfig.class,
-            BuildSource.class, McpConfig.class);
+            BuildSource.class, McpConfig.class, BaseImagePin.class);
 
     private static final Set<Class<?>> REACHABLE = reachableTypes();
 
@@ -62,6 +63,33 @@ class JjqGeneratedMappingTest {
                 .map(Class::getName)
                 .toList();
         assertEquals(List.of(), missing, "enums bound by jjq without @RegisterForReflection");
+    }
+
+    /**
+     * The generated mapping counts every field a class declares itself as a known key, ignored or
+     * not, and a known key never reaches the {@code @JqAnySetter}: a key in the file named after
+     * an ignored field would be neither bound nor reported (#1889). So a DTO that collects its
+     * undeclared keys keeps such fields in a superclass, whose fields are not counted.
+     */
+    @Test
+    void noDtoThatCollectsUndeclaredKeysDeclaresAFieldItDoesNotBind() {
+        var shadowing = REACHABLE.stream()
+                .filter(JjqGeneratedMappingTest::collectsUndeclaredKeys)
+                .flatMap(type -> java.util.Arrays.stream(type.getDeclaredFields()))
+                .filter(field -> !Modifier.isStatic(field.getModifiers()))
+                .filter(field -> Modifier.isTransient(field.getModifiers()) || field.isAnnotationPresent(JqIgnore.class))
+                .map(field -> field.getDeclaringClass().getSimpleName() + "." + field.getName())
+                .toList();
+        assertEquals(List.of(), shadowing, "fields whose name, as a key, would be silently dropped");
+    }
+
+    private static boolean collectsUndeclaredKeys(Class<?> type) {
+        for (var c = type; c != null; c = c.getSuperclass()) {
+            for (var method : c.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(JqAnySetter.class)) return true;
+            }
+        }
+        return false;
     }
 
     /**

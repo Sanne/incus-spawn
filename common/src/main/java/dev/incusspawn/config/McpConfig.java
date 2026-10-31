@@ -3,7 +3,6 @@ package dev.incusspawn.config;
 import dev.incusspawn.Environment;
 import io.hyperfoil.tools.jjq.mapper.JqAnySetter;
 import io.hyperfoil.tools.jjq.mapper.JqConverter;
-import io.hyperfoil.tools.jjq.mapper.JqIgnore;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.hyperfoil.tools.jjq.mapper.JqName;
@@ -14,7 +13,6 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermissions;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -57,7 +55,7 @@ import java.util.regex.Pattern;
  */
 @JqInclude(JqInclude.Include.NON_NULL)
 @JqMapped
-public class McpConfig {
+public class McpConfig extends McpUndeclaredKeys {
 
     public static final String FILE_NAME = "mcp.yaml";
 
@@ -114,12 +112,6 @@ public class McpConfig {
     @JqName("host-tools")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object hostToolsRaw;
-
-    // Keys isx does not know, only to refuse them, and retired ones, only to name them: never written back.
-    @JqIgnore
-    private final List<String> unknown = new ArrayList<>();
-    @JqIgnore
-    private final List<String> retired = new ArrayList<>();
 
     @JqAnySetter
     public void setUnknown(String key, Object value) {

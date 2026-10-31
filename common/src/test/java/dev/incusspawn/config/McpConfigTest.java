@@ -104,6 +104,13 @@ class McpConfigTest {
         assertTrue(invalid("codex:\n  sandbox-mod: read-only\n").contains("unknown key codex.sandbox-mod"));
     }
 
+    /** The fields that collect unknown and retired keys are no settings, so their names are unknown keys too (#1889). */
+    @Test
+    void aKeyNamedAfterAnInternalFieldIsRefused() {
+        assertTrue(invalid("templates: [t]\nunknown: x\n").contains("unknown key unknown"));
+        assertTrue(invalid("templates: [t]\nretired: x\n").contains("unknown key retired"));
+    }
+
     @Test
     void aMalformedFileNamesItselfAndTheLine() {
         var message = invalid("templates: [tpl-java\n");

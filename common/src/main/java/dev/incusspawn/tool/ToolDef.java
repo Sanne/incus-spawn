@@ -28,7 +28,7 @@ import java.util.TreeMap;
  * environment variables to export.
  */
 @JqMapped
-public class ToolDef extends MappedDefinition {
+public class ToolDef extends FingerprintCache {
 
     private String name;
     private String description = "";
@@ -56,8 +56,6 @@ public class ToolDef extends MappedDefinition {
     private String agentNote;
     @io.hyperfoil.tools.jjq.mapper.JqConverter(dev.incusspawn.config.SkillsDefConverter.class)
     private ImageDef.SkillsDef skills = ImageDef.SkillsDef.EMPTY;
-
-    private transient volatile String cachedFingerprint;
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -429,7 +427,7 @@ public class ToolDef extends MappedDefinition {
     }
 
     public String contentFingerprint() {
-        var result = cachedFingerprint;
+        var result = cachedFingerprint();
         if (result != null) return result;
         var sb = new StringBuilder();
         for (var d : downloads) {
@@ -510,7 +508,7 @@ public class ToolDef extends MappedDefinition {
                     sb.append('\n');
                 });
         result = sha256hex(sb.toString());
-        cachedFingerprint = result;
+        cacheFingerprint(result);
         return result;
     }
 

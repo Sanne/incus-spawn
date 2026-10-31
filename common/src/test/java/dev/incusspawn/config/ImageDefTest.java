@@ -742,6 +742,18 @@ class ImageDefTest {
                 + " 'confined-to' is set by isx, a file's value is ignored (#765)"), def.unknownKeyWarnings());
     }
 
+    /** Where a definition came from is set by isx; a key of that name is reported, never bound (#1889). */
+    @Test
+    void aKeyNamedAfterWhereADefinitionCameFromIsReportedNotBound() throws Exception {
+        var def = ImageDef.parseYaml("name: tpl-x\nsource: built-in\nprojectRoot: /\n");
+
+        assertNull(def.getProjectRoot());
+        assertNotEquals("built-in", def.getSource());
+        assertEquals(List.of("unknown key 'source', ignored; 'source' is set by isx, a file's value is ignored (#765)",
+                        "unknown key 'projectRoot', ignored; 'projectRoot' is set by isx, a file's value is ignored (#765)"),
+                def.unknownKeyWarnings());
+    }
+
     @Test
     void theOldVmKeySaysWhatBuildsAVirtualMachine() throws Exception {
         // No mapping reads 'vm:', so such a template builds a container.

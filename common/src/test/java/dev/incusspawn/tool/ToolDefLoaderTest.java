@@ -1025,6 +1025,13 @@ class ToolDefLoaderTest {
         }
     }
 
+    /** A key named after the fingerprint cache is reported like any other, never dropped (#1889). */
+    @Test
+    void aKeyNamedAfterTheFingerprintCacheIsReported() throws Exception {
+        var def = dev.incusspawn.config.Jjq.toolDef("name: t\ncachedFingerprint: x\n");
+        assertEquals(List.of("unknown key 'cachedFingerprint', ignored"), def.unknownKeyWarnings());
+    }
+
     @Test
     void theBuiltInToolsHoldNoKeyIsxIgnores() throws Exception {
         for (var file : ToolDefLoader.BUILTIN_TOOLS) {

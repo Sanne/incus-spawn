@@ -7,7 +7,6 @@ import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolRefListConverter;
 import dev.incusspawn.util.OutputFormat;
 import io.hyperfoil.tools.jjq.mapper.JqConverter;
-import io.hyperfoil.tools.jjq.mapper.JqIgnore;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.hyperfoil.tools.jjq.mapper.JqName;
@@ -44,7 +43,7 @@ import java.util.function.Consumer;
  * can refuse to build and insist the user disambiguate.
  */
 @JqMapped
-public class ImageDef extends MappedDefinition {
+public class ImageDef extends DefinitionOrigin {
 
     private static final String RESOURCE_DIR = "images/";
 
@@ -152,20 +151,6 @@ public class ImageDef extends MappedDefinition {
     @JqInclude(JqInclude.Include.NON_NULL)
     private Coordinator coordinator;
 
-    @JqIgnore
-    private String source = "unknown";
-
-    /**
-     * The project directory of a project-local definition ({@code .incus-spawn/images/} in the
-     * working directory), null for every trusted layer. Such a definition arrives with whatever
-     * repository was cloned, so its host-resources are confined to this directory (#765).
-     * Never read from YAML: a definition must not be able to vouch for itself.
-     */
-    @JqIgnore
-    private Path projectRoot;
-
-    public Path getProjectRoot() { return projectRoot; }
-    public void setProjectRoot(Path projectRoot) { this.projectRoot = projectRoot; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getDescription() { return description; }
@@ -231,10 +216,8 @@ public class ImageDef extends MappedDefinition {
     public boolean isDeprecated() {
         return deprecated != null && !deprecated.isBlank() && !"false".equalsIgnoreCase(deprecated.strip());
     }
-    public String getSource() { return source; }
-    public void setSource(String source) { this.source = source; }
     /** Whether this definition ships with isx itself, as opposed to one the user wrote. */
-    public boolean isBuiltIn() { return "built-in".equals(source); }
+    public boolean isBuiltIn() { return "built-in".equals(getSource()); }
 
     /**
      * A list as mapped from YAML, without its empty items: a bare '-' (or '~') arrives as null
@@ -458,11 +441,11 @@ public class ImageDef extends MappedDefinition {
     /**
      * {@code vm:} is the old spelling of {@code type: vm}, which no mapping reads. Only a root
      * template with no {@code type:} is sure to build a container: a child's type may come from
-     * its parent, which this one file does not know.
+     * its parent, which this one file does not know. The keys isx sets are {@link DefinitionOrigin}'s.
      */
     @Override
     protected String hint(String key) {
-        if (!"vm".equalsIgnoreCase(key)) return null;
+        if (!"vm".equalsIgnoreCase(key)) return super.hint(key);
         var hint = "a virtual machine is 'type: vm'";
         return type == null && isRoot() ? hint + "; without it this builds a container" : hint;
     }
