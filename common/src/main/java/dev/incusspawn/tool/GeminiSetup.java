@@ -14,7 +14,7 @@ import java.util.Map;
 /** Gemini CLI uses a guest placeholder; the proxy holds and injects its API key. */
 public class GeminiSetup implements ToolSetup {
 
-    private static final String PLACEHOLDER_API_KEY = "gemini-placeholder";
+    static final String PLACEHOLDER_API_KEY = "gemini-placeholder";
     static final String CONFIG_PATH = "/home/agentuser/.gemini/settings.json";
     /**
      * Gemini CLI reads no system-wide context file, and {@code ~/.gemini/GEMINI.md} is the

@@ -48,20 +48,35 @@ public final class ProofCarriers {
                         missing.computeIfAbsent(new MissingPlaceholders(tool.name(), namespace),
                                 key -> new java.util.LinkedHashSet<>()).addAll(auth.getDomains());
                     }
-                    var patterns = placeholders.getOrDefault(namespace, List.of()).stream()
-                            .map(p -> Pattern.compile("(?<![A-Za-z0-9._-])" + Pattern.quote(p.prefix() + ProofToken.MARKER)
-                                    + "([0-9a-f]{" + ProofToken.DIGEST_HEX_CHARS + "})(?![A-Za-z0-9._-])"))
-                            .toList();
-                    var claims = placeholders.getOrDefault(namespace, List.of()).stream()
-                            .map(p -> Pattern.compile("(?<![A-Za-z0-9._-])" + Pattern.quote(p.prefix()) + "(?:isx_|placeholder)"))
-                            .toList();
+                    var patterns = tokens(placeholders, namespace);
+                    var claims = claims(placeholders, namespace);
                     for (var domain : auth.getDomains()) {
                         for (var header : headers) declared.add(new Carrier(domain, namespace, header, patterns, claims));
                     }
                 }
             }
         }
+        // The proxy's own route for Pi's google-vertex provider, which no tool's auth entry declares
+        var claude = dev.incusspawn.config.SpawnConfig.ClaudeConfig.NAMESPACE;
+        if (placeholders.containsKey(claude)) {
+            for (var domain : ProxyConfig.GOOGLE_VERTEX_DOMAINS) {
+                declared.add(new Carrier(domain, claude, "x-goog-api-key", tokens(placeholders, claude), claims(placeholders, claude)));
+            }
+        }
         carriers = List.copyOf(declared);
+    }
+
+    private static List<Pattern> tokens(Map<String, List<ProofToken.Placeholder>> placeholders, String namespace) {
+        return placeholders.getOrDefault(namespace, List.of()).stream()
+                .map(p -> Pattern.compile("(?<![A-Za-z0-9._-])" + Pattern.quote(p.prefix() + ProofToken.MARKER)
+                        + "([0-9a-f]{" + ProofToken.DIGEST_HEX_CHARS + "})(?![A-Za-z0-9._-])"))
+                .toList();
+    }
+
+    private static List<Pattern> claims(Map<String, List<ProofToken.Placeholder>> placeholders, String namespace) {
+        return placeholders.getOrDefault(namespace, List.of()).stream()
+                .map(p -> Pattern.compile("(?<![A-Za-z0-9._-])" + Pattern.quote(p.prefix()) + "(?:isx_|placeholder)"))
+                .toList();
     }
 
     /** Configuration diagnostics, emitted once per load, never on the request path. */

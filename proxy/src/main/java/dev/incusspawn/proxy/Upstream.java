@@ -403,6 +403,11 @@ class Upstream {
 
     /** As above, with the head and the taps left to {@code hooks}: the credential-injecting relay (#1315). */
     void relayRequest(HttpServerRequest clientReq, String domain, RelayHooks hooks, long since) {
+        relayRequest(clientReq, domain, clientReq.uri(), hooks, since);
+    }
+
+    /** As above, to {@code domain} at {@code uri}, which may be other than the client named. */
+    void relayRequest(HttpServerRequest clientReq, String domain, String uri, RelayHooks hooks, long since) {
         var streaming = hasBody(clientReq);
         // At once, before anything waits: Vert.x queues a paused body, but drops one that arrives
         // with nothing reading it, and then refuses to read the request at all (#1164)
@@ -411,7 +416,7 @@ class Upstream {
                 .setMethod(clientReq.method())
                 .setHost(domain)
                 .setPort(443)
-                .setURI(clientReq.uri());
+                .setURI(uri);
         var watchdog = new RelayWatchdog(clientReq, domain, streaming, since, null, null);
         // Lookups before the relay spent the budget (check() has sent the 502), or the client left
         if (watchdog.gone()) return;

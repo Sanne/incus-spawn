@@ -98,7 +98,16 @@ Key design:
   `gemini.accounts.<name>.apiKey` stays on the host; the guest exports `GEMINI_API_KEY` with prefix `gemini-` and namespace `gemini`.
   `ProofCarriers` reads its proof from `x-goog-api-key` before HTTP or WebSocket account resolution and injection.
   Missing, static, wrong or reset proofs pass through unchanged, as do independent credentials; a valid proof with a missing account pin fails closed.
-  No Google wildcard, OAuth flow or Vertex route is added.
+  No Google wildcard or OAuth flow is added.
+- **Gemini on Vertex (#1114)** is a hardcoded route, like Anthropic's, for Pi's `google-vertex` provider.
+  `aiplatform.googleapis.com` is built in (`ProxyConfig.GOOGLE_VERTEX_DOMAINS`); `ProofCarriers` reads the claude namespace's proof from `x-goog-api-key` there, and `AccountSelection.namespacesByDomain` maps it to `claude`, so `refuseIfUnservable` and the `inherit` swap cover it.
+  An HTTP request that proved the claude namespace itself (`servesGeminiOnVertex`; another namespace's proof there gets only its own entry) goes to `relayGeminiOnVertex`: a non-Vertex account is a 502, and anything `GeminiOnVertex.projectUri` does not accept (only `POST /{v1,v1beta1}/publishers/google/models/<model>:{generateContent,streamGenerateContent,countTokens}`) a 403, both before anything leaves.
+  The accepted call keeps only the `alt` parameters of its query (`alt=<letters>`) and loses `x-goog-user-project` and `X-HTTP-Method-Override` (`GeminiOnVertex.CLIENT_OVERRIDES`, removed after the client's head is copied), so no `userProject` or quota header charges another project.
+  Its body is forwarded unread, and may still name another project's resources (`cachedContent`, `tools` retrieval): #1925.
+  It is rewritten to the account's project and location, sent to `vertexHost(region)` through `Upstream.relayRequest(..., uri, ...)`, and signed by `injectHeaders`' Vertex branch, which strips `x-goog-api-key`.
+  It streams, never held, so a 401 is not retried: it invalidates the token cache for the next call.
+  A proven WebSocket there gets the key header stripped and nothing injected; unproven requests relay unchanged, as everywhere.
+  The host's gcloud token reaches every project its user can touch, which is why the route names the project itself and serves model calls alone.
 - **The generic seam is one method.**
   `ProxyDef.accountConfigPath()` builds `<ns>.accounts.<account>.<config-path>` beside the existing `fullConfigPath()`.
   `ToolProxyResolver.resolveConfigValue` prefers it and falls back to the flat path when the namespace has no accounts *or the account omits that key* (a namespace may hold the token per account and other settings globally).

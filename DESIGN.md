@@ -240,7 +240,7 @@ A container's wait looks for an address on `eth0` and starts its `systemd-networ
 A template whose network never comes up fails its update with the build's diagnostics, and no step that needs the network runs.
 
 No coding agent is included in built-in templates by default — users add the ones they need to custom image definitions.
-Available Java tools: `gemini-cli` (Gemini CLI), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent, Anthropic or OpenAI provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
+Available Java tools: `gemini-cli` (Gemini CLI), `claude` (Claude Code), `codex` (Codex CLI), `pi` (Pi coding agent: Anthropic, OpenAI, Gemini API or Gemini on Vertex provider), `bob` (Bob Shell), `copilot` (GitHub Copilot CLI).
 
 Each image definition specifies:
 - `name` — container name (required)
@@ -1685,6 +1685,22 @@ Unlike Claude Code, Pi does not have a Vertex mode — it always sends standard 
 The proxy handles both direct key injection and standard-to-Vertex translation transparently.
 No Vertex-specific environment variables are needed inside the container; `ANTHROPIC_API_KEY=sk-ant-placeholder` is the only auth configuration (declared via `PiSetup.envEntries()`).
 
+**Gemini on Vertex for Pi (#1114):** Pi's `google-vertex` provider runs Gemini models, not Claude, and never speaks the Anthropic API.
+Pi has no provider named `vertex`; isx accepts it and writes `google-vertex` in Pi's settings.
+Before #1114 isx exported only `GOOGLE_CLOUD_PROJECT`/`GOOGLE_CLOUD_LOCATION`, while Pi authenticates with `GOOGLE_CLOUD_API_KEY` or ADC, so the provider had no working credential at all.
+Pi's `google` provider is the Gemini API (`GEMINI_API_KEY`, `generativelanguage.googleapis.com`), which isx had also mapped to the Vertex account; it now spends the `gemini` namespace through `GeminiSetup`'s existing route.
+With an API key, `@google/genai` uses Vertex's express form: `POST https://aiplatform.googleapis.com/v1/publishers/google/models/<model>:streamGenerateContent` with the key in `x-goog-api-key` and no project.
+`PiSetup` exports `GOOGLE_CLOUD_API_KEY=AIzaplaceholder`, a placeholder of the claude namespace, so login fills it with the instance's claude proof.
+`aiplatform.googleapis.com` is a built-in intercepted domain (`ProxyConfig.GOOGLE_VERTEX_DOMAINS`), and `ProofCarriers` reads that proof from `x-goog-api-key` there.
+A proven request on a Vertex account is rewritten to `/v1/projects/<project>/locations/<region>/publishers/google/models/<model>:<method>` on `vertexHost(region)` and signed with the host's gcloud token, as Claude's Vertex calls are (`GeminiOnVertex`, `MitmProxy.relayGeminiOnVertex`).
+The proof never leaves: the Vertex branch of `injectHeaders` strips `x-goog-api-key`.
+The gcloud user credential reaches every project and every Vertex API its user can, so the route serves only `generateContent`, `streamGenerateContent` and `countTokens` on Google's publisher in the express form, in the account's own project; anything else proven is a 403, and a proven call on an account that is not Vertex AI a 502, before anything is sent.
+Of the guest's query it keeps only `alt` (letters only), and it drops `x-goog-user-project` and `X-HTTP-Method-Override`, which would otherwise bill another quota project or change the method.
+The body is still forwarded as sent, and a Gemini body can name resources in other projects (`cachedContent`, a RAG corpus or a Vertex AI Search datastore in `tools`), which the host's token may read; screening it is #1925.
+Unproven requests relay unchanged, so a guest's own Google key still works there.
+The call streams rather than being held, so a 401 is not retried; it drops the cached token for the next call.
+Alternatives rejected: ADC in the guest (a credentials file Google's auth library exchanges for a real token, which would then sit in the instance); a refresh-token stub that the proxy answers on `oauth2.googleapis.com` (same: the guest would hold a working access token); intercepting every `*-aiplatform.googleapis.com` region (the express form needs only the global host).
+
 **WebSocket passthrough:** The proxy also handles WebSocket upgrade requests.
 When a client sends an HTTP Upgrade to a proxied domain, the proxy establishes a corresponding upstream WebSocket connection (injecting credentials on the initial handshake), then relays frames bidirectionally.
 The client socket is paused until the upstream connection is established to prevent frame drops.
@@ -1696,7 +1712,7 @@ Copying Netty's checks into the handler was rejected: Vert.x's own pre-checks ar
 Keepalive pings are sent on both legs, and close codes are propagated.
 This is used by Codex CLI, which communicates with `api.openai.com` over WebSocket.
 
-**Intercepted domains:** Built-in: `api.anthropic.com`, `registry-1.docker.io`, `auth.docker.io`, `ghcr.io`, `quay.io`, `repo.maven.apache.org`, `repo1.maven.org`, `plugins.gradle.org`, `services.gradle.org`, `registry.npmjs.org`.
+**Intercepted domains:** Built-in: `api.anthropic.com`, `aiplatform.googleapis.com`, `registry-1.docker.io`, `auth.docker.io`, `ghcr.io`, `quay.io`, `repo.maven.apache.org`, `repo1.maven.org`, `plugins.gradle.org`, `services.gradle.org`, `registry.npmjs.org`.
 Tool-contributed (via YAML `proxy:` entries): `github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `codeload.github.com`, `uploads.github.com`, `api.openai.com`, `bob.ibm.com` (and all `*.bob.ibm.com` subdomains).
 User-defined tools can add additional domains.
 
@@ -1732,7 +1748,7 @@ Only a source with no build record falls back to the current YAML.
 Tools the proxy does not serve (feature-gated off, or project-local) are not checked, as their credentials would not be injected anyway.
 Readiness that is more than a key being set is the tool's to state, through `ToolSetup.credentialProblem()`.
 So `CredentialCheck` names no tool: `ClaudeSetup` requires the resolved Claude account to be *complete* (a pre-accounts `useVertex: true` with no region still presents as an account, and fails every request).
-`PiSetup` applies the same rule for its Anthropic provider and requires a Vertex account for `vertex`/`google`.
+`PiSetup` applies the same rule for its Anthropic provider and requires a Vertex account for `vertex`/`google-vertex`; its `google` provider is judged through the `gemini` namespace like Gemini CLI.
 A template listing only pi would not otherwise say why it needs a Claude account, so pi adds a note through `ToolSetup.credentialNote()` (#1750).
 The note names pi and its provider, and offers another provider; it follows the command that configures the account.
 `CredentialCheck` leaves the note out when a tool without one needs the same namespace, as Claude Code beside pi does.
@@ -5471,6 +5487,7 @@ A started instance's placeholders are proof tokens (`gho_isx_<digest>`, see "Pro
 | Claude OAuth token (Pro/Max) | Placeholder `sk-ant-placeholder` | Proxy strips `x-api-key` and injects `Authorization: Bearer <oauth-token>`. Container configuration is identical to direct API key mode |
 | GCP credentials (Vertex mode) | Placeholder `ya29.placeholder-for-proxy` in `ISX_VERTEX_ACCESS_TOKEN` | Container runs Claude Code in Vertex mode with `CLAUDE_CODE_SKIP_VERTEX_AUTH=1`, which sends only `ANTHROPIC_CUSTOM_HEADERS`; a login script puts `Authorization: Bearer $ISX_VERTEX_ACCESS_TOKEN` there. Proxy injects GCP Bearer token from `gcloud` on the host. No GCP credentials, service accounts, or access tokens enter the container |
 | Pi Anthropic key | Placeholder `sk-ant-placeholder` in `ANTHROPIC_API_KEY` | Same as Claude direct/OAuth mode. Pi always uses standard API format; the proxy handles key injection, OAuth Bearer injection, or Vertex translation transparently |
+| Pi Gemini on Vertex | Placeholder `AIzaplaceholder` in `GOOGLE_CLOUD_API_KEY` (claude namespace) | Pi's `google-vertex` provider sends Vertex's express form to `aiplatform.googleapis.com`; the proxy moves it into the Vertex account's project and region and injects the host's gcloud Bearer token. Only Gemini model calls are served |
 | OpenAI API key | Placeholder `sk-placeholder` in `OPENAI_API_KEY` (and, for `codex`, copied into `~/.codex/auth.json` at login) | Proxy replaces `Authorization: Bearer` header with real key for `api.openai.com`. Used by `codex` and by `pi` with `provider: openai` |
 | GitHub token | Placeholder `gho_placeholder` in `GH_TOKEN` | Proxy replaces `Authorization` header with real token for GitHub domains (Basic auth for `github.com` git HTTP, Bearer for API) |
 

@@ -73,7 +73,7 @@ The runner publishes `result-<run>.txt` and `outcome-<run>.json` (`type: isx.pi.
 | Turn limit | None, as for every agent |
 | Model preflight | None; a model is checked for shape, and access errors become failed task results |
 | `ask` | Needs Claude in the template, as for Codex |
-| Credentials | The proxy injects the account the template's `provider` spends (`claude` or `openai`); the adapter reads none |
+| Credentials | The proxy injects the account the template's `provider` spends (`claude`, `openai` or `gemini`); the adapter reads none |
 
 Every worker runs with full access inside its instance, which is the boundary (#1857), so Pi needs no mapping of a Claude policy.
 The first Pi release refused a template with a restrictive Claude permission mode, and refused Pi while `delegate-max-turns` was set; #1857 removed both policies.

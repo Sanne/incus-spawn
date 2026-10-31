@@ -138,12 +138,20 @@ Your own extensions in `~/.pi/agent/extensions/` load as usual.
 
 | Parameter | Default | What it does |
 | --- | --- | --- |
-| `provider` | `anthropic` | The API Pi talks to; also accepts `openai`, `vertex` or `google` |
+| `provider` | `anthropic` | The API Pi talks to; also accepts `openai`, `google`, `google-vertex` or `vertex` |
 | `model` | `claude-sonnet-4-6` for `anthropic`, otherwise Pi's own | The model Pi uses |
 
-The `vertex` and `google` providers need a Vertex AI Claude account, whose project and region the build exports to Pi.
 The `openai` provider uses your OpenAI key, as shown below.
 A provider isx does not manage needs no credential from isx: Pi signs in to it itself.
+
+The `google` provider is the Gemini API, and uses your Gemini key, as [Gemini CLI](#gemini-cli) does.
+The `google-vertex` provider runs Gemini models on Vertex AI, and needs a Vertex AI Claude account.
+isx also accepts `vertex` for it, and writes Pi's own name in its settings.
+
+On Vertex AI, Pi sends its calls with an API key, a proof the instance holds.
+The proxy checks it and moves each call into your account's project and region.
+It signs the call with the host's GCP credentials, which never enter the instance.
+It serves only Gemini model calls with them, and refuses anything else the proof would reach.
 
 Pi can also run against OpenAI, using the same key as [Codex CLI](#codex-cli):
 
@@ -174,7 +182,9 @@ Use `accounts: { gemini: work }` in a template or `isx branch --from tpl-gemini-
 The instance receives a `GEMINI_API_KEY` proof placeholder.
 The proxy verifies it and adds the selected key to requests to `generativelanguage.googleapis.com` as they leave the instance.
 Gemini CLI reads the placeholder when launched, so no API key or proof is saved in its settings.
-This integration supports Gemini API keys; Google OAuth and Vertex authentication remain separate work ([#1114](https://github.com/Sanne/incus-spawn/issues/1114)).
+
+This integration supports Gemini API keys; Google OAuth is not supported.
+Gemini models on Vertex AI are served through [Pi](#pi-coding-agent) instead.
 
 After upgrading both `isx` and `isx-proxy`, rebuild existing Gemini templates and branch new instances.
 An instance from an older template keeps a login notice until its template is rebuilt.

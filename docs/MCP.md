@@ -100,7 +100,7 @@ Claude runs in `bypassPermissions` mode, Codex in `danger-full-access` without a
 The model is the template's unless the call names one.
 
 Codex uses the template's `openai` credential account.
-Pi spends the account its template's `provider` uses: the Claude account, or the `openai` one.
+Pi spends the account its template's `provider` uses: the Claude account, the `openai` one or the `gemini` one.
 
 ### Asking a question instead of reading the output
 

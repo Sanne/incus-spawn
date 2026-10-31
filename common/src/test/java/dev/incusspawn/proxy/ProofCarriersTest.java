@@ -16,6 +16,18 @@ class ProofCarriersTest {
     static final String SECRET = "12".repeat(32);
     static final String GH = "gho_isx_" + ProofToken.derive(SECRET, "github");
 
+    /** Pi's google-vertex provider sends its key as x-goog-api-key; the claude namespace's proof is read there. */
+    @Test void theVertexDomainReadsTheClaudeProofFromTheGoogleKeyHeader() {
+        var proof = "AIzaisx_" + ProofToken.derive(SECRET, "claude");
+        var carriers = new ProofCarriers(List.of(new ClaudeSetup(), new dev.incusspawn.tool.PiSetup()));
+        var presented = carriers.read("aiplatform.googleapis.com",
+                name -> name.equalsIgnoreCase("x-goog-api-key") ? List.of(proof) : List.of());
+        assertEquals(Map.of("claude", List.of(ProofToken.derive(SECRET, "claude"))), presented.digests());
+        assertTrue(presented.claimsProof());
+        assertEquals(Map.of(), new ProofCarriers(List.of(new GhSetup())).read("aiplatform.googleapis.com",
+                name -> List.of(proof)).digests(), "no claude placeholders, no carrier");
+    }
+
     @Test void anEmptyAuthItemDeclaresNothing() throws Exception {
         var tool = new YamlToolSetup(Jjq.toolDef("""
                 name: empty-auth

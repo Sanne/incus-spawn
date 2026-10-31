@@ -46,7 +46,9 @@ The `gemini` namespace uses the generic account menu and config tree, so no type
 Install, reconfigure and `refreshInherited` remove the old `/etc/profile.d/isx-gemini-login.sh` notice.
 Inherited-tool refresh sets the API-key auth selection while preserving the parent's model and other settings; interactive Gemini requires this selection even with `GEMINI_API_KEY` set.
 Existing instances need a template rebuild and a new branch; the action keeps `bash -lc gemini` so their legacy login notice still guards launches through zmx until then.
-Google OAuth and Vertex remain outside this API-key integration (#1114).
+Google OAuth remains outside this API-key integration.
+Pi's `google` provider is the Gemini API too: `PiSetup` exports the same `GEMINI_API_KEY` placeholder and spends the `gemini` namespace (#1114).
+Its `google-vertex` provider (isx's `vertex` is written as Pi's `google-vertex`) spends the Claude Vertex AI account through `GOOGLE_CLOUD_API_KEY`, whose prefix is `AIza` and namespace `claude`; see `proxy.md`.
 
 Tools can declare an `agent_note:` (exposed uniformly via `ToolSetup.agentNote()`, overridden in `YamlToolSetup`; Java tools may override it too).
 It is an always-true fact that must be known *before* the first relevant action, rendered by the build into the agent instructions (see `.claude/rules/build.md`).

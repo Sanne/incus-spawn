@@ -605,6 +605,13 @@ public final class AccountSelection {
                 }
             }
         });
+        // The proxy's own route for Pi's google-vertex provider, which spends the Claude account (#1114)
+        var claude = SpawnConfig.ClaudeConfig.NAMESPACE;
+        if (byDomain.values().stream().anyMatch(namespaces -> namespaces.contains(claude))) {
+            for (var domain : dev.incusspawn.proxy.ProxyConfig.GOOGLE_VERTEX_DOMAINS) {
+                byDomain.computeIfAbsent(domain, d -> new java.util.LinkedHashSet<>()).add(claude);
+            }
+        }
         return byDomain;
     }
 

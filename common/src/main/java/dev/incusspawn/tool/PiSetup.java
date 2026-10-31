@@ -72,7 +72,7 @@ public class PiSetup implements ToolSetup {
 
         var provider = new ToolDef.ParameterDef();
         provider.setType("string");
-        provider.setDescription("Pi provider (e.g. anthropic, openai, vertex, google)");
+        provider.setDescription("Pi provider (e.g. anthropic, openai, google, google-vertex)");
         provider.setPattern("^[a-z][a-z0-9_-]*$");
         provider.setOptional(true);
         provider.setReconfigurable(true);
@@ -111,23 +111,35 @@ public class PiSetup implements ToolSetup {
     }
 
     /**
-     * Pi spends Claude Code's credential, or OpenAI's with {@code provider: openai}, through the
-     * proxy entries those tools declare -- it has none of its own. Both are listed: which one a
-     * template uses is a parameter, and offering one account choice too many is harmless.
+     * Pi spends Claude Code's credential, OpenAI's with {@code provider: openai}, or Gemini's with
+     * {@code provider: google}, through the proxy entries those tools declare -- it has none of its
+     * own. All are listed: which one a template uses is a parameter, and offering one account
+     * choice too many is harmless.
      */
     @Override
     public java.util.Set<String> credentialNamespaces() {
-        return new java.util.LinkedHashSet<>(List.of(SpawnConfig.ClaudeConfig.NAMESPACE, "openai"));
+        return new java.util.LinkedHashSet<>(List.of(SpawnConfig.ClaudeConfig.NAMESPACE, "openai", GEMINI_NAMESPACE));
     }
 
+    static final String GEMINI_NAMESPACE = "gemini";
+
     /**
-     * Pi reads {@code ANTHROPIC_API_KEY} and {@code OPENAI_API_KEY} as Claude Code and Codex do,
-     * which declare them, and Claude's OAuth token under a name of its own, declared here.
+     * What Pi's google-vertex provider sends as its API key ({@code x-goog-api-key}): the claude
+     * namespace's proof, which the proxy swaps for the host's gcloud token in the Vertex account's
+     * project and region (#1114). The prefix is a Google API key's; nothing checks it.
+     */
+    static final ProofToken.Placeholder VERTEX_KEY =
+            new ProofToken.Placeholder("GOOGLE_CLOUD_API_KEY", "AIza", SpawnConfig.ClaudeConfig.NAMESPACE);
+
+    /**
+     * Pi reads {@code ANTHROPIC_API_KEY}, {@code OPENAI_API_KEY} and {@code GEMINI_API_KEY} as
+     * Claude Code, Codex and Gemini CLI do, which declare them; Claude's OAuth token and the
+     * Vertex key under names of their own, declared here.
      */
     @Override
     public List<ProofToken.Placeholder> placeholders() {
         return List.of(new ProofToken.Placeholder("ANTHROPIC_OAUTH_TOKEN",
-                SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX, SpawnConfig.ClaudeConfig.NAMESPACE));
+                SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX, SpawnConfig.ClaudeConfig.NAMESPACE), VERTEX_KEY);
     }
 
     /** Only the one its {@code provider} spends, once the template has said which. */
@@ -136,6 +148,7 @@ public class PiSetup implements ToolSetup {
         return switch (credentialFor(resolvedParams)) {
             case ANTHROPIC, VERTEX -> java.util.Set.of(SpawnConfig.ClaudeConfig.NAMESPACE);
             case OPENAI -> java.util.Set.of("openai");
+            case GEMINI -> java.util.Set.of(GEMINI_NAMESPACE);
             case NONE -> java.util.Set.of();
         };
     }
@@ -151,7 +164,7 @@ public class PiSetup implements ToolSetup {
                         && account.effectiveType() == SpawnConfig.ClaudeAccountType.VERTEX
                         ? "" : "Vertex AI configuration";
             }
-            case OPENAI, NONE -> "";
+            case OPENAI, GEMINI, NONE -> "";
         };
     }
 
@@ -164,7 +177,7 @@ public class PiSetup implements ToolSetup {
         var account = switch (credentialFor(resolvedParams)) {
             case ANTHROPIC -> "a Claude account";
             case VERTEX -> "a Vertex AI Claude account";
-            case OPENAI, NONE -> "";
+            case OPENAI, GEMINI, NONE -> "";
         };
         if (account.isEmpty()) return List.of();
         return List.of("Pi needs " + account + " for its provider '" + provider(resolvedParams) + "'.",
@@ -178,10 +191,12 @@ public class PiSetup implements ToolSetup {
     private enum Credential {
         /** Claude's account, whatever its type. */
         ANTHROPIC,
-        /** Claude's account, which must be a Vertex AI one. */
+        /** Claude's account, which must be a Vertex AI one, for Gemini on Vertex. */
         VERTEX,
         /** The {@code openai} namespace's API key. */
         OPENAI,
+        /** The {@code gemini} namespace's API key, for the Gemini API. */
+        GEMINI,
         /** None isx manages: pi brings its own for a provider isx does not know. */
         NONE
     }
@@ -190,10 +205,19 @@ public class PiSetup implements ToolSetup {
     private static Credential credentialFor(java.util.Map<String, String> resolvedParams) {
         return switch (provider(resolvedParams)) {
             case "anthropic" -> Credential.ANTHROPIC;
-            case "vertex", "google" -> Credential.VERTEX;
+            case "vertex", GOOGLE_VERTEX -> Credential.VERTEX;
+            case "google" -> Credential.GEMINI;
             case "openai" -> Credential.OPENAI;
             default -> Credential.NONE;
         };
+    }
+
+    /** Pi's name for Gemini on Vertex AI; isx also takes {@code vertex}, which Pi does not know. */
+    static final String GOOGLE_VERTEX = "google-vertex";
+
+    /** The provider Pi's settings name for {@code provider}: its own name for isx's {@code vertex}. */
+    static String piProvider(String provider) {
+        return "vertex".equals(provider) ? GOOGLE_VERTEX : provider;
     }
 
     /** The {@code provider} in pi's resolved parameters; a null one is the default. */
@@ -225,10 +249,10 @@ public class PiSetup implements ToolSetup {
             // OpenAI has its own credential; the Claude account is irrelevant here.
             entries.add(EnvEntry.set("OPENAI_API_KEY", "sk-placeholder"));
         } else if (credential == Credential.VERTEX) {
-            if (type == SpawnConfig.ClaudeAccountType.VERTEX) {
-                entries.add(EnvEntry.set("GOOGLE_CLOUD_PROJECT", account.getVertexProjectId()));
-                entries.add(EnvEntry.set("GOOGLE_CLOUD_LOCATION", account.getCloudMlRegion()));
-            }
+            // An API key puts Pi on Vertex's express form, which the proxy moves into the account's project
+            entries.add(EnvEntry.set(VERTEX_KEY.env(), VERTEX_KEY.staticValuePrefix()));
+        } else if (credential == Credential.GEMINI) {
+            entries.add(EnvEntry.set("GEMINI_API_KEY", GeminiSetup.PLACEHOLDER_API_KEY));
         } else if (type == SpawnConfig.ClaudeAccountType.OAUTH) {
             // ANTHROPIC, and NONE too: a placeholder is harmless to a provider that ignores it.
             entries.add(EnvEntry.set("ANTHROPIC_OAUTH_TOKEN", SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN));
@@ -265,7 +289,7 @@ public class PiSetup implements ToolSetup {
 
     private void configureSettings(Container c, java.util.Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Configuring Pi");
-        var provider = provider(resolvedParams);
+        var provider = piProvider(provider(resolvedParams));
         var model = defaultModel(provider, resolvedParams.get("model"));
         var modelLine = model == null ? "" : "  \"defaultModel\": \"" + model + "\",\n";
         var settingsJson = """
