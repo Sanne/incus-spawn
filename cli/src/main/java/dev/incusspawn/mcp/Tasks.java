@@ -86,7 +86,7 @@ final class Tasks {
      */
     record Status(String state, int run, Integer exit, long outputBytes,
                   long stderrBytes, String output, String stderr, Long attachedPid,
-                  Instant startedAt, Instant lastActivity, String sessionId) {
+                  Instant startedAt, Instant lastActivity, String sessionId, boolean sessionGone) {
         boolean running() {
             return "running".equals(state);
         }
@@ -275,6 +275,10 @@ final class Tasks {
         if (task.agent() == DelegateAgent.CLAUDE && !current.running() && current.sessionId() == null) {
             // The run would only refuse it: launching gains nothing.
             throw new ToolError(ToolError.Code.WRONG_STATE, "task " + task.id() + ": " + TaskScripts.NO_CLAUDE_SESSION
+                    + "; start a new delegated task.");
+        }
+        if (task.agent() == DelegateAgent.CLAUDE && !current.running() && current.sessionGone()) {
+            throw new ToolError(ToolError.Code.WRONG_STATE, "task " + task.id() + ": " + TaskScripts.CLAUDE_SESSION_GONE
                     + "; start a new delegated task.");
         }
         if (task.agent() == DelegateAgent.PI && !current.running() && current.sessionId() == null) {
@@ -889,7 +893,7 @@ final class Tasks {
             else header.put(key, lines[i].substring(eq + 1));
         }
         if ("missing".equals(header.get("state"))) {
-            return new Status("lost", 0, null, 0, 0, "", "", null, null, null, null);
+            return new Status("lost", 0, null, 0, 0, "", "", null, null, null, null, false);
         }
         var rest = i < lines.length ? String.join("\n", List.of(lines).subList(i + 1, lines.length)) : "";
         var split = rest.indexOf("\n---stderr\n");
@@ -907,7 +911,8 @@ final class Tasks {
                 outputBytes, parseLong(header.getOrDefault("stderr_bytes", "0")),
                 output.endsWith("\n") ? output.substring(0, output.length() - 1) : output, stderr, attached,
                 epochSeconds(header.get("started")), epochSeconds(header.get("activity")),
-                SESSION_ID.matcher(header.getOrDefault("session_id", "")).matches() ? header.get("session_id") : null);
+                SESSION_ID.matcher(header.getOrDefault("session_id", "")).matches() ? header.get("session_id") : null,
+                "1".equals(header.get("session_gone")));
     }
 
     /** A time the guest reported in seconds since the epoch; null if it reported none. */

@@ -1161,7 +1161,7 @@ final class McpTools {
         String joinCommand = null;
         if (Tasks.AGENT.equals(task.kind())) {
             if (status.sessionId() != null) node.put("session_id", status.sessionId());
-            var resumable = status.sessionId() != null && task.agent() != DelegateAgent.UNKNOWN;
+            var resumable = status.sessionId() != null && !status.sessionGone() && task.agent() != DelegateAgent.UNKNOWN;
             node.put("resumable", resumable);
             if (resumable) {
                 joinCommand = TaskJoin.hostCommand(task.instance(), task.id());

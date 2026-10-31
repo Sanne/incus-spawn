@@ -254,6 +254,38 @@ class TaskScriptsTest {
     }
 
     @Test
+    void aSessionWhoseTranscriptClaudeCodeDeletedIsGoneAndItsResumeIsRefused() throws Exception {
+        var id = "t1-abc";
+        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(), Tasks.Profile.NONE)), "go");
+        var finished = awaitFinished(id);
+        assertEquals(sessionId(), finished.sessionId());
+        assertFalse(finished.sessionGone());
+
+        // What Claude Code's cleanupPeriodDays does to an old conversation.
+        Files.delete(home.resolve(".claude/projects/-work/" + sessionId() + ".jsonl"));
+        var gone = Tasks.parse(sh(TaskScripts.status(id, 1000), ""));
+        assertEquals(sessionId(), gone.sessionId(), "still the conversation it had");
+        assertTrue(gone.sessionGone(), "but Claude Code can no longer resume it");
+
+        Files.delete(home.resolve("claude-args"));
+        sh(TaskScripts.launch(id, 2, Tasks.AGENT, TaskScripts.agentRun(id, 2, work.toString(), Tasks.Profile.NONE)), "carry on");
+        var refused = awaitFinished(id);
+        assertEquals(125, refused.exit());
+        assertTrue(refused.stderr().contains("its Claude Code conversation is gone"), refused.stderr());
+        assertFalse(Files.exists(home.resolve("claude-args")), "Claude Code was not started");
+    }
+
+    @Test
+    void aCodexOrPiTaskIsNeverJudgedByClaudeCodesTranscripts() throws Exception {
+        for (var agent : List.of("codex", "pi")) {
+            var d = finishedTaskFiles("t5-" + agent, Tasks.AGENT);
+            Files.writeString(d.resolve("identity"), "1 " + agent + "\n");
+            Files.writeString(d.resolve("session_id"), sessionId());
+            assertFalse(Tasks.parse(sh(TaskScripts.status("t5-" + agent, 1000), "")).sessionGone(), agent);
+        }
+    }
+
+    @Test
     void aDelegateRunsUnderItsProfileAndRecordsIt() throws Exception {
         var id = "t1-abc";
         sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(),
@@ -1597,6 +1629,7 @@ class TaskScriptsTest {
             var d = finishedTaskFiles(id, Tasks.AGENT);
             if (agent != DelegateAgent.CLAUDE) Files.writeString(d.resolve("identity"), "1 " + agent.id + "\n");
             if (agent == DelegateAgent.PI) piSessionFile(d, cwd);
+            if (agent == DelegateAgent.CLAUDE) claudeTranscript();
             Files.writeString(d.resolve("session_id"), sessionId() + "\n");
             Files.writeString(d.resolve("cwd"), cwd + "\n");
             Files.writeString(d.resolve("prompt-1.md"), "\n  Fix the flaky test\nand say why\n");
@@ -1635,6 +1668,30 @@ class TaskScriptsTest {
     /** The folder Pi keeps {@code cwd}'s sessions in, as the guest derives it. */
     private String piProjectSessions(String cwd) throws Exception {
         return sh("c=" + ExecScript.quote(cwd) + "; " + TaskScripts.PI_PROJECT_SESSIONS, "");
+    }
+
+    /** What Claude Code leaves for the session {@link #sessionId()}: its transcript, where it keeps them. */
+    private Path claudeTranscript() throws IOException {
+        var project = Files.createDirectories(home.resolve(".claude/projects/-work"));
+        return Files.writeString(project.resolve(sessionId() + ".jsonl"), "{}\n");
+    }
+
+    @Test
+    @Timeout(60)
+    void joiningAClaudeTaskWhoseTranscriptIsGoneIsRefused() throws Exception {
+        var id = "t14-abc";
+        var d = finishedTaskFiles(id, Tasks.AGENT);
+        Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        Files.writeString(d.resolve("cwd"), work.toRealPath() + "\n");
+        var transcript = claudeTranscript();
+        var ready = home.resolve("join-ready");
+        stub("claude", "exec -a claude bash -c " + JOINED_AGENT + " \"$@\"");
+        var join = (TaskJoin.Outcome.Join) TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id);
+        Files.delete(transcript);
+        var refused = joinAs(join.entry().guestCommand());
+        assertEquals(1, refused.exit(), refused.stderr());
+        assertTrue(refused.stderr().contains("its Claude Code conversation is gone"), refused.stderr());
+        assertFalse(Files.exists(ready), "Claude Code never started");
     }
 
     /** What Pi leaves for the session run 1 opened in {@code cwd}: its start in {@code d}, its file where Pi keeps it. */
@@ -1730,6 +1787,7 @@ class TaskScriptsTest {
         var id = "t11-join";
         var d = finishedTaskFiles(id, Tasks.AGENT);
         Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        claudeTranscript();
         Files.writeString(d.resolve("cwd"), cwd + "\n");
         var join = (TaskJoin.Outcome.Join) TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id);
         var ready = home.resolve("join-ready");
@@ -1791,6 +1849,7 @@ class TaskScriptsTest {
         var id = "t13-lock";
         var d = finishedTaskFiles(id, Tasks.AGENT);
         Files.writeString(d.resolve("session_id"), sessionId() + "\n");
+        claudeTranscript();
         Files.writeString(d.resolve("cwd"), cwd + "\n");
         var join = (TaskJoin.Outcome.Join) TaskJoin.resolve(TaskJoin.parse(sh(TaskScripts.joinable(), "")), id);
         var ready = home.resolve("join-ready");

@@ -542,7 +542,7 @@
         "type" : "string"
       },
       "resumable" : {
-        "description" : "A supported agent with a saved conversation ID",
+        "description" : "A supported agent with a saved conversation ID it can still resume",
         "type" : "boolean"
       },
       "join_command" : {
