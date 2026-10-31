@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.Platform;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.SecretRedactor;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.git.GitCommandException;
@@ -847,11 +848,15 @@ class RepoCloner {
         return !err.isEmpty() ? err : firstGitError(result.stdout());
     }
 
-    /** First fatal:/error: line from git output as a terminal shows it, else the last non-empty line. */
+    /**
+     * First fatal:/error: line from git output, else the last non-empty line, as the build log
+     * saves it: from the whole output scrubbed as printed and as shown, as the step's log is, so
+     * the line quoted in the failure message keeps no secret its log redacts (#1890).
+     */
     static String firstGitError(String text) {
         if (text == null || text.isEmpty()) return "";
         String lastNonEmpty = "";
-        for (var line : BuildOutput.guestText(text).split("\n")) {
+        for (var line : SecretRedactor.scrubGuest(text).split("\n")) {
             var trimmed = line.strip();
             if (trimmed.isEmpty()) continue;
             if (trimmed.startsWith("fatal:") || trimmed.startsWith("error:")) return trimmed;

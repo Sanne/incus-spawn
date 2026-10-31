@@ -49,9 +49,9 @@ final class BuildProgress {
             // "prime `cmd` failed: ", takes that line from the scrubbed log: alone, a key's last
             // line has no BEGIN header to be known by (#1882 review)
             if (detail != null && scrubbedLog != null) {
-                var rawLast = lastNonEmptyLine(log);
+                var rawLast = lastShownLine(log);
                 if (!rawLast.isEmpty() && detail.endsWith(rawLast)) {
-                    detail = detail.substring(0, detail.length() - rawLast.length()) + lastNonEmptyLine(scrubbedLog);
+                    detail = detail.substring(0, detail.length() - rawLast.length()) + lastShownLine(scrubbedLog);
                 }
             }
             detail = detail == null ? null : OutputFormat.oneLine(SecretRedactor.scrubGuest(detail));
@@ -390,10 +390,19 @@ final class BuildProgress {
     }
 
     /**
-     * Last non-empty line of some text as a terminal shows it, or "" if none: a last line holding
-     * only colour or a title escape is not the one that says what failed.
+     * Last non-empty line of a guest's output as the build log saves it, or "" if none: a last
+     * line holding only colour or a title escape is not the one that says what failed. It is
+     * taken from the whole output scrubbed as printed and as shown, since a caller may quote it
+     * where no {@link StepProgress} scrubs it, and alone a key's last line has no BEGIN header to
+     * be known by ({@link SecretRedactor#scrubGuest}, #1890).
      */
     static String lastNonEmptyLine(String text) {
+        if (text == null || text.isEmpty()) return "";
+        return lastShownLine(SecretRedactor.scrubGuest(text));
+    }
+
+    /** Last non-empty line of some text as a terminal shows it, or "" if none. */
+    private static String lastShownLine(String text) {
         if (text == null || text.isEmpty()) return "";
         String last = "";
         for (var line : BuildOutput.guestText(text).split("\n")) {
