@@ -731,6 +731,44 @@ class SecretRedactorTest {
         assertFalse(piled.contains("AAAAAAAAAA") || piled.contains("BBBBBBBBBB"), piled.substring(0, Math.min(200, piled.length())));
         // REP draws the character last drawn again: nineteen A and one repeat make the token
         assertEquals("x <isx:redacted:github-token>\n", SecretRedactor.scrubGuest("x ghp_" + "A".repeat(19) + "\u001b[1b\n"));
+        // An absolute row counts from the piece's first, as from the top of a screen it cleared,
+        // and the B are drawn over the dash on the token's row (#1916 review)
+        assertEquals(token, SecretRedactor.scrubGuest("\u001b[2J\u001b[H" + head + "-\n\u001b[1;17H" + tail + "\n"));
+        assertEquals(token, SecretRedactor.scrubGuest(head + "-\n\u001b[1d\u001b[17G" + tail + "\n"));
+        // Two rows apart, as two absolute moves put them
+        assertEquals(token, SecretRedactor.scrubGuest("\u001b[3;1H" + head + "-\nnext\n\u001b[3;17H" + tail + "\n"));
+        // Output that has scrolled addresses rows from a top long gone: counted from its first
+        // absolute row, row 24 is the line it is on, and the B are drawn over the dash (#1916 review)
+        var scrolled = "line\n".repeat(30) + head + "-\u001b[24;17H" + tail + "\n";
+        assertEquals("line\n".repeat(30) + token, SecretRedactor.scrubGuest(scrolled));
+        // A token drawn whole on a row once, then drawn over from another row: the half the last
+        // drawing kept is gone, and what it held is redacted with the token it shows now, so no half
+        // of the secret is kept. A row repainted from further down takes what lies between with it
+        var first = "ghp_" + "A".repeat(16);
+        var second = "B".repeat(20);
+        var redrawn = SecretRedactor.scrubGuest("\u001b[21G" + second + "\n\u001b[A\u001b[1G" + first
+                + "\n\u001b[A\u001b[21G" + "C".repeat(20) + "\n");
+        assertFalse(redrawn.contains(second) || redrawn.contains(first), redrawn);
+        // xterm's private save and restore, alone or with the alternate screen
+        assertEquals(token, SecretRedactor.scrubGuest(head + "\u001b[?1048h-\u001b[?1048l" + tail + "\n"));
+        assertEquals(token, SecretRedactor.scrubGuest(head + "\u001b[?1049h-\u001b[?1049l" + tail + "\n"));
+        // What a program draws on the alternate screen does not overwrite the main one: the dash it
+        // draws over the token's tenth column is gone when it leaves, and the token is whole
+        assertEquals("x <isx:redacted:github-token>-\n",
+                SecretRedactor.scrubGuest(head + "-\u001b[1D" + tail + "\u001b[?1049h\u001b[1;10H-\u001b[?1049l\n"));
+        // A mode's leading zeros are read as a terminal reads them
+        assertEquals(token, SecretRedactor.scrubGuest(head + "-\u001b[1D\u001b[?01048h--\u001b[?01048l" + tail + "\n"));
+        // Each screen keeps its own saved cursor, as xterm does: one saved on the alternate screen
+        // is not where leaving it restores the main one's
+        assertEquals(token, SecretRedactor.scrubGuest(head + "-\u001b[1D\u001b[?1049h\u001b[1;40H\u001b7\u001b[?1049l" + tail + "\n"));
+        assertEquals(token, SecretRedactor.scrubGuest(head + "-\u001b[1D\u001b7\u001b[?47h\u001b[1;40H\u001b7\u001b[?47l\u001b8" + tail + "\n"));
+        // 1047 clears the alternate screen as it leaves, so a second visit counts its absolute rows
+        // afresh rather than from rows of the first, as the first visit does
+        var visit = "\u001b[?1047h\r" + head + "-\n\u001b[A\u001b[5;17H" + tail + "\u001b[?1047l";
+        var twice = SecretRedactor.scrubGuest("a\nb\nc\nd" + visit + "\n" + visit);
+        assertFalse(twice.contains(tail), twice);
+        // 47 never clears the alternate screen, so a second visit draws beside what the first left
+        assertEquals(token, SecretRedactor.scrubGuest("\u001b[?47h\u001b[H" + head + "\u001b[?47ly\n\u001b[?47h\u001b[1;17H" + tail + "\u001b[?47l\n"));
         // A colour code moves nothing: the dash still splits the token, as on the screen
         var coloured = head + "-\u001b[1m" + tail + "\n";
         assertEquals(BuildOutput.guestText(coloured), SecretRedactor.scrubGuest(coloured));

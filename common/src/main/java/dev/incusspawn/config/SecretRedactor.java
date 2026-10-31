@@ -478,7 +478,7 @@ public final class SecretRedactor {
         if (!asPrinted) {
             for (var piece : raw) {
                 if (piece != null && Screen.mayMoveBack(piece)) {
-                    screen = new Screen(rawLength);
+                    screen = new Screen(rawLength, true);
                     break;
                 }
             }
@@ -503,6 +503,20 @@ public final class SecretRedactor {
         if (screen != null && screen.moved()) {
             var view = screen.view();
             wider |= addSpans(view.text, view.start, view.end, source, seen.spans, spans);
+        }
+        if (screen != null && screen.absoluteRowsMayDiffer()) {
+            // Absolute rows counted from the first one used instead of the top of the screen
+            var other = new Screen(rawLength, false);
+            int offset = 0;
+            for (var piece : raw) {
+                if (piece == null) continue;
+                other.print(piece, offset);
+                offset += piece.length();
+            }
+            if (other.moved()) {
+                var view = other.view();
+                wider |= addSpans(view.text, view.start, view.end, source, seen.spans, spans);
+            }
         }
         // A lone control the shown text spaces ends a token there, as the control does in the raw
         // text, and a character that draws no cell ends it in both: with them dropped it is whole,
@@ -614,13 +628,19 @@ public final class SecretRedactor {
      * moves to the next stop of eight, a line feed to the next line, a vertical tab, form feed
      * or 8-bit IND down a line, an 8-bit NEL to the next line and RI up one. Of the control
      * sequences, those that move the cursor along a line or up or down it (CUF, HPR, CUB, CHA,
-     * HPA, CHT, CBT, CUU, CUD, VPR, CNL, CPL, the column of CUP) and the escapes DECBI and DECFI
-     * do so here, a saved position is restored and REP repeats the character last drawn; the rest
-     * move nothing. Rows are counted
-     * from where each piece starts, as an absolute row would count from a screen top no log shows.
+     * HPA, CHT, CBT, CUU, CUD, VPR, CNL, CPL, CUP, VPA) and the escapes DECBI and DECFI do so
+     * here, a saved position is restored (DECSC and DECRC, SCOSC and SCORC, xterm's 1048 and
+     * 1049) and REP repeats the character last drawn; the rest move nothing. Rows are counted from
+     * where each piece starts. An absolute row (CUP, VPA) counts from there too, as if the piece
+     * started at the top of the screen, and on a second screen from where the first absolute row
+     * is, as output that has scrolled addresses it ({@link #absoluteRow}, #1916 review). The
+     * alternate screen (xterm's 47, 1047 and 1049) is a region of rows of its own, with its own
+     * saved cursor, so what a program draws there neither overwrites the main screen nor is lost.
      * <p>
      * Each cell redacts every raw character written to it, from its {@code start} to its
-     * {@code end}, so an overwritten half of a token is never kept beside a marker. A character
+     * {@code end}, so an overwritten half of a token is never kept beside a marker, nor one a
+     * token drawn whole there once left. A row repainted from further down then also redacts
+     * what lies between, which fails closed (#1916). A character
      * that draws no cell ({@link #cellWidth}) joins the cell before the cursor and the one last
      * written, and is left out of the view, so it splits no token. A wide character takes two
      * cells, and overwriting either clears the other. Erasing is not modelled: a cell the screen
@@ -639,17 +659,32 @@ public final class SecretRedactor {
          * cursor down at most {@link #MAX_COLUMN} rows, so no text a String holds comes near it: a
          * guest cannot pile its lines onto one row, where a line feed would overwrite the last.
          */
-        static final long MAX_ROW = Long.MAX_VALUE >>> (COLUMN_BITS + 1);
+        static final long MAX_ROW = (1L << 48) - 1;
+        /** The first row of the alternate screen's region, past every row of the main one. */
+        static final long ALTERNATE = MAX_ROW + 1;
         static final int MAX_REPEATS_PER_CHAR = 1;
         private static final byte NARROW = 1, WIDE_HEAD = 2, WIDE_TAIL = 3, CLEARED = 4;
 
         private boolean moved;
+        /** Whether absolute rows count from the top of the screen, else from the first one used. */
+        private final boolean fromTop;
+        /** Whether a first absolute row was not on the piece's first row, so counting the other way differs. */
+        private boolean absoluteRowsDiffer;
+        /** Where the first absolute row of each screen is, counted from the first one used, or unset. */
+        private final long[] firstAbsolute = new long[2];
         private long row;
         private int column;
-        private long savedRow;
-        private int savedColumn;
+        /** The saved row of each screen, main then alternate, from the base of its region: xterm keeps one per screen. */
+        private final long[] savedRow = new long[2];
+        private final int[] savedColumn = new int[2];
+        /** The first row of the piece in its region: where an absolute row counts from. */
         private long rowBase;
         private long lastRow = -1;
+        private long lastAlternateRow = ALTERNATE - 1;
+        private boolean alternate;
+        private long mainBase;
+        /** The alternate screen's base while what was drawn there stays shown (47 never clears), or -1. */
+        private long alternateBase = -1;
         /** The cell last written, where some terminals put a mark that follows a cursor move. */
         private int lastSlot = -1;
         private int lastCodePoint = -1;
@@ -669,7 +704,8 @@ public final class SecretRedactor {
         /** Per scrub, so a guest cannot choose cells that all land on one probe chain. */
         private final long seed = ThreadLocalRandom.current().nextLong();
 
-        Screen(int rawLength) {
+        Screen(int rawLength, boolean fromTop) {
+            this.fromTop = fromTop;
             repeats = (long) MAX_REPEATS_PER_CHAR * rawLength + MAX_COLUMN;
         }
 
@@ -690,11 +726,38 @@ public final class SecretRedactor {
                 char last = piece.charAt(controls.end() - 1);
                 if (controls.end() - controls.start() == 2 && piece.charAt(controls.start()) == ESC) {
                     if ("86M".indexOf(last) >= 0) return true;
-                } else if ("ADFG`HfZub".indexOf(last) >= 0) {
+                } else if ("ADFG`HfZubd".indexOf(last) >= 0) {
+                    return true;
+                } else if (last == 'l' && restoresOrLeaves(piece, controls.start(), controls.end())) {
                     return true;
                 }
             }
             return false;
+        }
+
+        /** Whether a sequence is a private mode reset that leaves the alternate screen or restores a cursor xterm saved. */
+        private static boolean restoresOrLeaves(String piece, int start, int end) {
+            int from = start + (piece.charAt(start) == ESC ? 2 : 1);
+            if (from >= end - 1 || piece.charAt(from) != '?') return false;
+            for (var mode : piece.substring(from + 1, end - 1).split(";", -1)) {
+                int m = mode(mode);
+                if (m == 47 || m == 1047 || m == 1048 || m == 1049) return true;
+            }
+            return false;
+        }
+
+        /** A private mode's number as a terminal reads it, leading zeros and all, or -1. */
+        private static int mode(String digits) {
+            int first = 0;
+            while (first < digits.length() && digits.charAt(first) == '0') first++;
+            if (digits.length() - first > 6) return -1;
+            int value = 0;
+            for (int i = first; i < digits.length(); i++) {
+                char d = digits.charAt(i);
+                if (d < '0' || d > '9') return -1;
+                value = value * 10 + d - '0';
+            }
+            return value;
         }
 
         /** Whether the cursor ever moved back, or REP drew what the shown text does not show. */
@@ -705,11 +768,13 @@ public final class SecretRedactor {
         /** Prints {@code piece}, which starts at {@code offset} in the raw text, on its own rows. */
         void print(String piece, int offset) {
             // A piece starts on a line of its own, below the last
+            alternate = false;
             rowBase = Math.min(lastRow + 1, MAX_ROW);
             row = rowBase;
             column = 0;
-            savedRow = rowBase;
-            savedColumn = 0;
+            Arrays.fill(savedRow, 0);
+            Arrays.fill(firstAbsolute, Long.MIN_VALUE);
+            Arrays.fill(savedColumn, 0);
             lastSlot = -1;
             lastCodePoint = -1;
             var controls = BuildOutput.guestControls(piece);
@@ -776,7 +841,8 @@ public final class SecretRedactor {
             lastSlot = write(row, column, c, width == 2 ? WIDE_HEAD : NARROW, from, to);
             if (width == 2) write(row, column + 1, c, WIDE_TAIL, from, to);
             lastCodePoint = c;
-            lastRow = Math.max(lastRow, row);
+            if (alternate) lastAlternateRow = Math.max(lastAlternateRow, row);
+            else lastRow = Math.max(lastRow, row);
             column += width;
         }
 
@@ -802,6 +868,10 @@ public final class SecretRedactor {
             boolean csi = first == '\u009b' || first == ESC && piece.charAt(start + 1) == '[';
             if (!csi) return;
             int from = start + (first == '\u009b' ? 1 : 2);
+            if (from < end - 1 && piece.charAt(from) == '?' && (last == 'h' || last == 'l')) {
+                for (var mode : piece.substring(from + 1, end - 1).split(";", -1)) privateMode(mode, last == 'h');
+                return;
+            }
             // Private (?, >, =, <) and intermediate bytes make another sequence of the same letter
             for (int i = from; i < end - 1; i++) {
                 char p = piece.charAt(i);
@@ -822,13 +892,93 @@ public final class SecretRedactor {
                 }
                 case 'F' -> move(row - n, 0);
                 case 'G', '`' -> move(row, n - 1);
-                case 'H', 'f' -> move(row, number(numbers, 1) - 1);
+                case 'H', 'f' -> move(absoluteRow(n), number(numbers, 1) - 1);
+                case 'd' -> move(absoluteRow(n), column);
                 case 's' -> save();
                 case 'u' -> restore();
                 case 'b' -> repeat(n, offset + start, offset + end - 1);
                 default -> {
                 }
             }
+        }
+
+        /**
+         * Where absolute row {@code n} is. Whether the piece started at the top of the screen is
+         * not known: a program that addresses rows usually clears it first, and one whose output
+         * has scrolled addresses rows from a top long gone. So one screen counts from the piece's
+         * first row and another from where its first absolute row is, and both are scrubbed.
+         */
+        private long absoluteRow(int n) {
+            int screen = alternate ? 1 : 0;
+            if (firstAbsolute[screen] == Long.MIN_VALUE) {
+                firstAbsolute[screen] = row - (n - 1);
+                // Where both count from the same row, the two screens are one
+                if (firstAbsolute[screen] != rowBase) absoluteRowsDiffer = true;
+            }
+            return (fromTop ? rowBase : firstAbsolute[screen]) + n - 1;
+        }
+
+        /** Whether a screen counting absolute rows the other way can differ from this one. */
+        boolean absoluteRowsMayDiffer() {
+            return absoluteRowsDiffer;
+        }
+
+        /** An xterm private mode set or reset that saves or restores the cursor or swaps the screen. */
+        private void privateMode(String mode, boolean set) {
+            switch (mode(mode)) {
+                case 1048 -> {
+                    if (set) save(); else restore();
+                }
+                case 1049 -> {
+                    if (set) {
+                        save();
+                        // xterm clears the alternate screen as it enters it
+                        if (!alternate) alternateBase = -1;
+                        switchScreen(true);
+                    } else {
+                        switchScreen(false);
+                        restore();
+                    }
+                }
+                case 1047 -> {
+                    switchScreen(set);
+                    // xterm clears the alternate screen as it leaves it
+                    if (!set) alternateBase = -1;
+                }
+                case 47 -> switchScreen(set);
+                default -> {
+                }
+            }
+        }
+
+        /**
+         * Onto the alternate screen's region, past every row of its own drawn before unless what
+         * was drawn there is still shown, or back to the main one. The cursor keeps its place on
+         * the screen, and going back may overwrite.
+         */
+        private void switchScreen(boolean toAlternate) {
+            if (alternate == toAlternate) return;
+            long fromBase = row - rowBase;
+            alternate = toAlternate;
+            if (alternate) {
+                mainBase = rowBase;
+                if (alternateBase < 0) {
+                    // A cleared alternate screen: its absolute rows count afresh, never from rows it left
+                    alternateBase = Math.min(lastAlternateRow + 1, lastRegionRow());
+                    firstAbsolute[1] = Long.MIN_VALUE;
+                } else {
+                    moved = true;
+                }
+                rowBase = alternateBase;
+            } else {
+                rowBase = mainBase;
+                moved = true;
+            }
+            row = Math.min(rowBase + fromBase, lastRegionRow());
+        }
+
+        private long lastRegionRow() {
+            return alternate ? ALTERNATE + MAX_ROW : MAX_ROW;
         }
 
         /** REP: the character last drawn, {@code n} times more, as drawn by the sequence itself. */
@@ -853,7 +1003,7 @@ public final class SecretRedactor {
          * does, the screen shows what the shown text does, with blanks where it moved ahead.
          */
         private void move(long toRow, int toColumn) {
-            long newRow = Math.max(rowBase, Math.min(toRow, MAX_ROW));
+            long newRow = Math.max(rowBase, Math.min(toRow, lastRegionRow()));
             int newColumn = Math.max(0, Math.min(toColumn, MAX_COLUMN));
             if (newRow < row || newRow == row && newColumn < column) moved = true;
             row = newRow;
@@ -862,17 +1012,19 @@ public final class SecretRedactor {
 
         /** A line feed, NEL or CNL: down a line, to its start, overwriting only after a move back up. */
         private void nextLine() {
-            row = Math.min(row + 1, MAX_ROW);
+            row = Math.min(row + 1, lastRegionRow());
             column = 0;
         }
 
         private void save() {
-            savedRow = row;
-            savedColumn = column;
+            int screen = alternate ? 1 : 0;
+            savedRow[screen] = row - rowBase;
+            savedColumn[screen] = column;
         }
 
         private void restore() {
-            move(savedRow, savedColumn);
+            int screen = alternate ? 1 : 0;
+            move(rowBase + savedRow[screen], savedColumn[screen]);
         }
 
         /** Overwriting either cell of a wide character clears the other. */
@@ -909,6 +1061,8 @@ public final class SecretRedactor {
                 if (++used * 4 > keys.length * 3) grow();
             } else {
                 slot = values[index] - 1;
+                // Everything it held, from any row: what a token once drawn whole there left is
+                // redacted with it, though a row repainted from further down then takes what lies between
                 slotStart[slot] = Math.min(slotStart[slot], from);
                 slotEnd[slot] = Math.max(slotEnd[slot], to);
             }
