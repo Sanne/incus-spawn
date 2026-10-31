@@ -628,6 +628,38 @@ class SecretRedactorTest {
     }
 
     @Test
+    void aGuestsTextKeepsNoTokenOneLoneControlSplits() {
+        // Raw, the byte ends the token; shown, the space it becomes does. Dropped, it is whole (#1888)
+        var head = "ghp_" + "A".repeat(15);
+        var tail = "A".repeat(16);
+        for (var control : new String[] {"\u0000", "\u000e", "\u000f", "\b", "\u007f", "\u0085"}) {
+            assertEquals("x <isx:redacted:github-token>\n", SecretRedactor.scrubGuest("x " + head + control + tail + "\n"));
+        }
+        // In pieces, a control ending one piece still joins it to the next
+        assertEquals("x <isx:redacted:github-token>\n", SecretRedactor.scrubGuest("x " + head + "\u0000", tail + "\n"));
+        // A few controls in a row are dropped together
+        assertEquals("x <isx:redacted:github-token>\n", SecretRedactor.scrubGuest("x " + head + "\u000e\u000f" + tail + "\n"));
+    }
+
+    @Test
+    void aGuestsTextKeepsNoTokenABackspaceOverstrikes() {
+        // As man prints bold and underline: each character struck over, or an underscore under it.
+        // Dropping the backspaces doubles every character; applying them shows the token (#1888)
+        var token = "ghp_" + "A".repeat(20);
+        var bold = new StringBuilder();
+        var underlined = new StringBuilder();
+        for (var c : token.toCharArray()) {
+            bold.append(c).append('\b').append(c);
+            underlined.append('_').append('\b').append(c);
+        }
+        assertEquals("x <isx:redacted:github-token> y", SecretRedactor.scrubGuest("x " + bold + " y"));
+        assertEquals("x <isx:redacted:github-token> y", SecretRedactor.scrubGuest("x " + underlined + " y"));
+        // Dropped, a backspace that struck out a character of the token still shows it
+        assertEquals("x <isx:redacted:github-token> y", SecretRedactor.scrubGuest("x gh\bhp_" + "A".repeat(20) + " y"));
+        assertEquals("x <isx:redacted:github-token> y", SecretRedactor.scrubGuest("x gh\bp_" + "A".repeat(20) + " y"));
+    }
+
+    @Test
     void aSecretTheShownTextDropsWholeLeavesNothingToRedact() {
         // Only what is shown can be kept: a URL a carriage return drew over is gone either way
         assertEquals("done", SecretRedactor.scrubGuest("https://u:hunter2\u0001pw@host\rdone"));

@@ -441,7 +441,8 @@ public final class SecretRedactor {
      * can split a token that only matches once they are gone, while a control byte turned into a
      * space, or a carriage return dropping a key's BEGIN line, hides a shape the raw text shows.
      * What the raw scrub redacts is found in the shown text through {@link BuildOutput.Shown}, and
-     * each run of what either redacts becomes one marker.
+     * each run of what either redacts becomes one marker. A lone control splits a token in both,
+     * so the shown text is also scrubbed with its controls dropped and its backspaces applied (#1888).
      */
     public static String scrubGuest(String... raw) {
         // Shown as printed, the common case: a raw scrub would find the same spans, so neither
@@ -477,17 +478,12 @@ public final class SecretRedactor {
         source = java.util.Arrays.copyOf(source, text.length());
         var seen = scrub(text, Map.of());
         var spans = new ArrayList<>(seen.spans);
-        boolean wider = false;
-        // Both earliest first, the shown ones swept once with a cursor as the raw ones advance
-        int cursor = 0;
-        for (var span : scrub(rawText.toString(), Map.of()).spans) {
-            int start = firstShownFrom(source, span.start());
-            int end = firstShownFrom(source, span.end());
-            if (start >= end) continue;
-            while (cursor < seen.spans.size() && seen.spans.get(cursor).end() <= start) cursor++;
-            if (!covered(seen.spans, cursor, start, end)) wider = true;
-            spans.add(new Span(start, end, span.label()));
-        }
+        boolean wider = addSpans(rawText, null, null, source, seen.spans, spans);
+        // A lone control the shown text spaces ends a token there, as the control does in the raw
+        // text: with the controls dropped it is whole, and with a backspace's overstrike applied a
+        // token man prints bold or underlined is (#1888). Showing changes a character only by
+        // spacing a control, so a shown character unlike its raw one is such a control
+        wider |= addControlFreeSpans(text, rawText, source, seen.spans, spans);
         if (!wider) return seen.text;
         // Earliest first, so a run is named by what starts it, and the shown scrub's when both do
         spans.sort(java.util.Comparator.comparingInt(Span::start));
@@ -503,6 +499,85 @@ public final class SecretRedactor {
         out.append(text, pos, text.length());
         // Once more as one text, as a scrub of the shown text would have seen what the raw one marked
         return scrubText(out.toString(), Map.of()).text();
+    }
+
+    /**
+     * Adds to {@code spans} what a scrub of the shown {@code text} with its lone controls dropped,
+     * and with its backspaces applied as overstrikes, redacts. Whether either redacts a character
+     * the shown scrub's {@code seen} spans leave.
+     */
+    private static boolean addControlFreeSpans(String text, CharSequence rawText, int[] source,
+                                               List<Span> seen, List<Span> spans) {
+        // Most text that is not shown as printed only loses escapes: nothing to build a view for
+        int spaced = 0;
+        boolean backspace = false;
+        for (int i = 0; i < text.length(); i++) {
+            char raw = rawText.charAt(source[i]);
+            if (text.charAt(i) != raw) {
+                spaced++;
+                backspace |= raw == '\b';
+            }
+        }
+        if (spaced == 0) return false;
+        var dropped = new StringBuilder(text.length() - spaced);
+        var droppedFrom = new int[text.length() - spaced];
+        for (int i = 0; i < text.length(); i++) {
+            char raw = rawText.charAt(source[i]);
+            if (text.charAt(i) == raw) {
+                droppedFrom[dropped.length()] = source[i];
+                dropped.append(raw);
+            }
+        }
+        boolean wider = addSpans(dropped, droppedFrom, droppedFrom, source, seen, spans);
+        if (!backspace) return wider;
+        // A backspace strikes the character before it out, never past the start of its line. What
+        // strikes it out redacts it with itself, so no struck half of a token is kept beside a marker
+        var struck = new StringBuilder(text.length());
+        var struckFrom = new int[text.length()];
+        var struckStart = new int[text.length()];
+        int pendingStart = -1;
+        for (int i = 0; i < text.length(); i++) {
+            char raw = rawText.charAt(source[i]);
+            if (text.charAt(i) == raw) {
+                int at = struck.length();
+                struckFrom[at] = source[i];
+                struckStart[at] = pendingStart >= 0 ? pendingStart : source[i];
+                pendingStart = -1;
+                struck.append(raw);
+            } else if (raw == '\b' && !struck.isEmpty() && struck.charAt(struck.length() - 1) != '\n') {
+                int last = struck.length() - 1;
+                // A whole code point, as a terminal strikes it
+                if (last > 0 && Character.isSurrogatePair(struck.charAt(last - 1), struck.charAt(last))) last--;
+                pendingStart = struckStart[last];
+                struck.setLength(last);
+            }
+        }
+        return addSpans(struck, struckStart, struckFrom, source, seen, spans) | wider;
+    }
+
+    /**
+     * Adds to {@code spans}, in the shown text, what a scrub of {@code view} redacts. Its character
+     * {@code i} redacts the raw text from {@code startIn[i]} to {@code endIn[i]}, both null for the
+     * raw text itself; {@code source} maps the shown text to it. Whether any redacts a character the
+     * shown scrub's {@code seen} spans leave.
+     */
+    private static boolean addSpans(CharSequence view, int[] startIn, int[] endIn, int[] source,
+                                    List<Span> seen, List<Span> spans) {
+        boolean wider = false;
+        // Both earliest first, the shown ones swept once with a cursor as these advance
+        int cursor = 0;
+        for (var span : scrub(view.toString(), Map.of()).spans) {
+            if (span.start() >= span.end()) continue;
+            int rawStart = startIn == null ? span.start() : startIn[span.start()];
+            int rawEnd = endIn == null ? span.end() : endIn[span.end() - 1] + 1;
+            int start = firstShownFrom(source, rawStart);
+            int end = firstShownFrom(source, rawEnd);
+            if (start >= end) continue;
+            while (cursor < seen.size() && seen.get(cursor).end() <= start) cursor++;
+            if (!covered(seen, cursor, start, end)) wider = true;
+            spans.add(new Span(start, end, span.label()));
+        }
+        return wider;
     }
 
     /** The first shown character at or after {@code rawIndex} in the raw text, or past the last. */
