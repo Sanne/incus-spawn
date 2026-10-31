@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.Platform;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.SecretRedactor;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.git.GitCommandException;
@@ -713,7 +714,8 @@ class RepoCloner {
         var both = first.strip() + "\n--- isx-trust ran; the prime's second run ---\n" + second;
         return GuestProvisioning.untrustedCertificate(second)
                 ? new PrimeRun(false, command, both.strip() + "\n--- isx ---\n" + UNTRUSTED_AFTER_BIND, STILL_UNTRUSTED, true, true)
-                : PrimeRun.failed(command, both, lastNonEmptyLine(second), true);
+                // The label is the second run's last line, from the log it ends, scrubbed whole (#1893 review)
+                : PrimeRun.failed(command, both, second.isBlank() ? "" : lastNonEmptyLine(both), true);
     }
 
     /** Run a repo's prime commands in turn, stopping at the first that fails. Returns true on
@@ -841,17 +843,24 @@ class RepoCloner {
         return OutputFormat.oneLine(name.isEmpty() ? java.util.Objects.requireNonNullElse(repo.sourceDescription(), "") : name);
     }
 
-    /** Extract a concise error line from a failed git exec (stderr first, then stdout). */
-    private static String gitError(IncusClient.ExecResult result) {
-        var err = firstGitError(result.stderr());
-        return !err.isEmpty() ? err : firstGitError(result.stdout());
+    /**
+     * Extract a concise error line from a failed git exec, from both streams scrubbed together as
+     * its log is: alone, a key's body on stderr has no BEGIN header when stdout printed it, and the
+     * host-reference fallback note has no log to take its line from (#1893 review).
+     */
+    static String gitError(IncusClient.ExecResult result) {
+        return firstGitError(combinedOutput(result));
     }
 
-    /** First fatal:/error: line from git output as a terminal shows it, else the last non-empty line. */
+    /**
+     * First fatal:/error: line from git output, else the last non-empty line, as the build log
+     * saves it: from the whole output scrubbed as printed and as shown, as the step's log is, so
+     * the line quoted in the failure message keeps no secret its log redacts (#1890).
+     */
     static String firstGitError(String text) {
         if (text == null || text.isEmpty()) return "";
         String lastNonEmpty = "";
-        for (var line : BuildOutput.guestText(text).split("\n")) {
+        for (var line : SecretRedactor.scrubGuest(text).split("\n")) {
             var trimmed = line.strip();
             if (trimmed.isEmpty()) continue;
             if (trimmed.startsWith("fatal:") || trimmed.startsWith("error:")) return trimmed;

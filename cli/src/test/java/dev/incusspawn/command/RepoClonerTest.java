@@ -697,6 +697,22 @@ class RepoClonerTest {
     }
 
     @Test
+    void aSecondPrimeRunsLabelIsScrubbedAsItsLogIs() {
+        // update-all quotes the label with no StepProgress: a key the first run began and the
+        // second continued is marked in the log, so it is in the label too
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        var armour = "-----";
+        primeAnswers(incus, new IncusClient.ExecResult(1, PKIX + "\n" + armour + "BEGIN PRIVATE KEY" + armour + "\nMIIEfirst", ""),
+                new IncusClient.ExecResult(1, "MIIElast-body", ""));
+
+        var run = RepoCloner.runPrime(container, repo("https://github.com/owner/app.git", "~/app", "./fetch-deps"), () -> {});
+
+        assertFalse(run.success());
+        assertEquals("<isx:redacted:private-key>", run.label());
+    }
+
+    @Test
     void aTemplateWithoutTheHelperIsNotPrimedAgainAsIfItHadBound() {
         // isx update-all --prime on a template built before isx-trust existed.
         var incus = mock(IncusClient.class);
@@ -910,6 +926,19 @@ class RepoClonerTest {
     void firstGitErrorFallsBackToLastNonEmptyLine() {
         assertEquals("some trailing message",
                 RepoCloner.firstGitError("first line\n\nsome trailing message\n"));
+    }
+
+    @Test
+    void aGitErrorIsScrubbedAcrossBothStreamsAsTheLogIs() {
+        // The host-reference fallback note has no log to take its line from: a key's BEGIN header
+        // on stdout still marks its body on stderr (#1893 review)
+        var armour = "-----";
+        var split = new IncusClient.ExecResult(1, armour + "BEGIN PRIVATE KEY" + armour + "\nMIIEfirst",
+                "MIIElast-body\n");
+        assertEquals("<isx:redacted:private-key>", RepoCloner.gitError(split));
+        // Git's fatal: line still wins over stdout's noise
+        assertEquals("fatal: repository not found",
+                RepoCloner.gitError(new IncusClient.ExecResult(128, "Cloning into 'x'...", "fatal: repository not found\n")));
     }
 
     @Test

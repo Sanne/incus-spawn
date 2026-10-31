@@ -86,6 +86,7 @@ So the scrub gets the raw text: the error line quotes stderr raw, and `appendDia
 `Container.failed`, `StepProgress` and npm's skip reasons scrub their output while it is still raw.
 `StepProgress` keeps one form for showing and saving, so its detail and log are redacted on the terminal too.
 A detail that ends in the log's last line takes that line from the scrubbed log, since a key cut short leaves its last body line with no BEGIN header of its own.
+A line picked out of guest output to quote, such as the last one or Git's first `fatal:`, comes from the whole output scrubbed this way (`BuildProgress.lastNonEmptyLine`, `RepoCloner.firstGitError`), so `update-all`'s warnings and a clone's failure message keep no secret the log redacts.
 The log is written as each command ends, the failure report names it, and `isx build --verbose` prints it through `BuildOutput.frame` once the template's build is over, before its failure, so a live batch's lines are never interleaved with it.
 `Container.runQuiet`, `runAsUserQuiet` and `NpmGlobalInstall` show a failed command's output through it too, since a tool's `run:` step or an npm package's install script decides that output.
 They report it as one warning, its lines as details (`BuildOutput.guestLines`), to the container's `Output`: the caller's when it made the `Container` with one, else the bound output (#1703).

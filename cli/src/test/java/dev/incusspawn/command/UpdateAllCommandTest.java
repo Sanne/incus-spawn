@@ -603,6 +603,23 @@ class UpdateAllCommandTest {
     }
 
     @Test
+    void aFailedBindsWarningKeepsNoSecretItsRawOutputShows() {
+        // The warning quotes what isx-trust printed last: scrubbed as printed and as shown (#1890)
+        var incus = incus();
+        when(incus.shellExec(NAME, "/usr/local/bin/isx-trust", "/usr/lib/jvm", "/opt", "/usr/local"))
+                .thenReturn(new IncusClient.ExecResult(1, "", "binding\nfatal: https://u:hunter2\u0001secretpw@host/r/\n"));
+        var command = new UpdateAllCommand();
+        command.prime = true;
+
+        var said = RecordingOutput.during(() ->
+                assertEquals(0, command.updateTemplates(incus, primed("~/app", "./gradlew dependencies"))));
+
+        var warned = String.join("\n", said.events(RecordingOutput.Kind.WARN).stream().map(RecordingOutput.Event::msg).toList());
+        assertTrue(warned.contains("fatal: https://u:<isx:redacted:url-credentials>@host/r/"), warned);
+        assertFalse(warned.contains("hunter2") || warned.contains("secretpw"), warned);
+    }
+
+    @Test
     void aTemplateBuiltBeforeTheHelperIsUpdatedWithoutAWarning() {
         var incus = incus();
         when(incus.shellExec(NAME, "/usr/local/bin/isx-trust", "/usr/lib/jvm", "/opt", "/usr/local"))

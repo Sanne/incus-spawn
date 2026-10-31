@@ -37,15 +37,37 @@ class BuildProgressTest {
         // The armour is put together at run time, so a secret scanner does not take this for a key
         var armour = "-----";
         var log = "fetching\n" + armour + "BEGIN PRIVATE KEY" + armour + "\nMIIEfirst\nMIIElast-body\n";
-        var p = BuildProgress.StepProgress.failed(BuildProgress.lastNonEmptyLine(log), log);
+        // Raw, as a caller that quotes the log's last line itself would pass it
+        var p = BuildProgress.StepProgress.failed("MIIElast-body", log);
         assertEquals("<isx:redacted:private-key>", p.detail());
         assertFalse(p.log().contains("MIIElast-body"), p.log());
+        assertEquals("<isx:redacted:private-key>", BuildProgress.StepProgress.failed(BuildProgress.lastNonEmptyLine(log), log).detail());
         // A prime's detail names its command before the log's last line
         var prime = BuildProgress.StepProgress.failed("prime", "make",
-                "prime `make` failed: " + BuildProgress.lastNonEmptyLine(log), log);
+                "prime `make` failed: MIIElast-body", log);
         assertEquals("prime `make` failed: <isx:redacted:private-key>", prime.detail());
         // Any other detail is scrubbed on its own
         assertEquals("exit 1", BuildProgress.StepProgress.failed("exit 1", log).detail());
+    }
+
+    @Test
+    void aFailedClonesGitErrorIsScrubbedAsItsLogIs() {
+        // The first fatal: line is not the log's last, so it must come from the scrubbed output (#1890)
+        var err = "fatal: unable to access 'https://u:hunter2\u0001secretpw@host/r/'\nhint: check the URL\n";
+        assertEquals("fatal: unable to access 'https://u:<isx:redacted:url-credentials>@host/r/'", RepoCloner.firstGitError(err));
+        var p = BuildProgress.StepProgress.failed(RepoCloner.firstGitError(err), err);
+        assertEquals("fatal: unable to access 'https://u:<isx:redacted:url-credentials>@host/r/'", p.detail());
+        // A key's last line alone has no BEGIN header to be known by: the whole output is scrubbed
+        var armour = "-----";
+        var key = armour + "BEGIN PRIVATE KEY" + armour + "\nMIIEfirst\nerror: MIIElast-body\n";
+        assertEquals("<isx:redacted:private-key>", RepoCloner.firstGitError(key));
+    }
+
+    @Test
+    void theLastLineOfGuestOutputIsScrubbedAsTheWholeOutputIs() {
+        // update-all warns with it, outside any StepProgress (#1890)
+        assertEquals("fatal: https://u:<isx:redacted:url-credentials>@host/",
+                BuildProgress.lastNonEmptyLine("ok\nfatal: https://u:hunter2\u0001secretpw@host/\n"));
     }
 
     @Test
