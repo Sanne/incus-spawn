@@ -2247,14 +2247,6 @@ public class BuildCommand extends BaseCommand {
         return BuildTools.resolveTools(imageDef, toolDefLoader, toolSetups, false);
     }
 
-    private void resolveWithDeps(String name, Map<String, String> params,
-                                  LinkedHashMap<String, ResolvedTool> resolved,
-                                  LinkedHashSet<String> visiting, Set<String> explicit,
-                                  Set<String> explicitlyResolved, boolean isExplicit) {
-        BuildTools.resolveWithDeps(name, params, resolved, visiting, explicit, explicitlyResolved, isExplicit,
-            toolDefLoader, toolSetups, false);
-    }
-
     /**
      * Bring the identities this image bakes in line with its accounts, once its tools are set up,
      * and say what to stamp for them: decided by what the guest holds, not by what config.yaml

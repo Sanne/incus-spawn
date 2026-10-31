@@ -65,15 +65,6 @@ public final class BuildTools {
         return new ArrayList<>(resolved.values());
     }
 
-    static void resolveWithDeps(String name, Map<String, String> params,
-                                  LinkedHashMap<String, ResolvedTool> resolved,
-                                  LinkedHashSet<String> visiting, Set<String> explicit,
-                                  Set<String> explicitlyResolved, boolean isExplicit,
-                                  ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools, boolean quiet) {
-        resolveWithDeps(name, params, resolved, visiting, explicit, explicitlyResolved, isExplicit,
-                toolDefLoader, cdiTools, quiet ? null : "");
-    }
-
     /**
      * {@code template} names the template being resolved in each warning (empty: unnamed), or is
      * null for a quiet resolution: {@link Warnings#warn} says a message once, so without the name a second
