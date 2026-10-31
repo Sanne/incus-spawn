@@ -72,6 +72,19 @@ class BuildLogTest {
     }
 
     @Test
+    void anEntryKeepsNoTokenOneLoneControlSplits() {
+        // Raw, the byte ends the token; shown, the space it becomes does: neither half is kept (#1888)
+        var head = "ghp_" + "A".repeat(15);
+        var tail = "B".repeat(16);
+        for (var control : new String[] {"\u0000", "\u000e", "\u000f", "\b"}) {
+            var entry = BuildLog.entry("s", "c",
+                    new IncusClient.ExecResult(0, "x " + head + control + tail + "\n", ""), Duration.ZERO);
+            assertFalse(entry.contains(head) || entry.contains(tail), entry);
+            assertTrue(entry.contains("x <isx:redacted:github-token>"), entry);
+        }
+    }
+
+    @Test
     void anEntryKeepsNoTokenColourSplitsAfterItsPrefix() {
         // The raw pass alone would stop the token at the escape and keep the digest's second half
         var half = "0123456789abcdef";

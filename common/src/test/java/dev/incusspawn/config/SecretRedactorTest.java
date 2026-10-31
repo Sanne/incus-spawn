@@ -5,6 +5,7 @@ import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.CodexSetup;
 import dev.incusspawn.tool.GhSetup;
 import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.util.BuildOutput;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -625,6 +626,60 @@ class SecretRedactorTest {
         assertEquals("plain\nhttps://u:<isx:redacted:url-credentials>@host\n",
                 SecretRedactor.scrubGuest("plain\n", null, "https://u:hunter2\u0001secretpw@host\n"));
         assertEquals("plain\n", SecretRedactor.scrubGuest("plain\n", null));
+    }
+
+    @Test
+    void aGuestsTextKeepsNoTokenOneLoneControlSplits() {
+        // Raw, the byte ends the token; shown, the space it becomes does. Dropped, it is whole (#1888)
+        var head = "ghp_" + "A".repeat(15);
+        var tail = "A".repeat(16);
+        for (var control : new String[] {"\u0000", "\u000e", "\u000f", "\b", "\u007f", "\u0085"}) {
+            assertEquals("x <isx:redacted:github-token>\n", SecretRedactor.scrubGuest("x " + head + control + tail + "\n"));
+        }
+        // In pieces, a control ending one piece still joins it to the next
+        assertEquals("x <isx:redacted:github-token>\n", SecretRedactor.scrubGuest("x " + head + "\u0000", tail + "\n"));
+        // A few controls in a row are dropped together
+        assertEquals("x <isx:redacted:github-token>\n", SecretRedactor.scrubGuest("x " + head + "\u000e\u000f" + tail + "\n"));
+    }
+
+    @Test
+    void aGuestsTextKeepsNoTokenABackspaceOverstrikes() {
+        // As man prints bold and underline: each character struck over, or an underscore under it.
+        // Dropping the backspaces doubles every character; applying them shows the token (#1888)
+        var token = "ghp_" + "A".repeat(20);
+        var bold = new StringBuilder();
+        var underlined = new StringBuilder();
+        for (var c : token.toCharArray()) {
+            bold.append(c).append('\b').append(c);
+            underlined.append('_').append('\b').append(c);
+        }
+        assertEquals("x <isx:redacted:github-token> y", SecretRedactor.scrubGuest("x " + bold + " y"));
+        assertEquals("x <isx:redacted:github-token> y", SecretRedactor.scrubGuest("x " + underlined + " y"));
+        // Dropped, a backspace that struck out a character of the token still shows it
+        assertEquals("x <isx:redacted:github-token> y", SecretRedactor.scrubGuest("x gh\bhp_" + "A".repeat(20) + " y"));
+        assertEquals("x <isx:redacted:github-token> y", SecretRedactor.scrubGuest("x gh\bp_" + "A".repeat(20) + " y"));
+        // A backspace moves the cursor back and leaves the cells to its right: the terminal shows
+        // the dash overwritten and the token whole (#1895 review)
+        assertEquals("x <isx:redacted:github-token>\n",
+                SecretRedactor.scrubGuest("x ghp_" + "A".repeat(10) + "-" + "B".repeat(10) + "\b".repeat(11) + "A\n"));
+        // What follows overwrites the cells after it, as on the terminal: " y" takes the first B,
+        // which leaves ghp_ and eleven A, too short for a token, on the screen as in the view
+        var overwritten = "x ghp_" + "A".repeat(10) + "-" + "B".repeat(10) + "\b".repeat(11) + "A y\n";
+        assertEquals(BuildOutput.guestText(overwritten), SecretRedactor.scrubGuest(overwritten));
+        // A tab moves to the next stop without writing, so the cursor counts it as the cells it skips
+        assertEquals("x <isx:redacted:github-token>\n",
+                SecretRedactor.scrubGuest("x ghp_AA\t" + "\b".repeat(8) + "A".repeat(20) + "\n"));
+        // A backspace at the start of a line moves nothing: the token stays split, as it is shown
+        var lineStart = SecretRedactor.scrubGuest("g\n\bhp_" + "A".repeat(20) + " y");
+        assertEquals("g\n hp_" + "A".repeat(20) + " y", lineStart);
+        // A character after a surrogate pair overwrites the whole pair, which a span then redacts
+        assertEquals("x <isx:redacted:github-token>",
+                SecretRedactor.scrubGuest("x ghp_" + "A".repeat(10) + "\uD83D\uDE00" + "B".repeat(10) + "\b".repeat(11) + "A"));
+        // A span the view alone finds that ends on a pair redacts both its halves, never one. The
+        // armour is put together at run time, so a secret scanner does not take this for a key
+        var armour = "-----";
+        assertEquals("<isx:redacted:private-key>",
+                SecretRedactor.scrubGuest(armour + "BEGIN RSA PRIVATE KEY--X\b---\nMIIabc\uD83D\uDE00"));
     }
 
     @Test

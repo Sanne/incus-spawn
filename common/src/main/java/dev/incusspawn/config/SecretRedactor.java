@@ -7,6 +7,7 @@ import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.yaml.JqYaml;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -441,7 +442,9 @@ public final class SecretRedactor {
      * can split a token that only matches once they are gone, while a control byte turned into a
      * space, or a carriage return dropping a key's BEGIN line, hides a shape the raw text shows.
      * What the raw scrub redacts is found in the shown text through {@link BuildOutput.Shown}, and
-     * each run of what either redacts becomes one marker.
+     * each run of what either redacts becomes one marker. A lone control splits a token in both,
+     * so the shown text is also scrubbed with its controls dropped and as a terminal's backspaces
+     * leave it (#1888).
      */
     public static String scrubGuest(String... raw) {
         // Shown as printed, the common case: a raw scrub would find the same spans, so neither
@@ -477,17 +480,13 @@ public final class SecretRedactor {
         source = java.util.Arrays.copyOf(source, text.length());
         var seen = scrub(text, Map.of());
         var spans = new ArrayList<>(seen.spans);
-        boolean wider = false;
-        // Both earliest first, the shown ones swept once with a cursor as the raw ones advance
-        int cursor = 0;
-        for (var span : scrub(rawText.toString(), Map.of()).spans) {
-            int start = firstShownFrom(source, span.start());
-            int end = firstShownFrom(source, span.end());
-            if (start >= end) continue;
-            while (cursor < seen.spans.size() && seen.spans.get(cursor).end() <= start) cursor++;
-            if (!covered(seen.spans, cursor, start, end)) wider = true;
-            spans.add(new Span(start, end, span.label()));
-        }
+        boolean wider = addSpans(rawText, null, null, source, seen.spans, spans);
+        // A lone control the shown text spaces ends a token there, as the control does in the raw
+        // text: with the controls dropped it is whole, and as a terminal shows it once its
+        // backspaces have moved the cursor, a token man prints bold or underlined is (#1888).
+        // Showing changes a character only by spacing a control, so a shown character unlike its
+        // raw one is such a control
+        wider |= addControlFreeSpans(text, rawText, source, seen.spans, spans);
         if (!wider) return seen.text;
         // Earliest first, so a run is named by what starts it, and the shown scrub's when both do
         spans.sort(java.util.Comparator.comparingInt(Span::start));
@@ -503,6 +502,173 @@ public final class SecretRedactor {
         out.append(text, pos, text.length());
         // Once more as one text, as a scrub of the shown text would have seen what the raw one marked
         return scrubText(out.toString(), Map.of()).text();
+    }
+
+    /**
+     * Adds to {@code spans} what a scrub of the shown {@code text} with its lone controls dropped,
+     * and as a terminal shows it once its backspaces have moved the cursor ({@link Cursor}),
+     * redacts. Whether either redacts a character the shown scrub's {@code seen} spans leave.
+     */
+    private static boolean addControlFreeSpans(String text, CharSequence rawText, int[] source,
+                                               List<Span> seen, List<Span> spans) {
+        // Most text that is not shown as printed only loses escapes: nothing to build a view for
+        int spaced = 0;
+        boolean backspace = false;
+        for (int i = 0; i < text.length(); i++) {
+            char raw = rawText.charAt(source[i]);
+            if (text.charAt(i) != raw) {
+                spaced++;
+                backspace |= raw == '\b';
+            }
+        }
+        if (spaced == 0) return false;
+        var dropped = new StringBuilder(text.length() - spaced);
+        var droppedFrom = new int[text.length() - spaced];
+        for (int i = 0; i < text.length(); i++) {
+            char raw = rawText.charAt(source[i]);
+            if (text.charAt(i) == raw) {
+                droppedFrom[dropped.length()] = source[i];
+                dropped.append(raw);
+            }
+        }
+        boolean wider = addSpans(dropped, droppedFrom, droppedFrom, source, seen, spans);
+        if (!backspace) return wider;
+        var struck = new Cursor(text.length());
+        for (int i = 0; i < text.length(); ) {
+            int c = text.codePointAt(i);
+            int width = Character.charCount(c);
+            int from = source[i];
+            int raw = rawText.charAt(from);
+            if (c == raw || width == 2) {
+                // A pair's cell redacts both its halves
+                struck.put(c, from, source[i + width - 1]);
+            } else if (raw == '\b') {
+                struck.back();
+            }
+            i += width;
+        }
+        struck.endLine();
+        return addSpans(struck.text, struck.start, struck.end, source, seen, spans) | wider;
+    }
+
+    /**
+     * The text a terminal shows once each backspace has moved its cursor (#1895 review): a
+     * backspace moves it one cell left, never past the start of its line, and a character
+     * overwrites the cell under it and leaves those to its right. A tab moves to the next stop of
+     * eight without writing. Each cell redacts every raw character written to it, from
+     * {@code start} to {@code end}, so a struck half of a token is never kept beside a marker.
+     * Wide and combining characters each take one cell.
+     */
+    private static final class Cursor {
+        final StringBuilder text;
+        int[] start;
+        int[] end;
+        private int[] cells = new int[16];
+        private int[] cellStart = new int[16];
+        private int[] cellEnd = new int[16];
+        private int length;
+        private int at;
+
+        Cursor(int capacity) {
+            text = new StringBuilder(capacity);
+            start = new int[capacity];
+            end = new int[capacity];
+        }
+
+        void put(int c, int from, int to) {
+            if (c == '\n') {
+                endLine();
+                append('\n', from, from);
+                return;
+            }
+            if (c == '\t') {
+                int stop = (at / 8 + 1) * 8;
+                // Unwritten cells show blank, and a blank ends a token as it does on the screen
+                while (length < stop) cell(length, ' ', from, from);
+                at = stop;
+                return;
+            }
+            if (at < length) {
+                cell(at, c, Math.min(cellStart[at], from), Math.max(cellEnd[at], to));
+            } else {
+                cell(at, c, from, to);
+            }
+            at++;
+        }
+
+        void back() {
+            if (at > 0) at--;
+        }
+
+        void endLine() {
+            for (int i = 0; i < length; i++) {
+                if (Character.isSupplementaryCodePoint(cells[i])) {
+                    append(Character.highSurrogate(cells[i]), cellStart[i], cellEnd[i]);
+                    append(Character.lowSurrogate(cells[i]), cellStart[i], cellEnd[i]);
+                } else {
+                    append((char) cells[i], cellStart[i], cellEnd[i]);
+                }
+            }
+            length = 0;
+            at = 0;
+        }
+
+        private void cell(int i, int c, int from, int to) {
+            if (i == cells.length) {
+                cells = Arrays.copyOf(cells, i * 2);
+                cellStart = Arrays.copyOf(cellStart, i * 2);
+                cellEnd = Arrays.copyOf(cellEnd, i * 2);
+            }
+            cells[i] = c;
+            cellStart[i] = from;
+            cellEnd[i] = to;
+            if (i == length) length++;
+        }
+
+        private void append(char c, int from, int to) {
+            int i = text.length();
+            if (i == start.length) {
+                start = Arrays.copyOf(start, i * 2 + 1);
+                end = Arrays.copyOf(end, i * 2 + 1);
+            }
+            start[i] = from;
+            end[i] = to;
+            text.append(c);
+        }
+    }
+
+    /**
+     * Adds to {@code spans}, in the shown text, what a scrub of {@code view} redacts. Its character
+     * {@code i} redacts the raw text from {@code startIn[i]} to {@code endIn[i]}, inclusive, both
+     * null for the raw text itself; {@code source} maps the shown text to it. Whether any redacts a
+     * character the shown scrub's {@code seen} spans leave.
+     */
+    private static boolean addSpans(CharSequence view, int[] startIn, int[] endIn, int[] source,
+                                    List<Span> seen, List<Span> spans) {
+        boolean wider = false;
+        // Both earliest first, the shown ones swept once with a cursor as these advance
+        int cursor = 0;
+        for (var span : scrub(view.toString(), Map.of()).spans) {
+            if (span.start() >= span.end()) continue;
+            int rawStart = span.start();
+            int rawEnd = span.end();
+            if (startIn != null) {
+                // A view's characters need not be in raw order: a span takes all its cells' sources
+                rawStart = Integer.MAX_VALUE;
+                rawEnd = 0;
+                for (int i = span.start(); i < span.end(); i++) {
+                    rawStart = Math.min(rawStart, startIn[i]);
+                    rawEnd = Math.max(rawEnd, endIn[i] + 1);
+                }
+            }
+            int start = firstShownFrom(source, rawStart);
+            int end = firstShownFrom(source, rawEnd);
+            if (start >= end) continue;
+            while (cursor < seen.size() && seen.get(cursor).end() <= start) cursor++;
+            if (!covered(seen, cursor, start, end)) wider = true;
+            spans.add(new Span(start, end, span.label()));
+        }
+        return wider;
     }
 
     /** The first shown character at or after {@code rawIndex} in the raw text, or past the last. */

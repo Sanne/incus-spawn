@@ -81,6 +81,10 @@ Neither scrub alone is enough.
 Colour codes can split a token that matches only once they are gone, as `grep --color` splits `isx` from `_<digest>` (#1864).
 A control byte turned into a space, or a carriage return dropping a key's BEGIN line, hides a shape only the raw text shows.
 So both scrubs run, `BuildOutput.shownGuestText` says which raw character each shown one came from, and each run of what either redacts becomes one marker.
+A lone control (a NUL, SO/SI or a backspace) splits a token in both: it ends the shape raw, and the space it becomes ends it shown (#1888).
+So two more views of the shown text are scrubbed, one with its lone controls dropped and one as a terminal shows it once each backspace has moved the cursor, which is how `man` prints bold and underline.
+In that view a backspace moves one cell left, never past the start of its line, and a character overwrites the cell under it and keeps the cells to its right; a tab moves to the next stop of eight.
+A span there redacts every raw character written to its cells, so no overwritten half of a token is kept beside the marker.
 No order of two passes does the same: a raw pass first leaves a marker that cuts a split token short, and a shown pass first misses what showing hid.
 So the scrub gets the raw text: the error line quotes stderr raw, and `appendDiag` keeps the LXC log and dmesg raw.
 `Container.failed`, `StepProgress` and npm's skip reasons scrub their output while it is still raw.
