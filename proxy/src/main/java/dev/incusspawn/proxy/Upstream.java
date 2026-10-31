@@ -500,7 +500,7 @@ class Upstream {
                 watchdog.bodyAsked = true;
                 clientReq.response().writeContinue();
             });
-            upReq.sendHead();
+            upReq.writeHead();
             clientReq.handler(first -> {
                 // Sent without a 100 too, once the client's own wait for one is over
                 watchdog.bodyAsked = true;

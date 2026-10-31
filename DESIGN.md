@@ -43,7 +43,7 @@ Other sandboxes for coding agents make it differently, and `docs/SANDBOXES.md`, 
 
 ## Tech Stack
 
-- **Java 25**, **Quarkus 3.x** with aesh for CLI commands
+- **Java 25**, **Quarkus 4.x** with aesh for CLI commands (the proxy runs on Vert.x 5 and Netty 4.2; see [docs/dev/QUARKUS-4.md](docs/dev/QUARKUS-4.md))
 - **Tamboui** (https://tamboui.dev/) for interactive TUI (list view, modal dialogs, inline actions)
 - **GraalVM native image** for optional zero-dependency distribution
 - **jjq** for YAML and JSON (see "jjq rather than Jackson" under Technical Tradeoffs)
@@ -1605,11 +1605,17 @@ No Vertex-specific environment variables are needed inside the container; `ANTHR
 **WebSocket passthrough:** The proxy also handles WebSocket upgrade requests.
 When a client sends an HTTP Upgrade to a proxied domain, the proxy establishes a corresponding upstream WebSocket connection (injecting credentials on the initial handshake), then relays frames bidirectionally.
 The client socket is paused until the upstream connection is established to prevent frame drops.
-The client's handshake is completed (`ServerWebSocket.accept()`) before any of this, and a refused one goes no further.
-Vert.x 4 runs the WebSocket handler before Netty validates the handshake, and only completes it once the handler returns.
+The client's handshake is completed (`ServerWebSocketHandshake.accept()`) before any of this, and a refused one goes no further.
+Vert.x 4 ran the WebSocket handler before Netty validated the handshake, and only completed it once the handler returned.
 So a request Netty refused (no key, no `Upgrade` token in `Connection`, ...) was answered 400 after the credential had been injected and an upstream socket opened for it (#972).
 Copying Netty's checks into the handler was rejected: Vert.x's own pre-checks are looser than Netty's (a substring match on `Connection`), so a copy misses refusals and drifts with Netty.
-`accept()` is deprecated and gone in Vert.x 5; a regression test covering each refused shape pins the behaviour for whatever replaces it.
+Vert.x 5 splits the handshake from the socket: `routeWebSocket` is a `webSocketHandshakeHandler`, which resolves the caller's account and then calls `reject(status)` or `accept()`.
+The relay is wired only once `accept()` has succeeded, and a handshake Netty refuses fails that future.
+Every path must decide the handshake, because Vert.x 5 holds an undecided one (a handler that threw, say) open until the idle timeout.
+The accepted socket is paused first thing: Vert.x 5 hands it over only once the 101 is written, and it starts flowing.
+A frame pipelined with the upgrade request, which the Vert.x 4 proxy relayed, is dropped inside Vert.x 5.2.2 before the proxy sees the socket (V-W1 in `docs/dev/QUARKUS-4.md`).
+RFC 6455 says a client must wait for the 101, so its test is disabled until Vert.x delivers the frame.
+A regression test covering each refused shape pins the behaviour.
 Keepalive pings are sent on both legs, and close codes are propagated.
 This is used by Codex CLI, which communicates with `api.openai.com` over WebSocket.
 
@@ -1893,7 +1899,7 @@ Only an unreachable upstream serves an older one.
   A domain that can withdraw releases never gets the tiers (`Revalidation.mayWithdraw`: the Plugin Portal), so its every hit is confirmed first.
   npm tarballs get the same tiers, keyed on the stored shasum's modification time (see "Proxy caching" above).
   `artifact-cache:` is read from the raw YAML value, so a mistyped section (`artifact-cache: 0`) is warned about and ignored instead of failing config.yaml, which would leave the proxy with no credentials.
-  The stored checksum goes out as `X-Checksum-SHA1` with bytes the proxy opens by path (Vert.x 4.5 has no `sendFile` from an open handle).
+  The stored checksum goes out as `X-Checksum-SHA1` with bytes the proxy opens by path (Vert.x 5 added `sendFile(FileChannel)`, but it is marked unstable and HTTP/1-only).
   So just before `sendFile` the path is checked to still be the file the checksum was read with, and a copy replaced meanwhile is confirmed first.
   The window left is the few microseconds between that stat and the open, on the same thread.
   The hit path reads the copy without the store's lock (commits hold it across an fsync), re-reading under it when the artifact changed between the reads.

@@ -98,7 +98,7 @@ final class HostRouteRelay {
      * As above, for a WebSocket, which a route refuses in this version: a controller streams
      * with long-poll or server-sent events, which the plain request path carries.
      */
-    static boolean claims(Map<String, Served> routes, io.vertx.core.http.ServerWebSocket ws) {
+    static boolean claims(Map<String, Served> routes, io.vertx.core.http.ServerWebSocketHandshake ws) {
         if (routes.isEmpty()) return false;
         String sni = null;
         if (ws.sslSession() instanceof javax.net.ssl.ExtendedSSLSession session) {
