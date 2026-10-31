@@ -106,6 +106,16 @@ class BuildProgressTest {
     }
 
     @Test
+    void aFailedPrimesCommandKeepsNoSecretOnlyItsRawFormShows() {
+        // The command is the failure report's too: scrubbed as written and as shown (#1886)
+        var command = "git clone https://u:hunter2\u0001secretpw@host/r";
+        var p = BuildProgress.StepProgress.failed("prime", command, "prime failed", "fatal\n");
+        assertEquals("git clone https://u:<isx:redacted:url-credentials>@host/r", p.command());
+        // The failure line names the command as RepoCloner shows it, scrubbed the same way
+        assertEquals("git clone https://u:<isx:redacted:url-credentials>@host/r", RepoCloner.commandText(command));
+    }
+
+    @Test
     void formatStepLineShowsErrorDetailWhenFailed() {
         var p = BuildProgress.StepProgress.failed("fatal: nope", null);
         var line = BuildProgress.formatStepLine("alpha", "url", p, 0, "Ready");

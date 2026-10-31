@@ -1099,6 +1099,7 @@ So both scrubs run, `BuildOutput.shownGuestText` says which raw character each s
 No order of two passes does the same: a raw pass first leaves a marker that cuts a split token short, and a shown pass first misses what showing hid.
 So the scrub gets the raw text: the error line quotes stderr raw, and `appendDiag` keeps the LXC log and dmesg raw.
 `Container.failed`, `StepProgress` and npm's skip reasons scrub their output while it is still raw.
+A definition's own command is scrubbed the same way from the text the template wrote, in the build log's header and as `StepProgress.command` (`RepoCloner.commandText`, #1886).
 `StepProgress` keeps one form for showing and saving, so its detail and log are redacted on the terminal too.
 A detail that ends in the log's last line takes that line from the scrubbed log, since a key cut short leaves its last body line with no BEGIN header of its own.
 The log is written as each command ends, the failure report names it, and `isx build --verbose` prints it through `BuildOutput.frame` once the template's build is over, before its failure, so a live batch's lines are never interleaved with it.

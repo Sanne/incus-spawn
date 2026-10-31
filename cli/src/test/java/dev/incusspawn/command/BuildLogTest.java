@@ -72,6 +72,15 @@ class BuildLogTest {
     }
 
     @Test
+    void anEntryKeepsNoSecretTheCommandsShownFormHides() {
+        // A definition's own command is scrubbed raw as well as shown, as what it printed is (#1886)
+        var entry = BuildLog.entry("repo 'app' prime", "git clone https://u:hunter2\u0001secretpw@host/r",
+                new IncusClient.ExecResult(1, "", "fatal\n"), Duration.ZERO);
+        assertFalse(entry.contains("secretpw") || entry.contains("hunter2"), entry);
+        assertTrue(entry.contains("$ git clone https://u:<isx:redacted:url-credentials>@host/r\n"), entry);
+    }
+
+    @Test
     void anEntryKeepsNoTokenColourSplitsAfterItsPrefix() {
         // The raw pass alone would stop the token at the escape and keep the digest's second half
         var half = "0123456789abcdef";

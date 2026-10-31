@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.Platform;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.SecretRedactor;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.git.GitCommandException;
@@ -744,10 +745,16 @@ class RepoCloner {
     /**
      * A prime command as text, its lines and tabs kept: a template wrote it, so a carriage return
      * shows as a space rather than drawing over what the line names before it, and escapes go as
-     * they do from a guest's output.
+     * they do from a guest's output. It is scrubbed as written and as shown, as what it printed
+     * is: a control byte shown as a space can end a credential's shape early (#1886).
      */
     static String commandText(String command) {
-        return BuildOutput.guestText(command.strip().replace('\r', ' '));
+        return SecretRedactor.scrubGuest(commandSource(command));
+    }
+
+    /** A prime command before it is shown, for a scrub that must see it as written: {@link #commandText}. */
+    static String commandSource(String command) {
+        return command.strip().replace('\r', ' ');
     }
 
     /** {@code command} as a shell shows it: {@code $ } before it, {@code > } before each line it continues on. */
