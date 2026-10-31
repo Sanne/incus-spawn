@@ -86,7 +86,7 @@ public class AccountCommand extends BaseCommand {
         @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
         String format;
 
-        // Used by the generated shell completion scripts; see completionLines.
+        // Read by the completion scripts of releases before #1842; see completionLines.
         @Option(name = "completion", hasValue = false,
                 description = "Print <namespace>=<account> candidates for shell completion")
         boolean completion;
@@ -134,18 +134,21 @@ public class AccountCommand extends BaseCommand {
     }
 
     /**
-     * Candidates for shell completion, one per line. First every namespace on its own, for
+     * What completion offers for accounts. {@code namespaces} is every namespace, for
      * {@code isx account unset}: it repairs a pin whatever the namespace's accounts look like now.
-     * Then, for {@code --account} and {@code isx account set}, {@code ns=} for each namespace
-     * with a usable account and {@code ns=account} for each usable one, the default followed by a
-     * TAB and {@code default} (the description fish and zsh show). Only names are printed, never
-     * an account's values, so nothing secret can reach a completion script; a name holding a
-     * control character is skipped, as it could not be typed and would break the line format.
+     * {@code selections} is what {@code --account} and {@code isx account set} take: {@code ns=}
+     * for each namespace with a usable account, then {@code ns=account} for each usable one, of
+     * which {@code defaults} are each namespace's default. Only names, never an account's values,
+     * so nothing secret can reach a completion script; a name holding a control character is
+     * skipped, as it could not be typed and would break a line.
      */
-    static List<String> completionLines(SpawnConfig config, Map<String, ToolSetup> setups) {
+    record CompletionNames(List<String> namespaces, List<String> selections, java.util.Set<String> defaults) {}
+
+    static CompletionNames completionNames(SpawnConfig config, Map<String, ToolSetup> setups) {
         var tree = config.tree();
         var namespaces = new ArrayList<String>();
-        var accounts = new ArrayList<String>();
+        var selections = new ArrayList<String>();
+        var defaults = new java.util.HashSet<String>();
         for (var entry : setups.entrySet()) {
             var ns = entry.getKey();
             if (!typable(ns)) continue;
@@ -155,13 +158,27 @@ public class AccountCommand extends BaseCommand {
                     .filter(AccountCommand::typable).toList();
             if (names.isEmpty()) continue;
             var defaultName = AccountResolver.effectiveAccount(tree, ns, shape, null);
-            accounts.add(ns + "=");
+            selections.add(ns + "=");
             for (var name : names) {
-                accounts.add(ns + "=" + name + (name.equals(defaultName) ? "\tdefault" : ""));
+                selections.add(ns + "=" + name);
+                if (name.equals(defaultName)) defaults.add(ns + "=" + name);
             }
         }
-        namespaces.addAll(accounts);
-        return namespaces;
+        return new CompletionNames(namespaces, selections, defaults);
+    }
+
+    /**
+     * {@link #completionNames} one per line, as {@code isx account list --completion} prints them
+     * for the completion scripts of releases before #1842: the namespaces, then the selections,
+     * the default followed by a TAB and {@code default}.
+     */
+    static List<String> completionLines(SpawnConfig config, Map<String, ToolSetup> setups) {
+        var names = completionNames(config, setups);
+        var lines = new ArrayList<>(names.namespaces());
+        for (var selection : names.selections()) {
+            lines.add(names.defaults().contains(selection) ? selection + "\tdefault" : selection);
+        }
+        return lines;
     }
 
     static boolean typable(String name) {
@@ -303,7 +320,7 @@ public class AccountCommand extends BaseCommand {
                 + " without one, choose from a menu")
         String credential;
 
-        // Used by the generated shell completion scripts; see addCompletionLines.
+        // Read by the completion scripts of releases before #1842; see addCompletionLines.
         @Option(name = "completion", hasValue = false,
                 description = "Print the credential names it takes, for shell completion")
         boolean completion;

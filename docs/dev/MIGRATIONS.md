@@ -240,6 +240,19 @@ That covers the paths `isx completion --install` suggests; grep a script saved a
 Regenerate each file it lists with the command `isx completion --install` gives for that shell, for example `isx completion zsh > ~/.zsh/completions/_isx`.
 Then open a new shell and check that `isx shell <Tab>` offers your instances.
 
+## Shell completion saved before it asked isx
+
+Since issue 1842, the bash, zsh and fish scripts answer every TAB with `isx --aesh-complete`, as the PowerShell one already did.
+A script saved to a file by an earlier release still works: it calls `isx account list --completion` and `isx account add --completion`, which stay for it.
+But it keeps its own lists of commands and options, so it misses what later releases add, and its zsh version completes nothing after `isx init`, `isx update-all` or `isx mcp`.
+
+```shell
+grep -L 'aesh-complete' ~/.zsh/completions/_isx ~/.local/share/bash-completion/completions/isx ~/.config/fish/completions/isx.fish 2>/dev/null
+```
+
+Each file it lists is an old script; regenerate it as in the section above, then check that `isx mcp --<Tab>` offers `--caller-instance`.
+Once no saved script calls them, the two `--completion` flags can go.
+
 ## Every config.yaml holds auto-clone-repos
 
 The `auto-clone-repos` setting is retired (issue 1789), because no command cloned a missing host checkout any more.

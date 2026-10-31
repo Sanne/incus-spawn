@@ -16,38 +16,39 @@ Each subcommand in `command/` is an aesh `@CommandDefinition` with Quarkus DI.
 **Platform-specific command tree**: aesh bakes `groupCommands` into the annotation at compile time, so macOS-only commands can't exist on one platform without a second top command.
 `IncusSpawn` defines two variants -- `IncusSpawnCommand` (macOS, includes the `vm` group) and `IncusSpawnLinuxCommand` (identical minus `vm`) -- and picks one at runtime via `Platform.isMacOS()`.
 The result: on Linux `isx vm` is an unknown command and never appears in `isx --help` (Incus runs natively there, so there is no appliance VM to manage).
-`CompletionCommand.stripVmCommand()` keeps the generated shell completions in step by removing the `vm` command on Linux (leaving the unrelated `build --type vm` value untouched).
+The completion scripts ask the running binary, so they follow the tree with no edit of their own.
 When adding a *shared* command, add it to **both** command lists -- `IncusSpawnCommandTreeTest` fails if they drift (the two lists must be identical except for `vm`).
-When adding another macOS-only command, add it to `IncusSpawnCommand` only and extend the completion strip.
+When adding another macOS-only command, add it to `IncusSpawnCommand` only.
 
-**Dynamic completion** (#1744): `isx --aesh-complete -- <words>` answers a TAB from the running binary's command tree, which `IncusSpawn.run` hands to `Completers.answer` before aesh sees it.
-The PowerShell script (`isx completion pwsh`, `CompletionCommand.PWSH_COMPLETION`) uses it; bash, zsh and fish are still hand-written.
-The request's words and candidates are plain values: the script sends a quoted word's value and single-quotes a candidate PowerShell would split, expand or glob.
+**Dynamic completion** (#1744, #1842): `isx --aesh-complete -- <words>` answers a TAB from the running binary's command tree, which `IncusSpawn.run` hands to `Completers.answer` before aesh sees it.
+Every script `isx completion` prints (`CompletionCommand.script`) asks it and lists no command, option or value of its own, so a new command or option needs no script change.
+The request's words and candidates are plain values: each script sends a word's value, its quoting removed by something that expands nothing, and quotes what it inserts by its shell's rules.
 `answer` drops a candidate holding a control character, and path options complete through `Completers.HostPath`, never aesh's file completer, which escapes a lone candidate for its own readline.
 A value comes from a completer on the argument or option itself (`completer = Completers.Instance.class` and its siblings), so a new instance, template, tool or account argument names one.
 A completer offers names only, never starts a VM, costs at most one Incus request, and offers nothing when its source fails.
-`answer` writes each candidate as the whole word (`--format=json`) and a command's or option's description after a TAB; `CompletersTest` pins both.
+`answer` writes each candidate as the whole word (`--format=json`) and, after a TAB, a command's or option's description or the one its completer gave with `Names.describe` (`default` beside the default account); `CompletersTest` pins both.
 `answer` drops the commands in `IncusSpawn.NOT_COMPLETED` (the hidden plumbing and `completion`), which stay runnable.
 
-Account values: `isx account list --completion` (names only, never credentials) prints every namespace on its own line for `account unset`, then `ns=` / `ns=account` lines for the usable accounts (default marked after a TAB) for `--account` and `account set`, in all three scripts.
-It skips names holding a control character.
-`account add`'s positional completes from `isx account add --completion` instead (`CredentialCheck.acceptedNames`): each credential step's namespace and its tool's name, as `credentialTool` resolves them for `addCredential`, so `gh` is offered beside `github`.
-It prints only names `ToolDefValidator.isNamespace` accepts, though the loader already refuses a tool whose name is not one (#1778).
-Bash's `compgen -W` expands its word list, so a cloned repository's tool named `$(...)` ran on TAB after `isx tools show`.
-So the bash script never gives `compgen -W` what isx prints: `_isx_reply` offers each line of a source, and each word it is given, by literal prefix (`CompletionCommandTest.bashNeverExpandsWhatIsxPrints`).
-It offers each candidate quoted (`printf %q`), since readline inserts a candidate as is and a `$(...)` would otherwise run on Enter; a typed prefix matches the name or its quoted form.
-The typed `<namespace>=` an account loses (readline replaces only what follows it) is dropped from the name before quoting (`_isx_reply_after`, which takes it as an argument), since `%q` may write the whole word as `$'...'`; a candidate in another namespace is never offered.
-The same test fails a `COMPREPLY=( $(...) )` that is not `compgen -W` over literal words, and a `commands` or `*_subcmds` list that is not a literal string.
-A new dynamic source goes through `_isx_reply` too.
-The hostile-name tests (`noSourceIsExpanded*` in the three shells' completion tests) reach every source at least once, the bash one at every place that offers one.
-Keep both free of Incus and secrets: they run on every TAB.
-`BashAccountCompletionTest` and `FishAccountCompletionTest` run the generated script in a real shell with a fake `isx`, and skip without the shell.
+Account values: `Completers.Account` and `InstanceThenAccounts` offer `AccountCommand.completionNames`: every namespace for `account unset`, and for `--account` and `account set` `ns=` / `ns=account` for the usable accounts, the bare `ns=` dropped once a namespace is typed.
+`account add`'s positional completes from `AccountCommand.addCompletionLines` instead (`CredentialCheck.acceptedNames`): each credential step's namespace and its tool's name, as `credentialTool` resolves them for `addCredential`, so `gh` is offered beside `github`.
+It offers only names `ToolDefValidator.isNamespace` accepts, though the loader already refuses a tool whose name is not one (#1778).
+`isx account list --completion` and `isx account add --completion` print the same names for scripts saved by releases before #1842; no script isx prints calls them (docs/dev/MIGRATIONS.md).
 
-The zsh script dispatches through `_arguments -C`, which already removes the command from `words` and decrements `CURRENT`.
-A helper therefore sees its subcommand as the command and completes positional values from `words[2]`.
-Never shift `words` or decrement `CURRENT` again in the dispatcher: that made the word being completed the command, so `isx destroy <TAB>` listed nothing.
-A helper with subcommands parses them with its own `_arguments -C` and `case $line[1]`, as `_isx_account` does, never from `$words[1]`.
-`ZshCompletionTest` types each line into a real interactive zsh through `zpty` and pins the buffer TAB leaves behind, so the whole dispatcher is exercised; `CompletionCommandTest` keeps a cheap structural guard for machines without zsh.
+Never hand what isx prints to anything that expands it: bash's `compgen -W` expanded its word list, so a cloned repository's tool named `$(...)` ran on TAB after `isx tools show`, and aesh's generated bash script still does that.
+The bash script reads the words from `COMP_LINE` with its own `_isx_words` (bash-completion's dequoting calls `eval`, and its `COMP_WORDS` split at `@` and the other word breaks), and never uses `compgen` or `eval` (`CompletionCommandTest.bashNeverExpandsWhatIsxPrints`).
+Readline inserts a candidate as is, after the quote the word left open, so `_isx_quote_for` quotes it for that quote: `printf %q` outside one, `'\''` for a `'` inside `'`, a backslash before `$`, backtick, `"` and `\` inside `"`.
+Never `%q` inside a quote: it writes a name the locale cannot print (U+2028, any non-ASCII under `LC_ALL=C`) as `$'...'`, which inside `"` leaves a `$(...)` live; `aCandidateIsQuotedForTheQuoteLeftOpen` presses Enter after each quote.
+The script runs on macOS's stock bash 3.2, which `unit-tests-macos` runs it under: no negative subscripts, `compopt` (bash 4) only behind `2>/dev/null`, and a `!` is written outside `$'...'` too, since bash 3.2 expands history there.
+Readline replaces only what follows the word's last unquoted `COMP_WORDBREAKS` character or its open quote, so the script drops the part before (`_isx_kept`) from each whole-word candidate before quoting; a candidate that does not start with it is not offered.
+A closing quote is no break (bash's `char_is_quoted` covers it), so `_isx_kept` returns to what it was before that quote opened; otherwise a second TAB into `"./a b/"` replaced the word with `sub/` (`aSecondTabIntoAQuotedDirectoryKeepsThePath`).
+Readline adds no closing quote to a line that already ends in that character, so a quoted candidate ending in one (a trailing `'` inside `'`, `\"` inside `"`, or a `!` written outside the quote) gets its quote closed by `_isx` when it is the lone match, as readline closes only a lone match's quote (`aCandidateEndingInItsQuoteLeavesItClosed`, `onlyALoneMatchHasItsQuoteClosed`).
+A redirection's target (`> ou`, `2>ou`) asks isx nothing: the script leaves `COMPREPLY` empty under `compopt -o default`, so readline completes file names (`aRedirectionTargetFallsBackToFileNames`); bash 3.2 has no `compopt`, so there the script is registered with `-o default`, and any empty answer falls back to file names.
+zsh removes quoting with `(Q)` and inserts through `_describe -U`, whose `compadd` quotes; fish reads `commandline -opc` and `string unescape`, and quotes and never evaluates what `__isx_complete` prints.
+A directory or a bare `ns=` gets no trailing space.
+isx answers a typed `~/` (or `--opt=~/`) with the home directory; fish, which matches candidates against the word, gets it back as typed, and so does bash where the `~/` is in `_isx_kept`.
+The hostile-name tests (`noCandidateIsExpanded*` in the three shells' completion tests) feed a command substitution to every kind of place that offers a value.
+`BashAccountCompletionTest`, `FishAccountCompletionTest` and `ZshCompletionTest` run the script in a real shell against a `FakeIsx`, which records each request's words and answers with `Completers.answer` for them, or with a given answer; each skips without its shell.
+`ZshCompletionTest` types each line into a real interactive zsh through `zpty` and pins the buffer TAB leaves behind.
 Its driver (`zsh-completion-driver.zsh`) waits on markers only the sourced setup or the widget can print, with blocking `zpty -r -m` reads that drain the pty, never on timed polling: on macOS the timed loop hung (#1738).
 It runs `compinit -D`, so no test writes the developer's `~/.zcompdump`.
 
@@ -63,10 +64,10 @@ See `.claude/rules/mcp.md`.
 **Hidden (internal) commands**: Some commands are plumbing not meant for direct user invocation: `git-remote-helper` (invoked by git), `ssh-proxy` (SSH ProxyCommand).
 These remain in `groupCommands` (so they're still executable) but are hidden from `isx --help` and shell tab-completion.
 `IncusSpawn.HIDDEN_COMMANDS` is the single source of truth for the help filter; `IncusSpawn.filterHiddenCommands()` intercepts `isx --help`/`-h` before aesh and strips matching lines from the rendered help via `LazyHelp.render()`.
-The completion scripts in `CompletionCommand` must be kept in sync manually (remove the command from suggestion lists, case dispatch, and any dedicated helper functions).
-`IncusSpawnCommandTreeTest.hiddenCommandsAreStillRegistered` asserts they stay in `groupCommands`; `CompletionCommandTest.commandsNotOfferedAsTopLevelCompletions` asserts that no shell offers them, `completion` or the removed `instances` (its `NOT_OFFERED` list).
+Completion drops them through `IncusSpawn.NOT_COMPLETED`, which every script reaches through `Completers.answer`.
+`IncusSpawnCommandTreeTest.hiddenCommandsAreStillRegistered` asserts they stay in `groupCommands`; `CompletersTest.neverOffersTheHiddenCommandsOrCompletionItself` asserts that completion offers neither them nor `completion`.
 `completion` is listed in `isx --help`, the one place a user finds it before completion is installed, but the completion scripts do not offer it: nobody tab-completes the command that sets up tab completion (#1802).
-When hiding a new command: add it to `HIDDEN_COMMANDS` (which `NOT_COMPLETED` and `NOT_OFFERED` are built from), remove it from all three completion scripts, update `stripVmCommand()` if it changes `vm`'s neighbors, and run both tests.
+When hiding a new command: add it to `HIDDEN_COMMANDS` (which `NOT_COMPLETED` is built from) and run both tests.
 
 **`isx start`, `isx stop` and owners are for programs that drive isx (#1720).**
 `isx start` is `isx shell`'s preparation without the shell (`InstanceStart`, shared with `isx ssh-proxy --start`): `InstancePrep.prepare` under the `starting` lock, waiting up to two minutes for another holder, never a bare Incus start.

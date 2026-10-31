@@ -99,6 +99,25 @@ class CompletersTest {
         assertTrue(linux("account", "unset", "box", "").contains("github"));
     }
 
+    /** A completer's own description reaches the answer: PowerShell showed no default marker (#1842). */
+    @Test
+    void describesTheDefaultAccountAndOffersNoBareNamespaceOnceOneIsTyped() throws Exception {
+        IsolatedHome.seed("""
+                github:
+                  default: personal
+                  accounts:
+                    personal:
+                      token: "xxxxxxxxxxxx"
+                    acme:
+                      token: "yyyyyyyyyyyy"
+                """);
+        var bytes = new ByteArrayOutputStream();
+        Completers.answer(IncusSpawn.IncusSpawnLinuxCommand.class, List.of("branch", "x", "--account", "github="),
+                new PrintStream(bytes, true, StandardCharsets.UTF_8));
+        assertEquals(List.of("github=acme", "github=personal\tdefault"), bytes.toString(StandardCharsets.UTF_8).lines().toList());
+        assertEquals(List.of("github=", "github=acme", "github=personal"), linux("account", "set", "box", "github"));
+    }
+
     @Test
     void completesPathsWithoutAShellFallbackMarker() {
         // aesh's own handler threw here (no working directory), and printed __aesh_file__ after commands.
@@ -154,7 +173,7 @@ class CompletersTest {
 
     @Test
     void powerShellScriptAsksIsxOnEveryTab() {
-        var script = CompletionCommand.rawScript(CompletionCommand.Shell.pwsh);
+        var script = CompletionCommand.script(CompletionCommand.Shell.pwsh);
         assertTrue(script.contains("Register-ArgumentCompleter -Native -CommandName 'isx'"), script);
         assertTrue(script.contains("--aesh-complete -- @cmdArgs"), script);
         // A word's value goes to isx without its quotes, and a candidate PowerShell would split comes back quoted.

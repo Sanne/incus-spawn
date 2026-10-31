@@ -26,8 +26,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.function.Predicate;
 
 /**
@@ -52,8 +55,8 @@ public final class Completers {
 
     /**
      * Answers {@code isx --aesh-complete -- <words>}: one candidate per line, followed by a TAB
-     * and its description when it is a command or an option. The last word is the one being
-     * completed, empty after a space. Words and candidates are plain values, never quoted or
+     * and its description when it is a command, an option or a value its completer describes.
+     * The last word is the one being completed, empty after a space. Words and candidates are plain values, never quoted or
      * escaped for a shell: the script quotes what it inserts. A candidate holding a control
      * character is dropped, since a newline or TAB in it would split the line.
      * <p>
@@ -81,18 +84,22 @@ public final class Completers {
             var kept = operation.isIgnoreOffset() || operation.getOffset() < wordStart || operation.getOffset() > line.length()
                     ? "" : unescape(line.substring(wordStart, operation.getOffset()));
             boolean topLevel = words.size() <= 1;
-            var candidates = request.pathValue != null
-                    ? request.paths.stream().map(path -> pathWord(typed, request.pathValue, path))
-                    : operation.getCompletionCandidates().stream().map(candidate -> wholeWord(typed, kept, candidate.getCharacters()));
-            candidates
-                    .filter(candidate -> candidate.chars().noneMatch(Character::isISOControl))
-                    .filter(candidate -> !(topLevel && IncusSpawn.NOT_COMPLETED.contains(candidate)))
-                    .distinct()
-                    .sorted()
-                    .forEach(candidate -> {
-                        var description = description(scope, candidate);
-                        out.println(description.isEmpty() ? candidate : candidate + "\t" + description);
-                    });
+            // Each whole word, with the description its completer gave the value, if any.
+            var described = new TreeMap<String, String>();
+            if (request.pathValue != null) {
+                request.paths.forEach(path -> described.putIfAbsent(pathWord(typed, request.pathValue, path), ""));
+            } else {
+                for (var candidate : operation.getCompletionCandidates()) {
+                    var value = candidate.getCharacters().strip();
+                    described.putIfAbsent(wholeWord(typed, kept, value), request.descriptions.getOrDefault(value, ""));
+                }
+            }
+            described.forEach((candidate, valueDescription) -> {
+                if (candidate.chars().anyMatch(Character::isISOControl)) return;
+                if (topLevel && IncusSpawn.NOT_COMPLETED.contains(candidate)) return;
+                var description = valueDescription.isEmpty() ? description(scope, candidate) : valueDescription;
+                out.println(description.isEmpty() ? candidate : candidate + "\t" + oneLine(description));
+            });
         } catch (Exception e) {
             // A TAB offers nothing rather than print over the line being typed.
         }
@@ -150,10 +157,15 @@ public final class Completers {
         return text == null ? "" : text.replaceAll("\\s+", " ").strip();
     }
 
-    /** The context of one request, through which {@link HostPath} hands {@link #answer} its paths. */
+    /**
+     * The context of one request, through which {@link HostPath} hands {@link #answer} its paths
+     * and a {@link Names} completer the descriptions of its values: aesh's completer values carry
+     * none.
+     */
     private static final class Request extends DefaultAeshContext {
         String pathValue;
         final List<String> paths = new ArrayList<>();
+        final Map<String, String> descriptions = new HashMap<>();
     }
 
     /**
@@ -191,6 +203,11 @@ public final class Completers {
     abstract static class Names implements OptionCompleter<CompleterInvocation> {
 
         abstract Collection<String> names(CompleterInvocation invocation);
+
+        /** What {@link #answer} shows beside a name {@link #names} returned, as fish and zsh list it. */
+        static void describe(CompleterInvocation invocation, String name, String description) {
+            if (invocation.getAeshContext() instanceof Request request) request.descriptions.put(name, description);
+        }
 
         @Override
         public final void complete(CompleterInvocation invocation) {
@@ -274,7 +291,7 @@ public final class Completers {
     public static class Account extends Names {
         @Override
         Collection<String> names(CompleterInvocation invocation) {
-            return accountNames(true);
+            return accountNames(invocation, true);
         }
     }
 
@@ -295,22 +312,25 @@ public final class Completers {
             var typed = invocation.getGivenCompleteValue();
             boolean typedIsLast = typed != null && !typed.isEmpty() && !args.isEmpty() && typed.equals(args.getLast());
             if (args.size() == (typedIsLast ? 1 : 0)) return instanceNames(RuntimeServices.incus(), NOT_A_TEMPLATE);
-            return accountNames(invocation.getCommand() instanceof AccountCommand.Set);
+            return accountNames(invocation, invocation.getCommand() instanceof AccountCommand.Set);
         }
     }
 
     /**
-     * With {@code selections}, what {@code --account} takes; otherwise every namespace, which
-     * {@code account unset} takes whatever its accounts look like now. Read with the config's
-     * own tool search paths, so the config is loaded once.
+     * With {@code selections}, what {@code --account} takes, each namespace's default described
+     * as such; once a namespace is typed, its accounts but not the bare {@code ns=} again.
+     * Otherwise every namespace, which {@code account unset} takes whatever its accounts look
+     * like now. Read with the config's own tool search paths, so the config is loaded once.
      */
-    private static List<String> accountNames(boolean selections) {
+    private static List<String> accountNames(CompleterInvocation invocation, boolean selections) {
         var config = SpawnConfig.load();
         var setups = AccountSelection.namespaceSetups(config, new ToolDefLoader(config.getSearchPaths()));
-        return AccountCommand.completionLines(config, setups).stream()
-                .filter(line -> line.contains("=") == selections)
-                .map(line -> line.split("\t", 2)[0])
-                .toList();
+        var names = AccountCommand.completionNames(config, setups);
+        if (!selections) return names.namespaces();
+        names.defaults().forEach(selection -> Names.describe(invocation, selection, "default"));
+        var typed = invocation.getGivenCompleteValue();
+        if (typed == null || !typed.contains("=")) return names.selections();
+        return names.selections().stream().filter(selection -> !selection.endsWith("=")).toList();
     }
 
     /** A value of {@code --format}. */

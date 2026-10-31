@@ -642,13 +642,14 @@ isx completion [<shell>]
 
 Supported shells: `bash` (the default), `zsh`, `fish` and `pwsh`.
 
-The PowerShell script asks isx itself on every TAB, so it offers only the commands this platform has.
+Every script asks isx itself on every TAB, so it offers only the commands this platform has.
 It completes instance names, templates, tools, accounts and option values such as `--format`.
-Add `isx completion pwsh | Out-String | Invoke-Expression` to your `$PROFILE` to load it.
+Add `isx completion pwsh | Out-String | Invoke-Expression` to your `$PROFILE` to load the PowerShell one.
 
 The scripts also complete `<namespace>=<account>` for `isx branch --account` and `isx account set`, and the namespaces for `isx account unset`.
 For `isx account add` they offer each credential by namespace and by tool, such as `github` and `gh`.
-They read these from `isx account list --completion` and `isx account add --completion`, which print names only, never credentials.
+They offer names only, never credentials.
+The zsh, fish and PowerShell scripts mark each namespace's default account; bash shows no descriptions.
 
 ## Scripting isx
 
