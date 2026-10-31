@@ -82,10 +82,16 @@ Colour codes can split a token that matches only once they are gone, as `grep --
 A control byte turned into a space, or a carriage return dropping a key's BEGIN line, hides a shape only the raw text shows.
 So both scrubs run, `BuildOutput.shownGuestText` says which raw character each shown one came from, and each run of what either redacts becomes one marker.
 A lone control (a NUL, SO/SI or a backspace) splits a token in both: it ends the shape raw, and the space it becomes ends it shown (#1888).
-So two more views of the shown text are scrubbed, one with its lone controls dropped and one as a terminal shows it once each backspace has moved the cursor, which is how `man` prints bold and underline.
-In that view a backspace moves one cell left, never past the start of its line, and a character overwrites the cell under it and keeps the cells to its right; a tab moves to the next stop of eight.
+A character that draws no cell (a combining mark, a zero-width space or joiner) splits a token in both as well, though a terminal draws one unbroken word (#1900).
+So two more views are scrubbed: the shown text with its lone controls and the characters that may draw no cell (a soft hyphen too) dropped, and the raw text as a terminal's screen shows it (`SecretRedactor.Screen`).
+On that screen a character overwrites the cells under it and keeps the cells to its right, which is how `man` prints bold and underline with backspaces.
+A backspace, a carriage return, a tab, a line feed and the cursor sequences that move along a line or up and down it (CUF, HPR, CUB, CHA, CHT, CBT, CUU, CUD, VPR, CNL, CPL, CUP's column, a saved position, the escapes DECBI and DECFI, and the 8-bit IND, NEL and RI) move the cursor, and REP draws the last character again; colour and other sequences move nothing.
+Cell widths follow `wcwidth` (`SecretRedactor.cellWidth`): a wide character takes two cells, and a zero-width one none, joining the cell before the cursor and the one last written.
 A span there redacts every raw character written to its cells, so no overwritten half of a token is kept beside the marker.
-A combining mark takes no cell: it joins the cell before the cursor and goes when that cell is overwritten.
+Erasing is not modelled, since a cell the screen shows blank never holds a token's character.
+Rows count from the start of each piece, as an absolute row would count from a screen top no log shows.
+Only written cells are kept, by row and column, so the screen grows with what a guest printed, never with how far it moved the cursor, and a guest cannot make it allocate without bound.
+REP draws at most one cell for each raw character, and the screen is built only when a piece can move the cursor back or repeat (`Screen.mayMoveBack`), so most coloured output pays nothing for it.
 No order of two passes does the same: a raw pass first leaves a marker that cuts a split token short, and a shown pass first misses what showing hid.
 So the scrub gets the raw text: the error line quotes stderr raw, and `appendDiag` keeps the LXC log and dmesg raw.
 `Container.failed`, `StepProgress` and npm's skip reasons scrub their output while it is still raw.

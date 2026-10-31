@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -444,21 +445,24 @@ public final class SecretRedactor {
      * can split a token that only matches once they are gone, while a control byte turned into a
      * space, or a carriage return dropping a key's BEGIN line, hides a shape the raw text shows.
      * What the raw scrub redacts is found in the shown text through {@link BuildOutput.Shown}, and
-     * each run of what either redacts becomes one marker. A lone control splits a token in both,
-     * so the shown text is also scrubbed with its controls dropped and as a terminal's backspaces
-     * leave it (#1888).
+     * each run of what either redacts becomes one marker. A lone control or a character that
+     * draws no cell splits a token in both, so the shown text is also scrubbed with those dropped
+     * (#1888, #1900), and the raw text as a terminal's screen shows it ({@link Screen}).
      */
     public static String scrubGuest(String... raw) {
         // Shown as printed, the common case: a raw scrub would find the same spans, so neither
         // the second scrub nor the map from shown to raw characters is needed
         boolean asPrinted = true;
+        boolean drawn = true;
         for (var piece : raw) {
-            if (piece != null && !BuildOutput.showsAsPrinted(piece)) {
+            if (piece == null) continue;
+            if (!BuildOutput.showsAsPrinted(piece)) {
                 asPrinted = false;
                 break;
             }
+            if (drawn && piece.codePoints().anyMatch(SecretRedactor::mayDrawNoCell)) drawn = false;
         }
-        if (asPrinted) {
+        if (asPrinted && drawn) {
             var printed = new StringBuilder();
             for (var piece : raw) if (piece != null) printed.append(piece);
             return scrubText(printed.toString(), Map.of()).text();
@@ -469,12 +473,23 @@ public final class SecretRedactor {
         int rawLength = 0;
         for (var piece : raw) rawLength += piece == null ? 0 : piece.length();
         var source = new int[rawLength];
+        // A screen shows what the shown text does until the cursor moves back: most output never does
+        Screen screen = null;
+        if (!asPrinted) {
+            for (var piece : raw) {
+                if (piece != null && Screen.mayMoveBack(piece)) {
+                    screen = new Screen(rawLength);
+                    break;
+                }
+            }
+        }
         for (var piece : raw) {
             if (piece == null) continue;
             var shown = BuildOutput.shownGuestText(piece);
             var from = shown.source();
             for (int i = 0; i < from.length; i++) source[shownText.length() + i] = rawText.length() + from[i];
             shownText.append(shown.text());
+            if (screen != null) screen.print(piece, rawText.length());
             rawText.append(piece);
         }
         var text = shownText.toString();
@@ -482,13 +497,18 @@ public final class SecretRedactor {
         source = Arrays.copyOf(source, text.length());
         var seen = scrub(text, Map.of());
         var spans = new ArrayList<>(seen.spans);
-        boolean wider = addSpans(rawText, null, null, source, seen.spans, spans);
+        boolean wider = false;
+        // Shown as printed, the raw text is the shown one
+        if (!asPrinted) wider = addSpans(rawText, null, null, source, seen.spans, spans);
+        if (screen != null && screen.moved()) {
+            var view = screen.view();
+            wider |= addSpans(view.text, view.start, view.end, source, seen.spans, spans);
+        }
         // A lone control the shown text spaces ends a token there, as the control does in the raw
-        // text: with the controls dropped it is whole, and as a terminal shows it once its
-        // backspaces have moved the cursor, a token man prints bold or underlined is (#1888).
-        // Showing changes a character only by spacing a control, so a shown character unlike its
-        // raw one is such a control
-        wider |= addControlFreeSpans(text, rawText, source, seen.spans, spans);
+        // text, and a character that draws no cell ends it in both: with them dropped it is whole,
+        // as it is on the screen. Showing changes a character only by spacing a control, so a
+        // shown character unlike its raw one is such a control
+        wider |= addDroppedSpans(text, rawText, source, seen.spans, spans);
         if (!wider) return seen.text;
         // Earliest first, so a run is named by what starts it, and the shown scrub's when both do
         spans.sort(Comparator.comparingInt(Span::start));
@@ -507,148 +527,484 @@ public final class SecretRedactor {
     }
 
     /**
-     * Adds to {@code spans} what a scrub of the shown {@code text} with its lone controls dropped,
-     * and as a terminal shows it once its backspaces have moved the cursor ({@link Cursor}),
-     * redacts. Whether either redacts a character the shown scrub's {@code seen} spans leave.
+     * Adds to {@code spans} what a scrub of the shown {@code text} with its lone controls and the
+     * characters that may draw no cell ({@link #mayDrawNoCell}) dropped redacts. Whether it redacts a
+     * character the shown scrub's {@code seen} spans leave.
      */
-    private static boolean addControlFreeSpans(String text, CharSequence rawText, int[] source,
-                                               List<Span> seen, List<Span> spans) {
+    private static boolean addDroppedSpans(String text, CharSequence rawText, int[] source,
+                                           List<Span> seen, List<Span> spans) {
         // Most text that is not shown as printed only loses escapes: nothing to build a view for
-        int spaced = 0;
-        boolean backspace = false;
-        for (int i = 0; i < text.length(); i++) {
-            char raw = rawText.charAt(source[i]);
-            if (text.charAt(i) != raw) {
-                spaced++;
-                backspace |= raw == '\b';
-            }
-        }
-        if (spaced == 0) return false;
-        var dropped = new StringBuilder(text.length() - spaced);
-        var droppedFrom = new int[text.length() - spaced];
-        for (int i = 0; i < text.length(); i++) {
-            char raw = rawText.charAt(source[i]);
-            if (text.charAt(i) == raw) {
-                droppedFrom[dropped.length()] = source[i];
-                dropped.append(raw);
-            }
-        }
-        boolean wider = addSpans(dropped, droppedFrom, droppedFrom, source, seen, spans);
-        if (!backspace) return wider;
-        var struck = new Cursor(text.length());
+        int kept = 0;
         for (int i = 0; i < text.length(); ) {
             int c = text.codePointAt(i);
             int width = Character.charCount(c);
-            int from = source[i];
-            int raw = rawText.charAt(from);
-            if (c == raw || width == 2) {
-                // A pair's cell redacts both its halves
-                struck.put(c, from, source[i + width - 1]);
-            } else if (raw == '\b') {
-                struck.back();
+            if (c == rawText.charAt(source[i]) || width == 2) {
+                if (!mayDrawNoCell(c)) kept += width;
             }
             i += width;
         }
-        struck.endLine();
-        return addSpans(struck.text, struck.start, struck.end, source, seen, spans) | wider;
+        if (kept == text.length()) return false;
+        var dropped = new StringBuilder(kept);
+        var droppedFrom = new int[kept];
+        for (int i = 0; i < text.length(); ) {
+            int c = text.codePointAt(i);
+            int width = Character.charCount(c);
+            if ((c == rawText.charAt(source[i]) || width == 2) && !mayDrawNoCell(c)) {
+                for (int j = i; j < i + width; j++) {
+                    droppedFrom[dropped.length()] = source[j];
+                    dropped.append(text.charAt(j));
+                }
+            }
+            i += width;
+        }
+        return addSpans(dropped, droppedFrom, droppedFrom, source, seen, spans);
     }
 
     /**
-     * The text a terminal shows once each backspace has moved its cursor (#1895 review): a
-     * backspace moves it one cell left, never past the start of its line, and a character
-     * overwrites the cell under it and leaves those to its right. A tab moves to the next stop of
-     * eight without writing. Each cell redacts every raw character written to it, from
-     * {@code start} to {@code end}, so a struck half of a token is never kept beside a marker.
-     * A combining mark takes no cell: it joins the cell before the cursor, and goes when that
-     * cell is overwritten. A wide character takes one cell, where a terminal gives it two.
+     * How many cells a terminal draws {@code c} in: none for a combining mark, a format
+     * character (U+200B, a joiner, a byte order mark) or a Hangul medial vowel, two for an East
+     * Asian wide or fullwidth character and most emoji, one for every other (#1900). A soft
+     * hyphen is drawn, one cell wide, on most terminals. Ranges follow {@code wcwidth}; a
+     * terminal that disagrees on one shows it a cell off from the {@link Screen}.
      */
-    private static final class Cursor {
+    static int cellWidth(int c) {
+        if (c < 0x300) return 1;
+        int type = Character.getType(c);
+        if (type == Character.NON_SPACING_MARK || type == Character.ENCLOSING_MARK
+                || type == Character.FORMAT
+                || c >= 0x1160 && c <= 0x11FF || c >= 0xD7B0 && c <= 0xD7FF) {
+            return 0;
+        }
+        for (int i = 0; i < WIDE.length; i += 2) {
+            if (c < WIDE[i]) return 1;
+            if (c <= WIDE[i + 1]) return 2;
+        }
+        return 1;
+    }
+
+    /**
+     * Whether some terminal draws {@code c} in no cell: what {@link #cellWidth} gives none, and a
+     * soft hyphen, which most draw one cell wide and some hide. Dropping it can only widen a span.
+     */
+    static boolean mayDrawNoCell(int c) {
+        return c == 0x00AD || cellWidth(c) == 0;
+    }
+
+    /** The code points {@link #cellWidth} draws in two cells, in ascending ranges of first and last. */
+    private static final int[] WIDE = {
+            0x1100, 0x115F, 0x231A, 0x231B, 0x2329, 0x232A, 0x23E9, 0x23EC, 0x23F0, 0x23F0,
+            0x23F3, 0x23F3, 0x25FD, 0x25FE, 0x2614, 0x2615, 0x2648, 0x2653, 0x267F, 0x267F,
+            0x2693, 0x2693, 0x26A1, 0x26A1, 0x26AA, 0x26AB, 0x26BD, 0x26BE, 0x26C4, 0x26C5,
+            0x26CE, 0x26CE, 0x26D4, 0x26D4, 0x26EA, 0x26EA, 0x26F2, 0x26F3, 0x26F5, 0x26F5,
+            0x26FA, 0x26FA, 0x26FD, 0x26FD, 0x2705, 0x2705, 0x270A, 0x270B, 0x2728, 0x2728,
+            0x274C, 0x274C, 0x274E, 0x274E, 0x2753, 0x2755, 0x2757, 0x2757, 0x2795, 0x2797,
+            0x27B0, 0x27B0, 0x27BF, 0x27BF, 0x2B1B, 0x2B1C, 0x2B50, 0x2B50, 0x2B55, 0x2B55,
+            0x2E80, 0x303E, 0x3041, 0x33FF, 0x3400, 0x4DBF, 0x4E00, 0x9FFF, 0xA000, 0xA4CF,
+            0xA960, 0xA97F, 0xAC00, 0xD7A3, 0xF900, 0xFAFF, 0xFE10, 0xFE19, 0xFE30, 0xFE6F,
+            0xFF00, 0xFF60, 0xFFE0, 0xFFE6, 0x16FE0, 0x16FE4, 0x17000, 0x18AFF, 0x1B000, 0x1B2FF,
+            0x1F004, 0x1F004, 0x1F0CF, 0x1F0CF, 0x1F18E, 0x1F18E, 0x1F191, 0x1F19A, 0x1F200, 0x1F251,
+            0x1F300, 0x1F64F, 0x1F680, 0x1F6FF, 0x1F7E0, 0x1F7EB, 0x1F90C, 0x1F9FF, 0x1FA70, 0x1FAFF,
+            0x20000, 0x2FFFD, 0x30000, 0x3FFFD,
+    };
+
+    /**
+     * The raw text as a terminal's screen shows it once its cursor has moved (#1888, #1900): what
+     * a character draws overwrites the cells under it and leaves those to its right. A backspace
+     * moves one cell left and a carriage return to the start of the line, never past it; a tab
+     * moves to the next stop of eight, a line feed to the next line, a vertical tab, form feed
+     * or 8-bit IND down a line, an 8-bit NEL to the next line and RI up one. Of the control
+     * sequences, those that move the cursor along a line or up or down it (CUF, HPR, CUB, CHA,
+     * HPA, CHT, CBT, CUU, CUD, VPR, CNL, CPL, the column of CUP) and the escapes DECBI and DECFI
+     * do so here, a saved position is restored and REP repeats the character last drawn; the rest
+     * move nothing. Rows are counted
+     * from where each piece starts, as an absolute row would count from a screen top no log shows.
+     * <p>
+     * Each cell redacts every raw character written to it, from its {@code start} to its
+     * {@code end}, so an overwritten half of a token is never kept beside a marker. A character
+     * that draws no cell ({@link #cellWidth}) joins the cell before the cursor and the one last
+     * written, and is left out of the view, so it splits no token. A wide character takes two
+     * cells, and overwriting either clears the other. Erasing is not modelled: a cell the screen
+     * shows blank never holds a token's character, so what this view keeps there only widens a
+     * span. Only written cells are kept, by row and column, so what a scrub holds grows with what
+     * the guest printed and never with how far it moved the cursor; REP draws at most
+     * {@link #MAX_REPEATS_PER_CHAR} cells for each raw character, the rest no more.
+     */
+    private static final class Screen {
+        /** Wider than any terminal: a real one stops its cursor at its last column. */
+        static final int MAX_COLUMN = 4096;
+        private static final char ESC = '\u001b'; // raw ANSI: read from guest output, never written
+        private static final int COLUMN_BITS = 13;
+        /**
+         * Rows past this are where the cursor stays, so no key overflows. A raw character moves the
+         * cursor down at most {@link #MAX_COLUMN} rows, so no text a String holds comes near it: a
+         * guest cannot pile its lines onto one row, where a line feed would overwrite the last.
+         */
+        static final long MAX_ROW = Long.MAX_VALUE >>> (COLUMN_BITS + 1);
+        static final int MAX_REPEATS_PER_CHAR = 1;
+        private static final byte NARROW = 1, WIDE_HEAD = 2, WIDE_TAIL = 3, CLEARED = 4;
+
+        private boolean moved;
+        private long row;
+        private int column;
+        private long savedRow;
+        private int savedColumn;
+        private long rowBase;
+        private long lastRow = -1;
+        /** The cell last written, where some terminals put a mark that follows a cursor move. */
+        private int lastSlot = -1;
+        private int lastCodePoint = -1;
+        private long repeats;
+
+        // The written cells, each a slot: what it shows and the raw characters written to it
+        private int[] codePoint = new int[64];
+        private int[] slotStart = new int[64];
+        private int[] slotEnd = new int[64];
+        private byte[] kind = new byte[64];
+        private int slots;
+
+        // Row and column to slot, open addressing: keys are row << COLUMN_BITS | column
+        private long[] keys = new long[128];
+        private int[] values = new int[128];
+        private int used;
+        /** Per scrub, so a guest cannot choose cells that all land on one probe chain. */
+        private final long seed = ThreadLocalRandom.current().nextLong();
+
+        Screen(int rawLength) {
+            repeats = (long) MAX_REPEATS_PER_CHAR * rawLength + MAX_COLUMN;
+        }
+
+        /**
+         * Whether {@code piece} holds what can move a cursor back or draw a character twice, a
+         * screen's only way to differ from the shown text but for blanks: a carriage return not
+         * ending a line, a backspace, an 8-bit RI, or a sequence that moves back or repeats. It
+         * only looks, so what it misses a screen would miss as well.
+         */
+        static boolean mayMoveBack(String piece) {
+            for (int i = 0; i < piece.length(); i++) {
+                char c = piece.charAt(i);
+                if (c == '\b' || c == '\u008d' || c == '\r' && (i + 1 == piece.length() || piece.charAt(i + 1) != '\n')) return true;
+            }
+            if (piece.indexOf(ESC) < 0 && piece.indexOf('\u009b') < 0) return false;
+            var controls = BuildOutput.guestControls(piece);
+            while (controls.find()) {
+                char last = piece.charAt(controls.end() - 1);
+                if (controls.end() - controls.start() == 2 && piece.charAt(controls.start()) == ESC) {
+                    if ("86M".indexOf(last) >= 0) return true;
+                } else if ("ADFG`HfZub".indexOf(last) >= 0) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** Whether the cursor ever moved back, or REP drew what the shown text does not show. */
+        boolean moved() {
+            return moved;
+        }
+
+        /** Prints {@code piece}, which starts at {@code offset} in the raw text, on its own rows. */
+        void print(String piece, int offset) {
+            // A piece starts on a line of its own, below the last
+            rowBase = Math.min(lastRow + 1, MAX_ROW);
+            row = rowBase;
+            column = 0;
+            savedRow = rowBase;
+            savedColumn = 0;
+            lastSlot = -1;
+            lastCodePoint = -1;
+            var controls = BuildOutput.guestControls(piece);
+            int pos = 0;
+            while (pos < piece.length()) {
+                int next = controls.find(pos) ? controls.start() : piece.length();
+                for (int i = pos; i < next; ) {
+                    int c = piece.codePointAt(i);
+                    int width = Character.charCount(c);
+                    put(c, offset + i, offset + i + width - 1);
+                    i += width;
+                }
+                if (next == piece.length()) break;
+                sequence(piece, controls.start(), controls.end(), offset);
+                pos = controls.end();
+            }
+        }
+
+        private void put(int c, int from, int to) {
+            switch (c) {
+                case '\n' -> {
+                    nextLine();
+                    return;
+                }
+                case '\r' -> {
+                    move(row, 0);
+                    return;
+                }
+                case '\b' -> {
+                    move(row, column - 1);
+                    return;
+                }
+                case '\t' -> {
+                    move(row, (column / 8 + 1) * 8);
+                    return;
+                }
+                case 0x0B, 0x0C, 0x84 -> {
+                    // A vertical tab, a form feed or an 8-bit IND
+                    move(row + 1, column);
+                    return;
+                }
+                case 0x85 -> {
+                    nextLine();
+                    return;
+                }
+                case 0x8D -> {
+                    move(row - 1, column);
+                    return;
+                }
+                default -> {
+                }
+            }
+            if (BuildOutput.actsOnTerminal(c)) return;
+            int width = cellWidth(c);
+            if (width == 0) {
+                // On the cell before the cursor, and on the one last written, which some terminals pick
+                if (column > 0) widen(slot(row, column - 1), from, to);
+                widen(lastSlot, from, to);
+                return;
+            }
+            if (column + width > MAX_COLUMN) return;
+            clear(row, column);
+            if (width == 2) clear(row, column + 1);
+            lastSlot = write(row, column, c, width == 2 ? WIDE_HEAD : NARROW, from, to);
+            if (width == 2) write(row, column + 1, c, WIDE_TAIL, from, to);
+            lastCodePoint = c;
+            lastRow = Math.max(lastRow, row);
+            column += width;
+        }
+
+        /** A control sequence or escape from {@code start} to {@code end} of {@code piece}. */
+        private void sequence(String piece, int start, int end, int offset) {
+            char first = piece.charAt(start);
+            char last = piece.charAt(end - 1);
+            if (first == ESC && end - start == 2) {
+                switch (last) {
+                    case '7' -> save();
+                    case '8' -> restore();
+                    case 'M' -> move(row - 1, column);
+                    case 'D' -> move(row + 1, column);
+                    case 'E' -> nextLine();
+                    // DECBI and DECFI: back and forward a column, as xterm moves them
+                    case '6' -> move(row, column - 1);
+                    case '9' -> move(row, column + 1);
+                    default -> {
+                    }
+                }
+                return;
+            }
+            boolean csi = first == '\u009b' || first == ESC && piece.charAt(start + 1) == '[';
+            if (!csi) return;
+            int from = start + (first == '\u009b' ? 1 : 2);
+            // Private (?, >, =, <) and intermediate bytes make another sequence of the same letter
+            for (int i = from; i < end - 1; i++) {
+                char p = piece.charAt(i);
+                if (p != ';' && (p < '0' || p > '9')) return;
+            }
+            var numbers = piece.substring(from, end - 1).split(";", -1);
+            int n = number(numbers, 0);
+            switch (last) {
+                case 'A' -> move(row - n, column);
+                case 'B', 'e' -> move(row + n, column);
+                case 'C', 'a' -> move(row, column + n);
+                case 'I' -> move(row, (column / 8 + n) * 8);
+                case 'Z' -> move(row, ((column + 7) / 8 - n) * 8);
+                case 'D' -> move(row, column - n);
+                case 'E' -> {
+                    move(row + n, column);
+                    column = 0;
+                }
+                case 'F' -> move(row - n, 0);
+                case 'G', '`' -> move(row, n - 1);
+                case 'H', 'f' -> move(row, number(numbers, 1) - 1);
+                case 's' -> save();
+                case 'u' -> restore();
+                case 'b' -> repeat(n, offset + start, offset + end - 1);
+                default -> {
+                }
+            }
+        }
+
+        /** REP: the character last drawn, {@code n} times more, as drawn by the sequence itself. */
+        private void repeat(int n, int from, int to) {
+            moved = true;
+            if (lastCodePoint < 0) return;
+            for (int i = 0; i < n && repeats > 0; i++, repeats--) put(lastCodePoint, from, to);
+        }
+
+        /** Parameter {@code i}, 1 when missing or 0, as a terminal reads it, at most a column's worth. */
+        private static int number(String[] numbers, int i) {
+            if (i >= numbers.length || numbers[i].isEmpty()) return 1;
+            int first = 0;
+            while (first < numbers[i].length() && numbers[i].charAt(first) == '0') first++;
+            var digits = numbers[i].substring(first);
+            if (digits.isEmpty()) return 1;
+            return digits.length() > 6 ? MAX_COLUMN : Math.min(Integer.parseInt(digits), MAX_COLUMN);
+        }
+
+        /**
+         * Moving back, up or left, is what lets a character overwrite another: until something
+         * does, the screen shows what the shown text does, with blanks where it moved ahead.
+         */
+        private void move(long toRow, int toColumn) {
+            long newRow = Math.max(rowBase, Math.min(toRow, MAX_ROW));
+            int newColumn = Math.max(0, Math.min(toColumn, MAX_COLUMN));
+            if (newRow < row || newRow == row && newColumn < column) moved = true;
+            row = newRow;
+            column = newColumn;
+        }
+
+        /** A line feed, NEL or CNL: down a line, to its start, overwriting only after a move back up. */
+        private void nextLine() {
+            row = Math.min(row + 1, MAX_ROW);
+            column = 0;
+        }
+
+        private void save() {
+            savedRow = row;
+            savedColumn = column;
+        }
+
+        private void restore() {
+            move(savedRow, savedColumn);
+        }
+
+        /** Overwriting either cell of a wide character clears the other. */
+        private void clear(long atRow, int at) {
+            int slot = slot(atRow, at);
+            if (slot < 0) return;
+            if (kind[slot] == WIDE_HEAD) {
+                int tail = slot(atRow, at + 1);
+                if (tail >= 0 && kind[tail] == WIDE_TAIL) kind[tail] = CLEARED;
+            } else if (kind[slot] == WIDE_TAIL && at > 0) {
+                int head = slot(atRow, at - 1);
+                if (head >= 0 && kind[head] == WIDE_HEAD) kind[head] = CLEARED;
+            }
+        }
+
+        /** Writes {@code c} at a cell, which keeps every raw character written to it: its slot. */
+        private int write(long atRow, int at, int c, byte cellKind, int from, int to) {
+            long key = atRow << COLUMN_BITS | at;
+            int index = index(key);
+            int slot;
+            if (values[index] == 0) {
+                if (slots == codePoint.length) {
+                    int size = slots * 2;
+                    codePoint = Arrays.copyOf(codePoint, size);
+                    slotStart = Arrays.copyOf(slotStart, size);
+                    slotEnd = Arrays.copyOf(slotEnd, size);
+                    kind = Arrays.copyOf(kind, size);
+                }
+                slot = slots++;
+                slotStart[slot] = from;
+                slotEnd[slot] = to;
+                keys[index] = key;
+                values[index] = slot + 1;
+                if (++used * 4 > keys.length * 3) grow();
+            } else {
+                slot = values[index] - 1;
+                slotStart[slot] = Math.min(slotStart[slot], from);
+                slotEnd[slot] = Math.max(slotEnd[slot], to);
+            }
+            codePoint[slot] = c;
+            kind[slot] = cellKind;
+            return slot;
+        }
+
+        private void widen(int slot, int from, int to) {
+            if (slot < 0) return;
+            slotStart[slot] = Math.min(slotStart[slot], from);
+            slotEnd[slot] = Math.max(slotEnd[slot], to);
+        }
+
+        /** The slot written at a cell, or -1. */
+        private int slot(long atRow, int at) {
+            return values[index(atRow << COLUMN_BITS | at)] - 1;
+        }
+
+        /** Where {@code key} is, or the empty place it would go. */
+        private int index(long key) {
+            int mask = keys.length - 1;
+            int index = (int) mix(key ^ seed) & mask;
+            while (values[index] != 0 && keys[index] != key) index = (index + 1) & mask;
+            return index;
+        }
+
+        private void grow() {
+            var oldKeys = keys;
+            var oldValues = values;
+            keys = new long[oldKeys.length * 2];
+            values = new int[oldKeys.length * 2];
+            for (int i = 0; i < oldKeys.length; i++) {
+                if (oldValues[i] == 0) continue;
+                int index = index(oldKeys[i]);
+                keys[index] = oldKeys[i];
+                values[index] = oldValues[i];
+            }
+        }
+
+        /** The murmur3 finalizer: every key bit reaches every index bit. */
+        private static long mix(long h) {
+            h ^= h >>> 33;
+            h *= 0xff51afd7ed558ccdL;
+            h ^= h >>> 33;
+            h *= 0xc4ceb9fe1a85ec53L;
+            return h ^ h >>> 33;
+        }
+
+        /** What the screen shows, row by row, and the raw characters each of its characters redacts. */
+        View view() {
+            var cells = new long[used];
+            int n = 0;
+            for (int i = 0; i < keys.length; i++) if (values[i] != 0) cells[n++] = keys[i];
+            Arrays.sort(cells);
+            var view = new View(n + n / 8 + 16);
+            long previous = -1;
+            for (long key : cells) {
+                long atRow = key >>> COLUMN_BITS;
+                int at = (int) (key & ((1 << COLUMN_BITS) - 1));
+                int slot = slot(atRow, at);
+                long previousRow = previous < 0 ? -1 : previous >>> COLUMN_BITS;
+                int previousAt = previous < 0 ? -1 : (int) (previous & ((1 << COLUMN_BITS) - 1));
+                // Rows and cells nothing was written to show blank, which ends a token as a line break does
+                if (previous >= 0 && atRow != previousRow) {
+                    view.append('\n', -1, -1);
+                    previousAt = -1;
+                }
+                if (at > previousAt + 1) view.append(' ', -1, -1);
+                switch (kind[slot]) {
+                    case NARROW, WIDE_HEAD -> {
+                        for (char half : Character.toChars(codePoint[slot])) view.append(half, slotStart[slot], slotEnd[slot]);
+                    }
+                    case CLEARED -> view.append(' ', slotStart[slot], slotEnd[slot]);
+                    default -> {
+                    }
+                }
+                previous = key;
+            }
+            return view;
+        }
+    }
+
+    /** A view of the raw text, and for each character the raw ones it redacts, -1 for none. */
+    private static final class View {
         final StringBuilder text;
         int[] start;
         int[] end;
-        private int[] cells = new int[16];
-        private int[] cellStart = new int[16];
-        private int[] cellEnd = new int[16];
-        /** The combining marks on each cell, null for none. */
-        private StringBuilder[] marks = new StringBuilder[16];
-        private int length;
-        private int at;
 
-        Cursor(int capacity) {
+        View(int capacity) {
             text = new StringBuilder(capacity);
             start = new int[capacity];
             end = new int[capacity];
         }
 
-        void put(int c, int from, int to) {
-            if (c == '\n') {
-                endLine();
-                append('\n', from, from);
-                return;
-            }
-            if (c == '\t') {
-                int stop = (at / 8 + 1) * 8;
-                // Unwritten cells show blank, and a blank ends a token as it does on the screen
-                while (length < stop) cell(length, ' ', from, from);
-                at = stop;
-                return;
-            }
-            int type = Character.getType(c);
-            if (type == Character.NON_SPACING_MARK || type == Character.ENCLOSING_MARK) {
-                // On the character it follows, which a later one overwrites with it
-                if (at > 0) {
-                    int on = at - 1;
-                    // Appended in place: a run of marks on one cell must not copy its marks per mark
-                    if (marks[on] == null) marks[on] = new StringBuilder(2);
-                    marks[on].appendCodePoint(c);
-                    cellStart[on] = Math.min(cellStart[on], from);
-                    cellEnd[on] = Math.max(cellEnd[on], to);
-                }
-                return;
-            }
-            if (at < length) {
-                cell(at, c, Math.min(cellStart[at], from), Math.max(cellEnd[at], to));
-            } else {
-                cell(at, c, from, to);
-            }
-            at++;
-        }
-
-        void back() {
-            if (at > 0) at--;
-        }
-
-        void endLine() {
-            for (int i = 0; i < length; i++) {
-                if (Character.isSupplementaryCodePoint(cells[i])) {
-                    append(Character.highSurrogate(cells[i]), cellStart[i], cellEnd[i]);
-                    append(Character.lowSurrogate(cells[i]), cellStart[i], cellEnd[i]);
-                } else {
-                    append((char) cells[i], cellStart[i], cellEnd[i]);
-                }
-                if (marks[i] != null) {
-                    for (int j = 0; j < marks[i].length(); j++) append(marks[i].charAt(j), cellStart[i], cellEnd[i]);
-                }
-            }
-            length = 0;
-            at = 0;
-        }
-
-        private void cell(int i, int c, int from, int to) {
-            if (i == cells.length) {
-                cells = Arrays.copyOf(cells, i * 2);
-                cellStart = Arrays.copyOf(cellStart, i * 2);
-                cellEnd = Arrays.copyOf(cellEnd, i * 2);
-                marks = Arrays.copyOf(marks, i * 2);
-            }
-            cells[i] = c;
-            cellStart[i] = from;
-            cellEnd[i] = to;
-            marks[i] = null;
-            if (i == length) length++;
-        }
-
-        private void append(char c, int from, int to) {
+        void append(char c, int from, int to) {
             int i = text.length();
             if (i == start.length) {
                 start = Arrays.copyOf(start, i * 2 + 1);
@@ -680,9 +1036,11 @@ public final class SecretRedactor {
                 rawStart = Integer.MAX_VALUE;
                 rawEnd = 0;
                 for (int i = span.start(); i < span.end(); i++) {
+                    if (startIn[i] < 0) continue;
                     rawStart = Math.min(rawStart, startIn[i]);
                     rawEnd = Math.max(rawEnd, endIn[i] + 1);
                 }
+                if (rawStart > rawEnd) continue;
             }
             int start = firstShownFrom(source, rawStart);
             int end = firstShownFrom(source, rawEnd);

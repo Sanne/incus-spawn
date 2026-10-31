@@ -672,23 +672,100 @@ class SecretRedactorTest {
         // A backspace at the start of a line moves nothing: the token stays split, as it is shown
         var lineStart = SecretRedactor.scrubGuest("g\n\bhp_" + "A".repeat(20) + " y");
         assertEquals("g\n hp_" + "A".repeat(20) + " y", lineStart);
-        // A character after a surrogate pair overwrites the whole pair, which a span then redacts
+        // A character after a surrogate pair overwrites the whole pair, which a span then redacts.
+        // U+10400 takes one cell, as most of the supplementary planes outside emoji and CJK do
         assertEquals("x <isx:redacted:github-token>",
-                SecretRedactor.scrubGuest("x ghp_" + "A".repeat(10) + "\uD83D\uDE00" + "B".repeat(10) + "\b".repeat(11) + "A"));
+                SecretRedactor.scrubGuest("x ghp_" + "A".repeat(10) + "\uD801\uDC00" + "B".repeat(10) + "\b".repeat(11) + "A"));
         // A combining mark shares the cell of the character before it: overwriting the dash takes
         // its accent too, and the token shows whole (#1895 review)
         assertEquals("x <isx:redacted:github-token>\n",
                 SecretRedactor.scrubGuest("x ghp_" + "A".repeat(10) + "-\u0301" + "B".repeat(10) + "\b".repeat(11) + "A\n"));
         assertEquals("x <isx:redacted:github-token>\n",
                 SecretRedactor.scrubGuest("x ghp_" + "A".repeat(10) + "-\u20DD" + "B".repeat(10) + "\b".repeat(11) + "A\n"));
-        // One left in its cell still marks the character it sits on, as on the screen
-        var accented = "x ghp_" + "A".repeat(10) + "-" + "B".repeat(10) + "\b".repeat(11) + "A\u0301\n";
-        assertEquals(BuildOutput.guestText(accented), SecretRedactor.scrubGuest(accented));
+        // One left on a character of the token draws no cell of its own, so the token is whole (#1900)
+        assertEquals("x <isx:redacted:github-token>\n",
+                SecretRedactor.scrubGuest("x ghp_" + "A".repeat(10) + "-" + "B".repeat(10) + "\b".repeat(11) + "A\u0301\n"));
         // A span the view alone finds that ends on a pair redacts both its halves, never one. The
         // armour is put together at run time, so a secret scanner does not take this for a key
         var armour = "-----";
         assertEquals("<isx:redacted:private-key>",
                 SecretRedactor.scrubGuest(armour + "BEGIN RSA PRIVATE KEY--X\b---\nMIIabc\uD83D\uDE00"));
+    }
+
+    @Test
+    void aGuestsTextKeepsNoTokenACursorSequenceSplits() {
+        // Escapes are dropped from the shown text, but a terminal moves its cursor on these, and
+        // what follows overwrites the dash: the token shows whole (#1900)
+        var head = "x ghp_" + "A".repeat(10);
+        var tail = "B".repeat(10);
+        var token = "x <isx:redacted:github-token>\n";
+        // Cursor left, as the issue found
+        assertEquals(token, SecretRedactor.scrubGuest(head + "-\u001b[1D" + tail + "\n"));
+        assertEquals(token, SecretRedactor.scrubGuest(head + "-\u009bD" + tail + "\n"));
+        // To column 17, the dash's, from the end of the line
+        assertEquals(token, SecretRedactor.scrubGuest(head + "-" + tail + "\u001b[17GA\n"));
+        // From the start of the line, sixteen cells right. Shown, the line is its last frame, the
+        // A that completes the token on the screen
+        assertEquals("<isx:redacted:github-token>\n", SecretRedactor.scrubGuest(head + "-" + tail + "\r\u001b[16CA\n"));
+        // Back to a saved position, in both forms
+        assertEquals(token, SecretRedactor.scrubGuest(head + "\u001b7-" + tail + "\u001b8A\n"));
+        assertEquals(token, SecretRedactor.scrubGuest(head + "\u001b[s-" + tail + "\u001b[uA\n"));
+        // Up a line, and to the dash's column there
+        assertEquals("x <isx:redacted:github-token>\n",
+                SecretRedactor.scrubGuest(head + "-" + tail + "\nnext\u001b[1A\u001b[17GA\n"));
+        // Back a tab stop, the dash's, and the 8-bit reverse index up to the token's line
+        assertEquals(token, SecretRedactor.scrubGuest(head + "-\u001b[Z" + tail + "\n"));
+        assertEquals(token, SecretRedactor.scrubGuest(head + "\n\u008d\u001b[17G" + tail + "\n"));
+        // However far the cursor moved before or after, only written cells are kept, and all modelled
+        var far = "\u001b[4000Gx\n".repeat(3);
+        var before = SecretRedactor.scrubGuest(far + head + "-\u001b[1D" + tail + "\n");
+        assertFalse(before.contains("AAAAAAAAAA") || before.contains("BBBBBBBBBB"), before);
+        var after = SecretRedactor.scrubGuest(head + "-\u001b[1D" + tail + "\n" + far);
+        assertFalse(after.contains("AAAAAAAAAA") || after.contains("BBBBBBBBBB"), after);
+        // DECBI moves back a column, as xterm does
+        assertEquals(token, SecretRedactor.scrubGuest(head + "-\u001b6" + tail + "\n"));
+        // However far down the cursor went, a line stays its own: a later one, on the next row,
+        // leaves the dash's cell to the backspaced A and the token whole
+        var deep = "\u009b4096B".repeat(270_000) + "\n";
+        var piled = SecretRedactor.scrubGuest(deep + head + "-" + tail + "\b".repeat(11) + "A\n" + "Q".repeat(16) + "-\n");
+        assertFalse(piled.contains("AAAAAAAAAA") || piled.contains("BBBBBBBBBB"), piled.substring(0, Math.min(200, piled.length())));
+        // REP draws the character last drawn again: nineteen A and one repeat make the token
+        assertEquals("x <isx:redacted:github-token>\n", SecretRedactor.scrubGuest("x ghp_" + "A".repeat(19) + "\u001b[1b\n"));
+        // A colour code moves nothing: the dash still splits the token, as on the screen
+        var coloured = head + "-\u001b[1m" + tail + "\n";
+        assertEquals(BuildOutput.guestText(coloured), SecretRedactor.scrubGuest(coloured));
+    }
+
+    @Test
+    void aGuestsTextKeepsNoTokenAWideCharacterHides() {
+        // A wide character takes two cells, so two backspaces after it put the cursor on it, and
+        // what follows overwrites it: the token shows whole (#1900)
+        assertEquals("x <isx:redacted:github-token>\n",
+                SecretRedactor.scrubGuest("x ghp_" + "A".repeat(9) + "\u4e00\b\bAA" + "B".repeat(9) + "\n"));
+        // Twelve backspaces put it on the second cell of the wide character, not on the dash:
+        // the dash stays and splits the token, as on the screen (#1895 review)
+        var dash = "x ghp_" + "A".repeat(10) + "-\u4e00" + "B".repeat(10) + "\b".repeat(12) + "AA\n";
+        assertEquals(BuildOutput.guestText(dash), SecretRedactor.scrubGuest(dash));
+    }
+
+    @Test
+    void aGuestsTextKeepsNoTokenAZeroWidthCharacterSplits() {
+        // A zero-width format character or a combining mark draws no cell, so a terminal shows
+        // one unbroken word, with or without a control byte around it (#1900)
+        var half = "A".repeat(18);
+        for (var zeroWidth : new String[] {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\u0301", "\ud7b0"}) {
+            assertEquals("x <isx:redacted:github-token>\n",
+                    SecretRedactor.scrubGuest("x ghp_" + half + zeroWidth + half + "\n"), zeroWidth);
+            // The backspace then counts no cell for it, and the dash is what it overwrites
+            assertEquals("x <isx:redacted:github-token>\n",
+                    SecretRedactor.scrubGuest("x ghp_" + "A".repeat(10) + "-" + zeroWidth + "B".repeat(10) + "\b".repeat(11) + "A\n"), zeroWidth);
+        }
+        // A mark written right after a backspace: wherever a terminal puts it, the token is whole
+        assertEquals("x <isx:redacted:github-token>\n",
+                SecretRedactor.scrubGuest("x ghp_" + "A".repeat(10) + "-\b\u0301A" + "B".repeat(10) + "\n"));
+        // A soft hyphen is drawn one cell wide on most terminals and hidden on some: redacted
+        assertEquals("x <isx:redacted:github-token>\n",
+                SecretRedactor.scrubGuest("x ghp_" + "A".repeat(10) + "\u00ad" + "B".repeat(10) + "\n"));
     }
 
     @Test
