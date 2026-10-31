@@ -12,7 +12,9 @@ import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpClientResponse;
+import io.vertx.core.http.HttpClosedException;
 import io.vertx.core.http.HttpConnection;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.http.HttpVersion;
@@ -413,7 +415,12 @@ class Upstream {
         var watchdog = new RelayWatchdog(clientReq, domain, streaming, since, null, null);
         // Lookups before the relay spent the budget (check() has sent the 502), or the client left
         if (watchdog.gone()) return;
+        relay(clientReq, domain, options, streaming, watchdog, hooks, mayResend(clientReq, streaming));
+    }
 
+    /** One attempt at the relay; {@code resend} lets {@link #send} make one more on a new request. */
+    private void relay(HttpServerRequest clientReq, String domain, RequestOptions options, boolean streaming,
+                       RelayWatchdog watchdog, RelayHooks hooks, boolean resend) {
         requestWithAsyncDns(options).onSuccess(upReq -> {
             // A client that left while its body was paused has no handler yet to say so
             if (!watchdog.adopt(upReq)) return;
@@ -426,7 +433,7 @@ class Upstream {
             }
             head.onComplete(prepared -> {
                 if (prepared.succeeded() && prepared.result() && !watchdog.gone()) {
-                    send(clientReq, domain, upReq, streaming, watchdog, hooks);
+                    send(clientReq, domain, options, upReq, streaming, watchdog, hooks, resend);
                     return;
                 }
                 // Nothing of the request has left: let the connection go back to the pool
@@ -444,8 +451,8 @@ class Upstream {
     }
 
     /** Sends the request whose head {@code hooks} has set, and relays its answer. */
-    private void send(HttpServerRequest clientReq, String domain, HttpClientRequest upReq, boolean streaming,
-                      RelayWatchdog watchdog, RelayHooks hooks) {
+    private void send(HttpServerRequest clientReq, String domain, RequestOptions options, HttpClientRequest upReq,
+                      boolean streaming, RelayWatchdog watchdog, RelayHooks hooks, boolean resend) {
         upReq.response().onSuccess(upResp -> {
             if (watchdog.cut) return;
             if (hooks.responseCallback() != null) {
@@ -460,11 +467,36 @@ class Upstream {
         }).onFailure(err -> {
             // A client that left mid-upload resets the request itself
             if (watchdog.gone()) return;
+            if (resend && closedUnanswered(err)) {
+                // A pooled connection upstream closed as the request went out on it (#1914)
+                ProxyLog.trace("Relay upstream closed (" + domain + "), sending again: " + err.getMessage());
+                relay(clientReq, domain, options, streaming, watchdog, hooks, false);
+                return;
+            }
             ProxyLog.trace("Relay upstream error (" + domain + "): " + err.getMessage());
             sendError(clientReq.response(), 502, "Upstream error");
         });
         if (streaming) pipeRequest(clientReq, upReq, watchdog, hooks.requestTap());
         else upReq.end();
+    }
+
+    /**
+     * A safe request without a body may be sent again when its connection closes before any answer
+     * (RFC 9110 9.2.2): an upstream may close an idle keep-alive connection just as the relay sends
+     * on it, and then the request failed through no fault of its own (#1914). Sent again once, as
+     * curl and browsers do. Never one with a body: the body has gone and is not held to send again.
+     */
+    static boolean mayResend(HttpServerRequest clientReq, boolean streaming) {
+        var method = clientReq.method();
+        return !streaming && (method == HttpMethod.GET || method == HttpMethod.HEAD || method == HttpMethod.OPTIONS);
+    }
+
+    /**
+     * The connection failed under the request: closed, or reset or broken by an I/O error. Only ever
+     * asked of the response's failure, which comes before any of the answer did.
+     */
+    private static boolean closedUnanswered(Throwable err) {
+        return err instanceof HttpClosedException || err instanceof java.io.IOException;
     }
 
     /**
