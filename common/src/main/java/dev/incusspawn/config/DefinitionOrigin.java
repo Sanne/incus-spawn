@@ -30,4 +30,13 @@ abstract class DefinitionOrigin extends MappedDefinition {
     public void setSource(String source) { this.source = source; }
     public Path getProjectRoot() { return projectRoot; }
     public void setProjectRoot(Path projectRoot) { this.projectRoot = projectRoot; }
+
+    /** A template that sets either key itself is told why its value is not used. */
+    @Override
+    protected String hint(String key) {
+        return switch (normalized(key)) {
+            case "source", "projectroot", "project-root" -> "'" + key + "' is set by isx" + ImageDef.HostResource.SET_BY_ISX;
+            default -> null;
+        };
+    }
 }

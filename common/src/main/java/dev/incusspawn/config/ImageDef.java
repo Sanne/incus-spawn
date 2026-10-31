@@ -441,11 +441,11 @@ public class ImageDef extends DefinitionOrigin {
     /**
      * {@code vm:} is the old spelling of {@code type: vm}, which no mapping reads. Only a root
      * template with no {@code type:} is sure to build a container: a child's type may come from
-     * its parent, which this one file does not know.
+     * its parent, which this one file does not know. The keys isx sets are {@link DefinitionOrigin}'s.
      */
     @Override
     protected String hint(String key) {
-        if (!"vm".equalsIgnoreCase(key)) return null;
+        if (!"vm".equalsIgnoreCase(key)) return super.hint(key);
         var hint = "a virtual machine is 'type: vm'";
         return type == null && isRoot() ? hint + "; without it this builds a container" : hint;
     }
