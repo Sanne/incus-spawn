@@ -1,12 +1,19 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.util.BuildOutput;
-import dev.incusspawn.Platform;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
+/**
+ * Prints a shell's completion script. Every script answers a TAB by asking the running binary,
+ * {@code isx --aesh-complete -- <words>} ({@link Completers#answer}), so it follows this
+ * platform's command tree and lists no command or option of its own (#1744, #1842). Each is
+ * isx's own rather than aesh's generated one: that one hands what isx prints to a shell that
+ * expands it, so a {@code $(...)} in a name ran on TAB or on Enter (#1778). These send each
+ * word's value and insert each candidate quoted by the shell's own rules.
+ */
 @CommandDefinition(
         name = "completion",
         description = "Print shell completion script",
@@ -29,52 +36,17 @@ public class CompletionCommand extends BaseCommand {
             printInstallInstructions();
             return CommandResult.SUCCESS;
         }
-        var script = rawScript(shell);
-        // The `vm` appliance command only exists on macOS (Incus runs natively on Linux), so it is
-        // not registered in the Linux command tree — keep the completion script in step with that.
-        if (!Platform.isMacOS() && shell != Shell.pwsh) {
-            script = stripVmCommand(script, shell);
-        }
-        BuildOutput.results().println(script);
+        BuildOutput.results().println(script(shell));
         return CommandResult.SUCCESS;
     }
 
-    /** The full (macOS) completion script for a shell, before any platform-specific filtering. */
-    static String rawScript(Shell shell) {
+    /** The completion script for a shell, the same on every platform. */
+    static String script(Shell shell) {
         return switch (shell) {
             case zsh  -> ZSH_COMPLETION;
             case bash -> BASH_COMPLETION;
             case fish -> FISH_COMPLETION;
-            // Asks isx itself on every TAB, so it already follows this platform's command tree.
             case pwsh -> PWSH_COMPLETION;
-        };
-    }
-
-    /**
-     * Remove the macOS-only {@code vm} command from a generated completion script so it is not
-     * offered on Linux, matching the platform-specific command tree in {@code IncusSpawn}.
-     * Removes the top-level {@code vm} suggestion, drops {@code vm} from the recognized
-     * subcommand lists, and deletes the now-unreachable per-{@code vm} dispatch blocks
-     * (the zsh {@code _isx_vm} function and the bash {@code vm)} case) so no dead code remains.
-     */
-    static String stripVmCommand(String script, Shell shell) {
-        return switch (shell) {
-            case zsh -> script
-                    .replaceAll("(?m)^\\s*'vm:manage the incus-spawn VM appliance'\\R", "")
-                    .replaceAll("(?m)^\\s*vm\\)\\s*_isx_vm ;;\\R", "")
-                    // Drop the unreachable _isx_vm() function (ends at the first standalone brace).
-                    .replaceAll("(?sm)^[ \\t]*_isx_vm\\(\\) \\{.*?^[ \\t]*\\}\\R", "");
-            case bash -> script
-                    .replace("tools vm doctor", "tools doctor")
-                    .replace("tools|vm|doctor", "tools|doctor")
-                    // Drop the unreachable vm) case (ends at the first standalone ";;").
-                    .replaceAll("(?sm)^[ \\t]*vm\\)\\R.*?^[ \\t]*;;\\R", "");
-            case pwsh -> script;
-            case fish -> script
-                    .replace("tools|vm|doctor", "tools|doctor")
-                    .replaceAll("(?m)^.*-n __isx_no_subcommand -a vm .*\\R", "")
-                    .replaceAll("(?m)^\\s*# ── vm ─.*\\R", "")
-                    .replaceAll("(?m)^.*__isx_using_subcommand vm.*\\R", "");
         };
     }
 
@@ -112,11 +84,9 @@ public class CompletionCommand extends BaseCommand {
     // ── PowerShell completion ───────────────────────────────────────────────────
 
     /**
-     * Asks isx itself on every TAB ({@link Completers#answer}), so it follows this platform's
-     * command tree. Not aesh's generated script: that one hands isx a quoted word with its quotes
-     * and inserts each candidate as is, so a path with a space became two arguments. This one
-     * sends each word's value and single-quotes a candidate PowerShell would otherwise split or
-     * expand.
+     * Not aesh's generated script: that one hands isx a quoted word with its quotes and inserts
+     * each candidate as is, so a path with a space became two arguments. This one sends each
+     * word's value and single-quotes a candidate PowerShell would otherwise split or expand.
      */
     private static final String PWSH_COMPLETION = """
             # PowerShell completion for isx: every TAB asks isx itself.
@@ -158,1032 +128,189 @@ public class CompletionCommand extends BaseCommand {
 
     // ── Zsh completion ──────────────────────────────────────────────────────────
 
+    /**
+     * zsh removes a word's quoting with {@code (Q)}, which expands nothing, and {@code compadd}
+     * quotes what it inserts. Each candidate is already the whole word isx matched, so
+     * {@code -U} replaces the word with it: isx answers a typed {@code ~/} with the home directory.
+     */
     private static final String ZSH_COMPLETION = """
             #compdef isx
-
-            _isx_instances() {
-              local -a instances
-              instances=(${(f)"$(isx list -q 2>/dev/null)"})
-              _describe -t instances 'instance' instances
-            }
-
-            _isx_accounts() {
-              local -a namespaces accounts
-              local line
-              for line in ${(f)"$(isx account list --completion 2>/dev/null)"}; do
-                if [[ $line != *=* ]]; then
-                  continue
-                elif [[ $line == *= ]]; then
-                  namespaces+=("${line//:/\\:}")
-                elif [[ $line == *$'\\t'* ]]; then
-                  accounts+=("${${line%%$'\\t'*}//:/\\:}:${line#*$'\\t'}")
-                else
-                  accounts+=("${line//:/\\:}")
-                fi
-              done
-              # Once a namespace is typed, offer only its accounts, as bash does.
-              [[ $PREFIX == *=* ]] && namespaces=()
-              # No space after a bare <namespace>=, so the account can follow it.
-              _describe -t namespaces 'namespace' namespaces -S ''
-              _describe -t accounts '<namespace>=<account>' accounts
-            }
-
-            _isx_account_namespaces() {
-              local -a namespaces
-              namespaces=(${${(f)"$(isx account list --completion 2>/dev/null)"}:#*=*})
-              _describe -t namespaces 'namespace' namespaces
-            }
-
-            _isx_account_add_names() {
-              local -a names
-              names=(${(f)"$(isx account add --completion 2>/dev/null)"})
-              _describe -t credentials 'credential' names
-            }
-
-            _isx_template_names() {
-              local -a templates
-              templates=(${(f)"$(isx templates 2>/dev/null)"})
-              _describe -t templates 'template' templates
-            }
-
-            _isx_tool_names() {
-              local -a tools
-              tools=(${(f)"$(isx tools list 2>/dev/null)"})
-              _describe -t tools 'tool' tools
-            }
-
-            _isx_templates() {
-              local state line; typeset -A opt_args
-              _arguments -C \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '1: :->subcmd' \\
-                '*:: :->args'
-
-              local -a _tpl_subcmds
-              _tpl_subcmds=(
-                'list:list available template names'
-                'edit:edit a template definition'
-                'new:create a new template definition'
-              )
-
-              case $state in
-                subcmd)
-                  _describe -t subcmds 'templates subcommand' _tpl_subcmds
-                  _isx_template_names ;;
-                args)
-                  case $line[1] in
-                    edit) _arguments '1:template:_isx_template_names' ;;
-                    new)  _arguments '--project[Create in project-local directory]' '1:name' ;;
-                    list) _arguments '(-v --verbose)'{-v,--verbose}'[Show source and description]' ;;
-                  esac ;;
-              esac
-            }
-
-            _isx_branch() {
-              _arguments \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '--from=[Source instance to branch from]:instance:_isx_instances' \\
-                '--gui[Enable GUI passthrough (Wayland + GPU + audio); the default for a gui: true container template, from a Wayland session]' \\
-                '--kvm[Expose /dev/kvm for nested virtualization]' \\
-                '--no-gui[Disable GUI passthrough even if the template has gui: true]' \\
-                '--no-kvm[Disable KVM even if the template was built with type: kvm]' \\
-                '--airgap[No network devices (masks NICs and outbound proxies, refuses pci/usb passthrough)]' \\
-                '--proxy-only[Restrict network to host proxy only]' \\
-                '--inbox=[Host directory to mount read-only at /home/agentuser/inbox]:directory:_files -/' \\
-                '--cpu=[CPU core limit]:number' \\
-                '--memory=[Memory limit, e.g. 8GB]:size' \\
-                '--disk=[Disk size limit]:size' \\
-                '--no-start[Don'"'"'t start the instance after creation]' \\
-                '*--account=[Credential account as <namespace>=<account>]:selection:_isx_accounts' \\
-                '--owner=[External tool that controls this instance'"'"'s lifecycle]:owner' \\
-                '--owner-id=[The owner'"'"'s own handle for this instance]:id' \\
-                '1:new instance name'
-            }
-
-            _isx_build() {
-              _arguments \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '--all[Rebuild all defined templates]' \\
-                '--out-of-sync[Rebuild templates that are out of sync]' \\
-                '--with-parents[Rebuild the template and all its parents]' \\
-                '--with-descendants[Rebuild the template and all templates inheriting from it]' \\
-                '--missing[Build only templates that don'"'"'t exist yet]' \\
-                '--type=[Instance type (overrides image definition)]:type:(container vm kvm)' \\
-                '--yes[Skip interactive confirmations]' \\
-                '--verbose[Show every command the definitions ran, with its output]' \\
-                '*:template name:_isx_template_names'
-            }
-
-            _isx_destroy() {
-              _arguments \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '--all-templates[Destroy all built templates (reverse order, derived first)]' \\
-                '--all-instances[Destroy all instances]' \\
-                '--skip-confirmation[Skip the confirmation prompt]' \\
-                '--owner=[Destroy only if this external tool owns it]:owner' \\
-                '--owner-id=[...and only under this handle]:id' \\
-                '1::environment name:_isx_instances'
-            }
-
-            _isx_reset() {
-              _arguments \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '--skip-confirmation[Skip the confirmation prompt]'
-            }
-
-            _isx_list() {
-              _arguments \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '--format=[Output format]:format:(table plain json)' \\
-                '--plain[Same as --format=plain]' \\
-                '(-q --quiet)'{-q,--quiet}'[Print instance names only]' \\
-                '--status=[Only instances in this state]:status:(running stopped)'
-            }
-
-            _isx_shell() {
-              _arguments \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '--task[Join a delegated task'"'"'s agent conversation]' \\
-                '1:clone name:_isx_instances' \\
-                '2::task id:'
-            }
-
-            _isx_instance_arg() {
-              _arguments \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '1:instance name:_isx_instances'
-            }
-
-            _isx_run() {
-              _arguments \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '--action=[Action to run (tool-name or tool-name\\:action-id)]:action' \\
-                '1:instance name:_isx_instances'
-            }
-
-            _isx_project() {
-              local state line; typeset -A opt_args
-              _arguments -C \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '1: :->subcmd' \\
-                '*:: :->args'
-
-              local -a _project_subcmds
-              _project_subcmds=(
-                'create:create a project template from a parent base image'
-                'update:update a project template (system packages, git repos, dependencies)'
-              )
-
-              case $state in
-                subcmd) _describe -t subcmds 'project subcommand' _project_subcmds ;;
-                args)
-                  case $line[1] in
-                    create)
-                      _arguments \\
-                        '(-h --help)'{-h,--help}'[Show help]' \\
-                        '--config=[Path to incus-spawn.yaml]:file:_files' \\
-                        '1:project template name' ;;
-                    update)
-                      _arguments \\
-                        '(-h --help)'{-h,--help}'[Show help]' \\
-                        '--config=[Path to incus-spawn.yaml]:file:_files' \\
-                        '1:project template name:_isx_instances' ;;
-                  esac ;;
-              esac
-            }
-
-            _isx_proxy() {
-              local state line; typeset -A opt_args
-              _arguments -C \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '1: :->subcmd' \\
-                '*:: :->args'
-
-              local -a _proxy_subcmds
-              _proxy_subcmds=(
-                'start:start the MITM authentication proxy'
-                'stop:stop the proxy'
-                'restart:restart the proxy service'
-                'status:check if the proxy is running'
-                'install:install the proxy as a systemd user service'
-                'uninstall:stop and remove the systemd proxy service'
-                'logs:follow the proxy log file in real time'
-                'dump:run a local pass-through proxy to capture host-side API traffic'
-              )
-
-              case $state in
-                subcmd) _describe -t subcmds 'proxy subcommand' _proxy_subcmds ;;
-                args)
-                  case $line[1] in
-                    start)
-                      _arguments \\
-                        '(-h --help)'{-h,--help}'[Show help]' \\
-                        '--port=[MITM TLS proxy port]:port' \\
-                        '--health-port=[Health check HTTP port]:port' \\
-                        '--gateway-ip=[Incus bridge gateway IP, for when Incus cannot report it (Linux: the bridge address; macOS: the VM bridge)]:ip' \\
-                        '--debug[Log full API request/response details for traffic inspection]' ;;
-                    dump)
-                      _arguments \\
-                        '(-h --help)'{-h,--help}'[Show help]' \\
-                        '--port=[Local HTTP port]:port' ;;
-                    stop|restart|status|install|uninstall|logs)
-                      _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
-                  esac ;;
-              esac
-            }
-
-            _isx_clean() {
-              local state line; typeset -A opt_args
-              _arguments -C \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '1: :->subcmd' \\
-                '*:: :->args'
-
-              local -a _clean_subcmds
-              _clean_subcmds=(
-                'cache:remove cached downloads, registry blobs, and build caches'
-                'state:remove VM state, logs, and appliance artifacts'
-                'config:remove configuration, SSH keys, and CA certificate'
-                'pool:reclaim space from the storage pool'
-                'dnf:remove only the DNF cache volume builds share'
-                'all:remove all incus-spawn data'
-              )
-
-              case $state in
-                subcmd) _describe -t subcmds 'clean subcommand' _clean_subcmds ;;
-                args)
-                  _arguments \\
-                    '(-h --help)'{-h,--help}'[Show help]' \\
-                    '--dry-run[Show what would be deleted without deleting]' \\
-                    '--skip-confirmation[Skip the confirmation prompt]' ;;
-              esac
-            }
-
-            _isx_vm() {
-              local state line; typeset -A opt_args
-              _arguments -C \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '1: :->subcmd' \\
-                '*:: :->args'
-
-              local -a _vm_subcmds
-              _vm_subcmds=(
-                'start:start the VM (creates disk image on first run)'
-                'stop:stop the VM (graceful shutdown)'
-                'restart:stop and restart the VM (keeps instances, stops running containers, applies pending appliance updates)'
-                'status:show VM status and system diagnostics'
-                'resize:grow the VM data disk that backs the storage pool'
-                'reset:wipe the VM data disk (deletes every instance, template and cached image)'
-                'console:follow VM serial console output'
-              )
-
-              case $state in
-                subcmd) _describe -t subcmds 'vm subcommand' _vm_subcmds ;;
-                args)
-                  _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
-              esac
-            }
-
-            _isx_update_base() {
-              _arguments \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '--list[List available versions]' \\
-                '--latest[Track the latest version (remove any pin)]' \\
-                '1::release tag'
-            }
-
-            _isx_doctor() {
-              _arguments \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '--bundle[Collect findings and logs into a redacted support archive (implies --deep)]' \\
-                '--deep[Run per-instance checks (DNS, TLS, resolv.conf)]'
-            }
-
-            _isx_account() {
-              local state line; typeset -A opt_args
-              _arguments -C \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '1: :->subcmd' \\
-                '*:: :->args'
-
-              local -a _account_subcmds
-              _account_subcmds=(
-                'list:list configured accounts per namespace'
-                'add:add or replace one credential'
-                'show:show the account an instance uses for each credential'
-                'set:point an instance at different credential accounts'
-                'unset:make an instance follow the default account again'
-                'reset-proofs:revoke and replace shared credential proofs'
-              )
-
-              case $state in
-                subcmd) _describe -t subcmds 'account subcommand' _account_subcmds ;;
-                args)
-                  case $line[1] in
-                    list) _arguments '--format=[Output format]:format:(table plain json)' ;;
-                    show|reset-proofs) _arguments '1:instance:_isx_instances' ;;
-                    set) _arguments '1:instance:_isx_instances' '*:account:_isx_accounts' ;;
-                    unset) _arguments '1:instance:_isx_instances' '*:namespace:_isx_account_namespaces' ;;
-                    add) _arguments '1:credential:_isx_account_add_names' ;;
-                  esac ;;
-              esac
-            }
-
-            _isx_tools() {
-              local state line; typeset -A opt_args
-              _arguments -C \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '1: :->subcmd' \\
-                '*:: :->args'
-
-              local -a _tools_subcmds
-              _tools_subcmds=(
-                'list:list available tools'
-                'show:show details of a tool definition'
-              )
-
-              case $state in
-                subcmd)
-                  _describe -t subcmds 'tools subcommand' _tools_subcmds ;;
-                args)
-                  case $line[1] in
-                    list) _arguments '(-v --verbose)'{-v,--verbose}'[Show source and description]' ;;
-                    show) _arguments '1:tool name:_isx_tool_names' ;;
-                  esac ;;
-              esac
-            }
+            # zsh completion for isx (incus-spawn): every TAB asks isx itself.
 
             _isx() {
-              local context state state_descr line
-              typeset -A opt_args
-
-              _arguments -C \\
-                '(-h --help)'{-h,--help}'[Show help and exit]' \\
-                '(-V --version)'{-V,--version}'[Show version and exit]' \\
-                '1: :->cmd' \\
-                '*:: :->args'
-
-              case $state in
-                cmd)
-                  local -a cmds
-                  cmds=(
-                    'init:one-time host setup (install Incus, configure auth)'
-                    'build:build or rebuild a template image'
-                    'clean:remove cached data, state, or configuration'
-                    'project:manage project templates'
-                    'branch:create a new instance from an existing one'
-                    'shell:open a shell in an existing clone'
-                    'start:start an instance and make it ready for use, without a shell'
-                    'stop:stop a running instance'
-                    'run:run the default action or a specific action on an instance'
-                    'list:list all incus-spawn environments'
-                    'destroy:destroy a clone environment'
-                    'reset:return to a freshly-installed state'
-                    'update-all:update all templates (packages, git repos, dependencies)'
-                    'proxy:manage the MITM authentication proxy'
-                    'templates:manage template definitions'
-                    'tools:list and inspect available tool definitions'
-                    'account:add credentials, and show or change the accounts an instance uses'
-                    'mcp:serve isx to a local AI agent over MCP (stdio)'
-                    'vm:manage the incus-spawn VM appliance'
-                    'update-base:check for and install base image updates'
-                    'doctor:run health checks and offer to fix problems'
-                    'help:AI-powered help — ask any question about incus-spawn'
-                  )
-                  _describe -t commands 'isx command' cmds ;;
-                args)
-                  # `_arguments -C` already dropped the command from `words` and decremented
-                  # `CURRENT`, so a helper's `_arguments` sees its subcommand as the command
-                  # and completes positional arguments from `words[2]`. Shifting again here
-                  # left the empty word being completed as the command, so no helper offered
-                  # a positional value (`isx destroy <TAB>` listed nothing).
-                  local cmd=$line[1]
-                  case $cmd in
-                    branch)     _isx_branch ;;
-                    build)      _isx_build ;;
-                    clean)      _isx_clean ;;
-                    destroy)    _isx_destroy ;;
-                    reset)      _isx_reset ;;
-                    doctor)     _isx_doctor ;;
-                    help)       _arguments '(-h --help)'{-h,--help}'[Show help]' '--with-templates[Include template definitions in AI context]' '*:question' ;;
-                    list)       _isx_list ;;
-                    shell)      _isx_shell ;;
-                    start|stop) _isx_instance_arg ;;
-                    run)        _isx_run ;;
-                    project)    _isx_project ;;
-                    proxy)      _isx_proxy ;;
-                    templates)  _isx_templates ;;
-                    tools)      _isx_tools ;;
-                    account)    _isx_account ;;
-                    vm)         _isx_vm ;;
-                    update-base) _isx_update_base ;;
-                  esac ;;
-              esac
+              local -a request spaced unspaced
+              local line word
+              # The words up to the cursor as isx receives them: their quoting removed, nothing expanded.
+              request=("${(@Q)words[2,CURRENT-1]}" "${(Q)PREFIX}")
+              for line in "${(@f)$(isx --aesh-complete -- "${request[@]}" 2>/dev/null)}"; do
+                word=${line%%$'\\t'*}
+                [[ -n $word ]] || continue
+                # _describe reads "word:description", so a colon in the word is escaped.
+                local entry=${word//:/\\\\:}
+                [[ $line == *$'\\t'* ]] && entry+=":${line#*$'\\t'}"
+                # A directory or a bare <namespace>= is completed further, so no space follows it.
+                if [[ $word == */ || $word == *= ]]; then unspaced+=("$entry"); else spaced+=("$entry"); fi
+              done
+              local ret=1
+              _describe -t values 'isx' spaced -U && ret=0
+              _describe -t values 'isx' unspaced -U -S '' && ret=0
+              return $ret
             }
 
-            compdef _isx isx
+            compdef _isx isx 2>/dev/null
             """;
 
     // ── Bash completion ─────────────────────────────────────────────────────────
 
+    /**
+     * Never gives what isx prints to anything that expands it ({@code compgen -W}, {@code eval}):
+     * readline inserts a candidate as is, so each is quoted for the quote the word left open
+     * (#1778). {@code printf %q} is used only outside quotes: inside {@code "} its {@code $'...'}
+     * form, written for a character the locale cannot print, leaves a {@code $(...)} live. The
+     * words come from {@code COMP_LINE}, read by the script itself rather than bash-completion,
+     * whose dequoting calls {@code eval}. Readline replaces only what follows the word's last
+     * {@code COMP_WORDBREAKS} character or its open quote, so the part before is dropped from each
+     * whole-word candidate first, before quoting.
+     */
     private static final String BASH_COMPLETION = """
-            # bash completion for isx (incus-spawn)
+            # bash completion for isx (incus-spawn): every TAB asks isx itself.
 
-            # Offer each line of stdin, then each argument, that starts with what is typed. Never
-            # give compgen what isx prints: it expands a -W word list, so a $(...) in a name
-            # would run on TAB. The names are checked where isx loads them; this is the second layer.
-            # Readline inserts a candidate as is, so each is quoted (%q) to stay one literal word.
-            _isx_reply() {
-              _isx_reply_after "" "$@"
-            }
-
-            # _isx_reply, offering each name without $1, a prefix already on the line. It is
-            # dropped before quoting: %q may write the whole name as one $'...' word.
-            _isx_reply_after() {
-              local typed=$1 candidate
-              shift
-              COMPREPLY=()
-              while IFS= read -r candidate || [[ -n "$candidate" ]]; do
-                [[ -n "$candidate" ]] && _isx_offer "$candidate" "$typed"
+            # Reads the command line up to the cursor as isx will, expanding and running nothing:
+            # _isx_request holds each word after "isx", its quotes and backslashes removed, the last the
+            # one being completed. Readline replaces only the end of that word, after its last word break
+            # (COMP_WORDBREAKS) or the quote still open; _isx_kept is the part before, as isx reads it,
+            # and _isx_quote the open quote: ', " or $', or nothing.
+            _isx_words() {
+              local line=${COMP_LINE:0:COMP_POINT} breaks=${COMP_WORDBREAKS//[[:space:]]/}
+              # One escape of $'...': up to three octal digits, a hex or Unicode code, or one character.
+              local escape='^\\\\([0-7]{1,3}|x[[:xdigit:]]{1,2}|u[[:xdigit:]]{1,4}|U[[:xdigit:]]{1,8}|.)'
+              # A closing quote is no word break for readline: what it kept before the quote opened holds again.
+              local word="" started="" before="" c i
+              _isx_request=() _isx_kept="" _isx_quote=""
+              for (( i = 0; i < ${#line}; i++ )); do
+                c=${line:i:1}
+                if [[ $_isx_quote == "'" ]]; then
+                  if [[ $c == "'" ]]; then _isx_quote="" _isx_kept=$before; else word+=$c; fi
+                elif [[ $_isx_quote == "\\$'" ]]; then
+                  if [[ $c == "'" ]]; then
+                    _isx_quote="" _isx_kept=$before
+                  elif [[ ${line:i:10} =~ $escape ]]; then
+                    # %b reads the escapes %q writes in $'...', and runs nothing; it keeps the backslash of \\', \\" and \\?.
+                    if [[ ${BASH_REMATCH[0]} == \\\\[\\'\\"?] ]]; then word+=${BASH_REMATCH[0]:1}; else printf -v c %b "${BASH_REMATCH[0]}"; word+=$c; fi
+                    (( i += ${#BASH_REMATCH[0]} - 1 ))
+                  else
+                    word+=$c
+                  fi
+                elif [[ $_isx_quote == '"' ]]; then
+                  if [[ $c == '"' ]]; then
+                    _isx_quote="" _isx_kept=$before
+                  elif [[ $c == "\\\\" && ${line:i+1:1} == [\\$\\`\\"\\\\] ]]; then
+                    word+=${line:i+1:1}
+                    (( i++ ))
+                  else
+                    word+=$c
+                  fi
+                elif [[ $c == [[:space:]] ]]; then
+                  [[ -n $started ]] && _isx_request+=("$word")
+                  word="" started="" _isx_kept=""
+                else
+                  started=1
+                  if [[ $c == "\\\\" ]]; then
+                    word+=${line:i+1:1}
+                    (( i++ ))
+                  elif [[ $c == "'" || $c == '"' ]]; then
+                    _isx_quote=$c before=$_isx_kept _isx_kept=$word
+                  elif [[ $c == '$' && ${line:i+1:1} == "'" ]]; then
+                    _isx_quote="\\$'" before=$_isx_kept _isx_kept=$word
+                    (( i++ ))
+                  else
+                    word+=$c
+                    [[ $breaks == *"$c"* ]] && _isx_kept=$word
+                  fi
+                fi
               done
-              for candidate in "$@"; do _isx_offer "$candidate" "$typed"; done
+              _isx_request+=("$word")
+              _isx_request=("${_isx_request[@]:1}")
             }
 
-            # Offer $1 without the prefix $2, which it must start with, when what is typed starts
-            # the name as it is or quoted whole.
-            _isx_offer() {
-              [[ "$1" == "$2"* ]] || return 0
-              local inserted quoted
-              printf -v inserted %q "${1#"$2"}"
-              quoted=$inserted
-              [[ -n "$2" ]] && printf -v quoted %q "$1"
-              [[ "$1" == "$cur"* || "$quoted" == "$cur"* ]] || return 0
-              COMPREPLY+=("$inserted")
-            }
-
-            _isx_list_instances() {
-              isx list -q 2>/dev/null
-            }
-
-            _isx_list_accounts() {
-              isx account list --completion 2>/dev/null | cut -f1 | grep =
-            }
-
-            _isx_list_account_namespaces() {
-              isx account list --completion 2>/dev/null | grep -v =
-            }
-
-            # What account add takes: credential namespaces and tool names.
-            _isx_list_account_add_names() {
-              isx account add --completion 2>/dev/null
-            }
-
-            # Offer <namespace>= then <namespace>=<account>.
-            _isx_complete_accounts() {
-              local candidates
-              candidates=$(_isx_list_accounts)
-              if [[ "$cur" == *=* ]]; then
-                # A namespace is typed: offer only its accounts, not the bare <namespace>= again.
-                candidates=$(grep -v '=$' <<< "$candidates")
-              fi
-              # _init_completion -s keeps the "=" in $cur, but readline replaces only what follows
-              # the last "=" (COMP_WORDBREAKS): drop the typed <namespace>= from each candidate.
-              local typed=""
-              if [[ "$cur" == *=* && "$COMP_WORDBREAKS" == *=* ]]; then
-                typed=${cur%"${cur##*=}"}
-              fi
-              _isx_reply_after "$typed" <<< "$candidates"
-            }
-
-            _isx_list_templates() {
-              isx templates 2>/dev/null
-            }
-
-            _isx_list_tools() {
-              isx tools list 2>/dev/null
-            }
-
-            _isx() {
-              local cur prev words cword split
-              # -s splits --opt=value into prev=--opt and cur=value, so the "$prev" cases below
-              # complete values in both the --opt value and the --opt=value forms.
-              _init_completion -s || return
-
-              local commands="init build clean project branch shell start stop run list destroy reset update-all update-base proxy templates account mcp tools vm doctor help"
-
-              # Determine which subcommand is active
-              local cmd=""
-              local i
-              for (( i=1; i < cword; i++ )); do
-                case "${words[i]}" in
-                  init|build|clean|project|branch|shell|start|stop|run|list|destroy|reset|update-all|update-base|proxy|templates|account|mcp|tools|vm|doctor|help)
-                    cmd="${words[i]}"
-                    break ;;
-                esac
-              done
-
-              if [[ -z "$cmd" ]]; then
-                # Complete top-level commands and options
-                case "$cur" in
-                  -*)
-                    COMPREPLY=( $(compgen -W "--help --version" -- "$cur") )
-                    ;;
-                  *)
-                    COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
-                    ;;
-                esac
-                return
-              fi
-
-              case "$cmd" in
-                branch)
-                  case "$prev" in
-                    --from)
-                      _isx_reply < <(_isx_list_instances)
-                      return ;;
-                    --inbox)
-                      _filedir -d
-                      return ;;
-                    --cpu|--memory|--disk|--owner|--owner-id) return ;;
-                    --account)
-                      _isx_complete_accounts
-                      return ;;
-                  esac
-                  COMPREPLY=( $(compgen -W "--help --from --gui --no-gui --kvm --no-kvm --airgap --proxy-only --inbox --cpu --memory --disk --no-start --account --owner --owner-id" -- "$cur") )
-                  ;;
-                build)
-                  case "$prev" in
-                    build)
-                      _isx_reply --help --all --out-of-sync --with-parents --with-descendants --missing --type --yes --verbose < <(_isx_list_templates)
-                      return ;;
-                    --type)
-                      COMPREPLY=( $(compgen -W "container vm kvm" -- "$cur") )
-                      return ;;
-                  esac
-                  _isx_reply --help --all --out-of-sync --with-parents --with-descendants --missing --type --yes --verbose < <(_isx_list_templates)
-                  ;;
-                clean)
-                  local clean_subcmds="cache state config pool dnf all"
-                  local clean_cmd=""
-                  local j
-                  for (( j=i+1; j < cword; j++ )); do
-                    case "${words[j]}" in
-                      cache|state|config|pool|dnf|all) clean_cmd="${words[j]}"; break ;;
-                    esac
-                  done
-                  if [[ -z "$clean_cmd" ]]; then
-                    COMPREPLY=( $(compgen -W "$clean_subcmds --help" -- "$cur") )
-                  else
-                    COMPREPLY=( $(compgen -W "--help --dry-run --skip-confirmation" -- "$cur") )
-                  fi
-                  ;;
-                destroy)
-                  case "$prev" in
-                    destroy)
-                      _isx_reply --help --all-templates --all-instances --skip-confirmation --owner --owner-id < <(_isx_list_instances)
-                      return ;;
-                    --owner|--owner-id) return ;;
-                  esac
-                  COMPREPLY=( $(compgen -W "--help --all-templates --all-instances --skip-confirmation --owner --owner-id" -- "$cur") )
-                  ;;
-                reset)
-                  COMPREPLY=( $(compgen -W "--help --skip-confirmation" -- "$cur") )
-                  ;;
-                list)
-                  case "$prev" in
-                    --format)
-                      COMPREPLY=( $(compgen -W "table plain json" -- "$cur") )
-                      return ;;
-                    --status)
-                      COMPREPLY=( $(compgen -W "running stopped" -- "$cur") )
-                      return ;;
-                  esac
-                  COMPREPLY=( $(compgen -W "--help --format --plain --quiet --status" -- "$cur") )
-                  ;;
-                shell)
-                  case "$prev" in
-                    shell)
-                      _isx_reply --help --task < <(_isx_list_instances)
-                      return ;;
-                  esac
-                  COMPREPLY=( $(compgen -W "--help --task" -- "$cur") )
-                  ;;
-                start|stop)
-                  case "$prev" in
-                    start|stop)
-                      _isx_reply --help < <(_isx_list_instances)
-                      return ;;
-                  esac
-                  COMPREPLY=( $(compgen -W "--help" -- "$cur") )
-                  ;;
-                run)
-                  case "$prev" in
-                    run)
-                      _isx_reply --help --action < <(_isx_list_instances)
-                      return ;;
-                    --action) return ;;
-                  esac
-                  COMPREPLY=( $(compgen -W "--help --action" -- "$cur") )
-                  ;;
-                account)
-                  local acct_cmd=""
-                  local j
-                  for (( j=i+1; j < cword; j++ )); do
-                    case "${words[j]}" in
-                      list|add|show|set|unset|reset-proofs) acct_cmd="${words[j]}"; break ;;
-                    esac
-                  done
-                  case "$acct_cmd" in
-                    "") COMPREPLY=( $(compgen -W "list add show set unset reset-proofs --help" -- "$cur") ) ;;
-                    add)
-                      if [[ "$prev" == add ]]; then
-                        _isx_reply --help < <(_isx_list_account_add_names)
-                      fi
-                      ;;
-                    show|set|unset|reset-proofs)
-                      if [[ "$prev" == "$acct_cmd" ]]; then
-                        _isx_reply --help < <(_isx_list_instances)
-                      elif [[ "$acct_cmd" == set ]]; then
-                        _isx_complete_accounts
-                      elif [[ "$acct_cmd" == unset ]]; then
-                        _isx_reply < <(_isx_list_account_namespaces)
-                      fi
-                      ;;
-                    *) COMPREPLY=( $(compgen -W "--help" -- "$cur") ) ;;
-                  esac
-                  ;;
-                project)
-                  local proj_subcmds="create update"
-                  local proj_cmd=""
-                  local j
-                  for (( j=i+1; j < cword; j++ )); do
-                    case "${words[j]}" in
-                      create|update) proj_cmd="${words[j]}"; break ;;
-                    esac
-                  done
-                  if [[ -z "$proj_cmd" ]]; then
-                    COMPREPLY=( $(compgen -W "$proj_subcmds --help" -- "$cur") )
-                  else
-                    case "$proj_cmd" in
-                      create) COMPREPLY=( $(compgen -W "--help --config" -- "$cur") ) ;;
-                      update)
-                        case "$prev" in
-                          update)
-                            _isx_reply --help --config < <(_isx_list_instances)
-                            return ;;
-                        esac
-                        COMPREPLY=( $(compgen -W "--help --config" -- "$cur") )
-                        ;;
-                    esac
-                  fi
-                  ;;
-                proxy)
-                  local proxy_subcmds="start stop restart status install uninstall logs dump"
-                  local proxy_cmd=""
-                  local j
-                  for (( j=i+1; j < cword; j++ )); do
-                    case "${words[j]}" in
-                      start|stop|restart|status|install|uninstall|logs|dump) proxy_cmd="${words[j]}"; break ;;
-                    esac
-                  done
-                  if [[ -z "$proxy_cmd" ]]; then
-                    COMPREPLY=( $(compgen -W "$proxy_subcmds --help" -- "$cur") )
-                  else
-                    case "$proxy_cmd" in
-                      start) COMPREPLY=( $(compgen -W "--help --port --health-port --gateway-ip --debug" -- "$cur") ) ;;
-                      dump) COMPREPLY=( $(compgen -W "--help --port" -- "$cur") ) ;;
-                      *) COMPREPLY=( $(compgen -W "--help" -- "$cur") ) ;;
-                    esac
-                  fi
-                  ;;
-                templates)
-                  local tpl_subcmds="list edit new"
-                  local tpl_cmd=""
-                  local j
-                  for (( j=i+1; j < cword; j++ )); do
-                    case "${words[j]}" in
-                      list|edit|new) tpl_cmd="${words[j]}"; break ;;
-                    esac
-                  done
-                  if [[ -z "$tpl_cmd" ]]; then
-                    _isx_reply $tpl_subcmds --help < <(_isx_list_templates)
-                  else
-                    case "$tpl_cmd" in
-                      list) COMPREPLY=( $(compgen -W "--help --verbose -v" -- "$cur") ) ;;
-                      edit)
-                        case "$prev" in
-                          edit)
-                            _isx_reply --help < <(_isx_list_templates)
-                            return ;;
-                        esac
-                        COMPREPLY=( $(compgen -W "--help" -- "$cur") )
-                        ;;
-                      new) COMPREPLY=( $(compgen -W "--help --project" -- "$cur") ) ;;
-                    esac
-                  fi
-                  ;;
-                tools)
-                  local tools_subcmds="list show"
-                  local tools_cmd=""
-                  local j
-                  for (( j=i+1; j < cword; j++ )); do
-                    case "${words[j]}" in
-                      list|show) tools_cmd="${words[j]}"; break ;;
-                    esac
-                  done
-                  if [[ -z "$tools_cmd" ]]; then
-                    COMPREPLY=( $(compgen -W "$tools_subcmds --help" -- "$cur") )
-                  else
-                    case "$tools_cmd" in
-                      list) COMPREPLY=( $(compgen -W "--help --verbose -v" -- "$cur") ) ;;
-                      show)
-                        case "$prev" in
-                          show)
-                            _isx_reply --help < <(_isx_list_tools)
-                            return ;;
-                        esac
-                        COMPREPLY=( $(compgen -W "--help" -- "$cur") )
-                        ;;
-                    esac
-                  fi
-                  ;;
-                vm)
-                  local vm_subcmds="start stop restart status resize reset console"
-                  local vm_cmd=""
-                  local j
-                  for (( j=i+1; j < cword; j++ )); do
-                    case "${words[j]}" in
-                      start|stop|restart|status|resize|reset|console) vm_cmd="${words[j]}"; break ;;
-                    esac
-                  done
-                  if [[ -z "$vm_cmd" ]]; then
-                    COMPREPLY=( $(compgen -W "$vm_subcmds --help" -- "$cur") )
-                  else
-                    COMPREPLY=( $(compgen -W "--help" -- "$cur") )
-                  fi
-                  ;;
-                update-base)
-                  COMPREPLY=( $(compgen -W "--help --list --latest" -- "$cur") )
-                  ;;
-                doctor)
-                  COMPREPLY=( $(compgen -W "--help --bundle --deep" -- "$cur") )
-                  ;;
-                help)
-                  COMPREPLY=( $(compgen -W "--help --with-templates" -- "$cur") )
-                  ;;
-                init|update-all)
-                  COMPREPLY=( $(compgen -W "--help" -- "$cur") )
-                  ;;
+            # REPLY is $1 quoted for where readline inserts it, inside the quote the word left open, so it
+            # stays one literal word and never runs: %q outside quotes, and inside them the escapes that
+            # quote allows. %q is never used inside a quote: its $'...' form keeps a $(...) live there.
+            # History expansion still reads a ! inside "...", and bash 3.2 (macOS) inside $'...' too, so it
+            # is written outside them, as "\\!" or '\\!$'.
+            # Inside $'...' a ' is \\x27: readline would read \\' as the end of the quote on the next TAB.
+            _isx_quote_for() {
+              case $_isx_quote in
+                "") printf -v REPLY %q "$1"; [[ $REPLY == "\\$'"* ]] && REPLY=${REPLY//!/\\'\\\\!\\$\\'} ;;
+                "'") REPLY=${1//\\'/\\'\\\\\\'\\'} ;;
+                '"') REPLY=${1//\\\\/\\\\\\\\}; REPLY=${REPLY//\\$/\\\\\\$}; REPLY=${REPLY//\\`/\\\\\\`}; REPLY=${REPLY//\\"/\\\\\\"}; REPLY=${REPLY//!/\\"\\\\!\\"} ;;
+                *) REPLY=${1//\\\\/\\\\\\\\}; REPLY=${REPLY//\\'/\\\\x27}; REPLY=${REPLY//!/\\'\\\\!\\$\\'} ;;
               esac
             }
 
-            complete -F _isx isx
+            _isx() {
+              _isx_words
+              local candidate kept=$_isx_kept typed="" prefix="" home=""
+              # Not [-1]: macOS's bash 3.2 has no negative subscripts.
+              (( ${#_isx_request[@]} )) && typed=${_isx_request[${#_isx_request[@]}-1]}
+              # A redirection's target is a file: ask isx nothing, and let readline complete it.
+              local redirect='^[0-9&]*[<>][<>&|]*$' redirected='^[0-9&]*[<>]'
+              if [[ $typed =~ $redirected ]] || { (( ${#_isx_request[@]} > 1 )) && [[ ${_isx_request[${#_isx_request[@]}-2]} =~ $redirect ]]; }; then
+                COMPREPLY=()
+                compopt -o default 2>/dev/null
+                return 0
+              fi
+              # isx answers a typed ~/ (or --opt=~/) with the home directory: in what readline keeps, it
+              # is matched as typed.
+              if [[ $typed == "~/"* ]]; then
+                home=1
+              elif [[ $typed == --*="~/"* ]]; then
+                home=1 prefix=${typed%%=*}=
+              fi
+              COMPREPLY=()
+              while IFS= read -r candidate; do
+                candidate=${candidate%%$'\\t'*}
+                if [[ -n $home && ${#kept} -gt ${#prefix} && $candidate == "$prefix$HOME/"* ]]; then
+                  candidate=$prefix"~/"${candidate#"$prefix$HOME/"}
+                fi
+                [[ $candidate == "$kept"?* ]] || continue
+                # A directory or a bare <namespace>= is completed further, so no space follows it.
+                [[ $candidate == */ || $candidate == *= ]] && compopt -o nospace 2>/dev/null
+                _isx_quote_for "${candidate#"$kept"}"
+                COMPREPLY+=("$REPLY")
+              done < <(isx --aesh-complete -- "${_isx_request[@]}" 2>/dev/null)
+              # Readline closes a lone match's quote, and only when the line does not already end in
+              # it; _isx_quote_for's escapes can end in one that reopens the quote or is escaped in it.
+              local close=${_isx_quote#\\$}
+              if [[ ${#COMPREPLY[@]} == 1 && -n $close && ${COMPREPLY[0]} == *"$close" ]]; then COMPREPLY[0]+=$close; fi
+            }
+
+            # bash 3.2 (macOS) has no compopt, so there an empty answer falls back to file names.
+            if (( BASH_VERSINFO[0] >= 4 )); then complete -F _isx isx; else complete -o default -F _isx isx; fi
             """;
 
     // ── Fish completion ─────────────────────────────────────────────────────────
 
+    /**
+     * isx answers in fish's own format, a candidate then a TAB and its description, and fish
+     * quotes what it inserts. A command substitution's output is never evaluated again, so what
+     * isx prints stays text.
+     */
     private static final String FISH_COMPLETION = """
-            # fish completion for isx (incus-spawn)
+            # fish completion for isx (incus-spawn): every TAB asks isx itself.
 
-            # Helper: list connectable instances (excludes templates)
-            function __isx_instances
-              isx list -q 2>/dev/null
+            # The words up to the cursor as isx receives them, their quoting removed; then what it answers.
+            function __isx_complete
+                set -l token (commandline -ct | string unescape)
+                set -l answer (isx --aesh-complete -- (commandline -opc)[2..-1] "$token" 2>/dev/null)
+                # isx answers a typed ~/ (or --opt=~/) with the home directory, which fish would not match against it.
+                if string match -qr -- '^(--[^=]*=)?~/' "$token"
+                    set -l prefix (string match -r -- '^--[^=]*=' "$token")
+                    set answer (string replace -r -- '^'(string escape --style=regex -- "$prefix$HOME/") "$prefix~/" $answer)
+                end
+                printf '%s\\n' $answer
             end
 
-            # Helper: <namespace>= and <namespace>=<account> candidates (default marked); names only
-            function __isx_accounts
-              isx account list --completion 2>/dev/null | string match -- '*=*'
-            end
-
-            # Helper: every credential namespace, for `account unset`
-            function __isx_account_namespaces
-              isx account list --completion 2>/dev/null | string match -v -- '*=*'
-            end
-
-            # Helper: what `account add` takes, credential namespaces and tool names
-            function __isx_account_add_names
-              isx account add --completion 2>/dev/null
-            end
-
-            # Helper: true when the line is `isx account $argv[1]` followed by exactly $argv[2]
-            # non-option arguments so far, or by at least one when $argv[2] is "+"
-            function __isx_account_args
-              set -l tokens (commandline -opc)
-              test (count $tokens) -ge 3; and test "$tokens[2]" = account; and test "$tokens[3]" = "$argv[1]"; or return 1
-              set -l n (count (string match -v -- '-*' $tokens[4..-1]))
-              if test "$argv[2]" = +
-                test $n -ge 1
-              else
-                test $n -eq $argv[2]
-              end
-            end
-
-            # Helper: list available template definitions
-            function __isx_templates
-              isx templates 2>/dev/null
-            end
-
-            # Helper: list available tool definitions
-            function __isx_tools
-              isx tools list 2>/dev/null
-            end
-
-            # Helper: true when no subcommand has been typed yet
-            function __isx_no_subcommand
-              not string match -qr -- '^(init|build|clean|project|branch|shell|start|stop|run|list|destroy|reset|update-all|update-base|proxy|templates|account|mcp|tools|vm|doctor|help)$' (commandline -opc)[2..-1]
-            end
-
-            # Helper: true when a specific subcommand is active
-            function __isx_using_subcommand
-              string match -qr -- "\\b$argv[1]\\b" (commandline -opc)
-            end
-
-            # ── Top-level commands ───────────────────────────────────────────────────────
-
-            complete -c isx -f -n __isx_no_subcommand -a init         -d 'One-time host setup (install Incus, configure auth)'
-            complete -c isx -f -n __isx_no_subcommand -a build        -d 'Build or rebuild a template image'
-            complete -c isx -f -n __isx_no_subcommand -a clean        -d 'Remove cached data, state, or configuration'
-            complete -c isx -f -n __isx_no_subcommand -a project      -d 'Manage project templates'
-            complete -c isx -f -n __isx_no_subcommand -a branch       -d 'Create a new instance from an existing one'
-            complete -c isx -f -n __isx_no_subcommand -a shell        -d 'Open a shell in an existing clone'
-            complete -c isx -f -n __isx_no_subcommand -a start        -d 'Start an instance and make it ready for use, without a shell'
-            complete -c isx -f -n __isx_no_subcommand -a stop         -d 'Stop a running instance'
-            complete -c isx -f -n __isx_no_subcommand -a run          -d 'Run the default action or a specific action on an instance'
-            complete -c isx -f -n __isx_no_subcommand -a list         -d 'List all incus-spawn environments'
-            complete -c isx -f -n __isx_no_subcommand -a destroy      -d 'Destroy a clone environment'
-            complete -c isx -f -n __isx_no_subcommand -a reset        -d 'Return to a freshly-installed state'
-            complete -c isx -f -n __isx_no_subcommand -a update-all   -d 'Update all templates (packages, git repos, dependencies)'
-            complete -c isx -f -n __isx_no_subcommand -a proxy        -d 'Manage the MITM authentication proxy'
-            complete -c isx -f -n __isx_no_subcommand -a templates    -d 'Manage template definitions'
-            complete -c isx -f -n __isx_no_subcommand -a tools        -d 'List and inspect available tool definitions'
-            complete -c isx -f -n __isx_no_subcommand -a mcp          -d 'Serve isx to a local AI agent over MCP (stdio)'
-            complete -c isx -f -n __isx_no_subcommand -a vm              -d 'Manage the incus-spawn VM appliance'
-            complete -c isx -f -n __isx_no_subcommand -a update-base     -d 'Check for and install base image updates'
-            complete -c isx -f -n __isx_no_subcommand -a doctor          -d 'Run health checks and offer to fix problems'
-            complete -c isx -f -n __isx_no_subcommand -a help            -d 'AI-powered help — ask any question about incus-spawn'
-
-            # ── help ────────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand help' -l with-templates -d 'Include template definitions in AI context'
-
-            # ── branch ───────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand branch' -a '(__isx_instances)' -d 'Instance name'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l from        -d 'Source instance to branch from' -a '(__isx_instances)'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l gui         -d 'Enable GUI passthrough (Wayland + GPU + audio); the default for a gui: true container template, from a Wayland session'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l kvm         -d 'Expose /dev/kvm for nested virtualization'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l no-gui      -d 'Disable GUI passthrough even if the template has gui: true'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l no-kvm      -d 'Disable KVM even if the template was built with type: kvm'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l airgap      -d 'No network devices (masks NICs and outbound proxies, refuses pci/usb passthrough)'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l proxy-only  -d 'Restrict network to host proxy only'
-            complete -c isx -F -n '__isx_using_subcommand branch' -l inbox       -d 'Host directory to mount read-only at /home/agentuser/inbox'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l cpu         -d 'CPU core limit'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l memory      -d 'Memory limit, e.g. 8GB'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l disk        -d 'Disk size limit'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l no-start    -d "Don't start the instance after creation"
-            complete -c isx -f -n '__isx_using_subcommand branch' -l account     -d 'Credential account as <namespace>=<account>' -x -a '(__isx_accounts)'
-            complete -c isx -f -n '__isx_using_subcommand branch' -l owner       -d "External tool that controls this instance's lifecycle" -x
-            complete -c isx -f -n '__isx_using_subcommand branch' -l owner-id    -d "The owner's own handle for this instance" -x
-
-            # ── build ────────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand build' -a '(__isx_templates)' -d 'Template name'
-            complete -c isx -f -n '__isx_using_subcommand build' -l all              -d 'Rebuild all defined templates'
-            complete -c isx -f -n '__isx_using_subcommand build' -l out-of-sync     -d 'Rebuild templates that are out of sync'
-            complete -c isx -f -n '__isx_using_subcommand build' -l with-parents    -d 'Rebuild the template and all its parents'
-            complete -c isx -f -n '__isx_using_subcommand build' -l with-descendants -d 'Rebuild the template and all templates inheriting from it'
-            complete -c isx -f -n '__isx_using_subcommand build' -l missing          -d 'Build only templates that don'"'"'t exist yet'
-            complete -c isx -f -n '__isx_using_subcommand build' -l type -x          -d 'Instance type: container, vm, or kvm' -a 'container vm kvm'
-            complete -c isx -f -n '__isx_using_subcommand build' -l yes              -d 'Skip interactive confirmations'
-            complete -c isx -f -n '__isx_using_subcommand build' -l verbose          -d 'Show every command the definitions ran, with its output'
-
-            # ── clean ────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -a cache  -d 'Remove cached downloads, registry blobs, and build caches'
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -a state  -d 'Remove VM state, logs, and appliance artifacts'
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -a config -d 'Remove configuration, SSH keys, and CA certificate'
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -a pool   -d 'Reclaim space from the storage pool'
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -a dnf    -d 'Remove only the DNF cache volume builds share'
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -a all    -d 'Remove all incus-spawn data'
-
-            complete -c isx -f -n '__isx_using_subcommand clean; and string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -l dry-run           -d 'Show what would be deleted without deleting'
-            complete -c isx -f -n '__isx_using_subcommand clean; and string match -qr -- "\\b(cache|state|config|pool|dnf|all)\\b" (commandline -opc)' -l skip-confirmation -d 'Skip the confirmation prompt'
-
-            # ── destroy ──────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand destroy' -a '(__isx_instances)' -d 'Environment name'
-            complete -c isx -f -n '__isx_using_subcommand destroy' -l all-templates      -d 'Destroy all built templates (reverse order, derived first)'
-            complete -c isx -f -n '__isx_using_subcommand destroy' -l all-instances       -d 'Destroy all instances'
-            complete -c isx -f -n '__isx_using_subcommand destroy' -l skip-confirmation   -d 'Skip the confirmation prompt'
-            complete -c isx -f -n '__isx_using_subcommand destroy' -l owner               -d 'Destroy only if this external tool owns it' -x
-            complete -c isx -f -n '__isx_using_subcommand destroy' -l owner-id            -d '...and only under this handle' -x
-
-            # ── reset ───────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand reset' -l skip-confirmation -d 'Skip the confirmation prompt'
-
-            # ── list ─────────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand list' -l format -x -d 'Output format' -a 'table plain json'
-            complete -c isx -f -n '__isx_using_subcommand list' -l plain -d 'Same as --format=plain'
-            complete -c isx -f -n '__isx_using_subcommand list' -s q -l quiet -d 'Print instance names only'
-            complete -c isx -f -n '__isx_using_subcommand list' -l status -x -d 'Only instances in this state' -a 'running stopped'
-
-            # ── shell ────────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand shell' -a '(__isx_instances)' -d 'Clone name'
-            complete -c isx -f -n '__isx_using_subcommand shell' -l task -d "Join a delegated task's agent conversation"
-
-            # ── start / stop ────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand start' -a '(__isx_instances)' -d 'Instance name'
-            complete -c isx -f -n '__isx_using_subcommand stop' -a '(__isx_instances)' -d 'Instance name'
-
-            # ── run ─────────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand run' -a '(__isx_instances)' -d 'Instance name'
-            complete -c isx -f -n '__isx_using_subcommand run' -l action -d 'Action to run (tool-name or tool-name:action-id)'
-
-            # ── project ──────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand project; and not string match -qr -- "\\b(create|update)\\b" (commandline -opc)' -a create -d 'Create a project template from a parent base image'
-            complete -c isx -f -n '__isx_using_subcommand project; and not string match -qr -- "\\b(create|update)\\b" (commandline -opc)' -a update -d 'Update a project template'
-
-            complete -c isx -F -n '__isx_using_subcommand project; and __isx_using_subcommand create' -l config -d 'Path to incus-spawn.yaml'
-            complete -c isx -F -n '__isx_using_subcommand project; and __isx_using_subcommand update' -l config -d 'Path to incus-spawn.yaml'
-            complete -c isx -f -n '__isx_using_subcommand project; and __isx_using_subcommand update' -a '(__isx_instances)' -d 'Project template name'
-
-            # ── templates ────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand templates; and not string match -qr -- "\\b(list|edit|new)\\b" (commandline -opc)' -a list -d 'List available template names'
-            complete -c isx -f -n '__isx_using_subcommand templates; and not string match -qr -- "\\b(list|edit|new)\\b" (commandline -opc)' -a edit -d 'Edit a template definition'
-            complete -c isx -f -n '__isx_using_subcommand templates; and not string match -qr -- "\\b(list|edit|new)\\b" (commandline -opc)' -a new  -d 'Create a new template definition'
-            complete -c isx -f -n '__isx_using_subcommand templates; and not string match -qr -- "\\b(list|edit|new)\\b" (commandline -opc)' -a '(__isx_templates)' -d 'Template name'
-
-            complete -c isx -f -n '__isx_using_subcommand templates; and __isx_using_subcommand list' -s v -l verbose -d 'Show source and description'
-            complete -c isx -f -n '__isx_using_subcommand templates; and __isx_using_subcommand edit' -a '(__isx_templates)' -d 'Template name'
-            complete -c isx -f -n '__isx_using_subcommand templates; and __isx_using_subcommand new' -l project -d 'Create in project-local directory'
-
-            # ── account ─────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|add|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a list -d 'List configured accounts per namespace'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|add|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a add -d 'Add or replace one credential'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|add|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a show -d 'Show the account an instance uses for each credential'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|add|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a set  -d 'Point an instance at different credential accounts'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|add|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a unset -d 'Make an instance follow the default account again'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|add|show|set|unset|reset-proofs)\\b" (commandline -opc)' -a reset-proofs -d 'Revoke and replace shared credential proofs'
-
-            complete -c isx -f -n '__isx_using_subcommand account; and __isx_using_subcommand show' -a '(__isx_instances)' -d 'Instance name'
-            complete -c isx -f -n '__isx_account_args set 0'   -a '(__isx_instances)' -d 'Instance name'
-            complete -c isx -f -n '__isx_account_args set +'   -a '(__isx_accounts)'
-            complete -c isx -f -n '__isx_account_args unset 0' -a '(__isx_instances)' -d 'Instance name'
-            complete -c isx -f -n '__isx_account_args reset-proofs 0' -a '(__isx_instances)' -d 'Instance name'
-            complete -c isx -f -n '__isx_account_args unset +' -a '(__isx_account_namespaces)' -d 'Namespace'
-            complete -c isx -f -n '__isx_account_args add 0' -a '(__isx_account_add_names)' -d 'Credential'
-
-            # ── tools ────────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand tools; and not string match -qr -- "\\b(list|show)\\b" (commandline -opc)' -a list -d 'List available tools'
-            complete -c isx -f -n '__isx_using_subcommand tools; and not string match -qr -- "\\b(list|show)\\b" (commandline -opc)' -a show -d 'Show details of a tool definition'
-
-            complete -c isx -f -n '__isx_using_subcommand tools; and __isx_using_subcommand list' -s v -l verbose -d 'Show source and description'
-            complete -c isx -f -n '__isx_using_subcommand tools; and __isx_using_subcommand show' -a '(__isx_tools)' -d 'Tool name'
-
-            # ── proxy ────────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a start     -d 'Start the MITM authentication proxy'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a stop      -d 'Stop the proxy'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a restart   -d 'Restart the proxy service'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a status    -d 'Check if the proxy is running'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a install   -d 'Install the proxy as a systemd user service'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a uninstall -d 'Stop and remove the systemd proxy service'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a logs      -d 'Follow the proxy log file in real time'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a dump      -d 'Run a local pass-through proxy for API traffic capture'
-
-            complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l port        -d 'MITM TLS proxy port'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l health-port -d 'Health check HTTP port'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l gateway-ip  -d 'Incus bridge gateway IP, for when Incus cannot report it (Linux: the bridge address; macOS: the VM bridge)'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l debug       -d 'Log full API request/response details'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand dump'  -l port        -d 'Local HTTP port'
-
-            # ── vm ──────────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a start   -d 'Start the VM (creates disk image on first run)'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a stop    -d 'Stop the VM (graceful shutdown)'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a restart -d 'Stop and restart the VM (keeps instances, stops running containers, applies pending appliance updates)'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a status  -d 'Show VM status and system diagnostics'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a resize  -d 'Grow the VM data disk that backs the storage pool'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a reset   -d 'Wipe the VM data disk: deletes every instance, template and cached image'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a console -d 'Follow VM serial console output'
-
-            # ── update-base ─────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand update-base' -l list   -d 'List available versions'
-            complete -c isx -f -n '__isx_using_subcommand update-base' -l latest -d 'Track the latest version (remove any pin)'
-
-            # ── doctor ──────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand doctor' -l bundle -d 'Collect findings and logs into a redacted support archive (implies --deep)'
-            complete -c isx -f -n '__isx_using_subcommand doctor' -l deep   -d 'Run per-instance checks (DNS, TLS, resolv.conf)'
+            complete -c isx -f -a '(__isx_complete)'
             """;
 }

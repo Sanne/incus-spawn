@@ -385,9 +385,10 @@ A tool whose `name:` is not an identifier, by the same rule, is refused at load 
 Every built-in tool already has such a name.
 Bash completion feeds `isx tools list` to the completion script, and `compgen -W` expands its word list, so a cloned repository's tool named `$(...)` ran on TAB.
 Refusing the name at load keeps it out of every listing, as for a template; a template's stored definitions are skipped under a refused name too.
-The bash script is the second layer: it offers what isx prints through `_isx_reply`, a literal prefix match, and gives `compgen -W` only words it spells out itself.
-`_isx_reply` inserts each candidate quoted with `printf %q`, because readline puts it on the command line as is, where a `$(...)` would run on Enter.
-An account's typed `<namespace>=` is dropped before quoting, because `%q` writes a name holding a character such as U+2028 as one `$'...'` word, where the prefix is no longer at the front.
+The completion scripts are the second layer: none hands what isx prints to anything that expands it (see "Shell completion asks the running binary").
+The bash script quotes each candidate for the quote the word left open, because readline puts it on the command line as is, where a `$(...)` would run on Enter.
+It uses `printf %q` only outside a quote: inside `"`, the `$'...'` form `%q` writes for a character such as U+2028 leaves a `$(...)` live.
+An account's typed `<namespace>=` is dropped before quoting, because `%q` writes such a name as one `$'...'` word, where the prefix is no longer at the front.
 A host with a user tool named outside the rule renames it (docs/dev/MIGRATIONS.md, "A user tool whose name is not an identifier").
 A tool definition is refused the same way with a bare key under `parameters:` or `proxy.configuration:` (`flavour:` with nothing under it; `ToolDefValidator.bareKeys`, #1475): a bare key has no meaning of its own, and isx does not imply a default for it.
 
@@ -1142,20 +1143,42 @@ Each adopts the same helper and contract when it gains one.
 
 ### Shell completion asks the running binary
 
-`isx completion pwsh` prints a script that answers every TAB by running `isx --aesh-complete -- <words>` (#1744).
+`isx completion <shell>` prints a script that answers every TAB by running `isx --aesh-complete -- <words>`, for bash, zsh and fish (#1842) as for PowerShell (#1744).
 That request walks the command tree this binary registered, so a platform's commands are offered only on that platform: on Linux there is no `vm` to strip, because the Linux top command has none.
+The scripts list no command, option or value of their own, so they cannot drift from the commands.
+The hand-written ones they replace did: zsh listed `init`, `update-all` and `mcp` but had no case for them, so their options completed nothing, and three regex edits (`stripVmCommand`) kept `vm` out of the Linux scripts.
 The values come from aesh completers on the commands' own arguments and options (`Completers`): instances (`isx list -q`'s source, one Incus request at `recursion=1`), `--from` sources with the built templates, template and tool definitions, `<namespace>=<account>` selections, credentials and fixed values such as `--format`.
-They follow the same rules as the hand-written scripts' sources: names only, never a credential, nothing that starts a VM, and nothing at all when the source fails, since an error would be drawn over the line being typed.
+They follow the rules the scripts' old sources did: names only, never a credential, nothing that starts a VM, and nothing at all when the source fails, since an error would be drawn over the line being typed.
 `Completers.answer` replaces aesh's own `--aesh-complete` handler, which in aesh 3.18 gave completers no working directory (a `Path` option threw) and asked the shell for files after every command without a positional argument.
-It answers each candidate as the whole word it replaces (`--format=json`, not `json`), and a command or option with its description after a TAB.
+It answers each candidate as the whole word it replaces (`--format=json`, not `json`), with a description after a TAB: a command's or option's, or the one its completer gave the value, such as `default` beside the default account.
+aesh's completer values carry no description, so a completer hands it to `answer` through the request's context (`Names.describe`).
 Words and candidates are plain values, so the request stays the same for every shell and each script quotes for its own.
-The PowerShell script is isx's, not aesh's generated one, which sent a quoted word with its quotes and inserted a path with a space as two arguments.
-It sends each word's value and single-quotes a candidate PowerShell would otherwise split, expand or glob.
-PowerShell reads a bare `a,b` as a list and replaces only its last item, so there the script inserts only that item.
+
+The scripts are isx's, not aesh's generated ones.
+aesh's bash script runs `compgen -W "$values"` over what isx prints and inserts candidates unquoted, which reopens the hole #1778 closed: a `$(...)` in a name ran on TAB or on Enter.
+Its PowerShell script sent a quoted word with its quotes and inserted a path with a space as two arguments.
+Each of isx's sends every word's value, its quoting removed by something that expands nothing, and inserts each candidate quoted by its shell's own rules:
+- bash reads the words from `COMP_LINE` with its own loop (`_isx_words`), since bash-completion's dequoting calls `eval` and its words split at every word break, `@` included; it never uses `compgen` or `eval`.
+  Readline replaces only what follows the word's last unquoted `COMP_WORDBREAKS` character or its open quote, so that much of the typed word is dropped from each candidate before quoting.
+  A closing quote is no break, so a second TAB into a directory completed inside a quote replaces the whole word.
+  Readline closes a lone candidate's quote only when the line does not already end in that character, so a lone candidate whose quoting ends in it gets the quote closed by the script.
+  A redirection's target is left to readline's file names, as bash-completion's `_init_completion` did.
+  It quotes each candidate for the quote the word left open, and uses `printf %q` only outside one.
+  It keeps to bash 3.2, macOS's stock shell: there history expansion also reads a `!` inside `$'...'`, so a `!` is written outside every quote but `'`.
+  Inside `"`, the `$'...'` form `%q` writes for a character the locale cannot print leaves a `$(...)` live, and Enter ran it (found in review: a directory named `x` U+2028 `$(...)`, completed after `--inbox "`).
+- zsh removes quoting with `(Q)` and inserts through `_describe`, whose `compadd` quotes; `-U` takes each candidate as isx matched it.
+- fish reads the words with `commandline -opc` and `string unescape`, and gets back its own format, a candidate then a TAB and a description, which it quotes and never evaluates.
+- PowerShell single-quotes a candidate it would otherwise split, expand or glob, and as it reads a bare `a,b` as a list and replaces only its last item, inserts only that item.
+
+A directory or a bare `<namespace>=` gets no trailing space, so the next TAB continues it.
 Paths come from `Completers.HostPath` rather than aesh's file completer, whose escaping of a lone candidate (`my\ dir/`) only aesh's readline reads back, and which cannot be undone exactly.
+A typed `~/` is answered with the home directory, which reads the same quoted or not.
+Where a shell matches against the word as typed, the answer gets its `~/` back: in fish always, and in bash where the `~/` lies before a word break readline keeps (`~/a=b`).
 A candidate holding a control character is dropped, since a newline or TAB would split its line.
 It never offers `git-remote-helper`, `ssh-proxy` or `completion` (`IncusSpawn.NOT_COMPLETED`), which stay runnable.
-bash, zsh and fish keep their hand-written scripts for now; they ask isx only for values, through the `--completion` helpers and `isx list -q`.
+`isx account list --completion` and `isx account add --completion` stay for scripts saved by earlier releases, which call them (docs/dev/MIGRATIONS.md); no script isx prints now does.
+A TAB costs one process start, about 3.5 ms on the native binary, plus one Incus request where instance names are offered.
+On a JVM install that start is a JVM's, about 200 ms, which the hand-written scripts paid only for values.
 
 ### Resource Limits (Adaptive)
 

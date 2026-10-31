@@ -173,7 +173,7 @@ class CompletersTest {
 
     @Test
     void powerShellScriptAsksIsxOnEveryTab() {
-        var script = CompletionCommand.rawScript(CompletionCommand.Shell.pwsh);
+        var script = CompletionCommand.script(CompletionCommand.Shell.pwsh);
         assertTrue(script.contains("Register-ArgumentCompleter -Native -CommandName 'isx'"), script);
         assertTrue(script.contains("--aesh-complete -- @cmdArgs"), script);
         // A word's value goes to isx without its quotes, and a candidate PowerShell would split comes back quoted.

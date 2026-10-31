@@ -1,261 +1,66 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.IncusSpawn;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests that the Linux completion output drops the macOS-only {@code vm} command while leaving
- * every other command — and the unrelated {@code --type vm} value — intact.
+ * Structural guards on the completion scripts, for machines without the shells the real-shell
+ * tests ({@code BashAccountCompletionTest}, {@code FishAccountCompletionTest},
+ * {@code ZshCompletionTest}) run.
  */
 class CompletionCommandTest {
 
-    /** The scripts kept in {@code CompletionCommand}; pwsh's asks isx on every TAB (CompletersTest). */
-    private static final List<CompletionCommand.Shell> WRITTEN_BY_HAND = List.of(
-            CompletionCommand.Shell.bash, CompletionCommand.Shell.zsh, CompletionCommand.Shell.fish);
-
-    private static String linux(CompletionCommand.Shell shell) {
-        return CompletionCommand.stripVmCommand(CompletionCommand.rawScript(shell), shell);
-    }
-
-    // --- bash ---
-
-    @Test
-    void bashDropsVmFromCommandList() {
-        String mac = CompletionCommand.rawScript(CompletionCommand.Shell.bash);
-        assertTrue(mac.contains("tools vm doctor"), "precondition: mac lists vm");
-
-        String linux = linux(CompletionCommand.Shell.bash);
-        assertFalse(linux.contains("tools vm doctor"));
-        assertFalse(linux.contains("tools|vm|doctor"));
-        // The now-unreachable vm) case block is removed too — no dead code left behind.
-        assertFalse(linux.contains("vm_subcmds"), "dead vm) case block must be stripped");
-        // Neighbours survive.
-        assertTrue(linux.contains("tools doctor"));
-        assertTrue(linux.contains("tools|doctor"));
-        assertTrue(linux.contains("doctor)"), "neighbouring case blocks must survive");
-    }
-
-    @Test
-    void bashKeepsTypeVmValue() {
-        // `build --type` still offers container/vm/kvm — that vm token must not be stripped.
-        assertTrue(linux(CompletionCommand.Shell.bash).contains("container vm kvm"));
-    }
-
-    // --- zsh ---
-
-    @Test
-    void zshLeavesTheWordsArgumentsAdjustedAlone() {
-        // `_arguments -C` already removes the command from `words` and decrements `CURRENT`.
-        // Shifting again left the empty word being completed as the command name, so no helper
-        // offered a positional value and `isx destroy <TAB>` listed nothing (see ZshCompletionTest).
-        String zsh = CompletionCommand.rawScript(CompletionCommand.Shell.zsh);
-        assertFalse(zsh.contains("shift words"), "the dispatcher must not shift the words _arguments adjusted");
-        assertFalse(zsh.contains("CURRENT--"), "the dispatcher must not decrement CURRENT again");
-        assertTrue(zsh.contains("local cmd=$line[1]"), "the subcommand still comes from $line[1]");
-        assertFalse(zsh.contains("$words[1]"), "a helper takes its subcommand from $line[1], never the words");
-    }
-
-    @Test
-    void zshAccountDispatchOwnsItsSubcommandParsing() {
-        // _isx_account used the shifted $words[1], so it needs its own _arguments -C like the
-        // other subcommand helpers now that the dispatcher leaves words alone.
-        String account = CompletionCommand.rawScript(CompletionCommand.Shell.zsh)
-                .lines()
-                .dropWhile(l -> !l.startsWith("_isx_account()"))
-                .takeWhile(l -> !l.equals("}"))
-                .collect(Collectors.joining("\n"));
-        assertTrue(account.contains("_arguments -C"), "account must parse its subcommand with _arguments -C");
-        assertTrue(account.contains("case $line[1] in"), "account must dispatch on $line[1]");
-        assertFalse(account.contains("case $words[1] in"), "account must not dispatch on the shifted words");
-    }
-
-    @Test
-    void zshDropsVmCommandAndDispatch() {
-        String linux = linux(CompletionCommand.Shell.zsh);
-        assertFalse(linux.contains("'vm:manage the incus-spawn VM appliance'"));
-        assertFalse(linux.contains("_isx_vm ;;"));
-        // The now-unreachable _isx_vm() function is removed too — no dead code left behind.
-        assertFalse(linux.contains("_isx_vm()"), "dead _isx_vm function must be stripped");
-        // Other commands remain dispatchable, and the --type vm value survives.
-        assertTrue(linux.contains("_isx_doctor ;;"));
-        assertTrue(linux.contains("_isx_doctor()"), "neighbouring functions must survive");
-        assertTrue(linux.contains("container vm kvm"));
-    }
-
-    // --- fish ---
-
-    @Test
-    void fishDropsVmSuggestionAndSubcommandRules() {
-        String linux = linux(CompletionCommand.Shell.fish);
-        assertFalse(linux.contains("-a vm "), "top-level vm suggestion removed");
-        assertFalse(linux.contains("__isx_using_subcommand vm"), "vm subcommand rules removed");
-        assertFalse(linux.contains("tools|vm|doctor"));
-        // Unrelated commands and the --type vm value survive.
-        assertTrue(linux.contains("-a doctor"));
-        assertTrue(linux.contains("container vm kvm"));
-    }
-
-    // --- commands no shell offers ---
-
     /**
-     * The hidden plumbing ({@code IncusSpawn.HIDDEN_COMMANDS}), {@code completion} (listed in
-     * {@code isx --help}, but nobody tab-completes the command that sets up tab completion, #1802)
-     * and the removed {@code instances}.
+     * Every script asks the running binary, so none lists a command, an option or a value of its
+     * own, or reads the per-source helpers the hand-written scripts read before #1842.
      */
-    private static final List<String> NOT_OFFERED = Stream.concat(
-            IncusSpawn.NOT_COMPLETED.stream(), Stream.of("instances")).sorted().toList();
-
     @Test
-    void commandsNotOfferedAsTopLevelCompletions() {
-        for (var shell : WRITTEN_BY_HAND) {
-            String script = CompletionCommand.rawScript(shell);
-            java.util.function.Predicate<String> offers = switch (shell) {
-                case zsh -> name -> script.contains("'" + name + ":");
-                case bash -> List.of(script.lines()
-                        .filter(l -> l.stripLeading().startsWith("local commands="))
-                        .findFirst()
-                        .orElseThrow(() -> new AssertionError("bash script has no 'local commands=' line"))
-                        .split("[\\s\"=]+"))::contains;
-                case fish -> fishTopLevelWords(script)::contains;
-                case pwsh -> throw new AssertionError("pwsh is not written by hand");
-            };
-            for (var name : NOT_OFFERED) {
-                assertFalse(offers.test(name), shell + " must not offer " + name);
+    void everyScriptAsksIsxAndNothingElse() {
+        for (var shell : CompletionCommand.Shell.values()) {
+            var script = CompletionCommand.script(shell);
+            assertEquals(2, script.split("--aesh-complete --", -1).length, shell + " asks isx once per TAB");
+            for (var gone : List.of("isx list", "--completion", "isx templates", "isx tools", "branch", "doctor")) {
+                assertFalse(script.contains(gone), shell + " still names " + gone);
             }
         }
     }
 
-    /** Every word a fish {@code __isx_no_subcommand} line offers with {@code -a}, quoted or not. */
-    private static List<String> fishTopLevelWords(String script) {
-        var arg = Pattern.compile("-a\\s+(?:'([^']*)'|\"([^\"]*)\"|(\\S+))");
-        return script.lines()
-                .filter(l -> l.contains("__isx_no_subcommand"))
-                .flatMap(l -> arg.matcher(l).results())
-                .flatMap(m -> Stream.of(m.group(1), m.group(2), m.group(3)))
-                .filter(java.util.Objects::nonNull)
-                .flatMap(words -> Stream.of(words.split("\\s+")))
-                .toList();
-    }
-
-    // --- macOS scripts keep vm (and its resize and reset subcommands) ---
-
-    @Test
-    void macScriptsRetainVmResizeAndReset() {
-        var zsh = CompletionCommand.rawScript(CompletionCommand.Shell.zsh);
-        assertTrue(zsh.contains("'resize:grow the VM data disk that backs the storage pool'"));
-        assertTrue(zsh.contains("'reset:wipe the VM data disk"));
-        assertTrue(CompletionCommand.rawScript(CompletionCommand.Shell.bash)
-                .contains("start stop restart status resize reset console"));
-        var fish = CompletionCommand.rawScript(CompletionCommand.Shell.fish);
-        assertTrue(fish.contains("-a resize"));
-        assertTrue(fish.contains("-a reset"));
-    }
-
-    // --- instance names come from isx list -q (#1036) ---
-
-    @Test
-    void instanceNamesComeFromListQuietNotTheRemovedInstancesCommand() {
-        for (var shell : WRITTEN_BY_HAND) {
-            String script = CompletionCommand.rawScript(shell);
-            assertFalse(script.contains("isx instances"), shell + " must not call the removed isx instances");
-            assertTrue(script.contains("isx list -q 2>/dev/null"), shell + " must list instance names with isx list -q");
-            assertTrue(script.contains("table plain json"), shell + " must offer the --format values");
-            assertFalse(script.contains("no-op"), shell + " must not describe --plain as a no-op");
-        }
-    }
-
-    // --- account values ---
-
-    @Test
-    void everyShellCompletesAccountValuesFromTheNamesOnlyHelper() {
-        for (var shell : WRITTEN_BY_HAND) {
-            String script = linux(shell);
-            assertTrue(script.contains("isx account list --completion"), shell + " must call the helper");
-            assertFalse(script.contains("--format=json"), shell + " must not parse the full listing");
-        }
-        assertTrue(linux(CompletionCommand.Shell.zsh).contains("*--account=[Credential account as <namespace>=<account>]:selection:_isx_accounts"));
-        assertTrue(linux(CompletionCommand.Shell.bash).contains("--account)"));
-        assertTrue(linux(CompletionCommand.Shell.fish).contains("-l account"));
-        assertTrue(linux(CompletionCommand.Shell.fish).contains("'(__isx_accounts)'"));
-    }
-
-    /** account add takes a tool name too, so its positional reads add's own list, not the namespaces (#1773). */
-    @Test
-    void everyShellCompletesAccountAddFromItsOwnNames() {
-        for (var shell : WRITTEN_BY_HAND) {
-            assertTrue(linux(shell).contains("isx account add --completion"), shell + " must call add's helper");
-        }
-        assertTrue(linux(CompletionCommand.Shell.zsh).contains("add) _arguments '1:credential:_isx_account_add_names' ;;"));
-        assertTrue(linux(CompletionCommand.Shell.bash).contains("_isx_reply --help < <(_isx_list_account_add_names)"));
-        assertTrue(linux(CompletionCommand.Shell.fish).contains("'__isx_account_args add 0' -a '(__isx_account_add_names)'"));
-    }
-
     /**
-     * compgen -W expands its words, so a $(...) in a name isx printed would run on TAB: the bash
-     * script gives it only words it spells out itself, and offers what isx prints through
-     * {@code _isx_reply} (#1778).
+     * compgen -W and eval expand their words, so a $(...) in a name isx printed would run on TAB
+     * (#1778): the bash script uses neither, and puts a candidate in COMPREPLY only as {@code _isx_quote_for}
+     * quoted it for the quote the word left open.
      */
     @Test
     void bashNeverExpandsWhatIsxPrints() {
-        // Only literal words and the script's own constant lists, named $commands or $<cmd>_subcmds
-        var allowed = java.util.regex.Pattern.compile("(\\$(commands|[a-z]+_subcmds)|[A-Za-z0-9-]+)");
-        var script = linux(CompletionCommand.Shell.bash);
-        // Every word list is double-quoted, so the check below sees all of it
-        assertEquals(script.split("compgen -W ", -1).length - 1, script.split("compgen -W \"", -1).length - 1,
-                "a compgen -W whose word list is not double-quoted");
-        var lists = java.util.regex.Pattern.compile("compgen -W \"([^\"]*)\"").matcher(script);
-        int seen = 0;
-        while (lists.find()) {
-            seen++;
-            for (var word : lists.group(1).split(" +")) {
-                assertTrue(allowed.matcher(word).matches(), "compgen -W is given '" + word + "' in: " + lists.group());
-            }
+        var script = CompletionCommand.script(CompletionCommand.Shell.bash);
+        for (var expands : List.of("compgen", "eval", "mapfile", "readarray", "COMPREPLY=( $(")) {
+            assertFalse(script.contains(expands), "the bash script uses " + expands);
         }
-        assertTrue(seen > 0, "the bash script still completes static words with compgen -W");
-        // A command substitution straight into COMPREPLY is split and globbed: only compgen of those lists may fill it
-        var substituted = java.util.regex.Pattern.compile("COMPREPLY\\+?=\\( *\\$\\((?!compgen -W \")").matcher(script);
-        assertFalse(substituted.find(), () -> "COMPREPLY filled from a command other than compgen -W: " + substituted.group());
-        // And the lists themselves are literal words, never what isx printed
-        var assigned = java.util.regex.Pattern.compile("(?m)\\b(commands|[a-z]+_subcmds)=(.*)$").matcher(script);
-        while (assigned.find()) {
-            assertTrue(assigned.group(2).matches("\"[a-z -]+\""), "not a literal list: " + assigned.group());
-        }
+        var filled = script.lines().map(String::strip).filter(l -> l.contains("COMPREPLY")).toList();
+        assertEquals(List.of("COMPREPLY=()", "COMPREPLY=()", "COMPREPLY+=(\"$REPLY\")",
+                "if [[ ${#COMPREPLY[@]} == 1 && -n $close && ${COMPREPLY[0]} == *\"$close\" ]]; then COMPREPLY[0]+=$close; fi"),
+                filled, "emptied, filled with what _isx_quote_for quoted, or a lone match's quote closed");
+        var lines = script.lines().map(String::strip).toList();
+        int added = lines.indexOf("COMPREPLY+=(\"$REPLY\")");
+        assertEquals("_isx_quote_for \"${candidate#\"$kept\"}\"", lines.get(added - 1), "quoted just before it is offered");
+        assertTrue(script.contains("done < <(isx --aesh-complete -- \"${_isx_request[@]}\" 2>/dev/null)"), script);
+        // %q only outside quotes: inside one its $'...' form leaves a $(...) live.
+        var quoting = lines.stream().filter(l -> !l.startsWith("#") && l.contains("%q")).toList();
+        assertEquals(1, quoting.size(), "%q in one place: " + quoting);
+        assertTrue(quoting.getFirst().startsWith("\"\") printf -v REPLY %q \"$1\""), "%q outside a quote only: " + quoting);
     }
 
-    /**
-     * An allowlist of where what isx prints may go in the bash script, so a new way of reading a
-     * source (mapfile into COMPREPLY, a list variable built from it) fails here: isx runs only in
-     * a one-line {@code _isx_list_*} function, and each of those is read only through
-     * {@code _isx_reply}, or into the account candidates that it then reads (#1778).
-     */
+    /** What zsh and fish insert is quoted by the shell: neither script asks it not to (compadd -Q, eval). */
     @Test
-    void bashReadsWhatIsxPrintsOnlyThroughIsxReply() {
-        var header = java.util.regex.Pattern.compile("\\s*_isx_list_\\w+\\(\\) \\{");
-        var runsIsx = java.util.regex.Pattern.compile("(^|[\\s(|;&`])isx\\s+\\S");
-        var lines = linux(CompletionCommand.Shell.bash).lines().map(String::strip).toList();
-        int sources = 0;
-        for (int i = 0; i < lines.size(); i++) {
-            var line = lines.get(i);
-            if (line.startsWith("#") || line.equals("complete -F _isx isx")) continue;
-            if (runsIsx.matcher(line).find()) {
-                assertTrue(i > 0 && header.matcher(lines.get(i - 1)).matches(), "isx runs outside an _isx_list_* function: " + line);
-                assertEquals("}", lines.get(i + 1), "an _isx_list_* function is one command: " + line);
-                sources++;
-            } else if (line.contains("_isx_list_") && !header.matcher(line).matches()) {
-                assertTrue(line.matches("_isx_reply( (--[a-z-]+|\\$[a-z]+_subcmds))* < <\\(_isx_list_\\w+\\)")
-                        || line.equals("candidates=$(_isx_list_accounts)"), "a source read another way: " + line);
-            } else if (line.matches(".*\\$\\{?candidates.*")) {
-                assertTrue(line.equals("_isx_reply_after \"$typed\" <<< \"$candidates\"")
-                        || line.equals("candidates=$(grep -v '=$' <<< \"$candidates\")"), "account candidates read another way: " + line);
-            }
-        }
-        assertTrue(sources >= 6, "found the sources: " + sources);
+    void zshAndFishLetTheShellQuote() {
+        var zsh = CompletionCommand.script(CompletionCommand.Shell.zsh);
+        assertFalse(zsh.contains("-Q") || zsh.contains("eval"), zsh);
+        assertTrue(zsh.contains("\"${(@Q)words[2,CURRENT-1]}\" \"${(Q)PREFIX}\""), "words reach isx unquoted, unexpanded");
+        var fish = CompletionCommand.script(CompletionCommand.Shell.fish);
+        assertFalse(fish.contains("eval"), fish);
+        assertTrue(fish.contains("complete -c isx -f -a '(__isx_complete)'"), fish);
     }
 }
