@@ -913,6 +913,19 @@ class RepoClonerTest {
     }
 
     @Test
+    void aGitErrorIsScrubbedAcrossBothStreamsAsTheLogIs() {
+        // The host-reference fallback note has no log to take its line from: a key's BEGIN header
+        // on stdout still marks its body on stderr (#1893 review)
+        var armour = "-----";
+        var split = new IncusClient.ExecResult(1, armour + "BEGIN PRIVATE KEY" + armour + "\nMIIEfirst",
+                "MIIElast-body\n");
+        assertEquals("<isx:redacted:private-key>", RepoCloner.gitError(split));
+        // Git's fatal: line still wins over stdout's noise
+        assertEquals("fatal: repository not found",
+                RepoCloner.gitError(new IncusClient.ExecResult(128, "Cloning into 'x'...", "fatal: repository not found\n")));
+    }
+
+    @Test
     void firstGitErrorEmptyForBlank() {
         assertEquals("", RepoCloner.firstGitError(""));
         assertEquals("", RepoCloner.firstGitError(null));

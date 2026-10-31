@@ -842,10 +842,13 @@ class RepoCloner {
         return OutputFormat.oneLine(name.isEmpty() ? java.util.Objects.requireNonNullElse(repo.sourceDescription(), "") : name);
     }
 
-    /** Extract a concise error line from a failed git exec (stderr first, then stdout). */
-    private static String gitError(IncusClient.ExecResult result) {
-        var err = firstGitError(result.stderr());
-        return !err.isEmpty() ? err : firstGitError(result.stdout());
+    /**
+     * Extract a concise error line from a failed git exec, from both streams scrubbed together as
+     * its log is: alone, a key's body on stderr has no BEGIN header when stdout printed it, and the
+     * host-reference fallback note has no log to take its line from (#1893 review).
+     */
+    static String gitError(IncusClient.ExecResult result) {
+        return firstGitError(combinedOutput(result));
     }
 
     /**
