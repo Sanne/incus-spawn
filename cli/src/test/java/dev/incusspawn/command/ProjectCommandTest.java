@@ -118,9 +118,11 @@ class ProjectCommandTest {
         var update = new ProjectCommand.Update();
         update.name = NAME;
         assertEquals(0, update.update(incus, config("mvn install")));
-        order.verify(incus).execInContainer(NAME, "agentuser", "mvn install");
-        order.verify(incus).shellExec(NAME, "sh", "-c", GuestUpdate.EMPTY_TMP_SCRIPT);
-        order.verify(incus).stop(NAME);
+        // In the copy that replaces the template (#1760)
+        order.verify(incus).execInContainer(BUILD, "agentuser", "mvn install");
+        order.verify(incus).shellExec(BUILD, "sh", "-c", GuestUpdate.EMPTY_TMP_SCRIPT);
+        order.verify(incus).stop(BUILD);
+        order.verify(incus).rename(BUILD, NAME);
     }
 
     /** As update-all's, the update waits for the template's network before its first step (#1734). */
@@ -134,8 +136,8 @@ class ProjectCommandTest {
         assertEquals(0, update.update(incus, config(null)));
 
         var order = inOrder(incus);
-        order.verify(incus).shellExec(eq(NAME), eq("sh"), eq("-c"), contains("mirrors.fedoraproject.org"));
-        order.verify(incus).shellExec(NAME, "dnf", "update", "-y");
+        order.verify(incus).shellExec(eq(BUILD), eq("sh"), eq("-c"), contains("mirrors.fedoraproject.org"));
+        order.verify(incus).shellExec(BUILD, "dnf", "update", "-y");
     }
 
     @Test
@@ -191,11 +193,54 @@ class ProjectCommandTest {
     @Test
     void failedUpdateRevokesItsProofsAndStopsTheRetainedProject() {
         var incus = preparedClient(true);
-        doReturn(FAILED).when(incus).execInContainer(NAME, "agentuser", "make");
+        doReturn(FAILED).when(incus).execInContainer(BUILD, "agentuser", "make");
         var update = new ProjectCommand.Update();
         update.name = NAME;
         assertEquals(1, update.update(incus, config("make")));
+        verify(incus).stop(BUILD);
+        assertFalse(incus.exists(BUILD), "the failed update is discarded");
         assertRevoked(incus, NAME);
+    }
+
+    /** The update runs in a copy that replaces the template (#1760), which stays untrusted as a project template is. */
+    @Test
+    void anUpdateReplacesTheTemplateWithItsCopyAndKeepsItUntrusted() {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(Metadata.TYPE, Metadata.TYPE_PROJECT,
+                Metadata.UNTRUSTED_LINEAGE, Metadata.TYPE_PROJECT));
+        var incus = spy(daemon.client());
+        doNothing().when(incus).waitForReady(anyString(), any(), anyString(), anyMap());
+        doReturn(OK).when(incus).shellExec(anyString(), any(String[].class));
+        doReturn(OK).when(incus).execInContainer(anyString(), eq("agentuser"), anyString());
+        doAnswer(inv -> List.of(daemon.instance(inv.getArgument(0)).path("config").path(Metadata.STATIC_IP).asText()))
+                .when(incus).ipv4Addresses(anyString());
+        var update = new ProjectCommand.Update();
+        update.name = NAME;
+
+        assertEquals(0, update.update(incus, config(null)));
+
+        verify(incus, never()).start(NAME);
+        verify(incus).rename(BUILD, NAME);
+        assertEquals(Metadata.TYPE_PROJECT, daemon.instance(NAME).path("config").pathText(Metadata.UNTRUSTED_LINEAGE, ""));
+        assertFalse(incus.exists(BUILD));
+    }
+
+    /** A project template made before the lineage stamp is not trusted by its update (#936, #1760). */
+    @Test
+    void anUpdateOfAnUnstampedProjectTemplateLeavesItUntrusted() {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(Metadata.TYPE, Metadata.TYPE_PROJECT));
+        var incus = spy(daemon.client());
+        doNothing().when(incus).waitForReady(anyString(), any(), anyString(), anyMap());
+        doReturn(OK).when(incus).shellExec(anyString(), any(String[].class));
+        doReturn(OK).when(incus).execInContainer(anyString(), eq("agentuser"), anyString());
+        doAnswer(inv -> List.of(daemon.instance(inv.getArgument(0)).path("config").path(Metadata.STATIC_IP).asText()))
+                .when(incus).ipv4Addresses(anyString());
+        var update = new ProjectCommand.Update();
+        update.name = NAME;
+
+        assertEquals(0, update.update(incus, config(null)));
+
+        verify(incus, never()).configUnset(NAME, Metadata.UNTRUSTED_LINEAGE);
+        assertEquals(Metadata.TYPE_PROJECT, daemon.instance(NAME).path("config").pathText(Metadata.UNTRUSTED_LINEAGE, ""));
     }
 
     @Test
@@ -211,7 +256,7 @@ class ProjectCommandTest {
     @Test
     void failedReadinessDuringUpdateStillRevokesAndStops() {
         var incus = preparedClient(true);
-        doThrow(new IncusException("agent not ready")).when(incus).waitForReady(eq(NAME), any(), anyString(), anyMap());
+        doThrow(new IncusException("agent not ready")).when(incus).waitForReady(eq(BUILD), any(), anyString(), anyMap());
         var update = new ProjectCommand.Update();
         update.name = NAME;
         assertEquals("agent not ready", assertThrows(IncusException.class,
@@ -277,7 +322,7 @@ class ProjectCommandTest {
     @Test
     void updateUsesAConfigNamedWithConfigWhateverItsName(@TempDir Path dir) {
         var incus = preparedClient(true);
-        doReturn(FAILED).when(incus).shellExec(NAME, "which", "npm");
+        doReturn(FAILED).when(incus).shellExec(BUILD, "which", "npm");
         var other = config("make");
         other.setName("other");
         var update = new ProjectCommand.Update();
@@ -285,7 +330,7 @@ class ProjectCommandTest {
         update.configPath = dir.resolve("incus-spawn.yaml");
 
         assertEquals(0, update.update(incus, other));
-        verify(incus).execInContainer(NAME, "agentuser", "make");
+        verify(incus).execInContainer(BUILD, "agentuser", "make");
     }
 
     @Test
