@@ -81,11 +81,13 @@ public class PiSetup implements ToolSetup {
 
         var model = new ToolDef.ParameterDef();
         model.setType("string");
-        model.setDescription("Model ID (e.g. claude-sonnet-4-6, gpt-4.1, gemini-3.7-flash)");
+        model.setDescription("Model ID (e.g. claude-sonnet-4-6, gpt-4.1, gemini-3.7-flash); omitted, "
+                + DEFAULT_MODEL + " for " + DEFAULT_PROVIDER + " and Pi's own default otherwise");
         model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
         model.setOptional(true);
         model.setReconfigurable(true);
-        model.setDefault(DEFAULT_MODEL);
+        // No declared default: one would be resolved before the build, so configureSettings could
+        // not tell it from a model the template chose, and every provider would get a Claude model.
         params.put("model", model);
 
         return params;
@@ -263,23 +265,33 @@ public class PiSetup implements ToolSetup {
 
     private void configureSettings(Container c, java.util.Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Configuring Pi");
-        var provider = resolvedParams.getOrDefault("provider", DEFAULT_PROVIDER);
-        var model = resolvedParams.getOrDefault("model", DEFAULT_MODEL);
+        var provider = provider(resolvedParams);
+        var model = defaultModel(provider, resolvedParams.get("model"));
+        var modelLine = model == null ? "" : "  \"defaultModel\": \"" + model + "\",\n";
         var settingsJson = """
                 {
                   "enableInstallTelemetry": false,
                   "quietStartup": true,
                   "defaultProvider": "%s",
-                  "defaultModel": "%s",
-                  "defaultThinkingLevel": "medium",
+                %s  "defaultThinkingLevel": "medium",
                   "extensions": ["%s"]
                 }
-                """.formatted(provider, model, STATUS_EXTENSION_PATH);
+                """.formatted(provider, modelLine, STATUS_EXTENSION_PATH);
         c.sh("mkdir -p /etc/isx/pi /home/agentuser/.pi/agent");
         c.writeFile(STATUS_EXTENSION_PATH, STATUS_EXTENSION);
         c.writeFile("/home/agentuser/.pi/agent/settings.json", settingsJson);
         c.chown("/home/agentuser/.pi", "agentuser:agentuser");
         BuildOutput.stepDone();
+    }
+
+    /**
+     * The template's model, or {@link #DEFAULT_MODEL} for the {@code anthropic} provider. Another
+     * provider without one gets none, so Pi picks a model that provider serves: a Claude model
+     * named to Vertex's Gemini path or to OpenAI is a 404 (#1918).
+     */
+    static String defaultModel(String provider, String model) {
+        if (model != null) return model;
+        return DEFAULT_PROVIDER.equals(provider) ? DEFAULT_MODEL : null;
     }
 
 }

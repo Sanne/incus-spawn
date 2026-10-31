@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -115,6 +116,36 @@ class PiSetupTest {
         verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg ->
                 arg.contains("\"defaultModel\": \"gpt-4.1\"")
                         && arg.contains("\"extensions\": [\"/etc/isx/pi/isx-status.ts\"]")));
+    }
+
+    @Test
+    void installLeavesModelToPiForAnotherProviderWithoutModel() {
+        // Pi picks a model the provider serves; claude-sonnet-4-6 sent to Vertex's Gemini path is a 404 (#1918).
+        for (var provider : List.of("vertex", "google", "google-vertex", "openai")) {
+            var incus = mock(IncusClient.class);
+            when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+            var params = ParameterResolver.resolve(new PiSetup().parameters(), Map.of("provider", provider));
+
+            new PiSetup().install(new Container(incus, CONTAINER), params.resolvedValues());
+
+            verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg ->
+                    arg.contains("/home/agentuser/.pi/agent/settings.json")
+                            && arg.contains("\"defaultProvider\": \"" + provider + "\"")
+                            && !arg.contains("defaultModel")));
+        }
+    }
+
+    @Test
+    void installKeepsExplicitClaudeModelForAnotherProvider() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        var params = ParameterResolver.resolve(new PiSetup().parameters(),
+                Map.of("provider", "vertex", "model", "claude-sonnet-4-6"));
+
+        new PiSetup().install(new Container(incus, CONTAINER), params.resolvedValues());
+
+        verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg ->
+                arg.contains("\"defaultModel\": \"claude-sonnet-4-6\"")));
     }
 
     @Test
@@ -312,7 +343,7 @@ class PiSetupTest {
         assertTrue(params.containsKey("provider"), "Should declare provider parameter");
         assertTrue(params.containsKey("model"), "Should declare model parameter");
         assertEquals("anthropic", params.get("provider").getDefault());
-        assertEquals("claude-sonnet-4-6", params.get("model").getDefault());
+        assertNull(params.get("model").getDefault(), "model has no declared default: Pi picks one per provider");
         assertTrue(params.get("provider").isReconfigurable());
         assertTrue(params.get("model").isReconfigurable());
     }

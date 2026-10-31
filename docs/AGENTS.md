@@ -139,7 +139,7 @@ Your own extensions in `~/.pi/agent/extensions/` load as usual.
 | Parameter | Default | What it does |
 | --- | --- | --- |
 | `provider` | `anthropic` | The API Pi talks to; also accepts `openai`, `vertex` or `google` |
-| `model` | `claude-sonnet-4-6` | The model Pi uses |
+| `model` | `claude-sonnet-4-6` for `anthropic`, otherwise Pi's own | The model Pi uses |
 
 The `vertex` and `google` providers need a Vertex AI Claude account, whose project and region the build exports to Pi.
 The `openai` provider uses your OpenAI key, as shown below.
