@@ -224,6 +224,10 @@ final class TaskScripts {
             sb.append(SAVED_SESSION).append("case $sid in ").append(NOT_A_SESSION_ID).append(") echo 'isx: ").append(NO_CLAUDE_SESSION)
                     .append("; start a new delegated task.' >> \"$D/stderr-").append(run).append(".log\"; ")
                     .append(recordExit(String.valueOf(run), "125")).append("; exit 0;; esac\n");
+            // Claude Code deletes old conversations; resuming one fails at once, and every later message the same way.
+            sb.append(claudeTranscriptExists("\"$sid\"")).append(" || { echo 'isx: ").append(CLAUDE_SESSION_GONE)
+                    .append("; start a new delegated task.' >> \"$D/stderr-").append(run).append(".log\"; ")
+                    .append(recordExit(String.valueOf(run), "125")).append("; exit 0; }\n");
         }
         sb.append(requireFlock("echo '" + NO_FLOCK + "' >> \"$D/stderr-" + run + ".log\"; "
                 + recordExit(String.valueOf(run), "127") + "; exit 0")).append('\n');
@@ -255,6 +259,20 @@ final class TaskScripts {
     static final String NO_CLAUDE_SESSION = "this task never saved a Claude Code session (it was cancelled or failed "
             + "before Claude Code wrote one), so there is no conversation to continue";
 
+    /** Why a Claude task whose saved session Claude Code no longer has cannot be continued. */
+    static final String CLAUDE_SESSION_GONE = "its Claude Code conversation is gone (Claude Code deletes old ones "
+            + "after cleanupPeriodDays)";
+
+    /**
+     * True when Claude Code still has the transcript of session {@code sessionId} (a shell word: a
+     * quoted ID, or {@code "$sid"}), which is what {@code claude --resume} needs: Claude Code keeps
+     * one file per session under its config directory's {@code projects/<directory>/}, and deletes
+     * those older than {@code cleanupPeriodDays}.
+     */
+    static String claudeTranscriptExists(String sessionId) {
+        return "ls \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}\"/projects/*/" + sessionId + "\".jsonl\" >/dev/null 2>&1";
+    }
+
     /**
      * Save the session a Claude Code run opened, from its stream-json {@code events} file, as the
      * task's {@code session_id}: what the next run resumes. Taken from the {@code init} event alone,
@@ -266,8 +284,7 @@ final class TaskScripts {
     static String saveClaudeSession(String events) {
         return "sid=$(" + ifFile(events, "grep -m 1 '\"subtype\":\"init\"'")
                 + " | sed -n 's/.*\"session_id\" *: *\"\\([^\"]*\\)\".*/\\1/p'); "
-                + "case $sid in " + NOT_A_SESSION_ID + ") ;; *) ! ls \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}\"/projects/*/\"$sid.jsonl\" "
-                + ">/dev/null 2>&1 || " + writeAside("session_id", "printf '%s' \"$sid\"") + ";; esac";
+                + "case $sid in " + NOT_A_SESSION_ID + ") ;; *) ! " + claudeTranscriptExists("\"$sid\"") + " || " + writeAside("session_id", "printf '%s' \"$sid\"") + ";; esac";
     }
 
     /** What a run that did not start, because a person holds the conversation, says on its stderr. */
@@ -335,7 +352,11 @@ final class TaskScripts {
                 + "[ $s = finished ] && echo exit=$(" + readFile("$D/exit-$n") + "); "
                 + "if [ \"$k\" = agent ]; then "
                 + "echo cwd=$(" + readFile("$D/cwd") + "); echo session_id=$(" + readFile("$D/session_id") + "); "
-                + "if [ -e \"$D/identity\" ] || [ -L \"$D/identity\" ]; then echo identity=$(" + ifFile("$D/identity", "head -c 200") + "); fi; "
+                + "ident=$(" + ifFile("$D/identity", "head -c 200") + "); "
+                + "if [ -e \"$D/identity\" ] || [ -L \"$D/identity\" ]; then echo identity=$ident; fi; "
+                // A Claude session Claude Code has since deleted: task_status says it cannot be resumed.
+                + "case $ident in ''|'1 claude') " + SAVED_SESSION + "case $sid in "
+                + NOT_A_SESSION_ID + ") ;; *) " + claudeTranscriptExists("\"$sid\"") + " || echo session_gone=1;; esac;; esac; "
                 + Presence.script("presence=") + "; "
                 // Size and last write of the events in one stat: this runs on every status read.
                 + "set -- $(stat -c '%s %Y' \"$D/events-$n.jsonl\" 2>/dev/null); echo events_bytes=${1:-0}; echo activity=$2; echo ---; "
@@ -493,7 +514,9 @@ final class TaskScripts {
                 + "[ -z \"$u\" ] || isx_refuse 'a run of it is going'; "
                 + Presence.holderScript(agent, sessionId, cwd)
                 + "[ -z \"$h\" ] || isx_refuse \"a person is already in its conversation (agent pid $h)\"; "
-                + (agent == DelegateAgent.PI ? piSessionCheck(ExecScript.quote(sessionId)) : "");
+                + (agent == DelegateAgent.PI ? piSessionCheck(ExecScript.quote(sessionId)) : "")
+                + (agent == DelegateAgent.CLAUDE ? claudeTranscriptExists(ExecScript.quote(sessionId))
+                        + " || isx_refuse '" + CLAUDE_SESSION_GONE + "'; " : "");
     }
 
     /**

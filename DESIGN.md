@@ -3929,6 +3929,9 @@ The ID is saved only from the `init` event, and only once Claude Code has writte
 A cancelled run used to leave none, since the cancel kills the run script before it reads the events, and the next run then started `claude --resume ""`.
 Claude Code fails that at once, with exit 1, no turns and a made-up session ID in its result, which was saved, so every later message failed the same way.
 Now `cancel` saves the session itself, a refused resume never replaces the saved ID, and a task without one is not `resumable`: `send_message` refuses it rather than launch a run that can only fail.
+A saved session can still go later: Claude Code deletes transcripts older than `cleanupPeriodDays` (30 days by default), and resuming one fails the same way (#1902).
+So the status script, the run script and the join guard look for the transcript too, as Pi's resume looks for its session file.
+The status script's check is one `ls` in an exec `task_status` and `send_message` make anyway, so refusing costs no extra request.
 The appended brief frames the role -- a delegate reporting to a coordinator -- and forbids nothing: what a delegate can reach is bounded by the credentials the template's proxy account carries, what it does by the instruction.
 That is what makes "fix it, don't push" -> review `get_diff` -> "push and open the PR" a controlled flow rather than a prompt-level honour system.
 `get_diff` compares against the commit each repository was at when the task started, using a throwaway index so untracked files are included and the instance's own index is untouched.

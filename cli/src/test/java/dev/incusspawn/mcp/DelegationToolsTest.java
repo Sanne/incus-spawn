@@ -49,6 +49,8 @@ class DelegationToolsTest {
     private volatile String savedSession;
     /** Without {@link #savedSession}, the session a finished task's status reports, as a Claude run saves it once over; null for none. */
     private volatile String claudeSession = "s1";
+    /** When set, the status reports that Claude Code deleted the saved session's transcript. */
+    private volatile boolean claudeSessionGone;
     /** The agent a finished task's identity names, with {@link #savedSession}. */
     private volatile String savedAgent = "codex";
     /** What a Pi task's session check answers before send_message launches: ok, or why not. */
@@ -128,7 +130,7 @@ class DelegationToolsTest {
             if (!script.startsWith("D=") || !script.contains("echo run=")) return ""; // cancel
             if (taskState.equals("unknown")) return "run=1\nkind=agent\nstate=unknown\n---\n\n---stderr\n";
             var who = attached ? "cwd=/home/agentuser\nsession_id=s1\npresence=claude 77 /elsewhere\n"
-                    + "presence=resume 77 s1\n" : savedSession == null ? (claudeSession == null || taskState.equals("running") ? "" : "session_id=" + claudeSession + "\n") : "identity=1 " + savedAgent + "\nsession_id=" + savedSession + "\n";
+                    + "presence=resume 77 s1\n" : savedSession == null ? (claudeSession == null || taskState.equals("running") ? "" : "session_id=" + claudeSession + "\n" + (claudeSessionGone ? "session_gone=1\n" : "")) : "identity=1 " + savedAgent + "\nsession_id=" + savedSession + "\n";
             return taskState.equals("running")
                     ? "run=1\nkind=agent\nstate=running\n" + who + "events_bytes=10\n---\n" + EVENTS.lines().limit(2)
                             .reduce("", (a, b) -> a + b + "\n") + "\n---stderr\n"
@@ -384,6 +386,22 @@ class DelegationToolsTest {
         var r = call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"carry on\"}");
         assertEquals("wrong_state", code(r));
         assertTrue(text(r).contains("start a new delegated task"), text(r));
+        assertEquals(launched, launches(), "no run that could only fail");
+    }
+
+    @Test
+    void aClaudeTaskWhoseTranscriptIsGoneIsNotResumableAndMessagesAreRefused() throws Exception {
+        var task = delegateFresh();
+        taskState = "finished";
+        claudeSessionGone = true; // Claude Code's cleanupPeriodDays deleted it
+        var status = structured(call("task_status", "{\"task_id\":\"" + task + "\"}"));
+        assertEquals("s1", status.path("session_id").asText());
+        assertFalse(status.path("resumable").asBoolean(true));
+        assertTrue(status.path("join_command").isMissingNode(), status.toString());
+        var launched = launches();
+        var r = call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"carry on\"}");
+        assertEquals("wrong_state", code(r));
+        assertTrue(text(r).contains("its Claude Code conversation is gone"), text(r));
         assertEquals(launched, launches(), "no run that could only fail");
     }
 

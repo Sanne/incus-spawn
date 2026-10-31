@@ -190,7 +190,7 @@ final class OutputSchemas {
                 .integer("run", null, true)
                 .integer("attached_pid", "The coding agent of a person in its conversation", false)
                 .string("session_id", "The saved agent conversation ID", false)
-                .bool("resumable", "A supported agent with a saved conversation ID", false)
+                .bool("resumable", "A supported agent with a saved conversation ID it can still resume", false)
                 .string("join_command", "When resumable: the host command a person runs to join its conversation", false)
                 .string("started_at", "ISO-8601: when the current run started", false)
                 .string("last_activity", "ISO-8601: when the current run last wrote output", false)
