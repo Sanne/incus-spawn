@@ -46,8 +46,11 @@ final class GeminiOnVertex {
     /** A plain {@code alt} value: no separator or escape a server might read as another parameter. */
     private static final Pattern RESPONSE_FORMAT = Pattern.compile("alt=[A-Za-z]+");
 
-    /** The {@code alt} parameters of {@code query}, as the client wrote them, behind a {@code ?}; else nothing. */
-    private static String responseFormat(String query) {
+    /**
+     * The {@code alt} parameters of {@code query}, as the client wrote them, behind a {@code ?}; else
+     * nothing. A signed Claude call in Vertex's format keeps the same (#1921).
+     */
+    static String responseFormat(String query) {
         var kept = Arrays.stream(query.split("&")).filter(p -> RESPONSE_FORMAT.matcher(p).matches()).toList();
         return kept.isEmpty() ? "" : "?" + String.join("&", kept);
     }
