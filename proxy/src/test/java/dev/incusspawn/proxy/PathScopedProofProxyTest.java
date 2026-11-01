@@ -92,7 +92,7 @@ class PathScopedProofProxyTest {
                         .setKeyCertOptions(NpmCacheProxyTest.keyCert(CertificateAuthority.loadOrCreate(), SHARED)))
                 .requestHandler(req -> {
                     var auth = req.getHeader("Authorization");
-                    received.put(req.host().replaceFirst(":\\d+$", "") + req.path(), auth == null ? "" : auth);
+                    received.put(req.authority().host() + req.path(), auth == null ? "" : auth);
                     req.response().end("{}");
                 })
                 .webSocketHandler(ws -> {

@@ -274,7 +274,7 @@ class ArtifactCacheHandler {
         }
 
         var from = upResp.request();
-        var redirectUri = redirectTarget(from.getHost(), from.getPort(), from.getURI(), location);
+        var redirectUri = redirectTarget(from.authority().host(), from.authority().port(), from.getURI(), location);
         if (redirectUri == null) {
             ProxyLog.trace("Invalid redirect Location for " + ref + ": " + location);
             upstream.sendError(clientReq.response(), 502, "Invalid redirect Location");
@@ -615,8 +615,8 @@ class ArtifactCacheHandler {
             var from = first.request();
             var options = new RequestOptions()
                     .setMethod(HttpMethod.GET)
-                    .setHost(from.getHost())
-                    .setPort(from.getPort())
+                    .setHost(from.authority().host())
+                    .setPort(from.authority().port())
                     .setURI(from.getURI())
                     .setConnectTimeout(resumeTimeoutMillis(Upstream.UPSTREAM_CONNECT_TIMEOUT_MILLIS));
             var headers = io.vertx.core.MultiMap.caseInsensitiveMultiMap().setAll(from.headers());

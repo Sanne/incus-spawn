@@ -18,8 +18,8 @@ Where the implementation differs from the plan, this page says so beside the pla
 Still open:
 
 - **Done:** the quality floors in `.github/scripts/check-pgo-quality.sh` are 12% applicability and 90% relevance.
-  The lowest figures measured are 15.04% applicability (the macOS aarch64 CLI, in dispatch run 40183611322 and in v0.5.0-dev.1; 15.05% in the table below) and 97.04% relevance (the macOS aarch64 proxy, Phase 3 dispatch run 40186966586).
-  That leaves 3 points of applicability and 7 of relevance for drift between releases, while a profile that did not apply or fit, which reads near zero, still fails.
+  The lowest figures measured are 14.98% applicability (the macOS aarch64 CLI, on Quarkus 4 in dispatch run 40313492040; 15.04% on Quarkus 3, in dispatch run 40183611322 and in v0.5.0-dev.1) and 97.04% relevance (the macOS aarch64 proxy, Phase 3 dispatch run 40186966586).
+  That leaves about 3 points of applicability and 7 of relevance for drift between releases, while a profile that did not apply or fit, which reads near zero, still fails.
 - Host routes and the MCP bridge have no load, so they compile as cold code.
   **Done (#1651):** the npm path and the WebSocket relay now have loads (`--load=npm`, `--load=websocket`) and are in the release profile, collected at a lighter weight so they do not outweigh the rest.
   Throughput on both is unchanged on the measuring host, since TLS and the network bound them, for about 1.5 MB more proxy; see the performance notes, "The npm and WebSocket paths".
@@ -167,6 +167,17 @@ A later PR that changes build flags, bumps GraalVM or changes the collection flo
 | macOS x86_64 | unprofiled | unprofiled | 83.31 → 83.56 MB | 38.51 → 38.64 MB |
 
 Item 4: the release smoke test passed on all four platforms, and the keychain smoke on both macOS builds.
+
+**Repeated for the Quarkus 4 upgrade (#1693)**, from `workflow_dispatch` run 40313492040 of `release.yml` on the PR's branch.
+Every build passed its floors, and the profiles were collected against the Vert.x 5 proxy.
+Sizes are against v0.5.0-dev.1, the last release on Quarkus 3, so they include what `main` merged since:
+
+| Platform | CLI applicability / relevance | Proxy applicability / relevance | `isx-proxy`, v0.5.0-dev.1 → Quarkus 4 | `isx`, v0.5.0-dev.1 → Quarkus 4 |
+|---|---|---|---|---|
+| Linux amd64 | 15.14% / 100.00% | 21.68% / 100.00% | 43.32 → 44.57 MB | 38.67 → 38.73 MB |
+| Linux aarch64 | 15.09% / 99.75% | 21.61% / 99.86% | 43.91 → 44.89 MB | 40.04 → 40.18 MB |
+| macOS aarch64 | 14.98% / 98.55% | 21.20% / 97.13% | 40.57 → 41.97 MB | 40.22 → 40.30 MB |
+| macOS x86_64 | unprofiled | unprofiled | 84.56 → 87.80 MB | 38.66 → 38.70 MB |
 
 ## Phase 3: collecting and applying profiles in the release run
 

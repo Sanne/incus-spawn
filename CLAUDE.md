@@ -109,7 +109,7 @@ Tests that run `git credential` or log in over HTTPS configure Git with `Hermeti
 
 ## Tech Stack
 
-- **Java 25**, **Quarkus 3.x** with aesh for CLI commands
+- **Java 25**, **Quarkus 4.x** with aesh for CLI commands (the proxy runs on Vert.x 5 and Netty 4.2; see [docs/dev/QUARKUS-4.md](docs/dev/QUARKUS-4.md))
 - **Tamboui** for the interactive TUI (terminal UI framework)
 - **jjq** (`io.hyperfoil.tools:jjq-*`) for YAML and JSON: definitions and `config.yaml` bind through generated `@JqMapped` mappings (`Jjq`), and JSON is read with `JqValues.parseStrict` when isx or Incus wrote it, and with `Jjq.parseForeign` (a lone surrogate escape reads as U+FFFD, nothing else is let through) when another program did
 - **Quarkus CDI** for dependency injection (tool discovery, command wiring)
