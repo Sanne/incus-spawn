@@ -40,6 +40,8 @@ class CredentialProofProxyTest {
     static final String VERTEX = "aiplatform.googleapis.com";
     /** What Pi's google-vertex provider sends with an API key: Vertex's express form, no project. */
     static final String EXPRESS_CALL = "/v1/publishers/google/models/gemini-3.7-flash:streamGenerateContent?alt=sse";
+    /** Where Claude Code sends a Vertex model call for the {@link #claude} Vertex account. */
+    static final String CLAUDE_ON_VERTEX = "/v1/projects/outer-project/locations/us-east5/publishers/anthropic/models/";
     static final String SECRET = ProofTestSupport.SECRET;
     static final String BODY = "{\"model\":\"claude-test\",\"messages\":[],\"max_tokens\":7}";
     static final String GITHUB_CONFIG = """
@@ -425,6 +427,82 @@ class CredentialProofProxyTest {
             assertEquals(403, http(call.getKey(), VERTEX, call.getValue(), "x-goog-api-key", proof), call.toString());
             assertFalse(received.isDone(), call.toString());
         }
+        assertEquals(0, tokenFetches.get());
+    }
+
+    /** A Claude call already in Vertex's form, in the account's project and region, is signed with the host's gcloud token. */
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "claude-opus-5-5:streamRawPredict", "claude-haiku-4-5@20251001:rawPredict", "count-tokens:rawPredict"})
+    void claudeOnVertexServesModelCallsInTheAccountsProjectAndRegion(String call) throws Exception {
+        serve(claude("vertex"));
+        assertEquals(200, http(HttpMethod.POST, ANTHROPIC, CLAUDE_ON_VERTEX + call,
+                "Authorization", "Bearer " + ProofTestSupport.token("claude", "ya29.")));
+        var got = received.get(10, TimeUnit.SECONDS);
+        assertEquals(CLAUDE_ON_VERTEX + call.replace("@20251001", ""), got.uri());
+        assertEquals("us-east5-aiplatform.googleapis.com", got.host());
+        assertEquals("Bearer ya29.outer", got.authorization());
+    }
+
+    /**
+     * The host's gcloud token reaches every project its user can: a proven model call naming another
+     * project or region is spent in the account's own (#1921), as a guest built for another account sends it.
+     */
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "/v1/projects/other-project/locations/us-east5/", "/v1/projects/outer-project/locations/europe-west1/",
+            "/v1/projects/../locations/../"})
+    void claudeOnVertexSpendsOnlyTheAccountsProjectAndRegion(String elsewhere) throws Exception {
+        serve(claude("vertex"));
+        assertEquals(200, http(HttpMethod.POST, ANTHROPIC, elsewhere + "publishers/anthropic/models/claude-opus-5-5:rawPredict",
+                "Authorization", "Bearer " + ProofTestSupport.token("claude", "ya29.")));
+        var got = received.get(10, TimeUnit.SECONDS);
+        assertEquals(CLAUDE_ON_VERTEX + "claude-opus-5-5:rawPredict", got.uri());
+        assertEquals("us-east5-aiplatform.googleapis.com", got.host());
+        assertEquals("Bearer ya29.outer", got.authorization());
+    }
+
+    /** A proven call in Vertex's form buys Claude model calls alone, refused before anything is sent (#1921). */
+    @Test void claudeOnVertexRefusesAnyOtherApiOrMethodBeforeAnythingIsSent() throws Exception {
+        serve(claude("vertex"));
+        var proof = "Bearer " + ProofTestSupport.token("claude", "ya29.");
+        for (var call : List.of(
+                Map.entry(HttpMethod.POST, "/v1/projects/other-project/locations/us-east5/endpoints"),
+                Map.entry(HttpMethod.POST, "/v1/projects/outer-project/locations/us-east5/endpoints"),
+                Map.entry(HttpMethod.POST, "/v1/projects/outer-project/locations/us-east5/publishers/google/models/gemini:generateContent"),
+                Map.entry(HttpMethod.POST, "/v1/projects/outer-project/locations/us-east5/publishers/anthropic/models/claude:predict"),
+                Map.entry(HttpMethod.POST, "/v1/projects/outer-project/locations/us-east5/endpoints/e:rawPredict"),
+                Map.entry(HttpMethod.POST, CLAUDE_ON_VERTEX + "../../../../../../other-project/locations/us-east5/publishers/anthropic/models/c:rawPredict"),
+                Map.entry(HttpMethod.POST, CLAUDE_ON_VERTEX + "claude%2F..%2F..%2Fx:rawPredict"),
+                Map.entry(HttpMethod.GET, CLAUDE_ON_VERTEX + "claude:rawPredict"),
+                Map.entry(HttpMethod.DELETE, "/v1/projects/outer-project/locations/us-east5/datasets/d"))) {
+            assertEquals(403, http(call.getKey(), ANTHROPIC, call.getValue(), "Authorization", proof), call.toString());
+            assertFalse(received.isDone(), call.toString());
+        }
+        assertEquals(0, tokenFetches.get());
+    }
+
+    /** No quota project, query parameter or method override of the guest's reaches a signed Claude call on Vertex. */
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "/v1/messages", CLAUDE_ON_VERTEX + "claude-opus-5-5:streamRawPredict"})
+    void claudeOnVertexKeepsNoBillingOverrideOfTheGuests(String path) throws Exception {
+        serve(claude("vertex"));
+        extraHeaders = Map.of("x-goog-user-project", "someone-else", "X-HTTP-Method-Override", "DELETE");
+        assertEquals(200, http(HttpMethod.POST, ANTHROPIC, path + "?userProject=someone-else&alt=sse&%24alt=json",
+                "Authorization", "Bearer " + ProofTestSupport.token("claude", "ya29.")));
+        var got = received.get(10, TimeUnit.SECONDS);
+        assertFalse(got.uri().contains("someone-else") || got.uri().contains("json"), got.uri());
+        assertNull(receivedHeaders.get("x-goog-user-project"));
+        assertNull(receivedHeaders.get("X-HTTP-Method-Override"));
+        assertEquals("Bearer ya29.outer", got.authorization());
+    }
+
+    /** Without the instance's claude proof, a call in Vertex's form keeps its own authentication, destination and query. */
+    @Test void claudeOnVertexWithoutAProofIsForwardedAsBefore() throws Exception {
+        serve(claude("vertex"));
+        var uri = "/v1/projects/other-project/locations/us-east5/endpoints?keep=1";
+        assertEquals(200, http(HttpMethod.POST, ANTHROPIC, uri, "Authorization", "Bearer ya29.inner-own"));
+        var got = received.get(10, TimeUnit.SECONDS);
+        assertEquals(uri, got.uri());
+        assertEquals("Bearer ya29.inner-own", got.authorization());
         assertEquals(0, tokenFetches.get());
     }
 
