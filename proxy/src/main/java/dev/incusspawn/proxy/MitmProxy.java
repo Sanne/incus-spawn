@@ -1839,7 +1839,25 @@ public class MitmProxy {
             streamApiRequest(clientReq, ctx, started);
             return;
         }
-        retainVertexRequest(clientReq, ctx);
+        var path = clientReq.path();
+        var query = clientReq.query() == null ? "" : "?" + clientReq.query();
+        if (ctx.authorized() && isVertexFormat(path)) {
+            // The host's gcloud token signs it: decided before its body is read (#1921)
+            var credentials = ctx.creds();
+            if (credentials.vertexProjectId().isBlank() || credentials.vertexRegion().isBlank()) {
+                refuseOnVertex(clientReq, ctx, "claude-on-vertex", 502, "Claude Code's Vertex calls need a Vertex AI"
+                        + " Claude account with a project and region; this instance's Claude account has none");
+                return;
+            }
+            path = ClaudeOnVertex.projectPath(clientReq.method(), path, credentials.vertexProjectId(), credentials.vertexRegion());
+            if (path == null) {
+                refuseOnVertex(clientReq, ctx, "claude-on-vertex", 403, "Only Claude model calls are served with the"
+                        + " Vertex AI account");
+                return;
+            }
+            query = clientReq.query() == null ? "" : GeminiOnVertex.responseFormat(clientReq.query());
+        }
+        retainVertexRequest(clientReq, ctx, path, query);
     }
 
     /**
@@ -1904,25 +1922,20 @@ public class MitmProxy {
     private void relayGeminiOnVertex(HttpServerRequest clientReq, RequestContext ctx, long started) {
         var credentials = ctx.creds();
         if (!credentials.useVertex() || credentials.vertexProjectId().isBlank() || credentials.vertexRegion().isBlank()) {
-            refuseGeminiOnVertex(clientReq, ctx, 502, "Pi's google-vertex provider needs a Vertex AI Claude account"
+            refuseOnVertex(clientReq, ctx, "gemini-on-vertex", 502, "Pi's google-vertex provider needs a Vertex AI Claude account"
                     + " with a project and region; this instance's Claude account is not one");
             return;
         }
         var uri = GeminiOnVertex.projectUri(clientReq.method(), clientReq.uri(),
                 credentials.vertexProjectId(), credentials.vertexRegion());
         if (uri == null) {
-            refuseGeminiOnVertex(clientReq, ctx, 403, "Only Gemini model calls are served with the Vertex AI account");
+            refuseOnVertex(clientReq, ctx, "gemini-on-vertex", 403, "Only Gemini model calls are served with the Vertex AI account");
             return;
         }
         var upstreamHost = vertexHost(credentials);
         var debug = debugExchange(clientReq, null);
         upstream.relayRequest(clientReq, upstreamHost, uri, new Upstream.RelayHooks(
-                upReq -> {
-                    var head = prepareApiHead(clientReq, upReq, ctx, upstreamHost, true, null);
-                    // After the client's head is copied in, and before any of it leaves
-                    GeminiOnVertex.CLIENT_OVERRIDES.forEach(upReq.headers()::remove);
-                    return head;
-                },
+                upReq -> prepareApiHead(clientReq, upReq, ctx, upstreamHost, true, null),
                 upResp -> {
                     if (upResp.statusCode() == 401) invalidateVertexToken();
                     if (debug != null) debug.logAtEnd(upResp);
@@ -1931,9 +1944,10 @@ public class MitmProxy {
                 responseTap(null, debug)), started);
     }
 
-    private void refuseGeminiOnVertex(HttpServerRequest clientReq, RequestContext ctx, int status, String message) {
+    /** Refuses a proven call the Vertex AI account does not serve on {@code route}, warning once in a while per caller. */
+    private void refuseOnVertex(HttpServerRequest clientReq, RequestContext ctx, String route, int status, String message) {
         var caller = ctx.caller() == null ? "an unknown caller" : "instance '" + ctx.caller().accounts().instanceName() + "'";
-        if (refusedProofWarnings.shouldLog(caller + ":gemini-on-vertex:" + status, System.nanoTime())) {
+        if (refusedProofWarnings.shouldLog(caller + ":" + route + ":" + status, System.nanoTime())) {
             ProxyLog.warn("Refusing " + clientReq.method() + " " + ctx.domain() + clientReq.path() + " for " + caller
                     + ": " + message);
         }
@@ -1955,8 +1969,9 @@ public class MitmProxy {
      * format and otherwise only rid of each tool's {@code strict} (#1568), unless it is encoded
      * ({@link #isEncodedVertexFormat}); and held in a {@link BodySpool} until it has been sent for good,
      * since the URL is known only at its end and a 401 sends it again. Paused here, before anything waits (#1164).
+     * A call already in Vertex's format goes to {@code path}, with {@code query} (empty, or from its {@code ?}).
      */
-    private void retainVertexRequest(HttpServerRequest clientReq, RequestContext ctx) {
+    private void retainVertexRequest(HttpServerRequest clientReq, RequestContext ctx, String path, String query) {
         clientReq.pause();
         var credentials = ctx.creds();
         var upstreamHost = vertexHost(credentials);
@@ -1973,7 +1988,6 @@ public class MitmProxy {
         clientResp.endHandler(ended);
         clientResp.closeHandler(ended);
 
-        var path = clientReq.path();
         VertexBodyRewriter rewriter = null;
         if (!isEncodedVertexFormat(clientReq)) {
             if (debug != null) debug.forwarded = new ApiTrafficLog.Capture();
@@ -2041,9 +2055,8 @@ public class MitmProxy {
                 refuseTranslation(path, e, refuse);
                 return;
             }
-            // A request already in Vertex's format keeps its query; a translation's URI is its own (#1576)
-            var query = clientReq.query();
-            if (query != null && isVertexFormat(path)) uri += "?" + query;
+            // A request already in Vertex's format keeps its query (#1576); a translation's URI is its own
+            if (isVertexFormat(path)) uri += query;
             var requestOptions = new RequestOptions()
                     .setMethod(clientReq.method())
                     .setPort(443)
@@ -2362,6 +2375,8 @@ public class MitmProxy {
                         upReq.headers().remove("x-api-key");
                         // Pi's google-vertex provider carries its proof here (#1114)
                         upReq.headers().remove("x-goog-api-key");
+                        // Only the account names the project the token is charged to (#1921)
+                        GeminiOnVertex.CLIENT_OVERRIDES.forEach(upReq.headers()::remove);
                         upReq.headers().remove("anthropic-beta");
                         upReq.headers().remove("anthropic-version");
                         upReq.headers().remove("anthropic-dangerous-direct-browser-access");

@@ -102,7 +102,7 @@ Key design:
 - **Gemini on Vertex (#1114)** is a hardcoded route, like Anthropic's, for Pi's `google-vertex` provider.
   `aiplatform.googleapis.com` is built in (`ProxyConfig.GOOGLE_VERTEX_DOMAINS`); `ProofCarriers` reads the claude namespace's proof from `x-goog-api-key` there, and `AccountSelection.namespacesByDomain` maps it to `claude`, so `refuseIfUnservable` and the `inherit` swap cover it.
   An HTTP request that proved the claude namespace itself (`servesGeminiOnVertex`; another namespace's proof there gets only its own entry) goes to `relayGeminiOnVertex`: a non-Vertex account is a 502, and anything `GeminiOnVertex.projectUri` does not accept (only `POST /{v1,v1beta1}/publishers/google/models/<model>:{generateContent,streamGenerateContent,countTokens}`) a 403, both before anything leaves.
-  The accepted call keeps only the `alt` parameters of its query (`alt=<letters>`) and loses `x-goog-user-project` and `X-HTTP-Method-Override` (`GeminiOnVertex.CLIENT_OVERRIDES`, removed after the client's head is copied), so no `userProject` or quota header charges another project.
+  The accepted call keeps only the `alt` parameters of its query (`alt=<letters>`) and loses `x-goog-user-project` and `X-HTTP-Method-Override` (`GeminiOnVertex.CLIENT_OVERRIDES`, removed by `injectHeaders`' Vertex branch after the client's head is copied), so no `userProject` or quota header charges another project.
   Its body is forwarded unread, and may still name another project's resources (`cachedContent`, `tools` retrieval): #1925.
   It is rewritten to the account's project and location, sent to `vertexHost(region)` through `Upstream.relayRequest(..., uri, ...)`, and signed by `injectHeaders`' Vertex branch, which strips `x-goog-api-key`.
   It streams, never held, so a 401 is not retried: it invalidates the token cache for the next call.
@@ -298,6 +298,10 @@ Key design:
   `ClaudeSetup`/`PiSetup` `envEntries(params, selection)` and `GhSetup.install(c, params, selection)` all take the **template's** account, not the global default.
 - Three auth modes for Anthropic domains (priority: Vertex > OAuth > API key): OAuth mode strips `x-api-key` and injects `Authorization: Bearer <token>` for Claude Pro/Max users.
   Vertex mode does three-way routing -- passthrough for Vertex-formatted requests, standard-to-Vertex translation for `/v1/messages` (`VertexBodyRewriter`: streaming, bounded memory, its departures from the old tree translation listed in DESIGN.md), and direct forwarding for non-messages endpoints.
+  A proven passthrough must be a Claude model call (`ClaudeOnVertex.projectPath`: `POST /v1/projects/<any>/locations/<any>/publishers/anthropic/models/<model>:{rawPredict,streamRawPredict}`, `count-tokens` being a model), which is moved into the account's own project and region, else `handleApiRequest` answers 403 before `retainVertexRequest` reads anything (#1921).
+  Moved, never refused for its project: the guest's project and region are baked at build, and the instance may since be served another Vertex account.
+  It keeps only the `alt` parameters of its query (`GeminiOnVertex.responseFormat`); an unproven one is forwarded as before, query and all.
+  `injectHeaders`' Vertex branch drops `GeminiOnVertex.CLIENT_OVERRIDES` from every request it signs, Claude's and Gemini's alike.
   A passthrough body loses only each tool's `strict` (`VertexBodyRewriter.vertexFormat`) and, for an object, insignificant whitespace; a non-empty one must be valid JSON (else 502) with well-formed top-level and tool names (else 400).
   One whose `Content-Encoding` headers name any coding but `identity` is not read, and is forwarded unchanged.
   API key mode replaces `x-api-key` with the real key.
