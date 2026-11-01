@@ -1101,6 +1101,14 @@ Only those commands, never isx's own: those can carry an instance's proofs, and 
 A build's own temporary proofs do reach those commands, since a login shell sources them, so the scrub removes the marker and digest of every proof isx mints and leaves its public prefix (`ProofToken.ANY_PROOF`, from the parts `tokenFor` joins).
 A pattern that also took the prefix would open with an unbounded run, and searching a long line of such characters would take quadratic time.
 `ProofScrubTest` checks one proof per placeholder a built-in tool declares, so a new kind is covered without being listed.
+**The scrub is hygiene, not a security boundary.**
+It exists for the accidental leak: a template's `user:pass@host` clone URL, or a step that prints its environment, landing in a log that someone later pastes into an issue.
+A guest that sets out to defeat it is outside its threat model, for three reasons.
+A guest holds no real credential, only per-instance proofs that are worthless away from the proxy, and a build's proofs are revoked when the build ends.
+The log is the host user's own owner-only file, and that user already holds every real credential.
+A guest that wanted to leak what it holds has easier ways out than escape sequences in a log.
+The screen model below already goes further than accidental output needs, and it stays as defence in depth.
+A further gap is worth closing only when a real tool's ordinary output opens it, never when only crafted input does (#1919, #1920 and #1927 are the crafted kind).
 Every saved copy of what a guest printed is scrubbed as printed and as shown (`SecretRedactor.scrubGuest`, #1878): the build log, the failure report and the instance's `~/inbox/BUILD_FAILURE.txt`.
 Neither scrub alone is enough.
 Colour codes can split a token that matches only once they are gone, as `grep --color` splits `isx` from `_<digest>` (#1864).
