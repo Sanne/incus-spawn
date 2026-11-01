@@ -1618,7 +1618,13 @@ Using Vertex mode in the container ensures the `/model` picker matches what's av
 The proxy routes requests to `api.anthropic.com` through one of three paths based on the URL:
 
 1. **Vertex passthrough** (`/v1/projects/...`): Requests already in Vertex format (from the container's Vertex SDK).
-   The proxy strips `@date` model version suffixes from the URL path (the global endpoint rejects them), keeping the query string as sent, removes the `anthropic-beta` header, injects a GCP Bearer token, and forwards to the real Vertex endpoint.
+   The proxy strips `@date` model version suffixes from the URL path (the global endpoint rejects them), removes the `anthropic-beta` header, injects a GCP Bearer token, and forwards to the real Vertex endpoint.
+   The host's gcloud token reaches every project and every Vertex API its user can, so a proven request is served only as a Claude model call, moved into the account's own project and region (#1921, `ClaudeOnVertex`).
+   That is `POST /v1/projects/<any>/locations/<any>/publishers/anthropic/models/<model>:{rawPredict,streamRawPredict}`, token counting (`count-tokens`) included; anything else proven is a 403 before its body is read or anything is sent.
+   Moved, not refused: the guest's `ANTHROPIC_VERTEX_PROJECT_ID` and `CLOUD_ML_REGION` were fixed at build, and two Vertex accounts are interchangeable on an instance (`isx account set`, a config edit), so refusing a mismatch would break every call of a re-pointed instance.
+   Before, such a call was billed to the project the guest named.
+   Of a proven request's query it keeps only `alt` (letters only), as the Gemini route does; an unproven one keeps its query as sent (#1576), and its own authentication and destination.
+   Every request the Vertex branch of `injectHeaders` signs, translated ones included, loses `x-goog-user-project` and `X-HTTP-Method-Override`, which would bill another quota project or change the method.
    The body is forwarded as sent, but for `strict` in each tool definition, which is dropped as on the translation path (#1568).
    An object body also loses its insignificant whitespace, between tokens and before the object with a byte order mark; the Vertex SDK already formats the rest correctly.
    `VertexBodyRewriter` does this as the body arrives, with the parser the translation uses, and the body is held like a translated one (see "A body the proxy must hold").
