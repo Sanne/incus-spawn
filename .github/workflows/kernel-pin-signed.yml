@@ -1,0 +1,58 @@
+name: Signed kernel pin
+
+# KERNEL_SHA256 in appliance/kernel/build-kernel.sh must be the sum kernel.org's signed
+# sha256sums.asc gives for KERNEL_VERSION, whoever wrote it (#1355).
+#
+# The check is main's copy of update-kernel-pin.sh, with main's key and fingerprint, applied to
+# the pin the PR would merge. A PR that changed the key, AUTOSIGNER_FPR or the script along with
+# the pin would pass its own copy, so the PR's copies are never run: pull_request_target runs this
+# workflow from the base branch, it checks out main's scripts and key whatever that base is, with
+# a read-only token and no secrets, and the PR's build-kernel.sh is read from its head as data. Never add a step that runs, builds or sources
+# anything from the PR. A PR that rotates the key fails this until it is merged: that is the
+# review the three-source check in update-kernel-pin.sh asks for, made on purpose.
+
+on:
+  pull_request_target:
+    # edited: a retargeted PR is checked again. Every edit runs it, since a skipped run would show as
+    # passing over a failed one on the same head; it is cheap.
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - 'appliance/kernel/**'
+  push:
+    branches: [main]
+    paths:
+      - 'appliance/kernel/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pin:
+    name: signed kernel pin
+    runs-on: ubuntu-latest
+    steps:
+      # main's copy, whatever the PR's base: a base branch could carry its own key and script.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      # The PR's head, as data. A clean merge carries the head's pin when the PR changed it, and the
+      # base's otherwise, which was checked when it reached main; a PR whose pin conflicts with the
+      # base's cannot merge until it is rebased, and is checked again then.
+      - name: Take the pin to check
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PR" ]; then
+            cp appliance/kernel/build-kernel.sh "$RUNNER_TEMP/build-kernel.sh"
+          else
+            git fetch -q --no-tags --depth 1 origin "+refs/pull/$PR/head:refs/remotes/pr/head"
+            git show refs/remotes/pr/head:appliance/kernel/build-kernel.sh > "$RUNNER_TEMP/build-kernel.sh"
+          fi
+
+      - name: Check the pin against kernel.org's signed sha256sums.asc
+        run: appliance/kernel/update-kernel-pin.sh check "$RUNNER_TEMP/build-kernel.sh"

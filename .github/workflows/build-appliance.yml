@@ -34,7 +34,11 @@ jobs:
 
       - name: Compute cache key
         id: cache_key
-        run: echo "key=appliance-x86_64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**', '!appliance/test-*.sh', '!appliance/*.md', '!appliance/kernel/vm*.config') }}" >> "$GITHUB_OUTPUT"
+        # With the kernel's fingerprint as well, so the image's kernel covers every input
+        # kernel-fingerprint.sh names, whatever the hash leaves out (#1355).
+        run: |
+          fp=$(appliance/kernel/kernel-fingerprint.sh)
+          echo "key=appliance-x86_64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**', '!appliance/test-*.sh', '!appliance/*.md', '!appliance/kernel/vm*.config') }}-$fp" >> "$GITHUB_OUTPUT"
         env:
           INPUT_VERSION: ${{ inputs.version }}
 
@@ -101,6 +105,17 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
 
+      # What was built, for a Mac boot of this artifact to be recorded against (#1355):
+      # on a PR, the merge commit actions/checkout built, not the PR's head.
+      - name: Record the kernel's inputs
+        run: |
+          commit=$(git rev-parse HEAD)
+          fp=$(appliance/kernel/kernel-fingerprint.sh)
+          version=$(appliance/kernel/update-kernel-pin.sh pinned)
+          printf 'commit %s\nfingerprint %s\nversion %s\n' "$commit" "$fp" "$version" > kernel-inputs
+          sudo mv kernel-inputs appliance/build/kernel-inputs
+          cat appliance/build/kernel-inputs
+
       - name: Cache built image
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
@@ -125,7 +140,11 @@ jobs:
 
       - name: Compute cache key
         id: cache_key
-        run: echo "key=appliance-aarch64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**', '!appliance/test-*.sh', '!appliance/*.md', '!appliance/kernel/vm*.config') }}" >> "$GITHUB_OUTPUT"
+        # With the kernel's fingerprint as well, so the image's kernel covers every input
+        # kernel-fingerprint.sh names, whatever the hash leaves out (#1355).
+        run: |
+          fp=$(appliance/kernel/kernel-fingerprint.sh)
+          echo "key=appliance-aarch64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**', '!appliance/test-*.sh', '!appliance/*.md', '!appliance/kernel/vm*.config') }}-$fp" >> "$GITHUB_OUTPUT"
         env:
           INPUT_VERSION: ${{ inputs.version }}
 
@@ -193,6 +212,17 @@ jobs:
           echo "Appliance version verified: $ACTUAL"
         env:
           INPUT_VERSION: ${{ inputs.version }}
+
+      # What was built, for a Mac boot of this artifact to be recorded against (#1355):
+      # on a PR, the merge commit actions/checkout built, not the PR's head.
+      - name: Record the kernel's inputs
+        run: |
+          commit=$(git rev-parse HEAD)
+          fp=$(appliance/kernel/kernel-fingerprint.sh)
+          version=$(appliance/kernel/update-kernel-pin.sh pinned)
+          printf 'commit %s\nfingerprint %s\nversion %s\n' "$commit" "$fp" "$version" > kernel-inputs
+          sudo mv kernel-inputs appliance/build/kernel-inputs
+          cat appliance/build/kernel-inputs
 
       - name: Cache built image
         if: steps.cache.outputs.cache-hit != 'true'

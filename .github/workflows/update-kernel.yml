@@ -1,0 +1,226 @@
+name: Update kernel
+
+# Proposes the newest point release of the pinned kernel series (#1355). The VM
+# base image and the macOS appliance both build appliance/kernel/build-kernel.sh's
+# KERNEL_VERSION, so a kernel.org stable fix reaches neither until that pin moves.
+#
+# update-kernel-pin.sh takes the version and its sum only from kernel.org's
+# sha256sums.asc, verified against the committed autosigner key. There is one
+# bump PR at a time, on bot/kernel-bump: a newer point release replaces its commit
+# and title, so a stale bump never waits beside a current one. A version whose PR
+# was closed unmerged is not proposed again; the next one is. A new series
+# (7.2 -> 7.3) is never proposed: the job opens an issue when the pinned one ends.
+#
+# Nothing here merges: the bump goes through CI and the Mac boot before Sanne
+# merges it. A failed run opens an issue, which the next good run closes.
+
+on:
+  schedule:
+    - cron: '41 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: update-kernel
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    # Forks have neither BOT_TOKEN nor a reason to propose bumps, and only main's copy of this job
+    # and its scripts runs with BOT_TOKEN: a dispatch on another branch would build the bump from it.
+    if: github.repository == 'Sanne/incus-spawn' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      # No credentials left in .git/config: the steps that use github.token must not push as the bot.
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Find the newest point release
+        id: pin
+        run: |
+          set -euo pipefail
+          current=$(appliance/kernel/update-kernel-pin.sh pinned)
+          new=$(appliance/kernel/update-kernel-pin.sh bump)
+          {
+            echo "current=$current"
+            echo "new=${new%% *}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Pinned: $current; newest in its series: ${new:-the same}"
+
+      - name: Open or refresh the bump PR
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN }}
+          REPO: ${{ github.repository }}
+          CURRENT: ${{ steps.pin.outputs.current }}
+          NEW: ${{ steps.pin.outputs.new }}
+        run: |
+          set -euo pipefail
+          BRANCH=bot/kernel-bump
+          BOT_EMAIL="github-actions[bot]@users.noreply.github.com"
+          PIN=appliance/kernel/build-kernel.sh
+          # The checkout keeps no credentials; pushes go through gh, as BOT_TOKEN.
+          gh auth setup-git
+          # This repository's own branch: a fork's branch of the same name is someone else's PR.
+          OURS='select(.headRepositoryOwner.login == "Sanne" and .isCrossRepository == false)'
+          OPEN=$(gh pr list --head "$BRANCH" --state open --json number,headRepositoryOwner,isCrossRepository \
+            --jq "[.[] | $OURS][0].number // empty")
+          # Fetched before the body is edited: an edit that fails stops the run with the PR as it was.
+          body=""
+          if [[ -n "$OPEN" ]]; then
+            body=$(gh pr view "$OPEN" --json body --jq .body)
+          fi
+
+          # The branch as it is, whether or not a PR is open on it.
+          branch_sha=""
+          branch_version=""
+          foreign=""
+          if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null; then
+            git fetch -q --depth 1 origin "$BRANCH"
+            branch_sha=$(git rev-parse FETCH_HEAD)
+            branch_version=$(git show "$branch_sha:$PIN" | sed -n 's/^KERNEL_VERSION="\(.*\)"$/\1/p')
+            [[ -n "$branch_version" ]] || { echo "::error::$BRANCH has no KERNEL_VERSION line this job can read."; exit 1; }
+            [[ "$(git log -1 --format=%ae "$branch_sha")" == "$BOT_EMAIL" ]] || foreign=1
+          else
+            rc=$?
+            # 2: no such branch; anything else is a failure to ask.
+            [[ "$rc" == 2 ]] || exit "$rc"
+          fi
+          # A commit someone added to the branch is not this job's to push over or delete.
+          keep_out() {
+            echo "::error::$BRANCH has a commit this job did not make, so it is left alone: $1. Rebase or delete the branch by hand."
+            exit 1
+          }
+
+          if [[ -z "$NEW" ]]; then
+            # main pins the newest release the signed sums list. An open bump of a release no newer
+            # than that is stale; one of a newer release stays, as a sums file can lag behind.
+            if [[ -n "$OPEN" ]]; then
+              [[ -z "$foreign" ]] || keep_out "#$OPEN is not closed as stale"
+              if [[ "$(printf '%s\n%s\n' "$branch_version" "$CURRENT" | sort -V | tail -1)" == "$CURRENT" ]]; then
+                # Without its marker, so it never reads as declined.
+                gh pr edit "$OPEN" --body "$(printf '%s\n' "$body" | grep -v '^<!-- update-kernel.yml: ' || true)"
+                gh pr close "$OPEN" --delete-branch \
+                  --comment "main already pins $CURRENT, so this bump of ${branch_version} is no longer needed."
+              else
+                echo "::warning::#$OPEN proposes $branch_version, newer than the $CURRENT the signed sums list now; left open."
+              fi
+            fi
+            echo "The pin is current."
+            exit 0
+          fi
+
+          TITLE="Update the kernel to $NEW"
+          # MARKER says the PR's branch carries $NEW; PENDING that its branch is being rebuilt to it.
+          # Only a branch carrying the release gets MARKER and the env:macos request, so a failure
+          # anywhere in a refresh leaves a PR that claims nothing, and the next run finishes it.
+          MARKER="<!-- update-kernel.yml: $NEW -->"
+          PENDING="<!-- update-kernel.yml: $NEW, pending -->"
+          BODY="Bumps the kernel the VM base image and the macOS appliance build, \`$PIN\`, from $CURRENT to $NEW, the newest release of its series on kernel.org.
+
+          \`KERNEL_SHA256\` is taken from kernel.org's [sha256sums.asc](https://cdn.kernel.org/pub/linux/kernel/v${NEW%%.*}.x/sha256sums.asc), verified against the committed autosigner key by \`update-kernel-pin.sh\`; \`kernel-pin-signed.yml\` checks it again with main's script and key. Changes: https://cdn.kernel.org/pub/linux/kernel/v${NEW%%.*}.x/ChangeLog-$NEW
+
+          Before merging: a Mac boot of this appliance kernel under vfkit, recorded by \`appliance/test-kernel-on-mac.sh <this PR>\` on the bare-metal Mac; \`kernel-mac-verified\` fails until then (ci.md, #791). A newer release replaces this PR's commit, and the boot has to be repeated.
+
+          Once merged, the images repo's \`ISX_REF\` has to follow for VMs to get it, and an isx release for the appliance (#1355).
+
+          $MARKER"
+          # The comment first: the PR keeps PENDING until both calls have gone through.
+          finish_pr() {
+            gh pr comment "$OPEN" --body "Rebuilt as $NEW on the current main: the previous commit, and any Mac boot of it, no longer applies."
+            gh pr edit "$OPEN" --title "$TITLE" --body "$BODY" --add-label env:macos
+          }
+
+          # The branch already carries this bump, on a base whose pin is main's: its commit, and any Mac
+          # boot of it, stand, whatever else was merged into it. A refresh this job left half done
+          # (PENDING) is finished; a body edited by hand is left as it is.
+          carries=""
+          if [[ -n "$OPEN" && -n "$branch_sha" ]] && git diff --quiet "$branch_sha" -- "$PIN"; then
+            base=$(gh api "repos/$REPO/compare/main...$BRANCH" --jq .merge_base_commit.sha)
+            git fetch -q --depth 1 origin "$base"
+            git diff --quiet "$base" HEAD -- "$PIN" && carries=1
+          fi
+          if [[ -n "$carries" ]]; then
+            if [[ "$body" == *"$PENDING"* ]]; then
+              finish_pr
+              echo "#$OPEN carries $NEW; finished its refresh."
+            else
+              echo "#$OPEN already proposes $NEW."
+            fi
+            exit 0
+          fi
+
+          # A declined release is recognised by the marker this step puts in its PR's body, pending or not.
+          declined=$(gh pr list --head "$BRANCH" --state closed --limit 200 --json body,mergedAt,headRepositoryOwner,isCrossRepository \
+            --jq "[.[] | $OURS | select(.mergedAt == null and (.body | contains(\"$MARKER\") or contains(\"$PENDING\")))] | length")
+          if [[ "$declined" != 0 ]]; then
+            echo "A PR for $NEW was closed unmerged; waiting for the next release."
+            exit 0
+          fi
+
+          [[ -z "$foreign" ]] || keep_out "it is not rebuilt as $NEW"
+          git config user.name "github-actions[bot]"
+          git config user.email "$BOT_EMAIL"
+          git switch -C "$BRANCH"
+          git commit -q -m "$TITLE" -m "From $CURRENT, with the sum from kernel.org's signed sha256sums.asc (update-kernel-pin.sh)." -- "$PIN"
+
+          # Pending first, without the request for a Mac boot, which its old commit must not get under
+          # the new name. One commit on main: a newer release replaces the previous bump, and its Mac
+          # boot with it. The lease is the branch as read above: a commit pushed since is not pushed over.
+          if [[ -n "$OPEN" ]]; then
+            gh pr edit "$OPEN" --title "$TITLE" --remove-label env:macos --body "Being rebuilt as $NEW: its commit does not carry it yet, so do not boot or review it until this says otherwise.
+
+          $PENDING"
+          fi
+          git push --force-with-lease="$BRANCH:$branch_sha" origin "$BRANCH"
+          if [[ -n "$OPEN" ]]; then
+            finish_pr
+          else
+            gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$BODY" --label env:macos
+          fi
+
+      # After the bump: the final release of an ending series is still worth proposing. It runs when
+      # the PR step failed too, so a failing bump never hides an ending series.
+      - name: Report a series at end of life
+        if: success() || failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SERIES=$(appliance/kernel/update-kernel-pin.sh eol)
+          TITLE="[kernel] $SERIES is EOL"
+          # An issue about a series no longer pinned, or no longer ended, is done.
+          gh issue list --state open --search 'in:title "[kernel]" in:title "is EOL"' --json number,title \
+              --jq '.[] | select(.title | test("^\\[kernel\\] [0-9.]+ is EOL$")) | "\(.number) \(.title)"' |
+          while read -r n title; do
+            [[ "$title" == "$TITLE" ]] || gh issue close "$n" --comment "The pin has moved to a live series."
+          done
+          [[ -n "$SERIES" ]] || exit 0
+          if [[ -n "$(gh issue list --state open --search "in:title \"$TITLE\"" --json title --jq ".[] | select(.title == \"$TITLE\") | .title")" ]]; then
+            exit 0
+          fi
+          gh issue create --title "$TITLE" --body "kernel.org's releases.json ends the $SERIES series that \`appliance/kernel/build-kernel.sh\` pins, or no longer lists it, so its security fixes stop. update-kernel.yml never moves to another series: that needs the fragments checked on it, both boot paths and a Mac boot, by hand (#1355)."
+
+      # One issue for a failing job, opened on the first failure and closed by the next good run.
+      - name: Track a failing run
+        if: success() || failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ job.status }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE="[kernel] update check failing"
+          n=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title --jq "[.[] | select(.title == \"$TITLE\") | .number][0] // empty")
+          if [[ "$STATUS" == success ]]; then
+            [[ -z "$n" ]] || gh issue close "$n" --comment "Passing again: $RUN"
+          elif [[ -n "$n" ]]; then
+            gh issue comment "$n" --body "Failed again: $RUN"
+          else
+            gh issue create --title "$TITLE" --body "update-kernel.yml failed: $RUN
+
+          A signature that does not verify against the committed key, or a key other than \`AUTOSIGNER_FPR\`, fails closed: nothing is proposed until a person looks. Never change the key to make this pass without the three-source check in \`update-kernel-pin.sh\` (#1355). The next good run closes this issue."
+          fi
