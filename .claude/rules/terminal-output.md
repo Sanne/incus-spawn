@@ -86,6 +86,10 @@ A character that draws no cell (a combining mark, a zero-width space or joiner) 
 So two more views are scrubbed: the shown text with its lone controls and the characters that may draw no cell (a soft hyphen too) dropped, and the raw text as a terminal's screen shows it (`SecretRedactor.Screen`).
 On that screen a character overwrites the cells under it and keeps the cells to its right, which is how `man` prints bold and underline with backspaces.
 A backspace, a carriage return, a tab, a line feed and the cursor sequences that move along a line or up and down it (CUF, HPR, CUB, CHA, CHT, CBT, CUU, CUD, VPR, CNL, CPL, CUP, VPA, a saved position (xterm's private 1048 and 1049 too), the escapes DECBI and DECFI, and the 8-bit IND, NEL and RI) move the cursor, and REP draws the last character again; colour and other sequences move nothing.
+A tab, CHT and CBT stop where the guest set its tab stops (HTS, its 8-bit form too, and TBC), until DECST8C or RIS puts back one every eight columns.
+Terminals differ here: VTE also clears every stop on TBC 2 and 5, and reads CTC, which xterm ignores.
+So when a guest sends one of those, a screen with VTE's stops is scrubbed as well as xterm's.
+DCH and ICH shift the cells right of the cursor along its row, and what ICH pushes past the last column is gone (#1919).
 Cell widths follow `wcwidth` (`SecretRedactor.cellWidth`): a wide character takes two cells, and a zero-width one none, joining the cell before the cursor and the one last written.
 A span there redacts every raw character written to its cells, so no overwritten half of a token is kept beside the marker.
 That holds when the cell was drawn over from another row too, so a row repainted from further down also redacts what lies between: it fails closed, losing log lines around a secret rather than half of one.
@@ -94,7 +98,10 @@ Rows count from the start of each piece.
 An absolute row (CUP, VPA) counts from there too, as if the piece started at the top of a screen it cleared.
 Output that has scrolled addresses rows from a top long gone, so a second screen counts them from where the first absolute row is, and both are scrubbed.
 The alternate screen (xterm's 47, 1047 and 1049) is a region of rows of its own, with its own saved cursor, so what a program draws there neither overwrites the main screen nor is lost.
-Only written cells are kept, by row and column, so the screen grows with what a guest printed, never with how far it moved the cursor, and a guest cannot make it allocate without bound.
+Only written cells are kept, so the screen grows with what a guest printed, never with how far it moved the cursor, and a guest cannot make it allocate without bound.
+Each row is a treap of its cells and of runs of blank ones, so a shift splits and joins the row instead of moving every cell past the cursor.
+What a shift drops is reused for the next cells, so the screen holds what its rows show, never every shift's leftovers.
+Tab stops are searched 64 columns at a time, so neither a guest's stops nor a long CHT costs a line's worth of work per sequence.
 REP draws at most one cell for each raw character, and the screen is built only when a piece can move the cursor back or repeat (`Screen.mayMoveBack`), so most coloured output pays nothing for it.
 No order of two passes does the same: a raw pass first leaves a marker that cuts a split token short, and a shown pass first misses what showing hid.
 So the scrub gets the raw text: the error line quotes stderr raw, and `appendDiag` keeps the LXC log and dmesg raw.
