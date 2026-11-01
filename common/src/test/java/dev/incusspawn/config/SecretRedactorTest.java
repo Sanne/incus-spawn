@@ -775,6 +775,112 @@ class SecretRedactorTest {
     }
 
     @Test
+    void aGuestsTextKeepsNoTokenACharacterShiftJoins() {
+        // DCH and ICH shift the cells right of the cursor along the line, so what a deletion pulls
+        // left or an insertion makes room for joins on the screen (#1919)
+        var head = "x ghp_" + "A".repeat(10);
+        var tail = "B".repeat(10);
+        var token = "x <isx:redacted:github-token>\n";
+        // Back onto the dash, and deleted: the B close up to the A
+        assertEquals(token, SecretRedactor.scrubGuest(head + "-" + tail + "\u001b[11D\u001b[P\n"));
+        assertEquals(token, SecretRedactor.scrubGuest(head + "--" + tail + "\u001b[12D\u009b2P\n"));
+        // Sixteen blanks inserted before the B, and the head drawn in them. Shown, the line is its
+        // last frame, which the token's first half ends
+        assertEquals("<isx:redacted:github-token>\n", SecretRedactor.scrubGuest(tail + "\r\u001b[16@" + head + "\n"));
+        // A deletion larger than a terminal is wide deletes the rest of the line, the B with it
+        var rest = head + "-" + tail + "\u001b[11D\u001b[9999999P\u001b[4000GQ\n";
+        assertEquals(BuildOutput.guestText(rest), SecretRedactor.scrubGuest(rest));
+    }
+
+    @Test
+    void aGuestsTextKeepsNoTokenAGuestsTabStopJoins() {
+        // A guest that clears the tab stops and sets its own moves a tab where a terminal does: to
+        // the dash's column, which the B then overwrites (#1919)
+        var head = "x ghp_" + "A".repeat(10);
+        var tail = "B".repeat(10);
+        var line = head + "-" + tail;
+        var token = "x <isx:redacted:github-token>\n";
+        // Shown, a line drawn again from its start is its last frame, which the B completes
+        var framed = "<isx:redacted:github-token>\n";
+        var onlyAtDash = "\u001b[3g\u001b[17G\u001bH\r";
+        assertEquals(framed, SecretRedactor.scrubGuest(onlyAtDash + line + "\r\tB\n"));
+        assertEquals(framed, SecretRedactor.scrubGuest(onlyAtDash + line + "\r\u001b[IB\n"));
+        assertEquals(token, SecretRedactor.scrubGuest(onlyAtDash + line + "\u001b[ZB\n"));
+        // The 8-bit HTS sets a stop as ESC H does
+        assertEquals(token, SecretRedactor.scrubGuest("\u001b[3g\u001b[17G\u0088\r" + line + "\u001b[ZB\n"));
+        // VTE also clears every stop on TBC 2 and 5, and sets and clears them with CTC, which
+        // xterm ignores: a screen for each terminal is scrubbed
+        for (var clearAll : new String[] {"\u001b[2g", "\u001b[5g", "\u001b[4W", "\u001b[5W"}) {
+            assertEquals(token, SecretRedactor.scrubGuest(clearAll + "\u001b[17G\u001bH\r" + line + "\u001b[ZB\n"), clearAll);
+        }
+        assertEquals(token, SecretRedactor.scrubGuest("\u001b[5W\u001b[17G\u001b[0W\r" + line + "\u001b[ZB\n"));
+        assertEquals(token, SecretRedactor.scrubGuest("\u001b[5W\u001b[17G\u001b[W\u001b[25G\u001b[2W\r" + line + "\u001b[ZB\n"));
+        // And xterm's reading stays: there TBC 5 clears nothing, so CBT from column 32 stops at 24
+        assertEquals(token, SecretRedactor.scrubGuest("\u001b[5g" + line + "QQQQQ\u001b[Z\u001b[8D" + "B\n"));
+        // The stop at column 9 cleared alone: one tab from the start reaches the dash at 17
+        assertEquals(framed, SecretRedactor.scrubGuest("\u001b[9G\u001b[0g\r" + line + "\r\tB\n"));
+        // Back past the first stop is the line's start, and the next stop from there the dash's
+        assertEquals(token, SecretRedactor.scrubGuest(onlyAtDash + line + "\u001b[99Z\u001b[IB\n"));
+        // The stops a guest set last across its lines and pieces, until DECST8C or RIS
+        assertEquals("y\n" + framed, SecretRedactor.scrubGuest(onlyAtDash + "y\n", line + "\r\tB\n"));
+        // put back a stop every eight, so the tab stops short of the dash and nothing is redacted
+        for (var reset : new String[] {"\u001b[?5W", "\u001bc"}) {
+            var again = onlyAtDash + reset + line + "\r\tB\n";
+            assertEquals(BuildOutput.guestText(again), SecretRedactor.scrubGuest(again), reset);
+        }
+    }
+
+    @Test
+    void aShiftKeepsEachRowAHeapOrderedTreap() {
+        // A row's cost per shift is its treap's depth, which stays logarithmic only while no node
+        // sits above one of higher priority. A gap split in two under several ancestors is where
+        // that broke: the part split off took a fresh priority under ancestors it then outranked
+        // (#1926 review)
+        var random = new java.util.Random(1);
+        for (int screen = 0; screen < 200; screen++) {
+            var raw = new StringBuilder();
+            for (int i = 0; i < 200; i++) {
+                switch (random.nextInt(3)) {
+                    case 0 -> raw.append("\u001b[").append(1 + random.nextInt(300)).append('G');
+                    case 1 -> raw.append((char) ('a' + random.nextInt(26)));
+                    default -> raw.append("\u001b[").append(1 + random.nextInt(20)).append(random.nextBoolean() ? '@' : 'P');
+                }
+            }
+            assertTrue(SecretRedactor.screenRowsHeapOrdered(raw.toString()), raw.toString().replace("\u001b", "ESC"));
+        }
+    }
+
+    @Test
+    void aGapWrittenIntoFromTheRightKeepsItsRowShallow() {
+        // Every cell written into a gap splits it, and a piece split off that copied the gap's
+        // priority tied with all the others: from the right, a 3000-column gap then made a row
+        // about 1500 deep on roughly one screen in five, as the gap's priority fell
+        for (int screen = 0; screen < 64; screen++) {
+            var raw = new StringBuilder("\u001b[3000Gx");
+            for (int column = 2999; column > 1; column -= 2) raw.append("\u001b[").append(column).append("Ga");
+            int depth = SecretRedactor.screenRowDepth(raw.toString());
+            assertTrue(depth < 100, "a row " + depth + " deep");
+        }
+    }
+
+    @Test
+    void aShiftOrATabStopCostsNoWholeLinePerSequence() {
+        // Each sequence a few bytes, each shifting a line of 4000 cells or searching 4000 stops: a
+        // shift or a search per cell would take minutes, and the scrub must stay linear (#1919)
+        var line = "y".repeat(4000) + "\u001b[1G";
+        var shifts = line + "\u001b[@\u001b[P".repeat(300_000) + "\u001b[4096@x".repeat(200_000) + "\n";
+        // Shifted into a gap and pushed off the line, cells are freed for the next to take: the
+        // screen holds what the row shows, not every shift's leftovers
+        var gaps = "y\u001b[4000Gy\u001b[2G" + "\u009b@\u009b2P".repeat(400_000) + "\n";
+        var stops = "\u001bH\u001b[C".repeat(4000) + "\r" + "\u001b[4096I\u001b[4096Z\u001b[0g\u001bH".repeat(200_000) + "\n";
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(10), () -> {
+            SecretRedactor.scrubGuest(shifts);
+            SecretRedactor.scrubGuest(gaps);
+            SecretRedactor.scrubGuest(stops);
+        });
+    }
+
+    @Test
     void aGuestsTextKeepsNoTokenAWideCharacterHides() {
         // A wide character takes two cells, so two backspaces after it put the cursor on it, and
         // what follows overwrites it: the token shows whole (#1900)

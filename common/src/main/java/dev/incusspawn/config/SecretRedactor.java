@@ -478,7 +478,7 @@ public final class SecretRedactor {
         if (!asPrinted) {
             for (var piece : raw) {
                 if (piece != null && Screen.mayMoveBack(piece)) {
-                    screen = new Screen(rawLength, true);
+                    screen = new Screen(rawLength, true, false);
                     break;
                 }
             }
@@ -504,17 +504,21 @@ public final class SecretRedactor {
             var view = screen.view();
             wider |= addSpans(view.text, view.start, view.end, source, seen.spans, spans);
         }
-        if (screen != null && screen.absoluteRowsMayDiffer()) {
-            // Absolute rows counted from the first one used instead of the top of the screen
-            var other = new Screen(rawLength, false);
+        // Where terminals or the screen's start can differ, a screen for each other reading: absolute
+        // rows counted from the first one used instead of the top, and tab stops set as VTE sets them
+        for (int other = 1; screen != null && other < 4; other++) {
+            boolean fromTop = (other & 1) == 0;
+            boolean vteStops = (other & 2) != 0;
+            if (!fromTop && !screen.absoluteRowsMayDiffer() || vteStops && !screen.tabStopsMayDiffer()) continue;
+            var otherScreen = new Screen(rawLength, fromTop, vteStops);
             int offset = 0;
             for (var piece : raw) {
                 if (piece == null) continue;
-                other.print(piece, offset);
+                otherScreen.print(piece, offset);
                 offset += piece.length();
             }
-            if (other.moved()) {
-                var view = other.view();
+            if (otherScreen.moved()) {
+                var view = otherScreen.view();
                 wider |= addSpans(view.text, view.start, view.end, source, seen.spans, spans);
             }
         }
@@ -625,17 +629,21 @@ public final class SecretRedactor {
      * The raw text as a terminal's screen shows it once its cursor has moved (#1888, #1900): what
      * a character draws overwrites the cells under it and leaves those to its right. A backspace
      * moves one cell left and a carriage return to the start of the line, never past it; a tab
-     * moves to the next stop of eight, a line feed to the next line, a vertical tab, form feed
-     * or 8-bit IND down a line, an 8-bit NEL to the next line and RI up one. Of the control
-     * sequences, those that move the cursor along a line or up or down it (CUF, HPR, CUB, CHA,
-     * HPA, CHT, CBT, CUU, CUD, VPR, CNL, CPL, CUP, VPA) and the escapes DECBI and DECFI do so
-     * here, a saved position is restored (DECSC and DECRC, SCOSC and SCORC, xterm's 1048 and
-     * 1049) and REP repeats the character last drawn; the rest move nothing. Rows are counted from
-     * where each piece starts. An absolute row (CUP, VPA) counts from there too, as if the piece
-     * started at the top of the screen, and on a second screen from where the first absolute row
-     * is, as output that has scrolled addresses it ({@link #absoluteRow}, #1916 review). The
-     * alternate screen (xterm's 47, 1047 and 1049) is a region of rows of its own, with its own
-     * saved cursor, so what a program draws there neither overwrites the main screen nor is lost.
+     * moves to the next tab stop, every eight columns until the guest sets its own (HTS and its
+     * 8-bit form, TBC, and CTC as VTE reads it; reset by DECST8C and RIS), a line feed to the
+     * next line, a vertical tab, form feed or 8-bit IND down a line, an 8-bit NEL to the next
+     * line and RI up one. Of the control sequences, those that move the cursor along a line or
+     * up or down it (CUF, HPR, CUB, CHA, HPA, CHT, CBT, CUU, CUD, VPR, CNL, CPL, CUP, VPA) and
+     * the escapes DECBI and DECFI do so here, a saved position is restored (DECSC and DECRC,
+     * SCOSC and SCORC, xterm's 1048 and 1049), REP repeats the character last drawn, and DCH
+     * and ICH shift the cells right of the cursor along its row (#1919); the rest move nothing.
+     * Rows are counted from where each piece starts. An absolute row (CUP, VPA) counts from there
+     * too, as if the piece started at the top of the screen, and on a second screen from where
+     * the first absolute row is, as output that has scrolled addresses it ({@link #absoluteRow},
+     * #1916 review). Where xterm and VTE set tab stops differently, a screen reads them as each
+     * does ({@link #vteStops}). The alternate screen (xterm's 47, 1047 and 1049) is a region of
+     * rows of its own, with its own saved cursor, so what a program draws there neither
+     * overwrites the main screen nor is lost.
      * <p>
      * Each cell redacts every raw character written to it, from its {@code start} to its
      * {@code end}, so an overwritten half of a token is never kept beside a marker, nor one a
@@ -645,15 +653,16 @@ public final class SecretRedactor {
      * written, and is left out of the view, so it splits no token. A wide character takes two
      * cells, and overwriting either clears the other. Erasing is not modelled: a cell the screen
      * shows blank never holds a token's character, so what this view keeps there only widens a
-     * span. Only written cells are kept, by row and column, so what a scrub holds grows with what
-     * the guest printed and never with how far it moved the cursor; REP draws at most
-     * {@link #MAX_REPEATS_PER_CHAR} cells for each raw character, the rest no more.
+     * span. Only written cells are kept, each row a treap of them and of runs of blank cells, so
+     * what a scrub holds grows with what the guest printed and never with how far it moved the
+     * cursor, and a shift costs a split and a join, never a move of every cell past it, and
+     * reuses the nodes it drops; REP draws at most {@link #MAX_REPEATS_PER_CHAR} cells for each
+     * raw character, the rest no more.
      */
     private static final class Screen {
         /** Wider than any terminal: a real one stops its cursor at its last column. */
         static final int MAX_COLUMN = 4096;
         private static final char ESC = '\u001b'; // raw ANSI: read from guest output, never written
-        private static final int COLUMN_BITS = 13;
         /**
          * Rows past this are where the cursor stays, so no key overflows. A raw character moves the
          * cursor down at most {@link #MAX_COLUMN} rows, so no text a String holds comes near it: a
@@ -663,9 +672,16 @@ public final class SecretRedactor {
         /** The first row of the alternate screen's region, past every row of the main one. */
         static final long ALTERNATE = MAX_ROW + 1;
         static final int MAX_REPEATS_PER_CHAR = 1;
-        private static final byte NARROW = 1, WIDE_HEAD = 2, WIDE_TAIL = 3, CLEARED = 4;
+        private static final byte NARROW = 1, WIDE_HEAD = 2, WIDE_TAIL = 3, CLEARED = 4, GAP = 5;
 
         private boolean moved;
+        /**
+         * Whether tab stops are set and cleared as VTE does, else as xterm: VTE also clears every
+         * stop on TBC 2 and 5, and reads CTC, which xterm ignores.
+         */
+        private final boolean vteStops;
+        /** Whether a sequence xterm and VTE read differently set or cleared a tab stop. */
+        private boolean stopsDiffer;
         /** Whether absolute rows count from the top of the screen, else from the first one used. */
         private final boolean fromTop;
         /** Whether a first absolute row was not on the piece's first row, so counting the other way differs. */
@@ -690,30 +706,55 @@ public final class SecretRedactor {
         private int lastCodePoint = -1;
         private long repeats;
 
-        // The written cells, each a slot: what it shows and the raw characters written to it
+        /**
+         * The tab stops a guest set (HTS, TBC), a bit for each column, or null while they are a
+         * terminal's own, every eight columns.
+         */
+        private long[] stops;
+
+        // Each row's cells in column order, a treap of nodes: a written cell is one column wide and
+        // a gap a run of blank ones. A node's place is the width of what lies before it, so DCH and
+        // ICH split and join a row and never move the cells past them. A cell is a slot: what it
+        // shows and the raw characters written to it. Node 0 is none
+        private int[] left = new int[64];
+        private int[] right = new int[64];
+        private int[] priority = new int[64];
+        /** The columns a node and the nodes under it take. */
+        private int[] size = new int[64];
+        private int[] width = new int[64];
         private int[] codePoint = new int[64];
         private int[] slotStart = new int[64];
         private int[] slotEnd = new int[64];
         private byte[] kind = new byte[64];
-        private int slots;
+        private int nodes = 1;
+        /** Subtrees no row holds any more, whose nodes are taken before new ones: what a shift drops. */
+        private int[] free = new int[16];
+        private int freeCount;
+        private long allocated;
+        /** What {@link #split} leaves: the first columns, and the rest. */
+        private int splitLeft, splitRight;
 
-        // Row and column to slot, open addressing: keys are row << COLUMN_BITS | column
-        private long[] keys = new long[128];
-        private int[] values = new int[128];
+        // Row to its treap's root, open addressing; -1 marks an empty place, as no row is negative
+        private long[] keys = filled(128);
+        private int[] roots = new int[128];
         private int used;
-        /** Per scrub, so a guest cannot choose cells that all land on one probe chain. */
+        /** The place of the row last looked up, so writing along a row probes once. */
+        private long cachedRow = -1;
+        private int cachedIndex;
+        /** Per scrub, so a guest can neither choose rows that all land on one probe chain nor unbalance a treap. */
         private final long seed = ThreadLocalRandom.current().nextLong();
 
-        Screen(int rawLength, boolean fromTop) {
+        Screen(int rawLength, boolean fromTop, boolean vteStops) {
             this.fromTop = fromTop;
+            this.vteStops = vteStops;
             repeats = (long) MAX_REPEATS_PER_CHAR * rawLength + MAX_COLUMN;
         }
 
         /**
          * Whether {@code piece} holds what can move a cursor back or draw a character twice, a
          * screen's only way to differ from the shown text but for blanks: a carriage return not
-         * ending a line, a backspace, an 8-bit RI, or a sequence that moves back or repeats. It
-         * only looks, so what it misses a screen would miss as well.
+         * ending a line, a backspace, an 8-bit RI, or a sequence that moves back, repeats or shifts
+         * cells (DCH, ICH). It only looks, so what it misses a screen would miss as well.
          */
         static boolean mayMoveBack(String piece) {
             for (int i = 0; i < piece.length(); i++) {
@@ -726,7 +767,7 @@ public final class SecretRedactor {
                 char last = piece.charAt(controls.end() - 1);
                 if (controls.end() - controls.start() == 2 && piece.charAt(controls.start()) == ESC) {
                     if ("86M".indexOf(last) >= 0) return true;
-                } else if ("ADFG`HfZubd".indexOf(last) >= 0) {
+                } else if ("ADFG`HfZubdP@".indexOf(last) >= 0) {
                     return true;
                 } else if (last == 'l' && restoresOrLeaves(piece, controls.start(), controls.end())) {
                     return true;
@@ -808,7 +849,7 @@ public final class SecretRedactor {
                     return;
                 }
                 case '\t' -> {
-                    move(row, (column / 8 + 1) * 8);
+                    move(row, nextStop(1));
                     return;
                 }
                 case 0x0B, 0x0C, 0x84 -> {
@@ -822,6 +863,11 @@ public final class SecretRedactor {
                 }
                 case 0x8D -> {
                     move(row - 1, column);
+                    return;
+                }
+                case 0x88 -> {
+                    // An 8-bit HTS, as ESC H
+                    setStop();
                     return;
                 }
                 default -> {
@@ -860,6 +906,9 @@ public final class SecretRedactor {
                     // DECBI and DECFI: back and forward a column, as xterm moves them
                     case '6' -> move(row, column - 1);
                     case '9' -> move(row, column + 1);
+                    case 'H' -> setStop();
+                    // RIS: a full reset puts back a terminal's own tab stops
+                    case 'c' -> stops = null;
                     default -> {
                     }
                 }
@@ -870,6 +919,11 @@ public final class SecretRedactor {
             int from = start + (first == '\u009b' ? 1 : 2);
             if (from < end - 1 && piece.charAt(from) == '?' && (last == 'h' || last == 'l')) {
                 for (var mode : piece.substring(from + 1, end - 1).split(";", -1)) privateMode(mode, last == 'h');
+                return;
+            }
+            // DECST8C: a tab stop every eight columns again
+            if (from < end - 1 && piece.charAt(from) == '?' && last == 'W' && mode(piece.substring(from + 1, end - 1)) == 5) {
+                stops = null;
                 return;
             }
             // Private (?, >, =, <) and intermediate bytes make another sequence of the same letter
@@ -883,8 +937,12 @@ public final class SecretRedactor {
                 case 'A' -> move(row - n, column);
                 case 'B', 'e' -> move(row + n, column);
                 case 'C', 'a' -> move(row, column + n);
-                case 'I' -> move(row, (column / 8 + n) * 8);
-                case 'Z' -> move(row, ((column + 7) / 8 - n) * 8);
+                case 'I' -> move(row, nextStop(n));
+                case 'Z' -> move(row, previousStop(n));
+                case 'g' -> clearStops(mode(numbers[0]));
+                case 'W' -> tabulationControl(mode(numbers[0]));
+                case 'P' -> deleteCells(n);
+                case '@' -> insertCells(n);
                 case 'D' -> move(row, column - n);
                 case 'E' -> {
                     move(row + n, column);
@@ -1027,6 +1085,113 @@ public final class SecretRedactor {
             move(rowBase + savedRow[screen], savedColumn[screen]);
         }
 
+        /** The column of the {@code n}th tab stop right of the cursor, or the last column when there are fewer. */
+        private int nextStop(int n) {
+            if (stops == null) return (int) Math.min((column / 8 + (long) n) * 8, MAX_COLUMN);
+            // A word at a time: as many stops as columns cost one count per 64 of them
+            int from = column + 1;
+            for (int word = from >>> 6; word < stops.length; word++) {
+                long bits = stops[word];
+                if (word == from >>> 6) bits &= -1L << (from & 63);
+                int count = Long.bitCount(bits);
+                if (n <= count) {
+                    for (int i = 1; i < n; i++) bits &= bits - 1;
+                    return word * 64 + Long.numberOfTrailingZeros(bits);
+                }
+                n -= count;
+            }
+            return MAX_COLUMN;
+        }
+
+        /** The column of the {@code n}th tab stop left of the cursor, or the first when there are fewer. */
+        private int previousStop(int n) {
+            if (stops == null) return (int) Math.max(((column + 7) / 8 - (long) n) * 8, 0);
+            int to = column - 1;
+            for (int word = to >>> 6; to >= 0 && word >= 0; word--) {
+                long bits = stops[word];
+                if (word == to >>> 6 && (to & 63) < 63) bits &= (1L << ((to & 63) + 1)) - 1;
+                int count = Long.bitCount(bits);
+                if (n <= count) {
+                    for (int i = 1; i < n; i++) bits &= ~Long.highestOneBit(bits);
+                    return word * 64 + 63 - Long.numberOfLeadingZeros(bits);
+                }
+                n -= count;
+            }
+            return 0;
+        }
+
+        /** HTS: a tab stop at the cursor's column. */
+        private void setStop() {
+            if (stops == null) {
+                stops = new long[MAX_COLUMN / 64 + 1];
+                for (int c = 8; c < MAX_COLUMN; c += 8) stops[c >>> 6] |= 1L << c;
+            }
+            stops[column >>> 6] |= 1L << column;
+        }
+
+        /** TBC: 0 clears the tab stop at the cursor's column and 3 every one, and so do 2 and 5 on VTE. */
+        private void clearStops(int which) {
+            if (which == 2 || which == 5) stopsDiffer = true;
+            if (which == 3 || vteStops && (which == 2 || which == 5)) {
+                stops = new long[MAX_COLUMN / 64 + 1];
+            } else if (which == 0) {
+                clearStop();
+            }
+        }
+
+        /** CTC, which only VTE reads: 0 sets a tab stop at the cursor's column, 2 clears it, 4 and 5 clear every one. */
+        private void tabulationControl(int which) {
+            stopsDiffer = true;
+            if (!vteStops) return;
+            switch (which) {
+                case 0 -> setStop();
+                case 2 -> clearStop();
+                case 4, 5 -> stops = new long[MAX_COLUMN / 64 + 1];
+                default -> {
+                }
+            }
+        }
+
+        private void clearStop() {
+            setStop();
+            stops[column >>> 6] &= ~(1L << column);
+        }
+
+        /** Whether a screen setting tab stops as the other terminal does can differ from this one. */
+        boolean tabStopsMayDiffer() {
+            return stopsDiffer;
+        }
+
+        /** DCH: deletes {@code n} cells from the cursor's, and those right of them move left as many. */
+        private void deleteCells(int n) {
+            int root = root(row);
+            if (column >= size[root]) return;
+            split(root, column);
+            int before = splitLeft;
+            split(splitRight, n);
+            discard(splitLeft);
+            setRoot(row, merge(before, splitRight));
+            moved = true;
+        }
+
+        /** ICH: {@code n} blank cells at the cursor's, which push those right of them off the line's end. */
+        private void insertCells(int n) {
+            int root = root(row);
+            if (column >= size[root]) return;
+            split(root, column);
+            int before = splitLeft;
+            int after = splitRight;
+            int gap = node(n, GAP);
+            root = merge(merge(before, gap), after);
+            if (size[root] > MAX_COLUMN) {
+                split(root, MAX_COLUMN);
+                discard(splitRight);
+                root = splitLeft;
+            }
+            setRoot(row, root);
+            moved = true;
+        }
+
         /** Overwriting either cell of a wide character clears the other. */
         private void clear(long atRow, int at) {
             int slot = slot(atRow, at);
@@ -1042,29 +1207,30 @@ public final class SecretRedactor {
 
         /** Writes {@code c} at a cell, which keeps every raw character written to it: its slot. */
         private int write(long atRow, int at, int c, byte cellKind, int from, int to) {
-            long key = atRow << COLUMN_BITS | at;
-            int index = index(key);
-            int slot;
-            if (values[index] == 0) {
-                if (slots == codePoint.length) {
-                    int size = slots * 2;
-                    codePoint = Arrays.copyOf(codePoint, size);
-                    slotStart = Arrays.copyOf(slotStart, size);
-                    slotEnd = Arrays.copyOf(slotEnd, size);
-                    kind = Arrays.copyOf(kind, size);
-                }
-                slot = slots++;
-                slotStart[slot] = from;
-                slotEnd[slot] = to;
-                keys[index] = key;
-                values[index] = slot + 1;
-                if (++used * 4 > keys.length * 3) grow();
-            } else {
-                slot = values[index] - 1;
+            int root = root(atRow);
+            int slot = slot(atRow, at);
+            if (slot >= 0) {
                 // Everything it held, from any row: what a token once drawn whole there left is
                 // redacted with it, though a row repainted from further down then takes what lies between
                 slotStart[slot] = Math.min(slotStart[slot], from);
                 slotEnd[slot] = Math.max(slotEnd[slot], to);
+            } else {
+                slot = node(1, cellKind);
+                slotStart[slot] = from;
+                slotEnd[slot] = to;
+                int columns = size[root];
+                if (at >= columns) {
+                    // Past the row's last cell, after the blanks the cursor moved over
+                    root = merge(root, at > columns ? merge(node(at - columns, GAP), slot) : slot);
+                } else {
+                    // In a gap: the blank column it takes is dropped
+                    split(root, at);
+                    int before = splitLeft;
+                    split(splitRight, 1);
+                    discard(splitLeft);
+                    root = merge(merge(before, slot), splitRight);
+                }
+                setRoot(atRow, root);
             }
             codePoint[slot] = c;
             kind[slot] = cellKind;
@@ -1079,28 +1245,215 @@ public final class SecretRedactor {
 
         /** The slot written at a cell, or -1. */
         private int slot(long atRow, int at) {
-            return values[index(atRow << COLUMN_BITS | at)] - 1;
+            int node = root(atRow);
+            while (node != 0) {
+                int before = size[left[node]];
+                if (at < before) {
+                    node = left[node];
+                } else if (at < before + width[node]) {
+                    return kind[node] == GAP ? -1 : node;
+                } else {
+                    at -= before + width[node];
+                    node = right[node];
+                }
+            }
+            return -1;
         }
 
-        /** Where {@code key} is, or the empty place it would go. */
-        private int index(long key) {
+        /** A node {@code columns} wide, at a priority the guest cannot guess: a discarded one, else a new one. */
+        private int node(int columns, byte nodeKind) {
+            int node;
+            if (freeCount > 0) {
+                // Its children are freed as it is taken, so dropping a subtree costs nothing at once
+                node = free[--freeCount];
+                discard(left[node]);
+                discard(right[node]);
+                if (node == lastSlot) lastSlot = -1;
+            } else {
+                node = newNode();
+            }
+            left[node] = 0;
+            right[node] = 0;
+            priority[node] = (int) mix(seed + ++allocated);
+            width[node] = columns;
+            size[node] = columns;
+            kind[node] = nodeKind;
+            return node;
+        }
+
+        /** Gives {@code subtree}'s nodes back, none of which any row holds now. */
+        private void discard(int subtree) {
+            if (subtree == 0) return;
+            if (freeCount == free.length) free = Arrays.copyOf(free, freeCount * 2);
+            free[freeCount++] = subtree;
+        }
+
+        private int newNode() {
+            if (nodes == left.length) {
+                int capacity = nodes * 2;
+                left = Arrays.copyOf(left, capacity);
+                right = Arrays.copyOf(right, capacity);
+                priority = Arrays.copyOf(priority, capacity);
+                size = Arrays.copyOf(size, capacity);
+                width = Arrays.copyOf(width, capacity);
+                codePoint = Arrays.copyOf(codePoint, capacity);
+                slotStart = Arrays.copyOf(slotStart, capacity);
+                slotEnd = Arrays.copyOf(slotEnd, capacity);
+                kind = Arrays.copyOf(kind, capacity);
+            }
+            return nodes++;
+        }
+
+        private void resize(int node) {
+            size[node] = size[left[node]] + width[node] + size[right[node]];
+        }
+
+        /** {@code a}'s columns, then {@code b}'s. */
+        private int merge(int a, int b) {
+            if (a == 0) return b;
+            if (b == 0) return a;
+            if (priority[a] > priority[b]) {
+                int joined = merge(right[a], b);
+                right[a] = joined;
+                resize(a);
+                return a;
+            }
+            int joined = merge(a, left[b]);
+            left[b] = joined;
+            resize(b);
+            return b;
+        }
+
+        /** Splits {@code node}'s columns into the first {@code at} and the rest, a gap across them in two. */
+        private void split(int node, int at) {
+            splitAtBoundary(cut(node, at), at);
+        }
+
+        /**
+         * Makes {@code at} a node boundary in the treap rooted at {@code root}, returning its root: a
+         * gap across it ends there, and the rest goes in as a gap of its own at a fresh priority.
+         * Copying the gap's priority instead would keep the heap order but tie every piece of a gap
+         * split many times, and a treap of tied priorities is as deep as it holds them.
+         */
+        private int cut(int root, int at) {
+            int rest = shorten(root, at);
+            if (rest == 0) return root;
+            splitAtBoundary(root, at);
+            int before = splitLeft;
+            int after = splitRight;
+            return merge(merge(before, node(rest, GAP)), after);
+        }
+
+        /** Ends the gap across {@code at} there, returning how many columns it lost: 0 when none spans it. */
+        private int shorten(int node, int at) {
+            if (node == 0) return 0;
+            int before = size[left[node]];
+            int lost;
+            if (at < before) {
+                lost = shorten(left[node], at);
+            } else if (at >= before + width[node]) {
+                lost = shorten(right[node], at - before - width[node]);
+            } else if (at == before) {
+                return 0;
+            } else {
+                lost = before + width[node] - at;
+                width[node] = at - before;
+            }
+            size[node] -= lost;
+            return lost;
+        }
+
+        /** Splits {@code node}'s columns into the first {@code at} and the rest, {@code at} falling between two nodes. */
+        private void splitAtBoundary(int node, int at) {
+            if (node == 0) {
+                splitLeft = 0;
+                splitRight = 0;
+                return;
+            }
+            int before = size[left[node]];
+            if (at <= before) {
+                splitAtBoundary(left[node], at);
+                left[node] = splitRight;
+                resize(node);
+                splitRight = node;
+            } else {
+                splitAtBoundary(right[node], at - before - width[node]);
+                right[node] = splitLeft;
+                resize(node);
+                splitLeft = node;
+            }
+        }
+
+        /** The depth of the deepest row's treap. */
+        int depth() {
+            int deepest = 0;
+            for (int root : roots) deepest = Math.max(deepest, depth(root));
+            return deepest;
+        }
+
+        private int depth(int node) {
+            return node == 0 ? 0 : 1 + Math.max(depth(left[node]), depth(right[node]));
+        }
+
+        /** Whether every row's treap has no node above one of higher priority, which keeps it shallow. */
+        boolean heapOrdered() {
+            for (int root : roots) if (root != 0 && !heapOrdered(root)) return false;
+            return true;
+        }
+
+        private boolean heapOrdered(int node) {
+            for (int child : new int[] {left[node], right[node]}) {
+                if (child != 0 && (priority[child] > priority[node] || !heapOrdered(child))) return false;
+            }
+            return true;
+        }
+
+        /** The root of {@code atRow}'s treap, 0 while nothing was written there. */
+        private int root(long atRow) {
+            return roots[place(atRow)];
+        }
+
+        private void setRoot(long atRow, int root) {
+            int index = place(atRow);
+            if (keys[index] < 0) {
+                keys[index] = atRow;
+                roots[index] = root;
+                if (++used * 4 > keys.length * 3) grow();
+            } else {
+                roots[index] = root;
+            }
+        }
+
+        /** Where {@code atRow} is, or the empty place it would go. */
+        private int place(long atRow) {
+            if (atRow == cachedRow && keys[cachedIndex] == atRow) return cachedIndex;
             int mask = keys.length - 1;
-            int index = (int) mix(key ^ seed) & mask;
-            while (values[index] != 0 && keys[index] != key) index = (index + 1) & mask;
+            int index = (int) mix(atRow ^ seed) & mask;
+            while (keys[index] >= 0 && keys[index] != atRow) index = (index + 1) & mask;
+            cachedRow = atRow;
+            cachedIndex = index;
             return index;
         }
 
         private void grow() {
             var oldKeys = keys;
-            var oldValues = values;
-            keys = new long[oldKeys.length * 2];
-            values = new int[oldKeys.length * 2];
+            var oldRoots = roots;
+            keys = filled(oldKeys.length * 2);
+            roots = new int[oldKeys.length * 2];
+            cachedRow = -1;
             for (int i = 0; i < oldKeys.length; i++) {
-                if (oldValues[i] == 0) continue;
-                int index = index(oldKeys[i]);
+                if (oldKeys[i] < 0) continue;
+                int index = place(oldKeys[i]);
                 keys[index] = oldKeys[i];
-                values[index] = oldValues[i];
+                roots[index] = oldRoots[i];
             }
+            cachedRow = -1;
+        }
+
+        private static long[] filled(int length) {
+            var empty = new long[length];
+            Arrays.fill(empty, -1);
+            return empty;
         }
 
         /** The murmur3 finalizer: every key bit reaches every index bit. */
@@ -1114,33 +1467,42 @@ public final class SecretRedactor {
 
         /** What the screen shows, row by row, and the raw characters each of its characters redacts. */
         View view() {
-            var cells = new long[used];
+            var rows = new long[used];
             int n = 0;
-            for (int i = 0; i < keys.length; i++) if (values[i] != 0) cells[n++] = keys[i];
-            Arrays.sort(cells);
-            var view = new View(n + n / 8 + 16);
-            long previous = -1;
-            for (long key : cells) {
-                long atRow = key >>> COLUMN_BITS;
-                int at = (int) (key & ((1 << COLUMN_BITS) - 1));
-                int slot = slot(atRow, at);
-                long previousRow = previous < 0 ? -1 : previous >>> COLUMN_BITS;
-                int previousAt = previous < 0 ? -1 : (int) (previous & ((1 << COLUMN_BITS) - 1));
-                // Rows and cells nothing was written to show blank, which ends a token as a line break does
-                if (previous >= 0 && atRow != previousRow) {
-                    view.append('\n', -1, -1);
-                    previousAt = -1;
-                }
-                if (at > previousAt + 1) view.append(' ', -1, -1);
-                switch (kind[slot]) {
-                    case NARROW, WIDE_HEAD -> {
-                        for (char half : Character.toChars(codePoint[slot])) view.append(half, slotStart[slot], slotEnd[slot]);
+            for (int i = 0; i < keys.length; i++) if (keys[i] >= 0 && roots[i] != 0) rows[n++] = keys[i];
+            rows = Arrays.copyOf(rows, n);
+            Arrays.sort(rows);
+            var view = new View(nodes + nodes / 8 + 16);
+            var path = new int[64];
+            for (int r = 0; r < rows.length; r++) {
+                // Rows nothing was written to show blank, which ends a token as a line break does
+                if (r > 0) view.append('\n', -1, -1);
+                boolean blank = false;
+                int depth = 0;
+                int node = root(rows[r]);
+                // In column order, the way down kept on a stack: a treap is shallow, not balanced
+                while (node != 0 || depth > 0) {
+                    while (node != 0) {
+                        if (depth == path.length) path = Arrays.copyOf(path, depth * 2);
+                        path[depth++] = node;
+                        node = left[node];
                     }
-                    case CLEARED -> view.append(' ', slotStart[slot], slotEnd[slot]);
-                    default -> {
+                    node = path[--depth];
+                    switch (kind[node]) {
+                        case NARROW, WIDE_HEAD -> {
+                            for (char half : Character.toChars(codePoint[node])) view.append(half, slotStart[node], slotEnd[node]);
+                        }
+                        case CLEARED -> view.append(' ', slotStart[node], slotEnd[node]);
+                        // Cells nothing was written to show blank too, one for any run
+                        case GAP -> {
+                            if (!blank) view.append(' ', -1, -1);
+                        }
+                        default -> {
+                        }
                     }
+                    blank = kind[node] == GAP;
+                    node = right[node];
                 }
-                previous = key;
             }
             return view;
         }
@@ -1320,6 +1682,20 @@ public final class SecretRedactor {
             for (; i < old.size(); i++, work++) result.add(old.get(i));
             return result;
         }
+    }
+
+    /** Whether a screen printing {@code raw} keeps its rows heap-ordered treaps, for the test that keeps a shift cheap. */
+    static boolean screenRowsHeapOrdered(String raw) {
+        var screen = new Screen(raw.length(), true, false);
+        screen.print(raw, 0);
+        return screen.heapOrdered();
+    }
+
+    /** How deep a screen printing {@code raw} leaves its deepest row's treap, for the test that keeps a shift cheap. */
+    static int screenRowDepth(String raw) {
+        var screen = new Screen(raw.length(), true, false);
+        screen.print(raw, 0);
+        return screen.depth();
     }
 
     /** How many spans {@code text}'s scrub visited, for the test that keeps it linear. */
