@@ -5,8 +5,12 @@ requires:
 
 # The base image ships no system bus, and without one logind never starts the user
 # manager that runs headroom-proxy.service: bring the bus, as the podman tool does.
+#
+# Headroom runs in its own venv on Python 3.14, not the system python3: Fedora 45's
+# is 3.15, which its fastuuid dependency has no wheel for, and building one fails
+# (PyO3 supports up to 3.14). On Fedora 44 python3 itself provides python3.14.
 packages:
-  - python3-pip
+  - python3.14
   - systemd-pam
   - dbus-broker
 
@@ -21,7 +25,11 @@ run:
     EOF
 
 run_as_user:
-  - pip install --user --quiet 'headroom-ai[proxy,mcp]'
+  - |
+    python3.14 -m venv ~/.local/share/headroom &&
+    ~/.local/share/headroom/bin/pip install --quiet 'headroom-ai[proxy,mcp]' &&
+    mkdir -p ~/.local/bin &&
+    ln -sf ../share/headroom/bin/headroom ~/.local/bin/headroom
   - claude mcp add headroom -s user -- headroom mcp serve
   - |
     mkdir -p ~/.config/systemd/user/default.target.wants

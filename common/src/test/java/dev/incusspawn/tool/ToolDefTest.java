@@ -961,11 +961,14 @@ class ToolDefTest {
             assertEquals(List.of("claude"),
                     def.getRequires().stream().map(ToolDef.ToolRef::getName).toList());
             // The bus logind needs to start headroom-proxy's user manager; the base image has none (#1520)
-            assertEquals(List.of("python3-pip", "systemd-pam", "dbus-broker"), def.getPackages());
+            // and Python 3.14: Fedora 45's python3 is 3.15, which headroom's fastuuid has no
+            // wheel for and cannot be built for (PyO3 stops at 3.14), so pip on it failed the build
+            assertEquals(List.of("python3.14", "systemd-pam", "dbus-broker"), def.getPackages());
             assertNotNull(def.getRun());
             assertFalse(def.getRun().isEmpty());
-            assertNotNull(def.getRunAsUser());
-            assertFalse(def.getRunAsUser().isEmpty());
+            var install = String.join("\n", def.getRunAsUser());
+            assertTrue(install.contains("python3.14 -m venv"), install);
+            assertFalse(install.contains("pip install --user"), install);
             assertNotNull(def.getVerify());
             assertNotNull(def.getReady());
 
