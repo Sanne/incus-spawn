@@ -220,7 +220,7 @@ public final class UfwCheck {
     }
 
     /** A forward block that does not start its own line, as {@code isx init} once wrote into ufw's stock comment. */
-    private static boolean forwardBlockMisplaced(String content) {
+    public static boolean forwardBlockMisplaced(String content) {
         int start = content.indexOf(MARKER_FWD_BEGIN);
         return start > 0 && content.charAt(start - 1) != '\n';
     }

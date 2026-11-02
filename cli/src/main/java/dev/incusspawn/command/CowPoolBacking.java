@@ -33,9 +33,10 @@ final class CowPoolBacking {
     static final Path POOLS_DIR = Path.of(BtrfsUsage.POOL_MOUNT_PREFIX);
     static final String LOOP_SIZE = "100GiB";
     static final String DISKS_DIR = "/var/lib/incus/disks";
+    /** The published host migration notes, where a section's heading gives its anchor. */
+    static final String MIGRATIONS = "https://github.com/Sanne/incus-spawn/blob/main/docs/dev/MIGRATIONS.md";
     /** The maintainer notes' migration off a loop file, which also covers the host's own tuning. */
-    static final String MIGRATION_NOTES = "https://github.com/Sanne/incus-spawn/blob/main/docs/dev/MIGRATIONS.md"
-            + "#the-cow-pool-is-a-loop-file-on-a-btrfs-host";
+    static final String MIGRATION_NOTES = MIGRATIONS + "#the-cow-pool-is-a-loop-file-on-a-btrfs-host";
     private static final String INCUS_DEFAULT_MOUNT_OPTIONS = "user_subvol_rm_allowed";
     /** The options that choose how file atimes are written; {@code nodiratime} covers directories only. */
     private static final Set<String> ATIME_OPTIONS = Set.of("noatime", "relatime", "strictatime", "atime");

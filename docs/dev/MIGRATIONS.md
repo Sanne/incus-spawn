@@ -313,3 +313,4 @@ sudo ufw enable && isx init                                               # init
 ```
 
 An `isx init` with ufw still active repairs the file by itself.
+`isx doctor` names an affected file under "UFW forward rules", whether ufw is active or not.
