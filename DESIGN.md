@@ -123,10 +123,11 @@ On a re-run after an `INIT_VERSION` bump that restart waits for the last step, w
 It reads the marker rather than a flag the firewall step set, so a run that stopped between the two still has the restart made by the next.
 
 On macOS a restart of the service is `launchctl kickstart -k`, not `bootout` followed by `bootstrap`.
-`bootout` returns before launchd has removed the job: a proxy that does not exit on SIGTERM is killed about five seconds later, and until then `bootstrap` fails with `5: Input/output error` while `launchctl print` still finds the job.
-The old sequence took that `print` for success, reported "Proxy service restarted", and five seconds later nothing was loaded at all.
+`bootout` returns before launchd has removed the job: a proxy that does not exit on SIGTERM is killed only at the plist's `ExitTimeOut`, and until then `bootstrap` fails with `5: Input/output error` while `launchctl print` still finds the job.
+The old sequence took that `print` for success, reported "Proxy service restarted", and moments later nothing was loaded at all.
 So the automatic restart never recovered a hung proxy while a later `isx proxy start`, finding no job, simply loaded one (#916).
 `kickstart -k` is launchd's own restart: the job stays loaded, so there is no teardown to race.
+The proxy's plist sets that `ExitTimeOut` to 15 s, past the proxy's own 10 s force-exit, so launchd does not kill a slow stop before it has warned about what did not close; a reload's wait for the job to be gone outlasts it, or it would give up and leave nothing loaded (#1905).
 Only a changed plist has to be unloaded and loaded again, and then the restart waits until `print` no longer finds the job.
 In both cases the restart has worked when `launchctl` returned 0 and the job is running.
 Sleeping between `bootout` and `bootstrap` was rejected as timing-dependent and still blind to a failed `bootstrap`; retrying `bootstrap` on error 5 was rejected because 5 is also what a rejected plist returns.

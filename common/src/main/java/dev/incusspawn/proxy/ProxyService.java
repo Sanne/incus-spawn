@@ -114,6 +114,15 @@ public final class ProxyService {
 
     /** launchd's pause between two starts of the proxy job: the plist's {@code ThrottleInterval}. */
     static final int LAUNCHD_THROTTLE_SECONDS = 10;
+    /** How long a stopping proxy runs before the shutdown hook in {@code ProxyMain} halts it. */
+    public static final int STOP_FORCE_EXIT_SECONDS = 10;
+    /**
+     * How long launchd lets the proxy run on after SIGTERM before it kills it (#1905). Its default
+     * is system-defined, about 5s when measured for #916, below the stop's worst case of the
+     * force-exit plus the process's teardown, so a slow close would be killed before the proxy
+     * could warn about it. {@link LaunchdJob#UNLOAD_POLLS} has to outlast this.
+     */
+    static final int LAUNCHD_EXIT_TIMEOUT_SECONDS = STOP_FORCE_EXIT_SECONDS + 5;
 
     /**
      * How long to wait for a proxy that was just started or installed to become healthy.
@@ -1281,6 +1290,7 @@ public final class ProxyService {
                     <key>RunAtLoad</key><true/>
                     <key>KeepAlive</key><true/>
                     <key>ThrottleInterval</key><integer>%d</integer>
+                    <key>ExitTimeOut</key><integer>%d</integer>
                     <key>EnvironmentVariables</key>
                     <dict>
                         <key>PATH</key><string>%s</string>
@@ -1289,7 +1299,7 @@ public final class ProxyService {
                     <key>StandardErrorPath</key><string>%s</string>
                 </dict>
                 </plist>
-                """.formatted(PROXY_LABEL, proxyBin, LAUNCHD_THROTTLE_SECONDS, path, serviceLog, serviceLog);
+                """.formatted(PROXY_LABEL, proxyBin, LAUNCHD_THROTTLE_SECONDS, LAUNCHD_EXIT_TIMEOUT_SECONDS, path, serviceLog, serviceLog);
     }
 
     private static boolean needsMacOsPlistUpdate() {
