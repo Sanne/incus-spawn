@@ -478,7 +478,7 @@ public final class SecretRedactor {
         if (!asPrinted) {
             for (var piece : raw) {
                 if (piece != null && Screen.mayMoveBack(piece)) {
-                    screen = new Screen(rawLength, true, false);
+                    screen = new Screen(rawLength, true, false, true);
                     break;
                 }
             }
@@ -505,12 +505,15 @@ public final class SecretRedactor {
             wider |= addSpans(view.text, view.start, view.end, source, seen.spans, spans);
         }
         // Where terminals or the screen's start can differ, a screen for each other reading: absolute
-        // rows counted from the first one used instead of the top, and tab stops set as VTE sets them
-        for (int other = 1; screen != null && other < 4; other++) {
+        // rows counted from the first one used instead of the top, tab stops set as VTE sets them,
+        // and rows left where they are by a row shift a terminal may not make
+        for (int other = 1; screen != null && other < 8; other++) {
             boolean fromTop = (other & 1) == 0;
             boolean vteStops = (other & 2) != 0;
-            if (!fromTop && !screen.absoluteRowsMayDiffer() || vteStops && !screen.tabStopsMayDiffer()) continue;
-            var otherScreen = new Screen(rawLength, fromTop, vteStops);
+            boolean shiftsRows = (other & 4) == 0;
+            if (!fromTop && !screen.absoluteRowsMayDiffer() || vteStops && !screen.tabStopsMayDiffer()
+                    || !shiftsRows && !screen.rowShiftsMayDiffer()) continue;
+            var otherScreen = new Screen(rawLength, fromTop, vteStops, shiftsRows);
             int offset = 0;
             for (var piece : raw) {
                 if (piece == null) continue;
@@ -653,10 +656,11 @@ public final class SecretRedactor {
      * written, and is left out of the view, so it splits no token. A wide character takes two
      * cells, and overwriting either clears the other. Erasing is not modelled: a cell the screen
      * shows blank never holds a token's character, so what this view keeps there only widens a
-     * span. Only written cells are kept, each row a treap of them and of runs of blank cells, so
-     * what a scrub holds grows with what the guest printed and never with how far it moved the
-     * cursor, and a shift costs a split and a join, never a move of every cell past it, and
-     * reuses the nodes it drops; REP draws at most {@link #MAX_REPEATS_PER_CHAR} cells for each
+     * span. Only written cells are kept, each row a treap of them and of runs of blank cells, and
+     * each screen's rows a treap of rows and of runs of blank rows, so what a scrub holds grows
+     * with what the guest printed and never with how far it moved the cursor, and a shift of
+     * cells (DCH, ICH) or rows (DL, IL, SU, SD) costs a split and a join, never a move of every
+     * cell or row past it, and reuses the nodes it drops; REP draws at most {@link #MAX_REPEATS_PER_CHAR} cells for each
      * raw character, the rest no more.
      */
     private static final class Screen {
@@ -672,7 +676,7 @@ public final class SecretRedactor {
         /** The first row of the alternate screen's region, past every row of the main one. */
         static final long ALTERNATE = MAX_ROW + 1;
         static final int MAX_REPEATS_PER_CHAR = 1;
-        private static final byte NARROW = 1, WIDE_HEAD = 2, WIDE_TAIL = 3, CLEARED = 4, GAP = 5;
+        private static final byte NARROW = 1, WIDE_HEAD = 2, WIDE_TAIL = 3, CLEARED = 4, GAP = 5, ROW = 6;
 
         private boolean moved;
         /**
@@ -684,6 +688,15 @@ public final class SecretRedactor {
         private boolean stopsDiffer;
         /** Whether absolute rows count from the top of the screen, else from the first one used. */
         private final boolean fromTop;
+        /**
+         * Whether DL, IL, SU and SD shift rows, else leave them as a terminal does outside its
+         * margins, SU and SD then moving the cursor as a screen whose top is above every row does.
+         */
+        private final boolean shiftsRows;
+        /** Whether a guest set scrolling margins (DECSTBM), outside which a terminal shifts no row. */
+        private boolean margins;
+        /** Whether a row shift was one a terminal may not make: after margins were set, or SU or SD, whose top is a guess. */
+        private boolean rowShiftsDiffer;
         /** Whether a first absolute row was not on the piece's first row, so counting the other way differs. */
         private boolean absoluteRowsDiffer;
         /** Where the first absolute row of each screen is, counted from the first one used, or unset. */
@@ -695,8 +708,6 @@ public final class SecretRedactor {
         private final int[] savedColumn = new int[2];
         /** The first row of the piece in its region: where an absolute row counts from. */
         private long rowBase;
-        private long lastRow = -1;
-        private long lastAlternateRow = ALTERNATE - 1;
         private boolean alternate;
         private long mainBase;
         /** The alternate screen's base while what was drawn there stays shown (47 never clears), or -1. */
@@ -715,14 +726,18 @@ public final class SecretRedactor {
         // Each row's cells in column order, a treap of nodes: a written cell is one column wide and
         // a gap a run of blank ones. A node's place is the width of what lies before it, so DCH and
         // ICH split and join a row and never move the cells past them. A cell is a slot: what it
-        // shows and the raw characters written to it. Node 0 is none
+        // shows and the raw characters written to it. Each screen's rows are a treap of the same
+        // nodes, a row one high and a gap a run of rows nothing was written to, so DL, IL, SU and
+        // SD split and join it as DCH and ICH do a row (#1927). Node 0 is none
         private int[] left = new int[64];
         private int[] right = new int[64];
         private int[] priority = new int[64];
-        /** The columns a node and the nodes under it take. */
-        private int[] size = new int[64];
-        private int[] width = new int[64];
+        /** The columns, or rows, a node and the nodes under it take. */
+        private long[] size = new long[64];
+        private long[] width = new long[64];
         private int[] codePoint = new int[64];
+        /** A row's treap of cells. */
+        private int[] cells = new int[64];
         private int[] slotStart = new int[64];
         private int[] slotEnd = new int[64];
         private byte[] kind = new byte[64];
@@ -734,18 +749,23 @@ public final class SecretRedactor {
         /** What {@link #split} leaves: the first columns, and the rest. */
         private int splitLeft, splitRight;
 
-        // Row to its treap's root, open addressing; -1 marks an empty place, as no row is negative
-        private long[] keys = filled(128);
-        private int[] roots = new int[128];
-        private int used;
-        /** The place of the row last looked up, so writing along a row probes once. */
+        /** The treap of each screen's rows, main then alternate, from the first row of its region. */
+        private final int[] regions = new int[2];
+        /**
+         * The rows DL and SU removed, each run a treap of its own. A token drawn whole on one was
+         * shown, and SU keeps it in a terminal's scrollback, so the view keeps them all, never reused.
+         */
+        private int[] removed = new int[8];
+        private int removedCount;
+        /** The row last looked up and its node, so writing along a row searches once, until rows shift. */
         private long cachedRow = -1;
-        private int cachedIndex;
-        /** Per scrub, so a guest can neither choose rows that all land on one probe chain nor unbalance a treap. */
+        private int cachedNode;
+        /** Per scrub, so a guest cannot unbalance a treap. */
         private final long seed = ThreadLocalRandom.current().nextLong();
 
-        Screen(int rawLength, boolean fromTop, boolean vteStops) {
+        Screen(int rawLength, boolean fromTop, boolean vteStops, boolean shiftsRows) {
             this.fromTop = fromTop;
+            this.shiftsRows = shiftsRows;
             this.vteStops = vteStops;
             repeats = (long) MAX_REPEATS_PER_CHAR * rawLength + MAX_COLUMN;
         }
@@ -754,7 +774,8 @@ public final class SecretRedactor {
          * Whether {@code piece} holds what can move a cursor back or draw a character twice, a
          * screen's only way to differ from the shown text but for blanks: a carriage return not
          * ending a line, a backspace, an 8-bit RI, or a sequence that moves back, repeats or shifts
-         * cells (DCH, ICH). It only looks, so what it misses a screen would miss as well.
+         * cells (DCH, ICH) or rows (DL, IL, SU, SD). It only looks, so what it misses a screen would
+         * miss as well.
          */
         static boolean mayMoveBack(String piece) {
             for (int i = 0; i < piece.length(); i++) {
@@ -770,7 +791,7 @@ public final class SecretRedactor {
                 char last = sequence.charAt(sequence.length() - 1);
                 if (sequence.length() == 2 && sequence.charAt(0) == ESC) {
                     if ("86M".indexOf(last) >= 0) return true;
-                } else if ("ADFG`HfZubdP@".indexOf(last) >= 0) {
+                } else if ("ADFG`HfZubdP@LMST".indexOf(last) >= 0) {
                     return true;
                 } else if (last == 'l' && restoresOrLeaves(sequence, 0, sequence.length())) {
                     return true;
@@ -813,7 +834,7 @@ public final class SecretRedactor {
         void print(String piece, int offset) {
             // A piece starts on a line of its own, below the last
             alternate = false;
-            rowBase = Math.min(lastRow + 1, MAX_ROW);
+            rowBase = Math.min(size[regions[0]], MAX_ROW);
             row = rowBase;
             column = 0;
             Arrays.fill(savedRow, 0);
@@ -901,8 +922,6 @@ public final class SecretRedactor {
             lastSlot = write(row, column, c, width == 2 ? WIDE_HEAD : NARROW, from, to);
             if (width == 2) write(row, column + 1, c, WIDE_TAIL, from, to);
             lastCodePoint = c;
-            if (alternate) lastAlternateRow = Math.max(lastAlternateRow, row);
-            else lastRow = Math.max(lastRow, row);
             column += width;
         }
 
@@ -960,6 +979,35 @@ public final class SecretRedactor {
                 case 'W' -> tabulationControl(mode(numbers[0]));
                 case 'P' -> deleteCells(n);
                 case '@' -> insertCells(n);
+                // DECSTBM: a terminal shifts no row outside the margins, which are not modelled
+                case 'r' -> margins = true;
+                // IL and DL put the cursor at the line's start, as xterm does
+                case 'L' -> {
+                    if (shiftRows(false)) {
+                        insertRows(row, n);
+                        column = 0;
+                    }
+                }
+                case 'M' -> {
+                    if (shiftRows(false)) {
+                        deleteRows(row, n);
+                        column = 0;
+                    }
+                }
+                // SU and SD scroll from the screen's top and leave the cursor where it is. The
+                // piece's first row stands for the top, as for an absolute row, but is not known to
+                // be it: the other screen reads the top as above every row, where scrolling moves
+                // the cursor along fixed rows instead
+                case 'S' -> {
+                    if (shiftRows(true)) deleteRows(rowBase, n);
+                    else if (!margins) row = Math.min(row + n, lastRegionRow());
+                }
+                case 'T' -> {
+                    // With more parameters, or an explicit 0, xterm reads it as mouse tracking, VTE as SD 1
+                    boolean tracking = !numbers[0].isEmpty() && mode(numbers[0]) == 0;
+                    if (numbers.length == 1 && shiftRows(true)) insertRows(rowBase, n);
+                    else if (numbers.length == 1 && !margins && !tracking) move(row - n, column);
+                }
                 case 'D' -> move(row, column - n);
                 case 'E' -> {
                     move(row + n, column);
@@ -996,6 +1044,17 @@ public final class SecretRedactor {
         /** Whether a screen counting absolute rows the other way can differ from this one. */
         boolean absoluteRowsMayDiffer() {
             return absoluteRowsDiffer;
+        }
+
+        /** Whether this screen makes a row shift, noting one a terminal may not make: {@code uncertain}, or margins are set. */
+        private boolean shiftRows(boolean uncertain) {
+            if (margins || uncertain) rowShiftsDiffer = true;
+            return shiftsRows;
+        }
+
+        /** Whether a screen leaving rows where they are can differ from this one. */
+        boolean rowShiftsMayDiffer() {
+            return rowShiftsDiffer;
         }
 
         /** An xterm private mode set or reset that saves or restores the cursor or swaps the screen. */
@@ -1039,7 +1098,7 @@ public final class SecretRedactor {
                 mainBase = rowBase;
                 if (alternateBase < 0) {
                     // A cleared alternate screen: its absolute rows count afresh, never from rows it left
-                    alternateBase = Math.min(lastAlternateRow + 1, lastRegionRow());
+                    alternateBase = Math.min(ALTERNATE + size[regions[1]], lastRegionRow());
                     firstAbsolute[1] = Long.MIN_VALUE;
                 } else {
                     moved = true;
@@ -1183,11 +1242,7 @@ public final class SecretRedactor {
         private void deleteCells(int n) {
             int root = root(row);
             if (column >= size[root]) return;
-            split(root, column);
-            int before = splitLeft;
-            split(splitRight, n);
-            discard(splitLeft);
-            setRoot(row, merge(before, splitRight));
+            setRoot(row, delete(root, column, n));
             moved = true;
         }
 
@@ -1195,18 +1250,77 @@ public final class SecretRedactor {
         private void insertCells(int n) {
             int root = root(row);
             if (column >= size[root]) return;
-            split(root, column);
+            setRoot(row, insert(root, column, n, MAX_COLUMN));
+            moved = true;
+        }
+
+        /** DL, or SU from {@code atRow}: removes {@code n} rows, kept for the view, and those below move up as many. */
+        private void deleteRows(long atRow, int n) {
+            int screen = region(atRow);
+            long at = atRow - regionStart(screen);
+            moved = true;
+            if (at >= size[regions[screen]]) return;
+            split(regions[screen], at);
             int before = splitLeft;
+            split(splitRight, n);
+            if (removedCount == removed.length) removed = Arrays.copyOf(removed, removedCount * 2);
+            removed[removedCount++] = splitLeft;
+            regions[screen] = merge(before, splitRight);
+            cachedRow = -1;
+        }
+
+        /** IL, or SD from {@code atRow}: {@code n} blank rows, which push those below down as many. */
+        private void insertRows(long atRow, int n) {
+            int screen = region(atRow);
+            long at = atRow - regionStart(screen);
+            moved = true;
+            if (at >= size[regions[screen]]) return;
+            regions[screen] = insert(regions[screen], at, n, MAX_ROW + 1);
+            cachedRow = -1;
+        }
+
+        /** The screen whose region holds {@code atRow}: 0 for the main one, 1 for the alternate. */
+        private static int region(long atRow) {
+            return atRow >= ALTERNATE ? 1 : 0;
+        }
+
+        private static long regionStart(int screen) {
+            return screen == 1 ? ALTERNATE : 0;
+        }
+
+        /** Drops {@code n} columns or rows of {@code root}'s from {@code at}, returning its root. */
+        private int delete(int root, long at, long n) {
+            split(root, at);
+            int before = splitLeft;
+            split(splitRight, n);
+            discard(splitLeft);
+            return merge(before, splitRight);
+        }
+
+        /** A gap {@code n} wide at {@code at} in {@code root}, dropping what it pushes past {@code limit}, returning its root. */
+        private int insert(int root, long at, long n, long limit) {
+            split(root, at);
             int after = splitRight;
-            int gap = node(n, GAP);
-            root = merge(merge(before, gap), after);
-            if (size[root] > MAX_COLUMN) {
-                split(root, MAX_COLUMN);
+            root = merge(merge(splitLeft, node(n, GAP)), after);
+            if (size[root] > limit) {
+                split(root, limit);
                 discard(splitRight);
                 root = splitLeft;
             }
-            setRoot(row, root);
-            moved = true;
+            return root;
+        }
+
+        /** Puts {@code node}, one wide, at {@code at} in {@code root}, where none is, returning its root. */
+        private int place(int root, long at, int node) {
+            long columns = size[root];
+            // Past the last one, after the blanks before it
+            if (at >= columns) return merge(root, at > columns ? merge(node(at - columns, GAP), node) : node);
+            // In a gap: the blank it takes is dropped
+            split(root, at);
+            int before = splitLeft;
+            split(splitRight, 1);
+            discard(splitLeft);
+            return merge(merge(before, node), splitRight);
         }
 
         /** Overwriting either cell of a wide character clears the other. */
@@ -1235,19 +1349,7 @@ public final class SecretRedactor {
                 slot = node(1, cellKind);
                 slotStart[slot] = from;
                 slotEnd[slot] = to;
-                int columns = size[root];
-                if (at >= columns) {
-                    // Past the row's last cell, after the blanks the cursor moved over
-                    root = merge(root, at > columns ? merge(node(at - columns, GAP), slot) : slot);
-                } else {
-                    // In a gap: the blank column it takes is dropped
-                    split(root, at);
-                    int before = splitLeft;
-                    split(splitRight, 1);
-                    discard(splitLeft);
-                    root = merge(merge(before, slot), splitRight);
-                }
-                setRoot(atRow, root);
+                setRoot(atRow, place(root, at, slot));
             }
             codePoint[slot] = c;
             kind[slot] = cellKind;
@@ -1261,31 +1363,39 @@ public final class SecretRedactor {
         }
 
         /** The slot written at a cell, or -1. */
-        private int slot(long atRow, int at) {
-            int node = root(atRow);
+        private int slot(long atRow, long at) {
+            int node = find(root(atRow), at);
+            return node == 0 || kind[node] == GAP ? -1 : node;
+        }
+
+        /** The node of {@code root}'s treap that takes column, or row, {@code at}, gap or not, or 0 past its end. */
+        private int find(int root, long at) {
+            int node = root;
             while (node != 0) {
-                int before = size[left[node]];
+                long before = size[left[node]];
                 if (at < before) {
                     node = left[node];
                 } else if (at < before + width[node]) {
-                    return kind[node] == GAP ? -1 : node;
+                    return node;
                 } else {
                     at -= before + width[node];
                     node = right[node];
                 }
             }
-            return -1;
+            return 0;
         }
 
         /** A node {@code columns} wide, at a priority the guest cannot guess: a discarded one, else a new one. */
-        private int node(int columns, byte nodeKind) {
+        private int node(long columns, byte nodeKind) {
             int node;
             if (freeCount > 0) {
-                // Its children are freed as it is taken, so dropping a subtree costs nothing at once
+                // Its children, and a row's cells, are freed as it is taken, so dropping a subtree costs nothing at once
                 node = free[--freeCount];
                 discard(left[node]);
                 discard(right[node]);
+                if (kind[node] == ROW) discard(cells[node]);
                 if (node == lastSlot) lastSlot = -1;
+                if (node == cachedNode) cachedRow = -1;
             } else {
                 node = newNode();
             }
@@ -1295,6 +1405,7 @@ public final class SecretRedactor {
             width[node] = columns;
             size[node] = columns;
             kind[node] = nodeKind;
+            cells[node] = 0;
             return node;
         }
 
@@ -1314,6 +1425,7 @@ public final class SecretRedactor {
                 size = Arrays.copyOf(size, capacity);
                 width = Arrays.copyOf(width, capacity);
                 codePoint = Arrays.copyOf(codePoint, capacity);
+                cells = Arrays.copyOf(cells, capacity);
                 slotStart = Arrays.copyOf(slotStart, capacity);
                 slotEnd = Arrays.copyOf(slotEnd, capacity);
                 kind = Arrays.copyOf(kind, capacity);
@@ -1342,7 +1454,7 @@ public final class SecretRedactor {
         }
 
         /** Splits {@code node}'s columns into the first {@code at} and the rest, a gap across them in two. */
-        private void split(int node, int at) {
+        private void split(int node, long at) {
             splitAtBoundary(cut(node, at), at);
         }
 
@@ -1352,8 +1464,8 @@ public final class SecretRedactor {
          * Copying the gap's priority instead would keep the heap order but tie every piece of a gap
          * split many times, and a treap of tied priorities is as deep as it holds them.
          */
-        private int cut(int root, int at) {
-            int rest = shorten(root, at);
+        private int cut(int root, long at) {
+            long rest = shorten(root, at);
             if (rest == 0) return root;
             splitAtBoundary(root, at);
             int before = splitLeft;
@@ -1362,10 +1474,10 @@ public final class SecretRedactor {
         }
 
         /** Ends the gap across {@code at} there, returning how many columns it lost: 0 when none spans it. */
-        private int shorten(int node, int at) {
+        private long shorten(int node, long at) {
             if (node == 0) return 0;
-            int before = size[left[node]];
-            int lost;
+            long before = size[left[node]];
+            long lost;
             if (at < before) {
                 lost = shorten(left[node], at);
             } else if (at >= before + width[node]) {
@@ -1381,13 +1493,13 @@ public final class SecretRedactor {
         }
 
         /** Splits {@code node}'s columns into the first {@code at} and the rest, {@code at} falling between two nodes. */
-        private void splitAtBoundary(int node, int at) {
+        private void splitAtBoundary(int node, long at) {
             if (node == 0) {
                 splitLeft = 0;
                 splitRight = 0;
                 return;
             }
-            int before = size[left[node]];
+            long before = size[left[node]];
             if (at <= before) {
                 splitAtBoundary(left[node], at);
                 left[node] = splitRight;
@@ -1401,10 +1513,13 @@ public final class SecretRedactor {
             }
         }
 
-        /** The depth of the deepest row's treap. */
+        /** The depth of the deepest treap, of rows or of a row's cells. */
         int depth() {
             int deepest = 0;
-            for (int root : roots) deepest = Math.max(deepest, depth(root));
+            for (int region : regions) {
+                deepest = Math.max(deepest, depth(region));
+                for (int node : rows(region)) deepest = Math.max(deepest, depth(cells[node]));
+            }
             return deepest;
         }
 
@@ -1412,9 +1527,12 @@ public final class SecretRedactor {
             return node == 0 ? 0 : 1 + Math.max(depth(left[node]), depth(right[node]));
         }
 
-        /** Whether every row's treap has no node above one of higher priority, which keeps it shallow. */
+        /** Whether every treap, of rows or of a row's cells, has no node above one of higher priority, which keeps it shallow. */
         boolean heapOrdered() {
-            for (int root : roots) if (root != 0 && !heapOrdered(root)) return false;
+            for (int region : regions) {
+                if (region != 0 && !heapOrdered(region)) return false;
+                for (int node : rows(region)) if (cells[node] != 0 && !heapOrdered(cells[node])) return false;
+            }
             return true;
         }
 
@@ -1427,53 +1545,61 @@ public final class SecretRedactor {
 
         /** The root of {@code atRow}'s treap, 0 while nothing was written there. */
         private int root(long atRow) {
-            return roots[place(atRow)];
+            return cells[row(atRow)];
         }
 
         private void setRoot(long atRow, int root) {
-            int index = place(atRow);
-            if (keys[index] < 0) {
-                keys[index] = atRow;
-                roots[index] = root;
-                if (++used * 4 > keys.length * 3) grow();
-            } else {
-                roots[index] = root;
+            int node = row(atRow);
+            if (node == 0) {
+                int screen = region(atRow);
+                node = node(1, ROW);
+                regions[screen] = place(regions[screen], atRow - regionStart(screen), node);
+                cachedRow = atRow;
+                cachedNode = node;
             }
+            cells[node] = root;
         }
 
-        /** Where {@code atRow} is, or the empty place it would go. */
-        private int place(long atRow) {
-            if (atRow == cachedRow && keys[cachedIndex] == atRow) return cachedIndex;
-            int mask = keys.length - 1;
-            int index = (int) mix(atRow ^ seed) & mask;
-            while (keys[index] >= 0 && keys[index] != atRow) index = (index + 1) & mask;
-            cachedRow = atRow;
-            cachedIndex = index;
-            return index;
-        }
-
-        private void grow() {
-            var oldKeys = keys;
-            var oldRoots = roots;
-            keys = filled(oldKeys.length * 2);
-            roots = new int[oldKeys.length * 2];
-            cachedRow = -1;
-            for (int i = 0; i < oldKeys.length; i++) {
-                if (oldKeys[i] < 0) continue;
-                int index = place(oldKeys[i]);
-                keys[index] = oldKeys[i];
-                roots[index] = oldRoots[i];
+        /** {@code atRow}'s node, or 0 while nothing was written there. */
+        private int row(long atRow) {
+            if (atRow == cachedRow) return cachedNode;
+            int screen = region(atRow);
+            int node = find(regions[screen], atRow - regionStart(screen));
+            if (node != 0 && kind[node] != ROW) node = 0;
+            if (node != 0) {
+                cachedRow = atRow;
+                cachedNode = node;
             }
-            cachedRow = -1;
+            return node;
         }
 
-        private static long[] filled(int length) {
-            var empty = new long[length];
-            Arrays.fill(empty, -1);
-            return empty;
+        /** The rows of each of {@code roots}, in order, without the gaps between them. */
+        private int[] rows(int... roots) {
+            var rows = new int[16];
+            int count = 0;
+            var path = new int[64];
+            for (int root : roots) {
+                int depth = 0;
+                int node = root;
+                // The way down kept on a stack: a treap is shallow, not balanced
+                while (node != 0 || depth > 0) {
+                    while (node != 0) {
+                        if (depth == path.length) path = Arrays.copyOf(path, depth * 2);
+                        path[depth++] = node;
+                        node = left[node];
+                    }
+                    node = path[--depth];
+                    if (kind[node] == ROW) {
+                        if (count == rows.length) rows = Arrays.copyOf(rows, count * 2);
+                        rows[count++] = node;
+                    }
+                    node = right[node];
+                }
+            }
+            return Arrays.copyOf(rows, count);
         }
 
-        /** The murmur3 finalizer: every key bit reaches every index bit. */
+        /** The murmur3 finalizer: every bit of its input reaches every bit of a priority. */
         private static long mix(long h) {
             h ^= h >>> 33;
             h *= 0xff51afd7ed558ccdL;
@@ -1484,19 +1610,23 @@ public final class SecretRedactor {
 
         /** What the screen shows, row by row, and the raw characters each of its characters redacts. */
         View view() {
-            var rows = new long[used];
-            int n = 0;
-            for (int i = 0; i < keys.length; i++) if (keys[i] >= 0 && roots[i] != 0) rows[n++] = keys[i];
-            rows = Arrays.copyOf(rows, n);
-            Arrays.sort(rows);
+            // Each row ends at a line break, so the order rows are taken in joins none
+            var roots = Arrays.copyOf(removed, removedCount + 2);
+            roots[removedCount] = regions[0];
+            roots[removedCount + 1] = regions[1];
+            var rows = rows(roots);
             var view = new View(nodes + nodes / 8 + 16);
             var path = new int[64];
+            boolean first = true;
             for (int r = 0; r < rows.length; r++) {
+                int node = cells[rows[r]];
+                // A row whose cells were all deleted shows nothing
+                if (node == 0) continue;
                 // Rows nothing was written to show blank, which ends a token as a line break does
-                if (r > 0) view.append('\n', -1, -1);
+                if (!first) view.append('\n', -1, -1);
+                first = false;
                 boolean blank = false;
                 int depth = 0;
-                int node = root(rows[r]);
                 // In column order, the way down kept on a stack: a treap is shallow, not balanced
                 while (node != 0 || depth > 0) {
                     while (node != 0) {
@@ -1703,14 +1833,14 @@ public final class SecretRedactor {
 
     /** Whether a screen printing {@code raw} keeps its rows heap-ordered treaps, for the test that keeps a shift cheap. */
     static boolean screenRowsHeapOrdered(String raw) {
-        var screen = new Screen(raw.length(), true, false);
+        var screen = new Screen(raw.length(), true, false, true);
         screen.print(raw, 0);
         return screen.heapOrdered();
     }
 
-    /** How deep a screen printing {@code raw} leaves its deepest row's treap, for the test that keeps a shift cheap. */
+    /** How deep a screen printing {@code raw} leaves its deepest treap, of rows or of a row's cells, for the test that keeps a shift cheap. */
     static int screenRowDepth(String raw) {
-        var screen = new Screen(raw.length(), true, false);
+        var screen = new Screen(raw.length(), true, false, true);
         screen.print(raw, 0);
         return screen.depth();
     }

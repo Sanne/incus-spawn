@@ -799,6 +799,46 @@ class SecretRedactorTest {
     }
 
     @Test
+    void aGuestsTextKeepsNoTokenARowShiftJoins() {
+        // DL and IL move the rows below the cursor up or down, and SU and SD scroll the screen, so
+        // what is written after one lands on a row a terminal has moved there (#1927)
+        var head = "x ghp_" + "A".repeat(10);
+        var tail = "B".repeat(10);
+        var token = "<isx:redacted:github-token>";
+        // The junk row deleted, so the head's row is where the cursor goes back to
+        assertEquals("junk\nx " + token + "\n", SecretRedactor.scrubGuest("junk\n" + head + "\n\u001b[2A\u001b[M\u001b[16C" + tail + "\n"));
+        // A blank row inserted above the head pushes it onto the junk's row
+        assertEquals("x " + token + "\n", SecretRedactor.scrubGuest(head + "\njunk\u001b[A\u001b[L\u001b[B\u001b[16C" + tail + "\n"));
+        // Scrolled up a row, the head's row is two above the cursor, and scrolled down, one below
+        assertEquals("junk\nx " + token + "\n", SecretRedactor.scrubGuest("junk\n" + head + "\n\u001b[S\u001b[2A\u001b[16C" + tail + "\n"));
+        assertEquals("junk\nx " + token + "\n", SecretRedactor.scrubGuest("junk\n" + head + "\u001b[T\n\u001b[16C" + tail + "\n"));
+        // DL puts the cursor at the line's start, as xterm does, so sixteen columns on from there
+        // is the head's end, not from where the tab left it
+        assertEquals("junk\nx " + token + "\n", SecretRedactor.scrubGuest("junk\n" + head + "\t\u001b[A\u001b[M\u001b[16C" + tail + "\n"));
+        // A token joined on the screen was shown whole, and stays redacted once DL or SU removes its row
+        var joined = head + "-" + tail + "\b".repeat(11) + "A";
+        for (var removed : new String[] {"\r\u001b[M", "\u001b[S"}) {
+            assertEquals("x " + token + "\n", SecretRedactor.scrubGuest(joined + removed + "\n"), removed.replace("\u001b", "ESC"));
+        }
+    }
+
+    @Test
+    void aGuestsTextKeepsNoTokenARowShiftATerminalMayNotMakeJoins() {
+        // Outside scrolling margins a terminal shifts no row, xterm reads SD 0 as mouse tracking,
+        // and SU and SD scroll from a top the piece's first row only stands for, so a screen that
+        // leaves the rows where they are, and reads that top as above every row, is scrubbed as well
+        var head = "x ghp_" + "A".repeat(10);
+        var tail = "B".repeat(10);
+        var token = "<isx:redacted:github-token>";
+        assertEquals("junk\nx " + token + "\n", SecretRedactor.scrubGuest("\u001b[5;10rjunk\n" + head + "\n\u001b[2A\u001b[M\u001b[B\u001b[16C" + tail + "\n"));
+        assertEquals("x " + token + "\n", SecretRedactor.scrubGuest(head + "\n\u001b[0T\u001b[A\u001b[16C" + tail + "\n"));
+        // Scrolled off a top above the piece, the head's row is still where the cursor goes back to
+        assertEquals("x " + token + "\n", SecretRedactor.scrubGuest(head + "\n\u001b[S\u001b[2A\u001b[16C" + tail + "\n"));
+        // Scrolled two rows from such a top, junk and head move up two with the cursor staying
+        assertEquals("junk\nx " + token + "\n", SecretRedactor.scrubGuest("junk\n" + head + "\n\u001b[2S\u001b[3A\u001b[16C" + tail + "\n"));
+    }
+
+    @Test
     void aGuestsTextKeepsNoTokenAGuestsTabStopJoins() {
         // A guest that clears the tab stops and sets its own moves a tab where a terminal does: to
         // the dash's column, which the B then overwrites (#1919)
@@ -846,10 +886,13 @@ class SecretRedactorTest {
         for (int screen = 0; screen < 200; screen++) {
             var raw = new StringBuilder();
             for (int i = 0; i < 200; i++) {
-                switch (random.nextInt(3)) {
+                switch (random.nextInt(5)) {
                     case 0 -> raw.append("\u001b[").append(1 + random.nextInt(300)).append('G');
                     case 1 -> raw.append((char) ('a' + random.nextInt(26)));
-                    default -> raw.append("\u001b[").append(1 + random.nextInt(20)).append(random.nextBoolean() ? '@' : 'P');
+                    case 2 -> raw.append("\u001b[").append(1 + random.nextInt(20)).append(random.nextBoolean() ? '@' : 'P');
+                    // And the rows: moved to, and shifted (#1927)
+                    case 3 -> raw.append("\u001b[").append(1 + random.nextInt(300)).append('d');
+                    default -> raw.append("\u001b[").append(1 + random.nextInt(20)).append("LMST".charAt(random.nextInt(4)));
                 }
             }
             assertTrue(SecretRedactor.screenRowsHeapOrdered(raw.toString()), raw.toString().replace("\u001b", "ESC"));
@@ -879,10 +922,14 @@ class SecretRedactorTest {
         // screen holds what the row shows, not every shift's leftovers
         var gaps = "y\u001b[4000Gy\u001b[2G" + "\u009b@\u009b2P".repeat(400_000) + "\n";
         var stops = "\u001bH\u001b[C".repeat(4000) + "\r" + "\u001b[4096I\u001b[4096Z\u001b[0g\u001bH".repeat(200_000) + "\n";
+        // And 4000 rows, each sequence shifting all of them up or down (#1927)
+        var rows = "y\n".repeat(4000) + "\u001b[4000A";
+        var rowShifts = rows + "\u001b[L\u001b[M\u001b[S\u001b[T".repeat(150_000) + "\u001b[4096Lx\u001b[4096Tx".repeat(100_000) + "\n";
         assertTimeoutPreemptively(java.time.Duration.ofSeconds(10), () -> {
             SecretRedactor.scrubGuest(shifts);
             SecretRedactor.scrubGuest(gaps);
             SecretRedactor.scrubGuest(stops);
+            SecretRedactor.scrubGuest(rowShifts);
         });
     }
 
