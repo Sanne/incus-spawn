@@ -225,27 +225,6 @@ public final class BtrfsUsage {
     }
 
     /**
-     * Poll the status until the accounting is consistent again or {@code maxWait} elapses. For the
-     * one caller that needs a trustworthy read <em>now</em> (the build-time stamp): a rescan of a
-     * developer-sized pool finishes in seconds, so a short bounded wait usually yields a correct
-     * stamp, while a huge pool merely leaves the template unstamped for the TUI to backfill later.
-     */
-    public static QgroupStatus awaitConsistent(String poolName, Duration maxWait) {
-        var deadline = System.nanoTime() + maxWait.toNanos();
-        var status = status(poolName);
-        while (status.untrusted() && System.nanoTime() < deadline) {
-            try {
-                Thread.sleep(500);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return status;
-            }
-            status = status(poolName);
-        }
-        return status;
-    }
-
-    /**
      * Start a {@code btrfs quota rescan} on the pool, unthrottled (for {@code isx doctor}'s explicit
      * remediation). Returns true if the kernel accepted it <em>or</em> one is already running —
      * either way a rescan is in progress. Never throws.

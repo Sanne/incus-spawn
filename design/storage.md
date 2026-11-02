@@ -126,9 +126,11 @@ Getting a stamp wrong no longer collapses the whole display.
 A built *derived* template missing its stamp is tolerated — `applyReferencedTemplateDeltas` leaves that one row on its exclusive usage instead of dropping every template to ~0.
 So a transient read failure at build time degrades a single row, not the entire panel.
 
-A missing stamp also self-heals on reload without a rebuild: `fillMissingReferencedSizes` backfills it with a single live probe — using the light (non-sync) flavour, and *only* when there's an actual gap (an unstamped built template).
-This keeps the privileged read out of the healthy per-refresh path (a fully-stamped install never probes on reload) while recovering pre-feature templates and the rare failed stamp.
-The backfill is in-memory (a rebuild re-stamps permanently) and never overwrites an existing stamp, which is authoritative and free.
+A missing stamp also self-heals on reload without a rebuild: `fillMissingReferencedSizes` backfills it with a single live probe, and *only* when there's an actual gap (an unstamped built template).
+It saves what it reads as the stamp, since templates are immutable and it reads only with consistent accounting, the condition a build stamps under.
+So a template is backfilled once: its first read forces a commit (the sync flavour, as a build's stamp does), and a gap it could not fill is read again only with the light flavour.
+This keeps the privileged read out of the healthy per-refresh path (a fully-stamped install never probes on reload) while recovering pre-feature templates and every build that left its template unstamped.
+The backfill never overwrites an existing stamp, which is authoritative and free.
 
 **The accounting itself can be silently wrong, so it is checked and repaired.**
 Ordering the read before the delete addresses a *transient* effect; the real failure is persistent and filesystem-wide.
@@ -154,7 +156,9 @@ The rescan-trigger budget (`MAX_RESCAN_TRIGGERS`) counts *consecutive* attempts 
 The TUI also calls it every reload (cadence-limited: 30s normally, 2s while a repair is pending, so an agent round trip on macOS isn't on the hot path).
 While untrusted it keeps showing existing stamps (a stamp taken from consistent accounting stays valid, templates being immutable), reads nothing live (no backfill, no shared-base fold) and shows a one-shot "repairing" hint.
 The reload that first sees the flag clear re-validates the stamps with one live probe and re-stamps whatever differs — the one path that overwrites a stamp, which also fires once per session on the poisoned-stamp signature (a derived template stamped with exactly its parent's value) so pools broken before the check existed heal without a rebuild.
-`BuildCommand.probeReferencedSize` runs the same detect-and-repair before stamping, with a bounded wait (`awaitConsistent`, 20s) so the usual case still gets an immediate, correct stamp.
+`BuildCommand.probeReferencedSize` runs the same detect-and-repair before stamping, and never waits for it.
+A rescan walks the whole pool, which took over 20 s on a nested host, and every rebuild's swap deletes a subvolume and can flag the pool again, so a batch of builds would wait once per template.
+The stamp serves only the TUI's disk panel, so a build whose accounting is under repair leaves its template unstamped, says nothing, and the TUI's backfill measures and saves it once the flag clears.
 `isx doctor` reports the state and offers the rescan for when the automatic one couldn't run.
 The `C` key reclaims space via `isx clean pool` (failed builds, unused images, build caches).
 Downloaded base images, the container one and the `-vm` disk image, are a category of their own and opt-in, like the DNF cache.

@@ -41,7 +41,11 @@ class RepoCloner {
     private final IncusClient incus;
     private GitPreparation preparation;
     private final java.util.Map<Integer, GitPreparation.Prepared> prepared = new java.util.concurrent.ConcurrentHashMap<>();
+    /** By repo: how long each phase of its preparation and clone took, shown only by {@code isx build --verbose}. */
     private final java.util.Map<Integer, String> preparationTimings = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Repos whose Git staging area could not be removed yet, for a note after the group. */
+    private final java.util.Set<Integer> cleanupDeferred = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private boolean showTimings;
     /** By repo: why its Git preparation failed, isx's words then Git's quoted, for a warning after the group. */
     final java.util.Map<Integer, GitCommandException> preparationFailures = new java.util.concurrent.ConcurrentHashMap<>();
     /** By repo: why its clean snapshot, or one its publication evicted, was not kept, so a later build clones it in full again. */
@@ -59,6 +63,12 @@ class RepoCloner {
     RepoCloner(IncusClient incus, GitPreparation preparation) {
         this(incus);
         this.preparation = preparation;
+    }
+
+    /** Whether to show each repo's phase timings after the group: a diagnostic, for {@code --verbose}. */
+    RepoCloner showTimings(boolean show) {
+        this.showTimings = show;
+        return this;
     }
 
     // 4 WebSocket fds (stdin, stdout, stderr, control) + 1 /wait long-poll per non-PTY exec
@@ -238,6 +248,7 @@ class RepoCloner {
         }
         if (repos.isEmpty()) return;
         preparationTimings.clear();
+        cleanupDeferred.clear();
         preparationFailures.clear();
         preparationNotRetained.clear();
 
@@ -346,7 +357,8 @@ class RepoCloner {
                 mounts.removeLeftovers();
             }
 
-            preparationTimings.forEach((idx, timing) -> BuildOutput.note(labels.get(idx) + ": " + timing));
+            if (showTimings) preparationTimings.forEach((idx, timing) -> BuildOutput.note(labels.get(idx) + ": " + timing));
+            cleanupDeferred.forEach(idx -> BuildOutput.note(labels.get(idx) + ": Git staging cleanup deferred"));
             // isx's words, then Git's quoted: the step lines hold one line each.
             preparationFailures.forEach((idx, failed) -> BuildOutput.warn(labels.get(idx)
                     + ": " + failed.getMessage() + (repos.get(idx).isHostSource() ? "." : "; falling back to a clone in the guest."),
@@ -632,7 +644,7 @@ class RepoCloner {
         var result = prepared.remove(idx);
         if (result != null) {
             try { result.close(); }
-            catch (Exception e) { preparationTimings.merge(idx, "Git staging cleanup deferred", (a, b) -> a + "; " + b); }
+            catch (Exception e) { cleanupDeferred.add(idx); }
         }
     }
 
