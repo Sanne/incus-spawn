@@ -787,6 +787,35 @@ class Upstream {
         headers.set("Host", domain);
     }
 
+    /** Relays a request whose body has already been read, as it came. */
+    void relayBuffered(HttpServerRequest clientReq, String domain, Buffer body) {
+        var options = new RequestOptions().setMethod(clientReq.method()).setHost(domain).setPort(443)
+                .setURI(clientReq.uri());
+        requestWithAsyncDns(options).onSuccess(upReq -> {
+            copyBufferedRequestHeaders(clientReq, upReq, domain);
+            upReq.putHeader("Content-Length", String.valueOf(body.length()));
+            upReq.send(body).onSuccess(upResp -> {
+                copyResponseHead(upResp, clientReq.response());
+                pipeResponse(upResp, clientReq.response(), null);
+            }).onFailure(e -> {
+                ProxyLog.warn("Upstream send error (" + domain + "): " + e.getMessage());
+                sendError(clientReq.response(), 502, "Upstream error");
+            });
+        }).onFailure(e -> {
+            ProxyLog.warn("Upstream connect error (" + domain + "): " + e.getMessage());
+            sendError(clientReq.response(), 502, "Upstream connection failed");
+        });
+    }
+
+    /**
+     * {@link #copyRequestHeaders}, for a request whose body was read here and goes upstream at
+     * once: its {@code Expect} was answered here, and upstream must not wait to send a 100.
+     */
+    void copyBufferedRequestHeaders(HttpServerRequest clientReq, HttpClientRequest upReq, String domain) {
+        copyRequestHeaders(clientReq, upReq, domain);
+        upReq.headers().remove("Expect");
+    }
+
     /** Upstream's status and headers, for a response relayed as it is. */
     void copyResponseHead(HttpClientResponse upResp, HttpServerResponse clientResp) {
         clientResp.setStatusCode(upResp.statusCode());

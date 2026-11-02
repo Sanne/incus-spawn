@@ -54,6 +54,11 @@ keywords = ["sk-ant-oat01-"]
     # Per-start proof tokens in the guest-script tests (#1108): a tool's placeholder prefix,
     # then isx_ and hex. Not a credential shape any service issues, and capped at 40 hex.
     '''^(?:gho_|sk-ant-|sk-|ya29\.)isx_[0-9a-f]{8,40}$''',
+    # #1332's ChatGPT fixtures: ChatGptProofTest's pinned HMAC test vector, RFC 6455's sample
+    # WebSocket key, and the end-to-end script's refresh placeholder, a shell variable reference.
+    '''^1f9f4bb27ccf73b6b3b1043fa1381ca38631be1068353fe4b30e89e7929b0eb1$''',
+    '''^dGhlIHNhbXBsZSBub25jZQ==$''',
+    '''^rt\.isx_\$REFRESH_PROOF$''',
     # Exact placeholders in SecretRedactorTest and HelpContextTest (redaction of support output):
     # a truncated PEM block with fake body lines, as captured with the test's text-block indent,
     # and a "ghp_" token with 16 characters where a GitHub token has 36.
