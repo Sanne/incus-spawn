@@ -204,8 +204,8 @@ public class ProxyStartCommand extends BaseCommand {
         }
     }
 
-    /** Longer than the proxy's own 10-second forced exit, so a clean stop always wins. */
-    private static final Duration PROXY_STOP_GRACE = Duration.ofSeconds(15);
+    /** Longer than the proxy's own forced exit, so a clean stop always wins. */
+    private static final Duration PROXY_STOP_GRACE = Duration.ofSeconds(ProxyService.STOP_FORCE_EXIT_SECONDS + 5);
 
     private static final int LOG_TAIL_LINES = 10;
 

@@ -327,6 +327,19 @@ class ProxyServiceTest {
         }
     }
 
+    /** #1905: launchd's default ExitTimeOut can kill the proxy before its own stop ends. */
+    @Test
+    void macOsPlistLetsTheProxyFinishItsStopBeforeLaunchdKillsIt() {
+        var m = java.util.regex.Pattern.compile("<key>ExitTimeOut</key><integer>(\\d+)</integer>")
+                .matcher(ProxyService.generateProxyPlist(PROXY_BIN));
+        assertTrue(m.find(), "the plist must set ExitTimeOut");
+        var exitTimeout = Integer.parseInt(m.group(1));
+        assertTrue(exitTimeout > ProxyService.STOP_FORCE_EXIT_SECONDS, "above the force-exit in ProxyMain");
+        // A reload that stops waiting before launchd's kill leaves nothing loaded
+        assertTrue(exitTimeout * 1000L < LaunchdJob.UNLOAD_POLLS * LaunchdJob.POLL_MILLIS,
+                "launchd's kill must come inside the wait for an unloading job");
+    }
+
     /**
      * #969: launchd starts the job again only after ThrottleInterval, so a wait for health that
      * ends sooner reports "not responding" for a proxy whose first start failed and whose second

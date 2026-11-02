@@ -196,8 +196,8 @@ public class ProxyMain implements QuarkusApplication {
             configWatcher.stop();
             var forceExit = new Thread(() -> {
                 // Past stop()'s own budget, which says what it could not close
-                try { Thread.sleep(10000); } catch (InterruptedException e) { return; }
-                ProxyLog.warn("Proxy shutdown exceeded 10 seconds, forcing exit.");
+                try { Thread.sleep(ProxyService.STOP_FORCE_EXIT_SECONDS * 1000L); } catch (InterruptedException e) { return; }
+                ProxyLog.warn("Proxy shutdown exceeded " + ProxyService.STOP_FORCE_EXIT_SECONDS + " seconds, forcing exit.");
                 Runtime.getRuntime().halt(0);
             }, "force-exit");
             forceExit.setDaemon(true);

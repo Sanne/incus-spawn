@@ -1057,7 +1057,8 @@ public class MitmProxy {
      * How long {@link #stop()} waits, all closes together, for its listeners and upstream clients
      * to close. A close takes milliseconds when idle but 1.5 s was measured under a 10% CPU quota
      * (#1887, #1894), so this leaves room for a loaded host. With {@link #HEALTH_CLOSE_FLOOR_SECONDS}
-     * it stays under the 10 s after which {@code ProxyMain}'s shutdown hook halts the process.
+     * it stays under {@link ProxyService#STOP_FORCE_EXIT_SECONDS}, after which {@code ProxyMain}'s shutdown
+     * hook halts the process.
      */
     static final long STOP_BUDGET_SECONDS = 8;
 

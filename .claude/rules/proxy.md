@@ -412,9 +412,9 @@ Key design:
   Never on the shell path: it costs a service-manager fork.
 - **launchd: `bootout` is asynchronous, so restarts use `kickstart -k`** (`LaunchdJob`, #916).
   `launchctl bootout` returns as soon as the job was told to go.
-  A process that ignores SIGTERM (a hung proxy) is killed only about 5 s later, and until then a `bootstrap` fails with `5: Input/output error` while `launchctl print` still finds the job.
+  A process that ignores SIGTERM (a hung proxy) is killed only at the plist's `ExitTimeOut`, 15 s (`LAUNCHD_EXIT_TIMEOUT_SECONDS`, above the proxy's own force-exit, #1905; about 5 s for a job loaded from an older plist), and until then a `bootstrap` fails with `5: Input/output error` while `launchctl print` still finds the job.
   The old `bootout` + `bootstrap` restart therefore reported success and left nothing loaded.
-  `LaunchdJob.restart` restarts a loaded job in place (`kickstart -k`, no unload, nothing to race); only a changed plist is reloaded, and then it waits (`UNLOAD_POLLS`, 10 s) until `print` stops finding the job before `bootstrap` + `kickstart`.
+  `LaunchdJob.restart` restarts a loaded job in place (`kickstart -k`, no unload, nothing to race); only a changed plist is reloaded, and then it waits (`UNLOAD_POLLS`, 20 s, which has to outlast `ExitTimeOut`) until `print` stops finding the job before `bootstrap` + `kickstart`.
   `restart`'s `kickstart -k` refuses with exit 37 for a job that is already being unloaded (after `isx proxy stop` on a hung proxy); that one waits for it to be gone and loads it afresh, same as a changed plist.
   `start` never reaches `kickstart` at all -- it is only `load` (`bootstrap` + `kickstart`), reached when `startService()` finds nothing loaded.
   Any other `kickstart` failure leaves the job loaded.

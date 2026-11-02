@@ -51,12 +51,14 @@ final class LaunchdJob {
         boolean launched() { return this == RUNNING || this == EXITED; }
     }
 
-    /**
-     * How long an unloading job is given to be gone. launchd gives a process about five seconds
-     * to exit before killing it, so the wait has to outlast that.
-     */
-    static final int UNLOAD_POLLS = 100;
     static final long POLL_MILLIS = 100;
+
+    /**
+     * How long an unloading job is given to be gone. launchd gives a process the plist's {@code
+     * ExitTimeOut} to exit before killing it, so the wait has to outlast that: giving up first
+     * leaves nothing loaded once the kill comes (#1905).
+     */
+    static final int UNLOAD_POLLS = (int) ((ProxyService.LAUNCHD_EXIT_TIMEOUT_SECONDS + 5) * 1000 / POLL_MILLIS);
 
     /** How long a job is given to show as running once {@code launchctl} has started it. */
     static final int RUNNING_POLLS = 20;
