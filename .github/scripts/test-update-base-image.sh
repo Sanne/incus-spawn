@@ -8,7 +8,8 @@
 # a switch of VM image and a release published again under its tag. Both events take every checksum
 # from the release's sums files, for the names the built-in's URLs download, and stop on a payload
 # that disagrees, a sum the release lacks or a malformed one (#1678); the PR lists each sum beside its
-# asset. Then runs verify-base-image-sums.sh, the pull-request check, against the same release. The built-in it starts from is
+# asset. A release of the next Fedora moves the built-in to its release line, by either event, and one of an
+# older Fedora stops the run (#1862). Then runs verify-base-image-sums.sh, the pull-request check, against the same release. The built-in it starts from is
 # written here, held to minimal.yaml's keys. Needs bash, git and mikefarah yq.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -32,10 +33,10 @@ mkdir -p "$WORK/bin" "$WORK/release"
 cat > "$WORK/bin/gh" <<EOF
 #!/bin/bash
 case "\$*" in
-  *"/releases --jq"*) echo $TAG ;;
-  "release download $TAG -R Sanne/incus-spawn-images -p SHA256SUMS -p SHA256SUMS.v2 -D "*)
+  *"/releases --jq"*) echo "\${FAKE_TAG:-$TAG}" ;;
+  "release download \${FAKE_TAG:-$TAG} -R Sanne/incus-spawn-images -p SHA256SUMS -p SHA256SUMS.v2 -D "*)
       rel="\${RELEASE:-$WORK/release}"
-      cp "\$rel/SHA256SUMS" "\${@: -1}"
+      [ -n "\${NO_V1:-}" ] || cp "\$rel/SHA256SUMS" "\${@: -1}"
       [ -n "\${NO_V2:-}" ] || cp "\$rel/SHA256SUMS.v2" "\${@: -1}" ;;
   "release download "*) echo "release not found" >&2; exit 1 ;;
   "pr create"*) printf '%s\n' "\$@" >> "$WORK/prs" ;;
@@ -67,8 +68,8 @@ run() {
         set -a; . "$dir/out"; set +a
         [ "$changed" = true ] || { echo "UNCHANGED"; exit 0; }
         TAG=$tag C_X86=$c_x86 C_ARM=$c_arm V_X86=$v_x86 V_ARM=$v_arm VM_KIND=$vm_kind VM_FILE=${vm_file:-} \
-            bash -eo pipefail "$WORK/update.sh" >/dev/null
-        TAG=$tag CURRENT_TAG=$current VM_KIND=$vm_kind REPUBLISHED=${republished:-} VM_SWITCH=${vm_switch:-} \
+            IMAGE=$image IMAGE_URL=$image_url bash -eo pipefail "$WORK/update.sh" >/dev/null
+        TAG=$tag CURRENT_TAG=$current VM_KIND=$vm_kind REPUBLISHED=${republished:-} VM_SWITCH=${vm_switch:-} LINE_MOVE=${line_move:-} \
             C_X86=$c_x86 C_ARM=$c_arm V_X86=$v_x86 V_ARM=$v_arm bash -eo pipefail "$WORK/pr.sh" >/dev/null 2>&1
         [ -f "$WORK/prs" ] || { echo "NO-PR"; exit 0; }
         cat common/src/main/resources/images/minimal.yaml
@@ -225,12 +226,40 @@ grep -q 'vm_image_url: .*/{tag}/fedora-45-{arch}-vm-direct.tar.xz$' <<<"$out" ||
     || fail "fedora-45 container checksum: $out"
 echo "ok: asset names come from the URLs"
 
+# A release of the next Fedora (#1862): the built-in's release line moves with it, the image alias
+# and both URLs' asset names included, by either event; never back to an older line.
+TAG45=fedora-45-20991231
+expect_next_line() { # <run output> <what>
+    local out
+    out="$(yaml_of "$1")"
+    [ "$(yq -r '.image' <<<"$out")" = fedora-45-base ] || fail "$2: image alias: $out"
+    grep -q 'image_url: .*/{tag}/fedora-45-{arch}.tar.xz$' <<<"$out" || fail "$2: image_url: $out"
+    grep -q 'vm_image_url: .*/{tag}/fedora-45-{arch}-vm-direct.tar.xz$' <<<"$out" || fail "$2: vm_image_url: $out"
+    [ "$(yq -r '.image_tag' <<<"$out")" = "$TAG45" ] || fail "$2: tag: $out"
+    [ "$(yq -r '.image_sha256.x86_64' <<<"$out")" = "$(H 14)" ] || fail "$2: x86_64 container checksum: $out"
+    [ "$(yq -r '.vm_image_sha256.aarch64' <<<"$out")" = "$(H 16)" ] || fail "$2: aarch64 VM checksum: $out"
+    grep -qx "title: Move base image to fedora-45 ($TAG45)" <<<"$1" || fail "$2: title: $(grep '^title:' <<<"$1")"
+    grep -q '^body: .*Release line: `fedora-44` to `fedora-45`' <<<"$1" || fail "$2: the PR does not name the move: $(grep '^body:' <<<"$1")"
+    echo "ok: $2"
+}
+expect_next_line "$(FAKE_TAG=$TAG45 RELEASE="$WORK/fedora-45" run "$WORK/direct-older.yaml")" "next Fedora, by hand"
+# Fedora 45 releases publish SHA256SUMS.v2 alone, so isx releases that read only SHA256SUMS find none.
+expect_next_line "$(NO_V1=1 FAKE_TAG=$TAG45 RELEASE="$WORK/fedora-45" run "$WORK/direct-older.yaml")" "next Fedora, SHA256SUMS.v2 alone"
+expect_next_line "$(FAKE_TAG=$TAG45 RELEASE="$WORK/fedora-45" EVENT_NAME=repository_dispatch PAYLOAD="{\"tag\":\"$TAG45\"}" \
+    run "$WORK/direct-older.yaml")" "next Fedora, by dispatch"
+release_variant fedora-43 's/fedora-44-/fedora-43-/'
+FAKE_TAG=fedora-43-20991231 RELEASE="$WORK/fedora-43" run "$WORK/direct-older.yaml" > "$WORK/out" 2> "$WORK/err" \
+    && fail "a release of an older Fedora was taken: $(cat "$WORK/out")"
+grep -q "not a newer release line" "$WORK/err" || fail "an older line's refusal: $(cat "$WORK/err")"
+echo "ok: never back to an older Fedora"
+
 # verify-base-image-sums.sh, the pull-request check, against the same fake release.
 verify() { PATH="$WORK/bin:$PATH" bash "$REPO/.github/scripts/verify-base-image-sums.sh" "$1"; }
 for y in direct stock-bump; do
     sed "s/^image_tag: .*/image_tag: $TAG/" "$WORK/$y.yaml" > "$WORK/verify-$y.yaml"
     verify "$WORK/verify-$y.yaml" >/dev/null || fail "verify rejects the release's own sums ($y)"
 done
+NO_V1=1 verify "$WORK/verify-direct.yaml" >/dev/null || fail "verify rejects a release with SHA256SUMS.v2 alone"
 expect_rejected() { # <what> <yq edit of a correct -vm-direct minimal.yaml> <expected message>
     yq "$2" "$WORK/verify-direct.yaml" > "$WORK/verify-bad.yaml"
     verify "$WORK/verify-bad.yaml" >/dev/null 2> "$WORK/err" && fail "verify accepted $1"

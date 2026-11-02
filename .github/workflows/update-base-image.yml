@@ -16,6 +16,10 @@ name: Update base image
 # URLs download (.github/scripts/base-image-sums.sh), and a payload whose checksums
 # differ from them stops the run. verify-base-image-checksums.yml checks the PR again.
 #
+# A release of a newer Fedora (fedora-45-... while the built-in is on fedora-44) is named for its
+# own release line: the bump moves the image alias and both URLs' file names to it, and says so
+# in the PR. A release of an older line stops the run (#1862).
+#
 # A release carries two VM images (#1255): the stock-based -vm.tar.xz, listed in
 # SHA256SUMS for isx releases before this reader, and the one built from scratch,
 # -vm-direct.tar.xz, listed only in SHA256SUMS.v2. When a release has the direct
@@ -71,6 +75,24 @@ jobs:
           SUMS="$(mktemp -d)"
           trap 'rm -rf "$SUMS"' EXIT
           fetch_release_sums "$IMAGES_REPO" "$TAG" "$SUMS"
+
+          # A release of the next Fedora (#1862): its assets are named for its own release line, so
+          # the image alias and both URLs' file names move from the built-in's line to the tag's.
+          # Only forward, and only when the built-in names its own line where the move rewrites it.
+          IMAGE="$(yq -r '.image' "$YAML")"
+          CUR_LINE="$(release_line "$CURRENT_TAG")"
+          NEW_LINE="$(release_line "$TAG")"
+          LINE_MOVE=""
+          if [[ "$NEW_LINE" != "$CUR_LINE" ]]; then
+            if [[ "${CUR_LINE%-*}" != "${NEW_LINE%-*}" ]] || (( 10#${NEW_LINE##*-} <= 10#${CUR_LINE##*-} )); then
+              echo "Release $TAG is not a newer release line than the built-in's $CURRENT_TAG; aborting." >&2
+              exit 1
+            fi
+            IMAGE="$(move_line "$IMAGE" "$CUR_LINE" "$NEW_LINE")"
+            IMAGE_URL="${IMAGE_URL%/*}/$(move_line "${IMAGE_URL##*/}" "$CUR_LINE" "$NEW_LINE")"
+            VM_URL="${VM_URL%/*}/$(move_line "${VM_URL##*/}" "$CUR_LINE" "$NEW_LINE")"
+            LINE_MOVE="$CUR_LINE:$NEW_LINE"
+          fi
 
           # The names come from the built-in's own URLs: the VM file is either kind, so both are
           # derived from whichever it names now.
@@ -136,6 +158,9 @@ jobs:
             echo "v_arm=$V_ARM"
             echo "vm_kind=$VM_KIND"
             echo "vm_file=$WANT_VM_FILE"
+            echo "image=$IMAGE"
+            echo "image_url=$IMAGE_URL"
+            echo "line_move=$LINE_MOVE"
           } >> "$GITHUB_OUTPUT"
 
           echo "Current built-in tag: $CURRENT_TAG"
@@ -171,12 +196,16 @@ jobs:
           V_X86: ${{ steps.resolve.outputs.v_x86 }}
           V_ARM: ${{ steps.resolve.outputs.v_arm }}
           VM_FILE: ${{ steps.resolve.outputs.vm_file }}
+          IMAGE: ${{ steps.resolve.outputs.image }}
+          IMAGE_URL: ${{ steps.resolve.outputs.image_url }}
         run: |
           set -euo pipefail
           YAML="common/src/main/resources/images/minimal.yaml"
           VM_URL="$(yq -r '.vm_image_url' "$YAML")"
           VM_URL="${VM_URL%/*}/$VM_FILE"
           yq -i "
+            .image = \"$IMAGE\" |
+            .image_url = \"$IMAGE_URL\" |
             .vm_image_url = \"$VM_URL\" |
             .image_tag = \"$TAG\" |
             .image_sha256.x86_64 = \"$C_X86\" |
@@ -196,6 +225,7 @@ jobs:
           VM_KIND: ${{ steps.resolve.outputs.vm_kind }}
           REPUBLISHED: ${{ steps.resolve.outputs.republished }}
           VM_SWITCH: ${{ steps.resolve.outputs.vm_switch }}
+          LINE_MOVE: ${{ steps.resolve.outputs.line_move }}
           C_X86: ${{ steps.resolve.outputs.c_x86 }}
           C_ARM: ${{ steps.resolve.outputs.c_arm }}
           V_X86: ${{ steps.resolve.outputs.v_x86 }}
@@ -218,7 +248,13 @@ jobs:
             TITLE="Base image $TAG was published again: new checksums"
             SUMMARY="**Same tag, checksums changed.** Release \`$TAG\` of Sanne/incus-spawn-images was published again under the tag the built-in already names, with different files. Check every checksum against the release before merging: they are what every base-image download is verified against."
           fi
+          [[ -n "$LINE_MOVE" ]] && TITLE="Move base image to ${LINE_MOVE#*:} ($TAG)"
           [[ "$VM_SWITCH" == true && "$VM_KIND" == direct ]] && TITLE="$TITLE, VM image built from scratch"
+          if [[ -n "$LINE_MOVE" ]]; then
+            SUMMARY="$SUMMARY
+
+          **Release line: \`${LINE_MOVE%%:*}\` to \`${LINE_MOVE#*:}\`.** The image alias and the asset names in both URLs move with it. Every template rebuilds on the new release; test them before merging."
+          fi
 
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
             echo "Branch $BRANCH already exists; a PR is likely already open. Skipping."

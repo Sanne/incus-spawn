@@ -31,8 +31,8 @@ asset_name() {
     printf '%s\n' "${f//\{arch\}/$3}"
 }
 
-# fetch_release_sums <repo> <tag> <dir>: downloads the release's SHA256SUMS, and SHA256SUMS.v2 when it
-# has one, into <dir>.
+# fetch_release_sums <repo> <tag> <dir>: downloads the release's SHA256SUMS and SHA256SUMS.v2, whichever
+# it has, into <dir>. From Fedora 45 on, releases have only SHA256SUMS.v2 (#1862).
 fetch_release_sums() {
     local repo="$1" tag="$2" dir="$3"
     if [[ ! "$tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
@@ -42,8 +42,8 @@ fetch_release_sums() {
     # Fails only when neither file is there, or the release cannot be read.
     gh release download "$tag" -R "$repo" -p SHA256SUMS -p SHA256SUMS.v2 -D "$dir" \
         || { echo "Cannot download the sums files of release $tag of $repo" >&2; return 1; }
-    if [[ ! -f "$dir/SHA256SUMS" ]]; then
-        echo "Release $tag of $repo has no SHA256SUMS asset" >&2
+    if [[ ! -f "$dir/SHA256SUMS" && ! -f "$dir/SHA256SUMS.v2" ]]; then
+        echo "Release $tag of $repo has neither a SHA256SUMS nor a SHA256SUMS.v2 asset" >&2
         return 1
     fi
 }
@@ -89,4 +89,26 @@ _listed_sums() {
     for f in "$1/SHA256SUMS" "$1/SHA256SUMS.v2"; do
         [[ -f "$f" ]] && awk -v f="$2" '{ sub(/\r$/, ""); n = $2; sub(/^\*/, "", n) } n == f { print $1 }' "$f"
     done | sort -u
+}
+
+# release_line <tag>: the distribution and release a tag is of, as fedora-44 for fedora-44-20261101.
+release_line() {
+    if [[ "$1" =~ ^([a-z]+-[0-9]+)-[A-Za-z0-9._-]+$ ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+    else
+        echo "Not a release tag: '$1'" >&2
+        return 1
+    fi
+}
+
+# move_line <name> <from line> <to line>: the name with its one "<from line>-" made "<to line>-". Fails
+# when the name does not hold it exactly once, rather than leave a name of the old line behind.
+move_line() {
+    local count
+    count="$(grep -o -- "$2-" <<<"$1" | wc -l)"
+    if [[ "$count" -ne 1 ]]; then
+        echo "'$1' does not name release line $2 exactly once" >&2
+        return 1
+    fi
+    printf '%s\n' "${1/"$2-"/"$3-"}"
 }

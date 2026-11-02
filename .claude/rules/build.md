@@ -88,6 +88,7 @@ Incus resolves a fingerprint by prefix, so `downloadAndAliasImage` refuses a che
 An event-driven CI job (`.github/workflows/update-base-image.yml`) opens a PR to bump the built-in fallback when the images repo publishes a newer release.
 The images repo (`Sanne/incus-spawn-images`) fires a `base-image-released` `repository_dispatch` carrying the tag + container/VM checksums, so the consumer does not poll (a manual `workflow_dispatch` backstop takes the newest release from the release list if a dispatch is missed).
 Either way only the tag is taken as given: every checksum comes from the release's `SHA256SUMS`/`SHA256SUMS.v2` for the names the definition's URLs download, and a payload that disagrees stops the run (`.github/scripts/base-image-sums.sh`, #1678).
+A release of a newer Fedora moves the image alias and both URLs' file names to its own release line first (`release_line`, `move_line`, #1862); an older line stops the run.
 `verify-base-image-checksums.yml` checks `minimal.yaml`'s four checksums against the release on every PR that changes it.
 This tracking behavior is unrelated to `INIT_VERSION`.
 

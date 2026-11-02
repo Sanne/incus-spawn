@@ -318,7 +318,9 @@ A manual `workflow_dispatch` takes the newest release from the images repo's rel
 **The bump takes only the tag on trust** (#1678).
 The checksums in `minimal.yaml` are what every base-image download is verified against, and they were merged wrong more than once while the dispatch path copied them from the payload.
 Both events now read every checksum from the release's own `SHA256SUMS` and `SHA256SUMS.v2` (`.github/scripts/base-image-sums.sh`).
-The names looked up are those `image_url` and `vm_image_url` download, with the tag and arch filled in, so a Fedora release change moves them too.
+The names looked up are those `image_url` and `vm_image_url` download, with the tag and arch filled in.
+A release of a newer Fedora moves them first (#1862): the image alias and both URLs' file names go from the built-in's release line, such as `fedora-44`, to the tag's.
+The PR is titled as a move, and a release of an older line stops the run.
 A missing or malformed sum, or one the two files disagree on, stops the run naming the asset.
 A payload whose checksums differ from the release's also stops it, printing both, since the images repo's release and its dispatch are then out of step.
 The PR lists each checksum beside its asset, with the `gh release download` command that repeats the check.
