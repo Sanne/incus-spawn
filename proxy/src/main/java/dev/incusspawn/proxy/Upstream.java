@@ -498,9 +498,10 @@ class Upstream {
 
     /**
      * The connection failed under the request: closed, or reset or broken by an I/O error. Only ever
-     * asked of the response's failure, which comes before any of the answer did.
+     * asked of the response's failure, which comes before any of the answer did. The one rule for
+     * the relay and the cache-miss fetch (#1923), so the two resend the same failures.
      */
-    private static boolean closedUnanswered(Throwable err) {
+    static boolean closedUnanswered(Throwable err) {
         return err instanceof HttpClosedException || err instanceof java.io.IOException;
     }
 
