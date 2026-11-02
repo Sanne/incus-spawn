@@ -433,7 +433,7 @@ final class ChatGptRoute {
         } catch (RuntimeException e) {
             parsed = null;
         }
-        if (!(parsed instanceof JqObject request) || !request.keys().equals(Set.of("client_id", "grant_type", "refresh_token"))
+        if (!(parsed instanceof JqObject request) || !isCodexRefresh(request)
                 || !"refresh_token".equals(request.pathText("grant_type", ""))
                 || !CODEX_CLIENT_ID.equals(request.pathText("client_id", ""))) {
             // Not the request the tested Codex sends: fail closed rather than guess what it means
@@ -445,6 +445,26 @@ final class ChatGptRoute {
         var digest = ChatGptProof.refreshDigestOf(request.pathText("refresh_token", ""));
         proven(req, sourceAddress, Operation.REFRESH, binding -> ChatGptProof.matches(digest, binding.refreshSha256()),
                 binding -> refresh(req, request, binding, digest));
+    }
+
+    /** The keys Codex's refresh body holds; see {@link #REFRESH_REASONS} for the optional one. */
+    private static final Set<String> REFRESH_KEYS = Set.of("client_id", "grant_type", "refresh_token");
+
+    /**
+     * The values of the optional {@code refresh_reason} Codex 0.166 adds to its refresh body, a
+     * diagnostic it reports to OpenAI (rust-v0.166.0, {@code codex-rs/login/src/oauth/client.rs}).
+     * Relayed as the guest sent it; any other value is no request isx recognises.
+     */
+    private static final Set<String> REFRESH_REASONS =
+            Set.of("proactive_expiry", "scheduled", "unauthorized_recovery", "forced");
+
+    /** Whether {@code request} has exactly the keys of a Codex refresh, with a known reason if any. */
+    private static boolean isCodexRefresh(JqObject request) {
+        var keys = request.keys();
+        if (keys.equals(REFRESH_KEYS)) return true;
+        var reason = request.path("refresh_reason");
+        return keys.size() == REFRESH_KEYS.size() + 1 && keys.containsAll(REFRESH_KEYS)
+                && reason.isString() && REFRESH_REASONS.contains(reason.asText());
     }
 
     /** A recognised refresh from a caller that proved it may make it. */
