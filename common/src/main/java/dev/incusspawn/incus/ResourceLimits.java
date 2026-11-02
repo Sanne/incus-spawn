@@ -5,11 +5,13 @@ import dev.incusspawn.util.CpuInfo;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.regex.Pattern;
 
 /**
  * Detects host resources and computes adaptive container limits.
  */
 public final class ResourceLimits {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     private ResourceLimits() {}
 
@@ -102,7 +104,7 @@ public final class ResourceLimits {
             var meminfo = Files.readString(Path.of("/proc/meminfo"));
             for (var line : meminfo.split("\n")) {
                 if (line.startsWith("MemTotal:")) {
-                    var parts = line.trim().split("\\s+");
+                    var parts = WHITESPACE.split(line.trim());
                     return Long.parseLong(parts[1]) * 1024; // /proc/meminfo is in kB
                 }
             }

@@ -31,6 +31,8 @@ import java.util.regex.Pattern;
  * releases API returns releases newest-first.
  */
 public final class BaseImageReleases {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+    private static final Pattern SHA256_HEX = Pattern.compile("[0-9a-fA-F]{64}");
 
     private static final Pattern GITHUB_RELEASE_URL =
             Pattern.compile("^https://github\\.com/([^/]+)/([^/]+)/releases/");
@@ -162,8 +164,8 @@ public final class BaseImageReleases {
         var sums = new HashMap<String, String>();
         for (var line : body.split("\n")) {
             if (line.isBlank()) continue;
-            var parts = line.strip().split("\\s+", 2);
-            if (parts.length < 2 || !parts[0].matches("[0-9a-fA-F]{64}")) {
+            var parts = WHITESPACE.split(line.strip(), 2);
+            if (parts.length < 2 || !SHA256_HEX.matcher(parts[0]).matches()) {
                 throw new IllegalArgumentException("not '<sha256>  <file>': " + line.strip());
             }
             var name = parts[1].startsWith("*") ? parts[1].substring(1) : parts[1];

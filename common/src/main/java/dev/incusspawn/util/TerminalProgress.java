@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.IntConsumer;
 import java.util.function.UnaryOperator;
+import java.util.regex.Pattern;
 
 /**
  * Runs a batch of independent tasks concurrently while rendering per-task
@@ -22,6 +23,7 @@ import java.util.function.UnaryOperator;
  * to {@code maxConcurrency}.
  */
 public final class TerminalProgress {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     private TerminalProgress() {}
 
@@ -35,7 +37,7 @@ public final class TerminalProgress {
             var p = pb.start();
             var output = new String(p.getInputStream().readAllBytes()).strip();
             if (p.waitFor(1, TimeUnit.SECONDS)) {
-                var parts = output.split("\\s+");
+                var parts = WHITESPACE.split(output);
                 if (parts.length >= 2) return Integer.parseInt(parts[1]);
             }
         } catch (Exception ignored) {}

@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 /**
  * Translates a standard Messages request body into Vertex's rawPredict as its bytes arrive, so a
@@ -48,6 +49,7 @@ import java.util.function.Consumer;
  * is. Only the names it compares, the top object's and a tool definition's, must be well-formed.
  */
 class VertexBodyRewriter {
+    private static final Pattern DATE_SUFFIX = Pattern.compile("-\\d{8}$");
 
     /** {@code parseStrict}'s own limit: 10,000 levels parse, 10,001 do not. */
     static final int MAX_DEPTH = 10_000;
@@ -211,7 +213,7 @@ class VertexBodyRewriter {
             if (state != TRAIL) throw new InvalidBody("the body ends before its JSON does");
             if (passthrough) return new Result(originalPath, List.of());
             if (!translating()) return new Result(originalPath, List.copyOf(dropped));
-            var name = model == null ? DEFAULT_MODEL : model.replaceFirst("-\\d{8}$", "");
+            var name = model == null ? DEFAULT_MODEL : DATE_SUFFIX.matcher(model).replaceFirst("");
             var path = pathPrefix + name + (stream ? ":streamRawPredict" : ":rawPredict");
             if (path.getBytes(StandardCharsets.UTF_8).length > MAX_URL_PATH) {
                 throw new RefusedBody("model is too long for a Vertex URL (" + MAX_URL_PATH + " bytes)");

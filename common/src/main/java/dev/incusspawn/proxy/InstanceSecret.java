@@ -11,6 +11,7 @@ import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * A random secret each instance is given at every start, so that a service on the host can
@@ -48,6 +49,7 @@ import java.util.Map;
  * <p>A caller presents it in {@link #HEADER}; {@link InstanceRegistry#identify} checks it.
  */
 public final class InstanceSecret {
+    private static final Pattern HEX_64 = Pattern.compile("[0-9a-f]{64}");
 
     private static final String GUEST_DIR = "/run/isx";
     /** Where the guest finds its secret. */
@@ -234,7 +236,7 @@ public final class InstanceSecret {
 
     /** Detect a reset racing a guest delivery during the VM agent probe that already runs. */
     public static String generationCheck(String generation) {
-        if (generation == null || !generation.matches("[0-9a-f]{64}")) return "echo " + MISSING;
+        if (generation == null || !HEX_64.matcher(generation).matches()) return "echo " + MISSING;
         return "grep -qx '" + generation + "' " + GUEST_DIR + "/proof-generation || echo " + MISSING;
     }
 

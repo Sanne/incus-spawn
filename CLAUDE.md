@@ -318,6 +318,10 @@ Pom profiles add platform arguments through placeholders the list includes and n
 `macos.min.args` is how every macOS build gets its minimum macOS (DESIGN.md "The minimum macOS is set by the build").
 `NativeImageInitializationTest` fails if a list stops deferring a class or registering a guard, or a pom redefines it, and `graal/BakedHostStateFeature` fails the native build if such a path reaches the image heap.
 
+**A regular expression is a `static final Pattern`** (#1929).
+`Pattern.compile`, and with it every `String.matches`, `replaceAll`, `replaceFirst` and regex `split`, costs a compile per call; a constant compiles once, at build time in the native image.
+`PatternConstantGateTest` enforces it; a pattern only known at run time says why with a `// regex at run time:` comment (DESIGN.md "Regular expressions are compiled once").
+
 **The platform role is the OS's, and no released binary can be switched (#1800).**
 On macOS the proxy identifies a caller by its credential proof without the Linux address check, so a Linux isx in macOS's role would drop that check.
 `Platform` takes macOS's role from `os.name` (which a JVM's `-Dos.name` or `JAVA_TOOL_OPTIONS` sets) only on a host with macOS's `SystemVersion.plist` and no Linux kernel (elsewhere it refuses to start), and native images fold it at build time, where `graal/PlatformRoleFeature` fails a build whose role is not its target OS's.

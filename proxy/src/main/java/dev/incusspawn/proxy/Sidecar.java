@@ -35,7 +35,7 @@ enum Sidecar {
     Sidecar(String extension, String algorithm, int hexLength) {
         this.extension = extension;
         this.algorithm = algorithm;
-        this.hexPattern = algorithm == null ? null : Pattern.compile("[a-f0-9]{" + hexLength + "}");
+        this.hexPattern = algorithm == null ? null : Pattern.compile("[a-f0-9]{" + hexLength + "}"); // regex at run time: once per enum constant
     }
 
     /** The sidecar type a request path names, or null for anything else (an artifact). */

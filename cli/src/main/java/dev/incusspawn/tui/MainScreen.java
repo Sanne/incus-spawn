@@ -23,6 +23,7 @@ import dev.tamboui.widgets.scrollbar.ScrollbarState;
 import dev.tamboui.widgets.table.TableState;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import static dev.incusspawn.tui.UsageFormat.bar;
 import static dev.incusspawn.tui.UsageFormat.gibShort;
 import static dev.incusspawn.tui.UsageFormat.runningSummary;
@@ -35,6 +36,7 @@ import dev.incusspawn.command.InstanceListing.TemplateInfo;
  * {@link Tui} holds and changes none of it.
  */
 final class MainScreen {
+    private static final Pattern LINE_BREAKS = Pattern.compile("[\\n\\r]+");
 
     private final Tui tui;
 
@@ -438,7 +440,7 @@ final class MainScreen {
 
         if (hasStatus) {
             var rows = splitVertical(area, 1, 1, 1);
-            var singleLine = tui.statusMessage.replaceAll("[\\n\\r]+", " ").strip();
+            var singleLine = LINE_BREAKS.matcher(tui.statusMessage).replaceAll(" ").strip();
             var isError = singleLine.startsWith("Failed") || singleLine.startsWith("Invalid")
                     || singleLine.startsWith("Template");
             var isWarning = singleLine.startsWith("⚠") || singleLine.startsWith("Warning");

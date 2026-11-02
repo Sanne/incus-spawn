@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -30,6 +31,7 @@ import java.util.stream.Collectors;
  * {@code McpSession.requireOwned} for an instance) and pass what they checked in.
  */
 final class Tasks {
+    private static final Pattern TASK_ID = Pattern.compile("[a-z0-9-]+");
 
     static final String COMMAND = "command";
     static final String AGENT = "agent";
@@ -322,7 +324,7 @@ final class Tasks {
         }
         for (var line : listing) {
             var parts = line.strip().split(" ", 7);
-            if (parts.length < 4 || !parts[0].matches("[a-z0-9-]+")) continue;
+            if (parts.length < 4 || !TASK_ID.matcher(parts[0]).matches()) continue;
             var kind = parts[1];
             if (!AGENT.equals(kind) && !COMMAND.equals(kind)) continue;
             int runs;

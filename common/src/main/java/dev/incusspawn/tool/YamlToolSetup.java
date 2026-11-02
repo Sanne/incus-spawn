@@ -13,12 +13,14 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Adapts a {@link ToolDef} (parsed from YAML) into a {@link ToolSetup}
  * that can be executed by the build system.
  */
 public class YamlToolSetup implements ToolSetup {
+    private static final Pattern TRAILING_ELLIPSIS = Pattern.compile("[.…\\s]+$");
 
     private final ToolDef def;
     private final DownloadCache downloadCache;
@@ -138,7 +140,7 @@ public class YamlToolSetup implements ToolSetup {
     public void install(Container container, java.util.Map<String, String> resolvedParams) {
         var label = def.getDescription().isEmpty() ? def.getName() : def.getDescription();
         // A description is definition text, and may end as a sentence: the label is bare
-        BuildOutput.stepStart("Installing " + label.replaceFirst("[.…\\s]+$", ""));
+        BuildOutput.stepStart("Installing " + TRAILING_ELLIPSIS.matcher(label).replaceFirst(""));
 
         // Packages are installed in bulk by BuildCommand before tool.install() is called.
 

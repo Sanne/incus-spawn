@@ -22,6 +22,8 @@ import java.util.regex.Pattern;
  * download as the seam's live step, and the per-step progress state the parallel block renders.
  */
 final class BuildProgress {
+    private static final Pattern DNF_PROGRESS_BAR = Pattern.compile("\\s+\\d+%\\s*\\|.*$");
+    private static final Pattern RPM_VERSION = Pattern.compile("-\\d+:.*$");
 
     private BuildProgress() {}
 
@@ -304,7 +306,7 @@ final class BuildProgress {
         // Drop the trailing "100% | rate | size | time" progress bar. dnf truncates
         // the action/package to a fixed column, so there may be only a single space
         // before the percentage — key off the "<n>% |" shape, not the spacing.
-        var body = m.group(3).replaceAll("\\s+\\d+%\\s*\\|.*$", "").strip();
+        var body = DNF_PROGRESS_BAR.matcher(m.group(3)).replaceAll("").strip();
         if (body.isEmpty() || body.equals("Total")) return; // skip the download subtotal line
         state.set(0, StepProgress.running("", m.group(1) + "/" + m.group(2) + "  " + shortenNevra(body)));
     }
@@ -314,7 +316,7 @@ final class BuildProgress {
      *  to its bare package name (everything before the {@code -<epoch>:} marker). Action-only
      *  lines ("Verify package files") and names truncated before the epoch are left untouched. */
     static String shortenNevra(String body) {
-        return body.replaceFirst("-\\d+:.*$", "");
+        return RPM_VERSION.matcher(body).replaceFirst("");
     }
 
     /**

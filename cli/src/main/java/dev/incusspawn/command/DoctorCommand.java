@@ -89,6 +89,8 @@ import java.util.stream.Collectors;
         generateHelp = true
 )
 public class DoctorCommand extends BaseCommand {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+    private static final Pattern TRAILING_PERIOD = Pattern.compile("\\.$");
 
     @Option(name = "bundle", hasValue = false,
             description = "Collect findings and logs into a redacted support archive (tar.gz); implies --deep")
@@ -616,7 +618,7 @@ public class DoctorCommand extends BaseCommand {
         UnreadConfigKeys.all(tree, tools).forEach((namespace, unread) ->
                 findings.add(Finding.warn("Unread keys in config.yaml",
                         // In parentheses like every detail, without the sentence's own full stop
-                        "(" + UnreadConfigKeys.note(namespace, unread, tools).replaceFirst("\\.$", "") + ")",
+                        "(" + TRAILING_PERIOD.matcher(UnreadConfigKeys.note(namespace, unread, tools)).replaceFirst("") + ")",
                         new Remediation("Rename or remove them in config.yaml", false, null))));
         return findings;
     }
@@ -1555,7 +1557,7 @@ public class DoctorCommand extends BaseCommand {
         var hint = info.authRemediationHint();
         return Finding.fail("Proxy auth", info.authError(),
                 new Remediation("Run '" + hint + "'", false,
-                        () -> runInteractive(hint.split("\\s+"))));
+                        () -> runInteractive(WHITESPACE.split(hint))));
     }
 
     private static void runInteractive(String... command) {

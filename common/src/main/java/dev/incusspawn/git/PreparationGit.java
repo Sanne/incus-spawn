@@ -16,9 +16,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 /** Git in an owned repository. Output goes to files: object enumerations can exceed a pipe or heap. */
 final class PreparationGit {
+    private static final Pattern WHITESPACE_CHAR = Pattern.compile("\\s");
     private static final Set<String> TRANSPORT_ENV = Set.of("GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT",
             "GIT_ASKPASS", "GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "GIT_SSL_NO_VERIFY", "GIT_PROXY_COMMAND",
             "GIT_HTTP_PROXY_AUTHMETHOD", "GIT_HTTP_USER_AGENT", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM");
@@ -167,7 +169,7 @@ final class PreparationGit {
      */
     static String withBatchMode(String command) {
         var trimmed = command.strip();
-        var program = trimmed.split("\\s", 2)[0];
+        var program = WHITESPACE_CHAR.split(trimmed, 2)[0];
         if (!program.equals("ssh") && !program.endsWith("/ssh")) return null;
         return program + " -o BatchMode=yes" + trimmed.substring(program.length());
     }

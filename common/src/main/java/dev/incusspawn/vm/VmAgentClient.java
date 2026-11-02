@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.regex.Pattern;
 
 /**
  * Talks to the in-VM control agent over its dedicated vsock port (exposed on the host as a
@@ -23,6 +24,7 @@ import java.util.OptionalInt;
  * client exposes typed wrappers for them.
  */
 public final class VmAgentClient {
+    private static final Pattern SAFE_NAME = Pattern.compile("[A-Za-z0-9._-]+");
 
     private static final int TIMEOUT_SECONDS = 5;
 
@@ -181,7 +183,7 @@ public final class VmAgentClient {
         // side, but this one must agree or a client-side-only name could still reach it some
         // other way in the future (review on #874).
         if (name == null || name.startsWith(".") || name.startsWith("-")
-                || !name.matches("[A-Za-z0-9._-]+")) return Optional.empty();
+                || !SAFE_NAME.matcher(name).matches()) return Optional.empty();
         return send("btrfs-orphan-delete " + poolName + " " + kindDir + " " + name);
     }
 

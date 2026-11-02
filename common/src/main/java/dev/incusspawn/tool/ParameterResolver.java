@@ -88,7 +88,7 @@ public class ParameterResolver {
     private static String validateString(String name, String value, ToolDef.ParameterDef def) {
         if (def.getPattern() != null && !def.getPattern().isEmpty()) {
             try {
-                if (!Pattern.matches(def.getPattern(), value)) {
+                if (!Pattern.matches(def.getPattern(), value)) { // regex at run time: the tool definition's own pattern
                     return "Parameter '" + name + "' value '" + value
                         + "' does not match pattern: " + def.getPattern();
                 }

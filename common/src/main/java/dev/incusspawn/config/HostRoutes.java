@@ -8,6 +8,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 /**
  * {@code host-routes:} in config.yaml (#936): names an instance reaches on 443 that the proxy
@@ -32,6 +33,7 @@ import java.util.function.Consumer;
  * (#935) can be added beside {@code templates:} rather than as a second route table.
  */
 public final class HostRoutes {
+    private static final Pattern PORT = Pattern.compile("[0-9]{1,5}");
 
     /**
      * One route.
@@ -180,7 +182,7 @@ public final class HostRoutes {
             host = t.substring(0, colon);
             port = t.substring(colon + 1);
         }
-        if (!isLoopback(host) || !port.matches("[0-9]{1,5}")) return null;
+        if (!isLoopback(host) || !PORT.matcher(port).matches()) return null;
         var number = Integer.parseInt(port);
         if (number < 1 || number > 65535) return null;
         // Stored canonical: a literal the connecting side does not read as one (127.1, 2130706433)

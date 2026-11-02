@@ -131,7 +131,7 @@ public final class YamlErrors {
      */
     private static String friendlyNative(String filename,
                                          io.hyperfoil.tools.jjq.yaml.YamlParseException ex) {
-        var raw = String.valueOf(ex.getMessage()).replaceAll(" at line \\d+$", "");
+        var raw = AT_LINE.matcher(String.valueOf(ex.getMessage())).replaceAll("");
         var prefix = ex.line() > 0 ? filename + ":" + ex.line() + ": " : filename + ": ";
         if (raw.contains("tabs are not allowed for indentation")
                 || raw.contains("tabs cannot separate")) {

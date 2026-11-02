@@ -42,6 +42,7 @@ import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 import static dev.incusspawn.DerEncoder.*;
 
@@ -55,6 +56,8 @@ import static dev.incusspawn.DerEncoder.*;
  * signed by this CA, and held in memory only.
  */
 public class CertificateAuthority {
+    private static final Pattern PEM_ARMOR = Pattern.compile("-----[A-Z ]+-----");
+    private static final Pattern WHITESPACE_CHAR = Pattern.compile("\\s");
 
     /**
      * How far back {@code notBefore} is set on generated certs, to tolerate clock
@@ -687,9 +690,7 @@ public class CertificateAuthority {
 
     private static PrivateKey loadPrivateKey(Path path) throws Exception {
         var pem = Files.readString(path);
-        var base64 = pem
-                .replaceAll("-----[A-Z ]+-----", "")
-                .replaceAll("\\s", "");
+        var base64 = WHITESPACE_CHAR.matcher(PEM_ARMOR.matcher(pem).replaceAll("")).replaceAll("");
         var der = Base64.getDecoder().decode(base64);
 
         if (pem.contains("BEGIN RSA PRIVATE KEY")) {

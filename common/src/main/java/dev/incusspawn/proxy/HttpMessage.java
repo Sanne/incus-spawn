@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Minimal HTTP/1.1 request parser and serializer for the MITM proxy.
@@ -17,6 +18,7 @@ import java.util.Map;
  * with immediate flushing.
  */
 public class HttpMessage {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     static final int BUFFER_SIZE = 64 * 1024;
 
@@ -138,7 +140,7 @@ public class HttpMessage {
      */
     public int statusCode() {
         if (requestLine == null) return -1;
-        var parts = requestLine.split("\\s+", 3);
+        var parts = WHITESPACE.split(requestLine, 3);
         if (parts.length >= 2) {
             try { return Integer.parseInt(parts[1]); } catch (NumberFormatException e) { return -1; }
         }

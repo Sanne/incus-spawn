@@ -39,6 +39,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static dev.incusspawn.util.BuildOutput.BOLD;
@@ -56,6 +57,7 @@ import static dev.incusspawn.command.CredentialSetup.readInput;
         generateHelp = true
 )
 public class InitCommand extends BaseCommand {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     IncusClient incus;
 
@@ -395,7 +397,7 @@ public class InitCommand extends BaseCommand {
         if (continuedInGroup()) return null;
         var connectivity = incusConnectivity();
         if (connectivity == null || !connectivity.contains("permission denied")) return null;
-        var configured = List.of(captureOutput("id", "-nG", System.getProperty("user.name")).split("\\s+"));
+        var configured = List.of(WHITESPACE.split(captureOutput("id", "-nG", System.getProperty("user.name"))));
         if (!configured.contains("incus-admin") || !hasSg()) return null;
         var commandLine = ownCommandLine();
         var primary = captureOutput("id", "-gn");

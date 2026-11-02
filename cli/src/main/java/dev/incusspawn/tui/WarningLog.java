@@ -4,6 +4,7 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 /**
  * Every warning raised while the TUI owns the terminal, from any thread.
@@ -17,6 +18,9 @@ import java.util.function.Supplier;
  * one that keeps recurring reads as recent rather than filling the list.
  */
 public final class WarningLog {
+    private static final Pattern WARNING_PREFIX = Pattern.compile("^Warning:\\s*");
+    private static final Pattern LINE_BREAK = Pattern.compile("\\R");
+    private static final Pattern LINE_BREAK_SPACED = Pattern.compile("\\s*\\R\\s*");
 
     /** Oldest entries are dropped beyond this; the log is for reading, not an archive. */
     static final int CAPACITY = 100;
@@ -63,7 +67,7 @@ public final class WarningLog {
 
     private Slot append(String message) {
         if (message == null || message.isBlank()) return null;
-        var text = dedent(message).strip().replaceFirst("^Warning:\\s*", "");
+        var text = WARNING_PREFIX.matcher(dedent(message).strip()).replaceFirst("");
         if (text.isEmpty()) return null;
         slots.removeIf(s -> s.entry.message().equals(text));
         var slot = new Slot(new Entry(text, clock.get()));
@@ -79,7 +83,7 @@ public final class WarningLog {
      * a build step, and their continuation lines are indented relative to that.
      */
     private static String dedent(String message) {
-        var lines = message.stripTrailing().split("\\R");
+        var lines = LINE_BREAK.split(message.stripTrailing());
         var first = lines[0];
         int indent = first.length() - first.stripLeading().length();
         var out = new StringBuilder(first.stripLeading());
@@ -134,7 +138,7 @@ public final class WarningLog {
      */
     public static String statusLine(List<Entry> fresh) {
         if (fresh.isEmpty()) return null;
-        var latest = fresh.get(fresh.size() - 1).message().replaceAll("\\s*\\R\\s*", " ");
+        var latest = LINE_BREAK_SPACED.matcher(fresh.get(fresh.size() - 1).message()).replaceAll(" ");
         return fresh.size() == 1 ? "⚠ " + latest
                 : "⚠ " + fresh.size() + " new warnings, latest: " + latest;
     }

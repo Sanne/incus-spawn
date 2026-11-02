@@ -4615,6 +4615,15 @@ The CLI's `macos-native` profile carried such a copy until #489, and it had drif
 The sibling guard `SyscallReachabilityFeature` targets something else — keeping lazy system-property resolvers off the startup path of short-lived commands — and currently cannot fail, because it resolves its targets on an abstract GraalVM class whose concrete overrides are what the analysis reaches.
 It now prints `INCONCLUSIVE` per target instead of `ok`, so the report stops reading as evidence; `.claude/rules/native-image.md` records what fixing it involves.
 
+### Regular expressions are compiled once
+
+`Pattern.compile` is expensive, and `String.matches`, `replaceAll`, `replaceFirst` and a regex `split` each call it on every run (#1929).
+So every regular expression in `main` is a `static final Pattern`, used through `matcher(...)` or `Pattern.split`.
+A constant's class is initialized at build time in the native image, so the compiled pattern is in the image heap and costs nothing at startup either.
+A one-character `split` (`"\n"`, `"\t"`, `":"`) is exempt: `String.split` takes a fast path that compiles nothing.
+A pattern known only at run time (a tool definition's `pattern:`, one per placeholder at load) is compiled once where it is known and carries a `// regex at run time: <why>` comment.
+`PatternConstantGateTest` (`cli`) fails on any other compile, in all three modules.
+
 ## Testing
 
 **Unit tests** (`mvn test`, no Incus needed):

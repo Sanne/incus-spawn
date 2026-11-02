@@ -18,8 +18,10 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.regex.Pattern;
 
 public final class ProxyHealthCheck {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     public enum ProxyStatus {
         RUNNING,
@@ -232,7 +234,7 @@ public final class ProxyHealthCheck {
 
     private static boolean hasListener(Path table, String localAddress) {
         try (var lines = Files.lines(table)) {
-            return lines.map(l -> l.strip().split("\\s+"))
+            return lines.map(l -> WHITESPACE.split(l.strip()))
                     .anyMatch(f -> f.length > 3 && f[1].equals(localAddress) && f[3].equals(TCP_LISTEN));
         } catch (Exception e) {
             return false;

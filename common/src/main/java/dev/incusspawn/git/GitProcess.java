@@ -30,6 +30,7 @@ import java.util.regex.Pattern;
  * when it exits (#1425).
  */
 final class GitProcess {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
     private GitProcess() {}
 
     enum Status { OK, FAILED, STALLED, TIMED_OUT, INTERRUPTED }
@@ -213,7 +214,7 @@ final class GitProcess {
             // A helper that exited meanwhile makes ps fail; the others' times are still a sample.
             var byPid = new HashMap<Long, Long>();
             for (var line : new String(ps.getInputStream().readAllBytes(), StandardCharsets.UTF_8).lines().toList()) {
-                var fields = line.strip().split("\\s+");
+                var fields = WHITESPACE.split(line.strip());
                 if (fields.length == 2) byPid.put(Long.parseLong(fields[0]), parsePsTime(fields[1]));
             }
             return byPid.isEmpty() ? null : byPid;

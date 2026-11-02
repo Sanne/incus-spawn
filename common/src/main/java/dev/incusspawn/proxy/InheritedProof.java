@@ -152,7 +152,7 @@ public final class InheritedProof {
      * side makes it something else. The prefix holds only {@code [A-Za-z0-9._-]}.
      */
     private static Pattern proofPattern(String prefix) {
-        return PATTERNS.computeIfAbsent(prefix, p -> Pattern.compile("(?<![A-Za-z0-9._-])" + Pattern.quote(p + ProofToken.MARKER)
+        return PATTERNS.computeIfAbsent(prefix, p -> Pattern.compile("(?<![A-Za-z0-9._-])" + Pattern.quote(p + ProofToken.MARKER) // regex at run time: once per prefix, cached
                 + "[0-9a-f]{" + ProofToken.DIGEST_HEX_CHARS + "}(?![A-Za-z0-9._-])"));
     }
 

@@ -19,8 +19,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
+import java.util.regex.Pattern;
 
 public final class ProxyService {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+    private static final Pattern JAVA_WRAPPER = Pattern.compile("exec\\s+\"?([^\"\\s]+)\"?\\s+.*-jar");
+    private static final Pattern JAVA_VERSION = Pattern.compile("\"(\\d+)(?:\\.(\\d+))?");
+    private static final Pattern JBANG_WRAPPER = Pattern.compile("exec\\s+\"?([^\"\\s]*jbang)\"?\\s+run\\b");
+    private static final Pattern EXEC_START = Pattern.compile("ExecStart=(.*)");
 
     private static final String SERVICE_NAME = Environment.PROXY_SERVICE_NAME;
 
@@ -811,7 +817,7 @@ public final class ProxyService {
             var stdout = new String(process.getInputStream().readAllBytes()).strip();
             process.getErrorStream().readAllBytes();
             if (process.waitFor() == 0 && !stdout.isBlank()) {
-                return Long.parseLong(stdout.split("\\s+")[0]);
+                return Long.parseLong(WHITESPACE.split(stdout)[0]);
             }
         } catch (Exception ignored) {}
         return -1;
@@ -833,8 +839,7 @@ public final class ProxyService {
             if (!content.startsWith("#!")) return null; // native binary
             var jbangIssue = checkJbangWrapper(binaryPath, content);
             if (jbangIssue != null) return jbangIssue;
-            var matcher = java.util.regex.Pattern.compile("exec\\s+\"?([^\"\\s]+)\"?\\s+.*-jar")
-                    .matcher(content);
+            var matcher = JAVA_WRAPPER.matcher(content);
             if (!matcher.find()) return null; // not a java wrapper
             var javaBin = matcher.group(1);
 
@@ -851,9 +856,8 @@ public final class ProxyService {
             if (process.waitFor() != 0) {
                 return "Could not determine Java version for " + javaBin;
             }
-            var vpattern = java.util.regex.Pattern.compile("\"(\\d+)(?:\\.(\\d+))?");
             var vmatch = output.lines()
-                    .map(vpattern::matcher)
+                    .map(JAVA_VERSION::matcher)
                     .filter(java.util.regex.Matcher::find)
                     .findFirst();
             if (vmatch.isEmpty()) {
@@ -880,9 +884,7 @@ public final class ProxyService {
      * a service that cannot find {@code jbang} on its PATH fails at every start.
      */
     private static String checkJbangWrapper(String binaryPath, String content) {
-        var matcher = java.util.regex.Pattern
-                .compile("exec\\s+\"?([^\"\\s]*jbang)\"?\\s+run\\b")
-                .matcher(content);
+        var matcher = JBANG_WRAPPER.matcher(content);
         if (!matcher.find()) return null;
         var jbang = matcher.group(1);
 
@@ -920,7 +922,7 @@ public final class ProxyService {
                     lines.add("Exit code 127 usually means a binary was not found.");
                     try {
                         var svc = Files.readString(Environment.proxyServiceFile());
-                        var m = java.util.regex.Pattern.compile("ExecStart=(.*)").matcher(svc);
+                        var m = EXEC_START.matcher(svc);
                         if (m.find()) lines.add("ExecStart: " + m.group(1));
                     } catch (Exception ignored) {}
                     lines.add("If isx-proxy was installed as a JVM wrapper, ensure Java "

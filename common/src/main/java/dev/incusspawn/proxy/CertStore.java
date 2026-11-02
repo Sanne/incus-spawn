@@ -17,6 +17,7 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Base64;
 import java.util.Date;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 /**
  * Domain-keyed persistent cache of MITM leaf certificates.
@@ -47,6 +48,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * change cert identity, so this store stays domain-keyed.
  */
 public class CertStore {
+    private static final Pattern PEM_ARMOR = Pattern.compile("-----[A-Z ]+-----");
+    private static final Pattern WHITESPACE_CHAR = Pattern.compile("\\s");
 
     /** Re-mint a stored cert once it falls within this window of its expiry. */
     private static final long RENEW_BEFORE_EXPIRY_MS = 30L * 24 * 60 * 60 * 1000;
@@ -190,7 +193,7 @@ public class CertStore {
     }
 
     private static PrivateKey loadPrivateKey(String pem) throws Exception {
-        var base64 = pem.replaceAll("-----[A-Z ]+-----", "").replaceAll("\\s", "");
+        var base64 = WHITESPACE_CHAR.matcher(PEM_ARMOR.matcher(pem).replaceAll("")).replaceAll("");
         var der = Base64.getDecoder().decode(base64);
         return KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(der));
     }

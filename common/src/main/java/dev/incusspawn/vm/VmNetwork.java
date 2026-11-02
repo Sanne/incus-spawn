@@ -11,6 +11,7 @@ import java.util.regex.Pattern;
  * We assign a fixed MAC and look up the IP from the macOS DHCP leases file.
  */
 public final class VmNetwork {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     private VmNetwork() {}
 
@@ -106,7 +107,7 @@ public final class VmNetwork {
             for (var line : output.split("\n")) {
                 line = line.strip();
                 if (line.startsWith("inet ") && line.contains(vmPrefix)) {
-                    var parts = line.split("\\s+");
+                    var parts = WHITESPACE.split(line);
                     if (parts.length >= 2) return parts[1];
                 }
             }

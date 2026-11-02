@@ -2,6 +2,7 @@ package dev.incusspawn.tui;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import dev.tamboui.buffer.Cell;
 import dev.tamboui.layout.Constraint;
@@ -31,6 +32,7 @@ import dev.tamboui.widgets.scrollbar.ScrollbarOrientation;
 import dev.tamboui.widgets.scrollbar.ScrollbarState;
 
 final class ModalRenderer {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     private final TuiTheme theme;
     private final Checkbox checkbox;
@@ -355,7 +357,7 @@ final class ModalRenderer {
      */
     static List<String> wrapWords(String paragraph, int width) {
         var result = new ArrayList<String>();
-        var words = paragraph.split("\\s+");
+        var words = WHITESPACE.split(paragraph);
         var line = new StringBuilder();
         int lineWidth = 0;
         for (var word : words) {

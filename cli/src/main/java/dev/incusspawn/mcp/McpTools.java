@@ -28,6 +28,7 @@ import java.util.regex.Pattern;
  * influence.
  */
 final class McpTools {
+    private static final Pattern SKILL_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_.-]{0,100}");
 
     static final int DEFAULT_OUTPUT_BYTES = 32 * 1024;
     static final int MAX_OUTPUT_BYTES = 256 * 1024;
@@ -470,7 +471,7 @@ final class McpTools {
 
     private static String renderBrief(DelegateAgent agent, Brief brief) {
         if (agent == DelegateAgent.CLAUDE || brief.skill() == null) return brief.text();
-        if (!brief.skill().matches("[A-Za-z0-9][A-Za-z0-9_.-]{0,100}"))
+        if (!SKILL_NAME.matcher(brief.skill()).matches())
             throw new ToolError(ToolError.Code.INVALID_ARGUMENT, agent.label + " skill must be an installed skill name without a command namespace or path");
         return "Use the installed skill at ~/.agents/skills/" + brief.skill() + "/SKILL.md.\nArguments: " + brief.args();
     }
