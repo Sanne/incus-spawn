@@ -1128,6 +1128,11 @@ A tab, CHT and CBT stop where the guest set its tab stops (HTS, its 8-bit form t
 Terminals differ here: VTE also clears every stop on TBC 2 and 5, and reads CTC, which xterm ignores.
 So when a guest sends one of those, a screen with VTE's stops is scrubbed as well as xterm's.
 DCH and ICH shift the cells right of the cursor along its row, and what ICH pushes past the last column is gone (#1919).
+DL and IL shift the rows from the cursor's down and put the cursor at the line's start, as xterm does, and SU and SD shift them from the piece's first row (#1927).
+A row DL or SU removes stays in the view, since a token drawn whole on it was shown.
+A terminal shifts no row outside scrolling margins (DECSTBM), and the piece's first row only stands for the top SU and SD scroll from.
+So after DECSTBM, SU or SD, a screen that leaves the rows in place is scrubbed as well.
+Without margins it reads the top as above every row, so there SU and SD move the cursor along fixed rows.
 Cell widths follow `wcwidth` (`SecretRedactor.cellWidth`): a wide character takes two cells, and a zero-width one none, joining the cell before the cursor and the one last written.
 A span there redacts every raw character written to its cells, so no overwritten half of a token is kept beside the marker.
 That holds when the cell was drawn over from another row too, so a row repainted from further down also redacts what lies between: it fails closed, losing log lines around a secret rather than half of one.
@@ -1138,6 +1143,7 @@ Output that has scrolled addresses rows from a top long gone, so a second screen
 The alternate screen (xterm's 47, 1047 and 1049) is a region of rows of its own, with its own saved cursor, so what a program draws there neither overwrites the main screen nor is lost.
 Only written cells are kept, so the screen grows with what a guest printed, never with how far it moved the cursor, and a guest cannot make it allocate without bound.
 Each row is a treap of its cells and of runs of blank ones, so a shift splits and joins the row instead of moving every cell past the cursor.
+Each screen's rows are a treap of the same kind, rows and runs of rows nothing was written to, so a row shift costs as little.
 What a shift drops is reused for the next cells, so the screen holds what its rows show, never every shift's leftovers.
 Tab stops are searched 64 columns at a time, so neither a guest's stops nor a long CHT costs a line's worth of work per sequence.
 REP draws at most one cell for each raw character, and the screen is built only when a piece can move the cursor back or repeat (`Screen.mayMoveBack`), so most coloured output pays nothing for it.
