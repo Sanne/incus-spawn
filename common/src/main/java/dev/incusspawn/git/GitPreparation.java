@@ -183,12 +183,21 @@ public final class GitPreparation {
                 // Damaged cache bytes or metadata are rebuildable; never use them as a reference.
             }
             var previousRepo = previous.resolve("repo.git");
-            if (manifest != null && advertised != null && advertised.equals(selection(previousRepo))) {
+            boolean hit = manifest != null && advertised != null && advertised.equals(selection(previousRepo));
+            elapsed(timings, "check", start);
+            if (manifest != null && !hit) {
+                // The early read may predate the access barrier, the limiter wait and this writer lock. A push
+                // since then would fail the refresh's selection check and rebuild in full, so read again first.
+                // A concurrent build may also have published exactly what it reads now.
+                start = System.nanoTime();
+                advertised = advertisement(lease.path, request.url(), phase);
+                elapsed(timings, "remote", start);
+                hit = advertised != null && advertised.equals(selection(previousRepo));
+            }
+            if (hit) {
                 validatePin(previousRepo, request.branch());
-                elapsed(timings, "check", start);
                 return new Prepared(lease, previousRepo, "cached clean snapshot", objectChecksums(manifest), timings, null);
             }
-            elapsed(timings, "check", start);
 
             start = System.nanoTime();
             phase.accept("Selecting Git reference");
