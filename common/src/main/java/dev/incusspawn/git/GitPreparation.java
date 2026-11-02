@@ -101,19 +101,79 @@ public final class GitPreparation {
                 && url.matches("(?:[^/@:]+@)?(?:\\[[0-9a-fA-F:]+\\]|[^/@:]+):[^:].*");
     }
 
-    public Prepared prepare(Request request, Phases phase) throws IOException {
-        if (!isRemoteUrl(request.url())) throw new IOException("Git preparation requires an HTTPS, SSH or Git remote");
-        var timings = new LinkedHashMap<String, Long>();
-        var key = hash(POLICY + "\n" + request.url());
+    /**
+     * The remote's refs as the host's credentials see them, and the lease preparation continues in.
+     * Reading them transfers no objects, so it may start before the guest's access check ends.
+     */
+    public static final class RemoteRefs implements AutoCloseable {
+        private final PreparationCache.Lease lease;
+        private final String url;
+        private final String advertised;
+        private final long millis;
+        private boolean taken;
+
+        private RemoteRefs(PreparationCache.Lease lease, String url, String advertised, long millis) {
+            this.lease = lease;
+            this.url = url;
+            this.advertised = advertised;
+            this.millis = millis;
+        }
+
+        private synchronized PreparationCache.Lease take() throws IOException {
+            if (taken) throw new IOException("Remote refs were already used");
+            taken = true;
+            return lease;
+        }
+
+        /** Discards refs never handed to {@link #prepare(Request, RemoteRefs, Phases)}. */
+        @Override public synchronized void close() throws IOException {
+            if (!taken) {
+                taken = true;
+                lease.close();
+            }
+        }
+    }
+
+    /** Always authenticate/contact the remote, even on a hit: never serve a stale offline snapshot. */
+    public RemoteRefs readRemote(String url, Phases phase) throws IOException {
+        if (!isRemoteUrl(url)) throw new IOException("Git preparation requires an HTTPS, SSH or Git remote");
         var lease = cache.lease();
         boolean success = false;
+        try {
+            long start = System.nanoTime();
+            var refs = new RemoteRefs(lease, url, advertisement(lease.path, url, phase), (System.nanoTime() - start) / 1_000_000);
+            success = true;
+            return refs;
+        } finally {
+            if (!success) lease.close();
+        }
+    }
+
+    public Prepared prepare(Request request, Phases phase) throws IOException {
+        return prepare(request, readRemote(request.url(), phase), phase);
+    }
+
+    /** Continues from {@code remote}, which it takes over whatever the outcome; it must have read {@code request}'s URL. */
+    public Prepared prepare(Request request, RemoteRefs remote, Phases phase) throws IOException {
+        var lease = remote.take();
+        boolean success = false;
+        try {
+            if (!remote.url.equals(request.url())) throw new IOException("Remote refs were read for another URL");
+            var prepared = prepare(request, lease, remote.advertised, remote.millis, phase);
+            success = true;
+            return prepared;
+        } finally {
+            if (!success) lease.close();
+        }
+    }
+
+    private Prepared prepare(Request request, PreparationCache.Lease lease, String advertised, long remoteMillis,
+                             Phases phase) throws IOException {
+        var timings = new LinkedHashMap<String, Long>();
+        timings.put("remote", remoteMillis);
+        var key = hash(POLICY + "\n" + request.url());
         try (var ignored = cache.writer(key)) {
             long start = System.nanoTime();
-            // Always authenticate/contact the remote, even on a hit. Never serve a stale offline snapshot.
-            var advertised = advertisement(lease.path, request.url(), phase);
-            elapsed(timings, "remote", start);
-
-            start = System.nanoTime();
             phase.accept("Checking Git snapshot");
             var previous = lease.path.resolve("previous");
             Map<String, String> manifest = null;
@@ -126,7 +186,6 @@ public final class GitPreparation {
             if (manifest != null && advertised != null && advertised.equals(selection(previousRepo))) {
                 validatePin(previousRepo, request.branch());
                 elapsed(timings, "check", start);
-                success = true;
                 return new Prepared(lease, previousRepo, "cached clean snapshot", objectChecksums(manifest), timings, null);
             }
             elapsed(timings, "check", start);
@@ -201,13 +260,10 @@ public final class GitPreparation {
             delete(previous);
             Files.deleteIfExists(tips);
             elapsed(timings, "publish", start);
-            success = true;
             return new Prepared(lease, clean, incremental ? "incremental clean snapshot"
                     : reference != null ? "reference-seeded clean snapshot"
                     : retried ? "new clean snapshot (reference retry)" : "new clean snapshot",
                     objectChecksums(manifest), timings, notRetained);
-        } finally {
-            if (!success) lease.close();
         }
     }
 
