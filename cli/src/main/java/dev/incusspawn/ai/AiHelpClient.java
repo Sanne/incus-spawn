@@ -256,7 +256,7 @@ public class AiHelpClient {
     /**
      * A Messages API request for one question, on the Claude API ({@code model}) or Vertex
      * ({@code anthropic_version}, the model being in the URL), at {@link #EFFORT}: at its default
-     * Sonnet 5.5 thinks before every answer (DESIGN.md "AI help credentials" has the measurement).
+     * Sonnet 5.5 thinks before every answer (design/accounts.md "AI help credentials" has the measurement).
      */
     static JqObject messagesBody(String versionKey, String version, String question, List<String> systemBlocks) {
         return JqObject.builder(6)

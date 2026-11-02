@@ -2,6 +2,7 @@
 paths:
   - "README.md"
   - "DESIGN.md"
+  - "design/**"
   - "docs/**"
   - "site/**"
 ---
@@ -16,7 +17,7 @@ The home page (`site/index.html`) is the reference example of the shape and the 
 The Shape and Voice rules are checked by `DocsShapeTest` and `DocsOneSentencePerLineTest` (`cli`) on `README.md` and `docs/*.md`.
 `DocsListsTest` checks that the pages' lists mirror the code's: top-level commands, built-in tools, and tools with a proxy credential.
 A fact that is a list in the code is a list in the docs, and the test is what keeps them equal.
-`docs/dev/` is maintainer notes and is exempt from the budgets, and DESIGN.md keeps its own register.
+`docs/dev/` is maintainer notes and is exempt from the budgets, and DESIGN.md and its `design/` pages keep their own register.
 
 ## Shape
 
@@ -120,7 +121,7 @@ A page over about 2,000 words of prose has usually gained a second reader and wa
 A release note ("after upgrading, restart", "before downgrading") is never a user page's business; it goes to `docs/dev/`.
 
 **`docs/dev/`** is maintainer notes and is not published.
-DESIGN.md is the record of why, and the one place for issue numbers and internals.
+DESIGN.md and its `design/` pages are the record of why, and the one place for issue numbers and internals.
 
 ## Splitting a sentence
 

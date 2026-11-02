@@ -24,7 +24,7 @@ public final class MachineId {
      * Run in a finished template's guest before its last stop, so each copy's first start finds no
      * ID and systemd generates its own. Still needed by a container branch whose {@link #giveOwn}
      * push failed, and by a VM on an image that commits its ID (older than #1483); the current VM
-     * image never does, and takes each boot's from the SMBIOS UUID (DESIGN.md "Branching").
+     * image never does, and takes each boot's from the SMBIOS UUID (design/instances.md "Branching").
      * Unmounted first: a transient ID systemd never committed is mounted over the file on disk.
      * Best effort, like {@link #giveOwn}: a template whose ID stays is still a working template.
      */

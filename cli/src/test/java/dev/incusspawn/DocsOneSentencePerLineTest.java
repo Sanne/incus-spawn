@@ -124,6 +124,9 @@ class DocsOneSentencePerLineTest {
             docs.filter(f -> f.toString().endsWith(".md")).sorted().forEach(files::add);
         }
         files.add(ROOT.resolve("DESIGN.md"));
+        try (Stream<Path> design = Files.list(ROOT.resolve("design"))) {
+            design.filter(f -> f.toString().endsWith(".md")).sorted().forEach(files::add);
+        }
         files.add(ROOT.resolve("CLAUDE.md"));
         try (Stream<Path> rules = Files.list(ROOT.resolve(".claude/rules"))) {
             rules.filter(f -> f.toString().endsWith(".md")).sorted().forEach(files::add);

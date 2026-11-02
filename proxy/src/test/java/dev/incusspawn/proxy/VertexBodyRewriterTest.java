@@ -428,7 +428,7 @@ class VertexBodyRewriterTest {
 
     /**
      * {@code output_config.format} is forwarded as sent on both paths, its {@code strict} members
-     * included, and nothing is reported dropped (#1569; DESIGN.md says why).
+     * included, and nothing is reported dropped (#1569; design/proxy.md says why).
      */
     @Test
     void outputConfigFormatIsForwardedAsSent() {

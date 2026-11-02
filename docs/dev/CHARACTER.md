@@ -20,4 +20,4 @@ incus-spawn solves a specific, underserved problem: **safe, fast, full-fidelity 
 
 The project is opinionated in the right ways (Fedora, Incus, YAML-first) and flexible where it matters (tool resolution layers, search paths, project-local overrides). It doesn't try to be a general-purpose container orchestrator — it's laser-focused on "give an AI agent a disposable Linux workstation with zero credential exposure."
 
-Every non-obvious decision in DESIGN.md has a "why not the alternative" section. When evaluating feature requests and changes, preserve this character: strong opinions on the core (security, fidelity, speed), flexibility at the edges (tools, templates, integrations).
+Every non-obvious decision in DESIGN.md's `design/` pages has a "why not the alternative" section. When evaluating feature requests and changes, preserve this character: strong opinions on the core (security, fidelity, speed), flexibility at the edges (tools, templates, integrations).

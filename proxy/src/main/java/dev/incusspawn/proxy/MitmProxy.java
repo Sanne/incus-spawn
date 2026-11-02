@@ -2761,7 +2761,7 @@ public class MitmProxy {
 
     /**
      * The health server's routing. It only reads: a write to the proxy's state is never one
-     * address check away from the bridge, which every container reaches (DESIGN.md "The proxy
+     * address check away from the bridge, which every container reaches (design/proxy.md "The proxy
      * holds no configuration of its own", #935). {@code /activity} is the host's only: a
      * container gets the 404 of an unknown path, since what its neighbours do is none of its
      * business, whatever the method.

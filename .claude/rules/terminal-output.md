@@ -166,4 +166,4 @@ Off an ANSI terminal `RepoCloner`'s parallel block reports each repository as it
 On any terminal the start of a failed repository's command and the end of its log are one warning (#1703).
 Headers live in command classes; shared helpers like `VmManager` emit only steps so they nest correctly under whichever header the caller prints.
 A build that fails says why as an error, its diagnostics as notes as they are found (a later probe may hang), and where the failure report was saved, with the container promoted for inspection, as warnings, so the TUI's log keeps where to look (`BuildCommand.reportBuildFailure`, #1703).
-See DESIGN.md "Terminal Output Visual Language" for the full spec.
+See design/terminal.md "Terminal Output Visual Language" for the full spec.

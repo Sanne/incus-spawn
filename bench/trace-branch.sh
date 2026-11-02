@@ -139,7 +139,7 @@ def probe_clock(vm_socket, count=5):
             s.recv(1)  # the first byte of the response: the daemon has handled it
             sent.append((before + time.time()) / 2)
             # Closed without reading the rest: this tunnel does not reliably pass on an EOF
-            # to wait for (DESIGN.md "macOS vsock robustness"), and the timing needs no more than that byte.
+            # to wait for (design/macos-and-vms.md "macOS vsock robustness"), and the timing needs no more than that byte.
         time.sleep(0.02)
     return sent
 

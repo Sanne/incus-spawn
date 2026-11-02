@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  * </pre>
  *
  * <p>Opt-in only here: a route reaches host state outside any project, so a template, least of
- * all a project-local one, can never declare it (DESIGN.md "Host routes"). Kept as the raw YAML
+ * all a project-local one, can never declare it (design/proxy.md "Host routes"). Kept as the raw YAML
  * value, like {@code artifact-cache:}: a mistyped section must not fail the whole config.yaml.
  * Each entry is checked on its own and dropped with a warning naming it when it is wrong, so one
  * typo never widens what a route admits -- an unknown key drops the entry rather than ignoring a

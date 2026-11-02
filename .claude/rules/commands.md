@@ -101,7 +101,7 @@ Every query command has it, plus `isx branch` (the new name alone).
 `--out-of-sync` calls `assess` on the same one listing; a named build's parents go through `BuildCommand.isImageOutdated`, which calls its `versionOutdated`, `definitionChanged` and `parentRebuilt`.
 `QueryCommandFormatTest` pins each JSON shape and `ExitCodeTest` the shared rejection.
 Work that prints progress runs under `BaseCommand.withStdoutOnStderr` (its swap is the gate class `StdoutOnStderr`), the machine formats never prompt, and the exit code is the table's.
-See DESIGN.md "Output for scripts".
+See design/terminal.md "Output for scripts".
 
 **Confirmations that delete data fail closed.**
 `BaseCommand.confirm()` proceeds when there is no terminal (and never reads stdin), so `echo n | isx ...` answers yes.
@@ -128,7 +128,7 @@ The exit status is opt-in so `isx vm stop && ...` keeps working.
 Doctor and build say what is done and do it through `IncusClient` (REST, so the same on Linux and over the macOS vsock tunnel, whose host has no `incus` CLI).
 A destructive step on a trust gate still asks, at a terminal, via `Prompts`.
 `NoIncusCliHintTest` fails on any `"... incus storage|profile|move|image|network|remote|console|config ..."` literal in `cli`, `common` or `proxy` outside its allowlist (Linux-only `isx init` setup hints, the Linux arms of `unknownRemoteMsg` and `gatewayUnavailableHint`, and the proxy's Linux `--gateway-ip` check, #1139).
-See DESIGN.md "Doctor and build remediations act through isx".
+See design/doctor.md "Doctor and build remediations act through isx".
 
 **A shell without a terminal is skipped or refused, never retried.**
 `isx branch` with no terminal (`IncusClient.hasTerminal()` false: stdin or stdout redirected) reports the branch, says how to connect, and exits 0 without a shell.

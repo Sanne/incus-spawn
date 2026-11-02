@@ -35,7 +35,7 @@ class StepLabelGateTest {
             if (!lines.isEmpty()) failures.append(source.getKey()).append(": decorated labels at lines ").append(lines).append('\n');
         }
         assertEquals("", failures.toString(), "write the label bare (\"Launching x\", not \"Launching x...\"):"
-                + " the terminal adds the ellipsis or the ✓ (DESIGN.md \"Terminal Output Visual Language\")");
+                + " the terminal adds the ellipsis or the ✓ (design/terminal.md \"Terminal Output Visual Language\")");
     }
 
     @Test

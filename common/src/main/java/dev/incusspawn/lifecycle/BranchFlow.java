@@ -471,7 +471,7 @@ public final class BranchFlow {
         BuildOutput.stepStart("Copying from template");
         incus.copy(source, name, copyPlan, copyConfig);
         BuildOutput.stepDone();
-        // Well before the start; a VM takes its SMBIOS UUID at every boot instead (DESIGN.md "Branching")
+        // Well before the start; a VM takes its SMBIOS UUID at every boot instead (design/instances.md "Branching")
         if (defaults.machineType() == MachineType.CONTAINER) MachineId.giveOwn(incus, name);
 
         // Configure GUI before start so environment.* keys are visible to init. First, because

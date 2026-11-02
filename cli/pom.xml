@@ -116,6 +116,7 @@
                                     <includes>
                                         <include>README.md</include>
                                         <include>DESIGN.md</include>
+                                        <include>design/*.md</include>
                                     </includes>
                                 </resource>
                                 <resource>
@@ -248,7 +249,7 @@
           tarballs and VM images over HTTPS (DownloadCache, SkillsCache, VmManager),
           so that is a real cost on any link faster than ~630 Mbit/s. Binary size and
           startup are unaffected, which is why this is worth taking on a build
-          otherwise tuned for size (-Os). See DESIGN.md "Native image CPU baseline".
+          otherwise tuned for size (-Os). See design/native-image.md "Native image CPU baseline".
         -->
         <profile>
             <id>x86-march-amd64</id>

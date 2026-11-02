@@ -203,6 +203,6 @@ Each `build` job then downloads the artifact and builds both binaries once, with
 
 ## Phase 4: docs in the same PR
 
-Performance notes, a DESIGN.md subsection beside "Native image CPU baseline", the module lines in CLAUDE.md that describe `-O3` as ML-inferred PGO, `bench/README.md` and `.claude/rules/native-image.md`.
+Performance notes, a design/native-image.md section beside "Native image CPU baseline", the module lines in CLAUDE.md that describe `-O3` as ML-inferred PGO, `bench/README.md` and `.claude/rules/native-image.md`.
 
 **Done** in #1642, which also updates `.claude/rules/ci.md` and this page.

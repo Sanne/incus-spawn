@@ -23,7 +23,7 @@ Project-local tools cannot declare `proxy:` (`ToolProxyResolver.rejectProjectLoc
 Any new capability that reaches host state outside the project, such as host paths, host-only sources, or credentials, needs the same gate.
 Host routes (#936) are one: only `config.yaml`'s `host-routes:` declares them, and a project-local instance never passes one.
 `coordinator:` (#1812) is another: a project-local definition's is ignored with a warning at load and in `TemplateValidator`, makes no coordinator by default, and gives a coordinator no scope (`McpScope`).
-See DESIGN.md "Project-local templates are confined to their project".
+See design/host-resources.md "Project-local templates are confined to their project".
 
 **Drivers** (`drivers:`, `Drivers`, #1720): a raw section like `host-routes:`; a tool name (`Metadata.ownerNameProblem`, never `mcp`) mapped to `destroy:` (a boolean, default false).
 An unknown key, a wrong type or a bad name drops the entry with a warning, and a dropped entry grants nothing.
@@ -40,7 +40,7 @@ The same declaration that makes the proxy inject it makes the redactor remove it
 The split is deliberate: `SecretRegistry` knows *where declared secrets live*, `SecretRedactor` knows *what a credential looks like* -- its `looksSecret()` whole-word name heuristic (a backstop for undeclared keys landing in `SpawnConfig.getExtras()`, a typed namespace's `NamespaceConfig` extras or any key of its accounts; keep it whole-word, since substring matching blanks out unrelated diagnostics like `monkey` and `keyboardLayout`; and the nearest key name governs — a secret-named *list* is redacted whole, a secret-named *object* is not, since its fields have their own names and an `auth: {endpoint, timeoutMs}` block is ordinary config) and its token-shape patterns.
 Its first pattern is `ProofToken.ANY_PROOF`, the marker and digest of every proof isx mints, so a proof is scrubbed even where its prefix borrows no known token shape (`gho_isx_`, `ya29.isx_`).
 Every pattern stays linear on any input, since a guest's output reaches the scrub through a build's log: no open-ended run before a literal that another attempt can start inside (a private-key header's words may run on, since they end at the next `-` at the latest and every header starts with one), no lazy match that can run to the end from each of many starts (`SecretRedactorTest.manyKeyHeadersWithNoEndAreScrubbedInLinearTime`).
-See DESIGN.md "Support bundles: redaction by construction".
+See design/doctor.md "Support bundles: redaction by construction".
 
 **Credential accounts**: each credential namespace may hold `accounts:` (a named map) and `default:`.
 `AccountResolver` resolves them off the serialized config tree, so any namespace gets named accounts without a Java change -- including a tool defined only in YAML, whose namespace lands in `SpawnConfig.getExtras()`.
@@ -99,7 +99,7 @@ A build-source snapshot merged in after load (`isx build`, the TUI's `ListingLoa
 Walk a parent chain through `ancestors` or `chain` so that guard covers it; a hand-written `getParent()` loop or recursion needs its own visited set (`BuildCommand.definitionChain`, `ActionResolver`, `DiskUsageModel`).
 `YamlErrors.friendly()` names the offending field for shape mismatches (list vs. single value vs. mapping), with the line jjq reports on the binding failure.
 
-Definitions and `config.yaml` bind through jjq (`Jjq`), not Jackson (DESIGN.md "jjq rather than Jackson"):
+Definitions and `config.yaml` bind through jjq (`Jjq`), not Jackson (design/native-image.md "jjq rather than Jackson"):
 - A new DTO is `@JqMapped`; `jjq-mapper-processor` generates its mapping and `Jjq` registers it, so the native image needs no registration for it.
   That holds only while `Jjq` and the generated `*_JqMapping` classes are initialized at build time: their static initializers look up private `Field`s, which the image heap keeps; keep them off the `--initialize-at-run-time` lists in both `application.properties`.
   An enum a DTO binds is the exception: jjq reads its `@JqEnum`/`@JqName` by reflection, so it carries `@RegisterForReflection` (`ClaudeAccountType`), or the native image binds every value to null.
@@ -108,7 +108,7 @@ Definitions and `config.yaml` bind through jjq (`Jjq`), not Jackson (DESIGN.md "
 - An object is never iterated with `asList()` (empty for an object); use `JqObject.values()`/`forEach`.
 - An `Integer` field takes `@JqConverter(IntegerConverter.class)`: jjq bound `.inf` and `.nan` as 0 before 0.2.4 (and `Jjq.exactInt` still refuses them, now non-finite) where a bad value must fail the file, refuses a blank string Jackson left unset, and names the field as a `$` path rather than as written.
 - isx's own JSON (its stamps, its proxy's endpoints, `isx mcp`'s output, Incus's answers) is read with `JqValues.parseStrict`, and a parse failure is shown with `Jjq.brief`.
-  JSON another program wrote (a tool's file, an agent's events, an MCP client's message, an API's answer) is read with `Jjq.parseForeign(json, source)`: a lone surrogate escape reads as U+FFFD, everything else malformed fails as `<source> is not valid JSON: <why> at line L, column C` (DESIGN.md "jjq rather than Jackson").
+  JSON another program wrote (a tool's file, an agent's events, an MCP client's message, an API's answer) is read with `Jjq.parseForeign(json, source)`: a lone surrogate escape reads as U+FFFD, everything else malformed fails as `<source> is not valid JSON: <why> at line L, column C` (design/native-image.md "jjq rather than Jackson").
   Pass the bytes received (`BodyHandlers.ofByteArray()`, `ByteLines` for a line stream), never a decoded `String`: decoding turns invalid UTF-8 into U+FFFD, which jjq then accepts.
   The exceptions are readers handed a `String` that exec output already decoded, such as the Claude Code, Codex and Pi event tails, `ModelCheck.refusal`, `HerdrIntegration`, `GeminiSetup.selectApiKeyAuth` and `ClaudeSetup.parseClaudeJson`.
   `~/.claude.json` is read with `ClaudeSetup.parseClaudeJson`, which first drops the approval line the login script appends (a repeated key).

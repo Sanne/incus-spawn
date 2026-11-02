@@ -172,7 +172,7 @@ public class Tui {
     // arrive through the Incus event feed and trigger a *light* refresh -- just the instance
     // listing (plus the pool gauge), fetched off the UI thread and swapped in on it. The heavy
     // parts of reloadData() (definitions on disk, btrfs accounting probes, proxy health) keep
-    // their own cadences and never run per event. See DESIGN.md "Keeping a long-lived TUI current".
+    // their own cadences and never run per event. See design/terminal.md "Keeping a long-lived TUI current".
     private InstanceEventWatcher eventWatcher;
     // `tui-live-refresh: false` in config.yaml: no subscription and no polling -- only the
     // manual `r` and the reloads the TUI already did (re-entry, its own background tasks).

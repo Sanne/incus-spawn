@@ -350,7 +350,7 @@ class Upstream {
 
     static final long UNREACHABLE_BACKOFF_SECONDS = 30;
 
-    // How long probeClient keeps an idle connection; DESIGN.md says why not longer
+    // How long probeClient keeps an idle connection; design/proxy.md says why not longer
     private static final int PROBE_KEEP_ALIVE_SECONDS = 60;
 
     // Per caching domain, when a connection to it last failed (requestWithAsyncDns

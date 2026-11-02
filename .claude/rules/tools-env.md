@@ -77,7 +77,7 @@ Templates select a default action via `ImageDef.defaultAction` (`default-action`
 The reference format is `tool-name` (single action) or `tool-name:action-id` (multiple actions).
 A reference that does not resolve is named with why, in the same words in the TUI's status line on Enter and on `isx run`'s stderr before it opens a shell (`ActionResolver.unresolvedReason`, #1444): `tool not found`, `action id not found or ambiguous`, or `ambiguous, use tool:action-id`; only a template with no reference gets "No default action configured".
 `default-action` inherits through the parent chain (child overrides parent) and is intentionally excluded from `contentFingerprint()` so changing it doesn't trigger template rebuilds.
-Its metadata stamp (`user.incus-spawn.default-action`, the fallback when the YAML is gone) is instead reconciled onto every up-to-date template at the end of each `isx build` by `BuildCommand.syncDefaultActions()` (see DESIGN.md "Metadata outside the fingerprint").
+Its metadata stamp (`user.incus-spawn.default-action`, the fallback when the YAML is gone) is instead reconciled onto every up-to-date template at the end of each `isx build` by `BuildCommand.syncDefaultActions()` (see design/instances.md "Metadata outside the fingerprint").
 
 Action resolution logic is centralized in `ActionResolver`, shared by both `Tui` and `RunCommand` (CLI).
 The TUI's `InstanceActions` (what F9 offers and what Enter runs) only builds `ActionResolver`'s inputs from the listing, with no Incus client and so no request; it keeps no resolution rule of its own (#1158); only `collectAutoDeps`, the dependencies the new-template dialog lists, still walks `requires` itself, in its own order.
@@ -118,7 +118,7 @@ Judged as `resolve()` judges it, a tool is missing credentials only when none of
 Config drift detection uses file stamps: `MitmProxy.hasConfigChangedSinceLoad()` compares a fresh `ConfigFingerprint` (mtime and size of `config.yaml` and each tool definition in `tools/` and in every search path's `tools/`, #890) against the one `ConfigFingerprint.load()` took before reading the config, avoiding re-parsing on every `/health` poll.
 Read the proxy's config through `ConfigFingerprint.load()`, never `SpawnConfig.load()` alone.
 `ToolProxyResolver.proxyToolSetups(config)` reads tools from that config's search paths, never a second `config.yaml` read, and `ConfigWatcher` watches the same tool directories.
-Drift means "differs", never "newer than the load time" (#818; see DESIGN.md).
+Drift means "differs", never "newer than the load time" (#818; see design/proxy.md).
 `ProxyHealthCheck.checkDrift()` consolidates version and config drift checks; `warnIfDrifted()` auto-restarts the proxy service when drift is detected.
 It restarts through `ProxyService.reinstallIfChanged(incus, info)`, which rewrites stale service files first and reuses the already-fetched info.
 The exception: `DriftRestartRecord` shows that the service was already restarted onto this installed `isx-proxy` for this CLI build.

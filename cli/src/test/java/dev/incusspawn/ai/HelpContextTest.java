@@ -12,13 +12,14 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class HelpContextTest {
 
     @Test
-    void helpReadsEveryUserPageTheSitePublishes() throws IOException {
+    void helpReadsEveryUserPageTheSitePublishesAndEveryDesignPage() throws IOException {
         try (var pages = Files.list(Path.of("..", "docs"))) {
             var expected = pages.map(p -> p.getFileName().toString())
                     .filter(f -> f.endsWith(".md"))
@@ -26,9 +27,30 @@ class HelpContextTest {
             var listed = HelpContext.HELP_RESOURCES.stream().filter(r -> r.startsWith("help/docs/")).sorted().toList();
             assertEquals(expected, listed);
         }
+        try (var pages = Files.list(Path.of("..", "design"))) {
+            var expected = pages.map(p -> p.getFileName().toString())
+                    .filter(f -> f.endsWith(".md"))
+                    .map(f -> "help/design/" + f).sorted().toList();
+            var listed = HelpContext.HELP_RESOURCES.stream().filter(r -> r.startsWith("help/design/")).sorted().toList();
+            assertEquals(expected, listed, "every design/ page DESIGN.md indexes is help context too");
+        }
         var documentation = HelpContext.documentation();
         for (var resource : HelpContext.HELP_RESOURCES) {
             assertTrue(documentation.contains("--- " + resource.substring("help/".length()) + " ---\n"), resource);
+        }
+    }
+
+    /** The JVM finds every resource on the classpath; a native image only those its includes name, and `*` stops at a `/`. */
+    @Test
+    void theNativeImageIncludesEveryHelpResource() throws IOException {
+        var properties = new Properties();
+        try (var in = Files.newBufferedReader(Path.of("src/main/resources-filtered/application.properties"))) {
+            properties.load(in);
+        }
+        var includes = List.of(properties.getProperty("quarkus.native.resources.includes", "").split(","));
+        for (var resource : HelpContext.HELP_RESOURCES) {
+            var glob = resource.substring(0, resource.lastIndexOf('/') + 1) + "*.md";
+            assertTrue(includes.contains(glob), resource + " is not in quarkus.native.resources.includes (" + glob + ")");
         }
     }
 

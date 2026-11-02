@@ -22,11 +22,11 @@ On a push, root jobs are gated so feature-branch pushes only run on forks (not u
 Key jobs:
 
 - **`unit-tests`**: `mvn package` (no Incus required), with zsh installed so `ZshCompletionTest` runs rather than skips
-- **`unit-tests-macos`**: `mvn test` on `macos-15` (a standard arm64 runner), so a test that assumes Linux tools or kernel behaviour fails the PR instead of every Mac (#970). arm64 only, by decision (#974); the reasoning is in DESIGN.md "Testing".
+- **`unit-tests-macos`**: `mvn test` on `macos-15` (a standard arm64 runner), so a test that assumes Linux tools or kernel behaviour fails the PR instead of every Mac (#970). arm64 only, by decision (#974); the reasoning is in design/testing.md "Testing".
   Its Git tests are paced by process starts there: `GitPreparationTest` runs its tests concurrently and `releasesFixture` is built once per JVM, which keep the job inside its 20-minute timeout (#1839).
   It sets `ISX_TEST_MUTATE_SYSTEM_KEYCHAIN=1`, which enables `KeychainTrustMacTest`: it adds CAs to the runner's System keychain, which only a discarded runner may do (#1467).
   Test failures are counted from the surefire reports after the run, so a failure in `common` does not skip `cli` and `proxy` (`-fae` would: they depend on it), and the reports are uploaded when it fails, since few contributors have a Mac to reproduce on
-- **Test JVM flags**: the root pom's `argLine` property keeps `com.sun.crypto.provider.AESCrypt::makeSessionKey` out of the JIT, a GraalVM 25 JIT bug that made the proxy tests flake with `bad_record_mac` (#940, upstream: [oracle/graal#14599](https://github.com/oracle/graal/issues/14599), DESIGN.md "Testing").
+- **Test JVM flags**: the root pom's `argLine` property keeps `com.sun.crypto.provider.AESCrypt::makeSessionKey` out of the JIT, a GraalVM 25 JIT bug that made the proxy tests flake with `bad_record_mac` (#940, upstream: [oracle/graal#14599](https://github.com/oracle/graal/issues/14599), design/testing.md "Testing").
   Add to that property and never set surefire's `<argLine>`, which would drop both the flag and the arguments the Quarkus plugin adds; `-DargLine=` on the command line replaces it too.
   The JVM launchers carry the same options (`install.sh`'s `jvm_options()` on a Graal-JIT JDK, `java-options` on the JBang aliases); `LauncherJitWorkaroundTest` keeps them equal to the `argLine`'s `-XX:CompileCommand` options, so change those in all three together.
   `JitWorkaroundTest` checks it in the proxy module, where the TLS tests are.
@@ -67,7 +67,7 @@ Nested inside an isx instance it also works around what a user namespace refuses
 
 Each job runs on its own freshly-provisioned runner, so jobs never inherit each other's Incus state.
 
-**An artifact a later job or the release needs is uploaded through `.github/actions/upload-artifact-retry`**, which tries once more when the first attempt fails (#1672, DESIGN.md "Testing").
+**An artifact a later job or the release needs is uploaded through `.github/actions/upload-artifact-retry`**, which tries once more when the first attempt fails (#1672, design/testing.md "Testing").
 Diagnostic uploads (`if: always()` or `failure()`) call `actions/upload-artifact` directly.
 `WorkflowArtifactUploadRetryTest` fails when a deliverable upload bypasses the action, or the action stops retrying.
 
@@ -87,7 +87,7 @@ Workflows name a versioned label (`ubuntu-26.04`, `ubuntu-24.04-arm`, `macos-15`
 That holds for API-only jobs too: GitHub annotates every run of a job on a floating label before it migrates, and a migration should be a change someone makes (#1679).
 The binaries' minimum macOS no longer follows the runner.
 It is the root pom's `macos.deployment.target` (15.0, Sequoia, #1086), linked in by a macOS-activated profile.
-The release job's "Check macOS binaries' minimum macOS" step (`scripts/check-macos-minos.py`) fails unless every macOS artifact the release uploads records exactly that `minos` (see DESIGN.md "The minimum macOS is set by the build").
+The release job's "Check macOS binaries' minimum macOS" step (`scripts/check-macos-minos.py`) fails unless every macOS artifact the release uploads records exactly that `minos` (see design/native-image.md "The minimum macOS is set by the build").
 The Homebrew formulas declare it as `depends_on macos: :sequoia`, which `release.yml`'s tap step writes from `MACOS_MIN` on every release; README and `docs/dev/HOMEBREW.md` state it.
 GitHub retires old images (`macos-14` with its `-large`/`-xlarge` variants, #1000), and a job on a removed label waits for a runner that never comes.
 Because `release.yml` runs only on `v*` tags, nothing but the next release would notice, so `WorkflowRunnerLabelsTest` fails on `macos-14` or older and on `ubuntu-latest` or `macos-latest` in any workflow.
@@ -127,7 +127,7 @@ Stand-ins replace what only macOS has: QEMU named in `vm.pid`, the lease in `/va
 It runs `isx init`, builds `tpl-minimal` and a template that runs `gh` on its own account, branches it plain, pinned and `--mcp-client`, and checks who was served what, that no known proof was refused, and that a forged proof and the host's own request get no credential.
 About a minute under KVM; it needs internet access for the builds.
 It does not run the native macOS binaries, vfkit or the real Keychain.
-Keeping the test build out of a release is `check-platform-role.sh` in `release.yml`, `PlatformRoleFeature` and `PlatformRoleBuildGuardTest` (DESIGN.md "The macOS roles, tested on Linux").
+Keeping the test build out of a release is `check-platform-role.sh` in `release.yml`, `PlatformRoleFeature` and `PlatformRoleBuildGuardTest` (design/testing.md "The macOS roles, tested on Linux").
 
 Findings this surfaced, each fixed or documented where it lives: the forwarder's socat listen backlog (default 5) refused concurrent connects (3/16, 12/32), and one exec opens about five; incusd's local listener stalled every new connection behind one that had sent nothing (see `incus.md`; fixed by a backport in #1313); incusd closes idle keep-alive connections after 30s.
 
@@ -158,7 +158,7 @@ The instance's image is a static busybox the job builds and imports itself, not 
 
 Note that `isx init` is not run against the QEMU appliance VM: on Linux it provisions a *native* Incus, and the appliance has its own provisioning.
 The vsock-bridged boot in `integration-tests` exercises the client path to the appliance instead (`isx` over `vm.incus.sock`), which needs no `init`.
-`appliance/test-with-isx.sh` stays macOS-only because it has isx *boot* the VM, and isx boots it only under vfkit (Linux users run native Incus; DESIGN.md "A Linux appliance mode").
+`appliance/test-with-isx.sh` stays macOS-only because it has isx *boot* the VM, and isx boots it only under vfkit (Linux users run native Incus; design/macos-and-vms.md "A Linux appliance mode").
 The appliance also provisions Incus with its own shell script and never calls `isx init` -- the "ensure default profile has a root disk and NIC" invariant is implemented twice, in `incus-spawn-vm-init` (shell, in-VM) and `IncusClient.ensureDefaultProfileDevices` (Java, host).
 Keep the two in sync.
 
@@ -318,8 +318,8 @@ A `workflow_dispatch` of `release.yml` runs `profiles` and `build` alone, on a b
 It also covers the preparation `isx shell` does before attaching a terminal, via `isx run <instance> --action=<unknown>`, and time to a usable prompt for `isx shell` and a full `isx branch --shell`, run on a pseudo-terminal that types a marker command.
 Results go to `bench/results/cli/` so `run.sh` never compares against them.
 `bench/trace-branch.sh` records the daemon's events (`incus monitor`) during one `isx branch --shell` and prints a timeline with the longest gaps and operations, to find where a branch spends its time without adding any instrumentation to isx.
-`bench/claude-start.sh` times a Claude Code template to Claude's first screen after `isx branch` and `isx run`, beside the shell prompt, the action's pre-launch history scan and `claude --version` timed in the instance (DESIGN.md "Claude Code's first screen: where the wait goes").
+`bench/claude-start.sh` times a Claude Code template to Claude's first screen after `isx branch` and `isx run`, beside the shell prompt, the action's pre-launch history scan and `claude --version` timed in the instance (docs/dev/PERFORMANCE-NOTES.md "Claude Code's first screen: where the wait goes").
 `bench/request-cost.sh` times plain requests on the daemon's socket, with no isx involved: what one read or one settings write costs on a host, the number to multiply a request count by.
-`bench/vm-boot.sh` times a VM copy's boot phase by phase (firmware, GRUB, kernel, `incus-agent`, Incus seeing it, exec) with `incus` alone, Linux only, and `--set` tries an instance setting on the copies (DESIGN.md "VM boot: where the wait goes").
+`bench/vm-boot.sh` times a VM copy's boot phase by phase (firmware, GRUB, kernel, `incus-agent`, Incus seeing it, exec) with `incus` alone, Linux only, and `--set` tries an instance setting on the copies (docs/dev/PERFORMANCE-NOTES.md "VM boot: where the wait goes").
 `cli.sh`, `trace-branch.sh` and `request-cost.sh` run on macOS against the appliance too: `cli.sh` needs no `incus` client there, and `trace-branch.sh` points the client at the appliance's socket by itself.
 All of them are developer-run and too noisy for CI; the PR-time guard for CLI latency is the request-count budget in `InstanceLifecycleRequestBudgetTest` (see `incus.md`).
