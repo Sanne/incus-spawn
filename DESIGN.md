@@ -2787,7 +2787,7 @@ Vertex AI users must have `gcloud` installed on the host and `gcloud auth login`
 A user who cannot create an OpenAI API key, for example under organization SSO, signs Codex in with ChatGPT.
 That session must stay on the host like every other credential, so an `openai` account of `type: chatgpt` holds it there and the proxy turns the guest's look-alikes into it.
 This is an **experimental compatibility mechanism**.
-It is built from OpenAI's documentation and the open-source Codex client (codex-rs, `rust-v0.162.1`), and verified against a local stub of OpenAI's token endpoint and the Codex backend, with Codex 0.162.1 when it was written.
+It is built from OpenAI's documentation and the open-source Codex client (codex-rs, `rust-v0.162.1`), and verified against a local stub of OpenAI's token endpoint and the Codex backend, with Codex 0.162.1 when it was written and Codex 0.166.0 since.
 No Codex version is pinned: CI's `tpl-test-codex` installs whatever `@openai/codex` npm serves when it is built (`CodexSetup`), and the test logs `codex --version`.
 So a Codex release that changes what this relies on fails CI's next run rather than waiting for a deliberate upgrade, and a user's own template may run a Codex no run has tried.
 It is not yet tested against a real ChatGPT account, and passing these tests does not establish that OpenAI supports the integration; feedback is welcome on #1332.
@@ -2844,6 +2844,7 @@ Codex's other calls (plugins, plugin MCP, analytics, user settings, usage) stay 
 
 **Refresh:** Codex refreshes when its token is within 5 minutes of expiry, or after a 401.
 The proxy accepts only the body the tested Codex sends (`client_id`, `grant_type=refresh_token`, `refresh_token`, with Codex's client id), checks the refresh proof, and relays it with the real refresh token only when the real token needs it: within the same 5 minutes, or after the backend refused it.
+Codex 0.166 adds an optional `refresh_reason`, a diagnostic from a fixed set of four values (`proactive_expiry`, `scheduled`, `unauthorized_recovery`, `forced`); the proxy accepts those and relays the value as it came, and refuses any other (`ChatGptRoute.isCodexRefresh`).
 Otherwise it answers with the current session's placeholders.
 Concurrent refreshes of one session share one upstream call, and at most one goes upstream per 30 seconds: with tokens that stayed inside the window, real Codex otherwise refreshed nearly 6000 times in 5 minutes.
 A caller whose token no longer works waits for a refresh already upstream for it, whatever the throttle says; one whose token still works is answered with it, and never shares a failed refresh.

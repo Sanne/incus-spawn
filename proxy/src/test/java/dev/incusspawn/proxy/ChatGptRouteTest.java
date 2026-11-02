@@ -918,12 +918,31 @@ class ChatGptRouteTest {
     }
 
     @Test
+    void aRefreshWithCodexsRefreshReasonIsRelayedWithIt() throws Exception {
+        // Codex 0.166 adds an optional refresh_reason, a diagnostic from a fixed set (rust-v0.166.0,
+        // codex-rs/login/src/oauth/client.rs); it goes upstream as the guest sent it
+        sessionId = store.create(ACCOUNT, mint(60)).sessionId();
+        bind(SECRET, sessionId);
+        var body = refreshBody(proofs().refreshToken()).replace("}", ",\"refresh_reason\":\"proactive_expiry\"}");
+
+        var reply = refreshWithBody(body);
+
+        assertEquals(200, reply.status(), reply.body());
+        assertEquals(1, refreshes.get());
+        assertEquals("proactive_expiry", JqValues.parseStrict(refreshBodies.peek()).pathText("refresh_reason", ""));
+    }
+
+    @Test
     void aTokenRequestIsxDoesNotRecogniseFailsClosed() throws Exception {
         var token = proofs().refreshToken();
         for (var body : List.of(
                 "{\"client_id\":\"another-client\",\"grant_type\":\"refresh_token\",\"refresh_token\":\"" + token + "\"}",
                 "{\"client_id\":\"" + ChatGptRoute.CODEX_CLIENT_ID + "\",\"grant_type\":\"refresh_token\",\"refresh_token\":\""
                         + token + "\",\"scope\":\"openid\"}",
+                "{\"client_id\":\"" + ChatGptRoute.CODEX_CLIENT_ID + "\",\"grant_type\":\"refresh_token\",\"refresh_token\":\""
+                        + token + "\",\"refresh_reason\":\"anything-else\"}",
+                "{\"client_id\":\"" + ChatGptRoute.CODEX_CLIENT_ID + "\",\"grant_type\":\"refresh_token\",\"refresh_token\":\""
+                        + token + "\",\"refresh_reason\":1}",
                 "{\"client_id\":\"" + ChatGptRoute.CODEX_CLIENT_ID + "\",\"grant_type\":\"urn:ietf:params:oauth:grant-type:token-exchange\",\"refresh_token\":\"" + token + "\"}",
                 "grant_type=refresh_token&refresh_token=" + token)) {
             assertEquals(400, refreshWithBody(body).status(), body);
