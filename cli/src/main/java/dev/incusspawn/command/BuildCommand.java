@@ -1495,7 +1495,7 @@ public class BuildCommand extends BaseCommand {
         // Install hooks can authenticate (gh derives the Git identity here). A login must already
         // see each tool's placeholder, so the delivered proof profile can replace it.
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
-        runToolSetup(container, toolResolution.effective(), ImageDef.resolveAccounts(imageDef, defs));
+        runToolSetup(container, toolResolution, ImageDef.resolveAccounts(imageDef, defs));
         // After tool setup, not before: a parent without gh still carries a GitHub stamp, and
         // writing an identity first would create the .gitconfig whose absence is how gh's setup
         // knows to write its git defaults.
@@ -1759,7 +1759,7 @@ public class BuildCommand extends BaseCommand {
 
             allTools.addAll(toolResolution.effective());
             writeEnvFile(container, imageDef, defs, allTools, canonicalName);
-            runToolSetup(container, toolResolution.effective(), ImageDef.resolveAccounts(imageDef, defs));
+            runToolSetup(container, toolResolution, ImageDef.resolveAccounts(imageDef, defs));
             maskServices(container, layer);
             installSkills(container, layer, defs, toolResolution.effective());
             // Before the layer's primes, which may use a JDK its tools just installed, run

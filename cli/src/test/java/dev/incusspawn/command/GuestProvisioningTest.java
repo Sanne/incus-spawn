@@ -9,6 +9,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.CodexSetup;
 import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.RecordingOutput;
 
 import org.junit.jupiter.api.Test;
@@ -926,6 +927,33 @@ class GuestProvisioningTest {
         GuestProvisioning.refreshInheritedTools(container, resolution);
 
         verifyNoInteractions(incus);
+    }
+
+    /** The auto-added note opens the Tools group it describes, before any tool's own lines (#1935). */
+    @Test
+    void runToolSetupNotesAutoAddedToolsInsideTheToolsGroup() {
+        var container = new Container(mock(IncusClient.class), "test");
+        var orca = new ToolSetup() {
+            @Override public String name() { return "orca"; }
+            @Override public void install(Container c, Map<String, String> params) {
+                BuildOutput.step("Installing orca");
+            }
+        };
+        var resolution = new BuildTools.ToolResolution(
+                List.of(new BuildTools.ResolvedTool("sshd", BuildCommandTest.simpleToolSetup("sshd"), Map.of()),
+                        new BuildTools.ResolvedTool("orca", orca, Map.of())),
+                List.of(),
+                List.of(new BuildTools.AutoAdded("sshd", List.of("orca"))));
+
+        var recorded = RecordingOutput.during(() -> GuestProvisioning.runToolSetup(container, resolution, Map.of()));
+
+        assertEquals(List.of(
+                        new RecordingOutput.Event(RecordingOutput.Kind.GROUP, "Tools", "sshd, orca"),
+                        new RecordingOutput.Event(RecordingOutput.Kind.NOTE,
+                                "Adding the sshd tool automatically: the orca tool requires it"),
+                        new RecordingOutput.Event(RecordingOutput.Kind.STEP, "Installing orca"),
+                        new RecordingOutput.Event(RecordingOutput.Kind.GROUP_END, null)),
+                recorded.events());
     }
 
     // --- Shared DNF cache volume: VM mount, teardown, and the cleanup guard ---
