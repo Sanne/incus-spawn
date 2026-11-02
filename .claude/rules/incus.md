@@ -58,7 +58,7 @@ A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past
 vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so a state directory whose path contains `#`, `?` or `%xx` would give the two different paths (the vsock `socketURL=` arguments have the same exposure).
 `vm.rest-uri` holds `unix://<path>`; `VfkitRest` still understands the `http://localhost:<port>` an older isx wrote, so a VM started before an upgrade is still asked to shut down rather than signalled.
 
-**macOS vsock robustness**: the vfkit vsock tunnel does not reliably propagate connection close/EOF, which drives several design choices (see DESIGN.md "Transport" and appliance/DESIGN.md):
+**macOS vsock robustness**: the vfkit vsock tunnel does not reliably propagate connection close/EOF, which drives several design choices (see DESIGN.md "macOS vsock robustness" and appliance/DESIGN.md):
 - **Exec completion via `/wait`, not close frames.**
   `IncusApi.execWebSocket` unifies capture/stream/bidirectional exec and takes the operation `/wait` endpoint (daemon operation state over HTTP) as the authoritative completion + exit-code signal, then drains and force-closes the data sockets -- so a lost close frame can't hang exec.
   Every exec fd is keepalive-pinged, stdin included (#1647).
