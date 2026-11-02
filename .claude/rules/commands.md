@@ -155,6 +155,7 @@ Effects outside the process are package-private overridable seams on `Credential
 Flow tests: `GitHubAuthFlowTest` (incl. the commit-email choice, `chooseEmail`), `ClaudeAuthFlowTest` (incl. credentials detected in the environment), `CredentialPromptsTest`, `PathListPromptsTest`, `AccountMenuTest`, `InitServiceStepTest`.
 Tests drive flows with `ScriptedPrompts`, which fails if a value scripted as a secret is read through an echoing `readLine()` (or vice versa) and answers `null` (EOF) once exhausted, like `isx init </dev/null`.
 `@ExtendWith(IsolatedHome.class)` is required for anything that can reach `config.save()`, which otherwise writes the developer's real `~/.config/incus-spawn/config.yaml`.
+It also gives `CredentialSetup` an empty `FakeIncusDaemon` (`CredentialSetup.replaceIncus`, `IsolatedHome.incus()`), so an account flow never reads the developer's instances, which made it ask questions no test scripted (#1965).
 Secrets are read with `askSecret(prompts)`, never a bare `readPassword()`.
 Nothing is echoed, so it prints a dimmed `✓ Received N characters (<maskSecret>)` line confirming a paste landed -- length and masked form only, which `GitHubAuthFlowTest` checks by asserting the raw token never reaches stdout.
 New prompts in init follow the same shape: take `Prompts`, route any network or host call through an overridable method, and add a flow test asserting what reaches the file on disk.

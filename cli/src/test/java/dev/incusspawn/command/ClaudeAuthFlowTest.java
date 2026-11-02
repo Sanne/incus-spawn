@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.ai.AiHelpClient;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -406,5 +407,21 @@ class ClaudeAuthFlowTest {
 
         assertEquals(Set.of("personal"), savedAccounts().keySet());
         assertEquals("personal", savedClaude().getDefaultAccount());
+    }
+
+    /**
+     * The instances that follow the default are asked of the test's own Incus, never the host's:
+     * with one following it, removing the default asks first (#1965).
+     */
+    @Test
+    void removingTheDefaultAsksAboutTheInstancesFollowingIt() throws Exception {
+        incus().container("follower", Map.of(Metadata.TYPE, Metadata.TYPE_CLONE));
+
+        var prompts = ScriptedPrompts.lines("x", "client", "n", "");
+        run(new FakeInit(), seed(TWO_ACCOUNTS), prompts);
+
+        assertTrue(prompts.conversation().contains("- follower"), prompts.conversation().toString());
+        assertEquals(Set.of("personal", "client"), savedAccounts().keySet());
+        assertEquals("client", savedClaude().getDefaultAccount());
     }
 }
