@@ -47,14 +47,14 @@ Key design:
   Every other TLS client starts from `SystemTrust.httpClient()` or `SystemTrust.sslContext()`, which add the bundle to the JDK store rather than replace it, so a CA a JVM user imported into `cacerts` keeps working; an unreadable bundle leaves the JDK store alone.
   A raw socket from `SystemTrust.sslContext()` checks the chain but not the host name, so it sets endpoint identification to `HTTPS` before the handshake (`DumpProxy.openUpstream`).
   Without it a native binary trusts only the JDK store baked in at build time, and fails behind TLS inspection where curl and the proxy succeed.
-  On macOS `MacKeychainTrust` adds what an administrator trusts for SSL in the Keychain's admin domain and removes what one denied, from every source (#1467, DESIGN.md "Host trust on macOS: the admin domain only").
+  On macOS `MacKeychainTrust` adds what an administrator trusts for SSL in the Keychain's admin domain and removes what one denied, from every source (#1467, design/proxy.md "Host trust on macOS: the admin domain only").
   It runs `/usr/bin/security` by absolute path; a failure adds nothing.
   When only the System keychain's certificates cannot be read (exit status, timeout or unparseable output), the export's denies still apply; a failed login-keychain read only loses the bodies stored there; nothing is denied only when the trust settings themselves cannot be read.
   An unreadable entry (not a dict, a result that is not an integer, a policy that is not data) decides nothing and stops any later entry from trusting; a later deny still denies, and so does a deny on an entry whose policy is not data, and a `<real>` result of 3.
   The user domain is read for its denies alone (`withUserDenies`); its trusts are never used (#1552).
   When it has no settings the admin result stands; when it has some that cannot be read, the read fails: no Keychain CA is trusted and the admin denies still apply (#1530).
   A deny only removes anchors, so whenever the Keychain denies anything `DeniedChainTrustManager` wraps the JDK's trust manager (CLI: `SystemTrust.sslContext`; proxy: `Upstream.refusingDenied`, `TrustOptions.wrap`) and refuses a presented chain holding a denied intermediate or leaf (#1552).
-  `Trust.denies` matches a certificate's SHA-1 or, for a denied certificate whose body a keychain holds (System, login, `SystemRootCertificates.keychain`), its subject and key (`keyOf`): a server's cross-signed copy of a denied root has another hash (#1552, DESIGN.md).
+  `Trust.denies` matches a certificate's SHA-1 or, for a denied certificate whose body a keychain holds (System, login, `SystemRootCertificates.keychain`), its subject and key (`keyOf`): a server's cross-signed copy of a denied root has another hash (#1552, design/proxy.md).
   It must stay an `X509ExtendedTrustManager` passing every `SSLEngine`/`Socket` overload to the JDK's, which does the host-name check; AIA fetching must stay off, or a fetched denied intermediate would go unchecked.
   `SystemTrustGateTest` (in `cli`) fails on a plain `HttpClient.newBuilder()`, a default `SSLContext`/socket factory or an `HttpsURLConnection` in any module's main sources; a plain HTTP client says so with a `// plain HTTP:` comment on that line.
   Nothing is cached: the class is initialized at image build time, and the store may change under a long-running isx.
@@ -144,13 +144,13 @@ Key design:
   The same exec reconciles the Claude Code and Pi registrations of `mcp.isx.internal` with the `mcp-caller` grant every caller passes beside it (`McpClientRegistration`, #1182, see `mcp.md`).
   Rotation does not signal the proxy (cost on every start; a refusal right after a start refreshes and retries, throttled by `wantsMissRefresh()` like a lookup miss).
   On macOS (#1583) `routeRequest` passes the `proofMayIdentify` gate to `McpBridge` and `HostRouteRelay`, and a caller at an unknown address is the instance whose secret it presents (`identify(address, secret, true)`, the snapshot's `addressBySecret`, running owners only, by `owner`'s rule, cleared by a failed listing like `addressByProof`); its traffic flow starts pending and the handler begins it for the instance it names; never widen that gate to Linux either.
-  See DESIGN.md "A per-start secret".
+  See design/accounts.md "A per-start secret".
 - **Guest tools read their placeholder when they run (#1108)**, because a build proof is revoked before publication and instance proofs can be explicitly reset.
   Nothing a build writes may hold one: `ClaudeSetup` and `CodexSetup` each write an `/etc/profile.d/isx-zz-*-auth.sh` login script (sorted after every `isx-*.sh`) that adapts the exported value to what the tool reads -- Claude Code's `customApiKeyResponses.approved` (last 20 characters of `ANTHROPIC_API_KEY`, else an interactive prompt defaulting to no), `ANTHROPIC_CUSTOM_HEADERS` from `ISX_VERTEX_ACCESS_TOKEN` (under `CLAUDE_CODE_SKIP_VERTEX_AUTH` Claude Code sends no Authorization header of its own), and Codex's `~/.codex/auth.json` (Codex never reads `OPENAI_API_KEY`).
   The `gcloud` stub prints `$ISX_VERTEX_ACCESS_TOKEN`; `GhSetup`'s host-driven `gh api` calls take `GH_TOKEN` from the guest's `/etc/profile` (`GhSetup.LOGIN_TOKEN`). gh, Copilot, Pi and Bob read the variable already.
   A child build refreshes these files for a tool it only inherits (`ToolSetup.refreshInherited`, from `GuestProvisioning.refreshInheritedTools`), so an older parent's files do not reach it.
   A YAML tool whose `files:` or build steps hold the value of one of its own credential-named env entries is warned about by the loader (`ToolDefValidator.embeddedTokens`).
-  Per-tool evidence: DESIGN.md "A placeholder is read when the tool runs".
+  Per-tool evidence: design/proxy.md "A placeholder is read when the tool runs".
 - **Proof tokens (#1100, #1107).**
   `CredentialProof` derives a stable seed from a protected host key and a public random generation in `Metadata.INSTANCE_PROOF_ID`.
   Namespace digests use HMAC keyed by that seed, never a `/dev/incus`-readable value.
@@ -230,7 +230,7 @@ Key design:
   `AccountSelection.validate` refuses `inherit` outside an instance; `isx init` refuses it as an account name.
   Tests never find the box's own secret: the parent pom points `isx.instance-secret-file` at a missing file, and a test that wants one sets that property.
   The outer proxy verifies the swapped proof as it verifies the parent's own; deeper descendants cannot obtain it with forged or unrelated proofs.
-  See DESIGN.md "Proof tokens".
+  See design/accounts.md "Proof tokens".
 - **`mcp.isx.internal` is answered, not relayed (#915).**
   `routeRequest` hands `ProxyConfig.MCP_DOMAIN` to `McpBridge` before any other domain check (a WebSocket to it is refused): `isx mcp` over MCP's Streamable HTTP for an instance stamped `mcp-caller`, identified by `InstanceRegistry.identifyWithLineage()` with `mcpCaller()` (address + secret + stamp; an unstamped caller it identifies is refused but its traffic counted as its own; one throttled refresh on a refusal, as for `identify()`).
   Each session is a child `isx mcp --caller-instance <name>` (the `isx` beside `isx-proxy`, else `~/.local/bin/isx`, else PATH; tests swap the command with `useMcpCommand`), one per instance.
@@ -255,7 +255,7 @@ Key design:
   Every check is made before the file is opened (a FIFO would block `reload()` for good): its type, and that it, `host-routes/` and the config directory belong to the proxy's uid (of a file it created, never a name lookup) with nobody else able to write them: no group write on `host-routes/`, and on the config directory only by a user-private group (its gid equals the proxy's uid; never a gid read off a file made inside it, which takes a setgid directory's group).
   A refused caller's retry is `InstanceRegistry.refreshAfterNow`: one listing started after the call answers every waiter, so a burst of wrong secrets costs one listing.
   The routes live in `ConfigState` (replaced whole on reload) and their names in the routing's intercepted domains, from `ToolProxyResolver.hostRoutes`, which `resolvedDomains` includes for the CLI's DNS writers.
-  See DESIGN.md "Host routes".
+  See design/proxy.md "Host routes".
 - **`security.ipv4_filtering` is load-bearing**, not incidental hardening: without it a container can re-address itself as a neighbour and spend that neighbour's credentials, so the whole model would be decorative.
   Set by `InstanceLifecycle.configureBranch` (a refused setting is retried without it and warned about, never fails the branch), re-armed on every stopped start by `InstanceLifecycle.prepareForStart` (package-private, reached only through `startForUse` and VM agent recovery; both shells get there through `InstancePrep.repairBeforeUse` and `readyForUse` -- `IpFilteringRearmTest`, `InstancePrepTest`), which also restores it on instances the fallback below turned off.
   **Setting it succeeds even where it cannot be enforced**.
@@ -265,7 +265,7 @@ Key design:
   Keep the match narrow -- it strips a security setting, so any other start failure must surface as itself.
 - **Per-request credentials.**
   `RequestContext(domain, instanceName, creds, routing, usesDefaultCredentials)` replaces the bare `domain` parameter down `routeRequest -> handleApiRequest -> streamApiRequest` (the relay's `RelayHooks.prepare`), or `-> retainVertexRequest -> sendVertexRequest`, to `injectHeaders`.
-  Only a Vertex model call is held, in a `BodySpool` under the shared `SpoolBudget` and `DiskReserve`, released once an answer other than a 401 has come and the body has all gone, or the exchange ends (#1315; DESIGN.md "A body the proxy must hold"): every other API request streams through `Upstream.relayRequest`, and its credential must be set in `prepare`, before any of the head leaves; `--debug` captures 64 KiB of each body as it passes, never more (DESIGN.md "API request bodies").
+  Only a Vertex model call is held, in a `BodySpool` under the shared `SpoolBudget` and `DiskReserve`, released once an answer other than a 401 has come and the body has all gone, or the exchange ends (#1315; design/proxy.md "A body the proxy must hold"): every other API request streams through `Upstream.relayRequest`, and its credential must be set in `prepare`, before any of the head leaves; `--debug` captures 64 KiB of each body as it passes, never more (design/proxy.md "API request bodies").
   Routing is global (which domains are intercepted never varies by account); only the credential inside the entry does, so a pinned instance gets its own `ToolProxyRouting` built by the pure `buildRouting(list, warn)`.
   Everything derived from the config -- its serialized tree (the one every selection resolves against: serialize once per read, never per request), default credentials and routing, tool setups, the per-namespace indexes, and the `credentialsBySelection`/`mismatchesByInstance` caches (the first also caching a dangling pin's `UnknownAccountException`, #891) -- is one immutable `ConfigState`, built eagerly by `useConfig()` (the single path for the `MitmProxy(..., ConfigFingerprint.Loaded)` constructor and `reload()`) and **replaced whole on every reload**.
   A late request writes only into the old state's caches, so a rotated token is never put back.
@@ -297,7 +297,7 @@ Key design:
   `InstancePrep` and `BranchFlow` pass the read they already made (for `ensureReady`, and the pre-start prefetch), so on the shell and branch paths the reconcile costs no request.
   `ClaudeSetup`/`PiSetup` `envEntries(params, selection)` and `GhSetup.install(c, params, selection)` all take the **template's** account, not the global default.
 - Three auth modes for Anthropic domains (priority: Vertex > OAuth > API key): OAuth mode strips `x-api-key` and injects `Authorization: Bearer <token>` for Claude Pro/Max users.
-  Vertex mode does three-way routing -- passthrough for Vertex-formatted requests, standard-to-Vertex translation for `/v1/messages` (`VertexBodyRewriter`: streaming, bounded memory, its departures from the old tree translation listed in DESIGN.md), and direct forwarding for non-messages endpoints.
+  Vertex mode does three-way routing -- passthrough for Vertex-formatted requests, standard-to-Vertex translation for `/v1/messages` (`VertexBodyRewriter`: streaming, bounded memory, its departures from the old tree translation listed in design/proxy.md), and direct forwarding for non-messages endpoints.
   A proven passthrough must be a Claude model call (`ClaudeOnVertex.projectPath`: `POST /v1/projects/<any>/locations/<any>/publishers/anthropic/models/<model>:{rawPredict,streamRawPredict}`, `count-tokens` being a model), which is moved into the account's own project and region, else `handleApiRequest` answers 403 before `retainVertexRequest` reads anything (#1921).
   Moved, never refused for its project: the guest's project and region are baked at build, and the instance may since be served another Vertex account.
   It keeps only the `alt` parameters of its query (`GeminiOnVertex.responseFormat`); an unproven one is forwarded as before, query and all.
@@ -360,7 +360,7 @@ Key design:
   `Upstream.copyRequestHeaders`, the head of `relayRequest`, of credentialed requests and of a cache fetch, drops the hop-by-hop headers and those the client names in `Connection:`, except `Content-Length` and `Expect`, which the relay reads to send the body (#1360); it runs before `prepare` injects anything, so a client cannot name an injected header away.
   `HostRouteRelay` and the WebSocket path build their own heads.
   Don't lower the upstream client's read-idle timeout instead: slow uploads get no bytes back
-- **Maven/Gradle cache integrity** (#555, DESIGN.md "Maven/Gradle cache integrity"): serve a cached artifact only when a direct fetch would have returned the same bytes at its last confirmation with upstream, and that confirmation is recent enough.
+- **Maven/Gradle cache integrity** (#555, design/proxy.md "Maven/Gradle cache integrity"): serve a cached artifact only when a direct fetch would have returned the same bytes at its last confirmation with upstream, and that confirmation is recent enough.
   **`ArtifactCacheTiers`** (`artifact-cache:` `fresh`, default 2h; `max-stale`, default 7d) decides from the stored checksum's mtime, which `VerifiedArtifactStore` sets on commit (to the commit's lookup time) and renews (best-effort, to the probe's time, never backwards) only on a match from an answer that could have evicted (`mayEvict`): fresh is served with no request, stale is served and confirmed in the background (single-flight, at most 16 in flight, the rest queued; a change evicts for the next request, an inconclusive answer expires the confirmation), older is **confirmed before serving**.
   `reconcile` takes the probe's time: an answer from a probe older than the stored checksum's mtime changes nothing (`Outcome.SUPERSEDED`, #1542); the foreground then serves the copy without the answer's checksum header, a sidecar request gets the copy's stored sidecar, else is asked upstream once more (`keptSidecar`; a 502 if that answer is superseded too), and a background confirmation does not expire it.
   `settleWithHeader` applies a sidecar answer only to the copy it was reconciled against: `reconcileCopy` returns the `FileState` it judged under the lock, and `storeSidecar`/`dropSidecar`/`isCopy` refuse any other, making the outcome `SUPERSEDED` (#1555).
@@ -451,10 +451,10 @@ Key design:
   A CLI writer gets them, built-ins included, from `ProxyConfig.bridgeDnsDomains(config)` or `configureBridgeDns(incus, config)`.
   Never add a writer that takes no domains: `isx init` once rewrote the block with the built-in ones alone after the proxy's reload, and builds got 401 from GitHub until the proxy restarted (#1354).
   `writeBridgeDns` refuses an empty set; `clearBridgeDns()` is the only way to remove the block.
-  On Linux the proxy points the block at the gateway it already resolved and listens on (`ProxyMain.Addresses`, whose writers startup uses and `MitmProxy` is handed for reloads; `--gateway-ip` sets it, and must be a unicast IPv4 address in canonical form or the proxy exits `EXIT_CONFIG`; DESIGN.md says why), never a second bridge lookup, which ignored the override and failed on a bridge with no address (#892).
+  On Linux the proxy points the block at the gateway it already resolved and listens on (`ProxyMain.Addresses`, whose writers startup uses and `MitmProxy` is handed for reloads; `--gateway-ip` sets it, and must be a unicast IPv4 address in canonical form or the proxy exits `EXIT_CONFIG`; design/network.md says why), never a second bridge lookup, which ignored the override and failed on a bridge with no address (#892).
   The proxy serves only where the CLI looks for it (`ProxyConfig.resolveGatewayIp()`), so a Linux `--gateway-ip` must equal the bridge's current gateway (`BridgeAddress.read()`, never the cached one) when Incus reports it, else `EXIT_CONFIG` (#933).
   With no bridge address to read it stands in for one (#892): it must equal the gateway `isx init` cached, if any (else `EXIT_CONFIG`), and be private (RFC 1918) or loopback, else exit 1 (#1022).
-  Never add a separate proxy address the CLI must learn; DESIGN.md names the rejected `proxy-gateway-ip` key and when it would be the path.
+  Never add a separate proxy address the CLI must learn; design/network.md names the rejected `proxy-gateway-ip` key and when it would be the path.
   On macOS it looks up the VM's own bridge, and `--gateway-ip`, the credential listener's bind address there, must equal the host's VM-bridge address (`VmNetwork.discoverHostBridgeIp()`) or the proxy exits `EXIT_CONFIG`.
   A wildcard or LAN address would serve the default accounts to other hosts (#937).
   A failed health probe with the block pointing at another address that the host no longer has but that still has a listener on the health port (`/proc/net/tcp{,6}`, since that address no longer answers) is `STALE_GATEWAY`, not `STALE_DNS`.
@@ -488,7 +488,7 @@ Key design:
   Fields are only added.
 - **The health server only reads** (`MitmProxy.healthRoute`): `GET` and `HEAD` only (405 otherwise), `/activity` and `/credential-proofs` a 404 for non-host callers whatever the method.
   It is the listener every container reaches: never add a write endpoint to it.
-- **The proxy holds no configuration of its own** (DESIGN.md, #935): routing is derived from host config and `user.incus-spawn.*` stamps, so restart and reload rebuild it.
+- **The proxy holds no configuration of its own** (design/proxy.md, #935): routing is derived from host config and `user.incus-spawn.*` stamps, so restart and reload rebuild it.
   A new capability is data in one of those stores with a no-inherit copy rule, written by `isx`, then a signal; any future proxy-side write is a stamp `PATCH` from an authenticated host-only surface, and every grant expires.
   Host callers only; a container gets a 404.
   `ProxyActivity` (`common`) is the CLI's reader of the same JSON -- `ApiActivityTest` pins the round trip.
@@ -503,5 +503,5 @@ Key design:
   The session file is the one file the proxy writes, under `ChatGptSessionStore`'s lock, and only to the session and generation a refresh started from; it never creates one.
   Whether ChatGPT's hosts are intercepted is `ChatGptAccounts.enabledBy`, the one decision the proxy and `ToolProxyResolver.resolvedDomains` (the CLI's DNS rewrites) share; a host route cannot clash with them, since its name must lie under `.internal`.
   A proven backend request streams through `Upstream.relayRequest` with `RelayHooks` (#1315), and a refused caller gets `CallerCheck`'s one registry refresh and retry.
-  See DESIGN.md "Codex ChatGPT sessions stay on the host".
+  See design/proxy.md "Codex ChatGPT sessions stay on the host".
 - `ISX_BENCH_UPSTREAM` reaches WebSockets too: Vert.x 4 ignores `setServer()` for them, so an overridden WebSocket is dialled to the override's address with `Host` set to the real name and no SNI.

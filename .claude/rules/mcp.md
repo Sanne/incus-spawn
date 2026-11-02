@@ -13,7 +13,7 @@ paths:
 # MCP server (`isx mcp`)
 
 `isx mcp` serves the Model Context Protocol over stdio so an agent on the host can use isx instances -- or, through the proxy, an agent in an instance branched with `--mcp-client`.
-DESIGN.md "MCP server: delegating work to isx instances" has the rationale; these are the invariants.
+design/mcp.md "MCP server: delegating work to isx instances" has the rationale; these are the invariants.
 Managed delegation supports Claude Code, Codex and Pi through the closed `DelegateAgent` registry.
 `list_templates.delegate_agents` exposes installed agents, capabilities and permissions; explicit `delegate.agent` selects one, otherwise Claude wins when installed, then Codex, then Pi.
 `send_message` keeps the task's recorded agent, including after adoption and idempotent replay.
@@ -84,7 +84,7 @@ A schema change must update the golden `cli/src/test/resources/mcp/output-schema
 Test hostile input in a real bash (`ExecScriptTest`, `TaskScriptsTest` run the generated scripts locally, the latter with stubs for `sudo`/`systemd-run`/`systemctl`/`su`/`claude`).
 
 **Lifecycles.**
-Session id is `<pid>-<start>` (`SessionId`; on Linux `/proc` starttime ticks, see DESIGN.md), or `instance:<name>:<grant>` for a coordinator instance (below), read only for liveness: an instance belongs to its `mcp-owner`.
+Session id is `<pid>-<start>` (`SessionId`; on Linux `/proc` starttime ticks, see design/mcp.md), or `instance:<name>:<grant>` for a coordinator instance (below), read only for liveness: an instance belongs to its `mcp-owner`.
 Names are reserved before the copy, as `mcp-<template>-<hint>-<suffix>` (`McpSession.reserve`): `create_instance` and `delegate(template)` take the same `name_hint`, validated there; a delegate without one is `task`, a create without one has no hint (#1242).
 `max-instances` counts the user's instances across sessions (`Orphans.othersOf`), and `max-concurrent-tasks` the user's busy tasks: this session's registry plus `TaskScripts.busy()` asked of each running instance another session holds or orphaned, or kept by a live one (`McpSession.taskInstancesElsewhere`; `InstanceBackend.running()` from the same listing), in parallel, nothing when there are none, recounted on every reservation, each task id once, named per instance in the refusal.
 An instance failing counts zero, and one silent past `Tasks.elsewhereTimeout`, or slower than half of it, is not asked for `elsewhereCooldown` and counts zero meanwhile (never a frozen earlier answer).

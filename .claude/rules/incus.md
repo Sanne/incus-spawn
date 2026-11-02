@@ -31,7 +31,7 @@ The flow then re-reads and rebuilds its `InstanceUpdate` under `IncusClient.retr
 Such a write is conditional whenever Incus sends an `ETag`, which it does on every instance GET and every transport keeps: a new removing flow reads with `readInstance` and retries the same way.
 `readInstance` turns a rejected read into a missing node, since Incus's error body carries `"metadata": null` (a `NullNode`), so a removal from an instance that cannot be read fails rather than writing nothing and succeeding.
 The transports keep the `ETag` header on `RawResponse`/`ApiResponse`; `FakeIncusDaemon` sends one and refuses a stale `If-Match`, and `writeAfterRead` stages a concurrent write.
-**`--proxy-only` is a host-side Incus network ACL** (`ProxyOnlyAcl`, #1137; DESIGN.md "Network Modes"): `isx-proxy-only` on the bridge NIC, egress default `drop`, ingress default `allow`.
+**`--proxy-only` is a host-side Incus network ACL** (`ProxyOnlyAcl`, #1137; design/network.md "Network Modes"): `isx-proxy-only` on the bridge NIC, egress default `drop`, ingress default `allow`.
 Never enforce it, or add to it, from inside the guest: root there can undo anything the guest holds, and the tests must exercise the boundary that actually holds.
 Incus accepts NIC ACLs only under its nftables firewall driver; anything else refuses proxy-only (preflight, and every start of an existing one through `prepareForStart`/`ensureReady`), never falls back.
 A new path that starts an instance for use goes through `prepareForStart`, or proxy-only instances from before #1137 start unrestricted, and airgapped ones start with any network device a profile gained since their branch (`AirgapGuard`, #1518).
@@ -58,7 +58,7 @@ A `KeepAliveConnection` keeps its one read-ahead for life, since bytes read past
 vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so a state directory whose path contains `#`, `?` or `%xx` would give the two different paths (the vsock `socketURL=` arguments have the same exposure).
 `vm.rest-uri` holds `unix://<path>`; `VfkitRest` still understands the `http://localhost:<port>` an older isx wrote, so a VM started before an upgrade is still asked to shut down rather than signalled.
 
-**macOS vsock robustness**: the vfkit vsock tunnel does not reliably propagate connection close/EOF, which drives several design choices (see DESIGN.md "macOS vsock robustness" and appliance/DESIGN.md):
+**macOS vsock robustness**: the vfkit vsock tunnel does not reliably propagate connection close/EOF, which drives several design choices (see design/macos-and-vms.md "macOS vsock robustness" and appliance/DESIGN.md):
 - **Exec completion via `/wait`, not close frames.**
   `IncusApi.execWebSocket` unifies capture/stream/bidirectional exec and takes the operation `/wait` endpoint (daemon operation state over HTTP) as the authoritative completion + exit-code signal, then drains and force-closes the data sockets -- so a lost close frame can't hang exec.
   Every exec fd is keepalive-pinged, stdin included (#1647).
@@ -72,7 +72,7 @@ vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so 
   `IncusApiLossyTunnelTest` pins all three.
 - **Bulk exec streams are framed large (#1643).**
   Stdin goes in frames of up to `IncusApi.STDIN_CHUNK` (64 KiB), each masked a word at a time and written in one write (`wsSendMasked`), and frames are parsed from a read-ahead that grows from 4 to 64 KiB once a read fills it or a frame wants more.
-  This is `isx ssh-proxy`'s scp throughput: `ExecRelayFramingTest` pins it, and DESIGN.md "A bulk exec stream is framed large and read ahead" has the figures.
+  This is `isx ssh-proxy`'s scp throughput: `ExecRelayFramingTest` pins it, and design/macos-and-vms.md "A bulk exec stream is framed large and read ahead" has the figures.
 - **Long-lived event subscription.**
   `IncusApi.openEvents(types)` (public via `IncusClient.openLifecycleEvents()`, returning `IncusEventStream`) is the one WebSocket meant to stay open indefinitely (the TUI's `InstanceEventWatcher`).
   Incus pings its event listeners about every 10s and drops those that never answer, so `readMessage()` answers PINGs with PONGs (`ControlFrames`) and reassembles fragmented frames (one JSON document per message).
@@ -159,7 +159,7 @@ Build containers that pin an account claim one too, for the length of the build 
 Their guest keeps DHCP, so their claim also skips the bridge's DHCP leases (`StaticIpAllocator.claim(..., alsoTaken, ...)`): dnsmasq will not hand out a reservation another MAC still has leased, typically the parent build's just-released address.
 `InstanceNetwork.requireBuildAddress` fails the build plainly if the guest got another address anyway.
 Tests that reach `claim()` through `configureBranch` or `assignBuildAddress` run under `@ExtendWith(TempHome.class)` so they never take the developer's real lock.
-See DESIGN.md "Static IP assignment".
+See design/instances.md "Static IP assignment".
 
 **Post-launch readiness**: every code path that freshly launches the VM must verify it actually booted — `startLocked()` only spawns the hypervisor process and cannot detect an immediate crash or a guest that fails to reach Incus.
 Callers use the `StartResult` enum to distinguish `LAUNCHED` (needs readiness wait) from `ALREADY_RUNNING` (VM process exists, no launch happened).
@@ -196,7 +196,7 @@ A CoW pool is **required** for instance creation and copying -- `requireCowPool(
 If the subvolume create fails, init and doctor's remediation fall back to a loop without compression (`CowPoolBacking.create`).
 Elsewhere it keeps the 100 GiB loop file with `btrfs.mount_options=user_subvol_rm_allowed,noatime,commit=300,compress=zstd:1`.
 `isx doctor` warns about a loop file on btrfs (linking the migration in `docs/dev/MIGRATIONS.md`, `CowPoolBacking.MIGRATION_NOTES`), offers the loop mount options, and offers a resize only for a loop file (a `.img` source, `CowPoolBacking.isLoopFile`).
-On a subvolume pool Incus's lazy `btrfs quota enable` covers the whole host filesystem, and any `btrfs.mount_options` remount the host filesystem, so isx sets none there; see DESIGN.md "How the pool is backed".
+On a subvolume pool Incus's lazy `btrfs quota enable` covers the whole host filesystem, and any `btrfs.mount_options` remount the host filesystem, so isx sets none there; see design/storage.md "How the pool is backed".
 
 **Default profile pool upgrade**: When Incus is set up before `isx init` (common on Ubuntu, where `incus admin init --minimal` creates a `default` dir pool), the default profile's root disk may point to the `dir` pool even after init creates a `cow` btrfs pool.
 `ensureDefaultProfile()` now detects this: after ensuring the profile has a root disk and NIC, `upgradeProfilePoolIfNeeded()` checks whether the existing root disk is on a non-CoW pool while a CoW pool is available, and updates it.
@@ -208,14 +208,14 @@ This only upgrades (non-CoW -> CoW), never downgrades.
 `BtrfsUsage.parse` places subvolumes with the same anchored parser, so rfer sizes and the orphan scan agree on names.
 All of it **fails open** when the pool cannot be listed.
 Do not reuse `BtrfsUsage.parse` for this: it drops subvolumes without a qgroup row.
-See DESIGN.md "Orphaned subvolumes and dangling records".
+See design/storage.md "Orphaned subvolumes and dangling records".
 
 **Request budgets**: each Incus round trip on the start/shell/branch path adds latency the user waits through.
 `InstanceLifecycleRequestBudgetTest` (and `ActionResolverRequestBudgetTest` for action contexts) pins exact request counts using `FakeIncusDaemon` (test scope, an in-memory `IncusTransport`, reachable from `cli` tests through common's test-jar).
 A change that adds requests to a covered flow fails it, and one that removes requests must lower the budget.
 `FakeIncusDaemon` serves no exec unless asked: `servesExecs()` and `execOutput(needle, stdout)` make each exec exit 0, recording its POST, a `WS` per fd and its wait, so a flow that runs commands in the guest can be counted too.
 Give a new user-facing flow in `common` a budget, and prefer one `instanceMetadata`/`configByPrefix` read over several `configGet` calls.
-See DESIGN.md "Request budgets".
+See design/testing.md "Request budgets".
 
 **Shell status bar** (`shell-status-bar` feature, `ShellStatusBar` + `EscapeSequenceParser`).
 With the flag off a shell must make no Incus request it did not make without the feature, so callers pass `ShellMenu.NONE` and resolve the F12 menu (`ActionResolver.shellMenu`, which itself returns `NONE` without a request when the flag is off) only when `ShellMenu.enabled()`.
@@ -227,12 +227,12 @@ The menu offers only `url` actions, run off the stdin thread.
 Menu actions run through `executeWithoutPrompting`, whose default refuses; F12 is intercepted only when the menu has actions.
 The TUI resolves its menu fresh (`ActionResolver.shellMenu`), not from its list cache.
 The input parser forwards everything that is not F12, a bare Esc at the end of a read immediately, swallows CSI and SS3 keys whole while the menu is open, and reports `consumed` so no byte after an event is lost.
-See DESIGN.md "Shell status bar".
+See design/instances.md "Shell status bar".
 
 **Batch instance writes**: every instance PATCH/PUT costs Incus a backup-file rewrite (~11-13 ms on btrfs).
 So a flow making several changes collects them in an `InstanceUpdate` and sends one `IncusClient.update()` against a single `instanceMetadata` read -- a PATCH, or one PUT only when a device the instance declares must be removed.
 `InstanceLifecycle.configureBranch` configures every new branch (CLI and TUI) this way in one write; add new pre-start branch settings there rather than as another write.
-See DESIGN.md "Why a branch is configured in one write".
+See design/instances.md "Why a branch is configured in one write".
 Every branch, from `isx branch` or the TUI, goes through `lifecycle/BranchFlow` (`preflight()` refuses before anything exists, `create()` copies, configures and starts).
 A front end supplies only its inputs and what follows (the shell), never its own copy of the steps -- the TUI's used to be one, and skipped the account selection and proxy refresh (#800).
 Defaults likewise: a null `Request` field means `BranchFlow.defaultsFor()`, which also fills the TUI dialog (#869); `Request.defaults()` (`isx mcp`) pins GUI off.
@@ -252,5 +252,5 @@ A file that must exist at boot (a container's `/etc/machine-id`, the static `.ne
 A VM on the current VM image takes its SMBIOS UUID, which Incus makes anew for every copy (#1483): the VM image keeps the file empty and never commits it, and the VM kernel keeps DMI (`appliance/kernel/vm.config`) so systemd can read the UUID.
 Builds still empty the file before their last stop (`MachineId.CLEAR_SCRIPT`), for a container whose push fails and for VM images that commit the ID.
 Never fix a VM's ID with a reboot at first start.
-Never write `uninitialized`: a first boot runs Fedora's full `preset-all`, which disables `systemd-networkd` and every other unit the image or template enabled (DESIGN.md "Branching").
-See DESIGN.md "Why nothing is pushed into an instance just before it starts".
+Never write `uninitialized`: a first boot runs Fedora's full `preset-all`, which disables `systemd-networkd` and every other unit the image or template enabled (design/instances.md "Branching").
+See design/instances.md "Why nothing is pushed into an instance just before it starts".

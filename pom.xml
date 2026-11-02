@@ -51,7 +51,7 @@
         <!--
           Keeps AESCrypt.makeSessionKey out of the test JVM's JIT: GraalVM 25's JIT sometimes
           gets an AES-256 key schedule wrong, and TLS tests fail with bad_record_mac (#940,
-          upstream: oracle/graal#14599, DESIGN.md "Testing"). A property rather than surefire
+          upstream: oracle/graal#14599, design/testing.md "Testing"). A property rather than surefire
           configuration, so the Quarkus plugin can still add its own test JVM arguments.
           JitWorkaroundTest pins it. The JVM launchers (install.sh, jbang-catalog.json) carry the
           same CompileCommand options for a GraalVM JDK (#1018); LauncherJitWorkaroundTest keeps them equal.
@@ -59,7 +59,7 @@
         <!--
           The oldest macOS the native binaries load on (#1086), linked in by the
           macos-deployment-target profile and checked on every release. Why it is set this way and
-          what else must move with it: DESIGN.md "The minimum macOS is set by the build".
+          what else must move with it: design/native-image.md "The minimum macOS is set by the build".
         -->
         <macos.deployment.target>15.0</macos.deployment.target>
         <macos.min.args/>

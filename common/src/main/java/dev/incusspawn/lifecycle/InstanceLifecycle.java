@@ -320,7 +320,7 @@ public final class InstanceLifecycle {
             // Asked before waiting for an address, which only re-deriving needs: an instance
             // that has its identity is just marked -- and stamped with the account's identity, so
             // a later change of account or token is still seen as one. Whose identity the guest
-            // holds is not something the check can tell (DESIGN.md).
+            // holds is not something the check can tell (design/accounts.md "An identity that was never baked is reconciled too").
             plan.unverified().forEach((namespace, account) -> {
                 var setup = setups.get(namespace);
                 if (setup == null) return;

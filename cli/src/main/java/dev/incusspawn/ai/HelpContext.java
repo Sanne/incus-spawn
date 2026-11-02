@@ -20,11 +20,15 @@ import java.util.stream.Collectors;
 
 public class HelpContext {
 
-    /** README.md, the docs/ pages isx.run publishes beside it, and DESIGN.md. Listed: a native image cannot list its resources. */
+    /** README.md, the docs/ pages isx.run publishes beside it, DESIGN.md and its design/ pages. Listed: a native image cannot list its resources. */
     static final List<String> HELP_RESOURCES = List.of("help/README.md",
             "help/docs/AGENTS.md", "help/docs/CLI.md", "help/docs/CONFIGURATION.md",
             "help/docs/CREDENTIAL-PROOFS.md", "help/docs/FAQ.md", "help/docs/FEDORA.md", "help/docs/INTEGRATIONS.md", "help/docs/MCP-PROTOCOL.md", "help/docs/MCP.md", "help/docs/SANDBOXES.md",
-            "help/docs/TEMPLATES.md", "help/docs/TOOLS.md", "help/docs/VISION.md", "help/DESIGN.md");
+            "help/docs/TEMPLATES.md", "help/docs/TOOLS.md", "help/docs/VISION.md", "help/DESIGN.md",
+            "help/design/accounts.md", "help/design/doctor.md", "help/design/git.md",
+            "help/design/host-resources.md", "help/design/instances.md", "help/design/macos-and-vms.md",
+            "help/design/mcp.md", "help/design/native-image.md", "help/design/network.md", "help/design/proxy.md",
+            "help/design/storage.md", "help/design/templates.md", "help/design/terminal.md", "help/design/testing.md");
     private static volatile String cachedBasePrompt;
 
     private static String basePrompt() {
@@ -71,9 +75,9 @@ public class HelpContext {
                 a line `Sources:` followed by one dash item per section it relies on, \
                 as a deep link like the ones above. Cite only headings that appear \
                 verbatim in the documentation files below. If no section supports the answer, write \
-                no `Sources:` line rather than guess one. DESIGN.md is not published, \
-                so cite it by file and heading instead, such as DESIGN.md \
-                "## Security Considerations". Never cite the tool and template \
+                no `Sources:` line rather than guess one. DESIGN.md and its design/ pages are not \
+                published, so cite them by file and heading instead, such as \
+                design/proxy.md "## Host routes". Never cite the tool and template \
                 definitions that may follow the documentation ("Available Tools", \
                 "Image Templates"): they have no page.
 

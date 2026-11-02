@@ -18,7 +18,7 @@ import java.util.function.Supplier;
 /**
  * Serves the names of {@code host-routes:} (#936): a request an instance sends to one is
  * forwarded over plain HTTP to the route's loopback target, a controller on this host, stamped
- * with who sent it. See DESIGN.md "Host routes".
+ * with who sent it. See design/proxy.md "Host routes".
  *
  * <p><b>Who may call.</b> An instance identified by its source address <em>and</em> the
  * per-start secret it presents ({@link InstanceSecret#HEADER}), as {@link InstanceRegistry#identify}

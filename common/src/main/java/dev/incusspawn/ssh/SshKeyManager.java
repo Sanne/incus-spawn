@@ -197,7 +197,7 @@ public final class SshKeyManager {
 
     /**
      * @param hostname optional address for the Hostname line, which Gateway resolves before it
-     *     runs the ProxyCommand but never dials (DESIGN.md "`Hostname` as a label")
+     *     runs the ProxyCommand but never dials (design/instances.md "`Hostname` as a label")
      */
     public static boolean addHostEntry(String instanceName, String hostname) {
         var isxPath = resolveIsxPath(); // a subprocess: not under the lock

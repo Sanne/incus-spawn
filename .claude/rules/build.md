@@ -122,7 +122,7 @@ Content comes from `AgentContextGenerator` (`common/config/`), a pure renderer t
 A location under `/home/agentuser` is never a link (all links share one owner and mode): it gets `agentuser`'s own copy.
 A link `ln` cannot make, across filesystems, falls back to a copy.
 Every build renames a new store into place and relinks every location; a recorded location (`/etc/isx/agent-instructions.paths`) no tool declares any more, and the three older builds wrote before the record (`AgentInstructions.LEGACY`), are removed when isx wrote them (a link to the store, or the `AgentContextGenerator.HEADING` first line).
-`AgentInstructionsTest` runs the script in a real shell; DESIGN.md "Agent Context File" lists what a hardlink needs.
+`AgentInstructionsTest` runs the script in a real shell; design/templates.md "Agent Context File" lists what a hardlink needs.
 A declared location must be one its tool never writes, since a write would reach every link.
 
 When the resolved tools include `gemini-cli`, the same content is copied to `~/.gemini/extensions/isx/GEMINI.md` and owned by `agentuser`.
@@ -233,7 +233,7 @@ Do not move a device attach after `start` (the inbox is attached pre-start too, 
 Mounts can create `/home/agentuser` before `useradd`, which is why user creation uses `AGENT_HOME_OWNERSHIP` rather than `chown -R`.
 Because mounts exist from first boot, `readonly`/`overlay` targets under system directories (`FORBIDDEN_MOUNT_ROOTS`) are rejected at build, validation and branch, but not at start (`requireAllowedMountTarget`).
 The overlay unit is ordered `After=incus-agent.service` so a VM's lower layers are mounted before it runs.
-See DESIGN.md "Devices are attached before start" and "Mounts may not target system directories".
+See design/host-resources.md "Devices are attached before start" and "Mounts may not target system directories".
 File-level resources (not directories) fall back to `copy` mode on VMs since disk devices only support directories.
 
 # Download Caching
@@ -244,7 +244,7 @@ A 429/500/502/503/504 or a failed or broken connection is retried four times fro
 A retry after a body broke off resumes it with `Range`/`If-Range` when the `200` had a strong validator and a length, appending only a `206` whose validator, `Content-Range` and length match (`Partial`, through `HttpValidator.strong` and `continues`, shared with the proxy's `CachingDownload`); a `416` or any other `206` starts over from 0 within the same attempt.
 `Listener.retrying()` lets `TransferProgress` reset its rate and show the retry; the next `received()` reports the offset it resumes from, which the rate does not count.
 Errors name the failing hop's host.
-`file://` goes only through `downloadAllowingLocalFile()`, which only base images use; see DESIGN.md "Host-side downloads reach only remote hosts".
+`file://` goes only through `downloadAllowingLocalFile()`, which only base images use; see design/host-resources.md "Host-side downloads reach only remote hosts".
 A `DownloadCache.Listener` observes a download (cache verification, bytes against `Content-Length`, checksum).
 Base images pass `BuildProgress.TransferProgress`, which the `runLiveStep` step's detail formats on each frame into percentage, size, rate and time left (`stepProgress(Supplier)`); the ✓ line then gives the size and time, or `cached`.
 The Incus import that follows is a separate spinner showing elapsed time.

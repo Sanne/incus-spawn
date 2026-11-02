@@ -10,7 +10,7 @@ import java.util.function.LongSupplier;
 
 /**
  * Asks for a second Ctrl+C before a running build is interrupted (#1415): a terminal can send
- * Ctrl+C for Ctrl+Shift+C, its copy shortcut (DESIGN.md "A running build takes two Ctrl+C").
+ * Ctrl+C for Ctrl+Shift+C, its copy shortcut (design/templates.md "A running build takes two Ctrl+C").
  * The second, within {@link #WINDOW}, goes to the handler that was there before.
  */
 final class BuildInterrupt implements SignalHandler {

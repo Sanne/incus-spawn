@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Starts a command as the leader of a new session, under the pid the caller gets: out of the
  * starting command's process group and off its terminal, so a hangup or a Ctrl+C there does not
- * reach it (DESIGN.md "The macOS VM outlives whatever started it", #971, #1425).
+ * reach it (design/macos-and-vms.md "The macOS VM outlives whatever started it", #971, #1425).
  * <p>
  * Java cannot call {@code setsid}. Linux has the {@code setsid} command, which execs the command in
  * its own place when it is not a process group leader, as a child of the JVM never is. macOS ships

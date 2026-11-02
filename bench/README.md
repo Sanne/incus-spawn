@@ -514,7 +514,7 @@ in them. `--restart-proxy` restarts the proxy service, so it is opt-in.
 
 The copy of the action's pre-launch command in the script is checked against
 `ClaudeSetup.actionCommand(":", ":")` by `BenchClaudeStartScriptTest`. Results go to `bench/results/claude/`.
-What the first measurement found is in DESIGN.md "Claude Code's first screen: where the wait
+What the first measurement found is in docs/dev/PERFORMANCE-NOTES.md "Claude Code's first screen: where the wait
 goes", with its data in [`data/claude-start-2026-10-23.json`](data/claude-start-2026-10-23.json).
 
 ## What One Incus Request Costs (`request-cost.sh`)
@@ -531,7 +531,7 @@ bench/request-cost.sh --write=isx-scratch    # also a settings write on a throwa
 Reads are timed on one kept-alive connection and again with a new connection per request
 (medians of 300 after 20 warmups). `--write` adds a `PATCH` that sets one `user.*` key (50
 timed after 20 warmups), and removes the key afterwards. Multiply a count from `trace-branch.sh` or a budget
-test by these figures to see what those requests cost; the macOS figures in DESIGN.md "CLI
+test by these figures to see what those requests cost; the macOS figures in docs/dev/PERFORMANCE-NOTES.md "CLI
 latency on macOS" come from this script. Nothing is saved: it prints.
 
 ## Where a Branch Spends Its Time (`trace-branch.sh`)
@@ -602,7 +602,7 @@ bench/vm-boot.sh tpl-minimal --isx --runs=5
 copies, never to the VM they are copied from. It is plain `incus`, Linux only, and needs
 `script(1)` (util-linux) for the console's terminal. A start that fails stops the run with its
 output, and so does a copy that has not answered exec after 300 s. What it found under nested KVM is in
-DESIGN.md "VM boot: where the wait goes".
+docs/dev/PERFORMANCE-NOTES.md "VM boot: where the wait goes".
 
 ## File Layout
 

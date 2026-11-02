@@ -1246,7 +1246,7 @@ public class InitCommand extends BaseCommand {
      * <p>
      * The marker comes before the install because {@code isx-proxy} exits
      * {@link ProxyService#EXIT_CONFIG} until init has completed, so a service installed ahead of
-     * it fails its first start and init reports a proxy that is not responding (#938; DESIGN.md
+     * it fails its first start and init reports a proxy that is not responding (#938; design/native-image.md
      * has the full account). It comes after the question so that an init abandoned at the prompt
      * is still run again. The services are optional: declining them leaves init complete.
      *

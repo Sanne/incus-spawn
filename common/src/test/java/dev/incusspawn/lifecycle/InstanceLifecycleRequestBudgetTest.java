@@ -36,7 +36,7 @@ import static org.mockito.Mockito.spy;
 /**
  * Pins how many Incus API round trips the flows behind {@code isx shell}, {@code isx branch}
  * and the TUI's start action cost. Each round trip is under a millisecond for a read and
- * about ten for a settings write, on Linux and over the macOS vsock tunnel alike (DESIGN.md
+ * about ten for a settings write, on Linux and over the macOS vsock tunnel alike (docs/dev/PERFORMANCE-NOTES.md
  * "CLI latency on macOS"), and they are paid in sequence before the user gets a prompt -- so a refactor that turns one GET into four is a latency regression even though
  * every functional test still passes.
  *

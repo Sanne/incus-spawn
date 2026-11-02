@@ -21,9 +21,9 @@ Resolved source associations are stamped at build for automatic remotes, with ho
 
 incus-spawn (`isx`) is a CLI tool for managing isolated Incus-based development environments.
 It creates full Linux system containers (not application containers) with copy-on-write branching, a MITM TLS proxy for credential isolation, and an interactive TUI.
-See README.md and the pages in `docs/` (published on isx.run beside it; maintainer notes are in `docs/dev/`) for user-facing docs, DESIGN.md for architecture rationale, and [docs/dev/CHARACTER.md](docs/dev/CHARACTER.md) for the project's mission and design philosophy.
+See README.md and the pages in `docs/` (published on isx.run beside it; maintainer notes are in `docs/dev/`) for user-facing docs, DESIGN.md and the `design/` pages it indexes for architecture rationale, and [docs/dev/CHARACTER.md](docs/dev/CHARACTER.md) for the project's mission and design philosophy.
 
-**Keep notes in the repository**: the machines this is developed on are wiped regularly, so anything worth remembering between sessions goes in a committed file (this one, `.claude/rules/`, DESIGN.md), never only in local agent memory.
+**Keep notes in the repository**: the machines this is developed on are wiped regularly, so anything worth remembering between sessions goes in a committed file (this one, `.claude/rules/`, a `design/` page), never only in local agent memory.
 Changes an existing host needs by hand, such as moving the CoW pool off a loop file, go in [docs/dev/MIGRATIONS.md](docs/dev/MIGRATIONS.md).
 
 **List every divergence from stock Fedora in [docs/FEDORA.md](docs/FEDORA.md)** (published as isx.run/docs/fedora), in the same change that makes it.
@@ -56,16 +56,18 @@ The same applies to a tool download added to `ToolDef` or a tool YAML, to the ap
 
 **Latency on the branch/start/shell path is never noise.**
 A container starts in well under a second, so a few milliseconds or a handful of redundant Incus round trips are a real share of the wait.
-A read costs well under a millisecond, on Linux and over the macOS vsock tunnel alike (DESIGN.md "CLI latency on macOS"); a settings write costs about 10 ms: 6-10 ms on macOS, 11-13 ms on Linux btrfs.
+A read costs well under a millisecond, on Linux and over the macOS vsock tunnel alike (docs/dev/PERFORMANCE-NOTES.md "CLI latency on macOS"); a settings write costs about 10 ms: 6-10 ms on macOS, 11-13 ms on Linux btrfs.
 When a flow repeats a read, fix it rather than weighing whether it is worth it.
 Pin the result in a request-budget test (such as `InstanceLifecycleRequestBudgetTest`), and trace it against a real Incus with `bench/trace-branch.sh`, since `FakeIncusDaemon` does not see what the proxy health check and refresh ask for.
 
-**Keep docs in sync**: When making architectural changes (new proxy capabilities, new tool types, new init steps, module structure changes, CI job changes, new intercepted domains, etc.), update both this file (and its `.claude/rules/` topic files) and DESIGN.md in the same PR.
-CLAUDE.md is the quick-reference for contributors; DESIGN.md is the full rationale.
+**Keep docs in sync**: When making architectural changes (new proxy capabilities, new tool types, new init steps, module structure changes, CI job changes, new intercepted domains, etc.), update both this file (and its `.claude/rules/` topic files) and the area's page under `design/` in the same PR.
+CLAUDE.md is the quick-reference for contributors; DESIGN.md indexes the full rationale, one `design/<area>.md` page per area, and lists each page's sections.
+A new page or a new top-level section is added to that index in the same change.
+Measurements go to `docs/dev/PERFORMANCE-NOTES.md`, and a design page cites them.
 Both must stay current.
 
 **Markdown source: one sentence per line, and short sentences** (#1243).
-This applies to README.md, `docs/*.md`, DESIGN.md, this file and `.claude/rules/`, so that a diff shows exactly which sentence changed.
+This applies to README.md, `docs/*.md`, DESIGN.md, `design/*.md`, this file and `.claude/rules/`, so that a diff shows exactly which sentence changed.
 A sentence never wraps, and a line never holds two sentences.
 In a list item, each sentence after the first goes on its own line, indented to the item's text; in a block quote, each line starts with `> `.
 Headings, tables (a row stays on one line), code, HTML and front matter are exempt.
@@ -146,7 +148,7 @@ Three Maven modules under a parent POM:
   `+aes` enables AES and PMULL, and GraalVM has no runtime CPU dispatch on aarch64, so it is a build-time choice.
   It drops no hardware the default ran on in practice: ARMv8.0 cores (Raspberry Pi 3/4) already fail `armv8.1-a`'s LSE check.
 
-**PGO**: release binaries are built with profiles collected in the same release run (#1637, DESIGN.md "Profile-guided optimization").
+**PGO**: release binaries are built with profiles collected in the same release run (#1637, design/native-image.md "Profile-guided optimization").
 `release.yml`'s `profiles` job builds both binaries instrumented (`-Dnative.pgo.instrument`), runs `bench/pgo-collect.sh` against a real Incus, and merges each binary's dumps into one profile (`scripts/pgo-merge.sh`).
 The build jobs apply them with `-Dnative.pgo=<dir>`, and `.github/scripts/check-pgo-quality.sh` fails a build whose binaries did not both take their profile above a floor.
 The Intel macOS build, on GraalVM 25.0, stays unprofiled.
@@ -170,11 +172,11 @@ Selection is always `<ns>=<account>`; never accept a bare account name, which wo
 Resolution **fails closed**: a pin to a missing account errors rather than serving the default.
 Every namespace, Claude included, follows one model (#773): a flat, pre-accounts credential *presents as the account `default`*, and writes always produce the accounts layout.
 What differs between namespaces is declared as an `AccountShape` (`ToolSetup.accountShape()`), never branched on by name.
-The proxy holds no configuration of its own (#935): what it routes and injects is derived from host config and these stamps, so a restart or reload rebuilds it, and a new per-instance capability is a no-inherit stamp `isx` writes, never proxy memory (DESIGN.md "The proxy holds no configuration of its own").
+The proxy holds no configuration of its own (#935): what it routes and injects is derived from host config and these stamps, so a restart or reload rebuilds it, and a new per-instance capability is a no-inherit stamp `isx` writes, never proxy memory (design/proxy.md "The proxy holds no configuration of its own").
 The proxy identifies the caller by source address (static IP + `security.ipv4_filtering`, which is load-bearing, not optional hardening).
 A per-start secret (`InstanceSecret`, #934) adds a second check for host-side services: `InstanceRegistry.identify()` wants address *and* secret.
 On macOS, behind the same gate as a proof, a non-host caller at an unknown address is the running instance whose secret it presents (#1583).
-Its consumers are `isx mcp` for a coordinator in an instance and the host routes of `config.yaml` (`host-routes:`, #936), which forward a name to a loopback controller with the caller's identity stamped by the proxy and a per-route secret the controller checks, which no guest ever holds (`HostRouteSecret`, DESIGN.md "Host routes").
+Its consumers are `isx mcp` for a coordinator in an instance and the host routes of `config.yaml` (`host-routes:`, #936), which forward a name to a loopback controller with the caller's identity stamped by the proxy and a per-route secret the controller checks, which no guest ever holds (`HostRouteSecret`, design/proxy.md "Host routes").
 Only its hash is recorded on the host, and every isx start rotates it, for one PATCH on a stopped start and none on a branch (`InstanceLifecycle.startForUse`).
 Rotating and delivering it are serialized per instance across isx processes by a `HostLock` (`InstanceLifecycle.secretLock`, #1065), and one that waited re-checks rather than rotating again.
 A container start, a branch's included, then records its boot (`last_used_at`, read once the guest answers and handed on to the CA check, so the stamp's write is the one request it adds), so `ensureReady` replaces a secret lost to a reboot isx did not do at no cost on the shell path.
@@ -205,11 +207,11 @@ The helper reads the current proof file per request, including outside login she
 A placeholder token in the guest is read when the tool runs, never fixed by a build (#1108): where a tool reads a file instead of its variable, a login script in `/etc/profile.d/isx-zz-*` rewrites the file from the variable.
 An isx running inside an instance shares that instance's grant for a namespace only when its account there is the reserved `inherit` (#1110): its proxy swaps the instance's proofs for the parent's, derived from `/run/isx/credential-secret` (`InheritedProof`).
 An `openai` account may be `type: chatgpt` (#1332, experimental, proxy side only so far): the ChatGPT session stays on the host, guests hold proof-bearing look-alikes, and `ChatGptRoute` serves an explicit allowlist of Codex operations.
-See `.claude/rules/proxy.md` and DESIGN.md.
+See `.claude/rules/proxy.md`, design/proxy.md and design/accounts.md.
 
 **Host trust** (#1437): isx's own HTTPS, CLI and proxy upstream alike, trusts the host's system CA bundle through `SystemTrust`.
 On macOS it adds what an administrator trusts for SSL in the Keychain's admin domain and drops what one denied, from every source, refusing a chain that holds it (`MacKeychainTrust`, #1467; `DeniedChainTrustManager`, #1552); the user's own domain counts for its denies alone.
-See DESIGN.md "Host trust on macOS: the admin domain only".
+See design/proxy.md "Host trust on macOS: the admin domain only".
 
 **Host CA propagation** is opt-in via `host-ca: { propagate: true }` in `config.yaml`.
 When enabled, `CertificateAuthority.collectTrustAnchors()` collects the MITM CA and host anchors from `/etc/pki/ca-trust/source/anchors/` into one trust set, each keyed by SHA-256 fingerprint (`isx-<fp>.crt`).
@@ -228,7 +230,7 @@ Flow tests drive them with `ScriptedPrompts` under `@ExtendWith(IsolatedHome.cla
 Secrets go through `askSecret()` and are shown only via `maskSecret()`, which never reveals more than a third of one.
 The question is shown by the same `Prompts` (`ask`, `say`; `BaseCommand.askYesNo` for yes or no), at the step indent, so `ScriptedPrompts.conversation()` sees what a flow asks; what it reports between questions goes through `BuildOutput` (#1703).
 A new prompt follows the same shape and gets a flow test.
-See `.claude/rules/commands.md` and DESIGN.md "Testing".
+See `.claude/rules/commands.md` and design/testing.md "Testing".
 
 **Never print straight to stdout/stderr: all output goes through one seam (#1703).**
 While the TUI renders it owns the terminal, so a raw `System.out`/`System.err` line is drawn over and lost, and scrambles the screen.
@@ -241,7 +243,7 @@ Shared code the TUI runs while it draws (`lifecycle/`, `incus/`) takes an `Outpu
 It counts a logger, `Thread.dumpStack()` and reflection on `System` as raw stream use, and lets only named files hand a child process the terminal or open `/dev/tty`.
 Code that hands the terminal over or draws on it whole takes the streams from `TerminalStreams`, and only the files the test names may.
 Tests assert on `RecordingOutput`'s typed events (common test-jar), never on a swapped stream; `StreamSwapGateTest` names the few that may swap, each with why.
-The bindings and every kind of message are in `.claude/rules/terminal-output.md`; the rationale is DESIGN.md "One output seam".
+The bindings and every kind of message are in `.claude/rules/terminal-output.md`; the rationale is design/terminal.md "One output seam".
 
 **Output a script reads is a contract.**
 `--format=plain|json` (on `isx list` and every other query command, and `isx branch`) goes through `OutputFormat` (`common/util`): one ordered map per record feeds both formats.
@@ -253,7 +255,7 @@ No value writes a control character raw (`plain` spaces them through `OutputForm
 `isx list` from the CLI costs one Incus request and loads no definitions.
 Commands that act need only clean stdout: `BuildOutput.ansi()` is the one gate for colour and hyperlinks (nothing off an ANSI terminal or under `NO_COLOR`; it follows stdout, not stderr), and its warnings and notes go to stderr.
 A status report goes to stdout in every state, its exit code saying which (#1037).
-See `.claude/rules/commands.md` and DESIGN.md "Output for scripts".
+See `.claude/rules/commands.md` and design/terminal.md "Output for scripts".
 
 **YAML tool downloads:** `ToolDef` download entries may set `extract`, `destination_file`, or both.
 Downloads are cached on the host, then either extracted into the target, copied to the exact destination path, or processed both ways.
@@ -265,7 +267,7 @@ So a new credential becomes known to every secret-aware consumer by being declar
 A declared leaf also holds anywhere under its namespace, which is what covers `claude.accounts.<name>.apiKey`.
 `SecretRedactor` owns the other half -- what a credential *looks like*: the whole-word key-name backstop for undeclared keys (`SpawnConfig.getExtras()`, a typed namespace's and its accounts'), the token-shape patterns, and the `<isx:redacted:<path>>` marker.
 `isx doctor --bundle` (`SupportBundle`) is the first consumer: the config is redacted structurally, every other file is scrubbed, and `SupportBundle.add()` is the only way into the archive so a new collector cannot leak by forgetting.
-See DESIGN.md "Support bundles: redaction by construction" and `.claude/rules/config.md`.
+See design/doctor.md "Support bundles: redaction by construction" and `.claude/rules/config.md`.
 
 **Project-local definitions are untrusted.**
 `.incus-spawn/` is whatever a cloned repository ships, so project-local templates get only what stays inside their project (#765).
@@ -275,7 +277,7 @@ Their repos never get host checkout mounts or host-side clones.
 Their `gui: true` is never a branch default (GUI hands over the host's GPU and its Wayland and audio sockets; `--gui` still can).
 For every definition, `DownloadCache.download()` is `http(s)`-only and refuses loopback and link-local hosts on every redirect hop, and no `prime` runs while any host checkout is mounted.
 A new capability that reaches host state outside the project needs the same gate.
-See DESIGN.md "Project-local templates are confined to their project" and `.claude/rules/config.md`.
+See design/host-resources.md "Project-local templates are confined to their project" and `.claude/rules/config.md`.
 
 **`isx mcp` gives a local agent a narrow slice of isx.**
 It serves MCP over stdio (hand-rolled JSON-RPC in `cli/.../mcp/`: the Quarkus MCP extension cost every isx command ~1.7 ms at startup).
@@ -297,7 +299,7 @@ Such a coordinator may use only the templates in both `mcp.yaml`'s `templates:` 
 The proxy serves it `https://mcp.isx.internal/mcp` (`McpBridge`, Streamable HTTP) after checking address, per-start secret and the `mcp-caller` stamp, bridged to a host `isx mcp --caller-instance <name>` whose session is the instance itself.
 No copy inherits the stamp and the MCP path refuses it.
 Every start registers the server in that instance's Claude Code and Pi, or removes it from one without the stamp, inside the exec that delivers the secret (`McpClientRegistration`, #1182), so a copy loses it on its first start.
-See `.claude/rules/mcp.md` and DESIGN.md "MCP server".
+See `.claude/rules/mcp.md` and design/mcp.md "MCP server".
 Managed delegation selects `claude`, `codex` or `pi`, exposes installed agents through `list_templates.delegate_agents`, and persists the selected agent with each task.
 See [MCP delegation to Codex workers](docs/dev/MCP-CODEX-DELEGATION.md) for recovery, policy differences, and validation, and [MCP delegation to Pi workers](docs/dev/MCP-PI-DELEGATION.md) for what differs for Pi.
 Every worker runs with full access inside its instance and no turn limit (Claude `bypassPermissions`, Codex `danger-full-access`, Pi every tool; `DelegateAgent.permissionMode`, #1857): the instance is the boundary, so no agent is refused for policy.
@@ -311,20 +313,20 @@ The `mcp.yaml` keys that once narrowed them still load, have no effect and are n
 `isx list`'s `OWNER` column folds in `isx mcp`'s standing, and its formats append `owner` and `owner_id`.
 An orchestrator with hooks (Orca) needs no isx code: `integrations/orca/isx-orca-recipe` speaks its recipe contract over those commands, with `jq` (`OrcaRecipeScriptTest`, `docs/INTEGRATIONS.md`).
 An orchestrator with no hooks (herdr) is served by a tool's host half instead: a built-in `HostIntegration` keyed on the tool being in the instance's build, which registers the instance on its first start and removes it on destroy, never for a project-local or untrusted build (`.claude/rules/tools-env.md`).
-See `.claude/rules/commands.md` and DESIGN.md "External orchestrators: owners, start, stop and destroy".
+See `.claude/rules/commands.md` and design/mcp.md "External orchestrators: owners, start, stop and destroy".
 
 **Native image: host paths belong in the run-time-initialized classes.**
 Quarkus initializes application classes at image-build time unless they are listed in `--initialize-at-run-time`, and Linux native builds run as **root inside the GraalVM builder container**.
-So a field holding an `Environment` path bakes the builder's `/root/...` into the binary (that regression shipped: see DESIGN.md "Build-time initialization must not capture host paths").
+So a field holding an `Environment` path bakes the builder's `/root/...` into the binary (that regression shipped: see design/native-image.md "Build-time initialization must not capture host paths").
 Eagerly resolved host state goes in `RuntimeConstants` (`common`) or `RuntimeServices` (`cli`), both on the flag; everywhere else call the `Environment` method instead of storing its result.
 The flag is declared once per module, in its `resources-filtered/application.properties`.
 Pom profiles add platform arguments through placeholders the list includes and never redefine the list itself (#489).
-`macos.min.args` is how every macOS build gets its minimum macOS (DESIGN.md "The minimum macOS is set by the build").
+`macos.min.args` is how every macOS build gets its minimum macOS (design/native-image.md "The minimum macOS is set by the build").
 `NativeImageInitializationTest` fails if a list stops deferring a class or registering a guard, or a pom redefines it, and `graal/BakedHostStateFeature` fails the native build if such a path reaches the image heap.
 
 **A regular expression is a `static final Pattern`** (#1929).
 `Pattern.compile`, and with it every `String.matches`, `replaceAll`, `replaceFirst` and regex `split`, costs a compile per call; a constant compiles once, at build time in the native image.
-`PatternConstantGateTest` enforces it; a pattern only known at run time says why with a `// regex at run time:` comment (DESIGN.md "Regular expressions are compiled once").
+`PatternConstantGateTest` enforces it; a pattern only known at run time says why with a `// regex at run time:` comment (design/native-image.md "Regular expressions are compiled once").
 
 **The platform role is the OS's, and no released binary can be switched (#1800).**
 On macOS the proxy identifies a caller by its credential proof without the Linux address check, so a Linux isx in macOS's role would drop that check.

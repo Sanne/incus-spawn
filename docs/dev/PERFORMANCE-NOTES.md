@@ -54,7 +54,7 @@ Earlier notes recorded cached artifact serving as capping at ~70 MB/s regardless
 concurrency, and guessed at `serveCachedFile`'s disk streaming. That was wrong. The native
 image was built with GraalVM's default `-march=x86-64-v3`, which excludes AES and CLMUL, so
 TLS bulk encryption ran as software AES. Building with `-march=haswell` took the same code
-from 73 MB/s to 960 MB/s — see DESIGN.md "Native image CPU baseline".
+from 73 MB/s to 960 MB/s — see design/native-image.md "Native image CPU baseline".
 
 A profile of the fixed build shows nothing left to chase on this path: the single event loop
 is idle more than half the time while serving over 1 GB/s, and its working time is socket
@@ -299,7 +299,7 @@ and the MCP bridge are not among them.
 
 ### Phase 3, release wiring (2026-10-25)
 
-`release.yml` collects and applies the profiles (DESIGN.md "Profile-guided optimization").
+`release.yml` collects and applies the profiles (design/native-image.md "Profile-guided optimization").
 Its `profiles` job and the Linux amd64 build were first reproduced on the host above, from templates not yet built.
 Collection, merge and the two profiled builds took 10.5 minutes.
 
@@ -521,3 +521,201 @@ The short ssh connection is flat because it is dominated by the exec setup in In
    seconds" would likely be the most compelling number on the page, and it is not measured.
 4. **Comparison baseline** — every figure here is absolute. A landing page needs a reference
    point (a plain forward proxy? no proxy at all?) for any of it to land.
+
+## CLI latency baseline: native vs JVM
+
+Measured with `bench/cli.sh` at 7d3389b on an AMD Ryzen 9 9950X3D2 (16 cores), Fedora 44, kernel 7.2.6, Incus 6.23 over the local Unix socket on a btrfs pool, with the native CLI built by GraalVM 25.4.
+Medians of 20 runs after 2 warmups:
+
+| Operation | Native | JVM | JVM / native |
+|---|---|---|---|
+| `isx --help` (process start only) | 2.8 ms | 195 ms | 70x |
+| `isx instances` (connect + one listing) | 6.4 ms | 268 ms | 42x |
+| `isx account show` (two instance reads) | 4.5 ms | 258 ms | 57x |
+| preparation before `isx shell` attaches | 53 ms | 773 ms | 15x |
+
+Single samples, indicative only: branch 350 ms, first start 223 ms, destroy of a running instance 846 ms.
+
+What it shows:
+
+- **Native is what makes the CLI feel instant.**
+  The JVM costs roughly 200 ms at startup and another ~580 ms running the shell preparation, all of it cold code that a short-lived process never gets to warm up.
+  Native does the same preparation in ~50 ms.
+- **Incus round trips are cheap locally**: `instances` costs ~3.6 ms above bare startup, and a single request well under a millisecond.
+  The request budgets are still worth having -- round trips run in sequence before the user gets a prompt -- but a few extra reads do not show up as user-visible latency.
+  The same holds over the macOS vsock tunnel (see "CLI latency on macOS" below).
+- **The host-side preparation is not where users wait.**
+  It takes ~50 ms, below the ~100 ms at which a delay becomes noticeable.
+
+These figures stop short of what users actually wait through, and both commands feel slow in practice.
+The `prepareRunning` figure ends before the terminal attaches: it leaves out the terminfo push, the exec session, and the login shell (or tmux, zmx or the default action) starting inside the instance.
+The branch figure is `--no-start`, so it leaves out the start, runtime setup, CA and `resolv.conf` repair, the account-identity reconcile (which polls the instance until it answers) and the shell attach.
+`bench/cli.sh` has since gained `shellToPrompt` and `branchToPrompt`, which measure to a usable prompt; this Linux baseline predates them.
+
+## CLI latency on macOS: the vsock tunnel is not where the time goes
+
+On macOS every Incus request crosses the vfkit vsock tunnel into the appliance VM, and until
+#803 nobody had measured what that costs. The worry was that a branch's ~40 requests, cheap
+over a local socket, would dominate there.
+They do not.
+
+Measured with `bench/cli.sh --runtime=native` on 2026-10-10, with the build of the change that added this section, on an Apple M6 (12 cores, 16 GB), macOS 27.0.1, vfkit 0.6.4, appliance 0.3.11 (Incus 6.21, kernel 7.2.9, 2 vCPUs, btrfs pool), with the native CLI built by Oracle GraalVM 25.4.
+Medians of 20 runs after 2 warmups (3 runs for the branch); the figure is the middle one of three passes, with the range the three covered.
+Passes the day before, on an older appliance, were within a tenth of these, except that `isx shell` reached its prompt later (82-96 ms):
+
+| Operation | macOS, native | Linux baseline, native |
+|---|---|---|
+| `isx --help` (process start only) | 5.3 ms (5.3-5.7) | 2.8 ms |
+| `isx list -q` (connect + one listing) | 7.9 ms (7.8-8.1) | 6.4 ms |
+| `isx account show` (instance reads only) | 10.2 ms (10.2-10.5) | 4.5 ms |
+| preparation before `isx shell` attaches | 30 ms (30-31) | 53 ms |
+| `isx shell` to a usable prompt | 79 ms (75-79) | not in the baseline |
+| `isx branch --shell` to a usable prompt | 372 ms (372-402) | not in the baseline |
+
+Single samples, indicative only: branch (`--no-start`) 58-75 ms, first start 122-170 ms, destroy of a running instance 653-668 ms.
+The two columns are different machines, different Incus versions and different numbers of instances in the listing, and the Linux listing was `isx instances`, which `isx list -q` has since replaced.
+They show the order of magnitude and nothing finer.
+
+What it shows:
+
+- **A request over the tunnel costs well under a millisecond, as on Linux.**
+  `bench/request-cost.sh` times plain HTTP requests on the appliance's socket, with no isx involved.
+  On one kept-alive connection: `GET /1.0` 0.13-0.14 ms, one instance 0.30-0.39 ms, the instance listing 0.43-0.47 ms, the bridge 0.70-0.82 ms (medians of 300, three sessions).
+  Opening a new connection and reading one instance takes 0.46-0.52 ms.
+  `GET /1.0` does almost nothing in the daemon, so the tunnel's own share of a round trip is about a tenth of a millisecond.
+- **Request count does not dominate `isx branch` on macOS.**
+  `bench/trace-branch.sh` counted 41-42 requests before the prompt.
+  Their cost is an estimate, the count times the 0.3-0.8 ms above, not a figure the trace gives: 12-34 ms of a ~400 ms branch.
+  The rest is the same work as on Linux.
+  Over six traces: 160-200 ms inside the first exec (the setup script running in the new instance), 42-52 ms starting it, 21-51 ms creating it, and about 30 ms each for process start and connect, for the gap before the shell's exec, and for the shell reaching its prompt.
+- **The preparation before `isx shell` stays below the ~100 ms at which a delay becomes noticeable**: 30 ms.
+  The whole of `isx shell`, to a prompt that accepts a command, is under it too.
+- **What costs on macOS is what costs on Linux: a write, not a read.**
+  In the traces a branch's settings write takes 6-10 ms, from the daemon logging the `PATCH` to its `UpdateInstanceBackupFile finished` (the backup file itself is the last millisecond of that).
+  Repeated on an idle, stopped instance (`bench/request-cost.sh --write`), the same kind of write takes 3.3-3.5 ms: an order of magnitude more than a read either way.
+  So the argument for configuring a branch in one write (below) is the same on both platforms, and trimming reads would gain no more on a Mac than on Linux.
+- **`isx account show` is slower than its reads explain, and the tunnel is not why.**
+  It costs 5 ms above process start here, against 1.7 ms in the Linux baseline.
+  With the daemon's request log beside it: the connect, `GET /1.0` and the first instance read are over 2.3 ms after start (`isx account show` on a name that does not exist, which stops there, takes 6.9 ms against 4.6 ms for `--help` in the same session).
+  The other ~2.6 ms come after: isx loading `config.yaml` and working out the accounts, with two more instance reads at 0.3-0.4 ms each.
+  The command made two reads when the Linux baseline was taken and makes three now, so the two columns do not measure the same code.
+  Why the host-side part takes about 2 ms on this Mac was not looked into further.
+
+The request budgets keep their purpose: a count is deterministic where a wall clock is not.
+What changes is one of the reasons given for them.
+"Far more expensive on macOS" was an assumption; measured, it is not so on this hardware and this vfkit.
+
+## Claude Code's first screen: where the wait goes
+
+For a template whose default action is Claude Code, the wait a user feels ends at Claude's first screen, not at a shell prompt, so `bench/cli.sh` (which keeps the default action out with `--shell`) did not measure it (#802).
+`bench/claude-start.sh` does, and splits it.
+
+Measured on 2026-10-23 with the native CLI from the change that added this section, on an AMD Ryzen 9 9950X3D2 (16 cores), Fedora 44, kernel 7.2.11, Incus 6.23.
+That Incus ran nested inside an isx instance, with the `validate-on-real-incus` skill's measurement-only patches, and Claude's traffic crossed two isx proxies, the inner one a JVM build.
+The template was `tpl-minimal` plus the `claude` tool (Claude Code 2.1.309).
+The ranges are the medians of two passes: 10 runs each after a warmup, and 3 branches each with none, in [`bench/data/claude-start-2026-10-23.json`](../../bench/data/claude-start-2026-10-23.json) with the experiments below:
+
+| What | Median |
+|---|---|
+| `isx branch` to Claude's first screen | 1259-1613 ms |
+| `isx branch --shell` to a usable prompt | 700-730 ms |
+| `isx run` on a running instance, to Claude's first screen | 391-405 ms |
+| `isx shell` on the same instance, to a usable prompt | 147-163 ms |
+| the action's pre-launch `find`/`grep`, the instance's own history | 1.4-1.7 ms |
+| the same over 300 synthetic sessions (900 transcripts) | 5.2-5.6 ms |
+| `claude --version` in the instance | 5.0-5.2 ms |
+
+What it shows:
+
+- **The pre-launch scan of the session history is not where users wait.**
+  It costs 1-2 ms with an empty history, about 6 ms with 300 sessions and 12 ms with 1000, against a first screen of ~400 ms.
+  Most of it is process start-up for the pipeline, and it was left as it is.
+- **Node start-up is not it either.**
+  `claude --version` takes 5 ms, so it answers without loading Claude's application, and cannot stand for Node's share.
+  Claude's own start on a running instance is the difference between the two `isx` figures, about 245 ms.
+- **Claude's first run in each instance waits on the network.**
+  The first start in a fresh instance takes 675-810 ms against ~390 ms for the next ones, after the shell has been warmed (a first `isx shell` costs about 80 ms more than later ones).
+  It is not the binary's page cache: reading the 280 MB binary first took 31 ms and changed nothing.
+  The first run writes `policy-limits.json` and `remote-settings.json` under `~/.claude`.
+  With `api.anthropic.com` made unreachable before that first run, every start waited about 5.4 s for the first screen; made unreachable after it, starts stayed at ~390 ms.
+  So the fetch that writes them is on the first screen's path until it has succeeded once.
+  Here it crosses two proxies; on a host it crosses one, so this share is smaller there.
+- **A proxy restart costs little.**
+  The first Claude start after one took 435 ms against ~390 ms for the later ones.
+  The proxy pre-mints and stores the intercepted domains' certificates on disk (`InterceptedCertOptions`), so a restart does not mint them again; what is left is the proxy's own warm-up.
+
+Claude's first-run fetch is made with the instance's credential, so its answer belongs to an account.
+Caching it in a template is therefore not the obvious fix it looks like: a template outlives an account switch, and builds scrub temporary credential state, Claude's included, before publication.
+It is recorded here rather than changed.
+
+## VM boot: where the wait goes
+
+A container answers exec in well under a second; a VM from `tpl-isx-agent-vm` took about 11 s on Sanne's host (#1238).
+Almost none of that is isx: it is firmware, the guest's boot, and Incus noticing the agent.
+`bench/vm-boot.sh` splits it, with the host's clock on the serial console and on Incus's answers, and the guest's own clock for what happens inside it.
+
+Measured on 2026-10-10 with `bench/vm-boot.sh` inside an isx VM, so **under nested KVM** (AMD Ryzen 9 9950X3D2, Incus 6.23, btrfs pool, 8 vCPUs and 4 GiB unless stated), copying a stopped VM of base image `fedora-44-20261009`.
+Nesting inflates every exit to the hypervisor, so these figures rank the phases and the effect of each change; they are not what a VM on bare metal waits:
+
+| Phase | Nested KVM | Clock |
+|---|---|---|
+| Firmware until shim (OVMF, Secure Boot) | 25 s; 37 s with 30 vCPUs; 5 s with Secure Boot off, at 8 or 30 | host |
+| GRUB loading kernel and initrd | ~3-4 s | host, guest |
+| Guest `systemd-analyze` (kernel, initrd, userspace), image as released | ~19 s | guest |
+| Start request until Incus's `GET /state` reports the agent connected, image as released | 49.4 s | host |
+| That, until an exec answers (probed every 50 ms) | 0.06-0.11 s | host |
+
+The time between `incus-agent` becoming active and Incus reporting it connected is not in the table: the first is read from the guest's clock, which was a few tenths of a second off the host's, as much as that gap.
+
+What it shows:
+
+- **The Secure Boot firmware is the largest block, and its cost grows with the vCPU count.**
+  With `security.secureboot` on, Incus boots `OVMF_CODE.secboot.fd`, which needs SMM; every SMM entry is expensive under nesting, and OVMF enters it per vCPU.
+  With it off, the firmware takes ~5 s at 8 or 30 vCPUs.
+  On Sanne's host, one level of virtualization, #1238 measured ~4.3 s from the request to the guest kernel starting, copy and QEMU start included, so there Secure Boot costs at most that.
+- **The kernel's console output was the next largest.**
+  The released image boots with `console=tty1 console=ttyS0` at the default log level, ~125 KB per boot through an emulated UART and framebuffer.
+  incus-spawn-images#19 (a draft; it reaches users only with an image release and the `minimal.yaml` bump that follows) proposes `loglevel=5`, set for every kernel in `/etc/kernel/cmdline`.
+  Built locally, it cut start-to-exec from 49.5 s to 41.3 s and `systemd-analyze` from 19.4 s to 12.1 s (three alternating runs each).
+  The console then shows warnings, errors and panics, ~300 bytes on a normal boot, and systemd's status lines, which are not kernel messages, so `VmAgentFailure` still finds `Failed to start incus-agent.service`.
+  `quiet` caps the kernel's console at level 4, which drops its warnings too, and turns systemd's status lines off until a unit fails or stalls; measured against `loglevel=4`, that second part was worth ~0.8 s.
+  The SELinux avc denials `VmAgentFailure` also matches (#842) are notices and no longer reach the console, so a report would quote the failure but not that cause; the image pins SELinux off, which is what keeps that case from happening.
+- **The initrd is not worth trimming.**
+  Dropping `fips`, `tpm2-tss`, `memstrack`, `i18n`, `kernel-modules-extra` and others took it from 34 MB to 28 MB with no measurable change.
+  A host-only initrd is not an option anyway: the image is built in a chroot on a CI runner, whose hardware a host-only dracut would detect.
+- **Memory slows the kernel, vCPUs slow the firmware.** 12 GiB instead of 4 added ~1.7 s of kernel time (memory zone setup).
+  30 vCPUs instead of 8 added ~12 s of firmware, all of it SMM, which turning Secure Boot off removes.
+  The VM in #1238 had 32 vCPUs and 15 GiB (isx's default VM memory is a quarter of host RAM, up to 16 GiB).
+- **isx's own polling can add at most a quarter of a second, by its code.**
+  Exec answered 0.06-0.11 s after Incus reported the agent connected, with the script probing every 50 ms.
+  `waitForReady` reads the same report every 250 ms (`VM_POLL_INTERVAL_MS`) and probes with exec in the pass that sees it, so what it adds is the delay in noticing, up to that interval.
+  This was read from the code, not measured through isx.
+
+Not measured: a VM on bare metal (one level of virtualization, as on Sanne's host) and VMs inside the macOS appliance (aarch64 firmware has no SMM, so the Secure Boot finding is x86-only).
+
+What was decided (Sanne, 2026-10-10, on #1240):
+
+- **Secure Boot is off for every VM.**
+  It guards the guest's boot chain against tampering from inside the guest, which is not what an isx VM is for.
+  The agent in it has root anyway, and the isolation isx stands for is the VM boundary and the proxy, which this leaves alone.
+  VM builds set `security.secureboot=false` in the one write `InstanceLifecycle.prepareVmBuild` makes, `InstanceLifecycle.configureBranch` sets it on every VM branch in the write it already makes, and `startForUse` (`isx shell`, `isx run`, the TUI, MCP) on a VM that still has it on, in the write that rotates its secret.
+  None of these adds a request.
+  `isx project create` sets it on its copy of the parent with one write of its own, off the latency path.
+  Other starts of an existing VM -- template updates, agent recovery -- leave it as it is: a template built before this keeps Secure Boot until it is rebuilt, though its branches never get it.
+- **A VM's default vCPU count is capped at 8, and on a hybrid host at its top tier** (Sanne's choice "C" on #1240).
+  `ResourceLimits.defaultVmCpus()` is `max(1, min(8, host CPUs - 2))` on a host with one tier of cores, and `max(1, min(8, host CPUs - 2, top-tier physical cores))` on a hybrid one (`CpuInfo.hybridTopTierCores()`, read once per process).
+  A host whose tiers cannot be told apart follows the first rule.
+  A 16-core, 32-thread desktop gets 8 instead of 30, a 4-core, 8-thread host 6 and a 4-core host without SMT 2, as before #1238, an i7-12700H (6 P-cores, 8 E-cores, 20 threads) 6 instead of 18, and an i9-13900K (8 P-cores, 32 threads) 8.
+  It is a default, not a ceiling: `--cpu` still sets any count.
+  A host is hybrid when its online CPUs fall into more than one tier; the top tier's cores are then counted with a core's SMT threads once.
+  On Linux the tier comes from the first source that tells CPUs apart: the hybrid PMU's list of performance CPUs (`/sys/devices/cpu_core/cpus`), which Intel 12th-14th gen hybrids with Hyper-Threading need because intel_pstate leaves every `cpu_capacity` at 1024 there, and Arrow Lake, whose E-cores reach about 80% of its P-cores by every other measure; then `cpu_capacity` where it differs (ARM big.LITTLE, Intel hybrids without SMT); then `cpufreq/cpuinfo_max_freq` where it differs (AMD Zen 5 + Zen 5c hybrids, which have neither).
+  With the last two, the top tier is every CPU within 80% of the highest: favoured cores and a dual-CCD X3D's slower CCD stay one tier (so such a host is not hybrid), and a three-tier ARM SoC's top tier is its prime cores.
+  A physical core is the set of CPUs in its `topology/core_cpus_list` (`thread_siblings_list` before 5.3), not its package and core id.
+  On device-tree Arm with Linux 6.x, `core_id` restarts in every cluster and the package is 0 throughout, so an RK3588's four A76 cores would count as two.
+  Anything that leaves the tier in doubt makes it unknown, which choice C maps to the one-tier rule: an unreadable capacity, a capacity on some CPUs but not others, a top-tier CPU without a core list.
+  CPU detection stops here for #1238: hardware nobody can test here degrades to the one-tier rule.
+  The same scan feeds `performanceCores()`, so clone concurrency on such hybrids now counts only their top tier's threads (an i7-12700H: 12 of 20).
+  On macOS a host is hybrid when `hw.nperflevels` is above 1, and its top tier is `hw.perflevel0.logicalcpu`, which equals the physical count on performance cores; both come from one `sysctl`, and a failed read is not kept.
+- **Of the services #1238 listed, only `dnf-makecache.timer` is masked** (incus-spawn-images, `configure-base.sh`, container and VM alike).
+  The LVM units have a user in a nested Incus with an LVM pool, and `upower` and `rtkit-daemon` come from templates, rtkit for GUI audio.
+- **Resuming a VM from a stateful snapshot is deferred**; it would need its own design.

@@ -13,7 +13,7 @@ paths:
 **No `System.out`/`System.err` while the TUI renders** (see CLAUDE.md): anything a TUI action calls reports through a sink the TUI routes to its warning log.
 Code running after the runner has closed (the `pendingAction` switch, e.g. `ShellLaunch.shellInto`) prints through `BuildOutput`, which the TUI binds to a copying terminal there; the shell's auth-error title goes through `BuildOutput.windowTitle` (#1703).
 
-**The screen is cleared before the first frame and on Ctrl+L** (#1681, DESIGN.md "Terminals the TUI cannot assume").
+**The screen is cleared before the first frame and on Ctrl+L** (#1681, design/terminal.md "Terminals the TUI cannot assume").
 Open runners through `Tui.openRunner`, never `TuiRunner.create`; `TuiScreenClearTest` checks `openRunner` and Ctrl+L, not that the TUI calls it.
 
 **`TuiTheme` holds no RGB colours**, only named ANSI colours and `Color.indexed` entries (#1681); `TuiThemeTest` fails on one.
@@ -45,7 +45,7 @@ Of these, only `Tui.run` (for `IncusSpawn`) and `InstanceDetailView.mcpDetailRow
 `ListingLoader` loads what the TUI shows (`reloadData`, `mergeInstances`, the disk model and its accounting checks, the pool gauge, the proxy and appliance status) and writes the rows into `Tui`, which keeps the selection and the live refresh.
 `isx list` is `ListCommand`, which prints the listing and never opens the TUI; both parse the Incus listing through `InstanceListing`.
 Two-panel layout (Templates + Instances) with modal dialogs for branching, renaming, and building.
-The runner's backend is `LegacyKeyboardBackend`, never a bare `PanamaBackend`: it keeps keys in their legacy encoding when a program left the kitty keyboard protocol or `modifyOtherKeys` on, so Esc and Ctrl+C still close a dialog (`KeyboardProtocol`, DESIGN.md "Keys are read in their legacy encoding").
+The runner's backend is `LegacyKeyboardBackend`, never a bare `PanamaBackend`: it keeps keys in their legacy encoding when a program left the kitty keyboard protocol or `modifyOtherKeys` on, so Esc and Ctrl+C still close a dialog (`KeyboardProtocol`, design/terminal.md "Keys are read in their legacy encoding").
 An unknown key is never Shift+Tab (`ShiftTabBindings.isShiftTab` is Tab with Shift alone).
 
 **Staying current (live refresh).**
@@ -107,7 +107,7 @@ A mark must not move anything (Sanne, #1482).
 The key bar has no room left at 80 columns, so `Space Mark` is hinted at the end of both tables' context lines.
 The count of marks comes after it, so a mark only adds to the end of the line.
 The F1 dialog (versions and keyboard shortcuts) is `AboutModal` (`AboutModalTest`): what it says about the build and the host comes through its `Source`, and it hands Esc and `?` (AI Help) back to `Tui`.
-**A digit is its F-key, and Alt+digit Shift with it** (#1824, DESIGN.md "Keyboards without F-keys"): `DigitKeys.asFunctionKey` translates once in `Tui.handleEvent`, after the search bar and before the mode dispatch, so a handler checks only `KeyCode.F<n>`.
+**A digit is its F-key, and Alt+digit Shift with it** (#1824, design/terminal.md "Keyboards without F-keys"): `DigitKeys.asFunctionKey` translates once in `Tui.handleEvent`, after the search bar and before the mode dispatch, so a handler checks only `KeyCode.F<n>`.
 A mode that reads digits itself (a text field, the build menu's numbered options) is `Mode(true)`; a new mode must choose.
 The key bar draws each F-key's digit bold, the context line ends with `DigitKeys.RULE` only when it fits whole (`MainScreen.withDigitRule`), and `AboutModal` lists both forms of every key (`TuiDigitKeysTest`).
 The F9 actions dialog is `ActionsMenu` (`ActionsMenuTest`): it owns the list, the selection and its rendering, and hands Enter back, so `Tui` checks the instance still exists and runs the selected action through `dispatchAction`.

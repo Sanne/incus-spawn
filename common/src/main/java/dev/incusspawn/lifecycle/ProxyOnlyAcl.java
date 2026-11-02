@@ -58,7 +58,7 @@ public final class ProxyOnlyAcl {
      * {@code ping} of the gateway.
      *
      * <p>The proxy's listening port is allowed too: with bridge netfilter on (Docker, Kubernetes),
-     * the host's redirect of 443 to it runs before the ACL's chains (#1503, DESIGN.md).
+     * the host's redirect of 443 to it runs before the ACL's chains (#1503, design/network.md).
      */
     static List<Map<String, String>> egressRules(String gateway) {
         var ports = ProxyConfig.CONTAINER_FACING_PORT + "," + ProxyConfig.DEFAULT_MITM_PORT + ","

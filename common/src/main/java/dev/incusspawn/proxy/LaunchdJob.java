@@ -10,7 +10,7 @@ import java.nio.file.Path;
  * A loaded job is restarted in place with {@code kickstart -k}; only a changed plist is unloaded
  * and loaded again, and then not before launchd has finished removing the old job. A restart
  * has worked when {@code launchctl} said so and the job is running, not when {@code print} can
- * still find it. DESIGN.md says why: {@code bootout} returns while the job is still being torn
+ * still find it. design/native-image.md says why: {@code bootout} returns while the job is still being torn
  * down, and until it is gone {@code bootstrap} fails although {@code print} succeeds (#916).
  * <p>
  * {@code kickstart -k} honours the plist's {@code ThrottleInterval}: asked to restart a job

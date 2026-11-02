@@ -237,7 +237,7 @@ public final class VmManager {
     /**
      * The appliance runs under vfkit on macOS, and nowhere else: on Linux isx drives the host's
      * own Incus. The QEMU backend this once had was unreachable from every released isx and was
-     * removed (#1695); DESIGN.md "A Linux appliance mode" says where to find it.
+     * removed (#1695); design/macos-and-vms.md "A Linux appliance mode" says where to find it.
      */
     private static void requireMacOs() {
         if (!Platform.isMacOS()) {

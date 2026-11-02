@@ -90,7 +90,7 @@
             <artifactId>nativeimage</artifactId>
             <scope>provided</scope>
         </dependency>
-        <!-- jjq for YAML and JSON (DESIGN.md "jjq rather than Jackson"). -->
+        <!-- jjq for YAML and JSON (design/native-image.md "jjq rather than Jackson"). -->
         <dependency>
             <groupId>io.hyperfoil.tools</groupId>
             <artifactId>jjq-yaml</artifactId>
