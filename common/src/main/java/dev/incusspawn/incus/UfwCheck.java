@@ -10,6 +10,7 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 public final class UfwCheck {
 
@@ -18,6 +19,9 @@ public final class UfwCheck {
     public static final String MARKER_NAT_END = "# END incus-spawn-nat";
     static final String MARKER_FWD_BEGIN = "# BEGIN incus-spawn-forward";
     static final String MARKER_FWD_END = "# END incus-spawn-forward";
+    /** A line that is exactly {@code *filter} or {@code COMMIT}, trailing blanks aside: never a comment naming it. */
+    static final Pattern FILTER_LINE = Pattern.compile("^\\*filter[ \\t\\r]*$", Pattern.MULTILINE);
+    static final Pattern COMMIT_LINE = Pattern.compile("^COMMIT[ \\t\\r]*$", Pattern.MULTILINE);
 
     private UfwCheck() {}
 
@@ -125,7 +129,7 @@ public final class UfwCheck {
     }
 
     public static boolean hasForwardRules(String beforeRulesContent) {
-        if (!hasForwardBlock(beforeRulesContent)) return false;
+        if (!hasForwardBlock(beforeRulesContent) || forwardBlockMisplaced(beforeRulesContent)) return false;
         var block = extractBlock(beforeRulesContent, MARKER_FWD_BEGIN, MARKER_FWD_END);
         return block.contains("-i incusbr0") && block.contains("-o incusbr0");
     }
@@ -176,7 +180,7 @@ public final class UfwCheck {
             return replaceBlock(existingContent, MARKER_NAT_BEGIN, MARKER_NAT_END, natBlock);
         }
         // Insert before the first *filter line
-        int filterIdx = existingContent.indexOf("*filter");
+        int filterIdx = lineIndex(existingContent, FILTER_LINE, 0);
         if (filterIdx < 0) {
             return existingContent + "\n" + natBlock + "\n";
         }
@@ -187,14 +191,18 @@ public final class UfwCheck {
 
     public static String insertFilterRules(String existingContent, String filterInsert) {
         if (hasForwardBlock(existingContent)) {
-            return replaceBlock(existingContent, MARKER_FWD_BEGIN, MARKER_FWD_END, filterInsert);
+            if (!forwardBlockMisplaced(existingContent)) {
+                return replaceBlock(existingContent, MARKER_FWD_BEGIN, MARKER_FWD_END, filterInsert);
+            }
+            // Written into a line by an older isx (#1932): take it out, which also rejoins that line
+            existingContent = removeBlock(existingContent, MARKER_FWD_BEGIN, MARKER_FWD_END);
         }
-        // Insert before the first COMMIT in the *filter section
-        int filterIdx = existingContent.indexOf("*filter");
+        // Insert before the COMMIT line of the *filter section, never a comment naming it
+        int filterIdx = lineIndex(existingContent, FILTER_LINE, 0);
         if (filterIdx < 0) {
             return existingContent + "\n" + filterInsert + "\n";
         }
-        int commitIdx = existingContent.indexOf("COMMIT", filterIdx);
+        int commitIdx = lineIndex(existingContent, COMMIT_LINE, filterIdx);
         if (commitIdx < 0) {
             return existingContent + "\n" + filterInsert + "\n";
         }
@@ -204,6 +212,18 @@ public final class UfwCheck {
     }
 
     // ---- Helpers ----
+
+    /** Where a line {@code line} matches starts, at or after {@code from}. */
+    static int lineIndex(String content, Pattern line, int from) {
+        var matcher = line.matcher(content);
+        return matcher.find(from) ? matcher.start() : -1;
+    }
+
+    /** A forward block that does not start its own line, as {@code isx init} once wrote into ufw's stock comment. */
+    private static boolean forwardBlockMisplaced(String content) {
+        int start = content.indexOf(MARKER_FWD_BEGIN);
+        return start > 0 && content.charAt(start - 1) != '\n';
+    }
 
     static String extractBlock(String content, String beginMarker, String endMarker) {
         int start = content.indexOf(beginMarker);
