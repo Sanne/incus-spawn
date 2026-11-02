@@ -116,6 +116,33 @@ class GitPreparationTest {
         assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
     }
 
+    @Execution(CONCURRENT) @Test void remoteRefsReadEarlyFetchNothingAndAreUsedOnce() throws Exception {
+        start();
+        var url = server.url(remote);
+        // Discarded, as when the guest's access check is denied: nothing fetched, its lease released.
+        preparation.readRemote(url, s -> {}).close();
+        assertFalse(Files.exists(cache.resolve("snapshots")) && !PreparationGit.children(cache.resolve("snapshots")).isEmpty());
+        assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
+
+        var other = preparation.readRemote(url, s -> {});
+        assertThrows(IOException.class, () -> preparation.prepare(
+                new GitPreparation.Request(url + "-other", null, null), other, s -> {}), "refs read for another URL");
+        assertEquals(List.of(), PreparationGit.children(cache.resolve("work")), "a refused handoff releases its lease");
+
+        try (var first = preparation.prepare(new GitPreparation.Request(url, null, null), preparation.readRemote(url, s -> {}), s -> {})) {
+            assertEquals("new clean snapshot", first.strategy());
+            assertTrue(first.timingsMillis().containsKey("remote"));
+        }
+        var refs = preparation.readRemote(url, s -> {});
+        try (var second = preparation.prepare(new GitPreparation.Request(url, null, null), refs, s -> {})) {
+            assertEquals("cached clean snapshot", second.strategy());
+            refs.close(); // the snapshot's reader owns the lease now
+            assertTrue(Files.isDirectory(second.repository()));
+            assertThrows(IOException.class, () -> preparation.prepare(new GitPreparation.Request(url, null, null), refs, s -> {}));
+        }
+        assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
+    }
+
     @Execution(CONCURRENT) @Test void anUnchangedRemoteWithAnotherRefEndingInHeadIsACacheHit() throws Exception {
         // ls-remote's HEAD pattern also matches refs/remotes/origin/HEAD, which mirrors advertise.
         git(remote, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/heads/stable");
