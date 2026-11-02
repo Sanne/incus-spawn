@@ -169,7 +169,7 @@ public class UpdateBaseCommand extends BaseCommand {
         BuildOutput.stepStart("Fetching checksums for " + selected.tag());
         var checksums = releases.fetchChecksums(selected, current.getImageUrl(), current.getVmImageUrl());
         if (checksums == null) {
-            BuildOutput.stepFail("No readable SHA256SUMS in release " + selected.tag() + ".");
+            BuildOutput.stepFail("No readable SHA256SUMS.v2 or SHA256SUMS in release " + selected.tag() + ".");
             return CommandResult.valueOf(1);
         }
         // A pin is used on any host it is copied to: an arch it has no checksum for would
