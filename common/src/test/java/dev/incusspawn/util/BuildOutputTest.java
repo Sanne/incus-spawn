@@ -249,8 +249,7 @@ class BuildOutputTest {
         BuildOutput.forceAnsi = true;
         BuildOutput.stepStart("Installing mx");
         BuildOutput.stepProgress("verifying: mx version");
-        Thread.sleep(200);
-        assertTrue(BuildOutput.stripAnsi(text()).contains("Installing mx  verifying: mx version"));
+        awaitScreen("Installing mx  verifying: mx version");
         BuildOutput.stepDone();
         assertEquals("    ✓ Installing mx", lastLines().getLast(), "the detail is gone once done");
     }
