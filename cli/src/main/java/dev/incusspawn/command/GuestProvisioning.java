@@ -260,12 +260,16 @@ public class GuestProvisioning {
 
     /**
      * Run the non-package setup steps for each tool (scripts, files, env, verify).
+     * The group opens with a note for each tool {@code resolution} added only because others
+     * require it, so the note sits in the section it describes (#1935).
      */
-    static void runToolSetup(Container container, List<ResolvedTool> tools,
+    static void runToolSetup(Container container, ToolResolution resolution,
                               Map<String, String> accountSelection) {
+        var tools = resolution.effective();
         if (tools.isEmpty()) return;
         var names = tools.stream().map(ResolvedTool::name).toList();
         try (var group = BuildOutput.group("Tools", String.join(", ", names))) {
+            for (var added : resolution.autoAdded()) BuildOutput.note(added.note());
             for (var resolved : tools) {
                 if (resolved.reconfigureOnly()) {
                     resolved.setup().reconfigure(container, resolved.parameters());

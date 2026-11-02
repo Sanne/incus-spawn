@@ -5,7 +5,6 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
-import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
 
 import java.util.ArrayList;
@@ -46,18 +45,40 @@ public final class BuildTools {
         }
     }
 
+    /**
+     * {@code autoAdded}: each dependency this build sets up only because other tools require it,
+     * for the Tools group to report (#1935). Resolution itself prints nothing.
+     */
     record ToolResolution(
         List<ResolvedTool> effective,
-        List<ResolvedTool> ancestors
-    ) {}
+        List<ResolvedTool> ancestors,
+        List<AutoAdded> autoAdded
+    ) {
+        /** Nothing auto-added: for tests. */
+        ToolResolution(List<ResolvedTool> effective, List<ResolvedTool> ancestors) {
+            this(effective, ancestors, List.of());
+        }
+    }
+
+    /** A tool added implicitly, with the tools that require it, in resolution order. */
+    record AutoAdded(String tool, List<String> requiredBy) {
+        /** "Adding the sshd tool automatically: the herdr and orca tools require it". */
+        String note() {
+            var n = requiredBy.size();
+            var dependents = n == 1 ? requiredBy.getFirst()
+                    : String.join(", ", requiredBy.subList(0, n - 1)) + " and " + requiredBy.getLast();
+            return "Adding the " + tool + " tool automatically: the " + dependents
+                    + (n == 1 ? " tool requires it" : " tools require it");
+        }
+    }
 
     static List<ResolvedTool> resolveTools(ImageDef imageDef, ToolDefLoader toolDefLoader, boolean quiet) {
         return resolveTools(imageDef, toolDefLoader, List.of(), quiet);
     }
 
     /**
-     * {@code quiet} silences the warnings. Auto-added dependencies are never announced here:
-     * only {@link #collectEffectiveTools} does, once per build.
+     * {@code quiet} silences the warnings. Auto-added dependencies are never reported here:
+     * only {@link #collectEffectiveTools} returns them, once per build.
      */
     static List<ResolvedTool> resolveTools(ImageDef imageDef, ToolDefLoader toolDefLoader,
                                                       Iterable<ToolSetup> cdiTools, boolean quiet) {
@@ -85,24 +106,25 @@ public final class BuildTools {
     }
 
     /**
-     * One note per dependency added implicitly, naming every tool that required it, so a
+     * One entry per dependency added implicitly, naming every tool that required it, so a
      * dependency shared by several tools is reported once. Only a dependency this build sets up
-     * ({@code effective}, a reconfigure of an ancestor's included) is announced: not one that did
+     * ({@code effective}, a reconfigure of an ancestor's included) is reported: not one that did
      * not resolve (unknown or feature-gated: already warned about) or that an ancestor template
      * installed as is. Packages the build installs anyway do not matter: the tool is still added
-     * and its setup still runs. The note names only the dependents this build sets up, unless
+     * and its setup still runs. The entry names only the dependents this build sets up, unless
      * none is (then all of them, so it still says why).
      */
-    private static void noteAutoAdded(Map<String, LinkedHashSet<String>> autoAdded,
-                                      List<ResolvedTool> effective) {
+    private static List<AutoAdded> autoAdded(Map<String, LinkedHashSet<String>> autoAdded,
+                                             List<ResolvedTool> effective) {
         var names = new HashSet<String>();
         for (var tool : effective) names.add(tool.name());
+        var result = new ArrayList<AutoAdded>();
         autoAdded.forEach((dep, dependents) -> {
             if (!names.contains(dep)) return;
             var setUp = dependents.stream().filter(names::contains).toList();
-            BuildOutput.note("Auto-adding dependency: " + dep
-                + " (required by " + String.join(", ", setUp.isEmpty() ? dependents : setUp) + ")");
+            result.add(new AutoAdded(dep, setUp.isEmpty() ? List.copyOf(dependents) : setUp));
         });
+        return List.copyOf(result);
     }
 
     /**
@@ -299,7 +321,7 @@ public final class BuildTools {
 
         var ancestorTools = new ArrayList<>(ancestorToolsMap.values());
         if (tools.isEmpty()) {
-            return new ToolResolution(tools, ancestorTools);
+            return new ToolResolution(tools, ancestorTools, List.of());
         }
 
         var effective = new ArrayList<ResolvedTool>();
@@ -346,7 +368,6 @@ public final class BuildTools {
                 }
             }
         }
-        noteAutoAdded(autoAdded, effective);
-        return new ToolResolution(effective, ancestorTools);
+        return new ToolResolution(effective, ancestorTools, autoAdded(autoAdded, effective));
     }
 }

@@ -461,7 +461,9 @@ YAML cannot set that flag, and an expanded `$HOME` and a literal `$HOME` count a
 **Transitive dependency resolution** (`requires`): Tools can declare dependencies on other tools.
 During build, `resolveWithDeps()` performs a recursive depth-first traversal to build the full dependency graph.
 Circular dependencies are detected and reported.
-Auto-added dependencies are logged once each, naming every tool that requires them: "Auto-adding dependency: sshd (required by herdr, orca)".
+Auto-added dependencies are reported once each, naming every tool that requires them: "Adding the sshd tool automatically: the herdr and orca tools require it".
+Resolution only returns them (`ToolResolution.autoAdded`), and the Tools group prints the note as its first line, so it sits in the section it describes (#1935).
+Printed during resolution, it landed after whatever step ran last and before the Packages group.
 A required tool that cannot be found is warned about, and one a parent template already installed is inherited; neither is announced as added.
 A `requires` entry that sets parameters other than a parent's, all of them reconfigurable, sets the tool up again, so it is announced; one without parameters keeps the parent's installation.
 Its note names only the dependents this build sets up, or all of them when it sets up none.

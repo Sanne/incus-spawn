@@ -639,8 +639,33 @@ class BuildToolsTest {
         var child = new ImageDef();
         child.setTools(List.of(new ToolDef.ToolRef("herdr"), new ToolDef.ToolRef("orca")));
         var herdr = tool("herdr", List.of(), List.of("sshd"));
-        assertEquals(List.of("Auto-adding dependency: sshd (required by herdr, orca)"),
+        assertEquals(List.of("Adding the sshd tool automatically: the herdr and orca tools require it"),
                 autoAddNotes(new ImageDef(), child, SSHD, herdr, ORCA));
+    }
+
+    /**
+     * Resolution prints nothing: the note belongs to the Tools group, which renders it (#1935).
+     * Printed here, it landed after whatever step ran last and before the Packages group.
+     */
+    @Test
+    void resolvingADependencyPrintsNothing() {
+        var child = new ImageDef();
+        child.setTools(List.of(new ToolDef.ToolRef("orca")));
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("sshd")).thenReturn(SSHD);
+        when(toolDefLoader.find("orca")).thenReturn(ORCA);
+        child.setName("tpl-child");
+        var recorded = RecordingOutput.during(() ->
+                BuildTools.collectEffectiveTools(child, Map.of("tpl-child", child), toolDefLoader, List.of()));
+        assertEquals(List.of(), recorded.events());
+    }
+
+    @Test
+    void theNoteNamesEachDefinitionAsATool() {
+        assertEquals("Adding the sshd tool automatically: the herdr tool requires it",
+                new BuildTools.AutoAdded("sshd", List.of("herdr")).note());
+        assertEquals("Adding the sshd tool automatically: the herdr, orca and pi tools require it",
+                new BuildTools.AutoAdded("sshd", List.of("herdr", "orca", "pi")).note());
     }
 
     @Test
@@ -664,13 +689,10 @@ class BuildToolsTest {
         child.setTools(List.of(new ToolDef.ToolRef("orca")));
 
         var defs = Map.of("tpl-parent", parent, "tpl-child", child);
-        var recorded = RecordingOutput.during(() -> {
-            var result = BuildTools.collectEffectiveTools(child, defs, toolDefLoader, List.of());
-            assertEquals(List.of("git", "orca"), result.effective().stream().map(t -> t.name()).toList());
-        });
-        var notes = recorded.events(RecordingOutput.Kind.NOTE).stream()
-                .map(e -> e.msg()).toList();
-        assertEquals(List.of("Auto-adding dependency: git (required by orca)"), notes,
+        var result = BuildTools.collectEffectiveTools(child, defs, toolDefLoader, List.of());
+        assertEquals(List.of("git", "orca"), result.effective().stream().map(t -> t.name()).toList());
+        var notes = result.autoAdded().stream().map(BuildTools.AutoAdded::note).toList();
+        assertEquals(List.of("Adding the git tool automatically: the orca tool requires it"), notes,
             "sshd is inherited from tpl-parent, so only git is added");
     }
 
@@ -688,7 +710,7 @@ class BuildToolsTest {
                 new ToolDef.ToolRef("orca")));
         var child = new ImageDef();
         child.setTools(List.of(new ToolDef.ToolRef("orca"), new ToolDef.ToolRef("headroom")));
-        assertEquals(List.of("Auto-adding dependency: sshd (required by headroom)"),
+        assertEquals(List.of("Adding the sshd tool automatically: the headroom tool requires it"),
                 autoAddNotes(parent, child, sshd, orca, headroom));
     }
 
@@ -701,7 +723,7 @@ class BuildToolsTest {
                 new ToolDef.ToolRef("orca")));
         var child = new ImageDef();
         child.setTools(List.of(new ToolDef.ToolRef("orca")));
-        assertEquals(List.of("Auto-adding dependency: sshd (required by orca)"),
+        assertEquals(List.of("Adding the sshd tool automatically: the orca tool requires it"),
                 autoAddNotes(parent, child, toolWithModel("sshd", true), orca));
     }
 
@@ -713,8 +735,8 @@ class BuildToolsTest {
         var git = tool("git", List.of(), List.of("sshd"));
         var child = new ImageDef();
         child.setTools(List.of(new ToolDef.ToolRef("herdr")));
-        assertEquals(List.of("Auto-adding dependency: sshd (required by herdr)",
-                        "Auto-adding dependency: git (required by sshd)"),
+        assertEquals(List.of("Adding the sshd tool automatically: the herdr tool requires it",
+                        "Adding the git tool automatically: the sshd tool requires it"),
                 autoAddNotes(new ImageDef(), child, herdr, sshd, git));
     }
 
@@ -727,7 +749,7 @@ class BuildToolsTest {
         };
     }
 
-    /** The notes {@code collectEffectiveTools} prints for {@code child} (parent: {@code tpl-parent}). */
+    /** The notes the Tools group shows for what {@code collectEffectiveTools} auto-adds to {@code child} (parent: {@code tpl-parent}). */
     private static List<String> autoAddNotes(ImageDef parent, ImageDef child, ToolSetup... tools) {
         var toolDefLoader = mock(ToolDefLoader.class);
         for (var tool : tools) when(toolDefLoader.find(tool.name())).thenReturn(tool);
@@ -735,10 +757,8 @@ class BuildToolsTest {
         child.setName("tpl-child");
         child.setParent("tpl-parent");
         var defs = Map.of("tpl-parent", parent, "tpl-child", child);
-        var recorded = RecordingOutput.during(() ->
-                BuildTools.collectEffectiveTools(child, defs, toolDefLoader, List.of()));
-        return recorded.events(RecordingOutput.Kind.NOTE).stream()
-                .map(e -> e.msg()).toList();
+        return BuildTools.collectEffectiveTools(child, defs, toolDefLoader, List.of()).autoAdded().stream()
+                .map(BuildTools.AutoAdded::note).toList();
     }
 
     private static final ToolSetup SSHD = tool("sshd", List.of("openssh-server", "nmap-ncat"), List.of());
@@ -751,7 +771,7 @@ class BuildToolsTest {
         parent.setPackages(List.of("nmap-ncat", "openssh-server"));
         var child = new ImageDef();
         child.setTools(List.of(new ToolDef.ToolRef("orca")));
-        assertEquals(List.of("Auto-adding dependency: sshd (required by orca)"),
+        assertEquals(List.of("Adding the sshd tool automatically: the orca tool requires it"),
                 autoAddNotes(parent, child, SSHD, ORCA));
     }
 
@@ -764,7 +784,7 @@ class BuildToolsTest {
         parent.setTools(List.of(new ToolDef.ToolRef("claude")));
         var child = new ImageDef();
         child.setTools(List.of(new ToolDef.ToolRef("headroom")));
-        assertEquals(List.of("Auto-adding dependency: claude (required by headroom)"),
+        assertEquals(List.of("Adding the claude tool automatically: the headroom tool requires it"),
                 autoAddNotes(parent, child, claude, headroom));
     }
 
@@ -778,10 +798,12 @@ class BuildToolsTest {
         imageDef.setName("tpl-unresolved-dep");
         imageDef.setTools(List.of(new ToolDef.ToolRef("herdr")));
 
-        var recorded = RecordingOutput.during(() -> assertEquals(1,
-                BuildTools.collectEffectiveTools(imageDef, Map.of(), toolDefLoader, List.of()).effective().size()));
-        assertTrue(recorded.events(RecordingOutput.Kind.NOTE).isEmpty(),
-            "a dependency that did not resolve must not be announced as added");
+        var recorded = RecordingOutput.during(() -> {
+            var result = BuildTools.collectEffectiveTools(imageDef, Map.of(), toolDefLoader, List.of());
+            assertEquals(1, result.effective().size());
+            assertEquals(List.of(), result.autoAdded(),
+                "a dependency that did not resolve must not be announced as added");
+        });
         assertTrue(recorded.warnings().stream().anyMatch(w -> w.contains("no-such-tool")));
     }
 
