@@ -36,9 +36,13 @@ class ImageDefTest {
         var defs = ImageDef.loadAll();
         var minimal = defs.get("tpl-minimal");
         assertTrue(minimal.isRoot());
-        assertNotNull(minimal.getImage());
-        assertEquals("fedora-44-base", minimal.getImage());
-        assertNotNull(minimal.getImageUrl());
+        // The alias and the asset names follow the release line of the built-in tag, which the
+        // base-image bump moves on a new Fedora (#1862), so the line is read, not written here.
+        var line = minimal.getImageTag().replaceFirst("^(fedora-\\d+)-.*", "$1");
+        assertTrue(line.matches("fedora-\\d+"), minimal.getImageTag());
+        assertEquals(line + "-base", minimal.getImage());
+        assertTrue(minimal.getImageUrl().endsWith("/" + line + "-{arch}.tar.xz"), minimal.getImageUrl());
+        assertTrue(minimal.getVmImageUrl().endsWith("/" + line + "-{arch}-vm-direct.tar.xz"), minimal.getVmImageUrl());
         assertNotNull(minimal.getImageSha256());
         assertTrue(minimal.getTools().isEmpty());
     }
