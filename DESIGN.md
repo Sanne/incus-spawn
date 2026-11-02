@@ -3493,6 +3493,7 @@ Paths, file transports and arbitrary helpers cannot turn a template URL into a h
 SSH defaults to batch mode unless an SSH command or executable was explicitly supplied.
 The guest first checks the remote with its template's accounts, and its full advertised selection must match the prepared snapshot before any bytes are mounted.
 Denied access, different credential-visible refs or a selection race uses the ordinary guest clone path instead.
+The host's `ls-remote` runs beside the guest's check, not after it: neither needs the other's result until the selections are compared, and it fetches nothing a denied guest could gain (#1934).
 All guest access checks finish before any prime runs; host credentials alone never authorize snapshot access, including warm-cache copies.
 The guest trusts only the mounted snapshot's own path, on the clone's command line, for Git's ownership check, since an unshifted macOS mount shows it owned by an unmapped uid (#1590).
 Changed refs first fetch incrementally into staging, with separate metadata and hardlinks only to the previous verified generation's owned immutable packs.

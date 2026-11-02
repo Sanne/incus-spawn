@@ -46,6 +46,11 @@ class RepoCloner {
     final java.util.Map<Integer, GitCommandException> preparationFailures = new java.util.concurrent.ConcurrentHashMap<>();
     /** By repo: why its clean snapshot, or one its publication evicted, was not kept, so a later build clones it in full again. */
     final java.util.Map<Integer, String> preparationNotRetained = new java.util.concurrent.ConcurrentHashMap<>();
+    /** By repo: the host's read of the remote's refs, started beside the guest's access check (#1934). */
+    private final java.util.Map<Integer, RemoteRead> remoteReads = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Bounds the host's concurrent {@code ls-remote}s, which outlive the limiter permit they started under. */
+    private final java.util.concurrent.Semaphore remoteReadSlots =
+            new java.util.concurrent.Semaphore(Math.max(1, CpuInfo.highPerfCores()));
 
     RepoCloner(IncusClient incus) {
         this.incus = incus;
@@ -393,11 +398,17 @@ class RepoCloner {
             if (hasReference && planned.request() != null) {
                 limiter.acquireUninterruptibly();
                 try {
+                    // Neither check needs the other to start; the selections are compared before mounting.
+                    if (!repo.isHostSource() && preparation != null) {
+                        remoteReads.put(idx, RemoteRead.start(preparation, repo.getUrl(), remoteReadSlots));
+                    }
                     advertisement = checkTemplateAccess(container, repo, states, idx);
                     if (advertisement == null) ref = RepoReference.skipped("template account could not access the repository");
                 } catch (Exception e) {
                     ref = RepoReference.skipped("could not check template repository access");
                 } finally { limiter.release(); }
+                // A denied guest never uses the host's read, which fetched nothing.
+                if (advertisement == null) discardRemoteRead(idx);
             }
         } finally { accessChecked.countDown(); }
         awaitUninterruptibly(accessChecked);
@@ -426,6 +437,7 @@ class RepoCloner {
                 limiter.release();
             }
         } finally {
+            discardRemoteRead(idx);
             if (hasReference) {
                 try {
                     long detaching = System.nanoTime();
@@ -512,13 +524,17 @@ class RepoCloner {
                                    AtomicReferenceArray<StepProgress> states, int idx, String advertisement) {
         try {
             var request = new GitPreparation.Request(repo.getUrl(), repo.getBranch(), ref.request().checkout());
-            var result = preparation.prepare(request, new GitPreparation.Phases() {
+            var phases = new GitPreparation.Phases() {
                 @Override public void accept(String phase) { states.set(idx, StepProgress.running(phase)); }
                 // Git's progress goes after the repo's name, which a narrow terminal must not cut off.
                 @Override public void progress(String phase, String detail) {
                     states.set(idx, StepProgress.running(phase, detail));
                 }
-            });
+            };
+            var early = remoteReads.remove(idx);
+            if (early != null) phases.accept("Reading remote refs");
+            var result = early == null ? preparation.prepare(request, phases)
+                    : preparation.prepare(request, early.await(), phases);
             boolean accepted = false;
             try {
                 if (!result.matchesAdvertisement(advertisement)) {
@@ -548,6 +564,67 @@ class RepoCloner {
         } catch (Exception e) {
             if (e instanceof GitCommandException failed && !failed.details().isEmpty()) preparationFailures.put(idx, failed);
             return RepoReference.skipped("Host source export failed: " + e.getMessage());
+        }
+    }
+
+    private void discardRemoteRead(int idx) {
+        var read = remoteReads.remove(idx);
+        if (read != null) read.discard();
+    }
+
+    /** The host's {@code ls-remote} on its own thread, so the guest's access check need not wait for it. */
+    private static final class RemoteRead {
+        private final java.util.concurrent.CompletableFuture<GitPreparation.RemoteRefs> refs =
+                new java.util.concurrent.CompletableFuture<>();
+        private Thread thread;
+
+        static RemoteRead start(GitPreparation preparation, String url, java.util.concurrent.Semaphore slots) {
+            var read = new RemoteRead();
+            // Its phases stay quiet: the repo's line shows the guest's access check meanwhile.
+            read.thread = Thread.ofVirtual().name("isx-git-remote-refs").start(() -> {
+                try {
+                    // Interruptibly: a discard while it waits for a slot ends it.
+                    slots.acquire();
+                    GitPreparation.RemoteRefs result;
+                    try {
+                        result = preparation.readRemote(url, phase -> {});
+                    } finally {
+                        slots.release();
+                    }
+                    // Discarded meanwhile: nobody else will release its lease.
+                    if (!read.refs.complete(result)) result.close();
+                } catch (Throwable e) {
+                    read.refs.completeExceptionally(e);
+                }
+            });
+            return read;
+        }
+
+        GitPreparation.RemoteRefs await() throws java.io.IOException {
+            try {
+                return refs.get();
+            } catch (InterruptedException e) {
+                discard();
+                Thread.currentThread().interrupt();
+                throw new java.io.InterruptedIOException("Interrupted while reading remote refs");
+            } catch (java.util.concurrent.ExecutionException e) {
+                if (e.getCause() instanceof java.io.IOException io) throw io;
+                if (e.getCause() instanceof RuntimeException runtime) throw runtime;
+                throw new java.io.IOException(e.getCause());
+            }
+        }
+
+        /** Stops a read still running; closes one that has finished. */
+        void discard() {
+            if (refs.cancel(false)) {
+                thread.interrupt();
+                return;
+            }
+            try {
+                if (!refs.isCompletedExceptionally()) refs.join().close();
+            } catch (Exception ignored) {
+                // Releasing an unused lease only; a stale one is reaped with the cache's work.
+            }
         }
     }
 

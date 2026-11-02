@@ -1024,6 +1024,70 @@ class RepoClonerTest {
         assertEquals(0, primed.getCount());
     }
 
+    /** A guest whose access check succeeds only if the host is reading the remote's refs meanwhile (#1934). */
+    private static IncusClient guestCheckingAccess(java.util.concurrent.CountDownLatch hostReading,
+                                                   java.util.concurrent.atomic.AtomicBoolean overlapped, boolean allowed) {
+        var incus = mock(IncusClient.class);
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenAnswer(inv -> {
+            String script = inv.getArgument(2);
+            if (script.contains("ls-remote --symref")) {
+                overlapped.set(hostReading.await(5, java.util.concurrent.TimeUnit.SECONDS));
+                return allowed ? new IncusClient.ExecResult(0, "advertised", "") : FAIL;
+            }
+            return OK;
+        });
+        return incus;
+    }
+
+    private static RepoCloner.RepoReference plannedFullClone(ImageDef.RepoEntry repo) {
+        return new RepoCloner.RepoReference("ref", "/mnt/ref", null, null,
+                new dev.incusspawn.git.GitPreparation.Request(repo.getUrl(), null, null), null);
+    }
+
+    @Test
+    void theHostReadsRemoteRefsWhileTheGuestChecksAccess() throws Exception {
+        var hostReading = new java.util.concurrent.CountDownLatch(1);
+        var overlapped = new java.util.concurrent.atomic.AtomicBoolean();
+        var incus = guestCheckingAccess(hostReading, overlapped, true);
+        var preparation = mock(dev.incusspawn.git.GitPreparation.class);
+        var refs = mock(dev.incusspawn.git.GitPreparation.RemoteRefs.class);
+        when(preparation.readRemote(anyString(), any())).thenAnswer(inv -> { hostReading.countDown(); return refs; });
+        var snapshot = reference("ref", "/mnt/ref", "/owned/snapshot", null).prepared();
+        when(snapshot.matchesAdvertisement("advertised")).thenReturn(true);
+        when(snapshot.repository()).thenReturn(Path.of("/owned/snapshot"));
+        when(preparation.prepare(any(), eq(refs), any())).thenReturn(snapshot);
+        var repo = repo("https://example.invalid/repo", "~/repo", null);
+        var states = new java.util.concurrent.atomic.AtomicReferenceArray<dev.incusspawn.command.BuildProgress.StepProgress>(1);
+
+        new RepoCloner(incus, preparation).prepareOne(new Container(incus, "test"), repo, plannedFullClone(repo),
+                states, 0, new java.util.concurrent.atomic.AtomicBoolean());
+
+        assertTrue(overlapped.get(), "the host's ls-remote waited for the guest's access check");
+        verify(preparation).prepare(argThat(r -> r.url().equals(repo.getUrl())), eq(refs), any());
+        assertEquals("via prepared Git packs", states.get(0).note(), states.get(0).toString());
+    }
+
+    @Test
+    void aDeniedGuestDiscardsTheHostsRemoteRefs() throws Exception {
+        var hostReading = new java.util.concurrent.CountDownLatch(1);
+        var overlapped = new java.util.concurrent.atomic.AtomicBoolean();
+        var incus = guestCheckingAccess(hostReading, overlapped, false);
+        var preparation = mock(dev.incusspawn.git.GitPreparation.class);
+        var refs = mock(dev.incusspawn.git.GitPreparation.RemoteRefs.class);
+        when(preparation.readRemote(anyString(), any())).thenAnswer(inv -> { hostReading.countDown(); return refs; });
+        var repo = repo("https://example.invalid/repo", "~/repo", null);
+        var states = new java.util.concurrent.atomic.AtomicReferenceArray<dev.incusspawn.command.BuildProgress.StepProgress>(1);
+
+        new RepoCloner(incus, preparation).prepareOne(new Container(incus, "test"), repo, plannedFullClone(repo),
+                states, 0, new java.util.concurrent.atomic.AtomicBoolean());
+
+        assertTrue(overlapped.get(), "the host's ls-remote waited for the guest's access check");
+        verify(refs, timeout(5000)).close();
+        verify(preparation, never()).prepare(any(), any());
+        verify(preparation, never()).prepare(any(), any(), any());
+        assertEquals("template account could not access the repository", states.get(0).note(), states.get(0).toString());
+    }
+
     @Test
     void localUrlsNeverPlanAHostReference() {
         var cmd = new RepoCloner(mock(IncusClient.class));

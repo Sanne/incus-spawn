@@ -172,6 +172,7 @@ Only HTTPS, SSH and Git network URLs qualify, with a protocol allowlist blocking
 SSH uses batch mode unless the user supplied an SSH command or executable.
 The guest checks repository access using the template's accounts, and its complete advertised selection must match the snapshot before mounting.
 All guest access checks finish before any prime can alter guest tools.
+The host's `ls-remote` (`GitPreparation.readRemote`) starts beside the guest's check, and a denied guest discards it unused.
 Only that remote's tracking tips are used for negotiation.
 A failed reference clone, dissociation or integrity check discards the partial output and retries once without a reference before publication.
 A warm snapshot requires matching fresh remote heads, tags, default HEAD and object format, plus a valid SHA-256 seal over all repository bytes.
