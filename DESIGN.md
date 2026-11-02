@@ -303,7 +303,10 @@ A mark moves nothing on the screen: it is drawn in the cursor gutter's blank sec
 **Base image**: The root image (`tpl-minimal`) uses a custom Fedora base image from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images) instead of linuxcontainers.org.
 This image is a pre-baked systemd rootfs with agentuser, systemd-networkd, a connectivity watchdog, container-specific service masking, and a tmpfiles override for device node permissions — all the static setup that `buildFromScratch` would otherwise perform on every build.
 A separate VM base image (`vm_image_url`) is also available: the same root, built from scratch around isx's own kernel, which the firmware starts with no boot loader and no initrd (`-vm-direct.tar.xz`, see "The VM image's boot chain").
-Releases still carry the older one, the stock Incus Fedora VM image customized with the same base configuration (`-vm.tar.xz`), for isx releases that read only `SHA256SUMS`.
+Fedora 44 releases also carried an older one, the stock Incus Fedora VM image customized with the same base configuration (`-vm.tar.xz`), for isx releases that read only `SHA256SUMS`.
+Fedora 45 releases drop it and publish `SHA256SUMS.v2` alone (#1862).
+isx releases up to v0.3.11 read `SHA256SUMS` by arch alone, so they would take a Fedora 45 release's checksums for their own `fedora-44-*` downloads and fail.
+With no `SHA256SUMS` to read they keep their built-in release, as later ones do on finding none of their exact names.
 A base image tag and SHA256 checksums are baked into `src/main/resources/images/minimal.yaml`, but they are only an **offline fallback**.
 When the base image is unpinned, `BuildCommand.resolveTrackedBaseImage()` fetches the newest release from the GitHub API at build time (via the shared `baseimage/BaseImageReleases`, whose owning repo is parsed from the definition's `image_url` — the YAML is the single source of truth, and a non-GitHub URL is simply not tracked) and downloads that release, with its per-arch container/VM checksums, in place of the built-in one.
 The definition itself is left as loaded, so `definition-sha` and `build-source` fingerprint the same definition the staleness checks read, and `build-source` records the release used as `trackedImageTag`.
@@ -346,7 +349,7 @@ From #1561 that command copied those lists from the definition in effect, so oth
 Any other user `minimal.yaml` is the user's, and the command never removes it; before #1563 `--latest` deleted it whatever it held.
 When such a file sets `pinned: true` itself, `--latest` says builds stay on its tag rather than report tracking the latest.
 `BaseImageReleases` looks checksums up by the exact file names the definition's `image_url` and `vm_image_url` download, per arch, so a pin records the correct digest for each.
-A release carries two VM images from #1255 on, and only the old ones are in `SHA256SUMS`, byte for byte what earlier isx releases parse: `-vm.tar.xz`, built from the stock Incus image, and `-vm-direct.tar.xz`, built from scratch around isx's own kernel, listed with everything else in `SHA256SUMS.v2`.
+A Fedora 44 release carries two VM images from #1255 on, and only the old ones are in `SHA256SUMS`, byte for byte what earlier isx releases parse: `-vm.tar.xz`, built from the stock Incus image, and `-vm-direct.tar.xz`, built from scratch around isx's own kernel, listed with everything else in `SHA256SUMS.v2`.
 isx reads `SHA256SUMS.v2` when a release has one.
 Earlier releases told the VM disk from the container rootfs by `-vm` anywhere in the name, so one more line in `SHA256SUMS` would have overwritten a checksum they use; matching exact names keeps any new asset from standing in for another.
 A manifest with a malformed line or a file listed twice is not read at all.
@@ -4489,7 +4492,7 @@ The VM base image isx uses (`-vm-direct.tar.xz`, from the first incus-spawn-imag
   The image carries no kernel package, no `/boot`, and no module files: `/usr/lib/modules/<release>/` holds only the index of built-in drivers, so `modprobe` of one succeeds (a nested Incus needs `modprobe vhost_vsock`).
   dnf in the image refuses kernel packages (`/etc/dnf/libdnf5.conf.d/isx-kernel.conf`), since a Fedora kernel would land in a `/boot` nothing boots.
   So a template cannot upgrade or replace the kernel of this image, by design: `dnf upgrade` leaves it alone, and `dnf install kernel-core` answers "matches only excluded packages" (seen on #1217); a new kernel comes with a bump of the pin.
-  The stock-based image (`-vm.tar.xz`, for older isx) still takes kernel upgrades, and from incus-spawn-images#27 on boots the newest one: its later kernels' boot entries share the image's own entry id (`KERNEL_INSTALL_MACHINE_ID` in `/etc/machine-info`), so GRUB's order no longer depends on the template build's random machine-id (#1217).
+  The stock-based image (`-vm.tar.xz`, for older isx, last released for Fedora 44) still takes kernel upgrades, and from incus-spawn-images#27 on boots the newest one: its later kernels' boot entries share the image's own entry id (`KERNEL_INSTALL_MACHINE_ID` in `/etc/machine-info`), so GRUB's order no longer depends on the template build's random machine-id (#1217).
   **Kernel fixes do not arrive with the ten-day rebuild.**
   The image is rebuilt every ten days, which brings Fedora's userspace updates, but its kernel is the version `KERNEL_VERSION` and `KERNEL_SHA256` in `appliance/kernel/build-kernel.sh` name, at the incus-spawn commit `ISX_REF` pins in the images repo, and the images CI caches the built kernel by that pin: every rebuild ships the same kernel until both are bumped.
   Nothing bumps either automatically.
@@ -4499,7 +4502,8 @@ The VM base image isx uses (`-vm-direct.tar.xz`, from the first incus-spawn-imag
   What a template needs from the kernel goes into `vm.config` when a template asks for it, and the `vm` build fails when an option there stops applying.
 - **How it ships.**
   Every isx release before the reader of `SHA256SUMS.v2` tracks the newest release's `-vm.tar.xz` and starts it with Secure Boot on and the root on virtio-scsi, which this image cannot boot.
-  So a release keeps that stock-based image and `SHA256SUMS` exactly as they were and adds this one as `-vm-direct.tar.xz`, listed only in `SHA256SUMS.v2` (see "Base image" above).
+  So a Fedora 44 release keeps that stock-based image and `SHA256SUMS` exactly as they were and adds this one as `-vm-direct.tar.xz`, listed only in `SHA256SUMS.v2` (see "Base image" above).
+  Fedora 45 releases carry this one alone, with `SHA256SUMS.v2` as their only manifest (#1862).
   The images repo's release job publishes it only when the boot test (`appliance/test-vm-kernel.sh`) passed on it, and checks every line of `SHA256SUMS.v2` against the file published under its name.
 
 Measured under nested KVM in an isx VM (the same host as above, Incus 6.23, 8 vCPUs, 4 GiB), three runs each, from the start request until an exec answers: 21.8 s on the stock-based image, 11.9 s on this one; through `isx branch` (`bench/vm-boot.sh --isx`), 22 s and 12.6 s.

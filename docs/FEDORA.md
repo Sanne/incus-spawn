@@ -153,7 +153,7 @@ The base image masks units an instance has no use for, which would otherwise fai
 | `systemd-timesyncd`, `systemd-time-wait-sync` | No time sync in the instance; a container has the host's clock |
 | `systemd-homed`, `systemd-homed-firstboot`, `systemd-firstboot` | No home-directory service, no first-boot prompts |
 | `systemd-pcrlock-*`, `systemd-tpm2-clear` | No TPM measurement |
-| `systemd-boot-update`, `systemd-boot-check-no-failures`, `systemd-boot-clear-sysfail`, `systemd-sysupdate.timer`, `systemd-sysupdate-reboot.timer` | No boot loader or system update management |
+| `systemd-boot-update`, `systemd-boot-check-no-failures`, `systemd-boot-clear-sysfail`, `systemd-sysupdate.timer`, `systemd-sysupdate-reboot.timer`, `systemd-sysupdate-update.timer` | No boot loader or system update management |
 | `dnf-makecache.timer` | `dnf` refreshes its metadata when it runs, not in the background |
 | `fstrim.timer`, `unbound-anchor.timer`, `selinux-autorelabel-mark` | Nothing to trim, anchor or relabel |
 | `console-getty` (containers) | No login prompt on the console |

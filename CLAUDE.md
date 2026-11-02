@@ -51,6 +51,7 @@ gh release download <tag> -R Sanne/incus-spawn-images -p SHA256SUMS -O -
 
 Four lines, four fields, and every one has to match the asset it names.
 When the bump moves `vm_image_url` to `-vm-direct.tar.xz` (its PR says `VM image: direct`), the two VM sums come from `SHA256SUMS.v2` instead (`-p SHA256SUMS.v2`), which lists those as well as the four.
+Fedora 45 releases publish `SHA256SUMS.v2` alone (#1862), so for them every sum comes from it.
 The same applies to a tool download added to `ToolDef` or a tool YAML, to the appliance kernel's `KERNEL_SHA256` in `appliance/kernel/build-kernel.sh` (from kernel.org's signed `sha256sums.asc`), and to `INCUS_SHA512` in `appliance/build.sh` (from Alpine's `incus-feature` APKBUILD): take the checksum from the publisher, never from a build log or another PR.
 
 **Latency on the branch/start/shell path is never noise.**
