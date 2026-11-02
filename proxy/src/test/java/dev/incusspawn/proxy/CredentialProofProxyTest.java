@@ -238,6 +238,11 @@ class CredentialProofProxyTest {
     }
 
     int http(HttpMethod method, String host, String uri, String header, String value) throws Exception {
+        return http(method, host, uri, header, value, BODY);
+    }
+
+    /** As {@link #http(HttpMethod, String, String, String, String)}, with {@code body} (null: none). */
+    int http(HttpMethod method, String host, String uri, String header, String value, String body) throws Exception {
         received = new CompletableFuture<>();
         var options = new RequestOptions().setMethod(method)
                 .setServer(SocketAddress.inetSocketAddress(proxy.mitmPort(), "127.0.0.1"))
@@ -245,7 +250,7 @@ class CredentialProofProxyTest {
         return client.request(options).compose(req -> {
             if (value != null) req.putHeader(header, value);
             extraHeaders.forEach(req::putHeader);
-            return req.send(BODY);
+            return body == null ? req.send() : req.send(body);
         }).compose(resp -> resp.body().map(b -> resp.statusCode()))
                 .toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
     }
@@ -464,7 +469,22 @@ class CredentialProofProxyTest {
     @Test void claudeOnVertexRefusesAnyOtherApiOrMethodBeforeAnythingIsSent() throws Exception {
         serve(claude("vertex"));
         var proof = "Bearer " + ProofTestSupport.token("claude", "ya29.");
+        var bodies = new java.util.HashMap<String, String>();
+        // On the translation route: the guest's path and method must never be the ones signed
+        var dataset = "/v1/messages/../projects/other-project/locations/us-east5/datasets/d";
+        var endpoints = "/v1/messages/../projects/other-project/locations/us-east5/endpoints";
+        var encoded = "/v1/messages%2F..%2Fprojects/other-project/locations/us-east5/datasets/d";
+        bodies.put(dataset, null);
+        bodies.put(endpoints, "[]");
+        bodies.put(encoded, null);
         for (var call : List.of(
+                Map.entry(HttpMethod.DELETE, dataset),
+                Map.entry(HttpMethod.POST, endpoints),
+                Map.entry(HttpMethod.GET, encoded),
+                Map.entry(HttpMethod.POST, "/v1/messages/batches"),
+                Map.entry(HttpMethod.POST, "/v1/messages/"),
+                Map.entry(HttpMethod.GET, "/v1/messages"),
+                Map.entry(HttpMethod.PUT, "/v1/messages/count_tokens"),
                 Map.entry(HttpMethod.POST, "/v1/projects/other-project/locations/us-east5/endpoints"),
                 Map.entry(HttpMethod.POST, "/v1/projects/outer-project/locations/us-east5/endpoints"),
                 Map.entry(HttpMethod.POST, "/v1/projects/outer-project/locations/us-east5/publishers/google/models/gemini:generateContent"),
@@ -474,10 +494,33 @@ class CredentialProofProxyTest {
                 Map.entry(HttpMethod.POST, CLAUDE_ON_VERTEX + "claude%2F..%2F..%2Fx:rawPredict"),
                 Map.entry(HttpMethod.GET, CLAUDE_ON_VERTEX + "claude:rawPredict"),
                 Map.entry(HttpMethod.DELETE, "/v1/projects/outer-project/locations/us-east5/datasets/d"))) {
-            assertEquals(403, http(call.getKey(), ANTHROPIC, call.getValue(), "Authorization", proof), call.toString());
+            var body = bodies.containsKey(call.getValue()) ? bodies.get(call.getValue()) : BODY;
+            assertEquals(403, http(call.getKey(), ANTHROPIC, call.getValue(), "Authorization", proof, body), call.toString());
             assertFalse(received.isDone(), call.toString());
         }
         assertEquals(0, tokenFetches.get());
+    }
+
+    /** A proven message call is signed only once translated: a body that is no JSON object is refused, unsent (#1921). */
+    @ParameterizedTest @org.junit.jupiter.params.provider.CsvSource(nullValues = "none", value = {
+            "/v1/messages, none", "/v1/messages, []", "/v1/messages, '\"x\"'", "/v1/messages, '  '",
+            "/v1/messages/count_tokens, none", "/v1/messages/count_tokens, 7"})
+    void claudeOnVertexSignsOnlyATranslatedMessageCall(String path, String body) throws Exception {
+        serve(claude("vertex"));
+        var proof = "Bearer " + ProofTestSupport.token("claude", "ya29.");
+        assertEquals(403, http(HttpMethod.POST, ANTHROPIC, path, "Authorization", proof, body));
+        assertFalse(received.isDone());
+        assertEquals(0, tokenFetches.get());
+    }
+
+    /** The count_tokens route is still translated, as before, and signed in the account's project. */
+    @Test void claudeOnVertexStillTranslatesTheCountTokensRoute() throws Exception {
+        serve(claude("vertex"));
+        assertEquals(200, http(HttpMethod.POST, ANTHROPIC, "/v1/messages/count_tokens", "Authorization",
+                "Bearer " + ProofTestSupport.token("claude", "ya29.")));
+        var got = received.get(10, TimeUnit.SECONDS);
+        assertTrue(got.uri().startsWith(CLAUDE_ON_VERTEX), got.uri());
+        assertEquals("Bearer ya29.outer", got.authorization());
     }
 
     /** No quota project, query parameter or method override of the guest's reaches a signed Claude call on Vertex. */
