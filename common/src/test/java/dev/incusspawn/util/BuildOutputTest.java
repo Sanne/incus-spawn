@@ -490,13 +490,36 @@ class BuildOutputTest {
         // A terminal still shows the text before a carriage return that only colour follows.
         assertEquals("npm error", BuildOutput.guestText("npm error\r\033[0m"));
         assertEquals("text", BuildOutput.guestText("\u009d0;title\u009ctext\033Pq#0\033\\"));
-        // A control string never spans lines, so an unterminated one cannot swallow the log.
-        assertEquals("0;open\nnext ", BuildOutput.guestText("\033]0;open\nnext\007"));
+        // An unterminated control string cannot swallow the log: it shows as text.
+        assertEquals("0;open\nnext", BuildOutput.guestText("\033]0;open\nnext"));
         // A terminal ends a control string at the next escape and shows the text after it.
         assertEquals("0;titlevisible error ", BuildOutput.guestText("\033]0;title\033[31mvisible error\007"));
         // tput sgr0 on xterm: a charset designation, then a reset.
         assertEquals("done", BuildOutput.guestText("done\033(B\033[m"));
         assertSame("plain\ttext\n", BuildOutput.guestText("plain\ttext\n"));
+    }
+
+    @Test
+    void guestTextShowsASequenceAControlInterruptsAsATerminalDoes() {
+        // A terminal acts on a C0 control inside a control sequence or escape and carries on with
+        // the sequence (#1920): the control is shown as it is outside one, the sequence is dropped
+        assertEquals("a b", BuildOutput.guestText("a\033[1\007Db"));
+        assertEquals("a\nb", BuildOutput.guestText("a\033[\n31mb"));
+        assertEquals("a\nb", BuildOutput.guestText("a\u009b1;\n2Hb"));
+        assertEquals("a\nb", BuildOutput.guestText("a\033\n7b"));
+        assertEquals("a\tb", BuildOutput.guestText("a\033\t[Kb"));
+        // A carriage return inside one starts the line's last frame, as one outside does
+        assertEquals("new", BuildOutput.guestText("old\033[\r0mnew"));
+        // DEL is ignored there, and CAN, SUB and ESC end the sequence, so what follows is text
+        assertEquals("ab", BuildOutput.guestText("a\033[1\u007fmb"));
+        assertEquals("a 1Db", BuildOutput.guestText("a\033[\u00181Db"));
+        // A control string runs to its terminator across lines, ignoring the controls in it
+        assertEquals("ab", BuildOutput.guestText("a\033]0;\n\007b"));
+        assertEquals("ab", BuildOutput.guestText("a\033]0;x\r\ny\033\\b"));
+        // CAN and SUB abort a control string, as they do a sequence: a later terminator ends nothing
+        assertEquals("a0;x\n y \nb", BuildOutput.guestText("a\033]0;x\n\u0018y\007\nb"));
+        // A control before a control string's introducer is acted on, as within an escape
+        assertEquals("a\nb", BuildOutput.guestText("a\033\n]0;t\n\007b"));
     }
 
     @Test
@@ -511,6 +534,11 @@ class BuildOutputTest {
             assertEquals("", BuildOutput.guestText("\033[".repeat(100_000)));
             assertEquals("", BuildOutput.guestText("\033[" + "0;".repeat(100_000) + " ".repeat(100_000) + "m"));
             assertEquals(" 0".repeat(100_000), BuildOutput.guestText("\u009b0".repeat(100_000)));
+            // Controls within a sequence, and a control string across lines, that never end (#1920)
+            assertEquals("\n".repeat(100_000), BuildOutput.guestText("\033[" + "\n".repeat(100_000)));
+            assertEquals("\n".repeat(100_000), BuildOutput.guestText("\033[\n".repeat(100_000)));
+            assertEquals("\n".repeat(100_000), BuildOutput.guestText("\033]\n".repeat(100_000)));
+            assertEquals(" " + "\n".repeat(100_000), BuildOutput.guestText("\033" + "\n".repeat(100_000)));
         });
     }
 
@@ -539,7 +567,7 @@ class BuildOutputTest {
     void showingAGuestsTextIsWhatItWasBeforeItSaidWhereFrom() {
         // The same text as the one-pass form it replaced, over a seeded corpus of what terminals act on
         var alphabet = new String[] {"a", "b", " ", "\n", "\r", "\t", "\033", "[", "]", "m", "0", ";", "\\",
-                "\007", "\u009b", "\u009d", "\u009c", "\u0001", "\u200e", "P", "(", "\uD83D\uDE00"};
+                "\007", "\u009b", "\u009d", "\u009c", "\u0001", "\u200e", "P", "(", "\uD83D\uDE00", "\u0018", "\u007f", "\b"};
         var random = new java.util.Random(1878);
         for (int n = 0; n < 20_000; n++) {
             var raw = new StringBuilder();
@@ -585,16 +613,27 @@ class BuildOutputTest {
         }
     }
 
+    private static final String WITHIN = "\u0000-\u0017\u0019\u001C-\u001F\u007F";
     private static final java.util.regex.Pattern GUEST_CONTROL = java.util.regex.Pattern.compile(
-            "(?:\u001B[\\]PX^_]|[\u0090\u0098\u009D\u009E\u009F])"
-                    + "[^\u0007\u001B\u009C\u0090\u0098\u009D\u009E\u009F\n]*(?:\u0007|\u001B\\\\|\u009C)"
-                    + "|(?:\u001B\\[|\u009B)[0-?]*[ -/]*[@-~]"
-                    + "|\u001B[ -/]*[0-~]");
+            "(?:\u001B[" + WITHIN + "]*[\\]PX^_]|[\u0090\u0098\u009D\u009E\u009F])"
+                    + "[^\u0007\u0018\u001A\u001B\u009C\u0090\u0098\u009D\u009E\u009F]*(?:\u0007|\u001B\\\\|\u009C)"
+                    + "|(?:\u001B[" + WITHIN + "]*\\[|\u009B)[0-?" + WITHIN + "]*+[ -/" + WITHIN + "]*+[@-~]"
+                    + "|\u001B[ -/" + WITHIN + "]*[0-~]");
 
-    /** guestText as it was written before it kept sources (#1588). */
+    /** guestText as it was written before it kept sources (#1588), with the controls within a sequence (#1920). */
     private static String oneShot(String text) {
         if (text.codePoints().noneMatch(TerminalLink::actsOnTerminal)) return text;
-        text = GUEST_CONTROL.matcher(text).replaceAll("");
+        text = GUEST_CONTROL.matcher(text).replaceAll(match -> {
+            // A control string's payload ignores the C0 controls in it; a sequence acts on them
+            var control = match.group();
+            boolean string = control.matches("(?s)(?:\u001B[" + WITHIN + "]*[\\]PX^_]|[\u0090\u0098\u009D-\u009F]).+");
+            var acted = new StringBuilder();
+            for (char c : control.toCharArray()) {
+                if (string && (c == ']' || c == 'P' || c == 'X' || c == '^' || c == '_' || c >= 0x90)) break;
+                if (c < 0x20 && c != 0x18 && c != 0x1A && c != 0x1B) acted.append(c);
+            }
+            return java.util.regex.Matcher.quoteReplacement(acted.toString());
+        });
         if (text.indexOf('\r') >= 0) {
             text = java.util.Arrays.stream(text.split("\n", -1)).map(line -> {
                 var frames = line.split("\r");

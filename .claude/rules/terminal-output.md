@@ -63,6 +63,9 @@ So step lines and output headers show a repository's URL or a COPR name as text.
 Output captured from a guest command is someone else's text too (#1588).
 `BuildOutput.guestText` is how such output is shown: complete control strings (OSC, DCS, APC and the like), control sequences and other escapes dropped, each line's last text a carriage return left, then `TerminalLink.plainText`.
 Its one pattern ends a control string at the next escape or introducer, as a terminal does, so a guest's long line costs linear time, never a stall.
+A control string runs to its terminator across lines and ignores the controls in it, as a terminal reads it (#1920).
+A C0 control inside a control sequence or escape is acted on as outside one, and the sequence carries on.
+CAN and SUB abort a control string, as they do a sequence, so a terminator after one ends nothing.
 A build step's `StepProgress` cleans its detail and log through it as it is made, the detail also through `OutputFormat.oneLine`, since a prime is code the repository controls.
 So the live line, the plain failure line, the log's warning and the saved failure report all show it as text, and the failure line is the last one with text left.
 A build's single steps (`BuildProgress.runDnf`, `runWithSpinner`, `runLiveStep`) are the seam's live step, drawn by the renderer every step uses (#1791): a failed one ends in its ✗ (a plain terminal ends its `label...` line), then, when it captured a log, one warning, `label failed` with the detail when the log does not end on it, the end of the log under it.
