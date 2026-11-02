@@ -477,7 +477,7 @@ losetup -d "$LOOP"
 After modifying any fragment, validate for both architectures in a container. Each arch is checked against its own merged fragment, the same concatenation `build-kernel.sh` performs -- checking against `isx.config` alone would miss every per-arch option:
 
 ```
-podman run --rm -v $PWD/appliance:/appliance:ro fedora:44 bash -c '
+podman run --rm -v $PWD/appliance:/appliance:ro fedora:45 bash -c '
 dnf install -y -q make gcc flex bison bc findutils
 mkdir -p /tmp/ks
 tar xf /appliance/build/linux-*.tar.xz -C /tmp/ks --strip-components=1
