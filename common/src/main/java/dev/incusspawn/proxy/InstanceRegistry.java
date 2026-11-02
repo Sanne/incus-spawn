@@ -129,14 +129,17 @@ public final class InstanceRegistry {
      * @param addressBySecret the same for the hash of each running address owner's secret, for
      *                        {@link #identify} when the address names no instance (#1583)
      * @param running         the names of the address owners that are running (#1586)
+     * @param chatGptByAddress the ChatGPT session binding of each address's instance (#1332),
+     *                        for those that have one; kept apart for the same reason as the secret
      */
     record Parsed(Map<String, InstanceAccounts> byAddress, Map<String, String> secretByAddress,
                   java.util.Set<String> mcpCallers, Map<String, String> incarnationByName,
                   Map<String, Lineage> lineageByName, Map<String, Map<String, String>> proofsByAddress,
                   Map<String, ProofState> proofStates, Map<String, Map<String, String>> addressByProof,
-                  Map<String, String> addressBySecret, java.util.Set<String> running) {
+                  Map<String, String> addressBySecret, java.util.Set<String> running,
+                  Map<String, ChatGptBinding> chatGptByAddress) {
         static final Parsed EMPTY = new Parsed(Map.of(), Map.of(), java.util.Set.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
-                Map.of(), java.util.Set.of());
+                Map.of(), java.util.Set.of(), Map.of());
     }
 
     /** Host-only acknowledgement of persisted proof state; contains no usable credential. */
@@ -178,6 +181,44 @@ public final class InstanceRegistry {
      */
     public record Identified(Caller caller, Lineage lineage, boolean mcpCaller) {
         public String instanceName() { return caller.accounts().instanceName(); }
+    }
+
+    /**
+     * What an instance's proofs for a ChatGPT session were derived for, and the verifiers of
+     * those proofs ({@code ChatGptProof}), as its metadata records them.
+     */
+    public record ChatGptBinding(String instanceName, String account, String sessionId,
+                                 String accessSha256, String refreshSha256) {
+
+        /**
+         * The binding {@code config} records, or null when it records none, only part of one, or
+         * one made with a secret that is no longer the instance's: inherited by a copy, or from
+         * before a start that did not renew it.
+         */
+        static ChatGptBinding of(String instanceName, JqValue config) {
+            var secret = config.pathText(Metadata.INSTANCE_SECRET_SHA256, "").strip();
+            if (secret.isEmpty() || !secret.equals(config.pathText(Metadata.CHATGPT_PROOF_SECRET_SHA256, "").strip())) {
+                return null;
+            }
+            var session = config.pathText(Metadata.CHATGPT_SESSION, "").strip();
+            var access = config.pathText(Metadata.CHATGPT_ACCESS_PROOF_SHA256, "").strip();
+            var refresh = config.pathText(Metadata.CHATGPT_REFRESH_PROOF_SHA256, "").strip();
+            var colon = session.indexOf(':');
+            if (colon <= 0 || access.isEmpty() || refresh.isEmpty()) return null;
+            var account = session.substring(0, colon);
+            var sessionId = session.substring(colon + 1);
+            if (!ChatGptProof.isValidName(account) || !ChatGptProof.isValidName(sessionId)) return null;
+            return new ChatGptBinding(instanceName, account, sessionId, access, refresh);
+        }
+    }
+
+    /**
+     * The ChatGPT session binding of the instance at this address, or null when the address is
+     * no known instance or its instance has none. Non-blocking.
+     */
+    public ChatGptBinding chatGptBinding(String sourceAddress) {
+        if (sourceAddress == null || sourceAddress.isBlank()) return null;
+        return snapshot.parsed().chatGptByAddress().get(normalize(sourceAddress));
     }
 
     /**
@@ -460,7 +501,7 @@ public final class InstanceRegistry {
             var previous = snapshot.parsed();
             var withoutProofs = new Parsed(previous.byAddress(), previous.secretByAddress(), previous.mcpCallers(),
                     previous.incarnationByName(), previous.lineageByName(), Map.of(), Map.of(), Map.of(), Map.of(),
-                    previous.running());
+                    previous.running(), Map.of());
             snapshot = new Snapshot(withoutProofs, clock.getAsLong(), snapshot.view(), true);
             ProxyLog.warn("Instance registry refresh failed: " + e.getMessage());
             return false;
@@ -632,6 +673,7 @@ public final class InstanceRegistry {
         // Per namespace and verifier hash, the address owners stamped with it; the same for secrets
         var stampedWith = new LinkedHashMap<String, Map<String, List<Claimant>>>();
         var givenSecret = new LinkedHashMap<String, List<Claimant>>();
+        var chatGptByAddress = new LinkedHashMap<String, ChatGptBinding>();
         claimants.forEach((address, all) -> {
             var owner = owner("Address " + address, all, "refusing credential injection until only one holds it");
             if (owner == null) return;
@@ -649,13 +691,16 @@ public final class InstanceRegistry {
             incarnationByName.put(owner.accounts().instanceName(), owner.createdAt());
             // Only for owners: a build stamp is parsed for no address nobody serves
             lineageByName.put(owner.accounts().instanceName(), lineageOf(owner.config(), configByName));
+            var chatGpt = ChatGptBinding.of(owner.accounts().instanceName(), owner.config());
+            if (chatGpt != null) chatGptByAddress.put(address, chatGpt);
         });
         var addressByProof = new LinkedHashMap<String, Map<String, String>>();
         stampedWith.forEach((namespace, byHash) -> addressByProof.put(namespace,
                 runningAddressByHash("A " + namespace + " proof verifier", byHash)));
         return new Parsed(byAddress, secretByAddress, java.util.Set.copyOf(mcpCallers),
                 Map.copyOf(incarnationByName), Map.copyOf(lineageByName), Map.copyOf(proofsByAddress), Map.copyOf(proofStates),
-                Map.copyOf(addressByProof), runningAddressByHash("An instance secret", givenSecret), java.util.Set.copyOf(running));
+                Map.copyOf(addressByProof), runningAddressByHash("An instance secret", givenSecret), java.util.Set.copyOf(running),
+                Map.copyOf(chatGptByAddress));
     }
 
     /**

@@ -19,6 +19,7 @@ import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.core.http.RequestOptions;
 import io.vertx.core.http.ServerWebSocket;
+import io.vertx.core.http.UpgradeRejectedException;
 import io.vertx.core.http.WebSocket;
 import io.vertx.core.http.WebSocketConnectOptions;
 
@@ -36,6 +37,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import java.util.regex.Pattern;
 
 /**
@@ -146,6 +148,9 @@ public class MitmProxy {
      */
     ApiActivity apiActivity = new ApiActivity();
 
+    /** ChatGPT sessions held on the host for Codex in instances (#1332). */
+    final ChatGptRoute chatGpt;
+
     /** {@code isx mcp} for coordinator instances, at {@link ProxyConfig#MCP_DOMAIN} (#915). */
     private volatile McpBridge mcpBridge;
     /** The names of {@code host-routes:}, forwarded to controllers on this host (#936). */
@@ -213,16 +218,18 @@ public class MitmProxy {
             Map<String, List<ProofToken.Placeholder>> placeholders,
             ProofCarriers proofCarriers, boolean nested) {
 
+        /** @param alsoIntercepted domains a built-in handler serves without a tool proxy, such as ChatGPT's */
         ConfigState(dev.incusspawn.config.SpawnConfig config,
                     io.hyperfoil.tools.jjq.value.JqValue configTree,
                     Map<String, dev.incusspawn.tool.ToolSetup> toolSetups,
                     ProxyCredentials credentials,
                     List<ResolvedToolProxy> proxiesAcrossAccounts,
                     Map<String, HostRouteRelay.Served> hostRoutes,
-                    boolean nested) {
+                    boolean nested,
+                    Set<String> alsoIntercepted) {
             this(config, configTree, toolSetups, credentials,
-                    withHostRoutes(buildRouting(credentials.toolProxies(), proxiesAcrossAccounts, true),
-                            hostRoutes.keySet()),
+                    alsoIntercepting(buildRouting(credentials.toolProxies(), proxiesAcrossAccounts, true),
+                            hostRoutes.keySet(), alsoIntercepted),
                     dev.incusspawn.config.AccountSelection.byNamespace(toolSetups),
                     dev.incusspawn.config.AccountSelection.namespacesByDomain(toolSetups),
                     new ConcurrentHashMap<>(), new ConcurrentHashMap<>(), hostRoutes,
@@ -232,11 +239,16 @@ public class MitmProxy {
         }
     }
 
-    /** {@code routing}, intercepting the host routes' names as well. */
-    private static ToolProxyRouting withHostRoutes(ToolProxyRouting routing, Set<String> names) {
-        if (names.isEmpty()) return routing;
+    /**
+     * {@code routing}, intercepting {@code names} as well: the host routes' names, and the domains
+     * a built-in handler such as ChatGPT's serves without a tool proxy.
+     */
+    private static ToolProxyRouting alsoIntercepting(ToolProxyRouting routing, Set<String> routeNames,
+                                                     Set<String> handlerDomains) {
+        if (routeNames.isEmpty() && handlerDomains.isEmpty()) return routing;
         var all = new HashSet<>(routing.allInterceptedDomains());
-        all.addAll(names);
+        all.addAll(routeNames);
+        all.addAll(handlerDomains);
         return new ToolProxyRouting(routing.exactDomain(), routing.wildcardSuffixes(), Set.copyOf(all),
                 routing.suffixes());
     }
@@ -326,7 +338,7 @@ public class MitmProxy {
         this(vertx, bindAddress, mitmPort, healthPort, healthBindAddress, ConfigFingerprint.capture());
         this.configState = new ConfigState(NO_CONFIG, NO_CONFIG.tree(),
                 ToolProxyResolver.proxyToolSetups(NO_CONFIG, dev.incusspawn.tool.ToolDefLoader.withoutProjectTools(NO_CONFIG.getSearchPaths())), credentials,
-                credentials.toolProxies(), Map.of(), false);
+                credentials.toolProxies(), Map.of(), false, Set.of());
     }
 
     /** The config of a proxy built from credentials alone: empty, and never compared on reload. */
@@ -344,10 +356,16 @@ public class MitmProxy {
         this.upstream = new Upstream(vertx, this::lookupHost);
         this.artifactCache = new ArtifactCacheHandler(vertx, upstream);
         this.hostRouteRelay = new HostRouteRelay(vertx, () -> instanceRegistry, upstream);
+        this.chatGpt = new ChatGptRoute(this, vertx, new ChatGptSessionStore());
     }
 
     public void setDnsConfigured(boolean configured) {
         this.dnsConfigured = configured;
+    }
+
+    /** The registry callers are identified by, or null before {@link #setIncusClient}. */
+    InstanceRegistry instanceRegistry() {
+        return instanceRegistry;
     }
 
     /** Tests only: serve callers from {@code registry}, populated by the caller, without Vert.x. */
@@ -553,9 +571,12 @@ public class MitmProxy {
         // The default selection is resolved once, and seeds the across-accounts set.
         var credentials = ProxyCredentials.forAccounts(config, tree, Map.of(), setups);
         var acrossAccounts = ToolProxyResolver.resolveAcrossAccounts(tree, setups, credentials.toolProxies(), nested);
+        var openai = dev.incusspawn.config.AccountSelection.byNamespace(setups).get(ChatGptAccounts.NAMESPACE);
+        chatGpt.useConfig(tree, openai == null ? null : openai.accountShape());
         configState = new ConfigState(config, tree, setups, credentials, acrossAccounts,
                 HostRouteRelay.served(ToolProxyResolver.hostRoutes(config, acrossAccounts, ProxyLog::warn),
-                        name -> HostRouteSecret.loadOrCreate(name, ProxyLog::warn)), nested);
+                        name -> HostRouteSecret.loadOrCreate(name, ProxyLog::warn)), nested,
+                ToolProxyResolver.handlerDomains(tree));
         artifactCache.artifactCacheTiers = ArtifactCacheTiers.from(config);
         return previous;
     }
@@ -1271,6 +1292,10 @@ public class MitmProxy {
             if (hostRoute) {
                 // First, by Host or SNI: neither half of a route's connection reaches credentials
                 hostRouteRelay.handle(clientReq, address, byTokenAlone, routes, identified -> begin(flow, identified));
+            } else if (chatGpt.handles(domain)) {
+                // ChatGPT's own route (#1332): it identifies its caller by address and proof itself
+                begin(flow, caller);
+                chatGpt.handle(clientReq, domain, address, started);
             } else if (mcp) {
                 // Answered here, never relayed: it names no host outside this machine.
                 mcpBridge.handle(clientReq, address, byTokenAlone, identified -> begin(flow, identified));
@@ -1578,7 +1603,7 @@ public class MitmProxy {
     }
 
     /** Name the caller for a log line: the instance if the registry knows it, else its address. */
-    private String describeCaller(String sourceAddress) {
+    String describeCaller(String sourceAddress) {
         var registry = instanceRegistry;
         var instance = registry == null ? null : registry.lookup(sourceAddress);
         if (instance != null) return "instance '" + instance.instanceName() + "'";
@@ -1603,6 +1628,18 @@ public class MitmProxy {
         var domain = colon > 0 ? host.substring(0, colon) : host;
         var address = sourceAddressOf(clientWs);
         var caller = callerAt(address);
+        if (domain != null && chatGpt.handles(domain)) {
+            // ChatGPT's own route (#1332): it refuses a claimed socket itself, or relays it
+            var chatGptFlow = trafficFlow(caller, domain);
+            var accepted = false;
+            try {
+                accepted = chatGpt.handleWebSocket(clientWs, domain, address, chatGptFlow);
+            } finally {
+                // Until the handshake's outcome takes the flow over, every way out ends it
+                if (!accepted) chatGptFlow.end();
+            }
+            return;
+        }
         var authorizes = domain != null && !ProxyConfig.MCP_DOMAIN.equals(domain)
                 && !HostRouteRelay.claims(configState.hostRoutes(), clientWs);
         var byProofAlone = authorizes && caller == null
@@ -1622,7 +1659,11 @@ public class MitmProxy {
             }
             clientWs.closeHandler(v -> flow.end());
             try {
-                handleWebSocketUpgrade(clientWs, context.get(), flow);
+                var ctx = context.get();
+                handleWebSocketUpgrade(clientWs, domain, flow, options -> {
+                    injectWebSocketAuth(options, ctx);
+                    presentInheritedProofs(options.getHeaders(), ctx);
+                }, refused -> {});
             } catch (RuntimeException e) {
                 ProxyLog.error("WebSocket relay setup failed for " + domain + " for " + describe(who.get(), address) + refusal(e));
                 if (!clientWs.isClosed()) clientWs.close((short) 1011, "Proxy error");
@@ -1660,8 +1701,40 @@ public class MitmProxy {
                 buildRouting(List.of(), List.of(), false), false, flow, null, Set.of());
     }
 
-    private void handleWebSocketUpgrade(ServerWebSocket clientWs, RequestContext ctx, ApiActivity.Flow flow) {
-        var domain = ctx.domain();
+    /**
+     * Completes the client's handshake and relays it upstream with whatever {@code auth} adds to
+     * the upstream handshake, once it is known; a failed {@code auth} closes the socket before
+     * anything is dialled. {@code upstreamRefused} hears the status upstream refused its
+     * handshake with, if it did. Returns whether the socket was accepted, so that the handshake's
+     * outcome ends {@code flow}. ChatGPT's route (#1332) relays through here.
+     */
+    boolean relayWebSocketWith(ServerWebSocket clientWs, String domain, ApiActivity.Flow flow,
+                               Future<Consumer<WebSocketConnectOptions>> auth, IntConsumer upstreamRefused) {
+        clientWs.pause();
+        clientWs.setHandshake(Future.succeededFuture(101)).onComplete(handshake -> {
+            if (handshake.failed() || handshake.result() != 101) {
+                flow.end();
+                return;
+            }
+            // Until the relay is up, and on its way to a failure; the relay's own replaces it
+            clientWs.closeHandler(v -> flow.end());
+            auth.onComplete(ar -> {
+                try {
+                    if (ar.failed()) throw new IllegalStateException(ar.cause().getMessage(), ar.cause());
+                    handleWebSocketUpgrade(clientWs, domain, flow, ar.result(), upstreamRefused);
+                } catch (RuntimeException e) {
+                    // The 101 has gone out, so a refusal can only be a close
+                    ProxyLog.warn("WebSocket relay setup failed (" + domain + "): " + e.getMessage());
+                    if (!clientWs.isClosed()) clientWs.close((short) 1011, "Proxy error");
+                    flow.end();
+                }
+            });
+        });
+        return true;
+    }
+
+    private void handleWebSocketUpgrade(ServerWebSocket clientWs, String domain, ApiActivity.Flow flow,
+                                        Consumer<WebSocketConnectOptions> auth, IntConsumer upstreamRefused) {
         var wsOptions = new WebSocketConnectOptions()
                 .setHost(domain)
                 .setPort(upstreamWsPort)
@@ -1692,8 +1765,7 @@ public class MitmProxy {
             wsOptions.setHost(override.host()).setPort(override.port()).putHeader("Host", domain);
         }
 
-        injectWebSocketAuth(wsOptions, ctx);
-        presentInheritedProofs(wsOptions.getHeaders(), ctx);
+        auth.accept(wsOptions);
 
         // Let Vert.x resolve DNS via its built-in resolver (configured on the
         // Vertx instance).  Unlike HTTP requests, WebSocket ignores setServer(),
@@ -1788,6 +1860,9 @@ public class MitmProxy {
             clientWs.resume();
         }).onFailure(err -> {
             ProxyLog.trace("WebSocket upstream connect failed (" + domain + "): " + err.getMessage());
+            if (err instanceof UpgradeRejectedException rejected) {
+                upstreamRefused.accept(rejected.getStatus());
+            }
             if (!clientWs.isClosed()) clientWs.close((short) 1011, "Upstream connection failed");
         });
     }
@@ -2559,6 +2634,18 @@ public class MitmProxy {
             authError = null;
             authErrorHint = null;
             authNotificationSentMs = 0;
+        }
+    }
+
+    /** Clears the standing error only if {@code ours} says it is the caller's, deciding under the lock. */
+    void clearAuthErrorIf(java.util.function.Predicate<String> ours) {
+        if (authError == null) return;
+        synchronized (authLock) {
+            if (authError != null && ours.test(authError)) {
+                authError = null;
+                authErrorHint = null;
+                authNotificationSentMs = 0;
+            }
         }
     }
 
