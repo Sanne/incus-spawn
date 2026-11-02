@@ -93,6 +93,31 @@ class RepoClonerTest {
     }
 
     @Test
+    void deferredStagingCleanupIsNotedWithoutTimings() throws Exception {
+        var incus = mock(IncusClient.class);
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        var def = new ImageDef();
+        def.setName("tpl-test");
+        def.setRepos(List.of(repo));
+        var cmd = cloner(incus);
+        doReturn(plannedReference("ref-repo", "/mnt/ref/repo", "/host/repo", null))
+                .when(cmd).planReference(eq(repo.getUrl()), any());
+        doAnswer(inv -> {
+            RepoCloner.RepoReference ref = inv.getArgument(1);
+            var held = reference(ref.deviceName(), ref.containerPath(), ref.source(), null);
+            doThrow(new java.io.IOException("staging busy")).when(held.prepared()).close();
+            return held;
+        }).when(cmd).prepareReference(any(), any(), any(), anyInt(), any());
+
+        String shown = shown(() -> cmd.cloneRepos(new Container(incus, "test"), def, java.util.Map.of(), MachineType.CONTAINER));
+
+        assertTrue(shown.contains("repo: Git staging cleanup deferred"), shown);
+        assertFalse(shown.contains("attach="), shown);
+    }
+
+    @Test
     void cloneReposRunsPrimeCommand() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");

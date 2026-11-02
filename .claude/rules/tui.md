@@ -184,7 +184,8 @@ Deleting a btrfs subvolume can mark qgroup accounting inconsistent, so a read ta
 A missing/zero rfer drops that template's stamp.
 The delta model tolerates a missing stamp on a *derived* template (`canUseReferencedModel` gates only on every built **root** being stamped -- an unstamped derived row falls back to its own exclusive usage, `applyReferencedTemplateDeltas`), but an unstamped root sends the whole display to the shared-base fold (`foldBaseWeightIntoRootTemplate`).
 To self-heal a missing stamp (pre-feature template, or a build that left it unstamped while the accounting was under repair) without a rebuild, `fillMissingReferencedSizes()` backfills it on reload with a single **live** probe -- but *only* when there's an actual gap (`unstampedBuiltTemplates`), never overwriting an existing stamp, so the "privileged read is rare, not per-refresh" posture holds for a healthy install.
-It saves what it reads as the stamp (`configSet`), so each template is backfilled once: the first read for a template forces a commit (sync flavour, as a build's stamp does), and a gap it could not fill is read again only non-sync (`backfillAttempted`).
+A template's first backfill is also saved as its stamp (`measureAndStamp`, through `BuildCommand.stampReferencedSize`), under a build's conditions: the template held in place by `TemplateLock.reading`, the accounting re-read consistent just before and after the read (never the reload's cached `qgroupStatus`), and the sync flavour.
+A gap that could not be filled is read again only non-sync, in memory (`measuredGaps`), and a name stamped this way leaves that set, so a rebuild in the same session is measured afresh.
 
 **Accounting trust and auto-repair.**
 None of the above helps when btrfs itself has stopped counting.

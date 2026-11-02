@@ -7,6 +7,8 @@ import dev.incusspawn.Warnings;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.lifecycle.TemplateLock;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.vm.VmManager;
 import java.util.ArrayList;
@@ -14,7 +16,6 @@ import java.util.List;
 import java.util.Map;
 import static dev.incusspawn.tui.DiskUsageModel.fillMissingReferenced;
 import static dev.incusspawn.tui.DiskUsageModel.hasSuspiciousStamps;
-import static dev.incusspawn.tui.DiskUsageModel.newlyFilled;
 import static dev.incusspawn.tui.DiskUsageModel.unstampedBuiltTemplates;
 import static dev.incusspawn.tui.DiskUsageModel.nearestStampedAncestorRfer;
 import static dev.incusspawn.tui.DiskUsageModel.referencedDelta;
@@ -41,9 +42,9 @@ final class ListingLoader {
     // refreshes, which don't probe, so an unstamped template keeps its figure between them.
     private java.util.Map<String, Long> backfilledReferenced = java.util.Map.of();
 
-    // Unstamped templates a backfill has already tried to stamp this session, so a gap the read
-    // cannot fill costs a forced filesystem commit once, not on every reload.
-    private final java.util.Set<String> backfillAttempted = new java.util.HashSet<>();
+    // Unstamped templates a backfill has already measured, or tried to, with a forced commit, so a
+    // gap it cannot fill costs that once, not on every reload. Kept to the current gaps.
+    private final java.util.Set<String> measuredGaps = new java.util.HashSet<>();
 
     /** Per built template, the file its build stamped, and the stamp it was read from. */
     private Map<String, StampedFile> templatesBuiltFrom = Map.of();
@@ -515,34 +516,66 @@ final class ListingLoader {
      * fold. This heals pre-feature templates (built before rfer stamping) and every build that left
      * its template unstamped because the accounting was being repaired: a build never waits for that.
      *
-     * <p>What it reads is saved as the stamp, since templates are immutable and only runs with
-     * consistent accounting ({@link #applyDiskModel}), the same condition a build stamps under.
-     * So it runs once per template, and the first read for a template forces a filesystem commit
-     * ({@code sync=true}), as a build's own stamp does, so the saved figure counts every write.
-     * A gap it cannot fill is not retried with a commit: later reloads use the non-sync flavour,
-     * light enough for the refresh cadence. An existing stamp is never overwritten here
-     * ({@link #revalidateStampsIfNeeded} heals suspect ones). If the read is unavailable (dir pool,
-     * no sudoers rule, agent down) the gap stays and the fold fallback handles it.
+     * <p>A template's first backfill is also saved as its stamp ({@link #measureAndStamp}), so it
+     * is measured that way once. A gap that measure could not fill is read again only with the
+     * non-sync flavour, light enough for the refresh cadence, and kept in memory. An existing stamp
+     * is never overwritten here ({@link #revalidateStampsIfNeeded} heals suspect ones). If the read
+     * is unavailable (dir pool, no sudoers rule, agent down) the gap stays and the fold fallback
+     * handles it.
      */
     private void fillMissingReferencedSizes() {
         if (!usagePoolIsBtrfs || usagePoolName == null) return;
         var unstamped = unstampedBuiltTemplates(tui.templateEntries);
+        measuredGaps.retainAll(unstamped);
         if (unstamped.isEmpty()) return;       // no gap — skip the probe entirely
-        boolean first = !backfillAttempted.containsAll(unstamped);
-        var live = dev.incusspawn.incus.BtrfsUsage.probe(usagePoolName, first);
+        var unmeasured = unstamped.stream().filter(name -> !measuredGaps.contains(name)).toList();
+        // Before the read: one that comes back empty is not retried with a commit either
+        measuredGaps.addAll(unstamped);
+        var live = unmeasured.isEmpty()
+                ? dev.incusspawn.incus.BtrfsUsage.probe(usagePoolName, false)
+                : measureAndStamp(unmeasured);
         if (live.isEmpty()) return;
         backfilledReferenced = live;
-        var before = tui.templateEntries;
-        tui.templateEntries = fillMissingReferenced(before, live);
-        newlyFilled(before, tui.templateEntries).forEach((name, bytes) -> {
-            if (!backfillAttempted.add(name)) return;
-            try {
-                tui.incus.configSet(name, Metadata.DISK_REFERENCED, String.valueOf(bytes));
-            } catch (Exception ignored) {
-                // Best-effort persistence: the backfilled value is used for this session regardless.
+        tui.templateEntries = fillMissingReferenced(tui.templateEntries, live);
+    }
+
+    /**
+     * One live read that also stamps {@code names} with what it measures: templates are
+     * immutable, so the figure stays right, as a build's own stamp does. It is held to a build's
+     * conditions. Each template is held in place ({@link TemplateLock#reading}), so no swap puts
+     * another instance under its name between the read and the stamp. The accounting is checked
+     * consistent just before and after the read, not taken from this reload's status, which may
+     * predate the swap that flagged it. And the read forces a filesystem commit, so the stamp
+     * counts every write. A template not stamped this way is measured again by a later reload.
+     */
+    private java.util.Map<String, Long> measureAndStamp(List<String> names) {
+        var held = new ArrayList<TemplateLock.Held>();
+        try {
+            for (var name : names) held.add(TemplateLock.reading(name, BuildOutput.bound()));
+            if (dev.incusspawn.incus.BtrfsUsage.repairIfInconsistent(usagePoolName).untrusted()) {
+                measuredGaps.removeAll(names);
+                return java.util.Map.of();
             }
-        });
-        backfillAttempted.addAll(unstamped);
+            var live = dev.incusspawn.incus.BtrfsUsage.probe(usagePoolName, true);
+            if (live.isEmpty()) return live;
+            if (dev.incusspawn.incus.BtrfsUsage.status(usagePoolName).untrusted()) {
+                measuredGaps.removeAll(names);
+                return java.util.Map.of();
+            }
+            for (var name : names) {
+                var referenced = live.getOrDefault(name, -1L);
+                BuildCommand.stampReferencedSize(tui.incus, name, referenced);
+                // A rebuild in this session leaves a new gap under the same name: measure it afresh
+                if (referenced > 0) measuredGaps.remove(name);
+            }
+            return live;
+        } catch (RuntimeException e) {
+            // A lock not had in time: measured again by a later reload
+            measuredGaps.removeAll(names);
+            return java.util.Map.of();
+        } finally {
+            held.forEach(TemplateLock.Held::close);
+        }
     }
 
     /**
