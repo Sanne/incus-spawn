@@ -297,3 +297,19 @@ Nothing needs a rebuild or a restart: `isx mcp` reads the definition on every ca
 ### How to verify
 
 `isx doctor` no longer warns for that template, and the coordinator's `list_templates` lists the templates.
+
+## UFW forward rules written into the stock COMMIT comment
+
+On ufw's stock `before.rules`, `isx init` used to write its forward block into the comment above the `*filter` section's `COMMIT` (issue 1932).
+The text left after the block is not valid `iptables-restore` input, so ufw could not load its rules and the host dropped loopback and reply traffic.
+ufw may also have disabled itself, so `isx init` stops at "UFW is not active" before reaching its repair.
+An affected file names the block right after `the '`:
+
+```shell
+sudo grep -c "the '# BEGIN incus-spawn-forward" /etc/ufw/before.rules   # 1 means affected
+sudo perl -0pi -e 's/(?<=the \x27)# BEGIN incus-spawn-forward\n.*?# END incus-spawn-forward\n//s' /etc/ufw/before.rules
+sudo grep -n "the 'COMMIT' line" /etc/ufw/before.rules                   # the comment is whole again
+sudo ufw enable && isx init                                               # init writes the block before COMMIT
+```
+
+An `isx init` with ufw still active repairs the file by itself.

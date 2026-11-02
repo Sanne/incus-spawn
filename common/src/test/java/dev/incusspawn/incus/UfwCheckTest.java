@@ -122,9 +122,32 @@ class UfwCheckTest {
         var result = UfwCheck.insertFilterRules(TYPICAL_BEFORE_RULES, filterInsert);
 
         int fwdIdx = result.indexOf(UfwCheck.MARKER_FWD_BEGIN);
-        int commitIdx = result.indexOf("COMMIT");
+        int commitIdx = UfwCheck.lineIndex(result, UfwCheck.COMMIT_LINE, 0);
         assertTrue(fwdIdx >= 0, "Forward block should be present");
         assertTrue(commitIdx > fwdIdx, "Forward block should appear before COMMIT");
+    }
+
+    @Test
+    void insertFilterRulesBeforeTheCommitLineNotTheCommentNamingIt() {
+        // ufw's stock before.rules names 'COMMIT' in the comment above the line (#1932)
+        var result = UfwCheck.insertFilterRules(TYPICAL_BEFORE_RULES, UfwCheck.generateFilterInsert());
+
+        assertTrue(result.contains("\n# don't delete the 'COMMIT' line or these rules won't be processed\n"),
+                "The stock comment must stay whole:\n" + result);
+        assertTrue(result.endsWith("processed\n" + UfwCheck.generateFilterInsert() + "\nCOMMIT\n"),
+                "The forward block must sit on its own lines right before COMMIT:\n" + result);
+    }
+
+    @Test
+    void insertFilterRulesRepairsABlockWrittenIntoTheComment() {
+        // What isx init wrote before #1932: the block split the stock comment in two
+        var broken = TYPICAL_BEFORE_RULES.replace("the 'COMMIT' line",
+                "the '" + UfwCheck.generateFilterInsert() + "\nCOMMIT' line");
+        assertFalse(UfwCheck.hasForwardRules(broken), "A block inside the comment must not count as configured");
+
+        var repaired = UfwCheck.insertFilterRules(broken, UfwCheck.generateFilterInsert());
+        assertEquals(UfwCheck.insertFilterRules(TYPICAL_BEFORE_RULES, UfwCheck.generateFilterInsert()), repaired);
+        assertTrue(UfwCheck.hasForwardRules(repaired));
     }
 
     @Test
