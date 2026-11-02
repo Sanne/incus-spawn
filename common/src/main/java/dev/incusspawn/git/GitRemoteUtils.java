@@ -146,6 +146,15 @@ public final class GitRemoteUtils {
     }
 
     public static Path resolveHostRepoPath(String repoName, SpawnConfig config) {
+        return resolveHostRepoPath(repoName, null, config);
+    }
+
+    /**
+     * The host checkout for {@code repoName}. Several same-named checkouts are narrowed to those with
+     * a remote matching {@code cloneUrl} (when given): none of them is then no checkout, and only more
+     * than one still needs a {@code repo-paths} entry, which this reports by throwing.
+     */
+    public static Path resolveHostRepoPath(String repoName, String cloneUrl, SpawnConfig config) {
         // Per-repo override first
         var override = config.getRepoPaths().get(repoName);
         if (override != null && !override.isEmpty()) {
@@ -159,20 +168,12 @@ public final class GitRemoteUtils {
         if (hostPaths.size() == 1) {
             var basePath = HostResourceSetup.expandHostTilde(hostPaths.get(0));
             var directChild = Path.of(basePath, repoName);
-            if (Files.isDirectory(directChild) && isGitRepo(directChild)) return directChild;
+            if (Files.isDirectory(directChild) && isGitRepo(directChild)
+                    && (cloneUrl == null || anyRemoteMatches(directChild, cloneUrl))) return directChild;
+            // The scan finds a mismatched direct child too, so a matching nested checkout still wins.
             var found = findRepoDirsNamed(Path.of(basePath), repoName);
-            if (found.isEmpty()) {
-                // Backwards compatibility: return path even if it doesn't exist
-                return directChild;
-            } else if (found.size() == 1) {
-                return found.get(0);
-            } else {
-                throw new IllegalStateException(
-                    "Found multiple host directories for repo '" + repoName + "': " +
-                    found.stream().map(Path::toString).collect(java.util.stream.Collectors.joining(", ")) +
-                    ". Add an explicit 'repo-paths' entry to disambiguate."
-                );
-            }
+            // Backwards compatibility: return path even if it doesn't exist
+            return found.isEmpty() ? directChild : onlyCandidate(repoName, cloneUrl, found);
         } else {
             // Multiple paths: check direct children first, then recursive scan
             var matches = new ArrayList<Path>();
@@ -183,24 +184,29 @@ public final class GitRemoteUtils {
                     matches.add(candidatePath);
                 }
             }
-            if (matches.isEmpty()) {
+            // A direct child only shadows the scan when it can be the checkout: a mismatched one
+            // must not hide a nested checkout whose remote matches.
+            if (matches.isEmpty() || (cloneUrl != null && matches.stream().noneMatch(dir -> anyRemoteMatches(dir, cloneUrl)))) {
+                matches.clear();
                 for (var hostPath : hostPaths) {
                     var basePath = HostResourceSetup.expandHostTilde(hostPath);
                     matches.addAll(findRepoDirsNamed(Path.of(basePath), repoName));
                 }
             }
-            if (matches.isEmpty()) {
-                return null;
-            } else if (matches.size() == 1) {
-                return matches.get(0);
-            } else {
-                throw new IllegalStateException(
-                    "Found multiple host directories for repo '" + repoName + "': " +
-                    matches.stream().map(Path::toString).collect(java.util.stream.Collectors.joining(", ")) +
-                    ". Add an explicit 'repo-paths' entry to disambiguate."
-                );
-            }
+            return matches.isEmpty() ? null : onlyCandidate(repoName, cloneUrl, matches);
         }
+    }
+
+    private static Path onlyCandidate(String repoName, String cloneUrl, List<Path> found) {
+        if (found.size() > 1 && cloneUrl != null) {
+            found = found.stream().filter(dir -> anyRemoteMatches(dir, cloneUrl)).toList();
+            if (found.isEmpty()) return null;
+        }
+        if (found.size() == 1) return found.get(0);
+        throw new IllegalStateException(
+                "Found multiple host directories for repo '" + repoName + "'" + (cloneUrl == null ? "" : " with a remote matching " + cloneUrl)
+                        + ": " + found.stream().map(Path::toString).collect(java.util.stream.Collectors.joining(", "))
+                        + ". Add an explicit 'repo-paths' entry to disambiguate.");
     }
 
     public static List<ImageDef.RepoEntry> collectReposForInstance(String instanceName, IncusClient incus) {

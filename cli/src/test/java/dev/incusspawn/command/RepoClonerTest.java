@@ -1037,6 +1037,44 @@ class RepoClonerTest {
     }
 
     @Test
+    void anAmbiguousHostCheckoutStillPreparesFromTheRemote(@org.junit.jupiter.api.io.TempDir Path dir) throws Exception {
+        var url = "https://github.com/Sanne/isx-apt-releases.git";
+        for (var copy : List.of("a/isx-apt-releases", "b/isx-apt-releases")) {
+            var checkout = java.nio.file.Files.createDirectories(dir.resolve(copy));
+            dev.incusspawn.git.GitTestUtils.runGit(checkout, "init");
+            dev.incusspawn.git.GitTestUtils.runGit(checkout, "remote", "add", "origin", url);
+        }
+        var config = new dev.incusspawn.config.SpawnConfig();
+        config.setHostPath(dir.toString());
+
+        var planned = new RepoCloner(mock(IncusClient.class)).planReference(url, config);
+
+        assertNotNull(planned, "an ambiguous checkout must not drop Git preparation");
+        assertTrue(planned.hasDevice());
+        assertNotNull(planned.request());
+        assertNull(planned.request().checkout());
+        assertTrue(planned.skipReason().contains("repo-paths"), planned.skipReason());
+    }
+
+    @Test
+    void aRepoPreparedWithoutItsHostCheckoutSaysWhyWithTheRepo() {
+        var incus = mock(IncusClient.class);
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
+        var cmd = cloner(incus);
+        var repo = repo("https://example.invalid/releases.git", "~/releases", null);
+        doReturn(new RepoCloner.RepoReference("ref", "/mnt/ref", null, "host checkout not used: two of them",
+                new dev.incusspawn.git.GitPreparation.Request(repo.getUrl(), null, null), null))
+                .when(cmd).planReference(eq(repo.getUrl()), any());
+        var def = trusted("tpl-test");
+        def.setRepos(List.of(repo));
+
+        String out = shown(() -> cmd.cloneRepos(new Container(incus, "test"), def, Map.of(), MachineType.CONTAINER));
+
+        assertTrue(out.contains("via prepared Git packs; host checkout not used"), out);
+        assertTrue(out.contains("releases: host checkout not used: two of them"), out);
+    }
+
+    @Test
     void noPrimeRunsWhileAHostReferenceIsMounted() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");

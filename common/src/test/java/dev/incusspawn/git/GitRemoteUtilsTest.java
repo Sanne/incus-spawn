@@ -218,6 +218,66 @@ class GitRemoteUtilsTest {
     }
 
     @Test
+    void resolveNarrowsSameNamedCheckoutsToTheOneWhoseRemoteMatches() throws Exception {
+        var path1 = tempDir.resolve("projects");
+        var path2 = tempDir.resolve("workspace");
+        Files.createDirectories(path1.resolve("quarkus"));
+        Files.createDirectories(path2.resolve("quarkus"));
+        runGit(path1.resolve("quarkus"), "init");
+        runGit(path2.resolve("quarkus"), "init");
+        runGit(path1.resolve("quarkus"), "remote", "add", "origin", "https://github.com/someone/quarkus.git");
+        runGit(path2.resolve("quarkus"), "remote", "add", "origin", "https://github.com/quarkusio/quarkus.git");
+
+        var config = new SpawnConfig();
+        config.setHostPaths(java.util.List.of(path1.toString(), path2.toString()));
+
+        assertEquals(path2.resolve("quarkus"),
+                GitRemoteUtils.resolveHostRepoPath("quarkus", "https://github.com/quarkusio/quarkus", config));
+        assertNull(GitRemoteUtils.resolveHostRepoPath("quarkus", "https://github.com/other/quarkus.git", config),
+                "no same-named checkout with a matching remote is no checkout");
+        runGit(path1.resolve("quarkus"), "remote", "add", "upstream", "https://github.com/quarkusio/quarkus.git");
+        var exception = assertThrows(IllegalStateException.class,
+                () -> GitRemoteUtils.resolveHostRepoPath("quarkus", "https://github.com/quarkusio/quarkus.git", config));
+        assertTrue(exception.getMessage().contains("repo-paths"), exception.getMessage());
+    }
+
+    @Test
+    void resolveNarrowsNestedCheckoutsUnderOneHostPathByRemote() throws Exception {
+        var base = tempDir.resolve("sources");
+        // No direct child: the scan finds both nested checkouts.
+        var mine = Files.createDirectories(base.resolve("work/isx-apt-releases"));
+        var copy = Files.createDirectories(base.resolve("old/isx-apt-releases"));
+        runGit(mine, "init");
+        runGit(copy, "init");
+        runGit(mine, "remote", "add", "origin", "https://github.com/Sanne/isx-apt-releases.git");
+
+        var config = new SpawnConfig();
+        config.setHostPath(base.toString());
+
+        assertEquals(mine, GitRemoteUtils.resolveHostRepoPath("isx-apt-releases",
+                "https://github.com/Sanne/isx-apt-releases.git", config));
+    }
+
+    @Test
+    void aMismatchedDirectChildDoesNotHideANestedCheckoutWhoseRemoteMatches() throws Exception {
+        var base = tempDir.resolve("code");
+        var fork = Files.createDirectories(base.resolve("quarkus"));
+        var upstream = Files.createDirectories(base.resolve("upstream/quarkus"));
+        runGit(fork, "init");
+        runGit(upstream, "init");
+        runGit(fork, "remote", "add", "origin", "https://github.com/someone/quarkus.git");
+        runGit(upstream, "remote", "add", "origin", "https://github.com/quarkusio/quarkus.git");
+
+        var config = new SpawnConfig();
+        config.setHostPath(base.toString());
+        assertEquals(upstream, GitRemoteUtils.resolveHostRepoPath("quarkus", "https://github.com/quarkusio/quarkus.git", config));
+
+        var other = Files.createDirectories(tempDir.resolve("other"));
+        config.setHostPaths(java.util.List.of(base.toString(), other.toString()));
+        assertEquals(upstream, GitRemoteUtils.resolveHostRepoPath("quarkus", "https://github.com/quarkusio/quarkus.git", config));
+    }
+
+    @Test
     void resolveDuplicateDirectoryNamesPicksGitRepo() throws Exception {
         // ~/Code/quarkus/quarkus layout: parent is a plain dir, child is the git repo
         var codePath = tempDir.resolve("Code");

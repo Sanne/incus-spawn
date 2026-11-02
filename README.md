@@ -270,7 +270,8 @@ With `host-paths` in `~/.config/incus-spawn/config.yaml`, isx manages the remote
 # Base directories where your repos live on the host
 # Subdirectories are scanned recursively (up to 4 levels deep),
 # so ~/projects finds ~/projects/java/my-repo, ~/projects/go/another-repo, etc.
-# If a repo name appears in multiple locations, add an explicit repo-paths entry
+# If a repo name appears in multiple locations, the checkout whose remote matches is used;
+# add an explicit repo-paths entry when more than one matches
 host-paths:
   - ~/projects
   - ~/workspace

@@ -59,7 +59,7 @@ public final class HostRepoRefresh {
 
             Path hostPath;
             try {
-                hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
+                hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, repo.getUrl(), config);
             } catch (IllegalStateException e) {
                 BuildOutput.warn(e.getMessage());
                 continue;
