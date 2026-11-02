@@ -2235,7 +2235,7 @@ public class Tui {
         try {
             var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
             if (repoName.isEmpty()) return null;
-            var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
+            var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, cloneUrl, config);
             if (hostPath == null || !java.nio.file.Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath))
                 return null;
             return GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl) ? hostPath : null;

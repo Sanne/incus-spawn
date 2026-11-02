@@ -242,6 +242,8 @@ class RepoCloner {
 
             // Phase 1 (serial, host only): find the host checkout each repo can clone from.
             var refs = new RepoReference[repos.size()];
+            // Why a repo's host checkout was left out of its preparation, said with the repo.
+            var checkoutProblems = new String[repos.size()];
             var projectLocal = imageDef.getProjectRoot() != null;
             var deviceNames = new java.util.HashSet<String>();
             var hostSources = new java.util.LinkedHashMap<String, String>();
@@ -261,6 +263,7 @@ class RepoCloner {
                 } else refs[i] = projectLocal
                         ? RepoReference.skipped("project-local template, host checkouts are not shared")
                         : planReference(repos.get(i).getUrl(), config);
+                if (refs[i] != null && refs[i].request() != null) checkoutProblems[i] = refs[i].skipReason();
                 // Shallow selection keeps the established transport/fixup path, with no host fetch.
                 if (repos.get(i).getDepth() != null && refs[i] != null && refs[i].request() != null) {
                     var r = refs[i];
@@ -344,6 +347,9 @@ class RepoCloner {
                     + ": " + failed.getMessage() + (repos.get(idx).isHostSource() ? "." : "; falling back to a clone in the guest."),
                     failed.details().toArray(String[]::new)));
             preparationNotRetained.forEach((idx, why) -> BuildOutput.warn(labels.get(idx) + ": " + why));
+            for (int i = 0; i < checkoutProblems.length; i++) {
+                if (checkoutProblems[i] != null) BuildOutput.warn(labels.get(i) + ": " + checkoutProblems[i]);
+            }
 
             assertNoStepFailures(repos, states, "prepare");
             if (!hostSources.isEmpty()) HostRepoSources.record(incus, container.name(), hostSources);
@@ -448,11 +454,14 @@ class RepoCloner {
         var reason = clone.usedReference() ? null
                 : clone.fallbackReason() != null ? clone.fallbackReason()
                 : ref != null ? ref.skipReason() : null;
+        // A planned request's own skip reason is a host checkout it prepares without.
+        var withoutCheckout = clone.usedReference() && ref.prepared() != null && planned != null
+                && planned.request() != null && planned.skipReason() != null;
         String note = clone.usedReference()
                 ? ref.prepared() == null ? "via host reference (shallow, depth " + repo.getDepth() + ")"
-                    : "via " + ref.prepared().strategy()
+                    : "via " + ref.prepared().strategy() + (withoutCheckout ? "; host checkout not used" : "")
                 : reason != null ? reason : repo.getDepth() != null ? "via remote (shallow, depth " + repo.getDepth() + ")" : null;
-        boolean highlight = reason != null;
+        boolean highlight = reason != null || withoutCheckout;
         if (repo.hasPrime()) {
             if (referencesDetached.getCount() > 0) {
                 states.set(idx, StepProgress.running("Waiting to prime"));
@@ -1100,26 +1109,34 @@ class RepoCloner {
     }
 
     /** The host checkout {@code cloneUrl} can clone from, decided on the host alone: a planned
-     *  reference, a skipped one saying why there is none, or null where none is configured. */
+     *  reference, a skipped one saying why there is none, or null where none is configured.
+     *  The checkout only lends objects, so a lookup that fails drops the checkout, never the
+     *  preparation from the remote; the planned reference's skip reason then says why. */
     RepoReference planReference(String cloneUrl, SpawnConfig config) {
         try {
             if (!GitPreparation.isRemoteUrl(cloneUrl)) return RepoReference.skipped("host preparation requires a network Git remote");
             var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
             if (repoName.isEmpty()) return null;
 
-            var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
-            if (hostPath != null && (!Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath)
-                    || !GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl))) {
+            java.nio.file.Path hostPath;
+            String checkoutProblem = null;
+            try {
+                hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, cloneUrl, config);
+                if (hostPath != null && (!Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath)
+                        || !GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl))) {
+                    hostPath = null;
+                }
+            } catch (Exception e) {
                 hostPath = null;
+                checkoutProblem = "host checkout not used: " + (e.getMessage() != null ? e.getMessage() : e.toString());
             }
 
             return new RepoReference(GitRemoteUtils.referenceDeviceName(repoName, cloneUrl),
                     GitRemoteUtils.referenceContainerPath(repoName, cloneUrl),
-                    hostPath == null ? null : HostResourceSetup.translateForVm(hostPath.toString()), null,
+                    hostPath == null ? null : HostResourceSetup.translateForVm(hostPath.toString()), checkoutProblem,
                     new GitPreparation.Request(cloneUrl, null, hostPath), null);
         } catch (Exception e) {
-            BuildOutput.warn("Could not set up the repo reference: " + e.getMessage());
-            return null;
+            return RepoReference.skipped("could not plan Git preparation: " + e.getMessage());
         }
     }
 }

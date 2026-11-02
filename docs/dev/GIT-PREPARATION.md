@@ -138,6 +138,8 @@ The first snapshot and occasional rebuilds retain full validation.
 
 A valid previous snapshot is the preferred reference when remote refs change.
 Otherwise discovery can supply an existing checkout through `host-paths` or `repo-paths`, including a matching upstream beside a fork.
+Same-named checkouts are narrowed to those with a remote matching the URL, in builds and in `update-all` alike.
+A lookup that still fails, such as two matching checkouts, drops only the checkout: the repo is prepared from the remote, and the build names the reason beside the repo.
 Builds never fetch into, maintain, create or request permission to create user checkouts.
 Explicit `update-all` and instance push/pull linking retain their existing behavior.
 

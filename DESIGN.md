@@ -550,6 +550,8 @@ On a stop or an interrupt it sends Git and every helper it started a SIGTERM, so
 A clone it stops is deleted, since an incomplete clone is no checkout.
 `--skip-git-refresh` remains accepted by builds as a compatibility no-op.
 Checkout discovery and instance push/pull linking still use `host-paths` and `repo-paths`.
+Discovery narrows same-named checkouts to those with a remote matching the URL (`GitRemoteUtils.resolveHostRepoPath`).
+A checkout only lends objects, so a lookup that fails (still ambiguous, unreadable) drops the checkout and keeps the preparation from the remote; the build warns with the repo's name why its checkout was not used (#1933).
 
 ### Build Flow
 
