@@ -63,8 +63,9 @@ public final class BaseImageReleases {
     static final List<String> ARCHES = dev.incusspawn.config.BaseImagePin.ARCHES;
 
     /**
-     * A published base-image release, with the download URLs of its manifests: {@code SHA256SUMS},
-     * and {@code SHA256SUMS.v2} when it has one (null otherwise).
+     * A published base-image release, with the download URLs of its manifests, each null when the
+     * release has none: {@code SHA256SUMS}, which Fedora 45 releases no longer publish, and
+     * {@code SHA256SUMS.v2}, which is read first.
      */
     public record Release(String tag, String date, String sha256sumsUrl, String sha256sumsV2Url) {}
 
