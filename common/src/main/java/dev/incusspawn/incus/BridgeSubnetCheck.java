@@ -6,8 +6,10 @@ import dev.incusspawn.util.BuildOutput;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Pattern;
 
 public final class BridgeSubnetCheck {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     public record ConflictResult(boolean conflictDetected, String conflictingRoute,
                                   String oldSubnet, String newSubnet) {}
@@ -51,7 +53,7 @@ public final class BridgeSubnetCheck {
         var bridgeNet = CidrUtils.parseCidr(bridgeCidr);
         for (var line : routeLines) {
             if (line.contains("incusbr0")) continue;
-            var tokens = line.strip().split("\\s+");
+            var tokens = WHITESPACE.split(line.strip());
             if (tokens.length == 0) continue;
             var first = tokens[0];
             if ("default".equals(first)) continue;
@@ -77,7 +79,7 @@ public final class BridgeSubnetCheck {
             }
             boolean conflicts = false;
             for (var line : routeLines) {
-                var tokens = line.strip().split("\\s+");
+                var tokens = WHITESPACE.split(line.strip());
                 if (tokens.length == 0) continue;
                 var first = tokens[0];
                 if ("default".equals(first)) continue;

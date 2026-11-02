@@ -29,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * High-level HTTP client for the Incus REST API.
@@ -36,6 +37,7 @@ import java.util.Set;
  * Handles request serialization, response parsing, async operation waiting, and WebSocket exec.
  */
 class IncusApi {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     private static final int WAIT_TIMEOUT_SECONDS = 120;
     /**
@@ -1547,7 +1549,7 @@ class IncusApi {
             var output = new String(p.getInputStream().readAllBytes()).strip();
             p.waitFor();
             // output is "rows cols" e.g. "24 80"
-            var parts = output.split("\\s+");
+            var parts = WHITESPACE.split(output);
             if (parts.length >= 2) {
                 return new int[]{Integer.parseInt(parts[1]), Integer.parseInt(parts[0])};
             }

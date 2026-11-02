@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 public class ClaudeSetup implements ToolSetup {
+    private static final Pattern SHA256_HEX = Pattern.compile("[a-fA-F0-9]{64}");
 
     private static final String DOWNLOAD_BASE_URL = "https://downloads.claude.ai/claude-code-releases";
 
@@ -384,7 +385,7 @@ public class ClaudeSetup implements ToolSetup {
         if (checksum == null) {
             throw new IOException("Platform " + platform + " not found in manifest");
         }
-        if (!checksum.matches("[a-fA-F0-9]{64}")) {
+        if (!SHA256_HEX.matcher(checksum).matches()) {
             throw new IOException("Invalid checksum for platform " + platform + ": " + checksum);
         }
         return checksum;

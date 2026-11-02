@@ -34,12 +34,15 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Shared helpers for instance/template creation lifecycle.
  * Eliminates duplication between BranchCommand and the TUI.
  */
 public final class InstanceLifecycle {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+    private static final Pattern PROOFS_SUFFIX = Pattern.compile(" proofs-v[0-9]+:");
 
     private InstanceLifecycle() {}
 
@@ -800,7 +803,7 @@ public final class InstanceLifecycle {
             var stamp = new HashMap<>(alongside);
             var secret = InstanceSecret.retainInto(stamp, config, seed, verifier);
             if (stamp.containsKey(Metadata.INSTANCE_SECRET_BOOT)) {
-                var boot = alongside.get(Metadata.INSTANCE_SECRET_BOOT).split(" proofs-v[0-9]+:", 2)[0];
+                var boot = PROOFS_SUFFIX.split(alongside.get(Metadata.INSTANCE_SECRET_BOOT), 2)[0];
                 stamp.put(Metadata.INSTANCE_SECRET_BOOT, secretBootStamp(boot, secret.proofGeneration()));
             }
             incus.configSetAll(name, stamp);
@@ -1192,7 +1195,7 @@ public final class InstanceLifecycle {
         // Latin-1: the Name: line above is the comm, any bytes a process gave itself
         try (var lines = Files.lines(status, StandardCharsets.ISO_8859_1)) {
             return lines.filter(l -> l.startsWith("Uid:"))
-                    .map(l -> l.substring(4).strip().split("\\s+"))
+                    .map(l -> WHITESPACE.split(l.substring(4).strip()))
                     .filter(f -> f.length >= 2 && !f[1].isEmpty() && f[1].chars().allMatch(Character::isDigit))
                     .map(f -> f[1])
                     .findFirst().orElse(null);

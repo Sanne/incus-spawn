@@ -368,14 +368,14 @@ public final class SecretRedactor {
             if (groups > 2) throw new IllegalArgumentException(label + ": only the text around the secret is a group");
         }
         static ScrubPattern whole(String label, String regex) {
-            return whole(label, Pattern.compile(regex));
+            return whole(label, Pattern.compile(regex)); // regex at run time: once per shape, building a static table
         }
         static ScrubPattern whole(String label, Pattern pattern) {
             if (pattern.matcher("").groupCount() != 0) throw new IllegalArgumentException(label + ": the whole match is the secret");
             return new ScrubPattern(label, pattern);
         }
         static ScrubPattern keeping(String label, String regex) {
-            var pattern = Pattern.compile(regex);
+            var pattern = Pattern.compile(regex); // regex at run time: once per shape, building a static table
             if (pattern.matcher("").groupCount() == 0) throw new IllegalArgumentException(label + ": keeps nothing");
             return new ScrubPattern(label, pattern);
         }

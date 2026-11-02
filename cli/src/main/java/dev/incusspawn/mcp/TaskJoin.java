@@ -23,6 +23,7 @@ import java.util.regex.Pattern;
  * joined too.
  */
 public final class TaskJoin {
+    private static final Pattern EPOCH_SECONDS = Pattern.compile("[0-9]{1,12}");
 
     private static final Pattern SESSION_ID = Tasks.SESSION_ID;
     private static final int PROMPT_WIDTH = 60;
@@ -130,7 +131,7 @@ public final class TaskJoin {
             var task = f.get("task").split(" ");
             var state = List.of("running", "finished", "lost").contains(task[0]) ? task[0] : "unknown";
             Instant started = null;
-            if (task.length > 1 && task[1].matches("[0-9]{1,12}")) started = Instant.ofEpochSecond(Long.parseLong(task[1]));
+            if (task.length > 1 && EPOCH_SECONDS.matcher(task[1]).matches()) started = Instant.ofEpochSecond(Long.parseLong(task[1]));
             var sid = f.getOrDefault("sid", "").strip();
             var agent = Tasks.recordedAgent(f.get("identity"));
             var session = SESSION_ID.matcher(sid).matches() ? sid : null;

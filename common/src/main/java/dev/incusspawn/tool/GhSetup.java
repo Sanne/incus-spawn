@@ -9,6 +9,7 @@ import dev.incusspawn.util.BuildOutput;
 
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import static dev.incusspawn.incus.Container.shellQuote;
 
@@ -105,13 +106,14 @@ public class GhSetup implements ToolSetup {
 
     private static final String IDENTITY_FINGERPRINT_SEPARATOR = "#";
     private static final int IDENTITY_FINGERPRINT_LENGTH = 12;
+    private static final Pattern IDENTITY_FINGERPRINT = Pattern.compile(Pattern.quote(IDENTITY_FINGERPRINT_SEPARATOR) + "[0-9a-f]{" + IDENTITY_FINGERPRINT_LENGTH + "}");
 
     /** The fingerprint carries over: the credential it describes is the same one, renamed. */
     @Override
     public String renameBakedIdentity(String baked, String from, String to) {
         if (baked.equals(from)) return to;
         var rest = baked.startsWith(from) ? baked.substring(from.length()) : "";
-        return rest.matches(IDENTITY_FINGERPRINT_SEPARATOR + "[0-9a-f]{" + IDENTITY_FINGERPRINT_LENGTH + "}")
+        return IDENTITY_FINGERPRINT.matcher(rest).matches()
                 ? to + rest : null;
     }
 

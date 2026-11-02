@@ -25,9 +25,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public final class GitRemoteUtils {
+    private static final Pattern URL_SCHEME = Pattern.compile("^[a-zA-Z][a-zA-Z0-9+.-]*://");
+    private static final Pattern NOT_ALPHANUMERIC = Pattern.compile("[^a-zA-Z0-9]");
 
     private static final String CONTAINER_HOME = "/home/agentuser";
 
@@ -115,10 +118,11 @@ public final class GitRemoteUtils {
         var colonIdx = s.indexOf(':', atIdx > 0 ? atIdx : 0);
         if (atIdx > 0 && colonIdx > atIdx && !s.substring(atIdx + 1, colonIdx).contains("/")) {
             s = s.substring(atIdx + 1);
-            s = s.replaceFirst(":", "/");
+            var colon = s.indexOf(':');
+            if (colon >= 0) s = s.substring(0, colon) + "/" + s.substring(colon + 1);
         } else {
             // HTTPS/SSH scheme: strip protocol
-            s = s.replaceFirst("^[a-zA-Z][a-zA-Z0-9+.-]*://", "");
+            s = URL_SCHEME.matcher(s).replaceFirst("");
             // Strip user@ prefix
             var at = s.indexOf('@');
             if (at >= 0 && at < s.indexOf('/')) {
@@ -462,7 +466,7 @@ public final class GitRemoteUtils {
         }
         var urlHash = Integer.toHexString(normalizeGitUrl(cloneUrl).hashCode() & 0x7fffffff);
         // Hot-plugged into a running VM, so the repo name is cut to keep the URL hash (#1513).
-        return DeviceNames.hotplug("ref-" + repoName.replaceAll("[^a-zA-Z0-9]", "-"), "-" + urlHash);
+        return DeviceNames.hotplug("ref-" + NOT_ALPHANUMERIC.matcher(repoName).replaceAll("-"), "-" + urlHash);
     }
 
     public static String referenceContainerPath(String repoName, String cloneUrl) {

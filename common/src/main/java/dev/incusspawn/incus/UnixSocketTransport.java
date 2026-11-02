@@ -20,12 +20,14 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Pattern;
 
 /**
  * Unix-socket-based transport for the Incus REST API (Linux).
  * Opens a fresh Unix domain socket connection per request/WebSocket.
  */
 class UnixSocketTransport implements IncusTransport {
+    private static final Pattern QUERY = Pattern.compile("\\?.*");
 
     static final List<String> SOCKET_CANDIDATES = List.of(
             "/run/incus/unix.socket",
@@ -242,7 +244,7 @@ class UnixSocketTransport implements IncusTransport {
         // nothing. Only the setup is bounded -- the open socket's reads are not (see UnixWsConnection).
         var watchdog = startWatchdog(channel, timeoutSeconds);
         // The fd secret is a credential for this operation: keep it out of error messages.
-        var loggablePath = wsPath.replaceFirst("\\?.*", "");
+        var loggablePath = QUERY.matcher(wsPath).replaceFirst("");
         try {
             channel.connect(addr);
             var out = Channels.newOutputStream(channel);

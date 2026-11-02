@@ -21,9 +21,12 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /** Installs the agent skills a template and its tools declare, fetched on the host. */
 final class SkillInstaller {
+    private static final Pattern GIT_SUFFIX = Pattern.compile("\\.git$");
+    private static final Pattern TOP_LEVEL_SKILL = Pattern.compile("[^/]+/SKILL\\.md");
 
     private SkillInstaller() {}
 
@@ -124,7 +127,7 @@ final class SkillInstaller {
         // Normalise GitHub URL to owner/repo[@skill]
         var normalised = source;
         if (normalised.startsWith("https://github.com/")) {
-            normalised = normalised.substring("https://github.com/".length()).replaceAll("\\.git$", "");
+            normalised = GIT_SUFFIX.matcher(normalised.substring("https://github.com/".length())).replaceAll("");
         }
 
         // owner/repo@skill-name
@@ -161,7 +164,7 @@ final class SkillInstaller {
             for (var node : tree.asList()) {
                 var path = node.pathText("path", "");
                 // Match <skill-name>/SKILL.md at the top level only
-                if (path.matches("[^/]+/SKILL\\.md")) {
+                if (TOP_LEVEL_SKILL.matcher(path).matches()) {
                     var skillName = path.substring(0, path.indexOf('/'));
                     skills.add(new SkillFile(skillName, cache.fetchSkillMd(ownerRepo, skillName, http)));
                 }

@@ -25,6 +25,11 @@ import static dev.incusspawn.incus.Container.shellQuote;
 
 /** Standalone full clones selected by the remote, retained as bounded immutable snapshots. */
 public final class GitPreparation {
+    private static final Pattern DRIVE_LETTER = Pattern.compile("^[A-Za-z]:.*");
+    private static final Pattern SCP_LIKE = Pattern.compile("(?:[^/@:]+@)?(?:\\[[0-9a-fA-F:]+\\]|[^/@:]+):[^:].*");
+    private static final Pattern OBJECT_ID = Pattern.compile("[0-9a-f]{40}(?:[0-9a-f]{24})?");
+    private static final Pattern LOOSE_OBJECT_DIR = Pattern.compile("[0-9a-f]{2}");
+    private static final Pattern PACK_FILE = Pattern.compile("pack-[0-9a-f]{40}(?:[0-9a-f]{24})?\\.(pack|idx)");
     private static final String POLICY = "isx-clean-full-snapshot-v1";
     static final int MAX_INCREMENTAL_PACKS = 32;
     private final PreparationCache cache;
@@ -97,8 +102,8 @@ public final class GitPreparation {
             } catch (IllegalArgumentException e) { return false; }
         }
         // SCP-style SSH: a slash before the colon denotes a path, and drive letters are paths too.
-        return !url.startsWith("file:") && !url.matches("^[A-Za-z]:.*") && !url.startsWith("-")
-                && url.matches("(?:[^/@:]+@)?(?:\\[[0-9a-fA-F:]+\\]|[^/@:]+):[^:].*");
+        return !url.startsWith("file:") && !DRIVE_LETTER.matcher(url).matches() && !url.startsWith("-")
+                && SCP_LIKE.matcher(url).matches();
     }
 
     public Prepared prepare(Request request, Phases phase) throws IOException {
@@ -556,7 +561,7 @@ public final class GitPreparation {
             } else if (!parts[1].endsWith("^{}") && (parts[1].equals("HEAD")
                     || parts[1].startsWith("refs/heads/") || parts[1].startsWith("refs/tags/"))) {
                 // The HEAD pattern also matches the tail of other refs, such as a mirror's refs/remotes/origin/HEAD.
-                if (!parts[0].matches("[0-9a-f]{40}(?:[0-9a-f]{24})?")) throw new IOException("Invalid Git object ID");
+                if (!OBJECT_ID.matcher(parts[0]).matches()) throw new IOException("Invalid Git object ID");
                 refs.put(parts[1], parts[0]);
             }
         }
@@ -628,11 +633,11 @@ public final class GitPreparation {
     }
 
     private static boolean hasLooseObjects(Path repo) throws IOException {
-        return children(repo.resolve("objects")).stream().anyMatch(p -> p.getFileName().toString().matches("[0-9a-f]{2}"));
+        return children(repo.resolve("objects")).stream().anyMatch(p -> LOOSE_OBJECT_DIR.matcher(p.getFileName().toString()).matches());
     }
 
     private static boolean packFile(Path p) {
-        return p.getFileName().toString().matches("pack-[0-9a-f]{40}(?:[0-9a-f]{24})?\\.(pack|idx)");
+        return PACK_FILE.matcher(p.getFileName().toString()).matches();
     }
 
     /** Bind the complete repository, including config, refs, HEAD and all object bytes, to one seal. */

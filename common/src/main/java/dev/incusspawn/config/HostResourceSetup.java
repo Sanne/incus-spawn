@@ -22,8 +22,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 public final class HostResourceSetup {
+    private static final Pattern NOT_ALPHANUMERIC = Pattern.compile("[^a-zA-Z0-9]");
 
     private static final String OVERLAY_BASE = "/var/lib/incus-spawn/overlays";
     private static final String OVERLAY_CONF = "/etc/incus-spawn/overlay-mounts.conf";
@@ -83,7 +85,7 @@ public final class HostResourceSetup {
 
     static String deviceName(String containerPath) {
         var stripped = containerPath.startsWith("/") ? containerPath.substring(1) : containerPath;
-        var name = "hr-" + stripped.replaceAll("[^a-zA-Z0-9]", "-");
+        var name = "hr-" + NOT_ALPHANUMERIC.matcher(stripped).replaceAll("-");
         if (name.length() > 64) {
             var hash = Integer.toHexString(containerPath.hashCode() & 0x7fffffff);
             name = name.substring(0, 55) + "-" + hash;

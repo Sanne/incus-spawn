@@ -69,6 +69,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.BiConsumer;
+import java.util.regex.Pattern;
 
 import static dev.incusspawn.tui.DiskUsageModel.hasDescendant;
 import static dev.incusspawn.tui.UsageFormat.bar;
@@ -83,6 +84,7 @@ import dev.incusspawn.command.InstanceListing.TemplateInfo;
  * {@code isx list} is {@link ListCommand}, which prints the listing and never opens this.
  */
 public class Tui {
+    private static final Pattern INSTANCE_NAME = Pattern.compile("[a-zA-Z][a-zA-Z0-9-]*");
 
     // What bare `isx` said before the TUI takes the terminal; handed over just before it does.
     private PreTuiOutput preTui;
@@ -2495,7 +2497,7 @@ public class Tui {
 
     private static String validateInstanceName(String name) {
         if (name.length() > 63) return "Name too long (max 63 characters)";
-        if (!name.matches("[a-zA-Z][a-zA-Z0-9-]*"))
+        if (!INSTANCE_NAME.matcher(name).matches())
             return "Invalid name: must start with a letter, only alphanumeric and hyphens allowed";
         return null;
     }

@@ -72,3 +72,9 @@ Registered via `--features=` in both modules' `application.properties`, comma-es
   It catches an `os.name` given to the builder and a `Platform` other than the one compiled from `common`, such as the macOS-role test build's.
 
 All three print a `[isx-…-guard]` report to stderr during the build; check it when touching one.
+
+## Regular expressions are constants
+
+Every regex in `main` is a `static final Pattern`, so a build-time-initialized class carries it compiled in the image heap (#1929).
+Never call `String.matches`, `replaceAll`, `replaceFirst` or a regex `split` with a pattern; use the constant's `matcher(...)` or `split(...)`.
+`PatternConstantGateTest` fails otherwise, unless the line says `// regex at run time: <why>`.

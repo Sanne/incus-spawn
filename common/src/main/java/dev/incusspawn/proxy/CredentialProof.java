@@ -12,9 +12,11 @@ import java.nio.file.Path;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /** Stable credential proofs, independent of the rotating MCP/host-service secret. */
 public final class CredentialProof {
+    private static final Pattern HEX_64 = Pattern.compile("[0-9a-f]{64}");
     public static final String GUEST_PATH = "/run/isx/credential-secret";
     public static final String FILE_ENV_VAR = "ISX_CREDENTIAL_SECRET_FILE";
     public static final String DELIVERY_ENV = "ISX_CREDENTIAL_SECRET";
@@ -64,7 +66,7 @@ public final class CredentialProof {
      */
     public static void invalidate(String generation) {
         // A malformed generation never authorized a proof; reset must still be able to repair it.
-        if (generation == null || !generation.matches("[0-9a-f]{64}")) return;
+        if (generation == null || !HEX_64.matcher(generation).matches()) return;
         var marker = invalidationFile(generation);
         try {
             Files.createDirectories(marker.getParent());
@@ -84,12 +86,12 @@ public final class CredentialProof {
     }
 
     private static Path invalidationFile(String generation) {
-        if (!generation.matches("[0-9a-f]{64}")) throw new IllegalStateException("Invalid credential proof generation; reset the instance's proofs");
+        if (!HEX_64.matcher(generation).matches()) throw new IllegalStateException("Invalid credential proof generation; reset the instance's proofs");
         return Environment.lockDir().resolve("credential-proofs/invalidated").resolve(generation);
     }
 
     private static Seed derive(String generation, boolean createKey) {
-        if (!generation.matches("[0-9a-f]{64}")) throw new IllegalStateException("Invalid credential proof generation; reset the instance's proofs");
+        if (!HEX_64.matcher(generation).matches()) throw new IllegalStateException("Invalid credential proof generation; reset the instance's proofs");
         try {
             var configDir = Environment.configDir();
             Files.createDirectories(configDir);
@@ -102,7 +104,7 @@ public final class CredentialProof {
                 HostRouteSecret.create(dir, file);
             }
             var key = HostRouteSecret.read(file, uid);
-            if (!key.matches("[0-9a-f]{64}")) throw new IllegalStateException("Credential proof host key is invalid");
+            if (!HEX_64.matcher(key).matches()) throw new IllegalStateException("Credential proof host key is invalid");
             var mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(HexFormat.of().parseHex(key), "HmacSHA256"));
             return new Seed(generation, HexFormat.of().formatHex(mac.doFinal(

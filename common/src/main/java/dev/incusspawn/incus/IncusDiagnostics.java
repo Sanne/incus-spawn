@@ -3,6 +3,7 @@ package dev.incusspawn.incus;
 import dev.incusspawn.config.Jjq;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Host and system diagnostics read through Incus: memory, swap, CPU, uptime, inotify limits and
@@ -10,6 +11,7 @@ import java.util.Map;
  * Split out of {@link IncusClient}.
  */
 public final class IncusDiagnostics {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     /**
      * Inotify instances one running instance uses: about 10 for systemd and the base services,
@@ -40,7 +42,7 @@ public final class IncusDiagnostics {
             if (!result.success()) return null;
             long memTotal = 0, memAvail = 0, swapTotal = 0, swapFree = 0;
             for (var line : result.stdout().strip().split("\n")) {
-                var parts = line.split("\\s+");
+                var parts = WHITESPACE.split(line);
                 if (parts.length < 2) continue;
                 long kB = Long.parseLong(parts[1]);
                 switch (parts[0]) {
@@ -148,7 +150,7 @@ public final class IncusDiagnostics {
             if (running == null) return "(no running container)";
             var result = incus.shellExec(running, "cat", "/proc/uptime");
             if (!result.success()) return "(could not read uptime)";
-            var parts = result.stdout().strip().split("\\s+");
+            var parts = WHITESPACE.split(result.stdout().strip());
             if (parts.length == 0 || parts[0].isEmpty()) {
                 return "(malformed uptime data)";
             }

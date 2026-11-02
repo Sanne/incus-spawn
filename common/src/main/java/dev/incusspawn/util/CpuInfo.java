@@ -12,6 +12,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -20,6 +21,7 @@ import java.util.stream.Collectors;
  * parallelism (e.g. concurrent git clones).
  */
 public final class CpuInfo {
+    private static final Pattern LINE_BREAK = Pattern.compile("\\s*\n\\s*");
 
     private CpuInfo() {}
 
@@ -92,7 +94,7 @@ public final class CpuInfo {
             var pb = new ProcessBuilder(command);
             pb.redirectError(ProcessBuilder.Redirect.DISCARD);
             var process = pb.start();
-            var lines = new String(process.getInputStream().readAllBytes()).strip().split("\\s*\n\\s*");
+            var lines = LINE_BREAK.split(new String(process.getInputStream().readAllBytes()).strip());
             if (process.waitFor() != 0 || lines.length != keys.length) return new int[0];
             var values = new int[keys.length];
             for (int i = 0; i < keys.length; i++) values[i] = Integer.parseInt(lines[i]);

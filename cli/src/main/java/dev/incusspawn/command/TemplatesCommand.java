@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @CommandDefinition(
@@ -40,6 +41,7 @@ import java.util.stream.Collectors;
         }
 )
 public class TemplatesCommand extends BaseCommand {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     // Bare, the command is its list, so it takes list's --format.
     @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
@@ -292,7 +294,7 @@ public class TemplatesCommand extends BaseCommand {
 
     private static int launchEditor(Path file) throws IOException, InterruptedException {
         var editor = resolveEditor();
-        var parts = new ArrayList<>(List.of(editor.split("\\s+")));
+        var parts = new ArrayList<>(List.of(WHITESPACE.split(editor)));
         parts.add(file.toString());
         var pb = new ProcessBuilder(parts);
         pb.inheritIO();

@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 /**
  * Per-subvolume <em>referenced</em> (rfer) bytes for a btrfs storage pool, keyed by instance name.
@@ -48,12 +49,15 @@ import java.util.concurrent.TimeUnit;
  * when done, typically within seconds. Rfer stamps are only ever taken from consistent accounting.
  */
 public final class BtrfsUsage {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+    private static final Pattern POOL_NAME = Pattern.compile("[A-Za-z0-9._-]+");
 
     /** Standard Incus on-disk layout: pools are mounted here on the host and inside the VM alike. */
     public static final String POOL_MOUNT_PREFIX = "/var/lib/incus/storage-pools/";
 
     /** Separates the two command outputs in the agent's {@code btrfs-usage} reply. */
     public static final String AGENT_SECTION_MARKER = "---ISX-SUBVOL---";
+    private static final Pattern AGENT_SECTION = Pattern.compile(Pattern.quote(AGENT_SECTION_MARKER));
 
     private static final long PROBE_TIMEOUT_SECONDS = 8;
 
@@ -343,7 +347,7 @@ public final class BtrfsUsage {
     private static String[] agentSections(String poolName, boolean sync) {
         var resp = VmAgentClient.btrfsUsage(poolName, sync);
         if (resp.isEmpty()) return null;
-        var parts = resp.get().split(AGENT_SECTION_MARKER, 2);
+        var parts = AGENT_SECTION.split(resp.get(), 2);
         return parts.length == 2 ? parts : null;
     }
 
@@ -357,7 +361,7 @@ public final class BtrfsUsage {
     public static Map<String, Long> parse(String qgroupShowOutput, String subvolumeListOutput, String poolName) {
         Map<Long, Long> referencedBySubvolid = new HashMap<>();
         for (var line : qgroupShowOutput.split("\n")) {
-            var fields = line.trim().split("\\s+");
+            var fields = WHITESPACE.split(line.trim());
             if (fields.length < 2) continue;
             var qid = fields[0];
             if (!qid.startsWith("0/")) continue;                 // skip headers and higher-level qgroups
@@ -384,7 +388,7 @@ public final class BtrfsUsage {
      * copy on purpose — a separate trust boundary in another language).
      */
     public static boolean isSafePoolName(String poolName) {
-        return poolName != null && poolName.matches("[A-Za-z0-9._-]+");
+        return poolName != null && POOL_NAME.matcher(poolName).matches();
     }
 
     /** Run {@code sudo -n btrfs <args>} on the host; returns stdout, or null on any failure. */

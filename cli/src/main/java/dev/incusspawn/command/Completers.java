@@ -32,6 +32,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 
 /**
  * The values aesh's completion engine offers for isx's arguments and options (#1744).
@@ -47,6 +48,9 @@ import java.util.function.Predicate;
  * error over the command line being typed.
  */
 public final class Completers {
+    private static final Pattern SHELL_SPECIAL = Pattern.compile("([\\\\ '\"])");
+    private static final Pattern SHELL_ESCAPED = Pattern.compile("\\\\(.)");
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     private Completers() {}
 
@@ -125,11 +129,11 @@ public final class Completers {
 
     /** A word as aesh's parser reads it back: a backslash keeps a space, quote or backslash literal. */
     private static String escape(String word) {
-        return word.replaceAll("([\\\\ '\"])", "\\\\$1");
+        return SHELL_SPECIAL.matcher(word).replaceAll("\\\\$1");
     }
 
     private static String unescape(String text) {
-        return text.replaceAll("\\\\(.)", "$1");
+        return SHELL_ESCAPED.matcher(text).replaceAll("$1");
     }
 
     /** The deepest command the complete words name, whose subcommands and options the candidates are. */
@@ -154,7 +158,7 @@ public final class Completers {
     }
 
     private static String oneLine(String text) {
-        return text == null ? "" : text.replaceAll("\\s+", " ").strip();
+        return text == null ? "" : WHITESPACE.matcher(text).replaceAll(" ").strip();
     }
 
     /**

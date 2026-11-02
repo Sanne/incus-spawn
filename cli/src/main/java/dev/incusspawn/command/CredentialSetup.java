@@ -62,6 +62,8 @@ import static dev.incusspawn.command.InitCommand.runHostCapturingExit;
  * variables, Incus lookups) are package-private methods, overridden by the flow tests.
  */
 class CredentialSetup {
+    private static final Pattern ACCOUNT_NAME = Pattern.compile("[A-Za-z0-9._-]+");
+    private static final Pattern ENTRY_NUMBER = Pattern.compile("#?\\s*(\\d+)");
 
     private HttpClient httpClient;
     /** What {@link #toolsOf} loads from, and for which search paths. */
@@ -485,7 +487,7 @@ class CredentialSetup {
                 prompts.say("There is already an account named '" + name + "'.");
                 continue;
             }
-            if (!name.matches("[A-Za-z0-9._-]+")) {
+            if (!ACCOUNT_NAME.matcher(name).matches()) {
                 prompts.say("Use letters, digits, '.', '_' or '-' only.");
                 continue;
             }
@@ -1756,7 +1758,7 @@ class CredentialSetup {
      * entry -- one that cannot exist -- so they are never mistaken for a directory to add.
      */
     static Integer entryNumber(String input) {
-        var m = java.util.regex.Pattern.compile("#?\\s*(\\d+)").matcher(input);
+        var m = ENTRY_NUMBER.matcher(input);
         if (!m.matches()) return null;
         try {
             return Integer.parseInt(m.group(1));

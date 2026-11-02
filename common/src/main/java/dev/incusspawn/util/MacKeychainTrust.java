@@ -32,6 +32,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 import static java.util.stream.Collectors.toUnmodifiableSet;
 
@@ -54,6 +55,8 @@ import static java.util.stream.Collectors.toUnmodifiableSet;
  * two domains fail apart: either one's denies apply when the other cannot be read.
  */
 public final class MacKeychainTrust {
+    private static final Pattern DOCTYPE = Pattern.compile("<!DOCTYPE plist [^>]*>");
+    private static final Pattern WHITESPACE_CHAR = Pattern.compile("\\s");
 
     /**
      * Admin-trusted certificates, the SHA-1 (upper-case hex) of every certificate an administrator
@@ -483,7 +486,7 @@ public final class MacKeychainTrust {
         factory.setExpandEntityReferences(false);
         factory.setXIncludeAware(false);
         factory.setNamespaceAware(false);
-        var withoutDoctype = xml.replaceFirst("<!DOCTYPE plist [^>]*>", "");
+        var withoutDoctype = DOCTYPE.matcher(xml).replaceFirst("");
         var doc = factory.newDocumentBuilder().parse(new InputSource(new StringReader(withoutDoctype)));
         var root = doc.getDocumentElement();
         if (!"plist".equals(root.getTagName())) throw new IOException("not a property list: <" + root.getTagName() + ">");
@@ -521,7 +524,7 @@ public final class MacKeychainTrust {
             case "real" -> Double.parseDouble(e.getTextContent().strip());
             case "true" -> Boolean.TRUE;
             case "false" -> Boolean.FALSE;
-            case "data" -> Base64.getMimeDecoder().decode(e.getTextContent().replaceAll("\\s", ""));
+            case "data" -> Base64.getMimeDecoder().decode(WHITESPACE_CHAR.matcher(e.getTextContent()).replaceAll(""));
             default -> throw new IOException("unknown property list element <" + e.getTagName() + ">");
         };
     }

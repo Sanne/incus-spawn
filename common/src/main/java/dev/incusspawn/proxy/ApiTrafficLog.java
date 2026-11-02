@@ -10,12 +10,14 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 
 /**
  * Writes per-exchange debug log files for API traffic inspection.
  * Each HTTP exchange (request + response) gets its own numbered file.
  */
 public class ApiTrafficLog {
+    private static final Pattern UNSAFE_FILENAME_CHAR = Pattern.compile("[^a-zA-Z0-9._-]");
 
     /** The most of one body a log holds: a body is never held whole to be logged (#1315). */
     static final int MAX_BODY_CAPTURE = 65536;
@@ -187,7 +189,7 @@ public class ApiTrafficLog {
     }
 
     private static String sanitize(String path) {
-        var s = path.replaceAll("[^a-zA-Z0-9._-]", "_");
+        var s = UNSAFE_FILENAME_CHAR.matcher(path).replaceAll("_");
         return s.substring(0, Math.min(s.length(), 50));
     }
 }

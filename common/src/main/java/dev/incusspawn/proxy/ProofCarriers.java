@@ -68,14 +68,14 @@ public final class ProofCarriers {
 
     private static List<Pattern> tokens(Map<String, List<ProofToken.Placeholder>> placeholders, String namespace) {
         return placeholders.getOrDefault(namespace, List.of()).stream()
-                .map(p -> Pattern.compile("(?<![A-Za-z0-9._-])" + Pattern.quote(p.prefix() + ProofToken.MARKER)
+                .map(p -> Pattern.compile("(?<![A-Za-z0-9._-])" + Pattern.quote(p.prefix() + ProofToken.MARKER) // regex at run time: once per declared placeholder, at load
                         + "([0-9a-f]{" + ProofToken.DIGEST_HEX_CHARS + "})(?![A-Za-z0-9._-])"))
                 .toList();
     }
 
     private static List<Pattern> claims(Map<String, List<ProofToken.Placeholder>> placeholders, String namespace) {
         return placeholders.getOrDefault(namespace, List.of()).stream()
-                .map(p -> Pattern.compile("(?<![A-Za-z0-9._-])" + Pattern.quote(p.prefix()) + "(?:isx_|placeholder)"))
+                .map(p -> Pattern.compile("(?<![A-Za-z0-9._-])" + Pattern.quote(p.prefix()) + "(?:isx_|placeholder)")) // regex at run time: once per declared placeholder, at load
                 .toList();
     }
 

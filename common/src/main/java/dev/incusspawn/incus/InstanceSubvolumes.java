@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
 
 /**
  * What a btrfs pool holds on disk for instances, compared with what Incus has a record of (#717).
@@ -22,6 +23,7 @@ import java.util.TreeSet;
  * inconsistent), which would hide orphans and invent dangling records.
  */
 public final class InstanceSubvolumes {
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     private InstanceSubvolumes() {}
 
@@ -107,7 +109,7 @@ public final class InstanceSubvolumes {
     static Map<Ref, Long> parseWithIds(String subvolumeListOutput, String pool) {
         var refs = new LinkedHashMap<Ref, Long>();
         for (var line : subvolumeListOutput.split("\n")) {
-            var fields = line.strip().split("\\s+", 3);
+            var fields = WHITESPACE.split(line.strip(), 3);
             var idx = line.indexOf(" path ");
             if (fields.length < 3 || !fields[0].equals("ID") || idx < 0) continue;
             long id;

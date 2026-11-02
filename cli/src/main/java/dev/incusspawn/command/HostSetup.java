@@ -688,7 +688,7 @@ class HostSetup {
     }
 
     static String replaceSubidLine(String content, String oldLine, String newLine) {
-        return content.replaceAll("(?m)^" + Pattern.quote(oldLine) + "$", Matcher.quoteReplacement(newLine));
+        return content.replaceAll("(?m)^" + Pattern.quote(oldLine) + "$", Matcher.quoteReplacement(newLine)); // regex at run time: the line to replace
     }
 
     private boolean ensureSubidEntry(String path, String entry, String oldEntry) {

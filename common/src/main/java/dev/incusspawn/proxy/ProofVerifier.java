@@ -9,9 +9,11 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
 
 /** Hashes of namespace digests, never the secret or a token a guest can present. */
 public final class ProofVerifier {
+    private static final Pattern HEX_64 = Pattern.compile("[0-9a-f]{64}");
     private ProofVerifier() {}
 
     /** One replaceable stamp: removed declarations cannot leave inherited verifiers behind. */
@@ -31,7 +33,7 @@ public final class ProofVerifier {
         for (var line : stamp.split("\n")) {
             var parts = line.split(":", -1);
             if (parts.length != 2 || !ToolDefValidator.isNamespace(parts[0])
-                    || !parts[1].matches("[0-9a-f]{64}") || hashes.putIfAbsent(parts[0], parts[1]) != null) {
+                    || !HEX_64.matcher(parts[1]).matches() || hashes.putIfAbsent(parts[0], parts[1]) != null) {
                 return Map.of();
             }
         }

@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 /**
  * The host half of the {@code herdr} tool (#1720): an instance whose template installs herdr is
@@ -44,6 +45,8 @@ public final class HerdrIntegration implements HostIntegration {
     static final Duration ADD_TIMEOUT = Duration.ofSeconds(30);
     static final Duration QUICK = Duration.ofSeconds(10);
     private static final String HERDR_ID = "[0-9a-f]{32}";
+    private static final Pattern HERDR_ID_PATTERN = Pattern.compile(HERDR_ID);
+    private static final Pattern ADDED_ID = Pattern.compile("\\b(" + HERDR_ID + ")\\b");
 
     private final HostCommands host;
     private final Supplier<Path> records;
@@ -92,7 +95,7 @@ public final class HerdrIntegration implements HostIntegration {
     @Override
     public boolean registered(String name) {
         try {
-            return Files.readString(record(name)).strip().matches(HERDR_ID);
+            return HERDR_ID_PATTERN.matcher(Files.readString(record(name)).strip()).matches();
         } catch (IOException | IllegalArgumentException e) {
             return false;
         }
@@ -145,7 +148,7 @@ public final class HerdrIntegration implements HostIntegration {
         var shown = OutputFormat.oneLine(name);
         try {
             var id = Files.readString(record).strip();
-            if (id.matches(HERDR_ID) && !host.onPath(TOOL)) {
+            if (HERDR_ID_PATTERN.matcher(id).matches() && !host.onPath(TOOL)) {
                 // Kept so a later isx with herdr removes it, but not under the name: a new instance
                 // of that name must not be taken as already added (review of #1823)
                 var orphan = orphans().resolve(id);
@@ -157,7 +160,7 @@ public final class HerdrIntegration implements HostIntegration {
                 return;
             }
             if (host.onPath(TOOL)) removeOrphans(out);
-            if (id.matches(HERDR_ID) && listed(id)) {
+            if (HERDR_ID_PATTERN.matcher(id).matches() && listed(id)) {
                 var removed = host.run(QUICK, List.of(TOOL, "machine", "remove", id));
                 if (!removed.ok()) {
                     out.warn("could not remove " + shown + " from herdr: " + lastLine(removed.output()),
@@ -186,7 +189,7 @@ public final class HerdrIntegration implements HostIntegration {
         try (var files = Files.list(dir)) {
             for (var orphan : files.toList()) {
                 var id = orphan.getFileName().toString();
-                if (!id.matches(HERDR_ID)) continue;
+                if (!HERDR_ID_PATTERN.matcher(id).matches()) continue;
                 if (listed(id) && !host.run(QUICK, List.of(TOOL, "machine", "remove", id)).ok()) continue;
                 Files.deleteIfExists(orphan);
             }
@@ -197,7 +200,7 @@ public final class HerdrIntegration implements HostIntegration {
 
     /** The machine id herdr printed for the one it saved: {@code Saved SSH machine <id>.} */
     static String addedId(String output) {
-        var matcher = java.util.regex.Pattern.compile("\\b(" + HERDR_ID + ")\\b").matcher(output);
+        var matcher = ADDED_ID.matcher(output);
         return matcher.find() ? matcher.group(1) : null;
     }
 

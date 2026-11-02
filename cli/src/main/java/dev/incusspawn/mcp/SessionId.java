@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
  * Who an MCP session is: over stdio, the {@code isx mcp} process, by pid and start mark; over
@@ -28,6 +29,7 @@ import java.util.Optional;
  * stamp again before serving.
  */
 record SessionId(long pid, long start, String instance, String grant) {
+    private static final Pattern SPACES = Pattern.compile(" +");
 
     /** How an instance session's stamp starts; never a digit, so never read as a process. */
     static final String INSTANCE_PREFIX = "instance:";
@@ -133,7 +135,7 @@ record SessionId(long pid, long start, String instance, String grant) {
     static Optional<Long> procStartTicks(String stat) {
         var close = stat.lastIndexOf(')');
         if (close < 0) return Optional.empty();
-        var fields = stat.substring(close + 1).trim().split(" +");
+        var fields = SPACES.split(stat.substring(close + 1).trim());
         try {
             return fields.length > 19 ? Optional.of(Long.parseLong(fields[19])) : Optional.empty();
         } catch (NumberFormatException e) {

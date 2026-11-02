@@ -7,6 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -23,6 +24,7 @@ import java.util.stream.Stream;
  * prompts arrive on stdin.
  */
 final class TaskScripts {
+    private static final Pattern IDLE_SECONDS = Pattern.compile("-?[0-9]{1,12}");
 
     static final String TASKS_DIR = "$HOME/.isx-mcp/tasks";
     private static final String UNIT_PREFIX = "isx-task-";
@@ -628,7 +630,7 @@ final class TaskScripts {
     static Long agentIdle(java.util.List<String> lines) {
         for (var l : lines) {
             var parts = l.strip().split(" ");
-            if (parts.length == 2 && parts[0].equals("idle") && parts[1].matches("-?[0-9]{1,12}")) {
+            if (parts.length == 2 && parts[0].equals("idle") && IDLE_SECONDS.matcher(parts[1]).matches()) {
                 return Math.max(0, Long.parseLong(parts[1]));
             }
         }
