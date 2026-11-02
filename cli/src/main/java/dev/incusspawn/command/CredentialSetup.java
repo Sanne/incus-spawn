@@ -11,6 +11,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NamespaceAccounts;
 import dev.incusspawn.tool.GhSetup;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.InstanceRegistry;
 import dev.incusspawn.proxy.ToolProxyResolver;
@@ -40,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 import dev.incusspawn.config.Jjq;
@@ -1265,10 +1267,27 @@ class CredentialSetup {
         }
     }
 
+    /**
+     * The Incus the account flows ask about instances. A test home ({@code IsolatedHome}) replaces
+     * it, so no test reads or changes the instances of an Incus the developer runs (#1965).
+     */
+    private static volatile Supplier<IncusClient> incus = RuntimeServices::incus;
+
+    /** Replace the Incus the account flows ask, returning what they asked before. For tests. */
+    static Supplier<IncusClient> replaceIncus(Supplier<IncusClient> replacement) {
+        var previous = incus;
+        incus = replacement;
+        return previous;
+    }
+
+    private static IncusClient incus() {
+        return incus.get();
+    }
+
     /** Every isx instance's account state, or none when Incus cannot be asked. Overridden in tests. */
     Map<String, InstanceRegistry.AccountState> instanceAccountStates() {
         try {
-            return InstanceRegistry.accountStates(RuntimeServices.incus());
+            return InstanceRegistry.accountStates(incus());
         } catch (Exception e) {
             return Map.of();
         }
@@ -1390,7 +1409,7 @@ class CredentialSetup {
      */
     List<String> pinInstances(SpawnConfig config, List<String> instances, String namespace, String account) {
         var failures = new java.util.ArrayList<String>();
-        var incus = RuntimeServices.incus();
+        var incus = incus();
         var setups = dev.incusspawn.config.AccountSelection.namespaceSetups(config);
         for (var instance : instances) {
             try {
@@ -1406,7 +1425,7 @@ class CredentialSetup {
 
     /** Bring running instances' baked git identity in line with their new account. Overridden in tests. */
     void refreshIdentities(List<String> instances) {
-        var incus = RuntimeServices.incus();
+        var incus = incus();
         for (var instance : instances) {
             InstanceLifecycle.reconcileAccountIdentities(incus, instance, new dev.incusspawn.util.Output() {
                 @Override
@@ -1440,7 +1459,7 @@ class CredentialSetup {
 
     /** Re-point instances after a rename, and tell the proxy. Overridden in tests. */
     List<String> renameInInstances(SpawnConfig config, String namespace, String from, String to) {
-        var repointed = AccountSelection.renameInInstances(RuntimeServices.incus(), config, namespace, from, to);
+        var repointed = AccountSelection.renameInInstances(incus(), config, namespace, from, to);
         if (!repointed.isEmpty()) ProxyService.signalAccountRefresh();
         return repointed;
     }

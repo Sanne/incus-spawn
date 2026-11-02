@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.proxy.ProxyService;
 
 /**
@@ -23,6 +24,8 @@ import dev.incusspawn.proxy.ProxyService;
  *
  * <p>It also stands in for the proxy's account-refresh signal, which would otherwise reach
  * whatever isx proxy runs on the developer's machine; {@link #proxySignals()} counts the calls.
+ * And it gives {@link CredentialSetup} an Incus of its own, empty until a test adds to it through
+ * {@link #incus()}, so no flow reads the instances of an Incus the developer runs (#1965).
  */
 public final class IsolatedHome implements BeforeEachCallback, AfterEachCallback {
 
@@ -64,6 +67,13 @@ public final class IsolatedHome implements BeforeEachCallback, AfterEachCallback
         return PROXY_SIGNALS.get();
     }
 
+    private static volatile FakeIncusDaemon incus;
+
+    /** The Incus the code under test asks, which has no instances until the test adds some. */
+    static FakeIncusDaemon incus() {
+        return incus;
+    }
+
     @Override
     public void beforeEach(ExtensionContext context) throws IOException {
         var store = context.getStore(NS);
@@ -73,6 +83,9 @@ public final class IsolatedHome implements BeforeEachCallback, AfterEachCallback
         System.setProperty("user.home", home.toString());
         PROXY_SIGNALS.set(0);
         store.put("signal", ProxyService.replaceAccountRefreshSignal(PROXY_SIGNALS::incrementAndGet));
+        var daemon = new FakeIncusDaemon();
+        incus = daemon;
+        store.put("incus", CredentialSetup.replaceIncus(daemon::client));
     }
 
     @Override
@@ -80,6 +93,10 @@ public final class IsolatedHome implements BeforeEachCallback, AfterEachCallback
         var store = context.getStore(NS);
         var signal = store.get("signal", Runnable.class);
         if (signal != null) ProxyService.replaceAccountRefreshSignal(signal);
+        @SuppressWarnings("unchecked")
+        java.util.function.Supplier<dev.incusspawn.incus.IncusClient> previous = store.get("incus", java.util.function.Supplier.class);
+        if (previous != null) CredentialSetup.replaceIncus(previous);
+        incus = null;
         var original = store.get("original", String.class);
         if (original == null) {
             System.clearProperty("user.home");
