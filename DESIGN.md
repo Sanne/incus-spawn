@@ -1647,6 +1647,9 @@ The proxy routes requests to `api.anthropic.com` through one of three paths base
 2. **Standard-to-Vertex translation** (`/v1/messages`): Requests in standard Anthropic API format.
    The proxy translates the body to Vertex `rawPredict` format as it arrives, and holds the result until it has been sent for good (see translation details below, and "A body the proxy must hold").
    This path is used if a container happens to send standard-format requests (e.g. from curl).
+   A proven request on it is signed only when it is `POST` to exactly `/v1/messages` or `/v1/messages/count_tokens` and its body is translated (#1921).
+   Anything else under `/v1/messages`, or a body that is empty or no JSON object, is a 403: the guest's own path and method would otherwise reach Vertex signed with the host's token.
+   The method and path are checked before the body is read; the body's shape only once it is all in, still before anything is sent.
 
 3. **Direct forwarding** (all other paths): Non-messages endpoints (settings, bootstrap, feature flags, MCP registry) are forwarded to the real `api.anthropic.com` with credential injection.
    These endpoints don't exist on the Vertex API.

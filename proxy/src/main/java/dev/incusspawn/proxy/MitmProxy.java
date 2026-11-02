@@ -1840,6 +1840,7 @@ public class MitmProxy {
             return;
         }
         var path = clientReq.path();
+        // Appended only to a call already in Vertex's format
         var query = clientReq.query() == null ? "" : "?" + clientReq.query();
         if (ctx.authorized() && isVertexFormat(path)) {
             // The host's gcloud token signs it: decided before its body is read (#1921)
@@ -1851,11 +1852,14 @@ public class MitmProxy {
             }
             path = ClaudeOnVertex.projectPath(clientReq.method(), path, credentials.vertexProjectId(), credentials.vertexRegion());
             if (path == null) {
-                refuseOnVertex(clientReq, ctx, "claude-on-vertex", 403, "Only Claude model calls are served with the"
-                        + " Vertex AI account");
+                refuseOnVertex(clientReq, ctx, "claude-on-vertex", 403, ONLY_CLAUDE_MODEL_CALLS);
                 return;
             }
             query = clientReq.query() == null ? "" : GeminiOnVertex.responseFormat(clientReq.query());
+        } else if (ctx.authorized() && !isTranslatedModelCall(clientReq)) {
+            // Only a translation is signed: the guest's own path never reaches Vertex with the host's token
+            refuseOnVertex(clientReq, ctx, "claude-on-vertex", 403, ONLY_CLAUDE_MODEL_CALLS);
+            return;
         }
         retainVertexRequest(clientReq, ctx, path, query);
     }
@@ -1869,6 +1873,15 @@ public class MitmProxy {
         var claude = dev.incusspawn.config.SpawnConfig.ClaudeConfig.NAMESPACE;
         return ProxyConfig.GOOGLE_VERTEX_DOMAINS.contains(ctx.domain()) && ctx.proven().contains(claude)
                 && !ctx.creds().inheritedNamespaces().contains(claude);
+    }
+
+    private static final String ONLY_CLAUDE_MODEL_CALLS = "Only Claude model calls are served with the Vertex AI account";
+
+    /** Whether a call in the standard API's format is one the proxy translates for Vertex: {@code POST} to a messages route it serves. */
+    private static boolean isTranslatedModelCall(HttpServerRequest clientReq) {
+        var path = clientReq.path();
+        return io.vertx.core.http.HttpMethod.POST.equals(clientReq.method())
+                && ("/v1/messages".equals(path) || "/v1/messages/count_tokens".equals(path));
     }
 
     private static boolean isVertexModelRequest(HttpServerRequest clientReq, RequestContext ctx) {
@@ -2053,6 +2066,12 @@ public class MitmProxy {
                 }
             } catch (VertexBodyRewriter.InvalidBody | VertexBodyRewriter.RefusedBody | RuntimeException e) {
                 refuseTranslation(path, e, refuse);
+                return;
+            }
+            if (ctx.authorized() && !isVertexFormat(path) && !isVertexFormat(uri)) {
+                // Not translated (no body, or no JSON object): the guest's path is never signed (#1921)
+                refuseOnVertex(clientReq, ctx, "claude-on-vertex", 403, "A Claude model call on the Vertex"
+                        + " AI account needs a JSON object for its body");
                 return;
             }
             // A request already in Vertex's format keeps its query (#1576); a translation's URI is its own
