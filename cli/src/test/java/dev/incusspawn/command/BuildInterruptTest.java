@@ -2,12 +2,13 @@ package dev.incusspawn.command;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import sun.misc.Signal;
+import sun.misc.SignalHandler;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,6 +18,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /** A single Ctrl+C, which may be a terminal's copy shortcut, does not end a running build (#1415). */
@@ -38,8 +40,7 @@ class BuildInterruptTest {
             assumeTrue(canResetSigint(), "SIGINT is ignored here and env cannot reset it for the stand-in (#1500)");
             command.addAll(RESET_SIGINT);
         }
-        command.addAll(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "-cp", System.getProperty("java.class.path"), Build.class.getName()));
+        command.addAll(java(Build.class));
         build = new ProcessBuilder(command).start();
         var out = new BufferedReader(new InputStreamReader(build.getInputStream(), StandardCharsets.UTF_8));
         var err = new BufferedReader(new InputStreamReader(build.getErrorStream(), StandardCharsets.UTF_8));
@@ -62,16 +63,19 @@ class BuildInterruptTest {
     /**
      * Whether this JVM inherited SIGINT ignored, as a suite started detached does (#1500). The
      * stand-in would inherit that too and get no SIGINT handler, so it is reset to the default.
+     * The JVM keeps an inherited ignore and answers {@code SIG_IGN} when asked to replace it, on
+     * any platform; macOS has no {@code /proc} to read that from (#1958).
      */
-    private static boolean sigintIgnored() throws IOException {
-        var status = Path.of("/proc/self/status");
-        if (!Files.exists(status)) return false;
-        try (var lines = Files.lines(status)) {
-            var prefix = "SigIgn:";
-            return lines.filter(line -> line.startsWith(prefix))
-                    .anyMatch(line -> (Long.parseUnsignedLong(line.substring(prefix.length()).strip(), 16)
-                            & 1L << 1) != 0); // signal n is bit n-1, SIGINT is 2
-        }
+    private static boolean sigintIgnored() {
+        var sigint = new Signal("INT");
+        var previous = Signal.handle(sigint, signal -> { });
+        Signal.handle(sigint, previous);
+        return previous == SignalHandler.SIG_IGN;
+    }
+
+    private static List<String> java(Class<?> main) {
+        return List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-cp", System.getProperty("java.class.path"), main.getName());
     }
 
     /** Whether this {@code env} has {@code --default-signal} (GNU coreutils 8.31 or later). */
@@ -91,6 +95,31 @@ class BuildInterruptTest {
         assertEquals(0, kill.waitFor());
     }
 
+    /** #1958: on macOS the stand-in cannot be reset, and that is only known if this answers there. */
+    @Test
+    void anIgnoredSigintIsRecognisedWithoutProc() throws Exception {
+        assertEquals("true", probeAnswerUnder("trap '' INT; exec \"$@\""));
+    }
+
+    /** Answering true regardless would skip the Ctrl+C test on macOS without a word. */
+    @Test
+    void aHandledSigintIsNotTakenForIgnored() throws Exception {
+        assumeFalse(sigintIgnored(), "SIGINT is ignored here and the probe would inherit that (#1500)");
+        assertEquals("false", probeAnswerUnder("exec \"$@\""));
+    }
+
+    /** Stderr stays apart: the JVM may print there first, as {@code JAVA_TOOL_OPTIONS} makes it. */
+    private String probeAnswerUnder(String script) throws Exception {
+        var command = new ArrayList<>(List.of("sh", "-c", script, "sh"));
+        command.addAll(java(IgnoredSigintProbe.class));
+        build = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.INHERIT).start();
+        var out = new BufferedReader(new InputStreamReader(build.getInputStream(), StandardCharsets.UTF_8));
+        var answer = out.readLine();
+        assertTrue(build.waitFor(20, TimeUnit.SECONDS), "the probe did not end");
+        assertEquals(0, build.exitValue());
+        return answer;
+    }
+
     @Test
     void secondCtrlCCountsOnlyWithinTheWindow() {
         var now = new AtomicLong();
@@ -106,6 +135,13 @@ class BuildInterruptTest {
     void ctrlCOutsideABuildInterruptsAtOnce() {
         var confirmation = new BuildInterrupt(() -> false, () -> 0);
         assertTrue(confirmation.shouldInterrupt());
+    }
+
+    /** Says what {@link #sigintIgnored} answers in a JVM started as the test chose. */
+    public static final class IgnoredSigintProbe {
+        public static void main(String[] args) {
+            System.out.println(sigintIgnored());
+        }
     }
 
     /** A build stand-in: guarded as {@code isx build} is, with its shutdown hook. */
