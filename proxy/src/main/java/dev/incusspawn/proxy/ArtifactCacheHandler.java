@@ -210,6 +210,13 @@ class ArtifactCacheHandler {
      */
     private void fetchCacheAndServe(HttpServerRequest clientReq, long started, String domain,
                                     Path cacheFile, String ref, Verification verification) {
+        // Never a body: the fetch sends none, whatever the client did
+        fetchCacheAndServe(clientReq, started, domain, cacheFile, ref, verification, Upstream.mayResend(clientReq, false));
+    }
+
+    /** One attempt at the fetch; {@code resend} lets it make one more on a new request. */
+    private void fetchCacheAndServe(HttpServerRequest clientReq, long started, String domain,
+                                    Path cacheFile, String ref, Verification verification, boolean resend) {
         var options = new RequestOptions()
                 .setMethod(clientReq.method())
                 .setHost(domain)
@@ -240,6 +247,13 @@ class ArtifactCacheHandler {
                     upstream.relayResponse(clientReq, domain, upResp, started);
                 }
             }).onFailure(err -> {
+                // Not for a guest that has left: nobody would read the answer
+                if (resend && !clientReq.response().closed() && Upstream.closedUnanswered(err)) {
+                    // A pooled connection upstream closed as the fetch went out on it (#1923)
+                    ProxyLog.trace("Upstream closed fetching " + ref + ", sending again: " + err.getMessage());
+                    fetchCacheAndServe(clientReq, started, domain, cacheFile, ref, verification, false);
+                    return;
+                }
                 ProxyLog.warn("Upstream error fetching " + ref + ": " + err.getMessage());
                 upstream.sendError(clientReq.response(), 502, "Upstream error");
             });
@@ -281,6 +295,13 @@ class ArtifactCacheHandler {
             return;
         }
 
+        fetchRedirect(clientReq, domain, redirectUri, location, cacheFile, ref, verification, depth, started, true);
+    }
+
+    /** One attempt at a redirect's GET; {@code resend} lets it make one more on a new request. */
+    private void fetchRedirect(HttpServerRequest clientReq, String domain, URI redirectUri, String location,
+                               Path cacheFile, String ref, Verification verification, int depth, long started,
+                               boolean resend) {
         var redirectHost = redirectUri.getHost();
         var redirectPort = redirectUri.getPort() > 0 ? redirectUri.getPort() : 443;
         var redirectPath = rawPathAndQuery(redirectUri);
@@ -309,6 +330,11 @@ class ArtifactCacheHandler {
                     upstream.relayResponse(clientReq, domain, redResp, started);
                 }
             }).onFailure(err -> {
+                if (resend && !clientReq.response().closed() && Upstream.closedUnanswered(err)) {
+                    ProxyLog.trace("Upstream closed following redirect for " + ref + ", sending again: " + err.getMessage());
+                    fetchRedirect(clientReq, domain, redirectUri, location, cacheFile, ref, verification, depth, started, false);
+                    return;
+                }
                 ProxyLog.warn("Redirect fetch error for " + ref + ": " + err.getMessage());
                 upstream.sendError(clientReq.response(), 502, "Redirect fetch failed");
             });

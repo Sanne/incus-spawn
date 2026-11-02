@@ -2094,6 +2094,8 @@ Only an unreachable upstream serves an older one.
   RFC 9110 lets a client resend an idempotent request then, as curl and browsers do; the resend goes through the same `prepare`, so its proof is checked and its credential injected as for the first.
   Only safe methods are resent: a bodyless PUT or DELETE is idempotent by the RFC but changes state, and a server need not honour that promise.
   A request with a body is never resent, since its body has gone upstream and is not held.
+  The artifact cache's fetch on a miss, and each redirect it follows, takes a connection from the same pool, so it is resent on the same rule (`Upstream.closedUnanswered`, #1923).
+  The cache's probes resend more widely, any failure after connecting but a timeout, since each reads its whole small answer before anything reaches the guest.
   The resend takes a connection from the same pool, which may be just as stale when upstream closed several at once; it is still one resend, never more.
   The cache path's own relays get the same watchdog (`relayResponse` and `relayBody`, #1192): an error answered to a fetch or after a redirect, and a download relayed uncached after a cache write error.
   Their clock starts at the client's request, or its last byte, not when the relay begins, since the head wait already spent part of the budget.

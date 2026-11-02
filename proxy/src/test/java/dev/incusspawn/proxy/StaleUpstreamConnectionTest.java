@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.Environment;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
 
@@ -44,6 +45,11 @@ import static org.junit.jupiter.api.Assertions.*;
 class StaleUpstreamConnectionTest {
 
     static final String HOST = "github.com";
+    /** Registries whose blobs the proxy caches, the second a redirect target of the first. */
+    static final String REGISTRY = "ghcr.io";
+    static final String REDIRECT_REGISTRY = "quay.io";
+    /** The digest of what the stub answers, so a fetched blob passes its check. */
+    static final String DIGEST = "sha256:" + sha256Hex("ok");
     static final String REAL_GITHUB = "ghp_realtoken";
 
     @TempDir
@@ -89,6 +95,12 @@ class StaleUpstreamConnectionTest {
         ContainerTls.startInBackground(proxy);
         ProofTestSupport.register(proxy);
         proxy.overrideUpstream(HOST, "127.0.0.1", port);
+        for (var registry : List.of(REGISTRY, REDIRECT_REGISTRY)) {
+            var registryServer = vertx.createHttpServer(new HttpServerOptions().setSsl(true)
+                            .setKeyCertOptions(NpmCacheProxyTest.keyCert(ca, registry)))
+                    .requestHandler(StaleUpstreamConnectionTest::answer);
+            proxy.overrideUpstream(registry, "127.0.0.1", NpmCacheProxyTest.listen(registryServer));
+        }
         mitmPort = proxy.mitmPort();
         client = vertx.createNetClient(new NetClientOptions()
                 .setSsl(true).setTrustAll(true).setHostnameVerificationAlgorithm(""));
@@ -108,6 +120,11 @@ class StaleUpstreamConnectionTest {
             return;
         }
         answeredAuthorization = req.getHeader("Authorization");
+        if (req.path().startsWith("/v2/moved/")) {
+            req.response().setStatusCode(302)
+                    .putHeader("Location", "https://" + REDIRECT_REGISTRY + "/v2/library/app/blobs/" + DIGEST).end();
+            return;
+        }
         req.body().onSuccess(body -> req.response().putHeader("Content-Type", "text/plain").end("ok"));
     }
 
@@ -122,7 +139,11 @@ class StaleUpstreamConnectionTest {
     }
 
     @BeforeEach
-    void reset() {
+    void reset() throws Exception {
+        // Each blob fetch is a cache miss
+        try (var cached = Files.list(Files.createDirectories(Environment.registryCacheDir()))) {
+            for (var file : cached.toList()) Files.deleteIfExists(file);
+        }
         // A connection an earlier test left pooled starts afresh: each test's first request is answered
         perConnection.clear();
         dropped.set(0);
@@ -214,6 +235,72 @@ class StaleUpstreamConnectionTest {
         assertTrue(answer.startsWith("HTTP/1.1 502"), answer);
     }
 
+    /** The cache-miss fetch of a blob takes its connection from the same pool as the relay (#1923). */
+    @Test
+    void cacheMissFetchIsSentAgainWhenItsPooledConnectionCloses() throws Exception {
+        // Not a blob: relayed, which leaves its connection pooled
+        assertTrue(getFrom(REGISTRY, "/v2/").startsWith("HTTP/1.1 200"));
+
+        var answer = getFrom(REGISTRY, "/v2/library/app/blobs/" + DIGEST);
+
+        assertEquals(1, dropped.get(), "The fetch did not go out on the pooled connection");
+        assertEquals(3, byMethod.get("GET").get(), "The fetch was not sent again");
+        assertTrue(answer.startsWith("HTTP/1.1 200"), answer);
+        assertTrue(answer.endsWith("ok"), answer);
+        awaitCached();
+    }
+
+    /** So does each hop of a redirect it follows. */
+    @Test
+    void redirectedCacheMissFetchIsSentAgainWhenItsPooledConnectionCloses() throws Exception {
+        assertTrue(getFrom(REDIRECT_REGISTRY, "/v2/").startsWith("HTTP/1.1 200"));
+
+        var answer = getFrom(REGISTRY, "/v2/moved/blobs/" + DIGEST);
+
+        assertEquals(1, dropped.get(), "The redirect did not go out on the pooled connection");
+        assertEquals(4, byMethod.get("GET").get(), "The redirect was not sent again");
+        assertTrue(answer.startsWith("HTTP/1.1 200"), answer);
+        assertTrue(answer.endsWith("ok"), answer);
+        awaitCached();
+    }
+
+    /** Sent again once only, as the relay is. */
+    @Test
+    void cacheMissFetchIsSentAgainOnlyOnce() throws Exception {
+        dropAll = true;
+
+        var answer = getFrom(REGISTRY, "/v2/library/app/blobs/" + DIGEST);
+
+        assertEquals(2, dropped.get(), "The fetch was not sent exactly twice");
+        assertTrue(answer.startsWith("HTTP/1.1 502"), answer);
+    }
+
+    /**
+     * The blob is committed after the client has its answer: wait for it, so the next test's reset
+     * does not run before the commit and leave that test a cache hit.
+     */
+    static void awaitCached() throws InterruptedException {
+        var cached = Environment.registryCacheDir().resolve(DIGEST.replace(":", "-"));
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!Files.isRegularFile(cached)) {
+            assertTrue(System.nanoTime() < deadline, "The fetched blob was never cached");
+            Thread.sleep(10);
+        }
+    }
+
+    static String sha256Hex(String text) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(text.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    static String getFrom(String host, String path) throws Exception {
+        return exchange(host, Buffer.buffer("GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n"));
+    }
+
     static String get(String path, String... headers) throws Exception {
         var head = new StringBuilder("GET " + path + " HTTP/1.1\r\nHost: " + HOST + "\r\n");
         for (var h : headers) head.append(h).append("\r\n");
@@ -226,7 +313,11 @@ class StaleUpstreamConnectionTest {
 
     /** Sends the request in one write and returns everything the proxy answers until it closes. */
     static String exchange(Buffer request) throws Exception {
-        var socket = client.connect(mitmPort, "127.0.0.1", HOST)
+        return exchange(HOST, request);
+    }
+
+    static String exchange(String host, Buffer request) throws Exception {
+        var socket = client.connect(mitmPort, "127.0.0.1", host)
                 .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
         var answer = new CompletableFuture<String>();
         var bytes = Buffer.buffer();
