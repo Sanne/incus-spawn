@@ -5,6 +5,7 @@ import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.InstanceSubvolumes;
+import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.proxy.BridgeDns;
 import dev.incusspawn.proxy.ProxyActivity;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -859,6 +860,67 @@ class DoctorCommandTest {
         assertEquals(DoctorCommand.Status.FAIL, f.status());
         assertTrue(f.detail().contains("installed but inactive"));
         assertTrue(f.remediation().description().startsWith("Enable firewalld"));
+    }
+
+    // ---- UFW forward block written into a comment (#1944) ----
+
+    private static final String STOCK_FILTER = """
+            *filter
+            :ufw-before-input - [0:0]
+            :ufw-before-forward - [0:0]
+            -A ufw-before-forward -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+            # don't delete the 'COMMIT' line or these rules won't be processed
+            COMMIT
+            """;
+
+    private static final DoctorCommand.Finding UFW_INACTIVE = DoctorCommand.Finding.fail(
+            "Firewall not running", "(UFW installed but inactive)", null);
+
+    private static String ufwBlockInComment() {
+        return STOCK_FILTER.replace("the 'COMMIT' line",
+                "the '" + UfwCheck.generateFilterInsert() + "\nCOMMIT' line");
+    }
+
+    @Test
+    void anInactiveUfwWithItsForwardBlockInACommentPointsAtTheManualRepair() throws Exception {
+        var findings = DoctorCommand.ufwFindings(ufwBlockInComment(), false, UFW_INACTIVE);
+        assertEquals(2, findings.size(), findings.toString());
+        var f = findings.getFirst();
+        assertEquals(DoctorCommand.Status.FAIL, f.status());
+        assertTrue(f.detail().contains("/etc/ufw/before.rules"), f.detail());
+        assertTrue(f.remediation().description().contains(
+                "MIGRATIONS.md#ufw-forward-rules-written-into-the-stock-commit-comment"),
+                f.remediation().description());
+        assertSame(UFW_INACTIVE, findings.get(1));
+        assertTrue(Files.readString(Path.of("../docs/dev/MIGRATIONS.md"))
+                .contains("\n## UFW forward rules written into the stock COMMIT comment\n"),
+                "the anchor names a section of the migration notes");
+    }
+
+    @Test
+    void anActiveUfwWithItsForwardBlockInACommentIsRepairedByInit() {
+        var redirect = DoctorCommand.Finding.ok("Firewall PREROUTING redirect (UFW)", "443 -> 8443");
+        var findings = DoctorCommand.ufwFindings(ufwBlockInComment(), true, redirect);
+        assertEquals(2, findings.size(), findings.toString());
+        assertEquals(DoctorCommand.Status.FAIL, findings.getFirst().status());
+        assertTrue(findings.getFirst().remediation().description().contains("isx init"));
+        assertSame(redirect, findings.get(1));
+    }
+
+    @Test
+    void aStoppedFirewalldKeepsItsFindingAfterTheUfwOne() {
+        var stopped = DoctorCommand.firewalldNotRunningFinding(FirewalldCheck.State.INACTIVE);
+        var findings = DoctorCommand.ufwFindings(ufwBlockInComment(), false, stopped);
+        assertEquals("UFW forward rules", findings.getFirst().label());
+        assertSame(stopped, findings.get(1));
+    }
+
+    @Test
+    void aForwardBlockOnItsOwnLinesAddsNoFinding() {
+        var placed = UfwCheck.insertFilterRules(STOCK_FILTER, UfwCheck.generateFilterInsert());
+        assertEquals(List.of(UFW_INACTIVE), DoctorCommand.ufwFindings(placed, false, UFW_INACTIVE));
+        assertEquals(List.of(UFW_INACTIVE), DoctorCommand.ufwFindings(STOCK_FILTER, false, UFW_INACTIVE));
+        assertEquals(List.of(UFW_INACTIVE), DoctorCommand.ufwFindings("", false, UFW_INACTIVE));
     }
 
     // ---- Proxy not-running finding selection ----

@@ -1582,8 +1582,7 @@ public class DoctorCommand extends BaseCommand {
         if (Platform.isLinux()) {
             // Linux only: on macOS the bridge is in the VM, whose routes the Mac's are not (#1202).
             findings.add(checkBridgeSubnet(incus));
-            var iptablesFinding = checkIptablesRedirect();
-            if (iptablesFinding != null) findings.add(iptablesFinding);
+            findings.addAll(checkIptablesRedirect());
         }
         return findings;
     }
@@ -1667,22 +1666,44 @@ public class DoctorCommand extends BaseCommand {
         return Finding.warn("Bridge DNS overrides incomplete", status.describe(), repair);
     }
 
-    private Finding checkIptablesRedirect() {
+    private List<Finding> checkIptablesRedirect() {
         var firewalld = FirewalldCheck.state();
         if (firewalld == FirewalldCheck.State.ACTIVE) {
-            return checkFirewalldRedirect();
+            return List.of(checkFirewalldRedirect());
         }
         if (UfwCheck.isActive()) {
-            return checkUfwRedirect();
+            var beforeRules = UfwCheck.readBeforeRules();
+            return ufwFindings(beforeRules, true, checkUfwRedirect(beforeRules));
         }
         if (FirewalldCheck.isInstalled()) {
-            return firewalldNotRunningFinding(firewalld);
+            var stopped = firewalldNotRunningFinding(firewalld);
+            // A ufw beside it may be the firewall that could not load and disabled itself
+            return UfwCheck.isInstalled() ? ufwFindings(UfwCheck.readBeforeRules(), false, stopped) : List.of(stopped);
         }
         if (UfwCheck.isInstalled()) {
-            return Finding.fail("Firewall not running", "(UFW installed but inactive)",
-                    new Remediation("Enable UFW and re-run 'isx init'", false, null));
+            return ufwFindings(UfwCheck.readBeforeRules(), false,
+                    Finding.fail("Firewall not running", "(UFW installed but inactive)",
+                            new Remediation("Enable UFW and re-run 'isx init'", false, null)));
         }
-        return Finding.warn("Firewall redirect", "(no firewall installed, cannot verify)", null);
+        return List.of(Finding.warn("Firewall redirect", "(no firewall installed, cannot verify)", null));
+    }
+
+    /**
+     * UFW's own finding, after one for a forward block an older {@code isx init} wrote into the
+     * comment naming {@code COMMIT} in {@code before.rules} (#1932). ufw cannot load that file and may
+     * disable itself, and then {@code isx init} stops before its repair, so the inactive case points
+     * at the manual one (#1944).
+     */
+    static List<Finding> ufwFindings(String beforeRules, boolean active, Finding firewall) {
+        if (!UfwCheck.forwardBlockMisplaced(beforeRules)) return List.of(firewall);
+        var repair = active
+                ? new Remediation("Re-run 'isx init', which moves the block before the COMMIT line", false, null)
+                : new Remediation("Remove the block as described in " + CowPoolBacking.MIGRATIONS
+                        + "#ufw-forward-rules-written-into-the-stock-commit-comment"
+                        + ", then enable UFW and re-run 'isx init'", false, null);
+        return List.of(Finding.fail("UFW forward rules",
+                "(written into a comment in /etc/ufw/before.rules, so ufw cannot load its rules)", repair),
+                firewall);
     }
 
     /**
@@ -1729,10 +1750,9 @@ public class DoctorCommand extends BaseCommand {
         }
     }
 
-    private Finding checkUfwRedirect() {
+    private Finding checkUfwRedirect(String beforeRules) {
         try {
             var gatewayIp = ProxyConfig.resolveGatewayIp(incus());
-            var beforeRules = UfwCheck.readBeforeRules();
             if (beforeRules.isEmpty()) {
                 return Finding.warn("Firewall PREROUTING redirect", "(could not read /etc/ufw/before.rules)", null);
             }
