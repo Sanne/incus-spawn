@@ -65,7 +65,7 @@ if [ -z "${ISX_INSIDE_CONTAINER:-}" ]; then
         -e ISX_VERSION="$ISX_VERSION" \
         -e KERNEL_CACHE_DIR=/cache \
         -e ISX_INSIDE_CONTAINER=1 \
-        fedora:44 bash -c '
+        fedora:45 bash -c '
             dnf install -y -q btrfs-progs zstd make gcc flex bison bc \
                 elfutils-libelf-devel openssl-devel findutils tar xz curl gzip \
                 perl diffutils
