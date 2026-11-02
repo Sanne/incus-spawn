@@ -317,6 +317,14 @@ class NpmGlobalInstallTest {
     }
 
     @Test
+    void skipReasonsQuoteTheRawLineAShownLineCameFromAcrossAControlString() {
+        // A title escape run across two lines shows them as one, so the shown line after it is
+        // the third raw one, not the second (#1920)
+        var npm = new IncusClient.ExecResult(0, "", "a\033]0;t\nu\007b\nnpm error real\nnpm ok\n");
+        assertEquals(List.of("npm error real"), NpmGlobalInstall.skipReasons(npm));
+    }
+
+    @Test
     void showsNpmsSkipReasonsAsText() {
         // An npm package's install script decides what npm's verbose log holds (#1588).
         var npm = new IncusClient.ExecResult(0, "", "\033]52;c;eA==\007\033[31mnpm error\033[0m \033[2Kskipped\nfetch error 10%\rfetch ok 100%\n");

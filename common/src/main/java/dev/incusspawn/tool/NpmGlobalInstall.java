@@ -262,13 +262,22 @@ public final class NpmGlobalInstall {
      * ({@link SecretRedactor#scrubGuest}, #1878), since the failure report keeps them.
      */
     static List<String> skipReasons(IncusClient.ExecResult npm) {
-        var raw = (npm.stdout() + "\n" + npm.stderr()).split("\n", -1);
-        // Showing it keeps every line break, so a shown line is the raw line it came from
-        var shown = BuildOutput.guestText(npm.stdout() + "\n" + npm.stderr()).split("\n", -1);
+        var raw = npm.stdout() + "\n" + npm.stderr();
+        // A control string can run across raw lines (#1920), so a shown line is the raw text
+        // between the line breaks it shows, found through where each shown character came from
+        var shown = BuildOutput.shownGuestText(raw);
+        var text = shown.text();
         var reasons = new ArrayList<String>();
-        for (int i = 0; i < shown.length; i++) {
-            var lower = shown[i].toLowerCase();
-            if (lower.contains("fail") || lower.contains("error")) reasons.add(SecretRedactor.scrubGuest(raw[i]));
+        for (int line = 0, rawLine = 0; line <= text.length(); ) {
+            int end = text.indexOf('\n', line);
+            if (end < 0) end = text.length();
+            int rawEnd = end < text.length() ? shown.source()[end] : raw.length();
+            var lower = text.substring(line, end).toLowerCase();
+            if (lower.contains("fail") || lower.contains("error")) {
+                reasons.add(SecretRedactor.scrubGuest(raw.substring(rawLine, rawEnd)));
+            }
+            line = end + 1;
+            rawLine = rawEnd + 1;
         }
         return List.copyOf(reasons);
     }

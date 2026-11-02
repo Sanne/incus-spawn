@@ -35,23 +35,33 @@ public final class BuildOutput {
     private static final java.util.regex.Pattern ANSI_PATTERN =
             java.util.regex.Pattern.compile("\u001B\\[[0-9;?]*[A-Za-z]");
     /**
-     * What a terminal acts on within one line, dropped whole from guest output, left to right:
+     * What a terminal acts on within a control sequence or escape and carries on with it: a C0
+     * control, which it acts on as outside one, and DEL, which it ignores. CAN, SUB and ESC end it.
+     */
+    private static final String WITHIN = "\u0000-\u0017\u0019\u001C-\u001F\u007F";
+    /**
+     * What a terminal acts on, dropped whole from guest output, left to right:
      * <ul>
      *   <li>a control string ended by BEL or ST, in its 7-bit or C1 form: an operating system
      *       command (a title, a link, a clipboard write), DCS, SOS, PM or APC.
-     *       Its payload stops at every introducer, so a line of them is matched in linear time,
-     *       not scanned to its end from each one;</li>
+     *       It runs across lines, ignoring the controls in it (#1920) but CAN and SUB, which
+     *       abort it as they do a sequence. Its payload stops at every introducer, so a line of
+     *       them is matched in linear time, not scanned to its end from each one;</li>
      *   <li>a control sequence, 7-bit or C1, with its parameters, intermediates and final byte
      *       ({@code \e[0 q}, {@code \e[>4;2m}), not only colour;</li>
      *   <li>any other escape ({@code \e(B}, {@code \e7}), including an introducer whose control
      *       string a later escape cut short, as a terminal does.</li>
      * </ul>
+     * A sequence or escape may hold C0 controls a terminal acts on as it reads them (#1920),
+     * which {@link #payloadStart} and {@link #parsedSequence} tell from the sequence. Its
+     * parameters are possessive: they and its intermediates both take those controls, and a
+     * run of them given back one at a time to an end that never comes was quadratic.
      */
     private static final java.util.regex.Pattern GUEST_CONTROL_PATTERN = java.util.regex.Pattern.compile(
-            "(?:\u001B[\\]PX^_]|[\u0090\u0098\u009D\u009E\u009F])"
-                    + "[^\u0007\u001B\u009C\u0090\u0098\u009D\u009E\u009F\n]*(?:\u0007|\u001B\\\\|\u009C)"
-                    + "|(?:\u001B\\[|\u009B)[0-?]*[ -/]*[@-~]"
-                    + "|\u001B[ -/]*[0-~]");
+            "(?:\u001B[" + WITHIN + "]*[\\]PX^_]|[\u0090\u0098\u009D\u009E\u009F])"
+                    + "[^\u0007\u0018\u001A\u001B\u009C\u0090\u0098\u009D\u009E\u009F]*(?:\u0007|\u001B\\\\|\u009C)"
+                    + "|(?:\u001B[" + WITHIN + "]*\\[|\u009B)[0-?" + WITHIN + "]*+[ -/" + WITHIN + "]*+[@-~]"
+                    + "|\u001B[ -/" + WITHIN + "]*[0-~]");
 
     /**
      * Whether to write escapes (colour, {@link TerminalLink} hyperlinks): on an ANSI terminal
@@ -102,6 +112,45 @@ public final class BuildOutput {
         return GUEST_CONTROL_PATTERN.matcher(raw);
     }
 
+    /**
+     * Whether a terminal acts on {@code c} within a control sequence or escape as it does outside
+     * one, and carries on with the sequence: a C0 control but CAN, SUB and ESC, which end it.
+     */
+    public static boolean actsWithinSequence(int c) {
+        return c < 0x20 && c != 0x18 && c != 0x1A && c != 0x1B;
+    }
+
+    /**
+     * Where a control {@link #guestControls} found from {@code start} to {@code end} of {@code raw}
+     * stops acting on the C0 controls in it ({@link #actsWithinSequence}): at a control string's
+     * payload, which ignores them, and at its end for a control sequence or escape.
+     */
+    public static int payloadStart(CharSequence raw, int start, int end) {
+        char first = raw.charAt(start);
+        if (first != '\u001B') return first == '\u009B' ? end : start;
+        int i = start + 1;
+        while (i < end - 1 && isWithin(raw.charAt(i))) i++;
+        return "]PX^_".indexOf(raw.charAt(i)) >= 0 && i < end - 1 ? i + 1 : end;
+    }
+
+    /**
+     * The control sequence or escape {@link #guestControls} found from {@code start} to
+     * {@code end} of {@code raw} (its {@link #payloadStart} is its end), as a terminal parses it:
+     * without the controls it acted on or ignored within it.
+     */
+    public static String parsedSequence(CharSequence raw, int start, int end) {
+        var parsed = new StringBuilder(end - start);
+        for (int i = start; i < end; i++) {
+            char c = raw.charAt(i);
+            if (!isWithin(c)) parsed.append(c);
+        }
+        return parsed.toString();
+    }
+
+    private static boolean isWithin(char c) {
+        return c == 0x7F || actsWithinSequence(c);
+    }
+
     /** Whether {@link #guestText} spaces {@code c}: a control other than a line feed or a tab. */
     public static boolean actsOnTerminal(int c) {
         return TerminalLink.actsOnTerminal(c);
@@ -129,6 +178,13 @@ public final class BuildOutput {
                 kept.append(raw.charAt(i));
             }
             if (end == raw.length()) break;
+            // The controls a terminal acted on within it, as it does outside one
+            for (int i = end, payload = payloadStart(raw, end, matcher.end()); i < payload; i++) {
+                if (actsWithinSequence(raw.charAt(i))) {
+                    from[kept.length()] = i;
+                    kept.append(raw.charAt(i));
+                }
+            }
             pos = matcher.end();
         }
         // Each line's last frame with text in it, when a carriage return drew over it

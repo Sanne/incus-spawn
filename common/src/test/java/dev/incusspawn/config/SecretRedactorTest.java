@@ -722,6 +722,12 @@ class SecretRedactorTest {
         assertFalse(before.contains("AAAAAAAAAA") || before.contains("BBBBBBBBBB"), before);
         var after = SecretRedactor.scrubGuest(head + "-\u001b[1D" + tail + "\n" + far);
         assertFalse(after.contains("AAAAAAAAAA") || after.contains("BBBBBBBBBB"), after);
+        // A control inside a sequence is acted on and the sequence carries on: the bell rings, the
+        // cursor moves back over the dash, and the token shows whole (#1920)
+        assertEquals("x <isx:redacted:github-token>\n", SecretRedactor.scrubGuest(head + "-\u001b[1\u0007D" + tail + "\n"));
+        assertEquals("x <isx:redacted:github-token>\n", SecretRedactor.scrubGuest(head + "-\u001b\u00076" + tail + "\n"));
+        // A control string runs to its terminator across a line feed, which it swallows (#1920)
+        assertEquals(token, SecretRedactor.scrubGuest(head + "\u001b]0;\n\u0007" + tail + "\n"));
         // DECBI moves back a column, as xterm does
         assertEquals(token, SecretRedactor.scrubGuest(head + "-\u001b6" + tail + "\n"));
         // However far down the cursor went, a line stays its own: a later one, on the next row,

@@ -764,12 +764,15 @@ public final class SecretRedactor {
             if (piece.indexOf(ESC) < 0 && piece.indexOf('\u009b') < 0) return false;
             var controls = BuildOutput.guestControls(piece);
             while (controls.find()) {
-                char last = piece.charAt(controls.end() - 1);
-                if (controls.end() - controls.start() == 2 && piece.charAt(controls.start()) == ESC) {
+                // A control string moves nothing, and its payload can run to megabytes
+                if (BuildOutput.payloadStart(piece, controls.start(), controls.end()) < controls.end()) continue;
+                var sequence = BuildOutput.parsedSequence(piece, controls.start(), controls.end());
+                char last = sequence.charAt(sequence.length() - 1);
+                if (sequence.length() == 2 && sequence.charAt(0) == ESC) {
                     if ("86M".indexOf(last) >= 0) return true;
                 } else if ("ADFG`HfZubdP@".indexOf(last) >= 0) {
                     return true;
-                } else if (last == 'l' && restoresOrLeaves(piece, controls.start(), controls.end())) {
+                } else if (last == 'l' && restoresOrLeaves(sequence, 0, sequence.length())) {
                     return true;
                 }
             }
@@ -829,8 +832,19 @@ public final class SecretRedactor {
                     i += width;
                 }
                 if (next == piece.length()) break;
-                sequence(piece, controls.start(), controls.end(), offset);
-                pos = controls.end();
+                // The controls within it, acted on as a terminal reads them, before the sequence ends.
+                // A control string moves nothing
+                int end = controls.end();
+                int payload = BuildOutput.payloadStart(piece, next, end);
+                for (int i = next; i < payload; i++) {
+                    char c = piece.charAt(i);
+                    if (BuildOutput.actsWithinSequence(c)) put(c, offset + i, offset + i);
+                }
+                if (payload == end) {
+                    var sequence = BuildOutput.parsedSequence(piece, next, end);
+                    sequence(sequence, 0, sequence.length(), offset + next, offset + end - 1);
+                }
+                pos = end;
             }
         }
 
@@ -892,8 +906,11 @@ public final class SecretRedactor {
             column += width;
         }
 
-        /** A control sequence or escape from {@code start} to {@code end} of {@code piece}. */
-        private void sequence(String piece, int start, int end, int offset) {
+        /**
+         * A control sequence or escape from {@code start} to {@code end} of {@code piece}, as a
+         * terminal parses it ({@link BuildOutput#parsedSequence}), from {@code rawFrom} to {@code rawTo} of the raw text.
+         */
+        private void sequence(String piece, int start, int end, int rawFrom, int rawTo) {
             char first = piece.charAt(start);
             char last = piece.charAt(end - 1);
             if (first == ESC && end - start == 2) {
@@ -954,7 +971,7 @@ public final class SecretRedactor {
                 case 'd' -> move(absoluteRow(n), column);
                 case 's' -> save();
                 case 'u' -> restore();
-                case 'b' -> repeat(n, offset + start, offset + end - 1);
+                case 'b' -> repeat(n, rawFrom, rawTo);
                 default -> {
                 }
             }
