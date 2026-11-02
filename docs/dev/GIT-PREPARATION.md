@@ -87,6 +87,8 @@ SSH never waits on a prompt; "Creating a snapshot" says how.
 Before preparing a full snapshot, the guest runs `ls-remote --symref` with the template's own accounts.
 All such checks finish before any prime runs, so primes cannot interfere with another repository's authorization check.
 Denied access skips host preparation and uses the ordinary guest clone path, which must obtain its own access.
+The host's own `ls-remote` starts beside the guest's check rather than after it, since it transfers no objects (#1934).
+A denied guest discards that advertisement, and nothing is fetched, cloned or published until the guest's check succeeded.
 The guest's complete advertised selection must match the prepared snapshot before any prepared bytes are mounted.
 A different account-visible ref scope or a race that changes selection uses the guest's network clone instead; a successful host credential check alone never authorizes a guest copy.
 This applies to warm cache hits as well as new generations.
@@ -97,6 +99,7 @@ All heads and tags, the default HEAD target and object ID, and the object format
 Different branch/tag pins share the same complete snapshot; each pin is validated separately.
 Unborn or ambiguous HEAD advertisements cannot produce a hit, since `ls-remote` does not reliably describe their target and object format.
 A remote failure does not authorize an offline snapshot.
+The advertisement is read before the cache entry's writer lock, so a concurrent build may publish a newer snapshot meanwhile; that only makes this build's selection miss and refresh.
 A cold clone may observe a newer remote state than the preceding advertisement; its snapshot records its actual repository bytes, never the earlier advertisement.
 
 The snapshot carries a SHA-256 seal over its entire file inventory and contents, bound to its URL/policy key.
