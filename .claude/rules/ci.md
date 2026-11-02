@@ -48,7 +48,7 @@ Key jobs:
   It needs Incus's nftables firewall driver on the runner
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
 
-The **`update-base-image-steps`** job in `test-integration.yml` runs `.github/scripts/test-update-base-image.sh`: `update-base-image.yml`'s three steps, as its `workflow_dispatch` backstop and its `repository_dispatch` path run them, against a fake images release with `-vm-direct` and `SHA256SUMS.v2`, `gh` and the remote faked (#1255).
+The **`update-base-image-steps`** job in `test-integration.yml` runs `.github/scripts/test-update-base-image.sh`: `update-base-image.yml`'s three steps, as its `workflow_dispatch` backstop and its `repository_dispatch` path run them, against a fake images release with `-vm-direct` and `SHA256SUMS.v2`, `gh` and the remote faked (#1255), and the move to a newer Fedora's release line (#1862).
 It checks the switch to `-vm-direct` with both arches' checksums, also after a stock-image bump of the same release was merged or while its branch is open; a routine bump of a built-in already on `-vm-direct` (plain title, `-vm-direct` branch); the refusal to move such a built-in back to stock when a release lacks `-vm-direct`; and that the PR title names the switch and a release published again under its tag.
 It checks that both events take every checksum from the release for the names the URLs download, that a payload disagreeing with the release or a missing, malformed or contradicted sum stops the run, and that the PR pairs each checksum with its asset (#1678).
 The same script runs `verify-base-image-sums.sh` against the fake release: a swapped arch, a stock sum under a `-vm-direct` URL and a rootfs sum paired with a VM disk must each fail it.
