@@ -99,7 +99,10 @@ All heads and tags, the default HEAD target and object ID, and the object format
 Different branch/tag pins share the same complete snapshot; each pin is validated separately.
 Unborn or ambiguous HEAD advertisements cannot produce a hit, since `ls-remote` does not reliably describe their target and object format.
 A remote failure does not authorize an offline snapshot.
-The advertisement is read before the cache entry's writer lock, so a concurrent build may publish a newer snapshot meanwhile; that only makes this build's selection miss and refresh.
+The early advertisement only decides a cache hit, so a hit costs one `ls-remote` however long the guest's check and the limiter took.
+On a miss with a snapshot to refresh, the host reads the advertisement again under the cache entry's writer lock before it fetches.
+A concurrent build's publication of that advertisement still hits.
+A push after the early read costs this build an incremental refresh, never a full host clone.
 A cold clone may observe a newer remote state than the preceding advertisement; its snapshot records its actual repository bytes, never the earlier advertisement.
 
 The snapshot carries a SHA-256 seal over its entire file inventory and contents, bound to its URL/policy key.

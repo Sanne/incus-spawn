@@ -120,8 +120,10 @@ class GitPreparationTest {
         start();
         var url = server.url(remote);
         // Discarded, as when the guest's access check is denied: nothing fetched, its lease released.
-        preparation.readRemote(url, s -> {}).close();
-        assertFalse(Files.exists(cache.resolve("snapshots")) && !PreparationGit.children(cache.resolve("snapshots")).isEmpty());
+        try (var denied = preparation.readRemote(url, s -> {}); var files = Files.walk(cache)) {
+            assertEquals(List.of(), files.filter(f -> f.getFileName().toString().endsWith(".pack")
+                    || f.getFileName().toString().equals("objects")).toList(), "reading refs fetches no objects");
+        }
         assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
 
         var other = preparation.readRemote(url, s -> {});
@@ -139,6 +141,37 @@ class GitPreparationTest {
             refs.close(); // the snapshot's reader owns the lease now
             assertTrue(Files.isDirectory(second.repository()));
             assertThrows(IOException.class, () -> preparation.prepare(new GitPreparation.Request(url, null, null), refs, s -> {}));
+        }
+        assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
+    }
+
+    @Execution(CONCURRENT) @Test void aPushAfterTheEarlyReadStillRefreshesIncrementally() throws Exception {
+        // The early read precedes the guest's access check and the limiter wait; the remote may move meanwhile.
+        start();
+        var url = server.url(remote);
+        try (var first = prepare(host, null)) { }
+        commitBinary(remote, "makes the early read miss");
+        var refs = preparation.readRemote(url, s -> {});
+        commitBinary(remote, "pushed after the early read");
+        try (var next = preparation.prepare(new GitPreparation.Request(url, null, null), refs, s -> {})) {
+            assertEquals("incremental clean snapshot", next.strategy());
+            sameObjects(remote, next.repository());
+        }
+        try (var again = prepare(null, null)) { assertEquals("cached clean snapshot", again.strategy()); }
+    }
+
+    @Execution(CONCURRENT) @Test void aPublicationAfterTheEarlyReadIsStillACacheHit() throws Exception {
+        // Another build may publish the remote's current selection while this one waits for its access check.
+        start();
+        var url = server.url(remote);
+        try (var first = prepare(host, null)) { }
+        commitBinary(remote, "seen by the early read");
+        var refs = preparation.readRemote(url, s -> {});
+        commitBinary(remote, "published by another build");
+        try (var other = prepare(null, null)) { assertEquals("incremental clean snapshot", other.strategy()); }
+        try (var next = preparation.prepare(new GitPreparation.Request(url, null, null), refs, s -> {})) {
+            assertEquals("cached clean snapshot", next.strategy());
+            sameObjects(remote, next.repository());
         }
         assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
     }
