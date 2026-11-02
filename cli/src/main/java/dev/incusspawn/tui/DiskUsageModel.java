@@ -99,21 +99,6 @@ final class DiskUsageModel {
         return out;
     }
 
-    /**
-     * The rows {@link #fillMissingReferenced} filled: by name, the size each went from unstamped
-     * to, in row order. {@code before} and {@code after} are that call's input and result.
-     */
-    static java.util.Map<String, Long> newlyFilled(java.util.List<TemplateInfo> before,
-                                                   java.util.List<TemplateInfo> after) {
-        var filled = new java.util.LinkedHashMap<String, Long>();
-        for (int i = 0; i < before.size(); i++) {
-            if (before.get(i).referencedBytes() < 0 && after.get(i).referencedBytes() >= 0) {
-                filled.put(after.get(i).name(), after.get(i).referencedBytes());
-            }
-        }
-        return filled;
-    }
-
     /** The built templates that lack a stamped referenced size — the trigger for a live backfill. */
     static java.util.List<String> unstampedBuiltTemplates(java.util.List<TemplateInfo> templates) {
         return templates.stream().filter(t -> t.isBuilt() && t.referencedBytes() < 0)

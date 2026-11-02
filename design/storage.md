@@ -127,8 +127,11 @@ A built *derived* template missing its stamp is tolerated — `applyReferencedTe
 So a transient read failure at build time degrades a single row, not the entire panel.
 
 A missing stamp also self-heals on reload without a rebuild: `fillMissingReferencedSizes` backfills it with a single live probe, and *only* when there's an actual gap (an unstamped built template).
-It saves what it reads as the stamp, since templates are immutable and it reads only with consistent accounting, the condition a build stamps under.
-So a template is backfilled once: its first read forces a commit (the sync flavour, as a build's stamp does), and a gap it could not fill is read again only with the light flavour.
+A template's first backfill is also saved as its stamp, since templates are immutable, and it is held to a build's conditions.
+The template is held in place (`TemplateLock.reading`), so no swap puts another instance under its name between the read and the stamp.
+The accounting is read consistent just before and after the read, never taken from the reload's status, which may predate the swap that flagged it.
+And the read forces a commit (the sync flavour), so the stamp counts every write.
+A gap that read could not fill is read again only with the light flavour, in memory, so it costs one commit, not one per reload.
 This keeps the privileged read out of the healthy per-refresh path (a fully-stamped install never probes on reload) while recovering pre-feature templates and every build that left its template unstamped.
 The backfill never overwrites an existing stamp, which is authoritative and free.
 

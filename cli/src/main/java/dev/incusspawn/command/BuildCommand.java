@@ -51,7 +51,6 @@ import org.aesh.command.option.Option;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -990,7 +989,7 @@ public class BuildCommand extends BaseCommand {
      * {@link #probeReferencedSize}) is simply not stamped and the TUI falls back to exclusive-usage
      * display. Must run after the rename to the canonical name (the subvolume path btrfs reports).
      */
-    static void stampReferencedSize(IncusClient incus, String canonicalName, long referenced) {
+    public static void stampReferencedSize(IncusClient incus, String canonicalName, long referenced) {
         if (referenced <= 0) return;
         try {
             incus.configSet(canonicalName, Metadata.DISK_REFERENCED, String.valueOf(referenced));
