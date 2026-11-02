@@ -51,10 +51,10 @@ class RepoClonerTest {
 
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
-    void shallowClonesReportDepthAndTimingsOnEveryBuild(boolean reference) {
+    void shallowClonesReportDepthAndTimingsOnEveryVerboseBuild(boolean reference) {
         var incus = mock(IncusClient.class);
         when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
-        var cmd = cloner(incus);
+        var cmd = cloner(incus).showTimings(true);
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://example.invalid/releases.git");
         repo.setDepth(1);
@@ -74,6 +74,22 @@ class RepoClonerTest {
         String second = shown(() -> cmd.cloneRepos(new Container(incus, "test"), def, java.util.Map.of(), MachineType.CONTAINER));
         assertTrue(second.contains("releases: attach="), second);
         assertFalse(second.contains("other:"), "timings must not leak across builds");
+    }
+
+    @Test
+    void timingsAreNotShownByDefault() {
+        var incus = mock(IncusClient.class);
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
+        var cmd = cloner(incus);
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://example.invalid/releases.git");
+        var def = new ImageDef();
+        def.setName("tpl-test");
+        def.setRepos(List.of(repo));
+        String shown = shown(() -> cmd.cloneRepos(new Container(incus, "test"), def, java.util.Map.of(), MachineType.CONTAINER));
+        assertTrue(shown.contains("releases"), shown);
+        assertFalse(shown.contains("guest="), shown);
+        assertFalse(shown.contains("attach="), shown);
     }
 
     @Test

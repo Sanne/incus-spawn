@@ -14,7 +14,8 @@ import java.util.List;
 import java.util.Map;
 import static dev.incusspawn.tui.DiskUsageModel.fillMissingReferenced;
 import static dev.incusspawn.tui.DiskUsageModel.hasSuspiciousStamps;
-import static dev.incusspawn.tui.DiskUsageModel.hasUnstampedBuiltTemplate;
+import static dev.incusspawn.tui.DiskUsageModel.newlyFilled;
+import static dev.incusspawn.tui.DiskUsageModel.unstampedBuiltTemplates;
 import static dev.incusspawn.tui.DiskUsageModel.nearestStampedAncestorRfer;
 import static dev.incusspawn.tui.DiskUsageModel.referencedDelta;
 import static dev.incusspawn.tui.DiskUsageModel.restampFromLive;
@@ -39,6 +40,10 @@ final class ListingLoader {
     // Live rfer values backfilled in memory by the last full reload; re-applied by light
     // refreshes, which don't probe, so an unstamped template keeps its figure between them.
     private java.util.Map<String, Long> backfilledReferenced = java.util.Map.of();
+
+    // Unstamped templates a backfill has already tried to stamp this session, so a gap the read
+    // cannot fill costs a forced filesystem commit once, not on every reload.
+    private final java.util.Set<String> backfillAttempted = new java.util.HashSet<>();
 
     /** Per built template, the file its build stamped, and the stamp it was read from. */
     private Map<String, StampedFile> templatesBuiltFrom = Map.of();
@@ -507,25 +512,37 @@ final class ListingLoader {
      * Backfill any built template that's missing its {@link Metadata#DISK_REFERENCED} stamp with a
      * single <em>live</em> btrfs read, so the referenced-delta model still applies to that row (and,
      * if the missing one is the root, to the whole panel) instead of falling back to the shared-base
-     * fold. This heals both pre-feature templates (built before rfer stamping) and the rare build
-     * whose stamp failed to record — with no rebuild required.
+     * fold. This heals pre-feature templates (built before rfer stamping) and every build that left
+     * its template unstamped because the accounting was being repaired: a build never waits for that.
      *
-     * <p>Deliberately lazy and light, to honour the "privileged read is rare, not per-refresh"
-     * posture: it runs the probe <em>only</em> when there is an actual gap (an unstamped built
-     * template), and uses the non-sync flavour ({@link dev.incusspawn.incus.BtrfsUsage#probe(String,
-     * boolean)} with {@code sync=false}) — no forced filesystem commit, cheap enough for a refresh
-     * cadence. An existing stamp is never overwritten (templates are immutable, so the stamp is
-     * authoritative and free), and the overlay is in-memory only (a rebuild re-stamps permanently).
-     * If the read is unavailable (dir pool, no sudoers rule, agent down) the gap stays and the fold
-     * fallback handles it.
+     * <p>What it reads is saved as the stamp, since templates are immutable and only runs with
+     * consistent accounting ({@link #applyDiskModel}), the same condition a build stamps under.
+     * So it runs once per template, and the first read for a template forces a filesystem commit
+     * ({@code sync=true}), as a build's own stamp does, so the saved figure counts every write.
+     * A gap it cannot fill is not retried with a commit: later reloads use the non-sync flavour,
+     * light enough for the refresh cadence. An existing stamp is never overwritten here
+     * ({@link #revalidateStampsIfNeeded} heals suspect ones). If the read is unavailable (dir pool,
+     * no sudoers rule, agent down) the gap stays and the fold fallback handles it.
      */
     private void fillMissingReferencedSizes() {
         if (!usagePoolIsBtrfs || usagePoolName == null) return;
-        if (!hasUnstampedBuiltTemplate(tui.templateEntries)) return;       // no gap — skip the probe entirely
-        var live = dev.incusspawn.incus.BtrfsUsage.probe(usagePoolName, false);   // non-sync: light enough for refresh
+        var unstamped = unstampedBuiltTemplates(tui.templateEntries);
+        if (unstamped.isEmpty()) return;       // no gap — skip the probe entirely
+        boolean first = !backfillAttempted.containsAll(unstamped);
+        var live = dev.incusspawn.incus.BtrfsUsage.probe(usagePoolName, first);
         if (live.isEmpty()) return;
         backfilledReferenced = live;
-        tui.templateEntries = fillMissingReferenced(tui.templateEntries, live);
+        var before = tui.templateEntries;
+        tui.templateEntries = fillMissingReferenced(before, live);
+        newlyFilled(before, tui.templateEntries).forEach((name, bytes) -> {
+            if (!backfillAttempted.add(name)) return;
+            try {
+                tui.incus.configSet(name, Metadata.DISK_REFERENCED, String.valueOf(bytes));
+            } catch (Exception ignored) {
+                // Best-effort persistence: the backfilled value is used for this session regardless.
+            }
+        });
+        backfillAttempted.addAll(unstamped);
     }
 
     /**

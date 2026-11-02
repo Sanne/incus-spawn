@@ -258,7 +258,7 @@ class DiskUsageModelTest {
         var tpls = java.util.List.of(
                 tpl("tpl-minimal", "", BUILT, 1_000L),
                 tpl("tpl-isx", "tpl-minimal", BUILT, -1));
-        assertTrue(DiskUsageModel.hasUnstampedBuiltTemplate(tpls));
+        assertEquals(java.util.List.of("tpl-isx"), DiskUsageModel.unstampedBuiltTemplates(tpls));
     }
 
     @Test
@@ -266,7 +266,7 @@ class DiskUsageModelTest {
         var tpls = java.util.List.of(
                 tpl("tpl-minimal", "", BUILT, 1_000L),
                 tpl("tpl-dev", "tpl-minimal", NOT_BUILT, -1));   // not built -> not a gap
-        assertFalse(DiskUsageModel.hasUnstampedBuiltTemplate(tpls));
+        assertTrue(DiskUsageModel.unstampedBuiltTemplates(tpls).isEmpty());
     }
 
     @Test
@@ -282,6 +282,8 @@ class DiskUsageModelTest {
         assertEquals(1_000L, out.get(0).referencedBytes());     // existing stamp not overwritten
         assertEquals(1_500L, out.get(1).referencedBytes());     // backfilled from live
         assertEquals(-1L, out.get(2).referencedBytes());        // not built stays unstamped
+        // Only the row the backfill filled is saved as a stamp
+        assertEquals(java.util.Map.of("tpl-java", 1_500L), DiskUsageModel.newlyFilled(tpls, out));
     }
 
     @Test
@@ -295,5 +297,6 @@ class DiskUsageModelTest {
 
         assertEquals(-1L, out.get(0).referencedBytes());        // absent from live -> still unstamped
         assertEquals(-1L, out.get(1).referencedBytes());        // non-positive live value -> ignored
+        assertTrue(DiskUsageModel.newlyFilled(tpls, out).isEmpty());   // nothing to save
     }
 }

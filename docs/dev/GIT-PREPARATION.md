@@ -287,7 +287,8 @@ Existing shallow, project-local, hotplug, timeout and detach-failure tests remai
 
 `bench/GitPreparationBench.java` runs the production preparation code with a fresh cache and reports cold/warm phase timings.
 Measurements and their limits are recorded with the raw dataset linked from `bench/README.md`.
-Build diagnostics report guest access checks, remote selection, snapshot validation, reference selection, incremental fetching, cloning, verification and publication durations alongside guest-copy time.
+With `isx build --verbose`, build diagnostics report guest access checks, remote selection, snapshot validation, reference selection, incremental fetching, cloning, verification and publication durations alongside guest-copy time.
+A build without it shows none of them, only a note when a repository's Git staging area could not be removed yet.
 Credential-bearing command lines are not included in failure diagnostics.
 
 The [incremental Quarkus measurements](../../bench/data/git-incremental-snapshots-2026-10-13.json) use Git 2.56.0, four packing threads, loopback transport, tmpfs and a warm filesystem cache.

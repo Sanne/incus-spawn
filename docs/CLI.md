@@ -42,7 +42,7 @@ isx build [<template>...] [options]
 | `--type <type>` | Instance type: `container`, `vm` or `kvm`, overriding the image definition. `vm` needs an Incus that runs VMs, which the macOS appliance cannot, and `kvm` passthrough is off on macOS |
 | `--yes` | Skip interactive confirmations |
 | `--skip-git-refresh` | Accepted for compatibility; builds do not refresh host checkouts |
-| `--verbose` | Show every command the definitions ran, with its output, once each template's build is over |
+| `--verbose` | Show every command the definitions ran, with its output, once each template's build is over, and how long each repository took to prepare |
 
 Every build keeps the commands its definitions ran in `~/.local/state/incus-spawn/build-logs/<template>.log`, with all that each printed and its exit status.
 These are each tool's `run`, `run_as_user` and `verify` commands and each repository's `prime`.

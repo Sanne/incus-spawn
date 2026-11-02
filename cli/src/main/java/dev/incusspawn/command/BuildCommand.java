@@ -126,7 +126,7 @@ public class BuildCommand extends BaseCommand {
     @Option(name = "skip-git-refresh", hasValue = false, description = "Compatibility option; builds no longer refresh host checkouts")
     boolean skipGitRefresh;
 
-    @Option(name = "verbose", hasValue = false, description = "Show every command the definitions ran, with its output, once each template is built")
+    @Option(name = "verbose", hasValue = false, description = "Show every command the definitions ran, with its output, once each template is built, and how long each repository took to prepare")
     boolean verbose;
 
     IncusClient incus;
@@ -967,20 +967,11 @@ public class BuildCommand extends BaseCommand {
             // Never stamp from inconsistent accounting. btrfs freezes every qgroup counter once the
             // pool is flagged inconsistent (a previous rebuild's subvolume delete is enough), and the
             // frozen figure is a plausible non-zero number — typically the base image's — that would
-            // sail through the `<= 0` guard and be recorded as this template's weight. Trigger the
-            // repair (a background rescan) and give it a short, bounded wait: on a developer-sized
-            // pool it finishes in seconds and the stamp is taken correctly right here; on a huge one
-            // the template is simply left unstamped and the TUI backfills it once the flag clears.
-            var status = dev.incusspawn.incus.BtrfsUsage.repairIfInconsistent(pool);
-            if (status.untrusted()) {
-                BuildOutput.stepStart("Repairing disk accounting");
-                status = dev.incusspawn.incus.BtrfsUsage.awaitConsistent(pool, ACCOUNTING_REPAIR_WAIT);
-                if (status.untrusted()) {
-                    BuildOutput.stepDone("still running, size will be recorded later");
-                    return -1;
-                }
-                BuildOutput.stepDone();
-            }
+            // sail through the `<= 0` guard and be recorded as this template's weight. Start the
+            // repair (a background rescan) and leave the template unstamped: the build never waits
+            // for it, since a rescan walks the whole pool and the stamp only serves the TUI's disk
+            // panel, whose backfill measures and saves it once the accounting reads consistent.
+            if (dev.incusspawn.incus.BtrfsUsage.repairIfInconsistent(pool).untrusted()) return -1;
             // sync=true: force a commit so the build's final (otherwise uncommitted) writes are
             // accounted. This is the rare accuracy-critical read; sampling uses the plain flavour.
             var rfer = dev.incusspawn.incus.BtrfsUsage.probe(pool, true).get(name);
@@ -990,9 +981,6 @@ public class BuildCommand extends BaseCommand {
             return -1;
         }
     }
-
-    /** How long a build waits for a just-triggered qgroup rescan before giving up on the stamp. */
-    private static final Duration ACCOUNTING_REPAIR_WAIT = Duration.ofSeconds(20);
 
     /**
      * Record a template's btrfs referenced (rfer) size as metadata. Templates are immutable and rfer
@@ -2745,7 +2733,7 @@ public class BuildCommand extends BaseCommand {
 
     /** Prepare and clone the repos without changing user checkouts. */
     void cloneRepos(Container container, ImageDef imageDef, Map<String, ImageDef> defs, MachineType machineType) {
-        new RepoCloner(incus).cloneRepos(container, imageDef, defs, machineType);
+        new RepoCloner(incus).showTimings(verbose).cloneRepos(container, imageDef, defs, machineType);
     }
 
     enum InstanceType {
