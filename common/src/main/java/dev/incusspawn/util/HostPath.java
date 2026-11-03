@@ -18,10 +18,24 @@ public final class HostPath {
     }
 
     public static boolean isOnPath(String name) {
-        for (var dir : effective(System.getenv("PATH")).split(File.pathSeparator)) {
+        return find(name) != null;
+    }
+
+    /**
+     * The absolute path of the first executable {@code name} on the {@code PATH}, or null. Absolute
+     * even for a relative entry, since callers write it into service units, ssh config and sudoers.
+     * Never {@code which} itself: Arch's base system does not ship it.
+     */
+    public static String find(String name) {
+        return find(name, System.getenv("PATH"));
+    }
+
+    static String find(String name, String path) {
+        for (var dir : effective(path).split(File.pathSeparator)) {
             if (dir.isBlank()) continue;
-            if (Files.isExecutable(Path.of(dir).resolve(name))) return true;
+            var candidate = Path.of(dir).resolve(name);
+            if (Files.isRegularFile(candidate) && Files.isExecutable(candidate)) return candidate.toAbsolutePath().normalize().toString();
         }
-        return false;
+        return null;
     }
 }
