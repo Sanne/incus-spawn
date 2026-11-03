@@ -5,7 +5,7 @@
 # certificates, trust variables and tool proxy credentials.
 #
 # Usage: incus file push test-instance.sh <instance>/tmp/
-#        incus exec <instance> -- bash /tmp/test-instance.sh
+#        incus exec <instance> -- bash /tmp/test-instance.sh [--core]
 
 TESTS=0
 PASS=0
@@ -66,6 +66,31 @@ fetch_matching() {
     return $found
 }
 
+# The totals, and a failing exit if any check failed.
+report() {
+    echo "========================================"
+    printf " Results: \033[1m%d/%d passed\033[0m" "$PASS" "$TESTS"
+    if [ "$FAIL" -gt 0 ]; then
+        printf ", \033[31m%d failed\033[0m" "$FAIL"
+    fi
+    echo ""
+    echo "========================================"
+
+    if [ "$FAIL" -gt 0 ]; then
+        echo ""
+        echo "Failed tests:"
+        printf "$ERRORS"
+        exit 1
+    fi
+    exit 0
+}
+
+# --core, which the host-distro jobs pass, skips what needs the native job's setup: GitHub's
+# interception (section 2 and its DNS checks), which a GitHub credential turns on, and everything
+# after section 6b. Section 9 needs the echo server and fixture tools, and 7 and 8 spend minutes on
+# package installs that test the guest, not the host.
+core_only() { [ "${1:-}" = --core ]; }
+
 # Sourcing defines the helpers above for tests of them, and runs no checks.
 [ "${BASH_SOURCE[0]}" = "$0" ] || return 0
 
@@ -86,17 +111,19 @@ assert "download Maven JAR checksum through proxy" \
 echo ""
 
 # --- 2. Git clone over HTTPS (proxy + git) ---
-# Tests GitHub domain interception. The proxy relays without injecting
-# auth for public repos (no GitHub token configured on CI).
-echo "[2] Git Clone over HTTPS (Proxy)"
-assert "clone public GitHub repo through proxy" \
-    bash -c "rm -rf /tmp/test-clone && \
-        git clone --depth 1 -q https://github.com/octocat/Hello-World.git /tmp/test-clone && \
-        test -d /tmp/test-clone/.git"
-assert "cloned repo has commits" \
-    bash -c "cd /tmp/test-clone && git log --oneline | head -1 | grep -q ."
-rm -rf /tmp/test-clone
-echo ""
+# Tests GitHub domain interception, which a GitHub credential on the host turns on (the native
+# job configures one). Under --core there is none, so GitHub is not intercepted.
+if ! core_only "$@"; then
+    echo "[2] Git Clone over HTTPS (Proxy)"
+    assert "clone public GitHub repo through proxy" \
+        bash -c "rm -rf /tmp/test-clone && \
+            git clone --depth 1 -q https://github.com/octocat/Hello-World.git /tmp/test-clone && \
+            test -d /tmp/test-clone/.git"
+    assert "cloned repo has commits" \
+        bash -c "cd /tmp/test-clone && git log --oneline | head -1 | grep -q ."
+    rm -rf /tmp/test-clone
+    echo ""
+fi
 
 # --- 3. Passwordless sudo ---
 # isx creates agentuser with a sudoers rule during template build.
@@ -135,17 +162,20 @@ echo ""
 # --- 5. DNS interception ---
 # Intercepted domains (Maven, GitHub, Docker) resolve to the bridge
 # gateway where the proxy listens, not their real IPs. This is how isx
-# routes traffic through the proxy without modifying any tools.
+# routes traffic through the proxy without modifying any tools. GitHub only with a credential,
+# so not under --core.
 echo "[5] DNS Interception"
 gateway=$(grep nameserver /etc/resolv.conf | head -1 | cut -d' ' -f2)
-assert "repo1.maven.org resolves to proxy gateway" \
-    bash -c "getent ahostsv4 repo1.maven.org | grep -q '$gateway'"
-assert "github.com resolves to proxy gateway" \
-    bash -c "getent ahostsv4 github.com | grep -q '$gateway'"
+intercepted="repo1.maven.org github.com"
+core_only "$@" && intercepted="repo1.maven.org"
+for host in $intercepted; do
+    assert "$host resolves to proxy gateway" \
+        bash -c "getent ahostsv4 $host | grep -q '$gateway'"
+done
 # AAAA must get no answer: not '::', which clients treat as loopback so a nested isx
 # refused every intercepted domain (#814), and not the real IPv6 addresses, which would
 # bypass the proxy. With no AAAA, glibc maps the A answer, so only ::ffff:<gateway> is left.
-for host in repo1.maven.org github.com; do
+for host in $intercepted; do
     assert "$host has no IPv6 answer besides the mapped gateway" \
         bash -c "! getent ahostsv6 $host | cut -d' ' -f1 | grep -qvx '::ffff:$gateway'"
 done
@@ -183,6 +213,8 @@ done
 assert "user-layer CLAUDE.md was not created by the build" \
     bash -c '! test -e /home/agentuser/.claude/CLAUDE.md'
 echo ""
+
+core_only "$@" && report
 
 # --- 7. npm install through proxy (tarball caching) ---
 # Verifies npm registry interception: packument fetch, tarball download,
@@ -321,17 +353,4 @@ assert "an independent inner credential passes through unchanged" \
     bash -c "curl -sf -H 'Authorization: Bearer inner-account-B' https://echo.incus-spawn.test/ | grep -q 'Bearer inner-account-B'"
 echo ""
 
-echo "========================================"
-printf " Results: \033[1m%d/%d passed\033[0m" "$PASS" "$TESTS"
-if [ "$FAIL" -gt 0 ]; then
-    printf ", \033[31m%d failed\033[0m" "$FAIL"
-fi
-echo ""
-echo "========================================"
-
-if [ "$FAIL" -gt 0 ]; then
-    echo ""
-    echo "Failed tests:"
-    printf "$ERRORS"
-    exit 1
-fi
+report

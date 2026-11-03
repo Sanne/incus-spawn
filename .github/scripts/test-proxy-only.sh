@@ -9,11 +9,15 @@
 # takes part.
 #
 # Requires:
-#   - tpl-minimal and tpl-test-vm already built
+#   - tpl-minimal and tpl-test-vm (or PROXY_ONLY_VM_TEMPLATE, below) already built
 #   - isx and incus on PATH, and the proxy running
 #
 # Usage:
 #   sg incus-admin -c "bash .github/scripts/test-proxy-only.sh"
+#
+# PROXY_ONLY_VM_TEMPLATE names the VM template (default tpl-test-vm); empty skips the VM, for a
+# host without nested virtualization. PROXY_ONLY_PROBE_URL is what proves the proxy answers
+# (default the native job's echo server); any intercepted domain does.
 
 set -euo pipefail
 
@@ -21,6 +25,8 @@ STARTED=test-proxy-only
 UNSTARTED=test-proxy-only-nostart
 VM=test-proxy-only-vm
 FULL=test-proxy-only-full
+VM_TEMPLATE=${PROXY_ONLY_VM_TEMPLATE-tpl-test-vm}
+PROBE_URL=${PROXY_ONLY_PROBE_URL:-https://echo.incus-spawn.test/}
 
 TESTS=0
 FAIL=0
@@ -68,7 +74,7 @@ no_egress_from_another_address() {
 # the missing credential still proves the connection got through.
 reaches_proxy() {
     local code
-    code=$(incus exec "$1" -- curl -s -m 15 -o /dev/null -w '%{http_code}' https://echo.incus-spawn.test/ || true)
+    code=$(incus exec "$1" -- curl -s -m 15 -o /dev/null -w '%{http_code}' "$PROBE_URL" || true)
     [ -n "$code" ] && [ "$code" != 000 ]
 }
 resolves() { incus exec "$1" -- getent hosts example.com >/dev/null; }
@@ -138,11 +144,13 @@ wait_for_ipv4 "$FULL"
 check "it reaches the internet" reaches_internet "$FULL"
 incus delete -f "$FULL"
 
-echo "=== A VM ==="
-isx branch "$VM" --from tpl-test-vm --proxy-only
-check "its NIC carries the host ACL" restricted_on_host "$VM"
-check "its agent answers" wait_for_agent "$VM"
-restricted "$VM" "VM"
+if [ -n "$VM_TEMPLATE" ]; then
+    echo "=== A VM ==="
+    isx branch "$VM" --from "$VM_TEMPLATE" --proxy-only
+    check "its NIC carries the host ACL" restricted_on_host "$VM"
+    check "its agent answers" wait_for_agent "$VM"
+    restricted "$VM" "VM"
+fi
 
 echo
 echo "$((TESTS - FAIL))/$TESTS passed"

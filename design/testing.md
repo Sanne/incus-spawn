@@ -136,6 +136,21 @@ A runtime seam in the shipped code, defaulted off, was rejected for the reason a
 What remains uncovered is vfkit itself.
 It cannot run on GitHub-hosted macOS runners at all -- they are macOS VMs, and Virtualization.framework nests only Linux guests -- so it needs a bare-metal Mac, as a self-hosted release gate or the manual pre-release run of `test-boot.sh` / `test-with-isx.sh` (#774).
 
+**Hosts as users install them** (#1972).
+`isx init` sets up the host itself: it installs Incus with the distribution's package manager and writes the host's firewall rules.
+`isx-integration-tests-native` runs on the runner's Ubuntu, where ufw is never active and init installs firewalld, so the ufw path shipped on unit tests alone.
+That is how #1932 passed: init wrote its forward block into a comment of ufw's `before.rules`, ufw failed to load, and an Arch host lost loopback and reply traffic.
+So three `host-distro` jobs boot a distribution's own cloud image as a KVM guest on the hosted runner and run what a user runs there, from `isx init` to `isx destroy`.
+The shapes are stock Arch (init installs firewalld through pacman), Arch with ufw enabled, and Ubuntu 24.04 with ufw enabled and its own Incus 6.0.
+Arch ships the newest Incus, ufw and iptables-nft and has dropped `sg` (#700), so it breaks first; Ubuntu is where ufw is the firewall users enable.
+A KVM guest, not the runner itself, because a broken host firewall would cut the runner off from GitHub mid-job, while in a guest the failure stays reportable.
+Not Incus VMs from images.linuxcontainers.org, whose outages already moved `fresh-daemon-init` off them (#1558), and whose images come pre-wired unlike a host a user installs.
+Not containers with nested Incus either: their kernel, nftables and AppArmor are the runner's, and the firewall is what is under test.
+Not a self-hosted runner: on a public repository it would run fork PRs' code, so it could not gate a PR.
+They run on every PR, beside the native job, since host-setup code is spread across packages no path filter could name.
+Reverting #1936's line-anchored `COMMIT` lookup fails both `-ufw` legs at "ufw still loads after isx init", and `arch` not at all, which is why it is a separate leg.
+The Arch leg found at once that isx init needed `which`, which Arch's base system does not ship; host commands are now found on the `PATH` in-process (`HostPath.find`).
+
 **Live tests** (`sg incus-admin -c "mvn test"`, requires Incus daemon + cached test image):
 - `IncusApiLiveTest` — REST protocol against real Incus: all endpoints, exec capture/stream, device ops, copy, launch, logs
 - `IncusClientSmokeTest` — high-level API: pollUntilReady, shellExec, execBidirectional, execPty, runAsUser, copy, filePush, filePushRecursive (directory placement + permission preservation), login PATH
