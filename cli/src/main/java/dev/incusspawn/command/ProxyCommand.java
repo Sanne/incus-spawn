@@ -143,7 +143,7 @@ public class ProxyCommand extends BaseCommand {
             var ownInfo = holder != null && holder.otherUser() ? null : proxyInfo;
             if (ownInfo != null) {
                 if (!ownInfo.isLegacy()) {
-                    out.println(field("Version", ownInfo.version() + " (" + ownInfo.gitSha() + ")"));
+                    out.println(field("Version", ownInfo.displayVersion() + " (" + ownInfo.gitSha() + ")"));
                     if (ownInfo.runtime() != null && !ownInfo.runtime().isEmpty()) {
                         out.println(field("Runtime", ownInfo.runtime()));
                     }
@@ -606,7 +606,7 @@ public class ProxyCommand extends BaseCommand {
             var row = "%-15s%s%n";
             out.printf(row, "Gateway IP:", gatewayIp);
             out.printf(row, "MITM port:", ProxyConfig.DEFAULT_MITM_PORT);
-            out.printf(row, "Version:", build.version() + " (" + build.gitSha() + ")");
+            out.printf(row, "Version:", build.displayVersion() + " (" + build.gitSha() + ")");
             out.printf(row, "Runtime:", build.runtime());
             out.println();
 

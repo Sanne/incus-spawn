@@ -86,6 +86,11 @@ class TuiDigitKeysTest {
             String currentVersion() {
                 return "1.2.3";
             }
+
+            @Override
+            String displayVersion() {
+                return "1.2.3";
+            }
         };
         var def = new ImageDef();
         def.setName("tpl-minimal");

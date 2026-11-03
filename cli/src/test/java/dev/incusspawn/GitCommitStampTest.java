@@ -21,6 +21,8 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
@@ -33,6 +35,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  * worktree whose HEAD differs from its main clone's.
  */
 class GitCommitStampTest {
+
+    private static final String DESCRIBE_FORMAT = "%(describe:tags=true,match=v[0-9]*)";
 
     @TempDir
     Path tmp;
@@ -48,19 +52,75 @@ class GitCommitStampTest {
         var worktree = tmp.resolve("worktree");
         git(clone, "worktree", "add", "-q", worktree.toString(), worktreeHead);
 
-        Files.writeString(worktree.resolve("pom.xml"), stampingPom(Path.of(modulePom)));
-        var mvn = new ArrayList<>(List.of(mvn(), "-o", "-q", "-B", "generate-resources"));
-        // Offline, so the nested build must look where the outer one resolved the plugin.
-        var localRepository = System.getProperty("isx.test.localRepository");
-        if (localRepository != null && !localRepository.isBlank()) mvn.add("-Dmaven.repo.local=" + localRepository);
-        run(worktree, mvn.toArray(String[]::new));
+        assertEquals("0.0.0-SNAPSHOT", stamp(worktree, modulePom), "a checkout without tags still builds");
 
         var props = new Properties();
         try (var in = Files.newInputStream(worktree.resolve("target/classes/git.properties"))) {
             props.load(in);
         }
         assertEquals(worktreeHead, props.getProperty("git.commit.id"),
-                modulePom + " stamps the main clone's HEAD, not the worktree's");
+                modulePom + " stamps the worktree's HEAD, not the main clone's");
+        assertTrue(List.of("", DESCRIBE_FORMAT).contains(props.getProperty("git.commit.id.describe")),
+                "no reachable tag yields an empty description, or an unexpanded placeholder on older Git");
+
+        git(worktree, "tag", "nightly");
+        assertEquals("0.0.0-SNAPSHOT", stamp(worktree, modulePom), "an unrelated tag is not a release version");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"pom.xml", "../proxy/pom.xml"})
+    void stampsTheWorktreesTagAndDistance(String modulePom) throws Exception {
+        var clone = Files.createDirectories(tmp.resolve("clone"));
+        git(clone, "init", "-q");
+        Files.writeString(clone.resolve("tracked.txt"), "original\n");
+        git(clone, "add", "tracked.txt");
+        git(clone, "commit", "-q", "-m", "release");
+        git(clone, "tag", "v1.2.3");
+        var releaseHead = git(clone, "rev-parse", "HEAD");
+        for (int i = 0; i < 5; i++) git(clone, "commit", "-q", "--allow-empty", "-m", "change " + i);
+        var worktreeHead = git(clone, "rev-parse", "HEAD");
+        git(clone, "tag", "nightly");
+        git(clone, "tag", "vnightly");
+        git(clone, "commit", "-q", "--allow-empty", "-m", "main clone's release");
+        git(clone, "tag", "v9.9.9");
+        var worktree = tmp.resolve("worktree");
+        git(clone, "worktree", "add", "-q", worktree.toString(), releaseHead);
+
+        // Older Git leaves the formatter unexpanded; source builds must still pass their tests.
+        var supportsDescribe = !git(worktree, "log", "-1", "--format=" + DESCRIBE_FORMAT).equals(DESCRIBE_FORMAT);
+        var atTag = supportsDescribe ? "1.2.3+0" : "0.0.0-SNAPSHOT";
+        var afterTag = supportsDescribe ? "1.2.3+5" : "0.0.0-SNAPSHOT";
+        assertEquals(atTag, stamp(worktree, modulePom), "an exact tag retains a snapshot marker");
+        Files.writeString(worktree.resolve("tracked.txt"), "changed at the tag\n");
+        assertEquals(atTag, stamp(worktree, modulePom), "a dirty exact tag is still a snapshot build");
+        git(worktree, "restore", "--", "tracked.txt");
+        git(worktree, "checkout", "-q", "--detach", worktreeHead);
+        assertEquals(afterTag, stamp(worktree, modulePom), "only tags reachable from the worktree count");
+        Files.writeString(worktree.resolve("tracked.txt"), "changed\n");
+        assertEquals(afterTag, stamp(worktree, modulePom), "unstaged changes do not affect the committed version");
+        git(worktree, "add", "tracked.txt");
+        assertEquals(afterTag, stamp(worktree, modulePom), "staged changes do not affect the committed version");
+    }
+
+    private static String stamp(Path worktree, String modulePom) throws Exception {
+        Files.writeString(worktree.resolve("pom.xml"), stampingPom(Path.of(modulePom)));
+        var mvn = new ArrayList<>(List.of(mvn(), "-o", "-q", "-B", "generate-resources"));
+        // Offline, so the nested build must look where the outer one resolved the plugin.
+        var localRepository = System.getProperty("isx.test.localRepository");
+        if (localRepository != null && !localRepository.isBlank()) mvn.add("-Dmaven.repo.local=" + localRepository);
+        run(worktree, mvn.toArray(String[]::new));
+        var props = new Properties();
+        try (var in = Files.newInputStream(worktree.resolve("target/classes/git.properties"))) {
+            props.load(in);
+        }
+        var description = props.getProperty("git.commit.id.describe");
+        assertNotNull(description, "git.properties includes the description alongside the commit hash");
+        var buildProps = new Properties();
+        buildProps.setProperty("app.version", "0.0.0-SNAPSHOT");
+        var build = BuildInfo.createInstance(buildProps, props);
+        assertEquals("0.0.0-SNAPSHOT", build.version(), "Git descriptions do not change template stamps");
+        assertTrue(build.isDev(), "snapshot builds remain development builds, even at a tag with local edits");
+        return build.displayVersion();
     }
 
     /** A minimal pom holding only the plugins of {@code modulePom} that stamp {@code git.commit.id}. */
@@ -102,7 +162,7 @@ class GitCommitStampTest {
 
     private static String git(Path dir, String... args) throws Exception {
         var cmd = new ArrayList<>(List.of("git", "-c", "user.name=test", "-c", "user.email=test@example.com",
-                "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main",
+                "-c", "commit.gpgsign=false", "-c", "tag.gpgSign=false", "-c", "init.defaultBranch=main",
                 "-c", "gc.auto=0", "-c", "maintenance.auto=false")); // no detached maintenance racing @TempDir cleanup (#1473)
         cmd.addAll(List.of(args));
         return run(dir, cmd.toArray(String[]::new));

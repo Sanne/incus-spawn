@@ -2741,6 +2741,7 @@ public class MitmProxy {
         var configDrifted = hasConfigChangedSinceLoad();
         var body = "{\"status\":\"ok\""
                 + ",\"version\":\"" + info.version() + "\""
+                + ",\"displayVersion\":\"" + escapeJson(info.displayVersion()) + "\""
                 + ",\"gitSha\":\"" + info.gitSha() + "\""
                 + ",\"runtime\":\"" + escapeJson(info.runtime()) + "\""
                 + ",\"caFingerprint\":\"" + caFingerprint + "\""

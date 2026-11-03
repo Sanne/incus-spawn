@@ -135,6 +135,11 @@ class TuiCharacterisationTest {
             String currentVersion() {
                 return VERSION;
             }
+
+            @Override
+            String displayVersion() {
+                return VERSION;
+            }
         };
         tui.useDefinitions(defs, new ToolDefLoader(List.of()), List.of());
         tui.startSession(daemon.client(), new BackgroundTaskManager(), new FlockInstanceLockManager(),

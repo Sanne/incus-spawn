@@ -50,7 +50,7 @@ public class ProxyMain implements QuarkusApplication {
                 }
                 case "--version", "-V" -> {
                     var info = BuildInfo.instance();
-                    ProxyLog.stdout("isx-proxy " + info.version() + " (" + info.gitSha() + ")");
+                    ProxyLog.stdout("isx-proxy " + info.displayVersion() + " (" + info.gitSha() + ")");
                     ProxyLog.stdout(info.runtime());
                     return 0;
                 }
@@ -101,9 +101,9 @@ public class ProxyMain implements QuarkusApplication {
         var creds = proxy.credentials();
 
         var build = BuildInfo.instance();
-        ProxyLog.info("Starting proxy " + build.version() + " (" + build.gitSha() + ") " + build.runtime());
+        ProxyLog.info("Starting proxy " + build.displayVersion() + " (" + build.gitSha() + ") " + build.runtime());
         ProxyLog.stdout("Starting MITM authentication proxy...");
-        ProxyLog.field("Version", build.version() + " (" + build.gitSha() + ")");
+        ProxyLog.field("Version", build.displayVersion() + " (" + build.gitSha() + ")");
         ProxyLog.field("Runtime", build.runtime());
         if (!Platform.isMacOS()) {
             ProxyLog.field("Incus", build.incusClient() + " (client) / " + build.incusServer() + " (server)");

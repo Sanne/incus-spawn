@@ -15,6 +15,13 @@ mvn verify -DskipITs=false      # integration tests (requires Incus)
 ./install.sh --native   # native (requires Docker, Podman, or GraalVM)
 ```
 
+Snapshot builds display the nearest reachable Git tag matching `v[0-9]*` without its leading `v`, followed by `+` and the number of commits since that tag, for example `1.2.3+5`.
+Builds exactly at a tag retain a `+0` snapshot marker, for example `1.2.3+0`; uncommitted changes do not affect the version.
+The full commit hash is still shown in parentheses.
+With no reachable tag, or with Git older than 2.35, the version falls back to the POM's snapshot version.
+Release builds keep the POM version.
+The Git description affects only the displayed version; template stamps and version comparisons keep the POM version.
+
 To try a change against a real Incus on a disposable Linux machine (a scratch VM, an isx instance), install it with `./install.sh` and run `scripts/local-incus.sh`: it sets Incus up the way CI's integration job does.
 
 ## Website Development

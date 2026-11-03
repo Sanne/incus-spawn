@@ -254,7 +254,7 @@ class QueryCommandFormatTest {
     @Test
     void proxyStatusOfARunningProxy() {
         var build = BuildInfo.instance();
-        var info = new ProxyInfo(build.version(), build.gitSha(), "native", "ab:cd", true, true, null);
+        var info = new ProxyInfo(build.version(), build.gitSha(), "native", "ab:cd", true, true, null, -1, "1.2.3+5");
         assertEquals("""
                 {
                   "status" : "running",

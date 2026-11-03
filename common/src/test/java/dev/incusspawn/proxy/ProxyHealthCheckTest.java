@@ -226,6 +226,7 @@ class ProxyHealthCheckTest {
         var info = ProxyHealthCheck.parseProxyInfo(
                 "{\"status\":\"ok\",\"version\":\"0.1.10\",\"gitSha\":\"abc1234\",\"runtime\":\"native (GraalVM 23.1)\",\"caFingerprint\":\"deadbeef\"}");
         assertEquals("0.1.10", info.version());
+        assertEquals("0.1.10", info.displayVersion(), "older proxies fall back to their POM version");
         assertEquals("abc1234", info.gitSha());
         assertEquals("native (GraalVM 23.1)", info.runtime());
         assertEquals("deadbeef", info.caFingerprint());
@@ -233,9 +234,20 @@ class ProxyHealthCheckTest {
     }
 
     @Test
+    void parseProxyInfoKeepsDisplayAndPomVersionsSeparate() {
+        var info = ProxyHealthCheck.parseProxyInfo("""
+                {"status":"ok","version":"0.0.0-SNAPSHOT","displayVersion":"1.2.3+5","gitSha":"abc1234"}
+                """);
+        assertEquals("0.0.0-SNAPSHOT", info.version());
+        assertEquals("1.2.3+5", info.displayVersion());
+        assertEquals("abc1234", info.gitSha());
+    }
+
+    @Test
     void parseProxyInfoHandlesOldFormat() {
         var info = ProxyHealthCheck.parseProxyInfo("{\"status\":\"ok\"}");
         assertEquals("", info.version());
+        assertEquals("", info.displayVersion());
         assertEquals("", info.gitSha());
         assertEquals("", info.runtime());
         assertTrue(info.isLegacy());
@@ -250,8 +262,17 @@ class ProxyHealthCheckTest {
     @Test
     void checkVersionDriftReturnsEmptyWhenMatching() {
         var cliInfo = BuildInfo.instance();
-        var proxyInfo = new ProxyHealthCheck.ProxyInfo(cliInfo.version(), cliInfo.gitSha(), cliInfo.runtime(), "somefp", false, true, "");
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo(cliInfo.version(), cliInfo.gitSha(), cliInfo.runtime(),
+                "somefp", false, true, "", -1, "1.2.3+5");
         assertEquals("", ProxyHealthCheck.checkVersionDrift(proxyInfo));
+    }
+
+    @Test
+    void checkVersionDriftStillDetectsADifferentCommitWithTheSameDisplayVersion() {
+        var cliInfo = BuildInfo.instance();
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo(cliInfo.version(), "other-commit", cliInfo.runtime(),
+                "somefp", false, true, "", -1, cliInfo.displayVersion());
+        assertFalse(ProxyHealthCheck.checkVersionDrift(proxyInfo).isEmpty());
     }
 
     @Test

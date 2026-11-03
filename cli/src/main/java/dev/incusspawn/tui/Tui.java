@@ -143,7 +143,7 @@ public class Tui {
     private final TaskPicker taskPicker = new TaskPicker(modal, theme);
 
     private final AboutModal about = new AboutModal(modal, theme, new AboutModal.Source() {
-        @Override public String version() { return Tui.this.currentVersion(); }
+        @Override public String version() { return Tui.this.displayVersion(); }
         @Override public String gitSha() { return BuildInfo.instance().gitSha(); }
         @Override public String incusClient() { return BuildInfo.instance().incusClient(); }
         @Override public String incusServer() { return BuildInfo.instance().incusServer(); }
@@ -2318,11 +2318,16 @@ public class Tui {
     }
 
     /**
-     * The version of isx running, which the header names and templates are judged outdated
-     * against; overridable so a test can give one that no build changes.
+     * The POM version templates are judged outdated against; overridable so a test can give
+     * one that no build changes.
      */
     String currentVersion() {
         return BuildInfo.instance().version();
+    }
+
+    /** The version shown in the header and About dialog, including a snapshot's commit count. */
+    String displayVersion() {
+        return BuildInfo.instance().displayVersion();
     }
 
     PendingAction pendingAction() {
