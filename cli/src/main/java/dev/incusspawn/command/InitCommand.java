@@ -1307,13 +1307,19 @@ public class InitCommand extends BaseCommand {
 
     void installGitRemoteShim() {
         if (System.getProperty("org.graalvm.version") != null) return;
+        var isxPath = HostPath.find("isx");
+        if (isxPath != null) installGitRemoteShim(java.nio.file.Path.of(isxPath).getParent());
+    }
 
+    /**
+     * Writes the helper beside {@code isx} in {@code dir}, unless one is there. A directory the user
+     * cannot write, such as a package's {@code /usr/bin}, is skipped quietly: warning there would
+     * repeat on every init of such an install, and nothing the user does in init changes it.
+     */
+    void installGitRemoteShim(java.nio.file.Path dir) {
         try {
-            var isxPath = HostPath.find("isx");
-            if (isxPath == null) return;
-
-            var shimPath = java.nio.file.Path.of(isxPath).getParent().resolve("git-remote-isx");
-            if (Files.exists(shimPath)) return;
+            var shimPath = dir.resolve("git-remote-isx");
+            if (Files.exists(shimPath) || !Files.isWritable(dir)) return;
 
             try (var is = getClass().getClassLoader().getResourceAsStream("git-remote-isx")) {
                 if (is == null) return;
