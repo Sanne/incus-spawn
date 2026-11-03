@@ -84,7 +84,7 @@ isx-trust ~/tools/jdk-21
 isx-trust ~/project/.venv
 ```
 
-The symptoms are `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`, and the agent context pairs them with that command.
+The symptoms are `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`, and the agent context pairs them with `isx-trust <dir>`.
 
 ### Host CAs (opt-in)
 
