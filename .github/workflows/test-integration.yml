@@ -1052,6 +1052,134 @@ jobs:
           sg incus-admin -c "isx destroy test-codex" || true
           sg incus-admin -c "isx destroy test-vm" || true
 
+  # isx on hosts as users install them (#1972): the distribution's own cloud image booted as a KVM
+  # guest, where isx init installs Incus from the distribution's repository and configures the
+  # host's own firewall. isx-integration-tests-native runs on the runner's Ubuntu, where ufw is
+  # never active and init installs firewalld, so the ufw path shipped on unit tests alone and
+  # broke loading on Arch (#1932). Three host shapes: stock Arch (no firewall: init installs
+  # firewalld through pacman), Arch with ufw enabled, Ubuntu 24.04 with ufw enabled and its own
+  # Incus 6.0. A failure stays inside the guest, so a broken host firewall cannot cut the runner
+  # off. Images are pinned by URL and the publisher's checksum (see .claude/rules/ci.md for the
+  # bump), and HostDistroWorkflowTest checks the pins.
+  host-distro:
+    needs: [build-native-cli, build-native-proxy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    name: host-distro (${{ matrix.shape }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shape: arch
+            image_url: https://geo.mirror.pkgbuild.com/images/v20261101.620452/Arch-Linux-x86_64-cloudimg-20261101.620452.qcow2
+            image_sha256: 794eb4889b39e1f0ed7d5ae998b2a1ed2137db8cf8c3476cf2962c7437ecb003
+          - shape: arch-ufw
+            image_url: https://geo.mirror.pkgbuild.com/images/v20261101.620452/Arch-Linux-x86_64-cloudimg-20261101.620452.qcow2
+            image_sha256: 794eb4889b39e1f0ed7d5ae998b2a1ed2137db8cf8c3476cf2962c7437ecb003
+          - shape: ubuntu-ufw
+            image_url: https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-amd64.img
+            image_sha256: 04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94
+    env:
+      VM: /tmp/distro-vm
+      SHAPE: ${{ matrix.shape }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install QEMU
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 qemu-utils genisoimage
+
+      - name: Cache the cloud image
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/distro-vm
+          key: distro-image-${{ matrix.image_sha256 }}
+
+      - name: Download CLI native binary
+        uses: actions/download-artifact@v6
+        with:
+          name: isx-native-cli
+          path: native-cli/
+
+      - name: Download proxy native binary
+        uses: actions/download-artifact@v6
+        with:
+          name: isx-native-proxy
+          path: native-proxy/
+
+      - name: Boot the host
+        run: scripts/distro-vm.sh boot "$VM" "${{ matrix.image_url }}" "${{ matrix.image_sha256 }}"
+
+      # Packages first, then a reboot: an upgraded Arch kernel has no modules for the one running
+      - name: Prepare the host
+        run: |
+          scripts/distro-vm.sh push "$VM" .github/scripts/test-host-distro.sh .github/scripts/test-instance.sh \
+            .github/scripts/test-proxy-only.sh .github/scripts/dump-incus-logs.sh bench/isxbench.py isx-test
+          scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh prepare "$SHAPE" </dev/null
+          scripts/distro-vm.sh reboot "$VM"
+          scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh firewall "$SHAPE" </dev/null
+
+      - name: Install isx
+        run: |
+          mkdir isx-bin
+          cp native-cli/incus-spawn-*-runner isx-bin/isx
+          cp native-proxy/incus-spawn-proxy-*-runner isx-bin/isx-proxy
+          scripts/distro-vm.sh push "$VM" isx-bin/isx isx-bin/isx-proxy bin
+          scripts/distro-vm.sh ssh "$VM" 'sudo install -m 755 bin/isx bin/isx-proxy /usr/local/bin/ && isx --version' </dev/null
+
+      # Without sg (Arch), init stops for a new login after adding the user to incus-admin: the
+      # next ssh session is that login
+      - name: isx init
+        run: |
+          rc=0
+          scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh init </dev/null || rc=$?
+          if [ "$rc" -eq 75 ]; then
+            echo "::notice::isx init continues in a new login"
+            scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh init </dev/null
+          else
+            exit "$rc"
+          fi
+
+      - name: Check the host after isx init
+        run: scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh host-checks "$SHAPE" </dev/null
+
+      - name: Install the proxy service
+        run: scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh proxy </dev/null
+
+      - name: Build tpl-minimal
+        run: scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh build </dev/null
+
+      - name: Test a branch through the bridge
+        run: scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh instance </dev/null
+
+      - name: Test isx shell
+        run: scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh shell </dev/null
+
+      - name: Test proxy-only branches
+        run: scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh proxy-only </dev/null
+
+      - name: Test stop, start and destroy
+        run: scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh lifecycle </dev/null
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          scripts/distro-vm.sh ssh "$VM" 'tail -100 ~/.local/state/incus-spawn/proxy.log; bash isx-test/dump-incus-logs.sh;
+            sudo journalctl -b --no-pager -n 200' </dev/null || true
+          echo "=== Serial console ==="
+          scripts/distro-vm.sh console "$VM" | tail -200 || true
+
+      - name: Stop the host
+        if: always()
+        run: scripts/distro-vm.sh stop "$VM"
+
   # Regression: isx init must produce a working setup on a machine where a pool exists but
   # the default profile is empty. This can happen when a pool was created manually (or by a
   # previous isx version) without 'incus admin init'. The isx-integration-tests jobs let
