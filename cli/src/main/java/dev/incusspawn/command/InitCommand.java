@@ -1319,7 +1319,7 @@ public class InitCommand extends BaseCommand {
     void installGitRemoteShim(java.nio.file.Path dir) {
         try {
             var shimPath = dir.resolve("git-remote-isx");
-            if (Files.exists(shimPath) || !Files.isWritable(dir)) return;
+            if (Files.exists(shimPath, java.nio.file.LinkOption.NOFOLLOW_LINKS) || !Files.isWritable(dir)) return;
 
             try (var is = getClass().getClassLoader().getResourceAsStream("git-remote-isx")) {
                 if (is == null) return;
