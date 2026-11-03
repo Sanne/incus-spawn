@@ -988,13 +988,17 @@ public class BuildCommand extends BaseCommand {
      * {@link dev.incusspawn.incus.BtrfsUsage}). Best-effort: a non-positive/absent size (see
      * {@link #probeReferencedSize}) is simply not stamped and the TUI falls back to exclusive-usage
      * display. Must run after the rename to the canonical name (the subvolume path btrfs reports).
+     *
+     * @return whether the stamp was written
      */
-    public static void stampReferencedSize(IncusClient incus, String canonicalName, long referenced) {
-        if (referenced <= 0) return;
+    public static boolean stampReferencedSize(IncusClient incus, String canonicalName, long referenced) {
+        if (referenced <= 0) return false;
         try {
             incus.configSet(canonicalName, Metadata.DISK_REFERENCED, String.valueOf(referenced));
+            return true;
         } catch (Exception ignored) {
             // Non-fatal: the referenced-size stamp is a display optimisation, not build state.
+            return false;
         }
     }
 

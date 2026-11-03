@@ -91,6 +91,37 @@ class TemplateLockTest {
     }
 
     @Test
+    void tryReadingGivesUpAtOnceDuringASwap() throws Exception {
+        var incus = mock(IncusClient.class);
+        var deleted = new CountDownLatch(1);
+        var finishSwap = new CountDownLatch(1);
+        doAnswer(inv -> {
+            deleted.countDown();
+            assertTrue(finishSwap.await(10, TimeUnit.SECONDS));
+            return null;
+        }).when(incus).deleteIfExists("tpl");
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            try {
+                var swap = pool.submit(() -> TemplateLock.replace(incus, "tpl-rebuilding", "tpl", RecordingOutput.QUIET));
+                assertTrue(deleted.await(10, TimeUnit.SECONDS));
+                long started = System.nanoTime();
+                var attempt = pool.submit(() -> TemplateLock.tryReading("tpl")).get(5, TimeUnit.SECONDS);
+                assertTrue(attempt.isEmpty(), "held the template while it was being swapped");
+                assertTrue(System.nanoTime() - started < TimeUnit.SECONDS.toNanos(2), "waited for the swap");
+                finishSwap.countDown();
+                swap.get(10, TimeUnit.SECONDS);
+            } finally {
+                finishSwap.countDown();
+            }
+            assertTrue(pool.submit(() -> {
+                var after = TemplateLock.tryReading("tpl");
+                after.ifPresent(TemplateLock.Held::close);
+                return after.isPresent();
+            }).get(5, TimeUnit.SECONDS), "not held once the swap was done");
+        }
+    }
+
+    @Test
     void aNameNoInstanceCanHaveGetsNoLockFile() {
         // An untrusted name (a project-local name:, an agent's argument) must not become a path
         try (var held = TemplateLock.reading("../../escaped", RecordingOutput.QUIET)) {

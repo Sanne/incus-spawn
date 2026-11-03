@@ -184,8 +184,10 @@ Deleting a btrfs subvolume can mark qgroup accounting inconsistent, so a read ta
 A missing/zero rfer drops that template's stamp.
 The delta model tolerates a missing stamp on a *derived* template (`canUseReferencedModel` gates only on every built **root** being stamped -- an unstamped derived row falls back to its own exclusive usage, `applyReferencedTemplateDeltas`), but an unstamped root sends the whole display to the shared-base fold (`foldBaseWeightIntoRootTemplate`).
 To self-heal a missing stamp (pre-feature template, or a build that left it unstamped while the accounting was under repair) without a rebuild, `fillMissingReferencedSizes()` backfills it on reload with a single **live** probe -- but *only* when there's an actual gap (`unstampedBuiltTemplates`), never overwriting an existing stamp, so the "privileged read is rare, not per-refresh" posture holds for a healthy install.
-A template's first backfill is also saved as its stamp (`measureAndStamp`, through `BuildCommand.stampReferencedSize`), under a build's conditions: the template held in place by `TemplateLock.reading`, the accounting re-read consistent just before and after the read (never the reload's cached `qgroupStatus`), and the sync flavour.
-A gap that could not be filled is read again only non-sync, in memory (`measuredGaps`), and a name stamped this way leaves that set, so a rebuild in the same session is measured afresh.
+A template's first backfill is also saved as its stamp (`ReferencedBackfill`, through `BuildCommand.stampReferencedSize`), under a build's conditions: the template held in place, the accounting re-read consistent just before and after the read (never the reload's cached `qgroupStatus`), and the sync flavour.
+The hold is `TemplateLock.tryReading`, which never waits, since this runs on the UI thread: a template a swap holds is left out and keeps its gap for a later reload.
+A gap that could not be filled, or whose stamp write failed, is read again only non-sync, in memory, and a name stamped this way is forgotten, so a rebuild in the same session is measured afresh.
+`ReferencedBackfillTest` drives the decision through its `Pool` seam (probe, status, locks and stamp).
 
 **Accounting trust and auto-repair.**
 None of the above helps when btrfs itself has stopped counting.

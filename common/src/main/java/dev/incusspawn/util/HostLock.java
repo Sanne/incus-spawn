@@ -126,15 +126,21 @@ public final class HostLock implements AutoCloseable {
      */
     public static HostLock acquireShared(Path lockFile, String activity, Consumer<String> log,
                                          Consumer<String> warn) {
+        return acquireShared(lockFile, activity, log, warn, TIMEOUT);
+    }
+
+    /** As above, waiting at most {@code timeout}: {@link Duration#ZERO} takes it only if free now. */
+    public static HostLock acquireShared(Path lockFile, String activity, Consumer<String> log,
+                                         Consumer<String> warn, Duration timeout) {
         var key = key(lockFile);
         var inProcess = IN_PROCESS.computeIfAbsent(key.path(), p -> new InProcess());
         // A downgrade would open a second channel, whose close drops the exclusive fcntl lock
         if (inProcess.threads.isWriteLockedByCurrentThread()) {
             throw new IllegalStateException("Lock " + lockFile + " is already held by this thread");
         }
-        long deadline = System.nanoTime() + TIMEOUT.toNanos();
+        long deadline = System.nanoTime() + timeout.toNanos();
         var readLock = inProcess.threads.readLock();
-        var waited = lockInProcess(readLock, TIMEOUT, activity, log);
+        var waited = lockInProcess(readLock, timeout, activity, log);
         if (key.unusable() != null) return degraded(readLock, lockFile, activity, warn, key.unusable(), waited);
         try {
             // Bounded by the same deadline: another thread may be waiting for the file under it

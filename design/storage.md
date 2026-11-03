@@ -128,10 +128,13 @@ So a transient read failure at build time degrades a single row, not the entire 
 
 A missing stamp also self-heals on reload without a rebuild: `fillMissingReferencedSizes` backfills it with a single live probe, and *only* when there's an actual gap (an unstamped built template).
 A template's first backfill is also saved as its stamp, since templates are immutable, and it is held to a build's conditions.
-The template is held in place (`TemplateLock.reading`), so no swap puts another instance under its name between the read and the stamp.
+The template is held in place (`TemplateLock.tryReading`), so no swap puts another instance under its name between the read and the stamp.
+That hold never waits, since the backfill runs on the TUI's UI thread and a swap can hold the lock for seconds.
+A template a rebuild is swapping right now keeps its gap until a later reload.
 The accounting is read consistent just before and after the read, never taken from the reload's status, which may predate the swap that flagged it.
 And the read forces a commit (the sync flavour), so the stamp counts every write.
-A gap that read could not fill is read again only with the light flavour, in memory, so it costs one commit, not one per reload.
+A gap that read could not fill, or whose stamp could not be written, is read again only with the light flavour, in memory, so it costs one commit, not one per reload.
+`ReferencedBackfill` holds that decision, behind a seam for the probe, the status reads, the locks and the stamp write, and `ReferencedBackfillTest` pins it.
 This keeps the privileged read out of the healthy per-refresh path (a fully-stamped install never probes on reload) while recovering pre-feature templates and every build that left its template unstamped.
 The backfill never overwrites an existing stamp, which is authoritative and free.
 
