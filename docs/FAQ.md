@@ -30,14 +30,16 @@ This goes in every tmux between the agent and your terminal, on the host and in 
 ### Why does a tool I installed fail with a certificate error?
 
 The proxy signs intercepted traffic with the isx CA, which the system store trusts.
-A JDK or Python's certifi ships its own root bundle and ignores the system store, so it rejects the proxy's certificate.
+Most tools read the system store, Fedora's own JDK and Python packages included.
+A JDK or Python `certifi` package from elsewhere can ship its own root bundle instead, so it rejects the proxy's certificate.
 The error reads `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`.
 
 isx binds such a runtime to the system store when it lands directly in a directory isx watches (such as `/opt`).
-For one anywhere else, run `isx-trust <dir>` on the directory you installed it in, then repeat the command.
-It replaces the bundle with a link to the system store, and verification stays on.
-Never turn verification off instead.
+Elsewhere, such as a vendor JDK unpacked into `~/tools` or a `certifi` pip installs into a project's virtualenv, run `isx-trust <dir>` on that directory.
+Then repeat the command.
 
+`isx-trust` replaces the bundle with a link to the system store, and verification stays on.
+Never turn verification off instead.
 With no argument, `isx-trust` binds every runtime in the watched directories, for one the watch has not reached yet.
 [What differs from Fedora](FEDORA.md#trust) lists those directories, and the variables that cover other runtimes.
 
