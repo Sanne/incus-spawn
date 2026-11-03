@@ -43,4 +43,21 @@ class GitRemoteShimTest {
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.STEP, "Installed git remote helper: " + shim)),
                 recorded.events());
     }
+
+    @Test
+    void anExistingHelperIsLeftAlone() throws IOException {
+        var shim = Files.writeString(dir.resolve("git-remote-isx"), "the user's own\n");
+        var recorded = RecordingOutput.during(() -> new InitCommand().installGitRemoteShim(dir));
+        assertEquals(List.of(), recorded.events());
+        assertEquals("the user's own\n", Files.readString(shim));
+    }
+
+    /** A dangling link is left too, never written through to wherever it points. */
+    @Test
+    void aDanglingLinkIsNotWrittenThrough() throws IOException {
+        var target = dir.resolve("elsewhere");
+        Files.createSymbolicLink(dir.resolve("git-remote-isx"), target);
+        RecordingOutput.during(() -> new InitCommand().installGitRemoteShim(dir));
+        assertFalse(Files.exists(target));
+    }
 }
