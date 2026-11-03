@@ -71,8 +71,19 @@ A watch binds a new runtime shortly after it lands, and a command that downloads
 In a template's prime, isx then binds the new runtime and runs the failed prime command again (see [Templates](TEMPLATES.md#runtimes-a-prime-downloads)).
 Elsewhere, run `isx-trust` and repeat the command.
 
-A bare `isx-trust` binds all of those directories.
-For a runtime anywhere else (a JDK unpacked into `~/tools`, a project's `.venv`), run `isx-trust <dir>`.
+`isx-trust` binds runtimes by hand, for one a watch missed or one outside the watched directories.
+You can run it again safely: it skips what is already bound, and it uses `sudo` only where it cannot write.
+
+| Command | Binds |
+| --- | --- |
+| `isx-trust` | Every runtime in the watched directories above |
+| `isx-trust <dir>...` | Every runtime under each directory |
+
+```sh
+isx-trust ~/tools/jdk-21
+isx-trust ~/project/.venv
+```
+
 The symptoms are `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`, and the agent context pairs them with that command.
 
 ### Host CAs (opt-in)
