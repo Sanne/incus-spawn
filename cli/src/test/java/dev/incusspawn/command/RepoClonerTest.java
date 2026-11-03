@@ -1044,6 +1044,17 @@ class RepoClonerTest {
                 new dev.incusspawn.git.GitPreparation.Request(repo.getUrl(), null, null), null);
     }
 
+    /** Counts down when {@code refs} is closed, on whichever thread closes it. {@code verify(refs, timeout(..))}
+     *  cannot wait for that (#1976): with Mockito 5.21 it missed a close of this final-class (inline) mock that
+     *  another thread made while the verification was already polling, though the call was recorded.
+     *  The same late call to an interface mock was seen. */
+    private static java.util.concurrent.CountDownLatch closing(dev.incusspawn.git.GitPreparation.RemoteRefs refs)
+            throws Exception {
+        var closed = new java.util.concurrent.CountDownLatch(1);
+        doAnswer(inv -> { closed.countDown(); return null; }).when(refs).close();
+        return closed;
+    }
+
     @Test
     void theHostReadsRemoteRefsWhileTheGuestChecksAccess() throws Exception {
         var hostReading = new java.util.concurrent.CountDownLatch(1);
@@ -1074,6 +1085,7 @@ class RepoClonerTest {
         var incus = guestCheckingAccess(hostReading, overlapped, false);
         var preparation = mock(dev.incusspawn.git.GitPreparation.class);
         var refs = mock(dev.incusspawn.git.GitPreparation.RemoteRefs.class);
+        var closed = closing(refs);
         when(preparation.readRemote(anyString(), any())).thenAnswer(inv -> { hostReading.countDown(); return refs; });
         var repo = repo("https://example.invalid/repo", "~/repo", null);
         var states = new java.util.concurrent.atomic.AtomicReferenceArray<dev.incusspawn.command.BuildProgress.StepProgress>(1);
@@ -1082,7 +1094,50 @@ class RepoClonerTest {
                 states, 0, new java.util.concurrent.atomic.AtomicBoolean());
 
         assertTrue(overlapped.get(), "the host's ls-remote waited for the guest's access check");
-        verify(refs, timeout(5000)).close();
+        assertTrue(closed.await(5, java.util.concurrent.TimeUnit.SECONDS), "the host's remote refs were never released");
+        verify(preparation, never()).prepare(any(), any());
+        verify(preparation, never()).prepare(any(), any(), any());
+        assertEquals("template account could not access the repository", states.get(0).note(), states.get(0).toString());
+    }
+
+    @Test
+    void aDeniedGuestReleasesTheRemoteRefsOfAReadItCut() throws Exception {
+        var hostReading = new java.util.concurrent.CountDownLatch(1);
+        var overlapped = new java.util.concurrent.atomic.AtomicBoolean();
+        var incus = guestCheckingAccess(hostReading, overlapped, false);
+        var preparation = mock(dev.incusspawn.git.GitPreparation.class);
+        var refs = mock(dev.incusspawn.git.GitPreparation.RemoteRefs.class);
+        var closed = closing(refs);
+        var returned = new java.util.concurrent.CountDownLatch(1);
+        var tester = Thread.currentThread();
+        // Still reading when the guest is denied, and done only once the test waits for the close (or after
+        // a second, as verify(refs, timeout(..)) polls without parking): the late close that verify missed.
+        when(preparation.readRemote(anyString(), any())).thenAnswer(inv -> {
+            hostReading.countDown();
+            try {
+                new java.util.concurrent.CountDownLatch(1).await();
+            } catch (InterruptedException discarded) {
+                returned.await();
+                long deadline = System.nanoTime() + 1_000_000_000L;
+                while (tester.getState() != Thread.State.TIMED_WAITING && System.nanoTime() < deadline) Thread.sleep(1);
+                Thread.currentThread().interrupt();
+            }
+            return refs;
+        });
+        var repo = repo("https://example.invalid/repo", "~/repo", null);
+        var states = new java.util.concurrent.atomic.AtomicReferenceArray<dev.incusspawn.command.BuildProgress.StepProgress>(1);
+
+        // A discard that waited for the read instead of cutting it would never return.
+        try {
+            assertTimeoutPreemptively(java.time.Duration.ofSeconds(15), () -> new RepoCloner(incus, preparation)
+                    .prepareOne(new Container(incus, "test"), repo, plannedFullClone(repo),
+                            states, 0, new java.util.concurrent.atomic.AtomicBoolean()));
+        } finally {
+            returned.countDown();
+        }
+
+        assertTrue(overlapped.get(), "the host's ls-remote waited for the guest's access check");
+        assertTrue(closed.await(5, java.util.concurrent.TimeUnit.SECONDS), "the cut read's remote refs were never released");
         verify(preparation, never()).prepare(any(), any());
         verify(preparation, never()).prepare(any(), any(), any());
         assertEquals("template account could not access the repository", states.get(0).note(), states.get(0).toString());
