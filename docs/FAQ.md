@@ -27,6 +27,19 @@ Agents copy with OSC 52, which isx forwards but cannot apply: your host terminal
 In tmux set `set -g set-clipboard on` and `set -as terminal-features '*:clipboard'` (tmux 3.2 or newer).
 This goes in every tmux between the agent and your terminal, on the host and in the instance: one that is missing them drops the copy silently.
 
+### Why does a tool I installed fail with a certificate error?
+
+Run `isx-trust <dir>` on the directory you installed it in, then repeat the command.
+The error reads `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`.
+
+The proxy signs intercepted traffic with the isx CA, which the system store trusts.
+A JDK or Python's certifi ships its own root bundle and ignores the system store.
+`isx-trust` replaces that bundle with a link to the system store, and verification stays on.
+Never turn verification off instead.
+
+With no argument, `isx-trust` binds every runtime in the directories isx watches, such as `/usr/lib/jvm`, `/opt` and `~/.jdks`.
+[What differs from Fedora](FEDORA.md#file-bindings) lists them all, and the variables that cover other runtimes.
+
 ### Why can't I mount a host directory read-write to follow agent work in my IDE?
 
 Fetch the agent's work as commits over an `isx://` git remote, or run your IDE's backend inside the instance.
