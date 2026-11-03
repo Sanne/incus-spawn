@@ -8,6 +8,7 @@ import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.CpuInfo;
 import dev.incusspawn.util.HostLock;
+import dev.incusspawn.util.HostPath;
 import dev.incusspawn.util.OwnSession;
 import dev.incusspawn.Platform;
 import dev.incusspawn.Warnings;
@@ -876,17 +877,8 @@ public final class VmManager {
     }
 
     private static String resolveVfkitPath() throws IOException {
-        try {
-            var pb = new ProcessBuilder("which", "vfkit");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes()).strip();
-            if (process.waitFor() == 0 && !output.isBlank()) {
-                return Path.of(output).toRealPath().toString();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        var found = HostPath.find("vfkit");
+        if (found != null) return Path.of(found).toRealPath().toString();
         throw new IOException("vfkit not found in PATH. Install it with: brew install vfkit");
     }
 
@@ -1459,13 +1451,7 @@ public final class VmManager {
     }
 
     private static boolean commandExists(String command) {
-        try {
-            var pb = new ProcessBuilder("which", command);
-            pb.redirectErrorStream(true);
-            return pb.start().waitFor() == 0;
-        } catch (Exception e) {
-            return false;
-        }
+        return HostPath.isOnPath(command);
     }
 
     private static void cleanupStaleFiles() {

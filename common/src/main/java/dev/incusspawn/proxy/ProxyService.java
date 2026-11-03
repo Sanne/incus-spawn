@@ -951,15 +951,8 @@ public final class ProxyService {
 
     /** The installed {@code isx} to point services and clients at, or null if none is found. */
     public static String resolveIsxPath() {
-        try {
-            var pb = new ProcessBuilder("which", "isx");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes()).strip();
-            if (process.waitFor() == 0 && !output.isBlank()) {
-                return output;
-            }
-        } catch (Exception ignored) {}
+        var found = HostPath.find("isx");
+        if (found != null) return found;
         var fallback = Environment.localBinIsx();
         if (java.nio.file.Files.isExecutable(fallback)) {
             return fallback.toString();

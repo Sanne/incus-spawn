@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.HostPath;
 import java.io.IOException;
 import java.util.function.UnaryOperator;
 
@@ -376,14 +377,7 @@ public class YamlToolAction implements ToolAction {
     }
 
     static boolean isCommandAvailable(String command) {
-        try {
-            var process = new ProcessBuilder("which", command)
-                    .redirectErrorStream(true).start();
-            process.getInputStream().readAllBytes();
-            return process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() == 0;
-        } catch (Exception e) {
-            return false;
-        }
+        return HostPath.isOnPath(command);
     }
 
     static boolean isVscodeExtensionInstalled(String codePath, String extensionId) {

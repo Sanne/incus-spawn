@@ -4,6 +4,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.Warnings;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.HostLock;
+import dev.incusspawn.util.HostPath;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -353,25 +354,12 @@ public final class SshKeyManager {
     }
 
     private static String resolveIsxPath() {
-        try {
-            var pb = new ProcessBuilder("which", "isx");
-            pb.redirectErrorStream(true);
-            var p = pb.start();
-            if (p.waitFor(5, TimeUnit.SECONDS) && p.exitValue() == 0) {
-                var path = new String(p.getInputStream().readAllBytes()).strip();
-                if (!path.isEmpty()) return path;
-            }
-        } catch (Exception ignored) {}
-        return Environment.localBinIsx().toString();
+        var path = HostPath.find("isx");
+        return path != null ? path : Environment.localBinIsx().toString();
     }
 
     private static boolean isSshKeygenAvailable() {
-        try {
-            var p = new ProcessBuilder("which", "ssh-keygen").start();
-            return p.waitFor(5, TimeUnit.SECONDS) && p.exitValue() == 0;
-        } catch (Exception e) {
-            return false;
-        }
+        return HostPath.isOnPath("ssh-keygen");
     }
 
     private static void writeAtomically(Path target, String content) throws IOException {

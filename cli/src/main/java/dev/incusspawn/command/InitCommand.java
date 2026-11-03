@@ -29,6 +29,7 @@ import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.vm.VmManager;
 import dev.incusspawn.Platform;
+import dev.incusspawn.util.HostPath;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 
@@ -672,13 +673,7 @@ public class InitCommand extends BaseCommand {
     }
 
     static boolean commandExists(String command) {
-        try {
-            var pb = new ProcessBuilder("which", command);
-            pb.redirectErrorStream(true);
-            return pb.start().waitFor() == 0;
-        } catch (Exception e) {
-            return false;
-        }
+        return HostPath.isOnPath(command);
     }
 
     /** The terminal, or null after saying why interactive setup cannot run without one. */
@@ -1314,11 +1309,8 @@ public class InitCommand extends BaseCommand {
         if (System.getProperty("org.graalvm.version") != null) return;
 
         try {
-            var pb = new ProcessBuilder("which", "isx");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var isxPath = new String(process.getInputStream().readAllBytes()).strip();
-            if (process.waitFor() != 0 || isxPath.isEmpty()) return;
+            var isxPath = HostPath.find("isx");
+            if (isxPath == null) return;
 
             var shimPath = java.nio.file.Path.of(isxPath).getParent().resolve("git-remote-isx");
             if (Files.exists(shimPath)) return;

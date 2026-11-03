@@ -17,6 +17,7 @@ import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.vm.VmManager;
 import dev.incusspawn.Platform;
+import dev.incusspawn.util.HostPath;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -120,8 +121,7 @@ class HostSetup {
                 "VMs with near-native performance. This step installs the",
                 "Incus package, enables its systemd service, and adds your",
                 "user to the incus-admin group for unprivileged access.");
-        var result = runHost("which", "incus");
-        if (result != 0) {
+        if (!commandExists("incus")) {
             var installCmd = detectInstallCommand();
             BuildOutput.step("Incus is not installed on this system.");
             BuildOutput.step("The following steps require sudo privileges:");
@@ -829,8 +829,8 @@ class HostSetup {
         if (probe.poolName() == null || !probe.isBtrfs()) return;
         var pool = probe.poolName();
 
-        var btrfsPath = captureOutput("which", "btrfs").strip();
-        if (btrfsPath.isEmpty()) btrfsPath = "/usr/sbin/btrfs";     // fall back to the usual location
+        var btrfsPath = HostPath.find("btrfs");
+        if (btrfsPath == null) btrfsPath = "/usr/sbin/btrfs";     // fall back to the usual location
 
         var user = System.getProperty("user.name");
         var mount = "/var/lib/incus/storage-pools/" + pool;
