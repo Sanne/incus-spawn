@@ -255,7 +255,7 @@ isx pre-trusts declared repos in `.claude.json`, so Claude Code does not prompt 
 ### Runtimes a prime downloads
 
 A prime's HTTPS calls go through the proxy, so its runtime must trust the isx CA.
-A JDK or Python's certifi ships its own root store, which isx binds to the system store.
+A JDK or Python `certifi` from outside Fedora ships its own root store, which isx binds to the system store.
 isx does this in the usual landing directories, such as `/opt` or mise's.
 The [Fedora page](FEDORA.md#file-bindings) lists them.
 

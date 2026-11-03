@@ -8,7 +8,7 @@ Some come from isx at build time, some from the `tpl-minimal` template, and some
 | --- | --- | --- |
 | The isx CA is a system trust anchor | The host proxy signs traffic to intercepted domains with it | `update-ca-trust` |
 | Trust variables point runtimes at the system store | A runtime that ships its own root bundle does not read the system anchors | `/etc/profile.d/isx-env.sh`, `/etc/environment.d/00-isx-trust.conf` |
-| JDK and certifi bundles are symlinks to the system store | A JDK and certifi ship their own root bundle | `isx-trust-system.path`, `isx-trust-home.path`, `isx-trust` |
+| JDK and `certifi` bundles are symlinks to the system store | A JDK or `certifi` from outside Fedora ships its own root bundle | `isx-trust-system.path`, `isx-trust-home.path`, `isx-trust` |
 | Host CAs are installed beside the isx CA | A host behind TLS inspection, or an isx inside another isx | `host-ca: { propagate: true }` in `config.yaml`, off by default |
 | `/tmp` is on disk | Instances restart often, and agents clone into `/tmp` | `tmp.mount` masked in `tpl-minimal` |
 | `agentuser` has passwordless sudo | The agent must be free to install what it needs | `/etc/sudoers.d/agentuser` |
@@ -53,9 +53,11 @@ Java is never bound through a variable: `JAVA_TOOL_OPTIONS` prints a "Picked up"
 
 ### File bindings
 
-isx replaces a JDK's `lib/security/cacerts` and an installed Python certifi's `site-packages/certifi/cacert.pem` with a symlink to the system store (`/etc/pki/ca-trust/extracted/java/cacerts`, `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`).
-The certifi copy a package vendors under `site-packages`, pip's included, is bound the same way; a source checkout is never touched.
+isx replaces a JDK's `lib/security/cacerts` and an installed Python `certifi`'s `site-packages/certifi/cacert.pem` with a symlink to the system store (`/etc/pki/ca-trust/extracted/java/cacerts`, `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`).
+The `certifi` copy a package vendors under `site-packages`, pip's included, is bound the same way; a source checkout is never touched.
 Such a runtime then trusts the Fedora/Mozilla root set plus the isx CA instead of its vendor's bundle.
+
+Fedora's own JDK and `python3-certifi` already use the system store, so this changes only a runtime from elsewhere.
 
 The build binds what the image already carries.
 After that, two systemd path units watch where runtimes land and bind each new one within seconds, with no resident process.
