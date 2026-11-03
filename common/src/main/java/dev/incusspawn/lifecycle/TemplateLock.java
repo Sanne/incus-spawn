@@ -82,6 +82,23 @@ public final class TemplateLock {
     }
 
     /**
+     * As {@link #reading}, but only if no swap holds the template right now: never waits, for a
+     * caller that can leave the template for later, such as the TUI's UI thread.
+     *
+     * @return the hold, released by closing it; empty while a swap holds the template
+     */
+    public static Optional<Held> tryReading(String template) {
+        if (!InstanceNames.isValid(template)) return Optional.of(() -> {});
+        try {
+            Held held = HostLock.acquireShared(lockFile(template), "replacing template '" + template + "'",
+                    message -> {}, Warnings::warn, Duration.ZERO)::close;
+            return Optional.of(held);
+        } catch (HostLock.HostLockException e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
      * Put {@code built} in place as {@code template}, replacing the one there, once no isx process
      * is copying from it. A lock file that cannot be used at all degrades to the swap without it.
      *

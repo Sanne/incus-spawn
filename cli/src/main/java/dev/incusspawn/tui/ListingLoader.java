@@ -8,7 +8,6 @@ import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.TemplateLock;
-import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.vm.VmManager;
 import java.util.ArrayList;
@@ -42,9 +41,8 @@ final class ListingLoader {
     // refreshes, which don't probe, so an unstamped template keeps its figure between them.
     private java.util.Map<String, Long> backfilledReferenced = java.util.Map.of();
 
-    // Unstamped templates a backfill has already measured, or tried to, with a forced commit, so a
-    // gap it cannot fill costs that once, not on every reload. Kept to the current gaps.
-    private final java.util.Set<String> measuredGaps = new java.util.HashSet<>();
+    // Which unstamped templates the backfill has measured and saved, so each costs that once
+    private final ReferencedBackfill referencedBackfill = new ReferencedBackfill();
 
     /** Per built template, the file its build stamped, and the stamp it was read from. */
     private Map<String, StampedFile> templatesBuiltFrom = Map.of();
@@ -516,66 +514,49 @@ final class ListingLoader {
      * fold. This heals pre-feature templates (built before rfer stamping) and every build that left
      * its template unstamped because the accounting was being repaired: a build never waits for that.
      *
-     * <p>A template's first backfill is also saved as its stamp ({@link #measureAndStamp}), so it
-     * is measured that way once. A gap that measure could not fill is read again only with the
-     * non-sync flavour, light enough for the refresh cadence, and kept in memory. An existing stamp
-     * is never overwritten here ({@link #revalidateStampsIfNeeded} heals suspect ones). If the read
-     * is unavailable (dir pool, no sudoers rule, agent down) the gap stays and the fold fallback
+     * <p>A template's first backfill is also saved as its stamp, so it is measured that way once
+     * ({@link ReferencedBackfill}, which says under what conditions). It never waits: a template a
+     * rebuild is swapping right now keeps its gap until a later reload. An existing stamp is never
+     * overwritten here ({@link #revalidateStampsIfNeeded} heals suspect ones). If the read is
+     * unavailable (dir pool, no sudoers rule, agent down) the gap stays and the fold fallback
      * handles it.
      */
     private void fillMissingReferencedSizes() {
         if (!usagePoolIsBtrfs || usagePoolName == null) return;
-        var unstamped = unstampedBuiltTemplates(tui.templateEntries);
-        measuredGaps.retainAll(unstamped);
-        if (unstamped.isEmpty()) return;       // no gap — skip the probe entirely
-        var unmeasured = unstamped.stream().filter(name -> !measuredGaps.contains(name)).toList();
-        // Before the read: one that comes back empty is not retried with a commit either
-        measuredGaps.addAll(unstamped);
-        var live = unmeasured.isEmpty()
-                ? dev.incusspawn.incus.BtrfsUsage.probe(usagePoolName, false)
-                : measureAndStamp(unmeasured);
+        var live = referencedBackfill.fill(unstampedBuiltTemplates(tui.templateEntries), backfillPool(usagePoolName));
         if (live.isEmpty()) return;
         backfilledReferenced = live;
         tui.templateEntries = fillMissingReferenced(tui.templateEntries, live);
     }
 
-    /**
-     * One live read that also stamps {@code names} with what it measures: templates are
-     * immutable, so the figure stays right, as a build's own stamp does. It is held to a build's
-     * conditions. Each template is held in place ({@link TemplateLock#reading}), so no swap puts
-     * another instance under its name between the read and the stamp. The accounting is checked
-     * consistent just before and after the read, not taken from this reload's status, which may
-     * predate the swap that flagged it. And the read forces a filesystem commit, so the stamp
-     * counts every write. A template not stamped this way is measured again by a later reload.
-     */
-    private java.util.Map<String, Long> measureAndStamp(List<String> names) {
-        var held = new ArrayList<TemplateLock.Held>();
-        try {
-            for (var name : names) held.add(TemplateLock.reading(name, BuildOutput.bound()));
-            if (dev.incusspawn.incus.BtrfsUsage.repairIfInconsistent(usagePoolName).untrusted()) {
-                measuredGaps.removeAll(names);
-                return java.util.Map.of();
+    /** The real pool, locks and stamps {@link ReferencedBackfill} works on. */
+    private ReferencedBackfill.Pool backfillPool(String pool) {
+        return new ReferencedBackfill.Pool() {
+            @Override
+            public boolean repairIfInconsistent() {
+                return dev.incusspawn.incus.BtrfsUsage.repairIfInconsistent(pool).untrusted();
             }
-            var live = dev.incusspawn.incus.BtrfsUsage.probe(usagePoolName, true);
-            if (live.isEmpty()) return live;
-            if (dev.incusspawn.incus.BtrfsUsage.status(usagePoolName).untrusted()) {
-                measuredGaps.removeAll(names);
-                return java.util.Map.of();
+
+            @Override
+            public boolean untrusted() {
+                return dev.incusspawn.incus.BtrfsUsage.status(pool).untrusted();
             }
-            for (var name : names) {
-                var referenced = live.getOrDefault(name, -1L);
-                BuildCommand.stampReferencedSize(tui.incus, name, referenced);
-                // A rebuild in this session leaves a new gap under the same name: measure it afresh
-                if (referenced > 0) measuredGaps.remove(name);
+
+            @Override
+            public java.util.Map<String, Long> probe(boolean sync) {
+                return dev.incusspawn.incus.BtrfsUsage.probe(pool, sync);
             }
-            return live;
-        } catch (RuntimeException e) {
-            // A lock not had in time: measured again by a later reload
-            measuredGaps.removeAll(names);
-            return java.util.Map.of();
-        } finally {
-            held.forEach(TemplateLock.Held::close);
-        }
+
+            @Override
+            public java.util.Optional<TemplateLock.Held> tryHold(String template) {
+                return TemplateLock.tryReading(template);
+            }
+
+            @Override
+            public boolean stamp(String template, long referenced) {
+                return BuildCommand.stampReferencedSize(tui.incus, template, referenced);
+            }
+        };
     }
 
     /**
