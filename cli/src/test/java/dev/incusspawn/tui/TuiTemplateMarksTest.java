@@ -94,6 +94,11 @@ class TuiTemplateMarksTest {
             String currentVersion() {
                 return VERSION;
             }
+
+            @Override
+            String displayVersion() {
+                return VERSION;
+            }
         };
         startSession(tui, defs());
         return tui;

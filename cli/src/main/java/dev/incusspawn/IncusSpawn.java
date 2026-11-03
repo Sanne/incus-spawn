@@ -114,7 +114,7 @@ public class IncusSpawn implements QuarkusApplication {
         if (versionRequested) {
             var info = BuildInfo.instance();
             var results = BuildOutput.results();
-            results.println("incus-spawn " + info.version() + " (" + info.gitSha() + ")");
+            results.println("incus-spawn " + info.displayVersion() + " (" + info.gitSha() + ")");
             results.println("incus client " + info.incusClient() + ", server " + info.incusServer());
             results.println(info.runtime());
             return CommandResult.SUCCESS;

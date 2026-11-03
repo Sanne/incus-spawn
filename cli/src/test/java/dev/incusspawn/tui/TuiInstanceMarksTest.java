@@ -94,6 +94,11 @@ class TuiInstanceMarksTest {
             String currentVersion() {
                 return "1.2.3";
             }
+
+            @Override
+            String displayVersion() {
+                return "1.2.3";
+            }
         };
         startSession(tui);
         return tui;

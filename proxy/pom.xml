@@ -109,9 +109,9 @@
                 </executions>
             </plugin>
             <plugin>
-                <!-- Stamps git.commit.id (BuildInfo) by asking git, which resolves a git worktree to
-                     its own HEAD. git-commit-id-maven-plugin maps a worktree to its main clone and
-                     stamped that clone's HEAD instead (#1169). -->
+                <!-- Stamps BuildInfo's commit hash and description by asking git, which resolves a git
+                     worktree to its own HEAD. git-commit-id-maven-plugin maps a worktree to its main
+                     clone and stamped that clone's HEAD instead (#1169). -->
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.6.4</version>
@@ -126,7 +126,7 @@
                                 <argument>log</argument>
                                 <argument>-1</argument>
                                 <argument>--no-show-signature</argument>
-                                <argument>--format=git.commit.id=%H</argument>
+                                <argument>--format=git.commit.id=%H%ngit.commit.id.describe=%(describe:tags=true,match=v[0-9]*)</argument>
                             </arguments>
                             <outputFile>${project.build.outputDirectory}/git.properties</outputFile>
                         </configuration>

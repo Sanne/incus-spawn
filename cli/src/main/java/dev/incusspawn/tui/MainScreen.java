@@ -66,7 +66,7 @@ final class MainScreen {
         var left = new ArrayList<Span>();
         left.add(Span.styled(" isx ", Style.EMPTY.bold().fg(bg).bg(tui.theme.contextAccentFg())));
         int leftW = 5;
-        var version = tui.currentVersion();
+        var version = tui.displayVersion();
         if (version != null && !version.isBlank()) {
             var vtext = "  " + version;
             left.add(Span.styled(vtext, Style.EMPTY.fg(tui.theme.contextSecondaryFg()).bg(bg)));

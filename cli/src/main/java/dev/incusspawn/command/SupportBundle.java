@@ -208,7 +208,7 @@ final class SupportBundle {
     private static String collectVersions() {
         var info = BuildInfo.instance();
         var sb = new StringBuilder();
-        sb.append("isx version: ").append(info.version()).append("\n");
+        sb.append("isx version: ").append(info.displayVersion()).append("\n");
         sb.append("isx git SHA: ").append(info.gitSha()).append("\n");
         sb.append("isx runtime: ").append(info.runtime()).append("\n");
         sb.append("Incus server: ").append(info.incusServer()).append("\n");
@@ -227,7 +227,7 @@ final class SupportBundle {
             sb.append("Status: ").append(status.name()).append("\n");
             var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
             if (info != null) {
-                sb.append("Version: ").append(info.version()).append("\n");
+                sb.append("Version: ").append(info.displayVersion()).append("\n");
                 sb.append("Git SHA: ").append(info.gitSha()).append("\n");
                 sb.append("Runtime: ").append(info.runtime()).append("\n");
                 sb.append("CA fingerprint: ").append(info.caFingerprint()).append("\n");

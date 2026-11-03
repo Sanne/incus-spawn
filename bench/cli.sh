@@ -194,8 +194,8 @@ else
 fi
 PROXY_HEALTH=$(curl -sf --max-time 2 "http://$HEALTH_ADDR:18080/health") || \
     die "No proxy answering on $HEALTH_ADDR:18080. Start it first: isx proxy start"
-# "<version> (<gitSha>)", the form `isx --version` prints, so the two compare as strings.
-PROXY_BUILD=$(python3 -c 'import json, sys; h = json.load(sys.stdin); print(h.get("version", ""), "(" + h.get("gitSha", "") + ")")' \
+# "<displayVersion> (<gitSha>)", the form `isx --version` prints; older proxies only send version.
+PROXY_BUILD=$(python3 -c 'import json, sys; h = json.load(sys.stdin); print(h.get("displayVersion") or h.get("version", ""), "(" + h.get("gitSha", "") + ")")' \
     <<<"$PROXY_HEALTH") || die "Unreadable /health response from $HEALTH_ADDR:18080: $PROXY_HEALTH"
 echo "  proxy:  $PROXY_BUILD"
 for spec in "${RUNTIMES[@]}"; do

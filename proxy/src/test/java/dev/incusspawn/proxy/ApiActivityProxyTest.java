@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.BuildInfo;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import dev.incusspawn.incus.IncusClient;
@@ -473,6 +474,20 @@ class ApiActivityProxyTest {
             listing = listed(WORKER, "2026-10-01T09:00:00.000000000Z");
             registry.refresh();
         }
+    }
+
+    @Test
+    void healthReportsBothVersionsWithoutIntroducingVersionDrift() throws Exception {
+        var response = health("GET", "/health");
+        assertEquals(200, response.statusCode());
+        var body = JqValues.parseStrict(response.body());
+        var build = BuildInfo.instance();
+        assertEquals(build.version(), body.pathText("version", ""));
+        assertEquals(build.displayVersion(), body.pathText("displayVersion", ""));
+        assertEquals(build.gitSha(), body.pathText("gitSha", ""));
+        var info = ProxyHealthCheck.parseProxyInfo(response.body());
+        assertEquals(build.displayVersion(), info.displayVersion());
+        assertEquals("", ProxyHealthCheck.checkVersionDrift(info));
     }
 
     @Test

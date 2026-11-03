@@ -33,11 +33,21 @@ public final class ProxyHealthCheck {
 
     /**
      * What {@code /health} reports. {@code pid} is -1 when absent: older proxies don't send it,
-     * and a proxy only sends it to callers on the host.
+     * and a proxy only sends it to callers on the host. {@code displayVersion} falls back to
+     * {@code version} for older proxies; drift comparisons always use {@code version}.
      */
     public record ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
                             boolean configDrifted, boolean dnsConfigured, String authError,
-                            long pid) {
+                            long pid, String displayVersion) {
+        public ProxyInfo {
+            if (displayVersion == null || displayVersion.isBlank()) displayVersion = version;
+        }
+
+        public ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
+                         boolean configDrifted, boolean dnsConfigured, String authError, long pid) {
+            this(version, gitSha, runtime, caFingerprint, configDrifted, dnsConfigured, authError, pid, version);
+        }
+
         public ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
                          boolean configDrifted, boolean dnsConfigured, String authError) {
             this(version, gitSha, runtime, caFingerprint, configDrifted, dnsConfigured, authError, -1);
@@ -326,7 +336,8 @@ public final class ProxyHealthCheck {
                     configDrifted,
                     dnsConfigured,
                     textOrEmpty(node, "authError"),
-                    Jjq.longOr(node.getField("pid"), -1));
+                    Jjq.longOr(node.getField("pid"), -1),
+                    textOrEmpty(node, "displayVersion"));
         } catch (Exception e) {
             return new ProxyInfo("", "", "", "", false, true, "");
         }

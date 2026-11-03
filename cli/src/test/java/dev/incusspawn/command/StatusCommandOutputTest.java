@@ -8,6 +8,9 @@ import dev.incusspawn.proxy.ProxyHealthCheck.ProxyStatus;
 import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -27,18 +30,21 @@ class StatusCommandOutputTest {
     private final PrintStream outStream = new PrintStream(out, true, StandardCharsets.UTF_8);
 
     /** A running proxy's report is the command's result: its state, then one aligned field a line. */
-    @Test
-    void aRunningProxyIsReportedAsResults() {
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"1.2.3+5", " "})
+    void aRunningProxyIsReportedAsResults(String displayVersion) {
         var build = BuildInfo.instance();
         var info = new ProxyInfo(build.version(), build.gitSha(), "native",
-                null, false, true, null);
+                null, false, true, null, -1, displayVersion);
         var recorded = new RecordingOutput();
+        var expectedVersion = displayVersion == null || displayVersion.isBlank() ? build.version() : displayVersion;
 
         assertEquals(0, ProxyCommand.Status.reportRunning(ProxyStatus.RUNNING, info, "10.0.0.1", null, true, false,
                 recorded.results()));
         assertEquals(List.of(
                 "Proxy is running.",
-                "  Version:         " + build.version() + " (" + build.gitSha() + ")",
+                "  Version:         " + expectedVersion + " (" + build.gitSha() + ")",
                 "  Runtime:         native",
                 "  DNS overrides:   active",
                 "  Health endpoint: http://10.0.0.1:" + ProxyConfig.DEFAULT_HEALTH_PORT + "/health",
