@@ -80,12 +80,16 @@ final class ChatGptRoute {
     static final long MIN_UPSTREAM_INTERVAL_MILLIS = 30_000;
     private static final int MAX_AUTH_BODY = 64 * 1024;
     private static final String HINT = " (isx, #1332)";
+    /** The only query {@link Operation#MODELS} may carry. */
+    private static final Pattern MODELS_QUERY = Pattern.compile("client_version=[0-9A-Za-z.+-]{1,64}");
+    /** An OAuth error code as OpenAI sends it; anything else counts as no code. */
+    private static final Pattern ERROR_CODE = Pattern.compile("[A-Za-z0-9_.-]{1,64}");
 
     /** What a claimed request may do. Nothing else is relayed with a credential. */
     enum Operation {
         RESPONSES(CHATGPT, HttpMethod.POST, "/backend-api/codex/responses", null),
         RESPONSES_WEBSOCKET(CHATGPT, HttpMethod.GET, "/backend-api/codex/responses", null),
-        MODELS(CHATGPT, HttpMethod.GET, "/backend-api/codex/models", Pattern.compile("client_version=[0-9A-Za-z.+-]{1,64}")),
+        MODELS(CHATGPT, HttpMethod.GET, "/backend-api/codex/models", MODELS_QUERY),
         /** Workspace discovery, which Codex needs before a turn: allowed on #1332, no query. */
         ACCOUNTS_CHECK(CHATGPT, HttpMethod.GET, "/backend-api/wham/accounts/check", null),
         REFRESH(AUTH, HttpMethod.POST, "/oauth/token", null),
@@ -660,7 +664,7 @@ final class ChatGptRoute {
             var error = root.path("error");
             var code = error.isString() ? error.asText() : error.pathText("code", "");
             if (code.isEmpty()) code = root.pathText("code", "");
-            return code.matches("[A-Za-z0-9_.-]{1,64}") ? code : null;
+            return ERROR_CODE.matcher(code).matches() ? code : null;
         } catch (RuntimeException e) {
             return null;
         }
