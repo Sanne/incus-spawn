@@ -486,7 +486,7 @@ public final class InstanceLifecycle {
             if (probe == null) {
                 VmAgentRecovery.restartForAgent(incus, name, out);
             } else if (InstanceSecret.missingIn(probe)) {
-                giveSecretToThisBoot(incus, name, instance, null, Metadata.isMcpCaller(instance), out);
+                giveSecretToThisBoot(incus, name, instance, MachineType.VM, out);
             }
         } else {
             // Every container reboot is a start: the instance already read says which boot it is.
@@ -566,11 +566,37 @@ public final class InstanceLifecycle {
         if (!isRunning(instance)) return false;
         var machineType = IncusClient.machineType(instance);
         if (machineType == MachineType.CONTAINER && secretRecordedForBoot(instance)) return true;
+        // A VM's guest is asked before the lock, so one that holds its secret never waits on another isx
+        if (machineType == MachineType.VM) {
+            var probe = probeAgent(incus, name, instance);
+            if (probe == null) return false;
+            if (!InstanceSecret.missingIn(probe)) return true;
+        }
+        return giveSecretToThisBoot(incus, name, instance, machineType, out);
+    }
+
+    /**
+     * Give running {@code instance} a new secret, once its boot was found without one (from its
+     * boot stamp, or for a VM from the guest): its hash recorded first, then put in place by the
+     * script every start runs. Best-effort, like every delivery: a box left without its secret is
+     * refused, and the shell must still open.
+     *
+     * <p>Under the instance's {@link #secretLock}. After waiting for another isx, it asks again
+     * whether this boot still needs a secret, since the holder may have given it one or stopped it;
+     * otherwise what the caller read or probed still stands, so a VM is not asked twice.
+     *
+     * @return whether the boot holds its secret now
+     */
+    private static boolean giveSecretToThisBoot(IncusClient incus, String name, JqValue instance,
+                                                MachineType machineType, Output out) {
         try (var lock = secretLock(incus, name, machineType, "giving " + name + " a new secret", out)) {
-            // The holder may have given it one meanwhile, or stopped it
-            return giveSecretIfStillNeeded(incus, name, lock.waited() ? incus.instanceMetadataOrThrow(name) : instance,
-                    machineType, out);
+            if (lock.waited()) {
+                return giveSecretIfStillNeeded(incus, name, incus.instanceMetadataOrThrow(name), machineType, out);
+            }
+            return giveSecretHeld(incus, name, instance, machineType == MachineType.VM ? null : bootOf(instance),
+                    Metadata.isMcpCaller(instance), out);
         } catch (HostLock.HostLockException | IncusException e) {
+            // The wait or the re-read after it; a nesting bug (already held by this thread) still throws
             out.warn("could not give " + name + " a new instance secret: " + e.getMessage());
             return false;
         }
@@ -935,31 +961,7 @@ public final class InstanceLifecycle {
     }
 
     /**
-     * Give running instance {@code name} a new secret, for a boot isx did not start (#1024):
-     * its hash recorded first -- with {@code bootedAt}, the container boot it goes to, when
-     * there is one -- then put in place by the script every start runs. Best-effort, like every
-     * delivery: a box left without its secret is refused, and the shell must still open.
-     *
-     * <p>Under the instance's {@link #secretLock}. After waiting for another isx, it asks again
-     * whether this boot still needs a secret, since the holder may have given it one.
-     */
-    private static void giveSecretToThisBoot(IncusClient incus, String name, JqValue instance, String bootedAt,
-                                             boolean mcpCaller, Output out) {
-        var machineType = bootedAt == null ? MachineType.VM : MachineType.CONTAINER;
-        try (var lock = secretLock(incus, name, machineType, "giving " + name + " a new secret", out)) {
-            if (lock.waited()) {
-                giveSecretIfStillNeeded(incus, name, incus.instanceMetadataOrThrow(name), machineType, out);
-            } else {
-                giveSecretHeld(incus, name, instance, bootedAt, mcpCaller, out);
-            }
-        } catch (HostLock.HostLockException | IncusException e) {
-            // The wait or the re-read after it; a nesting bug (already held by this thread) still throws
-            out.warn("could not give " + name + " a new instance secret: " + e.getMessage());
-        }
-    }
-
-    /**
-     * {@link #giveSecretToThisBoot}, with its {@link #secretLock} held. Never throws.
+     * {@link #giveSecretToThisBoot}, with the {@link #secretLock} held. Never throws.
      *
      * @return whether the guest kept the secret; on false, why was warned
      */

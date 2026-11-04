@@ -236,7 +236,7 @@ The instance `ensureReady` already holds carries it, so it is compared with `use
 Since a boot's `last_used_at` exists only once it starts, isx's own starts (`startForUse`, `restartForUse`, a branch's first start) record it after the guest answers, after the boot and not during it, where `setupRuntime` documents that API calls contend.
 That takes a read of the instance, which the starts followed by a CA check (`isx shell` and `isx run`, the TUI's shell, a branch that is not airgapped) were about to make anyway, so `startForUse` and `recordSecretBoot` return it and `CertificateAuthority.fixContainerCaIfNeeded(incus, name, instance)` uses it: there the stamp's write is the one request added (an airgapped start and the TUI's restart have no CA check, and pay the read too) (start plus CA check 5 -> 6, branch 18 -> 19 against `FakeIncusDaemon`, pinned in `InstanceLifecycleRequestBudgetTest`).
 Two isx processes acting on one instance in the same boot -- two shells, a shell and the TUI, MCP's `start_instance` -- each rotate and then deliver, and interleaved they left the guest holding one secret and the host recording the other, with the boot stamped as holding it (#1065).
-So rotating and delivering are serialized per instance by a `HostLock` (`InstanceLifecycle.secretLock`, `instance-secret/<name>.lock` under `Environment.lockDir()`), held over `startForUse`, `restartForUse`, `giveSecretToThisBoot` and `VmAgentRecovery.restartForAgent`.
+So rotating and delivering are serialized per instance by a `HostLock` (`InstanceLifecycle.secretLock`, `instance-secret/<name>.lock` under `Environment.lockDir()`), held over `startForUse`, `restartForUse`, `giveSecretToThisBoot` (which `giveSecretIfMissing` takes) and `VmAgentRecovery.restartForAgent`.
 One that waited asks again whether the work is still needed (`HostLock.waited()`): a start that finds the instance running only gives it a secret if its boot still lacks one, as a delivery that waited does (a container's boot stamp, a VM's guest).
 A listing read before another start that has already let go is not seen by the lock, so a start that then fails on an instance that is running all the same goes on as if it had started it: the readiness probe delivers the secret it just recorded, and the boot is recorded.
 The same covers a start Incus made whose answer was lost.
@@ -264,6 +264,8 @@ A delivery that fails is logged and the command still runs: without its proofs t
 A plain `ssh <name>` takes the same step: its ProxyCommand, `isx ssh-proxy` without `--start`, already read the instance to check it runs, so it calls `InstanceLifecycle.giveSecretIfMissing` from that read and never starts anything.
 What it says goes to stderr only (`TerminalOutput.stderrOnly()`), since stdout is the connection's stream.
 For a VM, whose readiness only its guest can answer, that is one probe per connection, as `--start` already prepares a running VM on every connection.
+The probe runs before the `secretLock`, so a VM that holds its secret never waits on another isx.
+A VM it finds without its secret is given it under the lock without a second probe, unless another isx held the lock meanwhile.
 A plain `incus exec` bypasses isx entirely, and stays without its proofs until isx next prepares the box.
 
 **Proof tokens: address and proof authorize credential injection (#1100, #1107).**

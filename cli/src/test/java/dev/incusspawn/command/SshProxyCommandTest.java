@@ -297,6 +297,7 @@ class SshProxyCommandTest {
     @org.junit.jupiter.api.extension.ExtendWith(IsolatedHome.class)
     void withoutStartARunningBoxWhoseBootHasNoSecretIsGivenItOnce() {
         var daemon = new dev.incusspawn.incus.FakeIncusDaemon().instance("box", "container", "Running", java.util.Map.of(
+                dev.incusspawn.incus.Metadata.PARENT, "tpl-dev",
                 dev.incusspawn.incus.Metadata.INSTANCE_SECRET_BOOT, "2026-11-02T19:04:00Z proofs-v4:"))
                 .lastUsedAt("box", "2026-11-03T16:33:00Z");
         var delivered = new ArrayList<String>();
@@ -317,6 +318,56 @@ class SshProxyCommandTest {
         assertTrue(command.checkInstanceRunning(incus));
         assertEquals(1, delivered.size(), "once per boot, not once per connection");
         assertEquals(List.of("GET /1.0/instances/box"), daemon.requests(), "one read per connection, as before");
+    }
+
+    /** A VM's guest is asked, once per connection, and one that holds its secret is given nothing. */
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(IsolatedHome.class)
+    void withoutStartAVmHoldingItsSecretCostsOneProbe() {
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon().instance("vm", "virtual-machine", "Running",
+                        java.util.Map.of(dev.incusspawn.incus.Metadata.PARENT, "tpl-dev"))
+                .lastUsedAt("vm", "2026-11-03T16:33:00Z");
+        var incus = org.mockito.Mockito.spy(daemon.client());
+        var probes = new java.util.concurrent.atomic.AtomicInteger();
+        org.mockito.Mockito.doAnswer(call -> {
+            probes.incrementAndGet();
+            return new IncusClient.ExecResult(0, "", "");
+        }).when(incus).shellExec(eq("vm"), any(String[].class));
+        var command = new SshProxyCommand();
+        command.instance = "vm";
+
+        daemon.clearRequests();
+        assertTrue(command.checkInstanceRunning(incus));
+        assertEquals(1, probes.get());
+        assertEquals(List.of("GET /1.0/instances/vm"), daemon.requests(), "no rotation for a guest that holds it");
+        org.mockito.Mockito.verify(incus, org.mockito.Mockito.never()).shellExec(eq("vm"), org.mockito.ArgumentMatchers.anyMap(), any(String[].class));
+    }
+
+    /** A VM Incus restored without its secret is asked once, then given it: never a second probe. */
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(IsolatedHome.class)
+    void withoutStartAVmLackingItsSecretCostsOneProbeAndOneDelivery() {
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon().instance("vm", "virtual-machine", "Running",
+                        java.util.Map.of(dev.incusspawn.incus.Metadata.PARENT, "tpl-dev"))
+                .lastUsedAt("vm", "2026-11-03T16:33:00Z");
+        var incus = org.mockito.Mockito.spy(daemon.client());
+        var probes = new java.util.concurrent.atomic.AtomicInteger();
+        org.mockito.Mockito.doAnswer(call -> {
+            probes.incrementAndGet();
+            return new IncusClient.ExecResult(0, dev.incusspawn.proxy.InstanceSecret.MISSING + "\n", "");
+        }).when(incus).shellExec(eq("vm"), any(String[].class));
+        var delivered = new ArrayList<String>();
+        org.mockito.Mockito.doAnswer(call -> {
+            java.util.Map<String, String> env = call.getArgument(1);
+            if (env.containsKey(dev.incusspawn.proxy.InstanceSecret.DELIVERY_ENV)) delivered.add(env.get(dev.incusspawn.proxy.InstanceSecret.DELIVERY_ENV));
+            return new IncusClient.ExecResult(0, "", "");
+        }).when(incus).shellExec(eq("vm"), org.mockito.ArgumentMatchers.anyMap(), any(String[].class));
+        var command = new SshProxyCommand();
+        command.instance = "vm";
+
+        assertTrue(command.checkInstanceRunning(incus));
+        assertEquals(1, probes.get(), "the probe before the lock is not repeated under it");
+        assertEquals(1, delivered.size());
     }
 
     /** Without {@code --start}, the ProxyCommand a plain {@code ssh} runs, nothing is started. */
