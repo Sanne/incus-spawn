@@ -555,6 +555,7 @@ A stop is `stop_instance`'s, through the one helper they share (`InstanceDestroy
 Every connection of an orchestrator runs it, `git` and `scp` included, so a running container that no isx process holds, and whose boot is stamped as holding its secret (`InstanceLifecycle.readyForThisBoot`), is used as it is, for one read.
 One that Incus restored running after a host reboot has an empty `/run/isx`, so it is prepared like a stopped one, as is a running VM, whose secret only its guest can answer for.
 Only a stopped one, or one another isx process is starting or stopping, pays for the preparation.
+Without `--start`, the Host block a plain `ssh` reads, nothing is started, but a running box whose boot lacks its secret is still given it (`InstanceLifecycle.giveSecretIfMissing`, design/accounts.md, #1975).
 A connection that waited out a stop does not undo it: an instance that was up when it came and is down once it may act is refused, never started again.
 An orchestrator records a workspace as awake until it suspends it, and reconnects on its own after a host restart.
 Only the ProxyCommand handed to a program carries `--start`; the Host block a plain `ssh <name>` reads never does, so typing `ssh` never starts anything.

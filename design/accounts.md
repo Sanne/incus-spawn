@@ -261,6 +261,9 @@ For a container the judgment comes from the read `requireRunning` already made: 
 A missed boot costs one read, then the delivery under the `secretLock`.
 A VM's guest is probed once per boot `isx mcp` sees (its `last_used_at`), so a restart by Incus is caught without a probe on every exec; a reboot in place waits for the next `isx shell`, as before.
 A delivery that fails is logged and the command still runs: without its proofs the proxy relays the guest's placeholder unchanged, which fails closed.
+A plain `ssh <name>` takes the same step: its ProxyCommand, `isx ssh-proxy` without `--start`, already read the instance to check it runs, so it calls `InstanceLifecycle.giveSecretIfMissing` from that read and never starts anything.
+What it says goes to stderr only (`TerminalOutput.stderrOnly()`), since stdout is the connection's stream.
+For a VM, whose readiness only its guest can answer, that is one probe per connection, as `--start` already prepares a running VM on every connection.
 A plain `incus exec` bypasses isx entirely, and stays without its proofs until isx next prepares the box.
 
 **Proof tokens: address and proof authorize credential injection (#1100, #1107).**
