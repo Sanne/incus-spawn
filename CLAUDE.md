@@ -72,6 +72,7 @@ A sentence never wraps, and a line never holds two sentences.
 In a list item, each sentence after the first goes on its own line, indented to the item's text; in a block quote, each line starts with `> `.
 Headings, tables (a row stays on one line), code, HTML and front matter are exempt.
 `DocsOneSentencePerLineTest` enforces this in `mvn test`.
+A docs-only PR runs these docs tests in `docs-gates.yml`, since `test-integration.yml` skips it; a test reading the repository's docs is tagged `@Tag("docs")` (`DocsGatesWorkflowTest`).
 README.md and `docs/*.md` also keep to the budgets in `.claude/rules/writing.md` (a paragraph of at most four sentences and 60 words, a sentence of at most 40, no dashes, no issue numbers), enforced by `DocsShapeTest`.
 Their lists mirror the code's: every top-level command in the README's CLI table and `docs/CLI.md`, every built-in tool in the Tools page's table, every tool with a proxy credential in the README's credential table (`DocsListsTest`).
 A new command or tool fails that test until its page names it.

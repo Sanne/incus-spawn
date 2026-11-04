@@ -1,5 +1,6 @@
 package dev.incusspawn;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * line (.claude/rules/writing.md "Shape"). Headings, tables, code, HTML and front matter are exempt;
  * CLAUDE.md "Markdown source" has the rule.
  */
+@Tag("docs")
 class DocsOneSentencePerLineTest {
 
     private static final Path ROOT = Path.of("..");

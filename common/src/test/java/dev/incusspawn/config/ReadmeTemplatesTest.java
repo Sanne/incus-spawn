@@ -1,5 +1,6 @@
 package dev.incusspawn.config;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * (#1440), starts from the deprecated tpl-dev, so a copied one builds without its deprecation
  * warning.
  */
+@Tag("docs")
 class ReadmeTemplatesTest {
 
     private static final Pattern YAML_BLOCK = Pattern.compile("```yaml\\n(.*?)```", Pattern.DOTALL);

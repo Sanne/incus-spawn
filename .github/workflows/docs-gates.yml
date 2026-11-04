@@ -1,0 +1,57 @@
+name: Docs Gates
+
+# test-integration.yml ignores a change to these paths alone, so the tests guarding them would never
+# run on it (#1960). This runs only those: every test tagged `docs`, in common and cli. The paths are
+# test-integration.yml's paths-ignore, which DocsGatesWorkflowTest keeps equal.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '*.md'
+      - 'docs/**'
+      - 'site/**'
+      - 'LICENSE'
+      - '.claude/**'
+      - '.github/workflows/pages.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '*.md'
+      - 'docs/**'
+      - 'site/**'
+      - 'LICENSE'
+      - '.claude/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-gates-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs-gates:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Oracle GraalVM 25.4
+        uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.4'
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: maven-
+
+      - name: Run the docs gates
+        run: mvn -B -ntp -pl common,cli -am test -Dgroups=docs

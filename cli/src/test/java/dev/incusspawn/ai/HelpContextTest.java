@@ -4,6 +4,7 @@ import dev.incusspawn.FileTrees;
 import dev.incusspawn.command.IsolatedHome;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
@@ -19,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class HelpContextTest {
 
     @Test
+    @Tag("docs")
     void helpReadsEveryUserPageTheSitePublishesAndEveryDesignPage() throws IOException {
         try (var pages = Files.list(Path.of("..", "docs"))) {
             var expected = pages.map(p -> p.getFileName().toString())

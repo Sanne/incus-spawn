@@ -1,5 +1,6 @@
 package dev.incusspawn;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -19,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * (.claude/rules/writing.md "Shape" and "Voice"). Headings, tables, code, HTML and front matter are
  * exempt from the budgets; the dash rule holds in headings and table cells too.
  */
+@Tag("docs")
 class DocsShapeTest {
 
     private static final Path ROOT = Path.of("..");
