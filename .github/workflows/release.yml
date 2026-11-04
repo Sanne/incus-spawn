@@ -88,8 +88,7 @@ jobs:
           codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
           echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable $codename main" \
             | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq incus btrfs-progs
+          sudo .github/scripts/apt-install.sh incus btrfs-progs
           sudo usermod -aG incus-admin "$USER"
 
       - name: Build instrumented binaries
@@ -468,7 +467,7 @@ jobs:
         continue-on-error: true
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          sudo apt-get install -y -qq rpm > /dev/null
+          sudo .github/scripts/apt-install.sh rpm
           pip install --quiet copr-cli
           mkdir -p ~/.config
           printf '[copr-cli]\nlogin = %s\nusername = %s\ntoken = %s\ncopr_url = https://copr.fedorainfracloud.org\n' \
@@ -500,8 +499,7 @@ jobs:
             exit 0
           fi
 
-          sudo apt-get update -qq > /dev/null
-          sudo apt-get install -y -qq dpkg-dev apt-utils > /dev/null
+          sudo .github/scripts/apt-install.sh dpkg-dev apt-utils
 
           echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
           GPG_KEY_ID=$(gpg --list-secret-keys --with-colons 2>/dev/null | awk -F: '/^sec:/{print $5; exit}')

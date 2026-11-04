@@ -83,6 +83,12 @@ Each job runs on its own freshly-provisioned runner, so jobs never inherit each 
 Diagnostic uploads (`if: always()` or `failure()`) call `actions/upload-artifact` directly.
 `WorkflowArtifactUploadRetryTest` fails when a deliverable upload bypasses the action, or the action stops retrying.
 
+**A runner installs Ubuntu packages with `sudo .github/scripts/apt-install.sh <package>...`, never `apt-get` directly** (#1993, design/testing.md "Testing").
+It bounds the update and the download, moves past a stalled mirror, and runs dpkg only on what it downloaded, so a crawling Azure mirror fails or recovers in minutes instead of eating the job.
+A step that adds an apt source (zabbly's Incus) writes it before calling the script, which runs its own `apt-get update`.
+`WorkflowAptInstallTest` fails on a workflow that runs `apt-get update` or `install` itself, or calls the script before the checkout.
+Scripts pushed into a guest (`test-host-distro.sh`) are not runner installs and keep their own apt calls.
+
 **No CI job boots the appliance under vfkit.**
 Both arches boot under QEMU; this is worth stating precisely, because the runner list makes it look like more:
 

@@ -59,8 +59,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential flex bison bc libelf-dev libssl-dev \
+          sudo .github/scripts/apt-install.sh build-essential flex bison bc libelf-dev libssl-dev \
             gdisk mtools e2fsprogs qemu-utils ${{ matrix.packages }}
 
       - name: Build the vm kernel
