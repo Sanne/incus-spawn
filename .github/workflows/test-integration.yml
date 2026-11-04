@@ -783,6 +783,12 @@ jobs:
                 effort: medium
           default-action: codex
           EOF
+          cat > ~/.config/incus-spawn/images/test-ssh.yaml << 'EOF'
+          name: tpl-test-ssh
+          parent: tpl-minimal
+          tools:
+            - sshd
+          EOF
           cat > ~/.config/incus-spawn/images/test-mcp.yaml << 'EOF'
           name: tpl-test-mcp
           parent: tpl-minimal
@@ -800,6 +806,7 @@ jobs:
           sg incus-admin -c "isx build tpl-test-accounts --yes"
           sg incus-admin -c "isx build tpl-test-codex --yes"
           sg incus-admin -c "isx build tpl-test-mcp --yes"
+          sg incus-admin -c "isx build tpl-test-ssh --yes"
 
       - name: Test published templates have no build credential grant
         run: sg incus-admin -c "bash .github/scripts/test-build-proofs.sh"
@@ -835,6 +842,11 @@ jobs:
           sudo modprobe br_netfilter
           sudo sysctl -w net.bridge.bridge-nf-call-iptables=1
           sg incus-admin -c "bash .github/scripts/test-proxy-only.sh"
+
+      # A client forcing StrictHostKeyChecking=yes, as herdr does, reaches an instance by the
+      # host keys its readiness probe reported (#1863)
+      - name: Test strict SSH host key checking
+        run: sg incus-admin -c "bash .github/scripts/test-ssh-host-keys.sh"
 
       - name: Test container
         run: |

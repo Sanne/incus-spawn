@@ -45,7 +45,7 @@ Key jobs:
 - **`integration-tests (x86_64)`, `integration-tests (aarch64)`**: a matrix.
   Each boots its arch's appliance VM image under QEMU with a `vhost-vsock-pci` device, checks it reaches `ISX READY` and passes the in-guest Incus smoke test, then bridges the guest's vsock ports to Unix sockets with host `socat` (standing in for vfkit) and runs `appliance/test-tunnel.sh` and the real native `isx` through them -- see below.
   A second boot runs `appliance/test-proxy-remote.sh`: the macOS proxy data path (#1585)
-- **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-podman-rootless`, `tpl-test-vm`, `tpl-test-codex`, `tpl-test-mcp`), then runs test scripts inside branched instances.
+- **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-podman-rootless`, `tpl-test-vm`, `tpl-test-codex`, `tpl-test-mcp`, `tpl-test-ssh`), then runs test scripts inside branched instances.
   `test-proxy-only.sh` is the only real check of the proxy-only boundary (#1137): branches of `tpl-minimal` (no iptables) and `tpl-test-vm` must reach the proxy and nothing else after `isx branch`, after `incus restart`, and on a `--no-start` branch first started by `incus start`.
   It needs Incus's nftables firewall driver on the runner
 - **`host-distro (arch)`, `host-distro (arch-ufw)`, `host-distro (ubuntu-ufw)`**: isx on hosts as users install them (#1972).
@@ -190,6 +190,12 @@ Test scripts live in `.github/scripts/`; a script pushed into a guest cannot use
   It needs a real Incus because the bug it guards (#813) was Incus semantics.
   Removing an instance device that overrides a profile device only drops the override, so the NIC must be masked with `type: none` instead.
   A fake that drops removed devices from `expanded_devices` passes either way.
+- **`test-ssh-host-keys.sh`**: runs on the host.
+  Branches `tpl-test-ssh` (`tpl-minimal` with the `sshd` tool) and connects with herdr's own ssh options, `StrictHostKeyChecking=yes` among them (#1863).
+  It checks the keys are pinned under the name and the stamped address, and that strict ssh connects by name and, with `HostKeyAlias` dropped from a copy of the block, by address.
+  Then it regenerates the guest's keys, checks strict ssh is refused, and checks `isx stop` and `isx start` pin the new ones.
+  After `isx destroy` no `known_hosts` line or Host block names the instance.
+  Only a real Incus runs the probe's guest script against a real sshd, so only this proves the probe carries the keys.
 - **`test-podman.sh`**: pushed into the podman container, tests rootless podman (pull, run, build).
 - **`test-project-proofs.sh`**: creates a project from an authenticated Git fixture served by `echo-server.py`, checks its selected account during pre-build and update, and checks revocation, shutdown and address release after success and failure.
   The fixture rejects clones without the synthetic selected credential, so a public repository cannot hide missing proof delivery.

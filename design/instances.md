@@ -353,6 +353,7 @@ incus-spawn manages a dedicated SSH key pair, per-instance SSH configuration and
   An address alone is no identity: `StaticIpAllocator` recycles addresses, and every branch of a template shares the host keys its build generated (`ssh-keygen -A` in the `sshd` tool), so an address-keyed pin would eventually report `REMOTE HOST IDENTIFICATION HAS CHANGED` (#1630 proposed that and was declined).
   Each line also names the address, `<name>,<address> <type> <key> isx:<name>`, for a client that ignores `HostKeyAlias` and dials `Hostname`; pinning an address takes it off any other instance's line, which keeps its name.
   Every key type sshd has is pinned, so no `HostKeyAlgorithms` restriction is needed.
+  `test-ssh-host-keys.sh` in `isx-integration-tests-native` connects with herdr's options against a real Incus and sshd, by name and by address, after a key change and a start, and checks destroy removes the pins.
   The keys come from the guest on the readiness exec a start already makes, never from a build: a template rebuild changes nothing for existing branches, and a key regenerated inside an instance is pinned again on its next start.
   The guest is not trusted with the host's files: `HostKeys.parse` takes only a checked type and a base64 blob that decodes to a key of that type, at most eight of them, and isx writes the host field itself.
   A pin that has gone stale shows ssh's warning to plain `ssh`, which still logs in, and is replaced on the next start.
