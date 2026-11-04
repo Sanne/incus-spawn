@@ -114,6 +114,18 @@ fi
 nft delete table bridge isx_smoke
 echo "  PASS: bridge conntrack available (--proxy-only enforceable)"
 
+# Rootful Podman's netavark accepts forwarded traffic by "ct mark", and nft refuses its whole
+# ruleset without connection marks (CONFIG_NF_CONNTRACK_MARK, #2003): no container in a
+# container on this kernel would start on a bridge network.
+if ! { nft add table inet isx_smoke && nft add chain inet isx_smoke marks \
+        && nft add rule inet isx_smoke marks ct mark 0x1000 accept; } > /tmp/smoke-nft.log 2>&1; then
+    cat /tmp/smoke-nft.log
+    nft delete table inet isx_smoke 2>/dev/null || true
+    fail "kernel lacks connection marks (CONFIG_NF_CONNTRACK_MARK); rootful Podman cannot start a bridged container"
+fi
+nft delete table inet isx_smoke
+echo "  PASS: connection marks available (rootful Podman's bridge networks)"
+
 # Filter to CONTAINER images — picking a VIRTUAL-MACHINE image would fail creation spuriously.
 IMAGE=$(incus image list --format csv --columns ft 2>/dev/null \
     | grep -i ',container' | head -n1 | cut -d, -f1)
