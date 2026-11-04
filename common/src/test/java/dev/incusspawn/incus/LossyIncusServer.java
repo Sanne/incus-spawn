@@ -92,6 +92,14 @@ final class LossyIncusServer implements AutoCloseable {
     volatile boolean runsForever = false;
     /** With {@link #runsForever}, a signal on the control fd ends it, as Incus's does a killable process. */
     volatile boolean diesOnSignal = false;
+    /**
+     * An interactive exec, as {@code isx shell} starts: only fds "0" and "control", started once
+     * both connect. Its command ends after {@link #runMillis} by closing both, unless it
+     * {@link #runsForever}.
+     */
+    volatile boolean interactive = false;
+    /** false is a silent link: client PINGs still arrive and are counted, but no PONG comes back. */
+    volatile boolean answersPings = true;
     /** Each operation /wait is held this long before it is answered: a tunnel slower than its slack. */
     volatile long waitStallMillis = 0;
     /** Data messages the client sent on the control fd, in order. */
@@ -197,7 +205,7 @@ final class LossyIncusServer implements AutoCloseable {
         requests.add(req.method() + " " + req.path());
         if (req.method().equals("POST") && req.path().endsWith("/exec")) {
             startOperation();
-            respond(out, 202, execBody(), Framing.LENGTH, req.close());
+            respond(out, 202, interactive ? INTERACTIVE_EXEC_BODY : execBody(), Framing.LENGTH, req.close());
             return !req.close();
         }
         switch (fault) {
@@ -289,6 +297,12 @@ final class LossyIncusServer implements AutoCloseable {
                 """.formatted(FD_STDIN, FD_STDOUT, FD_STDERR, FD_CONTROL);
     }
 
+    private static final String INTERACTIVE_EXEC_BODY = """
+            {"type":"async","status_code":100,"operation":"/1.0/operations/op1",
+             "metadata":{"id":"op1","status":"Running","metadata":{"fds":
+               {"0":"%s","control":"%s"}}}}
+            """.formatted(FD_STDIN, FD_CONTROL);
+
     private String waitBody(String path) {
         var running = "{\"type\":\"sync\",\"status_code\":200,\"metadata\":{\"id\":\"op1\",\"status\":\"Running\"}}";
         if (waitStallMillis > 0) {
@@ -346,7 +360,8 @@ final class LossyIncusServer implements AutoCloseable {
         var peer = new WsPeer(conn, out);
         execFds.put(fd, peer);
         afterFdRegistered.run();
-        if (execFds.keySet().containsAll(List.of("0", "1", "2", "control"))
+        var fds = interactive ? List.of("0", "control") : List.of("0", "1", "2", "control");
+        if (execFds.keySet().containsAll(fds)
                 && commandStarted.compareAndSet(false, true)) {
             // wait-for-websocket: Incus starts the command once every fd is connected.
             Thread.ofVirtual().start(this::runCommand);
@@ -358,6 +373,10 @@ final class LossyIncusServer implements AutoCloseable {
         if (runsForever) return; // only a signal, if anything, ends it
         try {
             if (runMillis > 0) Thread.sleep(runMillis);
+            if (interactive) { // the shell exited: Incus closes control, and the client hangs up fd "0"
+                execFds.get("control").closeWithFrame();
+                return;
+            }
             execFds.get("1").send(0x2, stdout.getBytes(StandardCharsets.UTF_8));
             execFds.get("2").send(0x2, stderr.getBytes(StandardCharsets.UTF_8));
             if (sendCloseFrames) {
@@ -419,7 +438,7 @@ final class LossyIncusServer implements AutoCloseable {
                 }
                 if (opcode == 0x9) {
                     pingsByFd.computeIfAbsent(fd, k -> new AtomicInteger()).incrementAndGet();
-                    peer.send(0xA, payload);
+                    if (answersPings) peer.send(0xA, payload);
                 }
             }
         } catch (IOException ignored) {

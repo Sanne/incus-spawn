@@ -630,10 +630,18 @@ class UnixSocketTransport implements IncusTransport {
         private final java.util.concurrent.atomic.AtomicBoolean closed =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
         private final boolean permit;
-        // Byte-stream reads (exec, shells) skip control frames exactly as they always have: Incus
-        // doesn't ping exec sockets, and a PONG sent from the reader thread would queue behind a
-        // stdin write holding writeLock -- a stall risk on the one channel that must never stall.
-        private static final ControlFrames IGNORE_CONTROL = payload -> {};
+        // Byte-stream reads (exec, shells) never answer a control frame: Incus doesn't ping exec
+        // sockets, and a PONG sent from the reader thread would queue behind a stdin write holding
+        // writeLock -- a stall risk on the one channel that must never stall. They still count
+        // what arrives, so a shell can tell its keepalive's PONGs from a silent link (#1996).
+        private final ControlFrames countingControl = new ControlFrames() {
+            @Override public void ping(byte[] payload) {
+                received();
+            }
+            @Override public void pong() {
+                received();
+            }
+        };
         // Message reads (the long-lived event subscription) answer PINGs, which Incus requires of
         // event listeners, and count every control frame as a sign the peer is alive.
         private final ControlFrames answeringControl = new ControlFrames() {
@@ -656,8 +664,10 @@ class UnixSocketTransport implements IncusTransport {
 
         @Override
         public byte[] readPayload() throws IOException {
-            var frame = wsReadFrame(in, IGNORE_CONTROL);
-            return frame == null ? null : frame.payload();
+            var frame = wsReadFrame(in, countingControl);
+            if (frame == null) return null;
+            received();
+            return frame.payload();
         }
 
         @Override

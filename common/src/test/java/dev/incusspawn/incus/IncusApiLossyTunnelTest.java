@@ -350,6 +350,37 @@ class IncusApiLossyTunnelTest {
         }
     }
 
+    /** An {@code isx shell} session against the server, pinging every 50 ms and cut after 300 ms of silence. */
+    private boolean shell() throws IOException {
+        var api = new IncusApi(new UnixSocketTransport(server.socketPath()), 50);
+        api.shellSilenceLimit(300);
+        server.interactive = true;
+        // Nobody types: stdin ends at once, as a session left alone sends nothing.
+        try (var stdin = java.nio.channels.FileChannel.open(Path.of("/dev/null"))) {
+            return api.execPty("c1", List.of("bash"), null, null, null, null, 80, 24, null, stdin);
+        }
+    }
+
+    @Test
+    @Timeout(value = 10, threadMode = Timeout.ThreadMode.SEPARATE_THREAD) // a hung session ignores interrupts
+    void aShellOnASilentLinkIsCutAndReadAsALostConnection() throws IOException {
+        // The client is alive, but nothing comes back: no output, and no PONG to its pings (#1996).
+        // Without a silence limit the session, and the guest's shell with it, lasts forever.
+        server.runsForever = true;
+        server.answersPings = false;
+        assertTrue(shell(), "a silent link must end the session as a lost connection, so the shell reconnects");
+        assertTrue(server.pings("control") >= 2, "the control fd was pinged: " + server.pings("control"));
+    }
+
+    @Test
+    @Timeout(value = 10, threadMode = Timeout.ThreadMode.SEPARATE_THREAD) // a hung session ignores interrupts
+    void aQuietShellWhoseLinkAnswersIsNotCut() throws IOException {
+        // Idle for well past the silence limit, but every ping draws a PONG: the link is there.
+        server.runMillis = 1_000;
+        assertFalse(shell(), "the shell exited by itself; that is no lost connection");
+        assertTrue(server.pings("control") >= 10, "pinged throughout: " + server.pings("control"));
+    }
+
     @Test
     @Timeout(10)
     void execFailsLoudlyWhenAnFdHandshakeIsCutOff() {

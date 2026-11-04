@@ -75,6 +75,13 @@ That single fault surfaced in two directions and shaped several design choices:
   The wait's long-polls shrink to it, the process is then sent SIGKILL over the control fd, and after a short grace the caller is released either way, since a killed process whose child still holds its output keeps the operation open.
   The kill goes out on every way the bounded wait can end before the command was reported finished -- a `/wait` that overran its slack (likely over the vsock tunnel), an operation lost, an interrupt -- so giving up on a bounded exec never leaves its command running unowned.
   (An unbounded one keeps its old behaviour: it waits, up to its four-hour ceiling.)
+  An interactive `isx shell` has no operation to wait on, and Incus never times one out, so a link that went silent with isx still running held the session, and the guest's shell, forever (#1996).
+  Its control fd's keepalive therefore also watches for silence: Incus answers each ping with a pong, so once `EXEC_SILENCE_LIMIT_MS` (50 s) passes with nothing received, the link is gone.
+  The check runs at each ping, so the cut comes up to one ping interval (15 s) later.
+  The keepalive then closes control, which ends the session as a lost connection, and the shell's reconnect loop starts a fresh one.
+  Incus kills the command once that close reaches it; across a link that stays half-open it may not, and the old shell lingers until it does.
+  Only control is watched, because fd "0"'s reader also waits on the terminal, and a stalled terminal is no dead link.
+  So byte-stream reads count what arrives, pongs included, in `millisSinceLastReceived()`, while still never writing.
 
 - **The forwarder leaks, so it needs a backstop and a recovery path.**
   The same close-propagation gap means the in-VM `socat` forwarder never reaps connections whose close didn't cross the boundary.

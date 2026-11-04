@@ -46,6 +46,8 @@ class IncusApi {
      */
     private Duration operationWaitCeiling = Duration.ofSeconds(MAX_EXEC_WAIT_SECONDS);
 
+    private long shellSilenceLimitMs = EXEC_SILENCE_LIMIT_MS;
+
     private final IncusTransport transport;
     private final long pingIntervalMs;
     private final DrainClock drainClock;
@@ -473,6 +475,11 @@ class IncusApi {
         return status.equals("Running") || status.equals("Pending");
     }
 
+    /** For tests: how long an interactive shell's link may stay silent before it is cut. */
+    void shellSilenceLimit(long millis) {
+        shellSilenceLimitMs = millis;
+    }
+
     /** For tests: how long {@link #waitForOperation} keeps asking before giving up. */
     void operationWaitCeiling(Duration ceiling) {
         operationWaitCeiling = ceiling;
@@ -798,6 +805,8 @@ class IncusApi {
     }
 
     static final long WS_PING_INTERVAL_MS = 15_000;
+    /** As {@link #EVENTS_SILENCE_LIMIT_MS}: silence past three answered pings means the link is gone. */
+    static final long EXEC_SILENCE_LIMIT_MS = 50_000;
 
     /**
      * Interactive PTY exec — bridges System.in/out to the container PTY.
@@ -836,10 +845,11 @@ class IncusApi {
         }
     }
 
-    private boolean execPty(String instance, List<String> command,
-                            Integer uid, Integer gid, String cwd, Map<String, String> env,
-                            int width, int height, ShellStatusBar statusBar,
-                            java.nio.channels.FileChannel stdinChannel) {
+    /** Test seam: the session's terminal input is {@code stdinChannel}, not {@code /dev/tty}. */
+    boolean execPty(String instance, List<String> command,
+                    Integer uid, Integer gid, String cwd, Map<String, String> env,
+                    int width, int height, ShellStatusBar statusBar,
+                    java.nio.channels.FileChannel stdinChannel) {
         var effectiveHeight = statusBar != null ? statusBar.effectiveHeight(height) : height;
         var exec = postExec(instance, command, uid, gid, cwd, env, true, width, effectiveHeight);
 
@@ -860,7 +870,16 @@ class IncusApi {
         }
         try {
             var controlThread = Thread.ofVirtual().start(() -> {
-                var keepalive = startKeepalive(controlWs);
+                // Incus never times out an interactive exec, so a link that goes silent with isx
+                // still running (a half-open vsock tunnel or TCP link) would hold the session, and
+                // the guest's shell, forever (#1996). Our pings draw PONGs, so silence means the
+                // link is gone: close it, which ends the session as a lost connection, and the
+                // shell reconnects. Only control is watched: its reader blocks on nothing else,
+                // while fd "0"'s waits on the terminal.
+                var keepalive = new Keepalive(controlWs, pingIntervalMs, shellSilenceLimitMs, () -> {
+                    controlLostConnection.set(true);
+                    controlWs.close();
+                });
                 try {
                     while (controlWs.readPayload() != null) {}
                 } catch (IOException e) {
@@ -1153,9 +1172,24 @@ class IncusApi {
         private boolean stopped; // guarded by this
 
         Keepalive(IncusTransport.WsConnection ws, long intervalMs) {
+            this(ws, intervalMs, Long.MAX_VALUE, () -> {});
+        }
+
+        /**
+         * Also watch for silence: once nothing has arrived for {@code silenceLimitMs}, not even a
+         * PONG to an earlier ping, stop pinging and run {@code onSilence}. Only for a socket whose
+         * reader never blocks on anything but the socket, or a stalled reader reads as a dead link.
+         */
+        Keepalive(IncusTransport.WsConnection ws, long intervalMs, long silenceLimitMs, Runnable onSilence) {
             Thread.ofVirtual().start(() -> {
                 try {
-                    while (awaitNextPing(intervalMs)) ws.sendPing();
+                    while (awaitNextPing(intervalMs)) {
+                        if (ws.millisSinceLastReceived() > silenceLimitMs) {
+                            onSilence.run();
+                            return;
+                        }
+                        ws.sendPing();
+                    }
                 } catch (IOException | InterruptedException ignored) {}
             });
         }
