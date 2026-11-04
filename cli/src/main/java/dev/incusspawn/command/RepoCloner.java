@@ -44,7 +44,7 @@ class RepoCloner {
     /** By repo: how long each phase of its preparation and clone took, shown only by {@code isx build --verbose}. */
     private final java.util.Map<Integer, String> preparationTimings = new java.util.concurrent.ConcurrentHashMap<>();
     /** Repos whose Git staging area could not be removed yet, for a note after the group. */
-    private final java.util.Set<Integer> cleanupDeferred = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    final java.util.Set<Integer> cleanupDeferred = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private boolean showTimings;
     /** By repo: why its Git preparation failed, isx's words then Git's quoted, for a warning after the group. */
     final java.util.Map<Integer, GitCommandException> preparationFailures = new java.util.concurrent.ConcurrentHashMap<>();
@@ -343,6 +343,10 @@ class RepoCloner {
             var failureSeen = new AtomicBoolean(false);
             // Complete guest authorization before any untrusted prime can alter the guest's Git/tools.
             // Only these short remote checks synchronize; slow host preparation never gates other primes.
+            // A snapshot the remote moved past is matched against a later reading (prepareReference), which
+            // may run after another repo's prime started. That is still safe: a prime can only make the guest
+            // read differently, and a snapshot is mounted only when the reading equals its exact selection,
+            // SHAs of refs the guest's accounts cannot see included, which no prime can learn from the guest.
             var accessChecked = new java.util.concurrent.CountDownLatch(repos.size());
             var labels = repos.stream().map(RepoCloner::repoDisplayName).toList();
             try {
@@ -539,13 +543,14 @@ class RepoCloner {
         return access.success() ? access.stdout() : null;
     }
 
-    /** How many times a snapshot is brought up to date when the remote moved during its preparation (#1980). */
+    /** How many times a snapshot may be refreshed; the guest's refs are read again once more than that (#1980). */
     static final int REF_DRIFT_REFRESHES = 3;
 
     /**
      * {@code advertisement} is the guest's reading from its access check; {@code guestRefs} reads again.
      * A long preparation of a busy repository outlives that first reading, so a mismatch reads the guest's
-     * refs again and, while they still differ, brings the snapshot up to date with an incremental fetch.
+     * refs again and, while they still differ, brings the snapshot up to that reading with an incremental
+     * fetch (#1980). These readings may run after another repo's prime started: see {@code accessChecked}.
      */
     RepoReference prepareReference(ImageDef.RepoEntry repo, RepoReference ref,
                                    AtomicReferenceArray<StepProgress> states, int idx, String advertisement,
@@ -566,23 +571,28 @@ class RepoCloner {
             boolean accepted = false;
             try {
                 boolean matched = result.matchesAdvertisement(advertisement);
-                for (int refresh = 0; !matched && refresh <= REF_DRIFT_REFRESHES; refresh++) {
-                    if (refresh > 0) {
-                        var next = refreshSnapshot(request, result, phases);
-                        if (next == null) break;
-                        var stale = result;
-                        result = next;
-                        stale.close();
-                    }
+                // A refresh's publish reports only itself: keep what the first one lost.
+                var notRetained = result.notRetained();
+                // Each reading may be followed by one refresh towards it; the last one is final.
+                for (int read = 0; !matched && read <= REF_DRIFT_REFRESHES; read++) {
                     states.set(idx, StepProgress.running("Checking template repository refs"));
                     var seen = guestRefs.get();
-                    if (seen == null) return RepoReference.skipped("template account could not access the repository");
+                    if (seen == null) return RepoReference.skipped("could not read template repository refs again");
+                    matched = result.matchesAdvertisement(seen);
+                    if (matched || read == REF_DRIFT_REFRESHES) break;
+                    var next = refreshSnapshot(request, result, seen, phases, idx);
+                    if (next == null) break;
+                    if (next == result) continue; // the host saw another selection: read the guest again
+                    var stale = result;
+                    result = next;
+                    if (next.notRetained() != null) notRetained = next.notRetained();
+                    closeStale(stale, idx);
                     matched = result.matchesAdvertisement(seen);
                 }
                 if (!matched) return RepoReference.skipped("template and host repository refs differ");
                 var ready = new RepoReference(ref.deviceName(), ref.containerPath(),
                         HostResourceSetup.translateForVm(result.repository().toString()), null, null, result);
-                if (result.notRetained() != null) preparationNotRetained.put(idx, result.notRetained());
+                if (notRetained != null) preparationNotRetained.put(idx, notRetained);
                 accepted = true;
                 return ready;
             } finally {
@@ -594,15 +604,24 @@ class RepoCloner {
         }
     }
 
-    /** Null when the snapshot cannot be brought up to date cheaply; the guest then clones from the network. */
+    /** See {@link GitPreparation#refresh}; a failure is null, after which the guest clones from the network. */
     private GitPreparation.Prepared refreshSnapshot(GitPreparation.Request request, GitPreparation.Prepared prior,
-                                                    GitPreparation.Phases phases) throws java.io.InterruptedIOException {
+                                                    String seen, GitPreparation.Phases phases, int idx)
+            throws java.io.InterruptedIOException {
         try {
-            return preparation.refresh(request, prior, phases);
+            return preparation.refresh(request, prior, seen, phases);
         } catch (java.io.IOException e) {
             if (e instanceof java.io.InterruptedIOException interrupted) throw interrupted;
+            // Git's own words, as for a failed preparation, rather than a bare "refs differ".
+            if (e instanceof GitCommandException failed && !failed.details().isEmpty()) preparationFailures.put(idx, failed);
             return null;
         }
+    }
+
+    /** The snapshot a refresh replaced: failing to release its lease must not cost the refreshed one. */
+    private void closeStale(GitPreparation.Prepared stale, int idx) {
+        try { stale.close(); }
+        catch (Exception e) { cleanupDeferred.add(idx); }
     }
 
     private RepoReference prepareHostReference(ImageDef.RepoEntry repo, RepoReference ref,

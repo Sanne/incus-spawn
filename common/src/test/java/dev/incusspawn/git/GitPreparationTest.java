@@ -125,10 +125,12 @@ class GitPreparationTest {
         var phases = new ArrayList<String>();
         try (var first = unkept.prepare(request, s -> {})) {
             assertNotNull(first.notRetained());
-            assertNull(unkept.refresh(request, first, phases::add), "nothing to refresh while the remote is unchanged");
+            assertSame(first, unkept.refresh(request, first, guestReading(), phases::add),
+                    "nothing to refresh while the remote is unchanged");
             commitBinary(remote, "pushed during preparation");
-            try (var refreshed = unkept.refresh(request, first, phases::add)) {
+            try (var refreshed = unkept.refresh(request, first, guestReading(), phases::add)) {
                 assertNotNull(refreshed);
+                assertNotSame(first, refreshed);
                 assertEquals("reference-seeded clean snapshot (refreshed)", refreshed.strategy());
                 assertTrue(phases.contains("Fetching incremental Git snapshot"), phases.toString());
                 assertFalse(phases.contains("Creating clean Git snapshot"), phases.toString());
@@ -142,6 +144,38 @@ class GitPreparationTest {
             }
         }
         assertEquals(List.of(), PreparationGit.children(tmp.resolve("unkept/work")));
+    }
+
+    /** What the guest's {@code ls-remote} would print for {@link #remote} now. */
+    private String guestReading() throws Exception {
+        return git(tmp, "ls-remote", "--symref", "--", server.url(remote), "HEAD", "refs/heads/*", "refs/tags/*");
+    }
+
+    @Execution(CONCURRENT) @Test void refreshFetchesNothingWhileTheHostSeesAnotherSelectionThanTheGuest() throws Exception {
+        start();
+        var request = new GitPreparation.Request(server.url(remote), null, host);
+        var phases = new ArrayList<String>();
+        try (var first = preparation.prepare(request, s -> {})) {
+            // A guest whose accounts see another ref scope, or a push between the two readings (#1992).
+            var guest = guestReading();
+            commitBinary(remote, "pushed after the guest read");
+            assertSame(first, preparation.refresh(request, first, guest, phases::add));
+            assertFalse(phases.contains("Fetching incremental Git snapshot"), phases.toString());
+        }
+    }
+
+    @Execution(CONCURRENT) @Test void refreshGivesUpWhenSelectedHistoryWasRemoved() throws Exception {
+        start();
+        var request = new GitPreparation.Request(server.url(remote), null, host);
+        var phases = new ArrayList<String>();
+        try (var first = preparation.prepare(request, s -> {})) {
+            // Like a merge-queue branch dropped unmerged: following it needs a rebuild, which a refresh never does.
+            git(remote, "branch", "-D", "stable");
+            commitBinary(remote, "pushed during preparation");
+            assertNull(preparation.refresh(request, first, guestReading(), phases::add));
+            assertTrue(phases.contains("Rebuilding Git snapshot: selected history was removed"), phases.toString());
+            assertFalse(phases.contains("Creating clean Git snapshot"), phases.toString());
+        }
     }
 
     @Execution(CONCURRENT) @Test void remoteRefsReadEarlyFetchNothingAndAreUsedOnce() throws Exception {

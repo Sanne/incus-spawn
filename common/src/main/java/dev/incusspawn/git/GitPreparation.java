@@ -264,12 +264,16 @@ public final class GitPreparation {
     }
 
     /**
-     * Bring {@code prior} up to the remote's current refs with an incremental fetch from its own leased bytes,
-     * whether or not the cache kept it. Null when the host already sees exactly {@code prior}'s selection, or
-     * when only a full rebuild could follow the remote: that is the cost a refresh exists to avoid (#1980).
+     * Bring {@code prior} up to {@code guestAdvertisement}, the guest's latest {@code ls-remote}, with an
+     * incremental fetch from its own leased bytes, whether or not the cache kept it (#1980).
+     * The host fetches only when its own advertisement equals the guest's, so a result matches that reading
+     * by construction, and a guest whose accounts see a different ref scope never costs a fetch.
+     * Returns {@code prior} itself when the host sees a different selection than the guest, which a later
+     * reading may settle, or already sees exactly {@code prior}'s, and null when only a full rebuild could
+     * follow the remote, such as when selected history was removed: that is the cost a refresh exists to avoid.
      * {@code prior} stays open; the caller closes it once it holds the result.
      */
-    public Prepared refresh(Request request, Prepared prior, Phases phase) throws IOException {
+    public Prepared refresh(Request request, Prepared prior, String guestAdvertisement, Phases phase) throws IOException {
         if (!isRemoteUrl(request.url())) throw new IOException("Git preparation requires an HTTPS, SSH or Git remote");
         var key = hash(POLICY + "\n" + request.url());
         // The ready line and --verbose timings describe the whole preparation, the refreshes included.
@@ -281,7 +285,8 @@ public final class GitPreparation {
             long start = System.nanoTime();
             var advertised = advertisement(lease.path, request.url(), phase);
             elapsed(timings, "remote", start);
-            if (advertised == null || advertised.equals(selection(prior.repository()))) return null;
+            if (advertised == null || !advertised.equals(parseAdvertisement(guestAdvertisement))
+                    || advertised.equals(selection(prior.repository()))) return prior;
             var staged = Files.createDirectory(lease.path.resolve("snapshot"));
             var result = staged.resolve("repo.git");
             if (!refreshSnapshot(request.url(), prior.repository(), prior.checksums(), advertised,
@@ -557,8 +562,10 @@ public final class GitPreparation {
                 && Arrays.asList(receive.group(1).replace("'", "").split(" ")).contains("--strict")) ? receives.size() : 0;
     }
 
-    /** Extend a verified generation without rewriting or decoding its old packs. */
-    /** {@code previousManifest} needs only its {@code objects/} entries. */
+    /**
+     * Extend a verified generation without rewriting or decoding its old packs.
+     * {@code previousManifest} needs only its {@code objects/} entries.
+     */
     private boolean refreshSnapshot(String url, Path previous, Map<String, String> previousManifest,
                                            String advertised, Path work, Path result,
                                            Phases phase, Map<String, Long> timings) throws IOException {

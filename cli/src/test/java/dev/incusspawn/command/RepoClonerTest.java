@@ -118,6 +118,31 @@ class RepoClonerTest {
     }
 
     @Test
+    void aStaleSnapshotThatWillNotCloseKeepsTheRefreshedOne() throws Exception {
+        var preparation = mock(dev.incusspawn.git.GitPreparation.class);
+        var stale = mock(dev.incusspawn.git.GitPreparation.Prepared.class);
+        var refreshed = mock(dev.incusspawn.git.GitPreparation.Prepared.class);
+        when(preparation.prepare(any(), any())).thenReturn(stale);
+        doThrow(new java.io.IOException("staging busy")).when(stale).close();
+        when(preparation.refresh(any(), eq(stale), eq("moved"), any())).thenReturn(refreshed);
+        when(refreshed.matchesAdvertisement("moved")).thenReturn(true);
+        when(refreshed.repository()).thenReturn(Path.of("/cache/snapshot"));
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        var planned = new RepoCloner.RepoReference("ref-repo", "/mnt/ref/repo", "/host/repo", null,
+                new dev.incusspawn.git.GitPreparation.Request(repo.getUrl(), null, Path.of("/host/repo")), null);
+        var cloner = new RepoCloner(mock(IncusClient.class), preparation);
+
+        var ref = cloner.prepareReference(repo, planned, new java.util.concurrent.atomic.AtomicReferenceArray<>(1), 0,
+                "old", () -> "moved");
+
+        // A cleanup failure must not cost a full network clone in the guest (#1992).
+        assertSame(refreshed, ref.prepared(), ref.skipReason());
+        verify(refreshed, never()).close();
+        assertEquals(java.util.Set.of(0), cloner.cleanupDeferred);
+    }
+
+    @Test
     void cloneReposRunsPrimeCommand() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");

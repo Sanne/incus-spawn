@@ -209,7 +209,8 @@ class RepoClonerPreparedTest {
         var result = run(null);
         assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
         assertEquals("via reference-seeded clean snapshot (refreshed)", result.note());
-        assertEquals(3, guestReads);
+        // The refresh fetched what the guest's second reading saw, so it needs no third (#1992).
+        assertEquals(2, guestReads);
         assertEquals(1, mounts.size(), "only the refreshed snapshot is mounted");
         assertEquals(1, scripts.stream().filter(s -> s.contains(" clone ")).count(), "no network clone in the guest");
         var guest = tmp.resolve("guest");
@@ -219,13 +220,15 @@ class RepoClonerPreparedTest {
                 new java.util.HashSet<>(git(guest, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)").lines().toList()));
     }
 
-    @Test void aRemoteThatNeverHoldsStillFallsBackToTheGuestAfterBoundedRefreshes() throws Exception {
-        afterGuestRead = n -> { if (n == 1) advanceRemote("pushed after the access check"); };
-        beforeGuestRead = n -> { if (n > 1) advanceRemote("push " + n); };
+    @Test void aRemoteThatNeverHoldsStillFallsBackToTheGuestAfterBoundedReadings() throws Exception {
+        // The guest's second reading is newer than the snapshot, and every later push lands between
+        // the guest's reading and the host's, so the two never agree and no refresh may fetch.
+        beforeGuestRead = n -> { if (n == 2) advanceRemote("pushed while the snapshot was prepared"); };
+        afterGuestRead = n -> advanceRemote("push " + n);
         var result = run(null);
         assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
         assertEquals("template and host repository refs differ", result.note());
-        // The access check, the reading after preparation, and one after each refresh.
+        // The access check, the reading after preparation, and one after each refresh the host declined.
         assertEquals(2 + RepoCloner.REF_DRIFT_REFRESHES, guestReads);
         assertTrue(mounts.isEmpty(), "a snapshot the guest did not see last must never be mounted");
         assertEquals(git(remote, "rev-parse", "HEAD"), git(tmp.resolve("guest"), "rev-parse", "HEAD"));
