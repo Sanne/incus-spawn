@@ -22,6 +22,16 @@ import static org.mockito.Mockito.when;
 
 class UpdateBaseCommandTest {
 
+    /**
+     * The built-in's release line, as {@code fedora-45}. A release of it is pinned under the
+     * built-in's own names, so the tests of a plain pin take theirs from it: a fixed tag would
+     * turn into a pin across lines (#1967) at the next bump of the line.
+     */
+    private static final String LINE = BaseImageReleases.releaseLine(ImageDef.loadBuiltinByName("tpl-minimal").getImageTag());
+
+    /** A line the built-in is never on: the next Fedora after it. */
+    private static final String NEXT_LINE = "fedora-" + (Integer.parseInt(LINE.substring(LINE.indexOf('-') + 1)) + 1);
+
     private static String pin(Path home, Checksums sums) {
         return pin(home, ImageDef.loadBuiltinByName("tpl-minimal"), sums);
     }
@@ -31,7 +41,7 @@ class UpdateBaseCommandTest {
         InitCommandTest.withHome(home, () -> {
             try {
                 new UpdateBaseCommand().writePin(new BaseImageReleases.Names(
-                        def.getImage(), def.getImageUrl(), def.getVmImageUrl()), "fedora-44-20261020", sums);
+                        def.getImage(), def.getImageUrl(), def.getVmImageUrl()), LINE + "-20261020", sums);
                 out[0] = Files.readString(BaseImagePin.file());
             } catch (java.io.IOException e) {
                 throw new AssertionError(e);
@@ -58,7 +68,7 @@ class UpdateBaseCommandTest {
     /** The same for the container image, which every template starts from: the pin is refused. */
     @Test
     void aReleaseWithTheContainerImageForOneArchIsNotPinned(@TempDir Path home) throws Exception {
-        var release = new BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
+        var release = new BaseImageReleases.Release(LINE + "-20261020", "2026-10-20", "sums", null);
         var releases = mock(BaseImageReleases.class);
         when(releases.fetchChecksums(org.mockito.ArgumentMatchers.eq(release),
                         org.mockito.ArgumentMatchers.anyString(), any()))
@@ -67,7 +77,7 @@ class UpdateBaseCommandTest {
             try {
                 var cmd = new UpdateBaseCommand();
                 cmd.releases = releases;
-                var result = cmd.pinToTag("fedora-44-20261020", java.util.List.of(release),
+                var result = cmd.pinToTag(LINE + "-20261020", java.util.List.of(release),
                         ImageDef.loadBuiltinByName("tpl-minimal"));
                 assertNotEquals(CommandResult.SUCCESS, result);
                 assertFalse(Files.exists(BaseImagePin.file()));
@@ -91,7 +101,7 @@ class UpdateBaseCommandTest {
     /** A minimal.yaml of the user's own, on another repository, keeps its choice of no VM image. */
     @Test
     void aPinOfTheUsersOwnDefinitionGetsNoBuiltInVmImage(@TempDir Path home) throws Exception {
-        var release = new BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
+        var release = new BaseImageReleases.Release(LINE + "-20261020", "2026-10-20", "sums", null);
         var releases = mock(BaseImageReleases.class);
         when(releases.fetchChecksums(org.mockito.ArgumentMatchers.eq(release),
                         org.mockito.ArgumentMatchers.anyString(), any()))
@@ -99,12 +109,12 @@ class UpdateBaseCommandTest {
         InitCommandTest.withHome(home, () -> {
             try {
                 var own = ImageDef.loadBuiltinByName("tpl-minimal");
-                own.setImageUrl("https://github.com/someone/images/releases/download/{tag}/fedora-44-{arch}.tar.xz");
+                own.setImageUrl("https://github.com/someone/images/releases/download/{tag}/" + LINE + "-{arch}.tar.xz");
                 own.setVmImageUrl(null);
                 var cmd = new UpdateBaseCommand();
                 cmd.releases = releases;
                 assertEquals(CommandResult.SUCCESS,
-                        cmd.pinToTag("fedora-44-20261020", java.util.List.of(release), own));
+                        cmd.pinToTag(LINE + "-20261020", java.util.List.of(release), own));
                 var yaml = Files.readString(BaseImagePin.file());
                 assertFalse(yaml.contains("vm_image_url"), yaml);
                 org.mockito.Mockito.verify(releases).fetchChecksums(release, own.getImageUrl(), null);
@@ -165,7 +175,7 @@ class UpdateBaseCommandTest {
     /** A definition whose names do not carry its line cannot be moved to another: refused, saying why. */
     @Test
     void aReleaseOfAnotherLineIsRefusedWhenTheNamesDoNotCarryTheLine(@TempDir Path home) throws Exception {
-        var release = new BaseImageReleases.Release("fedora-45-20261201", "2026-12-01", null, "sums");
+        var release = new BaseImageReleases.Release(NEXT_LINE + "-20261201", "2026-12-01", null, "sums");
         var releases = mock(BaseImageReleases.class);
         var own = ImageDef.loadBuiltinByName("tpl-minimal");
         own.setImageUrl("https://github.com/someone/images/releases/download/{tag}/base-{arch}.tar.xz");
@@ -178,7 +188,7 @@ class UpdateBaseCommandTest {
             assertFalse(Files.exists(BaseImagePin.file()));
             var errors = recorded.events(RecordingOutput.Kind.ERROR);
             assertEquals(1, errors.size(), recorded.events().toString());
-            assertTrue(errors.get(0).text().contains("fedora-45"), errors.get(0).text());
+            assertTrue(errors.get(0).text().contains(NEXT_LINE), errors.get(0).text());
         });
         verifyNoInteractions(releases);
     }
@@ -193,7 +203,7 @@ class UpdateBaseCommandTest {
     }
 
     private static final BaseImageReleases.Release RELEASE =
-            new BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
+            new BaseImageReleases.Release(LINE + "-20261020", "2026-10-20", "sums", null);
 
     /** Pins {@code RELEASE} as {@code isx update-base <tag>} does. */
     private static void pinRelease() throws java.io.IOException {
@@ -293,7 +303,7 @@ class UpdateBaseCommandTest {
         inHome(home, () -> {
             var builtin = ImageDef.loadBuiltinByName("tpl-minimal");
             writeUserMinimal("name: tpl-minimal\ndescription: Base OS only\nimage: " + builtin.getImage()
-                    + "\nimage_url: " + builtin.getImageUrl() + "\nimage_tag: fedora-44-20260101\npinned: true\n"
+                    + "\nimage_url: " + builtin.getImageUrl() + "\nimage_tag: " + LINE + "-20260101\npinned: true\n"
                     + "image_sha256:\n  aarch64: o2\n  x86_64: o1\n");
             assertTrue(ImageDef.loadAll().get("tpl-minimal").getMaskServices().isEmpty());
             pinRelease();
@@ -311,7 +321,7 @@ class UpdateBaseCommandTest {
         inHome(home, () -> {
             var builtin = ImageDef.loadBuiltinByName("tpl-minimal");
             writeUserMinimal("name: tpl-minimal\nimage: " + builtin.getImage() + "\nimage_url: " + builtin.getImageUrl()
-                    + "\nimage_tag: fedora-44-20260101\npinned: true\nimage_sha256: {x86_64: o1, aarch64: o2}\n");
+                    + "\nimage_tag: " + LINE + "-20260101\npinned: true\nimage_sha256: {x86_64: o1, aarch64: o2}\n");
             new UpdateBaseCommand().trackLatest(RELEASE.tag());
             assertFalse(Files.exists(BaseImagePin.legacyFile()));
             assertFalse(ImageDef.loadAll().get("tpl-minimal").isPinned());
@@ -379,7 +389,7 @@ class UpdateBaseCommandTest {
         inHome(home, () -> {
             var builtin = ImageDef.loadBuiltinByName("tpl-minimal");
             writeUserMinimal("name: tpl-minimal\nmask_services: [other.service]\nimage: " + builtin.getImage()
-                    + "\nimage_url: " + builtin.getImageUrl() + "\nimage_tag: fedora-44-20260101\npinned: true\n"
+                    + "\nimage_url: " + builtin.getImageUrl() + "\nimage_tag: " + LINE + "-20260101\npinned: true\n"
                     + "image_sha256: {x86_64: o1, aarch64: o2}\n");
             pinRelease();
             assertTrue(Files.exists(BaseImagePin.legacyFile()));
@@ -397,7 +407,7 @@ class UpdateBaseCommandTest {
                 new UpdateBaseCommand().askWhatToDo(prompts, RELEASE, List.of(RELEASE), null).getResultValue()));
         assertEquals(List.of(
                 "What would you like to do?",
-                "1) Track latest (fedora-44-20261020) — always installs the newest release on build",
+                "1) Track latest (" + RELEASE.tag() + ") — always installs the newest release on build",
                 "2) Pin a specific version",
                 "3) Cancel",
                 "? Choice [1-3]: "), prompts.conversation());
