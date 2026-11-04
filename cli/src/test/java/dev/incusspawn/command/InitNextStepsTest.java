@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.util.BuildOutput;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
@@ -18,6 +19,7 @@ class InitNextStepsTest {
     }
 
     @Test
+    @Tag("docs")
     void stepsEndInABranchWithAnAgent() throws Exception {
         var text = String.join("\n", lines(InitCommand.Services.INSTALLED));
         var readme = Files.readString(Path.of("..", "README.md"));

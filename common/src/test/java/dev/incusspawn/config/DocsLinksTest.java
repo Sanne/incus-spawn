@@ -1,5 +1,6 @@
 package dev.incusspawn.config;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -22,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * short, and every link between them, which site/build.sh turns into a link between isx.run
  * pages, reaches a file and a heading that exist.
  */
+@Tag("docs")
 public class DocsLinksTest {
 
     private static final Path ROOT = Path.of("..").toAbsolutePath().normalize();

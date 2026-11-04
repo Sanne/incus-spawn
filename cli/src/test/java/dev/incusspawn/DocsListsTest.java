@@ -4,6 +4,7 @@ import dev.incusspawn.command.IsolatedHome;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import org.aesh.command.CommandDefinition;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -26,6 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * README's credential table. A feature-gated tool is left out of the pages on purpose.
  */
 @ExtendWith(IsolatedHome.class)
+@Tag("docs")
 class DocsListsTest {
 
     private static final Path ROOT = Path.of("..");

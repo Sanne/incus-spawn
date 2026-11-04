@@ -34,6 +34,14 @@ Under dash that failure is silent, since the shell runs the host's command of th
 Four run at a time, and on three CPUs the class takes 10 s instead of 36 s, so the timeout stays at 20 minutes.
 A class added to the concurrent set must share no state between its tests: no bound `Output`, system property or fixed port.
 
+**A docs-only change runs the docs gates** (#1960).
+`test-integration.yml` ignores a change to Markdown, `docs/`, `site/` or `.claude/` alone, which keeps its Incus jobs off such a change.
+So the tests guarding those files would not run on such a change, and one breaking them would merge green.
+The next code PR would then fail on a test it did not touch.
+`docs-gates.yml` runs on exactly those paths and runs only the tests tagged `docs`, in `common` and `cli`, in well under a minute.
+A test that reads the repository's own docs carries `@Tag("docs")`, on its class or on the methods that do.
+`DocsGatesWorkflowTest` holds both halves: the paths equal `test-integration.yml`'s `paths-ignore`, and a test source naming a repository doc is tagged.
+
 **An artifact upload that other jobs need is retried once.**
 A hosted runner now and then times out reaching GitHub's artifact service (`CreateArtifact: ETIMEDOUT`), failing a job whose build had passed, and every job downloading its artifact with it (#1672).
 `actions/upload-artifact` has no retry input, and its client does not retry a network error such as `ETIMEDOUT`.

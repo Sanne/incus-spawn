@@ -12,6 +12,7 @@ import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.util.MacKeychainTrust;
 import dev.incusspawn.vm.VmManager;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.io.RandomAccessFile;
@@ -882,6 +883,7 @@ class DoctorCommandTest {
     }
 
     @Test
+    @Tag("docs")
     void anInactiveUfwWithItsForwardBlockInACommentPointsAtTheManualRepair() throws Exception {
         var findings = DoctorCommand.ufwFindings(ufwBlockInComment(), false, UFW_INACTIVE);
         assertEquals(2, findings.size(), findings.toString());

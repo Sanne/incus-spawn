@@ -31,6 +31,8 @@ Key jobs:
   The JVM launchers carry the same options (`install.sh`'s `jvm_options()` on a Graal-JIT JDK, `java-options` on the JBang aliases); `LauncherJitWorkaroundTest` keeps them equal to the `argLine`'s `-XX:CompileCommand` options, so change those in all three together.
   `JitWorkaroundTest` checks it in the proxy module, where the TLS tests are.
   That the excluded method still exists is checked only on a Graal-JIT JVM (`UseJVMCICompiler`), since other JDKs need no exclude and JDK 27 has no `AESCrypt` at all (#1050)
+- **`docs-gates.yml`** (**`docs-gates`**): `test-integration.yml` ignores a change to Markdown, `docs/`, `site/` or `.claude/` alone, so this one runs on exactly those paths, `mvn -pl common,cli -am test -Dgroups=docs` (#1960).
+  A test that reads the repository's docs carries `@Tag("docs")`; `DocsGatesWorkflowTest` fails on one that does not, on one outside `common` and `cli`, and when the two workflows' path lists differ
 - **`uber-jar-smoke`**: builds `-Prelease` and runs both uber-jars on a JVM -- what JBang users get.
   Nothing else in CI executes them, which is how the JBang channel broke unnoticed (issue #701); it also asserts that `proxy start` without an `isx-proxy` sibling exits 78 with install instructions rather than looping.
   It runs `scripts/check-platform-role.sh` on them, as `release.yml` does on the jars it uploads, and uploads them for `macos-role`

@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.config.DocsLinksTest;
 import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.ProofToken;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
@@ -202,6 +203,7 @@ class DoctorInstanceCredentialsTest {
     }
 
     @Test
+    @Tag("docs")
     void theDocsPointerNamesAHeadingTheDocsPageHas() throws IOException {
         var anchor = DoctorCommand.CREDENTIALS_DOCS.substring(DoctorCommand.CREDENTIALS_DOCS.indexOf('#') + 1);
         assertTrue(DocsLinksTest.anchors(Path.of("..", "README.md")).contains(anchor), anchor);

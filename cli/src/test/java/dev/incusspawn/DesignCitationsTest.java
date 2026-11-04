@@ -1,5 +1,6 @@
 package dev.incusspawn;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -31,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * measurements in {@code docs/dev/PERFORMANCE-NOTES.md} to a heading or a bold lead-in
  * of that file, which the citation may shorten to a prefix.
  */
+@Tag("docs")
 class DesignCitationsTest {
 
     private static final Path ROOT = Path.of("..");
