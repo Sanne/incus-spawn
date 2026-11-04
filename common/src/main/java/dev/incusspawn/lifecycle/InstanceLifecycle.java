@@ -489,10 +489,9 @@ public final class InstanceLifecycle {
                 giveSecretToThisBoot(incus, name, instance, null, Metadata.isMcpCaller(instance), out);
             }
         } else {
-            // Every container reboot is a start: the instance already read says which boot it is
-            if (!secretRecordedForBoot(instance)) {
-                giveSecretToThisBoot(incus, name, instance, bootOf(instance), Metadata.isMcpCaller(instance), out);
-            }
+            // Every container reboot is a start: the instance already read says which boot it is.
+            // The step isx mcp and a plain ssh take too (#1975)
+            giveSecretIfMissing(incus, name, instance, out);
         }
         // Only a VM is ever marked
         if (instance.path("config").has(Metadata.NETWORK_PUSH_PENDING)) {
