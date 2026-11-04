@@ -116,6 +116,34 @@ class GitPreparationTest {
         assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
     }
 
+    @Execution(CONCURRENT) @Test void refreshFetchesOnlyNewObjectsIntoASnapshotTheCacheDidNotKeep() throws Exception {
+        start();
+        // Retention off: preparing again would clone in full, which a refresh exists to avoid (#1980).
+        var unkept = new GitPreparation(tmp.resolve("unkept"), new GitCacheConfig(0, java.time.Duration.ofDays(7)),
+                GitTransferConfig.DEFAULT);
+        var request = new GitPreparation.Request(server.url(remote), null, host);
+        var phases = new ArrayList<String>();
+        try (var first = unkept.prepare(request, s -> {})) {
+            assertNotNull(first.notRetained());
+            assertNull(unkept.refresh(request, first, phases::add), "nothing to refresh while the remote is unchanged");
+            commitBinary(remote, "pushed during preparation");
+            try (var refreshed = unkept.refresh(request, first, phases::add)) {
+                assertNotNull(refreshed);
+                assertEquals("reference-seeded clean snapshot (refreshed)", refreshed.strategy());
+                assertTrue(phases.contains("Fetching incremental Git snapshot"), phases.toString());
+                assertFalse(phases.contains("Creating clean Git snapshot"), phases.toString());
+                sameObjects(remote, refreshed.repository());
+                assertEquals(git(remote, "rev-parse", "HEAD"), git(refreshed.repository(), "rev-parse", "HEAD"));
+                assertTrue(first.timingsMillis().keySet().stream().allMatch(refreshed.timingsMillis()::containsKey));
+                // The first snapshot's packs are linked, not rewritten: one more pack carries the push.
+                assertEquals(first.checksums().size() + 2, refreshed.checksums().size());
+                assertTrue(refreshed.checksums().entrySet().containsAll(first.checksums().entrySet()));
+                assertTrue(Files.isDirectory(first.repository()), "the prior snapshot stays readable until closed");
+            }
+        }
+        assertEquals(List.of(), PreparationGit.children(tmp.resolve("unkept/work")));
+    }
+
     @Execution(CONCURRENT) @Test void remoteRefsReadEarlyFetchNothingAndAreUsedOnce() throws Exception {
         start();
         var url = server.url(remote);

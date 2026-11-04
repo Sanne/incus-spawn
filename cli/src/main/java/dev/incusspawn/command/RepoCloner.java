@@ -431,7 +431,8 @@ class RepoCloner {
                     ref = prepareHostReference(repo, planned, states, idx);
                     if (ref.prepared() != null) prepared.put(idx, ref.prepared());
                 } else if (hasReference && ref.hasDevice() && planned.request() != null) {
-                    ref = prepareReference(repo, planned, states, idx, advertisement);
+                    ref = prepareReference(repo, planned, states, idx, advertisement,
+                            () -> readTemplateRefs(container, repo));
                     if (ref.prepared() != null) prepared.put(idx, ref.prepared());
                 }
                 long attaching = System.nanoTime();
@@ -523,17 +524,32 @@ class RepoCloner {
                                    AtomicReferenceArray<StepProgress> states, int idx) {
         states.set(idx, StepProgress.running("Checking template repository access"));
         long start = System.nanoTime();
+        var refs = readTemplateRefs(container, repo);
+        preparationTimings.put(idx, "access=" + (System.nanoTime() - start) / 1_000_000 + "ms");
+        return refs;
+    }
+
+    /** The remote's refs as the template's own accounts see them, from the guest; null when it is denied. */
+    String readTemplateRefs(Container container, ImageDef.RepoEntry repo) {
         var access = container.shAsUser("agentuser", "export GIT_TERMINAL_PROMPT=0; "
                 + "if [ -z \"${GIT_SSH_COMMAND+x}${GIT_SSH+x}\" ]; then export GIT_SSH_COMMAND='ssh -o BatchMode=yes'; fi; "
                 + "git -c protocol.allow=never -c protocol.https.allow=always -c protocol.ssh.allow=always"
                 + " -c protocol.git.allow=always -c protocol.file.allow=never ls-remote --symref -- "
                 + shellQuote(repo.getUrl()) + " HEAD 'refs/heads/*' 'refs/tags/*'");
-        preparationTimings.put(idx, "access=" + (System.nanoTime() - start) / 1_000_000 + "ms");
         return access.success() ? access.stdout() : null;
     }
 
+    /** How many times a snapshot is brought up to date when the remote moved during its preparation (#1980). */
+    static final int REF_DRIFT_REFRESHES = 3;
+
+    /**
+     * {@code advertisement} is the guest's reading from its access check; {@code guestRefs} reads again.
+     * A long preparation of a busy repository outlives that first reading, so a mismatch reads the guest's
+     * refs again and, while they still differ, brings the snapshot up to date with an incremental fetch.
+     */
     RepoReference prepareReference(ImageDef.RepoEntry repo, RepoReference ref,
-                                   AtomicReferenceArray<StepProgress> states, int idx, String advertisement) {
+                                   AtomicReferenceArray<StepProgress> states, int idx, String advertisement,
+                                   java.util.function.Supplier<String> guestRefs) {
         try {
             var request = new GitPreparation.Request(repo.getUrl(), repo.getBranch(), ref.request().checkout());
             var phases = new GitPreparation.Phases() {
@@ -549,9 +565,21 @@ class RepoCloner {
                     : preparation.prepare(request, early.await(), phases);
             boolean accepted = false;
             try {
-                if (!result.matchesAdvertisement(advertisement)) {
-                    return RepoReference.skipped("template and host repository refs differ");
+                boolean matched = result.matchesAdvertisement(advertisement);
+                for (int refresh = 0; !matched && refresh <= REF_DRIFT_REFRESHES; refresh++) {
+                    if (refresh > 0) {
+                        var next = refreshSnapshot(request, result, phases);
+                        if (next == null) break;
+                        var stale = result;
+                        result = next;
+                        stale.close();
+                    }
+                    states.set(idx, StepProgress.running("Checking template repository refs"));
+                    var seen = guestRefs.get();
+                    if (seen == null) return RepoReference.skipped("template account could not access the repository");
+                    matched = result.matchesAdvertisement(seen);
                 }
+                if (!matched) return RepoReference.skipped("template and host repository refs differ");
                 var ready = new RepoReference(ref.deviceName(), ref.containerPath(),
                         HostResourceSetup.translateForVm(result.repository().toString()), null, null, result);
                 if (result.notRetained() != null) preparationNotRetained.put(idx, result.notRetained());
@@ -563,6 +591,17 @@ class RepoCloner {
         } catch (Exception e) {
             if (e instanceof GitCommandException failed && !failed.details().isEmpty()) preparationFailures.put(idx, failed);
             return RepoReference.skipped("Git preparation unavailable: " + e.getMessage());
+        }
+    }
+
+    /** Null when the snapshot cannot be brought up to date cheaply; the guest then clones from the network. */
+    private GitPreparation.Prepared refreshSnapshot(GitPreparation.Request request, GitPreparation.Prepared prior,
+                                                    GitPreparation.Phases phases) throws java.io.InterruptedIOException {
+        try {
+            return preparation.refresh(request, prior, phases);
+        } catch (java.io.IOException e) {
+            if (e instanceof java.io.InterruptedIOException interrupted) throw interrupted;
+            return null;
         }
     }
 

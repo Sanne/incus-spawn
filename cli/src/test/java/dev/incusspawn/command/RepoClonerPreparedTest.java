@@ -42,6 +42,9 @@ class RepoClonerPreparedTest {
     private int foreignClones;
     private Path guestConfig;
     private String checksumPrelude = "";
+    /** Run before and after the guest's n-th ls-remote, counting from 1, so a test can move the remote between readings. */
+    private java.util.function.IntConsumer beforeGuestRead = n -> {}, afterGuestRead = n -> {};
+    private int guestReads;
     private final AtomicReferenceArray<BuildProgress.StepProgress> states = new AtomicReferenceArray<>(1);
     private final List<BuildProgress.StepProgress> statesWhileCloning = new ArrayList<>();
 
@@ -59,6 +62,7 @@ class RepoClonerPreparedTest {
         when(incus.execInContainer(eq("test"), eq("agentuser"), anyString())).thenAnswer(inv -> {
             String script = inv.getArgument(2);
             scripts.add(script);
+            if (script.contains(" ls-remote ")) beforeGuestRead.accept(++guestReads);
             if (script.contains(" clone ")) statesWhileCloning.add(states.get(0));
             script = script.replaceAll("\\{ ! command -v mountpoint .*?; \\} && ", "");
             if (breakCopy && script.contains("clone --no-hardlinks")) {
@@ -82,7 +86,9 @@ class RepoClonerPreparedTest {
                     .redirectOutput(out.toFile()).redirectError(err.toFile());
             if (guestConfig != null) builder.environment().put("GIT_CONFIG_GLOBAL", guestConfig.toString());
             var process = builder.start();
-            return new IncusClient.ExecResult(process.waitFor(), Files.readString(out), Files.readString(err));
+            var result = new IncusClient.ExecResult(process.waitFor(), Files.readString(out), Files.readString(err));
+            if (script.contains(" ls-remote ")) afterGuestRead.accept(guestReads);
+            return result;
         });
     }
 
@@ -134,7 +140,7 @@ class RepoClonerPreparedTest {
         repo.setUrl(server.url(tmp.resolve("missing")));
         var planned = new RepoCloner.RepoReference("ref", "/mnt/ref", host.toString(), null,
                 new GitPreparation.Request(repo.getUrl(), null, host), null);
-        var ref = cloner.prepareReference(repo, planned, states, 0, "");
+        var ref = cloner.prepareReference(repo, planned, states, 0, "", () -> null);
         assertEquals("Git preparation unavailable: Git preparation failed: ls-remote", ref.skipReason());
         var details = cloner.preparationFailures.get(0).details();
         assertEquals("Git's output:", details.getFirst(), details.toString());
@@ -149,7 +155,7 @@ class RepoClonerPreparedTest {
         var planned = new RepoCloner.RepoReference("ref", "/mnt/ref", host.toString(), null,
                 new GitPreparation.Request(repo.getUrl(), null, host), null);
         var advertisement = git(tmp, "ls-remote", "--symref", "--", repo.getUrl(), "HEAD", "refs/heads/*", "refs/tags/*");
-        var ref = cloner.prepareReference(repo, planned, states, 0, advertisement);
+        var ref = cloner.prepareReference(repo, planned, states, 0, advertisement, () -> advertisement);
         assertNotNull(ref.prepared(), ref.skipReason());
         try {
             assertTrue(cloner.preparationNotRetained.get(0).endsWith(
@@ -175,6 +181,54 @@ class RepoClonerPreparedTest {
         assertTrue(mounts.isEmpty(), "the wider host selection must never be mounted");
         assertEquals("", git(tmp.resolve("guest"), "for-each-ref", "refs/remotes/origin/stable"));
         assertEquals("", git(tmp.resolve("guest"), "fsck", "--full", "--no-dangling"));
+    }
+
+    private void advanceRemote(String message) {
+        try {
+            commitBinary(remote, message);
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @Test void aRemoteThatMovedBeforePreparationIsMatchedByReadingTheGuestAgain() throws Exception {
+        // The guest's access check predates the snapshot, which already holds the newer commit (#1980).
+        afterGuestRead = n -> { if (n == 1) advanceRemote("pushed after the access check"); };
+        var result = run(null);
+        assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
+        assertEquals("via reference-seeded clean snapshot", result.note());
+        assertEquals(2, guestReads);
+        assertEquals(1, mounts.size());
+        assertEquals(git(remote, "rev-parse", "HEAD"), git(tmp.resolve("guest"), "rev-parse", "HEAD"));
+    }
+
+    @Test void aRemoteThatMovedDuringPreparationRefreshesTheSnapshotInsteadOfCloningInTheGuest() throws Exception {
+        // The snapshot is newer than the access check, and the remote moves again before the guest reads it.
+        afterGuestRead = n -> { if (n == 1) advanceRemote("pushed after the access check"); };
+        beforeGuestRead = n -> { if (n == 2) advanceRemote("pushed while the snapshot was prepared"); };
+        var result = run(null);
+        assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
+        assertEquals("via reference-seeded clean snapshot (refreshed)", result.note());
+        assertEquals(3, guestReads);
+        assertEquals(1, mounts.size(), "only the refreshed snapshot is mounted");
+        assertEquals(1, scripts.stream().filter(s -> s.contains(" clone ")).count(), "no network clone in the guest");
+        var guest = tmp.resolve("guest");
+        assertEquals(git(remote, "rev-parse", "HEAD"), git(guest, "rev-parse", "HEAD"));
+        assertEquals("", git(guest, "fsck", "--full", "--no-dangling"));
+        assertEquals(new java.util.HashSet<>(git(remote, "rev-list", "--objects", "--all", "--no-object-names").lines().toList()),
+                new java.util.HashSet<>(git(guest, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)").lines().toList()));
+    }
+
+    @Test void aRemoteThatNeverHoldsStillFallsBackToTheGuestAfterBoundedRefreshes() throws Exception {
+        afterGuestRead = n -> { if (n == 1) advanceRemote("pushed after the access check"); };
+        beforeGuestRead = n -> { if (n > 1) advanceRemote("push " + n); };
+        var result = run(null);
+        assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
+        assertEquals("template and host repository refs differ", result.note());
+        // The access check, the reading after preparation, and one after each refresh.
+        assertEquals(2 + RepoCloner.REF_DRIFT_REFRESHES, guestReads);
+        assertTrue(mounts.isEmpty(), "a snapshot the guest did not see last must never be mounted");
+        assertEquals(git(remote, "rev-parse", "HEAD"), git(tmp.resolve("guest"), "rev-parse", "HEAD"));
     }
 
     @Test void guestIsIndependentAndHasTheSameRefScopeAsAFullNetworkClone() throws Exception {

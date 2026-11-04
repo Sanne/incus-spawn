@@ -58,7 +58,8 @@ Full clones have no depth limit and use snapshots only for eligible network URLs
 | Full clone, changes remove selected history, incremental validation fails, or the result would exceed 32 packs | Rebuild a clean snapshot, preferably borrowing from the previous verified generation: usually `via reference-seeded clean snapshot` | Drop objects no longer selected, recover from failed validation, or compact accumulated packs. |
 | Reference cloning, dissociation or full validation fails | Discard the partial snapshot and retry from the remote: `via new clean snapshot (reference retry)` | A changing or damaged reference must not produce an incomplete guest repository. |
 | Shallow clone (`depth: N`, including `depth: 1`) | Bypass this cache: `via host reference (shallow, depth N)` or `via remote (shallow, depth N)` | The separate shallow path reconciles with the remote and repacks on every build; limiting history still requires copying current large binaries. |
-| Project-local template, ineligible URL, denied guest access, differing guest/host refs, or preparation/mount/copy-verification failure | Use the ordinary guest clone path | Host preparation must respect the template's trust and access scope; failures must not expose an unchecked snapshot. |
+| Guest's refs moved while the snapshot was prepared | Read the guest's refs again and refresh the snapshot incrementally, up to three times: `via … (refreshed)` | A busy repository changes during a long preparation, and discarding the snapshot costs a full network clone in the guest. |
+| Project-local template, ineligible URL, denied guest access, guest/host refs still differing after the refreshes, or preparation/mount/copy-verification failure | Use the ordinary guest clone path | Host preparation must respect the template's trust and access scope; failures must not expose an unchecked snapshot. |
 
 `Cached` means the freshly checked remote selection matches the snapshot; it never means using stale data while the remote is unavailable.
 Guest access and selection checks apply to every snapshot, including cache hits.
@@ -91,6 +92,12 @@ The host's own `ls-remote` starts beside the guest's check rather than after it,
 A denied guest discards that advertisement, and nothing is fetched, cloned or published until the guest's check succeeded.
 The guest's complete advertised selection must match the prepared snapshot before any prepared bytes are mounted.
 A different account-visible ref scope or a race that changes selection uses the guest's network clone instead; a successful host credential check alone never authorizes a guest copy.
+A long preparation of a busy repository outlives the guest's first reading, so a mismatch is not final at once (#1980).
+The guest reads the remote again, which settles the common case of a snapshot newer than the access check.
+While the two still differ, the snapshot is brought up to date by an incremental fetch from its own leased bytes, and the guest reads again, up to three times (`RepoCloner.REF_DRIFT_REFRESHES`).
+That refresh never clones in full, even when the cache did not keep the snapshot, and stops when the host already sees exactly the snapshot's selection.
+Only a selection the guest has just seen is mounted; the ready line adds `(refreshed)` to the strategy, for example `via reference-seeded clean snapshot (refreshed)`.
+On nixpkgs a cold preparation with a host checkout took about 16 minutes, during which `master`, release and merge-queue branches moved: without the refresh, all of it was discarded for a full network clone in the guest.
 This applies to warm cache hits as well as new generations.
 
 A warm host-cache hit additionally requires a successful `ls-remote --symref` using the host's current remote credentials.

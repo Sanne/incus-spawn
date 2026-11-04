@@ -117,7 +117,7 @@ class RepoClonerReferenceTest {
         doAnswer(inv -> {
             RepoCloner.RepoReference ref = inv.getArgument(1);
             return RepoClonerTest.reference(ref.deviceName(), ref.containerPath(), ref.source(), null);
-        }).when(cmd).prepareReference(any(), any(), any(), anyInt(), any());
+        }).when(cmd).prepareReference(any(), any(), any(), anyInt(), any(), any());
         doReturn(count).when(cmd).repoConcurrency(anyInt()); // every clone at once: the most slot pressure
         var shown = RepoClonerTest.shown(() -> assertTimeoutPreemptively(java.time.Duration.ofSeconds(30),
                 () -> cmd.cloneRepos(new Container(incus, VM), imageDef, java.util.Map.of(), MachineType.VM)));

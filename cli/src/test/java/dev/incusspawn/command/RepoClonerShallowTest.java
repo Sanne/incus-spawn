@@ -445,8 +445,9 @@ class RepoClonerShallowTest {
         }
         new RepoCloner(incus, preparation) {
             @Override RepoReference prepareReference(ImageDef.RepoEntry entry, RepoReference planned,
-                                                       AtomicReferenceArray<StepProgress> progress, int index, String advertisement) {
-                var prepared = super.prepareReference(entry, planned, progress, index, advertisement);
+                                                       AtomicReferenceArray<StepProgress> progress, int index, String advertisement,
+                                                       java.util.function.Supplier<String> guestRefs) {
+                var prepared = super.prepareReference(entry, planned, progress, index, advertisement, guestRefs);
                 if (!prepared.hasDevice()) return prepared;
                 return new RepoReference(prepared.deviceName(), prepared.source(), prepared.source(),
                         null, null, prepared.prepared());
