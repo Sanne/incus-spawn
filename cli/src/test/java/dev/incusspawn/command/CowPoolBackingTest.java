@@ -1,8 +1,11 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.config.DocsLinksTest;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -203,5 +206,12 @@ class CowPoolBackingTest {
     @Test
     void filesystemTypeOfAMissingPathIsUnknown() {
         assertNull(CowPoolBacking.filesystemType(Path.of("/nonexistent/isx-1656")));
+    }
+
+    @Test
+    @Tag("docs")
+    void theMigrationNotesLinkNamesAHeadingTheNotesHave() throws IOException {
+        var anchor = CowPoolBacking.MIGRATION_NOTES.substring(CowPoolBacking.MIGRATION_NOTES.indexOf('#') + 1);
+        assertTrue(DocsLinksTest.anchors(Path.of("../docs/dev/MIGRATIONS.md")).contains(anchor), anchor);
     }
 }
