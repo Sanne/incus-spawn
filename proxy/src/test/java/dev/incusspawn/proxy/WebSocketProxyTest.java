@@ -523,17 +523,43 @@ class WebSocketProxyTest {
     @ParameterizedTest
     @MethodSource("refusedUpgrades")
     void refusedUpgradeIsAnswered400AndNeverDialled(String path, String headers) throws Exception {
-        try (var socket = openTls()) {
-            var out = socket.getOutputStream();
-            out.write(("GET " + path + " HTTP/1.1\r\n"
-                    + "Host: api.openai.com\r\n"
-                    + "Authorization: Bearer " + ProofTestSupport.token("openai", "sk-") + "\r\n"
-                    + "Upgrade: websocket\r\n"
-                    + headers + "\r\n")
-                    .getBytes(StandardCharsets.US_ASCII));
-            out.flush();
-            var head = readHead(socket.getInputStream());
-            assertTrue(head.startsWith("HTTP/1.1 400"), "Expected a 400, got: " + head);
+        var log = dev.incusspawn.Environment.proxyLifecycleLogFile();
+        long logStart = Files.exists(log) ? Files.size(log) : 0;
+        var proof = ProofTestSupport.token("openai", "sk-");
+        var debugWas = ProxyLog.isDebugEnabled();
+        ProxyLog.setDebugEnabled(true);
+        // Restored only after the poll: Vert.x fails accept() once the 400 is written, so the proxy
+        // may check the flag after the client has already read the response
+        try {
+            try (var socket = openTls()) {
+                var out = socket.getOutputStream();
+                out.write(("GET " + path + " HTTP/1.1\r\n"
+                        + "Host: api.openai.com\r\n"
+                        + "Authorization: Bearer " + proof + "\r\n"
+                        + "Upgrade: websocket\r\n"
+                        + headers + "\r\n")
+                        .getBytes(StandardCharsets.US_ASCII));
+                out.flush();
+                var head = readHead(socket.getInputStream());
+                assertTrue(head.startsWith("HTTP/1.1 400"), "Expected a 400, got: " + head);
+            }
+            // Vert.x 5 reports Netty's refusal as a failed accept(): the proxy says so instead of dropping it
+            var failed = "WebSocket handshake to api.openai.com failed";
+            String logged = "";
+            for (int i = 0; i < 50 && !logged.contains(failed); i++) {
+                if (Files.exists(log)) {
+                    // logStart counts bytes: cut the bytes, then decode
+                    var bytes = Files.readAllBytes(log);
+                    // A log truncated meanwhile is read whole
+                    int from = logStart <= bytes.length ? (int) logStart : 0;
+                    logged = new String(bytes, from, bytes.length - from, StandardCharsets.UTF_8);
+                }
+                if (!logged.contains(failed)) Thread.sleep(100);
+            }
+            assertTrue(logged.contains(failed), "The failed accept should be logged, log was: " + logged);
+            assertFalse(logged.contains(proof), "The failed accept's diagnostic must never include the proof");
+        } finally {
+            ProxyLog.setDebugEnabled(debugWas);
         }
         var dials = upstreamDials.stream()
                 .filter(o -> o.getURI().equals(path))
@@ -543,13 +569,18 @@ class WebSocketProxyTest {
     }
 
     /**
-     * A frame pipelined in the same write as the upgrade request is relayed. RFC 6455
-     * 4.1 says a client waits for the 101 first, so this is not a requirement -- but the
-     * proxy relays it today: the frame is buffered while the client socket is paused
-     * and upstream connects, like any other early frame.
+     * A frame pipelined in the same write as the upgrade request closes the connection, and
+     * nothing is dialled upstream for it. RFC 6455 4.1 says a client waits for the 101 first;
+     * the Vert.x 4 proxy relayed such a frame anyway, buffered like any other early one.
+     * <p>
+     * Vert.x 5.2.2 dropped the frame inside the HTTP connection, leaking its buffer, and still
+     * handed the proxy an accepted socket (V-W1 in docs/dev/QUARKUS-4.md). Vert.x 5.2.3
+     * (eclipse-vertx/vert.x#6490) releases it and fails {@code accept()} after the 101, closing
+     * the connection, so the proxy never relays the upgrade. This pins that: a Vert.x that went
+     * back to accepting the socket would fail here.
      */
     @Test
-    void framePipelinedWithTheUpgradeRequestIsRelayed() throws Exception {
+    void framePipelinedWithTheUpgradeRequestClosesTheConnectionAndIsNeverDialled() throws Exception {
         try (var socket = openTls()) {
             // RFC 6455's sample nonce, encoded here so a secret scanner does not mistake it for a key
             var key = Base64.getEncoder().encodeToString("the sample nonce".getBytes(StandardCharsets.US_ASCII));
@@ -575,14 +606,21 @@ class WebSocketProxyTest {
 
             var in = socket.getInputStream();
             var head = readHead(in);
-            assertTrue(head.startsWith("HTTP/1.1 101"), "Expected a 101, got: " + head);
-            int b0 = in.read();
-            assertEquals(0x81, b0, "Expected one unfragmented text frame (-1: the connection closed)");
-            int len = in.read();
-            assertTrue(len >= 0 && len < 126, "Expected a short unmasked frame, length byte " + len);
-            var body = in.readNBytes(len);
-            assertEquals("echo:pipelined", new String(body, StandardCharsets.UTF_8));
+            // Vert.x 5.2.3 writes the 101 and then fails accept(): a refusal of ours would be a 4xx or 5xx
+            assertTrue(head.startsWith("HTTP/1.1 101"), "Expected a 101 before the close, got: " + head);
+            int next;
+            try {
+                next = in.read();
+            } catch (java.net.SocketException e) {
+                next = -1; // closed abruptly, as Vert.x does: a reset reads the same
+            }
+            assertEquals(-1, next, "Expected the connection closed, not a relayed frame");
         }
+        var dials = upstreamDials.stream()
+                .filter(o -> o.getURI().equals("/v1/pipelined"))
+                .map(o -> o.getURI() + " " + o.getHeaders())
+                .toList();
+        assertEquals(List.of(), dials, "A pipelined upgrade must not be dialled upstream");
     }
 
     /** A raw TLS connection to the proxy as {@code api.openai.com}, for requests no WebSocket client would send. */

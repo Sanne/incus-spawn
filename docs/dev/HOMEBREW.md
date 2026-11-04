@@ -33,7 +33,7 @@ When cutting a new release:
 1. **Tag and push** the release in this repository (triggers GitHub Actions)
 
 2. **GitHub Actions builds**:
-   - macOS native binaries (`incus-spawn-macos-aarch64`, `incus-spawn-macos-x86_64`)
+   - macOS native binaries (`incus-spawn-macos-aarch64`, `isx-proxy-macos-aarch64`; Apple Silicon only)
    - Linux binaries (amd64, aarch64)
    - VM appliance artifacts (kernel, disk images)
    - Git remote helper (`git-remote-isx`)
@@ -47,12 +47,14 @@ When cutting a new release:
 
 ### Manual formula update (fallback)
 
-If the automated step fails, update the formula manually:
+If the automated step fails, update the formula manually.
+It is `continue-on-error`, so a failed tap update leaves the release green with only an `::error::` annotation: check for one after every release.
+Its guard refuses a formula that still names an Intel asset or lacks `depends_on arch: :arm64` (design/native-image.md "Intel Macs are not shipped"); after fixing the formula, bump it as below, since nothing re-runs the step.
 
 ```bash
 VERSION=X.Y.Z
 curl -sL https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/incus-spawn-macos-aarch64 | shasum -a 256
-curl -sL https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/incus-spawn-macos-x86_64 | shasum -a 256
+curl -sL https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/isx-proxy-macos-aarch64 | shasum -a 256
 curl -sL https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/git-remote-isx | shasum -a 256
 ```
 
@@ -85,4 +87,4 @@ The dev formula is updated automatically by the release workflow when a tag with
 
 ## Supported Platforms
 
-The Homebrew formulas install on both Apple Silicon (arm64) and Intel (x86_64) Macs. Both binaries need **macOS 15 (Sequoia) or later**; macOS 14 and older are not supported. Apple Silicon is supported and verified on a Mac; the Intel binary is built and shipped on the same minimum as **best effort**: beyond the release workflow's smoke test on its Intel runner, it is not verified on an Intel Mac, as none is available. The build sets that minimum explicitly (`macos.deployment.target` in the root `pom.xml`), and the release workflow fails if any macOS binary it uploads records a different one, so a runner upgrade cannot move it (see design/native-image.md "The minimum macOS is set by the build"). Both formulas declare it as `depends_on macos: :sequoia`, so `brew install` refuses an older macOS instead of installing binaries that cannot load there. The release workflow writes that line on every release from its `MACOS_MIN`, and `WorkflowRunnerLabelsTest` fails when it no longer names the deployment target; a manual update keeps the line as it is.
+The Homebrew formulas install on Apple Silicon (arm64) Macs only: from the first release on Quarkus 4 they declare `depends_on arch: :arm64` and name no Intel asset, so `brew install` tells an Intel Mac so before downloading anything. That edit to both formulas is made by hand before that release, since the release workflow's tap step will not rewrite an Intel formula. Intel Macs are not shipped since the first release on Quarkus 4; v0.4.2 and v0.5.0-dev.2 were the last with an Intel binary (design/native-image.md "Intel Macs are not shipped"). The release workflow's tap step refuses to update a formula that still names an Intel asset or lacks that line. The binaries need **macOS 15 (Sequoia) or later**; macOS 14 and older are not supported, and Apple Silicon is verified on a Mac. The build sets that minimum explicitly (`macos.deployment.target` in the root `pom.xml`), and the release workflow fails if any macOS binary it uploads records a different one, so a runner upgrade cannot move it (see design/native-image.md "The minimum macOS is set by the build"). Both formulas declare it as `depends_on macos: :sequoia`, so `brew install` refuses an older macOS instead of installing binaries that cannot load there. The release workflow writes that line on every release from its `MACOS_MIN`, and `WorkflowRunnerLabelsTest` fails when it no longer names the deployment target; a manual update keeps the line as it is.

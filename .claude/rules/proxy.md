@@ -320,9 +320,16 @@ Key design:
   It answers from `allInterceptedDomains` (every account's domains, as bridge DNS and certificates have them), never the default account's entries alone: an instance pinned to an account whose entry the default lacks would be relayed with nothing injected.
   `ProxyCredentials` only has Anthropic-specific fields (`anthropicApiKey`, `oauthToken`, Vertex settings) -- `ghToken`/`bobApiKey`/`openaiApiKey` have been removed
 - WebSocket passthrough: handles Upgrade requests by establishing an upstream WebSocket connection (with credential injection via both Anthropic auth and tool proxy lookup), then relaying frames bidirectionally with keepalive pings and close-code propagation.
-  A host that `ISX_BENCH_UPSTREAM` overrides is dialled at the override's address, with the real host in the `Host` header (Vert.x ignores `setServer` for a WebSocket), so `bench/run.sh --load=websocket` reaches its stub.
-  `routeWebSocket` completes the client's handshake (`completeHandshake`, the deprecated `ServerWebSocket.accept()` on purpose) before injecting anything or dialling, because the handler runs before Netty validates the handshake (#972); keep any new rejection (e.g. `reject(502)`) before it.
+  A host that `ISX_BENCH_UPSTREAM` overrides is dialled at the override's address, with the real host in the `Host` header (a WebSocket client reads `setServer` only when no host is set), so `bench/run.sh --load=websocket` reaches its stub.
+  `routeWebSocket` is the `webSocketHandshakeHandler`: it decides the `ServerWebSocketHandshake` once the caller's account is resolved, and dials only once `accept()` has succeeded, i.e. Netty validated the handshake (#972); keep any new rejection (e.g. `reject(502)`) before the `accept()`.
   Used by Codex CLI for `api.openai.com`
+- **Vert.x 5 rules that the compiler does not enforce** (full record in `docs/dev/QUARKUS-4.md`):
+  - Every path through `routeWebSocket` must `accept()` or `reject()` the `ServerWebSocketHandshake`: Vert.x 5 leaves an undecided one, even one whose handler threw, hanging until the MITM idle timeout.
+  - `pause()` must stay the first call on the accepted socket, in `routeWebSocket` and in `relayWebSocketWith`, which ChatGPT's route accepts through.
+  - A frame pipelined with the upgrade request fails `accept()` (Vert.x 5.2.3), so nothing is dialled for it; `WebSocketProxyTest#framePipelinedWithTheUpgradeRequestClosesTheConnectionAndIsNeverDialled` pins that.
+  - Cert reloads build their `ServerSSLOptions` from `mitmServerOptions()`, never a bare object, because the update replaces client auth, protocols and ciphers.
+  - `HttpClientRequest.authority()` is the request's own `Host`, not the `setServer()` target, which is what the redirect and resume paths want.
+    That holds because every upstream request sets a host: without one, Vert.x falls back to the server address.
 - Caches OCI blobs by SHA256, Maven/Gradle artifacts by repository path (confirmed with upstream per `ArtifactCacheTiers`, see below), and npm tarballs from `registry.npmjs.org` with ETag-based packument verification.
   The caching lives in `ArtifactCacheHandler`, built only from `Upstream` (the upstream clients, async DNS, backoff, relay and response helpers it shares with `MitmProxy`) and given no `RequestContext`, so by its types it cannot inject a credential; keep it that way.
   npm's per-version digest lookups go through `probeClient` (`fetchNpmVersion` → `fetchSmallBody`) like Maven/Gradle checksums.

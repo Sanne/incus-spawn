@@ -159,13 +159,8 @@ jobs:
             arch: aarch64
             graalvm-version: '25.4'
             pgo: true
-          # Best effort (#1086), and on GraalVM 25.0, whose builds would take a 25.4 profile only
-          # past its version check: built unprofiled, as before.
-          - runner: macos-15-intel
-            os: macos
-            arch: x86_64
-            graalvm-version: '25.0'
-            pgo: false
+          # No Intel macOS build since Quarkus 4 (#1693): it needs GraalVM 25.0.4, and Oracle GraalVM
+          # ships no macOS x64 build after 25.0.1. design/native-image.md "Intel Macs are not shipped".
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -364,11 +359,9 @@ jobs:
             artifacts/native-linux-amd64/incus-spawn-linux-amd64 \
             artifacts/native-linux-aarch64/incus-spawn-linux-aarch64 \
             artifacts/native-macos-aarch64/incus-spawn-macos-aarch64 \
-            artifacts/native-macos-x86_64/incus-spawn-macos-x86_64 \
             artifacts/native-linux-amd64/isx-proxy-linux-amd64 \
             artifacts/native-linux-aarch64/isx-proxy-linux-aarch64 \
             artifacts/native-macos-aarch64/isx-proxy-macos-aarch64 \
-            artifacts/native-macos-x86_64/isx-proxy-macos-x86_64 \
             artifacts/vmlinuz-x86_64.gz \
             artifacts/vmlinuz-aarch64.gz \
             artifacts/disk-x86_64.img.gz \
@@ -385,9 +378,7 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
 
           SHA_ARM64=$(sha256sum artifacts/native-macos-aarch64/incus-spawn-macos-aarch64 | cut -d' ' -f1)
-          SHA_X86_64=$(sha256sum artifacts/native-macos-x86_64/incus-spawn-macos-x86_64 | cut -d' ' -f1)
           PROXY_SHA_ARM64=$(sha256sum artifacts/native-macos-aarch64/isx-proxy-macos-aarch64 | cut -d' ' -f1)
-          PROXY_SHA_X86_64=$(sha256sum artifacts/native-macos-x86_64/isx-proxy-macos-x86_64 | cut -d' ' -f1)
           GIT_REMOTE_SHA=$(sha256sum common/src/main/resources/git-remote-isx | cut -d' ' -f1)
           COMPLETIONS_SHA=$(sha256sum artifacts/completions.tar.gz | cut -d' ' -f1)
 
@@ -396,32 +387,30 @@ jobs:
 
           FORMULA="Formula/${{ needs.channel.outputs.homebrew_formula }}"
 
+          # No Intel macOS binary is released any more (#1693). Rewritten, a formula that still names
+          # one would point Intel Macs at a missing v#{version} binary beside the previous isx-proxy.
+          # The tap's formulas must declare depends_on arch: :arm64 instead, which brew reports to an
+          # Intel Mac before downloading. A refusal leaves every Mac on the previous formula: this step
+          # is continue-on-error, so the release still publishes, with this annotation.
+          if grep -q 'macos-x86_64\|on_intel\|depends_on arch: :x86_64' "$FORMULA" || ! grep -q '^  depends_on arch: :arm64' "$FORMULA"; then
+            echo "::error::$FORMULA still serves Intel Macs: make it Apple Silicon only (depends_on arch: :arm64, no x86_64 asset) before this release updates it"
+            exit 1
+          fi
+
           # Add isx-proxy resource and install blocks if not yet present (handles
           # the transition from monolithic CLI to separate proxy binary)
           if ! grep -q 'resource "isx-proxy"' "$FORMULA"; then
-            awk -v ver="$VERSION" -v sha_arm="$PROXY_SHA_ARM64" -v sha_x86="$PROXY_SHA_X86_64" '
+            awk -v ver="$VERSION" -v sha_arm="$PROXY_SHA_ARM64" '
               /resource "git-remote-isx"/ {
                 print "  resource \"isx-proxy\" do"
-                print "    on_macos do"
-                print "      on_arm do"
-                print "        url \"https://github.com/Sanne/incus-spawn/releases/download/v" ver "/isx-proxy-macos-aarch64\""
-                print "        sha256 \"" sha_arm "\""
-                print "      end"
-                print "      on_intel do"
-                print "        url \"https://github.com/Sanne/incus-spawn/releases/download/v" ver "/isx-proxy-macos-x86_64\""
-                print "        sha256 \"" sha_x86 "\""
-                print "      end"
-                print "    end"
+                print "    url \"https://github.com/Sanne/incus-spawn/releases/download/v" ver "/isx-proxy-macos-aarch64\""
+                print "    sha256 \"" sha_arm "\""
                 print "  end"
                 print ""
               }
               /resource\("git-remote-isx"\)/ {
                 print "    resource(\"isx-proxy\").stage do"
-                print "      if Hardware::CPU.arm?"
-                print "        bin.install \"isx-proxy-macos-aarch64\" => \"isx-proxy\""
-                print "      else"
-                print "        bin.install \"isx-proxy-macos-x86_64\" => \"isx-proxy\""
-                print "      end"
+                print "      bin.install \"isx-proxy-macos-aarch64\" => \"isx-proxy\""
                 print "    end"
                 print ""
               }
@@ -445,9 +434,7 @@ jobs:
           sed -i \
             -e "s/version \"[^\"]*\"/version \"${VERSION}\"/" \
             -e "/incus-spawn-macos-aarch64/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${SHA_ARM64}\"/;}" \
-            -e "/incus-spawn-macos-x86_64/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${SHA_X86_64}\"/;}" \
             -e "/isx-proxy-macos-aarch64/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${PROXY_SHA_ARM64}\"/;}" \
-            -e "/isx-proxy-macos-x86_64/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${PROXY_SHA_X86_64}\"/;}" \
             -e "/resource \"git-remote-isx\"/,/end/{s|url \"[^\"]*\"|url \"https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/git-remote-isx\"|}" \
             -e "/resource \"git-remote-isx\"/,/end/{s/sha256 \"[^\"]*\"/sha256 \"${GIT_REMOTE_SHA}\"/}" \
             -e "/resource \"completions\"/,/end/{s|url \"[^\"]*\"|url \"https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/completions.tar.gz\"|}" \

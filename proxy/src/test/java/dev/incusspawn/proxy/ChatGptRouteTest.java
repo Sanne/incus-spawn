@@ -4,7 +4,6 @@ import dev.incusspawn.incus.IncusClient;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.http.HttpServerRequest;
@@ -68,7 +67,7 @@ class ChatGptRouteTest {
     static HttpServer stub;
     static MitmProxy proxy;
     static int mitmPort;
-    static io.vertx.core.http.HttpClient wsClient;
+    static io.vertx.core.http.WebSocketClient wsClient;
     static ChatGptSessionStore store;
     static volatile String sessionId;
 
@@ -117,16 +116,16 @@ class ChatGptRouteTest {
         stub = vertx.createHttpServer(new HttpServerOptions().setSsl(true)
                         .setKeyCertOptions(NpmCacheProxyTest.keyCert(ca, ChatGptRoute.CHATGPT)))
                 .requestHandler(ChatGptRouteTest::answer)
-                .webSocketHandler(ws -> {
+                .webSocketHandshakeHandler(handshake -> {
                     // Decided before it is recorded: a test waits for the record, then clears the flag
                     var refuse = backendRefuses;
-                    seen.add("WS " + ws.headers().get("Host") + " " + ws.path() + " | "
-                            + ws.headers().get("Authorization") + " | " + ws.headers().get("ChatGPT-Account-Id"));
+                    seen.add("WS " + handshake.headers().get("Host") + " " + handshake.path() + " | "
+                            + handshake.headers().get("Authorization") + " | " + handshake.headers().get("ChatGPT-Account-Id"));
                     if (refuse) {
-                        ws.reject(401);
+                        handshake.reject(401);
                         return;
                     }
-                    ws.textMessageHandler(msg -> ws.writeTextMessage("echo:" + msg));
+                    handshake.accept().onSuccess(ws -> ws.textMessageHandler(msg -> ws.writeTextMessage("echo:" + msg)));
                 });
         int stubPort = NpmCacheProxyTest.listen(stub);
 
@@ -136,7 +135,7 @@ class ChatGptRouteTest {
         proxy.overrideUpstream(ChatGptRoute.AUTH, "127.0.0.1", stubPort);
         ContainerTls.startInBackground(proxy);
         mitmPort = proxy.mitmPort();
-        wsClient = vertx.createHttpClient(new HttpClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
+        wsClient = vertx.createWebSocketClient(new io.vertx.core.http.WebSocketClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
     }
 
     @AfterAll
@@ -819,7 +818,7 @@ class ChatGptRouteTest {
         // The proxy answers the handshake before it reads the session, then closes the socket when
         // the session is not the binding's: wait for that close, then nothing may have been dialled
         var closed = new CompletableFuture<Short>();
-        wsClient.webSocket(webSocket("/backend-api/codex/responses", "Bearer " + oldProof))
+        wsClient.connect(webSocket("/backend-api/codex/responses", "Bearer " + oldProof))
                 .onSuccess(ws -> ws.closeHandler(v -> closed.complete(ws.closeStatusCode())))
                 .onFailure(closed::completeExceptionally);
         assertEquals((short) 1011, closed.get(15, TimeUnit.SECONDS), "closed by the proxy, not dialled");
@@ -970,14 +969,14 @@ class ChatGptRouteTest {
 
     @Test
     void aWebSocketWithTheCurrentProofIsDialledToTheOverrideWithTheRealToken() throws Exception {
-        var client = vertx.createHttpClient(new HttpClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
+        var client = vertx.createWebSocketClient(new io.vertx.core.http.WebSocketClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
         var options = new WebSocketConnectOptions().setHost(ChatGptRoute.CHATGPT).setPort(mitmPort).setSsl(true)
                 .setURI("/backend-api/codex/responses")
                 // As a container sends it: it connects to 443, which the bridge redirects here
                 .putHeader("Host", ChatGptRoute.CHATGPT)
                 .addHeader("Authorization", "Bearer " + accessPlaceholder(proofs().access()));
         var echoed = new CompletableFuture<String>();
-        client.webSocket(options).onSuccess(ws -> {
+        client.connect(options).onSuccess(ws -> {
             ws.textMessageHandler(echoed::complete);
             ws.writeTextMessage("{\"type\":\"response.create\"}");
         }).onFailure(echoed::completeExceptionally);
@@ -1012,7 +1011,7 @@ class ChatGptRouteTest {
     /** The status a WebSocket upgrade was refused with, or 101 if it was accepted. */
     static int upgrade(WebSocketConnectOptions options) throws Exception {
         var status = new CompletableFuture<Integer>();
-        wsClient.webSocket(options).onSuccess(ws -> { status.complete(101); ws.close(); })
+        wsClient.connect(options).onSuccess(ws -> { status.complete(101); ws.close(); })
                 .onFailure(e -> status.complete(e instanceof io.vertx.core.http.UpgradeRejectedException rejected
                         ? rejected.getStatus() : -1));
         return status.get(15, TimeUnit.SECONDS);

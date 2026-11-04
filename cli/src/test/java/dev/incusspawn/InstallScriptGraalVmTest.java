@@ -9,7 +9,6 @@ import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Properties;
-import java.util.Set;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -23,15 +22,13 @@ import static org.junit.jupiter.api.Assertions.*;
  * and the proxy's default builder image must be the same: a bump that reaches the workflows but not these leaves
  * local builds on the old GraalVM, silently, as the 25.3 -> 25.4 upgrade did.
  * Every {@code setup-graalvm} step in the workflows follows the same version, so CI tests the
- * toolchain releases ship; only the Intel macOS release build stays on the 25.0 LTS, by decision.
+ * toolchain releases ship, with no exemption since the Intel macOS build was dropped (#1693).
  */
 class InstallScriptGraalVmTest {
 
     private static final Path INSTALL_SCRIPT = Path.of("../install.sh");
     private static final Path WORKFLOWS = Path.of("../.github/workflows");
     private static final Path RELEASE_WORKFLOW = WORKFLOWS.resolve("release.yml");
-    /** The one release build exempt: Intel macOS floats on the LTS line (#1086, #1730). */
-    private static final String LTS_RUNNER = "macos-15-intel";
     private static final String MATRIX_VERSION = "${{ matrix.graalvm-version }}";
     private static final List<Path> BUILDER_DEFAULTS = List.of(
             Path.of("src/main/resources-filtered/application.properties"),
@@ -67,13 +64,11 @@ class InstallScriptGraalVmTest {
     void everyWorkflowSetsUpTheReleasedLinuxGraalVm() throws IOException {
         var linux = linuxReleaseGraalVmVersion();
         var checked = new HashSet<String>();
-        var exempted = new HashSet<String>();
         try (var files = Files.list(WORKFLOWS)) {
             for (var file : files.filter(f -> f.toString().endsWith(".yml")).sorted().toList()) {
                 var jobs = JqYaml.parse(Files.readString(file)).path("jobs").asMap();
                 for (var job : jobs.entrySet()) {
                     var where = file.getFileName() + " job " + job.getKey();
-                    var releaseBuild = file.equals(RELEASE_WORKFLOW) && "build".equals(job.getKey());
                     for (var step : job.getValue().path("steps").asList()) {
                         if (!step.pathText("uses", "").startsWith("graalvm/setup-graalvm@")) {
                             continue;
@@ -90,12 +85,6 @@ class InstallScriptGraalVmTest {
                         for (var entry : include) {
                             var runner = entry.pathText("runner", "");
                             var entryVersion = entry.pathText("graalvm-version", "");
-                            if (releaseBuild && LTS_RUNNER.equals(runner)) {
-                                assertEquals("0", parts(entryVersion)[1],
-                                        where + " " + runner + ": the exempt build must stay on an LTS (X.0)");
-                                exempted.add(where + " " + runner);
-                                continue;
-                            }
                             assertEquals(linux, entryVersion, where + " " + runner
                                     + ": graalvm-version must be the Linux one of release.yml");
                             checked.add(where + " " + runner);
@@ -109,8 +98,6 @@ class InstallScriptGraalVmTest {
             assertTrue(checked.stream().anyMatch(c -> c.startsWith(workflow)),
                     "no setup-graalvm step checked in " + workflow + ": " + checked);
         }
-        assertEquals(Set.of("release.yml job build " + LTS_RUNNER), exempted,
-                "the " + LTS_RUNNER + " release build must be the one exemption");
     }
 
     @Test
