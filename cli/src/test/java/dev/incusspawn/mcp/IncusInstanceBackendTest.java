@@ -40,6 +40,60 @@ class IncusInstanceBackendTest {
     }
 
     @Test
+    @org.junit.jupiter.api.extension.ExtendWith(dev.incusspawn.command.IsolatedHome.class)
+    void aBoxIncusRestartedItselfGetsItsSecretOnceAndThenCostsNothing() {
+        // #1975: after a host reboot Incus brings a running box back with an empty /run/isx and a
+        // new last_used_at; isx mcp ran commands in it as it was, so Claude in it got a 401
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon().instance("box", "container", "Running", java.util.Map.of(
+                        Metadata.INSTANCE_SECRET_SHA256, dev.incusspawn.proxy.InstanceSecret.sha256(dev.incusspawn.proxy.InstanceSecret.generate()),
+                        Metadata.INSTANCE_SECRET_BOOT, "2026-11-02T19:04:00Z proofs-v4:"))
+                .lastUsedAt("box", "2026-11-03T16:33:00.123456789Z");
+        var delivered = new java.util.ArrayList<String>();
+        var client = org.mockito.Mockito.spy(daemon.client());
+        org.mockito.Mockito.doAnswer(call -> {
+            java.util.Map<String, String> env = call.getArgument(1);
+            if (env.containsKey(dev.incusspawn.proxy.InstanceSecret.DELIVERY_ENV)) delivered.add(env.get(dev.incusspawn.proxy.InstanceSecret.DELIVERY_ENV));
+            return new IncusClient.ExecResult(0, "", "");
+        }).when(client).shellExec(org.mockito.ArgumentMatchers.eq("box"), org.mockito.ArgumentMatchers.anyMap(),
+                org.mockito.ArgumentMatchers.any(String[].class));
+        var real = new IncusInstanceBackend(client, mock(InstanceLockManager.class));
+
+        real.giveSecretIfMissing("box", real.metadata("box"));
+        assertEquals(1, delivered.size(), daemon.requests()::toString);
+        assertEquals(dev.incusspawn.proxy.InstanceSecret.sha256(delivered.getFirst()),
+                daemon.instance("box").path("config").pathText(Metadata.INSTANCE_SECRET_SHA256, ""));
+
+        var metadata = real.metadata("box");
+        var requests = daemon.requests().size();
+        real.giveSecretIfMissing("box", metadata);
+        assertEquals(1, delivered.size(), "once per boot, not once per exec");
+        assertEquals(requests, daemon.requests().size(), "a boot holding its secret is judged from the read the call made");
+    }
+
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(dev.incusspawn.command.IsolatedHome.class)
+    void aVmsGuestIsAskedOncePerBootNotOncePerExec() {
+        // Only the guest knows whether a VM holds its secret: a probe per exec would cost every one
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon().instance("vm", "virtual-machine", "Running", java.util.Map.of())
+                .lastUsedAt("vm", "2026-11-03T16:33:00Z");
+        var client = org.mockito.Mockito.spy(daemon.client());
+        var probes = new java.util.concurrent.atomic.AtomicInteger();
+        org.mockito.Mockito.doAnswer(call -> {
+            probes.incrementAndGet();
+            return new IncusClient.ExecResult(0, "", ""); // holds its secret
+        }).when(client).shellExec(org.mockito.ArgumentMatchers.eq("vm"), org.mockito.ArgumentMatchers.any(String[].class));
+        var real = new IncusInstanceBackend(client, mock(InstanceLockManager.class));
+
+        real.giveSecretIfMissing("vm", real.metadata("vm"));
+        real.giveSecretIfMissing("vm", real.metadata("vm"));
+        assertEquals(1, probes.get());
+
+        daemon.lastUsedAt("vm", "2026-11-04T08:00:00Z"); // Incus restarted it
+        real.giveSecretIfMissing("vm", real.metadata("vm"));
+        assertEquals(2, probes.get(), "a new boot is asked again");
+    }
+
+    @Test
     void onlyAnInstanceIncusSaysIsMissingReadsAsGone() {
         when(incus.instanceMetadataOrThrow("gone")).thenReturn(null);
         assertNull(backend.metadata("gone"));

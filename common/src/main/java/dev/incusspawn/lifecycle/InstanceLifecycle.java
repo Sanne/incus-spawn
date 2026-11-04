@@ -554,21 +554,47 @@ public final class InstanceLifecycle {
     }
 
     /**
+     * Give running {@code instance} a new secret if its boot has none, for a caller that runs
+     * something in it without {@link #ensureReady}: {@code isx mcp}'s {@code exec}, {@code delegate}
+     * and task tools, on a box Incus restarted itself, after a host reboot say (#1975). Free for a
+     * container whose boot is stamped as holding it; a VM's guest is probed. Never starts or
+     * recovers anything, and never throws: a box left without its secret is refused by the proxy.
+     *
+     * @return whether this boot holds its secret as far as isx can tell: false for one not running,
+     *         a VM whose agent does not answer, or a delivery that failed (and warned)
+     */
+    public static boolean giveSecretIfMissing(IncusClient incus, String name, JqValue instance, Output out) {
+        if (!isRunning(instance)) return false;
+        var machineType = IncusClient.machineType(instance);
+        if (machineType == MachineType.CONTAINER && secretRecordedForBoot(instance)) return true;
+        try (var lock = secretLock(incus, name, machineType, "giving " + name + " a new secret", out)) {
+            // The holder may have given it one meanwhile, or stopped it
+            return giveSecretIfStillNeeded(incus, name, lock.waited() ? incus.instanceMetadataOrThrow(name) : instance,
+                    machineType, out);
+        } catch (HostLock.HostLockException | IncusException e) {
+            out.warn("could not give " + name + " a new instance secret: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * With the {@link #secretLock} held: give running {@code instance} a new secret if its boot has
      * none, for a container from its boot stamp, for a VM from the guest. A VM whose agent does not
      * answer is left to the next shell, which recovers it.
+     *
+     * @return whether the boot holds its secret now; false for one not running or a VM whose agent does not answer
      */
-    private static void giveSecretIfStillNeeded(IncusClient incus, String name, JqValue instance,
-                                                MachineType machineType, Output out) {
-        if (!isRunning(instance)) return;
+    private static boolean giveSecretIfStillNeeded(IncusClient incus, String name, JqValue instance,
+                                                   MachineType machineType, Output out) {
+        if (!isRunning(instance)) return false;
         if (machineType == MachineType.VM) {
             var probe = probeAgent(incus, name, instance);
-            if (probe != null && InstanceSecret.missingIn(probe)) {
-                giveSecretHeld(incus, name, instance, null, Metadata.isMcpCaller(instance), out);
-            }
-        } else if (!secretRecordedForBoot(instance)) {
-            giveSecretHeld(incus, name, instance, bootOf(instance), Metadata.isMcpCaller(instance), out);
+            if (probe == null) return false;
+            return !InstanceSecret.missingIn(probe)
+                    || giveSecretHeld(incus, name, instance, null, Metadata.isMcpCaller(instance), out);
         }
+        return secretRecordedForBoot(instance)
+                || giveSecretHeld(incus, name, instance, bootOf(instance), Metadata.isMcpCaller(instance), out);
     }
 
     private static boolean isRunning(JqValue instance) {
@@ -863,10 +889,18 @@ public final class InstanceLifecycle {
 
     /** Whether container {@code instance}'s boot is stamped as holding the secret isx gave it, or unknown. */
     private static boolean secretRecordedForBoot(JqValue instance) {
-        var bootedAt = bootOf(instance);
         var config = instance.path("config");
-        return bootedAt.isEmpty() || secretBootStamp(bootedAt, config.pathText(Metadata.INSTANCE_PROOF_ID, ""))
-                .equals(config.pathText(Metadata.INSTANCE_SECRET_BOOT, ""));
+        return secretRecordedForBoot(bootOf(instance), config.pathText(Metadata.INSTANCE_PROOF_ID, ""),
+                config.pathText(Metadata.INSTANCE_SECRET_BOOT, ""));
+    }
+
+    /**
+     * {@link #secretRecordedForBoot(JqValue)} from the values it reads: the boot ({@code last_used_at}),
+     * the {@link Metadata#INSTANCE_PROOF_ID} and the {@link Metadata#INSTANCE_SECRET_BOOT} stamp,
+     * for a caller holding them rather than the instance ({@code isx mcp}, #1975).
+     */
+    public static boolean secretRecordedForBoot(String bootedAt, String proofId, String bootStamp) {
+        return bootedAt.isEmpty() || secretBootStamp(bootedAt, proofId).equals(bootStamp);
     }
 
     /**
@@ -925,9 +959,13 @@ public final class InstanceLifecycle {
         }
     }
 
-    /** {@link #giveSecretToThisBoot}, with its {@link #secretLock} held. Never throws. */
-    static void giveSecretHeld(IncusClient incus, String name, JqValue instance, String bootedAt,
-                               boolean mcpCaller, Output out) {
+    /**
+     * {@link #giveSecretToThisBoot}, with its {@link #secretLock} held. Never throws.
+     *
+     * @return whether the guest kept the secret; on false, why was warned
+     */
+    static boolean giveSecretHeld(IncusClient incus, String name, JqValue instance, String bootedAt,
+                                  boolean mcpCaller, Output out) {
         String failure;
         try {
             var placeholders = ProofToken.declaredInBackground();
@@ -944,7 +982,7 @@ public final class InstanceLifecycle {
                 }
                 return result;
             });
-            if (delivery.success() && !InstanceSecret.missingIn(delivery.stdout())) return;
+            if (delivery.success() && !InstanceSecret.missingIn(delivery.stdout())) return true;
             failure = delivery.success() ? "the guest did not keep it" : "exit code " + delivery.exitCode();
         } catch (RuntimeException e) {
             failure = e.getMessage();
@@ -960,6 +998,7 @@ public final class InstanceLifecycle {
             }
         }
         out.warn("could not give " + name + " a new instance secret: " + failure);
+        return false;
     }
 
     /**

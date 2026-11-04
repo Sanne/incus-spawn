@@ -253,6 +253,16 @@ Only the guest can tell, and `ensureReady` already asks a running VM's agent whe
 Asking the guest the same way for containers was the alternative: one exec on every shell into a running container, where the comparison costs nothing.
 Guessing from the pre-start state was rejected: a stamp written before a start cannot tell the boot it was made for from a later one.
 
+*A running box that `isx mcp` uses (#1975).*
+`ensureReady` runs only where isx prepares a box for use, and a coordinator's `exec`, `delegate` and task tools run in a box that is already running.
+So a box Incus restored after a host reboot kept its empty `/run/isx`, and every model call in it was refused with a 401 until someone ran `isx shell` or `isx start` on it.
+`McpSession.requireRunning`, the gate of every tool that runs something in a box, and `start_instance` on a running one now call `InstanceBackend.giveSecretIfMissing` (`InstanceLifecycle.giveSecretIfMissing`) before anything runs.
+For a container the judgment comes from the read `requireRunning` already made: `metadata()` carries `last_used_at` and the type beside the config, so a boot holding its secret costs no request.
+A missed boot costs one read, then the delivery under the `secretLock`.
+A VM's guest is probed once per boot `isx mcp` sees (its `last_used_at`), so a restart by Incus is caught without a probe on every exec; a reboot in place waits for the next `isx shell`, as before.
+A delivery that fails is logged and the command still runs: without its proofs the proxy relays the guest's placeholder unchanged, which fails closed.
+A plain `incus exec` bypasses isx entirely, and stays without its proofs until isx next prepares the box.
+
 **Proof tokens: address and proof authorize credential injection (#1100, #1107).**
 A nested machine shares its parent's apparent source address after NAT, including user-mode networking.
 Every credential request therefore needs the current proof for that address and credential namespace before the proxy can inject the selected account.

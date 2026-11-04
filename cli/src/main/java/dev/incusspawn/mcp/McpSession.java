@@ -419,6 +419,8 @@ final class McpSession {
             throw new ToolError(ToolError.Code.WRONG_STATE, "'" + name + "' is " + metadata.get(InstanceBackend.STATUS).toLowerCase(java.util.Locale.ROOT)
                     + ", which isx mcp cannot change. Ask the user to look at it: isx shell " + name);
         }
+        // Restarted outside isx (a host reboot), its /run/isx is empty: no proofs, so every model call is refused
+        backend.giveSecretIfMissing(name, metadata);
         return metadata;
     }
 

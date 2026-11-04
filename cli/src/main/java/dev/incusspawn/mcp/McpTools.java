@@ -1525,6 +1525,8 @@ final class McpTools {
         node.put("instance", name);
         var taskIds = JqArray.arrayBuilder();
         if (InstanceBackend.running(metadata)) {
+            // Running is not ready: a box Incus restarted itself still needs its secret (#1975)
+            backend.giveSecretIfMissing(name, metadata);
             node.put("already", true);
             node.put("tasks", taskIds.build());
             return ToolResult.text(name + " is already running.", node.build());

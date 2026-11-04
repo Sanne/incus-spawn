@@ -314,6 +314,36 @@ final class IncusInstanceBackend implements InstanceBackend {
         incus.configUpdate(name, new java.util.HashMap<String, Object>(config));
     }
 
+    /**
+     * The boot of each VM whose guest was last found holding its secret, by name: only the guest
+     * can say, and a probe per call would cost every exec one. A VM restarted by Incus has a new
+     * boot, and is asked again; one rebooted in place is not seen until {@code isx shell}.
+     */
+    private final Map<String, String> vmBootsHoldingSecret = new java.util.concurrent.ConcurrentHashMap<>();
+
+    @Override
+    public void giveSecretIfMissing(String name, Map<String, String> metadata) {
+        var boot = metadata.getOrDefault(LAST_USED_AT, "");
+        if ("virtual-machine".equals(metadata.get(TYPE))) {
+            if (!boot.isEmpty() && boot.equals(vmBootsHoldingSecret.get(name))) return;
+        } else if (InstanceLifecycle.secretRecordedForBoot(boot, metadata.getOrDefault(Metadata.INSTANCE_PROOF_ID, ""),
+                metadata.getOrDefault(Metadata.INSTANCE_SECRET_BOOT, ""))) {
+            return;
+        }
+        try {
+            // A missed boot only: the delivery wants the whole instance, and this read is its first request
+            var instance = incus.instanceMetadataOrThrow(name);
+            if (instance == null) return;
+            if (InstanceLifecycle.giveSecretIfMissing(incus, name, instance, dev.incusspawn.util.BuildOutput.bound())
+                    && IncusClient.machineType(instance) == dev.incusspawn.incus.MachineType.VM) {
+                vmBootsHoldingSecret.put(name, instance.pathText("last_used_at", ""));
+            }
+        } catch (IncusException e) {
+            // The read; the command still runs: without its proofs the proxy refuses its credentials, which is safe
+            McpLog.log("could not give " + name + " its instance secret: " + e.getMessage());
+        }
+    }
+
     @Override
     public Map<String, Map<String, String>> mcpInstances() {
         var result = new LinkedHashMap<String, Map<String, String>>();
@@ -361,6 +391,10 @@ final class IncusInstanceBackend implements InstanceBackend {
         if (!status.isEmpty()) result.put(STATUS, status);
         var createdAt = instance instanceof JqObject createdObj ? JsonRpc.text(createdObj, "created_at", "") : "";
         if (!createdAt.isEmpty()) result.put(CREATED_AT, createdAt);
+        var lastUsedAt = instance instanceof JqObject usedObj ? JsonRpc.text(usedObj, "last_used_at", "") : "";
+        if (!lastUsedAt.isEmpty()) result.put(LAST_USED_AT, lastUsedAt);
+        var type = instance instanceof JqObject typeObj ? JsonRpc.text(typeObj, "type", "") : "";
+        if (!type.isEmpty()) result.put(TYPE, type);
         return result;
     }
 }

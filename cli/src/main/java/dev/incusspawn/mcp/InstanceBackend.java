@@ -30,6 +30,15 @@ interface InstanceBackend {
      */
     String CREATED_AT = "created_at";
 
+    /**
+     * Not a config key: when Incus last started the instance ({@code last_used_at}), from the same
+     * read as {@link #STATUS}; every start sets it, a restart after a host reboot included.
+     */
+    String LAST_USED_AT = "last_used_at";
+
+    /** Not a config key: the instance's Incus type ({@code container}, {@code virtual-machine}), from the same read. */
+    String TYPE = "type";
+
     static boolean stopped(Map<String, String> metadata) {
         return "Stopped".equals(metadata.get(STATUS));
     }
@@ -174,6 +183,14 @@ interface InstanceBackend {
 
     /** Set config keys in one write; a null value removes the key. */
     void stamp(String name, Map<String, String> config);
+
+    /**
+     * Give running {@code name}, as {@link #metadata} just read it, its instance secret and proofs
+     * if its boot lacks them, as {@code isx shell} would: a box Incus restarted itself, after a host
+     * reboot say, comes back with an empty {@code /run/isx}, and its agent's calls are refused
+     * until then (#1975). Free while the boot holds them; never throws, a failure is warned.
+     */
+    void giveSecretIfMissing(String name, Map<String, String> metadata);
 
     /** Instances whose config carries an MCP session, with their config and {@link #STATUS}. */
     Map<String, Map<String, String>> mcpInstances();
