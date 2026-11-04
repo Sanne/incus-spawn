@@ -81,9 +81,9 @@ interface IncusTransport {
          */
         byte[] readMessage() throws IOException;
         /**
-         * Milliseconds since anything (data, PING or PONG) last arrived through
-         * {@link #readMessage}. A quiet long-lived stream that sends its own pings uses this to
-         * tell an idle peer from a vanished one.
+         * Milliseconds since anything (data, PING or PONG) last arrived through a read. A quiet
+         * long-lived stream that sends its own pings uses this to tell an idle peer from a
+         * vanished one.
          */
         long millisSinceLastReceived();
         /**

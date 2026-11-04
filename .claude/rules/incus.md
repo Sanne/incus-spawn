@@ -70,15 +70,17 @@ vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so 
   At the limit it sends `signalMessage(9)` on the control fd, then gives up `KILL_GRACE_SECONDS` later whether or not the operation ended (a child holding the output can keep it open), throwing.
   Any other exit before the command finished (a `/wait` overrunning its slack, a lost op, an interrupt) sends the kill too, from `waitForExecOp`'s `finally`.
   `IncusApiLossyTunnelTest` pins all three.
+  `execPty` (`isx shell`) has no `/wait` to end it, so its control keepalive closes control at its first ping after `EXEC_SILENCE_LIMIT_MS` (50s) with nothing received, not even a pong, and returns as a lost connection, which the reconnect loop retries (#1996).
+  Only control is watched: fd "0"'s reader also blocks on the terminal.
 - **Bulk exec streams are framed large (#1643).**
   Stdin goes in frames of up to `IncusApi.STDIN_CHUNK` (64 KiB), each masked a word at a time and written in one write (`wsSendMasked`), and frames are parsed from a read-ahead that grows from 4 to 64 KiB once a read fills it or a frame wants more.
   This is `isx ssh-proxy`'s scp throughput: `ExecRelayFramingTest` pins it, and design/macos-and-vms.md "A bulk exec stream is framed large and read ahead" has the figures.
 - **Long-lived event subscription.**
   `IncusApi.openEvents(types)` (public via `IncusClient.openLifecycleEvents()`, returning `IncusEventStream`) is the one WebSocket meant to stay open indefinitely (the TUI's `InstanceEventWatcher`).
   Incus pings its event listeners about every 10s and drops those that never answer, so `readMessage()` answers PINGs with PONGs (`ControlFrames`) and reassembles fragmented frames (one JSON document per message).
-  **`readPayload()` -- the exec/shell path -- deliberately never writes**: it skips PINGs exactly as before event subscriptions existed, because a PONG sent from the reader thread would queue behind a stdin write holding `writeLock`, and Incus doesn't ping exec sockets anyway.
+  **`readPayload()` -- the exec/shell path -- deliberately never writes**: it counts PINGs and PONGs as received but never answers them, because a PONG sent from the reader thread would queue behind a stdin write holding `writeLock`, and Incus doesn't ping exec sockets anyway.
   Keep the two paths separate.
-  The event stream also pings every 15s (keeps `socat -T` from reaping it) and its keepalive closes the stream after 50s with nothing received (`millisSinceLastReceived()`, fed only by `readMessage()`) -- in a `finally`, so the stream ends whenever the keepalive does -- so a half-open vsock stream reads as end-of-stream instead of blocking forever.
+  The event stream also pings every 15s (keeps `socat -T` from reaping it) and its keepalive closes the stream after 50s with nothing received (`millisSinceLastReceived()`, fed by both reads) -- in a `finally`, so the stream ends whenever the keepalive does -- so a half-open vsock stream reads as end-of-stream instead of blocking forever.
   Reconnect policy (bounded; gives up for the session) lives in the TUI's `InstanceEventWatcher`.
 - **An interactive shell needs a terminal, and only a lost session is retried.**
   `IncusClient.interactiveShell()` throws `NoTerminalForShellException` (an `IncusException`) unless `IncusClient.hasTerminal()` (stdin and stdout a terminal), and `execPty` opens `/dev/tty` *before* posting the exec, so neither case starts a guest process.
