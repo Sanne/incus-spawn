@@ -38,6 +38,11 @@ class RepoClonerReferenceTest {
     @TempDir
     Path checkouts;
 
+    /** The host's {@code ls-remote}, which no test here sends to the network. */
+    private org.mockito.stubbing.Answer<?> readRemote = inv -> mock(dev.incusspawn.git.GitPreparation.RemoteRefs.class);
+    /** Run as soon as {@code cloneRepos} returns. */
+    private Runnable cloned = () -> {};
+
     /** {@code clones} holds the clones that succeeded. */
     private record Build(FakeIncusDaemon daemon, List<String> clones, AtomicInteger primes,
                          AtomicInteger primesWhileAttached, String output, List<String> deviceNames) {}
@@ -114,13 +119,19 @@ class RepoClonerReferenceTest {
         }).when(incus).execInContainer(eq(VM), eq("agentuser"), anyString());
 
         var cmd = spy(new RepoCloner(incus));
+        var preparation = mock(dev.incusspawn.git.GitPreparation.class);
+        when(preparation.readRemote(anyString(), any())).thenAnswer(readRemote);
+        doReturn(preparation).when(cmd).preparation(any());
         doAnswer(inv -> {
             RepoCloner.RepoReference ref = inv.getArgument(1);
             return RepoClonerTest.reference(ref.deviceName(), ref.containerPath(), ref.source(), null);
         }).when(cmd).prepareReference(any(), any(), any(), anyInt(), any(), any());
         doReturn(count).when(cmd).repoConcurrency(anyInt()); // every clone at once: the most slot pressure
         var shown = RepoClonerTest.shown(() -> assertTimeoutPreemptively(java.time.Duration.ofSeconds(30),
-                () -> cmd.cloneRepos(new Container(incus, VM), imageDef, java.util.Map.of(), MachineType.VM)));
+                () -> {
+                    cmd.cloneRepos(new Container(incus, VM), imageDef, java.util.Map.of(), MachineType.VM);
+                    cloned.run();
+                }));
         return new Build(daemon, clones, primes, primesWhileAttached, shown, deviceNames);
     }
 
@@ -130,6 +141,43 @@ class RepoClonerReferenceTest {
         assertEquals(3, viaReference(build), build.output());
         assertEquals(3, new java.util.HashSet<>(build.deviceNames()).size());
         assertEquals(List.of(), referenceDevices(build));
+    }
+
+    @Test
+    void noRemoteReadOutlivesTheClones() throws IOException, InterruptedException {
+        // A read nobody consumed is cut, and releasing its lease touches the cache (#2000):
+        // cloneRepos must not return while that is still under way.
+        var returned = new java.util.concurrent.CountDownLatch(1);
+        var outlived = new java.util.concurrent.atomic.AtomicInteger();
+        var reads = new java.util.concurrent.ConcurrentLinkedQueue<Thread>();
+        readRemote = inv -> {
+            reads.add(Thread.currentThread());
+            try {
+                new java.util.concurrent.CountDownLatch(1).await();
+            } catch (InterruptedException cut) {
+                // Still releasing when cloneRepos returns, unless cloneRepos waits for it.
+                boolean done = false;
+                while (!done) {
+                    try {
+                        if (returned.await(1, java.util.concurrent.TimeUnit.SECONDS)) outlived.incrementAndGet();
+                        done = true;
+                    } catch (InterruptedException again) {
+                        // Keep releasing.
+                    }
+                }
+                throw new java.io.InterruptedIOException("cut");
+            }
+            throw new AssertionError("unreachable");
+        };
+        cloned = returned::countDown;
+
+        var build = build(3, 8);
+
+        assertEquals(3, viaReference(build), build.output());
+        // Each read has ended before outlived is read, so a read cloneRepos left running is counted.
+        for (var read : reads) assertTrue(read.join(java.time.Duration.ofSeconds(10)), "a host ls-remote never ended");
+        assertFalse(reads.isEmpty(), "no host ls-remote started");
+        assertEquals(0, outlived.get(), "a host ls-remote was still running after cloneRepos returned");
     }
 
     @Test

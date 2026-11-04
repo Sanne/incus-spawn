@@ -52,6 +52,8 @@ class RepoCloner {
     final java.util.Map<Integer, String> preparationNotRetained = new java.util.concurrent.ConcurrentHashMap<>();
     /** By repo: the host's read of the remote's refs, started beside the guest's access check (#1934). */
     private final java.util.Map<Integer, RemoteRead> remoteReads = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Every read started, consumed or cut, so {@link #cloneRepos} returns only once none still touches the cache. */
+    private final java.util.Queue<RemoteRead> startedReads = new java.util.concurrent.ConcurrentLinkedQueue<>();
     /** Bounds the host's concurrent {@code ls-remote}s, which outlive the limiter permit they started under. */
     private final java.util.concurrent.Semaphore remoteReadSlots =
             new java.util.concurrent.Semaphore(Math.max(1, CpuInfo.highPerfCores()));
@@ -297,7 +299,7 @@ class RepoCloner {
             }
             if (!hostSources.isEmpty() || java.util.Arrays.stream(refs).anyMatch(r -> r != null && r.request() != null)) {
                 try {
-                    preparation = new GitPreparation(config.gitCache(), config.gitTransfer());
+                    preparation = preparation(config);
                 } catch (Exception e) {
                     if (!hostSources.isEmpty()) throw new IncusException("Host repository preparation unavailable: " + e.getMessage());
                     for (int i = 0; i < refs.length; i++) {
@@ -358,7 +360,12 @@ class RepoCloner {
                         idx -> reportPlain(labels.get(idx), states.get(idx)));
             } finally {
                 // Phase 3 (serial): remove any reference a worker could not detach.
-                mounts.removeLeftovers();
+                try {
+                    mounts.removeLeftovers();
+                } finally {
+                    // A cut read may still be releasing its lease's work directory.
+                    awaitRemoteReads();
+                }
             }
 
             if (showTimings) preparationTimings.forEach((idx, timing) -> BuildOutput.note(labels.get(idx) + ": " + timing));
@@ -416,7 +423,9 @@ class RepoCloner {
                 try {
                     // Neither check needs the other to start; the selections are compared before mounting.
                     if (!repo.isHostSource() && preparation != null) {
-                        remoteReads.put(idx, RemoteRead.start(preparation, repo.getUrl(), remoteReadSlots));
+                        var read = RemoteRead.start(preparation, repo.getUrl(), remoteReadSlots);
+                        startedReads.add(read);
+                        remoteReads.put(idx, read);
                     }
                     advertisement = checkTemplateAccess(container, repo, states, idx);
                     if (advertisement == null) ref = RepoReference.skipped("template account could not access the repository");
@@ -637,6 +646,16 @@ class RepoCloner {
         }
     }
 
+    /** The host's Git preparation for {@link #cloneRepos}; a test supplies its own. */
+    GitPreparation preparation(SpawnConfig config) throws java.io.IOException {
+        return new GitPreparation(config.gitCache(), config.gitTransfer());
+    }
+
+    /** Waits for every read's thread to end; each worker has already consumed or discarded its read. */
+    private void awaitRemoteReads() {
+        for (RemoteRead read; (read = startedReads.poll()) != null; ) read.awaitEnd();
+    }
+
     private void discardRemoteRead(int idx) {
         var read = remoteReads.remove(idx);
         if (read != null) read.discard();
@@ -682,6 +701,20 @@ class RepoCloner {
                 if (e.getCause() instanceof RuntimeException runtime) throw runtime;
                 throw new java.io.IOException(e.getCause());
             }
+        }
+
+        /** Waits for the read's thread, which a discard has interrupted if it was still running. */
+        void awaitEnd() {
+            var interrupted = false;
+            while (true) {
+                try {
+                    thread.join();
+                    break;
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+            if (interrupted) Thread.currentThread().interrupt();
         }
 
         /** Stops a read still running; closes one that has finished. */

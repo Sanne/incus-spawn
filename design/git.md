@@ -87,6 +87,7 @@ The refresh never clones in full, and only a selection the guest has just seen i
 When following the remote would need a rebuild, as when an unmerged branch was deleted, the refresh gives up and the guest clones from the network.
 Denied access, different credential-visible refs or a selection still racing after the refreshes uses the ordinary guest clone path instead.
 The host's `ls-remote` runs beside the guest's check, not after it: neither needs the other's result until the selections are compared, and it fetches nothing a denied guest could gain (#1934).
+A read nobody uses is cut, and the build's repos step returns only once every read has ended, so none still touches the cache's work directories afterwards (#2000).
 All guest access checks finish before any prime runs; host credentials alone never authorize snapshot access, including warm-cache copies.
 The re-reads after a mismatch are the exception: a slow preparation does not hold back other repos' primes, so a re-read may follow one (#1992).
 That is accepted because a prime can change only what the guest reads, never the snapshot it must match.
