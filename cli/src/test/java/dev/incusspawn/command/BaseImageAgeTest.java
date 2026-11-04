@@ -171,6 +171,41 @@ class BaseImageAgeTest {
         }
     }
 
+    /**
+     * An explicit release tag ({@code fedora-45-v1}, which incus-spawn-images' release workflow
+     * accepts) has no date, but its release still orders it against another release line (#1988).
+     */
+    @Test
+    void anExplicitTagOrdersAcrossReleasesButNotWithinItsOwn() {
+        assertTrue(BaseImageAge.compareTags("fedora-44-20261015", "fedora-45-v1") < 0);
+        assertTrue(BaseImageAge.compareTags("fedora-45-v1", "fedora-44-20261015") > 0);
+        assertTrue(BaseImageAge.compareTags("fedora-45-v1", "fedora-9-20250101") > 0, "by number, not text");
+        assertTrue(BaseImageAge.compareTags("fedora-44-v2", "fedora-45-v1") < 0);
+        assertTrue(BaseImageAge.compareTags("fedora-44-20261021-2", "fedora-45-v1") < 0);
+        assertNull(BaseImageAge.compareTags("fedora-45-v1", "fedora-45-20261104"), "same release, no date to compare");
+        assertNull(BaseImageAge.compareTags("fedora-45-v1", "fedora-45-v2"));
+        assertEquals(0, BaseImageAge.compareTags("fedora-45-v1", "fedora-45-v1"), "the same release is current");
+        assertNull(BaseImageAge.compareTags("fedora-45-v1", "centos-45-v1"));
+        assertNull(BaseImageAge.compareTags("fedora-45-v1", "fedora-45"));
+        assertTrue(BaseImageAge.sameLine("fedora-45-v1", "fedora-45-20261104"));
+        assertFalse(BaseImageAge.sameLine("fedora-45-v1", "fedora-44-20261104"));
+
+        assertTrue(BuildCommand.isNewerRelease("fedora-45-v1", "fedora-9-20250101"));
+        assertFalse(BuildCommand.isNewerRelease("fedora-44-20261015", "fedora-45-v1"));
+
+        var defs = Map.of("tpl-minimal", def("""
+                name: tpl-minimal
+                image: fedora-45-base
+                image_url: https://example.org/{tag}/fedora-45-{arch}.tar.xz
+                image_tag: fedora-45-v1
+                """));
+        assertEquals(Standing.OLDER,
+                BaseImageAge.assess(container("tpl-minimal", "fedora-44-20261015", "ee".repeat(32)), defs).standing());
+        var age = new BaseImageAge.Assessment(Standing.OLDER, "fedora-44-20261001", "fedora-45-v1");
+        assertEquals(List.of("fedora-44-20261009"),
+                BaseImageAge.missingFixes(age).stream().map(BaseImageAge.KnownFix::release).toList());
+    }
+
     /** A pin behind the built-in release is a warning with its remedy, never a step marked "Warning:" (#1703). */
     @Test
     @ExtendWith(IsolatedHome.class)
