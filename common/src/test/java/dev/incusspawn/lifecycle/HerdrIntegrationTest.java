@@ -315,4 +315,21 @@ class HerdrIntegrationTest {
         assertFalse(Files.exists(records.resolve(".orphaned").resolve(ID)), "forgotten once removed");
         assertEquals(next, recorded("ws"), "the new ws has its own machine");
     }
+
+    /**
+     * herdr connects with {@code StrictHostKeyChecking=yes}, so the instance's alias reaches it only
+     * once its host key is pinned (#1863): before, herdr saved machines it could never reach again.
+     */
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(TempHome.class)
+    void theManagedAliasWantsTheHostKeyPinned() {
+        assertTrue(dev.incusspawn.ssh.SshKeyManager.ensureSshConfigInclude());
+        assertTrue(dev.incusspawn.ssh.SshKeyManager.addHostEntry("ws", "10.0.0.5"));
+        assertFalse(HerdrIntegration.SshAlias.MANAGED.resolves("ws", "10.0.0.5"), "no key a strict client finds");
+
+        dev.incusspawn.ssh.SshKeyManager.pinHostKeys("ws", "10.0.0.5",
+                List.of(dev.incusspawn.ssh.TestHostKeys.key("ssh-ed25519", 5)));
+
+        assertTrue(HerdrIntegration.SshAlias.MANAGED.resolves("ws", "10.0.0.5"));
+    }
 }

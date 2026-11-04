@@ -137,7 +137,7 @@ class InstanceLifecycleRequestBudgetTest {
         // reuses that read. So the boot costs one PATCH: 6, where it was 5 before #1024.
         var daemon = new FakeIncusDaemon().container(NAME, stableProofConfig()).ipFiltering(NAME, "true");
         var incus = spy(daemon.client());
-        doNothing().when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
+        doReturn("").when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
         var started = InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, RecordingOutput.QUIET);
         CertificateAuthority.fixContainerCaIfNeeded(incus, NAME, started, msg -> {});
         var requests = daemon.requests();
@@ -159,7 +159,7 @@ class InstanceLifecycleRequestBudgetTest {
             if (ssh) config.put(Metadata.SSH_SETUP, "true");
             var daemon = new FakeIncusDaemon().container(NAME, config).ipFiltering(NAME, "true");
             var incus = spy(daemon.client());
-            doNothing().when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
+            doReturn("").when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
             InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, RecordingOutput.QUIET);
             requests.add(daemon.requests());
         }
@@ -172,7 +172,7 @@ class InstanceLifecycleRequestBudgetTest {
         var daemon = new FakeIncusDaemon().instance(NAME, "container", "Running", stableProofConfig());
         var listed = daemon.instance(NAME);
         var incus = spy(daemon.client());
-        doNothing().when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
+        doReturn("").when(incus).waitForReady(eq(NAME), any(), any(), anyMap());
         InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, false, listed, RecordingOutput.QUIET);
         assertEquals("PATCH /1.0/instances/" + NAME, daemon.requests().getFirst());
         assertBudget(5, daemon, "TUI restart with its listing and guest answering");
@@ -185,7 +185,7 @@ class InstanceLifecycleRequestBudgetTest {
         // serve, so the flow ends there). The nameserver is the gateway that read carries.
         var daemon = new FakeIncusDaemon().container("dev-0", Map.of(Metadata.PROFILE, "tpl-dev"));
         var incus = spy(daemon.client());
-        doReturn(true).when(incus).pollUntilReady(eq(NAME), anyInt(), anyMap(), any(String[].class));
+        doReturn("").when(incus).pollUntilReadyOutput(eq(NAME), anyInt(), anyMap(), any(String[].class));
         var request = new BranchFlow.Request("dev-0", NAME, false, false, NetworkMode.FULL,
                 null, null, null, null, List.of(), true, Map.of());
         // A non-airgapped branch checks the host's proxy first; this host may not run one.

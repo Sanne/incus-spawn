@@ -12,8 +12,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -85,7 +87,143 @@ class SshKeyManagerTest {
         assertTrue(content.contains("IdentityFile ~/.config/incus-spawn/ssh/id_ed25519"));
         assertTrue(content.contains("IdentitiesOnly yes"));
         assertTrue(content.contains("StrictHostKeyChecking no"));
-        assertTrue(content.contains("UserKnownHostsFile /dev/null"));
+        // The key a strict client checks is found by the instance's name, in isx's pins (#1863)
+        assertTrue(content.contains("    HostKeyAlias test-instance\n"), content);
+        assertTrue(content.contains("    HashKnownHosts no\n"), content);
+        assertTrue(content.contains("    UserKnownHostsFile \"" + knownHosts() + "\"\n"), content);
+        assertFalse(content.contains("/dev/null"), content);
+    }
+
+    private Path knownHosts() {
+        return tempDir.resolve(".config/incus-spawn/ssh/known_hosts").toAbsolutePath();
+    }
+
+    private static final HostKeys.HostKey ED25519 = TestHostKeys.key("ssh-ed25519", 1);
+    private static final HostKeys.HostKey ECDSA = TestHostKeys.key("ecdsa-sha2-nistp256", 2);
+    private static final HostKeys.HostKey OTHER = TestHostKeys.key("ssh-ed25519", 3);
+
+    private static String pin(String name, String ip, HostKeys.HostKey key) {
+        return name + (ip.isEmpty() ? "" : "," + ip) + " " + key.type() + " " + key.blob() + " isx:" + name;
+    }
+
+    @Test
+    void aBlockWrittenBeforeHostKeysWerePinnedIsRewritten() throws IOException {
+        // Every block isx wrote before #1863 sends the key to /dev/null: a start must replace it
+        var config = tempDir.resolve(".config/incus-spawn/ssh/config");
+        Files.createDirectories(config.getParent());
+        Files.writeString(config, "Host dev\n    Hostname 10.0.0.5\n    StrictHostKeyChecking no\n"
+                + "    UserKnownHostsFile /dev/null\n");
+
+        assertFalse(SshKeyManager.hasHostEntry("dev", "10.0.0.5"));
+        SshKeyManager.addHostEntry("dev", "10.0.0.5");
+        assertTrue(SshKeyManager.hasHostEntry("dev", "10.0.0.5"));
+    }
+
+    @Test
+    void hostKeysArePinnedUnderTheNameAndTheAddress() throws IOException {
+        assertTrue(SshKeyManager.pinHostKeys("dev", "10.0.0.5", List.of(ED25519, ECDSA)));
+
+        assertEquals(List.of(pin("dev", "10.0.0.5", ED25519), pin("dev", "10.0.0.5", ECDSA)),
+                Files.readAllLines(knownHosts()));
+        assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(knownHosts())));
+        assertTrue(SshKeyManager.hasHostKeys("dev"));
+        assertFalse(SshKeyManager.hasHostKeys("de"));
+    }
+
+    @Test
+    void withoutAnAddressTheKeyIsPinnedUnderTheNameAlone() throws IOException {
+        SshKeyManager.pinHostKeys("dev", "", List.of(ED25519));
+        SshKeyManager.pinHostKeys("box", "not-an-address", List.of(ECDSA));
+
+        assertEquals(List.of(pin("dev", "", ED25519), pin("box", "", ECDSA)), Files.readAllLines(knownHosts()));
+    }
+
+    @Test
+    void noKeysPinNothing() {
+        assertFalse(SshKeyManager.pinHostKeys("dev", "10.0.0.5", List.of()));
+        assertFalse(Files.exists(knownHosts()));
+        assertFalse(SshKeyManager.hasHostKeys("dev"));
+    }
+
+    @Test
+    void aChangedKeyReplacesTheInstancesLinesWhereTheyStood() throws IOException {
+        // In place, so two instances' starts never move each other's lines and rewrite the file
+        SshKeyManager.pinHostKeys("a", "10.0.0.1", List.of(ED25519, ECDSA));
+        SshKeyManager.pinHostKeys("b", "10.0.0.2", List.of(ED25519));
+
+        SshKeyManager.pinHostKeys("a", "10.0.0.1", List.of(OTHER));
+
+        assertEquals(List.of(pin("a", "10.0.0.1", OTHER), pin("b", "10.0.0.2", ED25519)),
+                Files.readAllLines(knownHosts()));
+    }
+
+    @Test
+    void aCurrentPinIsNotRewritten() throws IOException {
+        SshKeyManager.pinHostKeys("a", "10.0.0.1", List.of(ED25519));
+        SshKeyManager.pinHostKeys("b", "10.0.0.2", List.of(ECDSA));
+        var before = FileTime.fromMillis(0);
+        Files.setLastModifiedTime(knownHosts(), before);
+
+        assertTrue(SshKeyManager.pinHostKeys("a", "10.0.0.1", List.of(ED25519)));
+
+        assertEquals(before, Files.getLastModifiedTime(knownHosts()), "the pins must not be rewritten");
+    }
+
+    @Test
+    void aRecycledAddressLeavesItsEarlierTenantPinnedByName() throws IOException {
+        // The address is the instance's only while it holds it: a stopped instance whose address
+        // went to another keeps its pin by name, and the address now names the new holder's key
+        SshKeyManager.pinHostKeys("old", "10.0.0.7", List.of(ED25519));
+
+        SshKeyManager.pinHostKeys("new", "10.0.0.7", List.of(OTHER));
+
+        assertEquals(List.of(pin("old", "", ED25519), pin("new", "10.0.0.7", OTHER)),
+                Files.readAllLines(knownHosts()));
+    }
+
+    @Test
+    void linesIsxDoesNotManageAreLeftAsTheyAre() throws IOException {
+        Files.createDirectories(knownHosts().getParent());
+        var foreign = List.of("# a comment naming dev", "@revoked dev " + OTHER.type() + " " + OTHER.blob(),
+                "|1|c2FsdA==|aGFzaA== " + OTHER.type() + " " + OTHER.blob(), "");
+        Files.write(knownHosts(), foreign);
+
+        SshKeyManager.pinHostKeys("dev", "10.0.0.5", List.of(ED25519));
+        SshKeyManager.cleanupInstance("dev");
+
+        assertEquals(foreign, Files.readAllLines(knownHosts()));
+    }
+
+    @Test
+    void aLineSshAddedByTheAliasIsReplacedByThePin() throws IOException {
+        // Under StrictHostKeyChecking no, ssh records a key it did not know, by the alias
+        Files.createDirectories(knownHosts().getParent());
+        Files.writeString(knownHosts(), "dev " + OTHER.type() + " " + OTHER.blob() + "\n");
+
+        SshKeyManager.pinHostKeys("dev", "10.0.0.5", List.of(ED25519));
+
+        assertEquals(List.of(pin("dev", "10.0.0.5", ED25519)), Files.readAllLines(knownHosts()));
+    }
+
+    @Test
+    void destroyingAnInstanceRemovesItsPinsOnly() throws IOException {
+        SshKeyManager.addHostEntry("gone", "10.0.0.1");
+        SshKeyManager.pinHostKeys("gone", "10.0.0.1", List.of(ED25519));
+        SshKeyManager.pinHostKeys("kept", "10.0.0.2", List.of(ECDSA));
+
+        SshKeyManager.cleanupInstance("gone");
+
+        assertFalse(SshKeyManager.hasHostKeys("gone"));
+        assertEquals(List.of(pin("kept", "10.0.0.2", ECDSA)), Files.readAllLines(knownHosts()));
+    }
+
+    @Test
+    void concurrentPinsKeepEachOthersLines() throws Exception {
+        whileFirstWriterHoldsConfig(() -> SshKeyManager.pinHostKeys("first", "10.0.0.1", List.of(ED25519)),
+                () -> SshKeyManager.pinHostKeys("second", "10.0.0.2", List.of(ECDSA)));
+
+        assertTrue(SshKeyManager.hasHostKeys("first"));
+        assertTrue(SshKeyManager.hasHostKeys("second"));
     }
 
     @Test

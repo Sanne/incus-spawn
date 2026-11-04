@@ -7,6 +7,8 @@ import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.ssh.HostKeys;
+import dev.incusspawn.ssh.TestHostKeys;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Output;
 import org.junit.jupiter.api.Test;
@@ -57,7 +59,7 @@ class BranchSetupWarningsTest {
 
     private static IncusClient settingUp(FakeIncusDaemon daemon, boolean ready) {
         var incus = spy(daemon.client());
-        doReturn(ready).when(incus).pollUntilReady(eq("dev-1"), anyInt(), anyMap(), any(String[].class));
+        doReturn(ready ? "" : null).when(incus).pollUntilReadyOutput(eq("dev-1"), anyInt(), anyMap(), any(String[].class));
         return incus;
     }
 
@@ -86,6 +88,53 @@ class BranchSetupWarningsTest {
 
         assertTrue(warnings.stream().anyMatch(w -> w.contains("Failed to configure SSH host entry: no address yet")),
                 "warned " + warnings);
+    }
+
+    /** A branch pins the host key its setup script reported (#1863), so herdr's strict check finds it. */
+    @Test
+    void aBranchPinsTheHostKeyItsSetupReported() throws IOException {
+        Files.createDirectories(Environment.sshDir());
+        Files.writeString(Environment.sshKeyFile(), "private\n");
+        Files.writeString(Environment.sshPubKeyFile(), "ssh-ed25519 AAAA isx\n");
+        var daemon = new FakeIncusDaemon().container("tpl-dev", Map.of(Metadata.TYPE, Metadata.TYPE_BASE,
+                Metadata.PROFILE, "tpl-dev", Metadata.SSH_SETUP, "true"));
+        var incus = spy(daemon.client());
+        var key = TestHostKeys.key("ssh-ed25519", 9);
+        var script = org.mockito.ArgumentCaptor.forClass(String[].class);
+        doReturn(TestHostKeys.printed(key)).when(incus)
+                .pollUntilReadyOutput(eq("dev-1"), anyInt(), anyMap(), script.capture());
+        doReturn("10.166.11.9").when(incus).getContainerIpv4("dev-1");
+
+        assertEquals(List.of(), branchWarnings(incus));
+
+        assertTrue(String.join(" ", script.getAllValues().getFirst()).contains(HostKeys.GUEST_SCRIPT));
+        // An airgapped branch has no stamped address, so its keys are pinned under its name alone
+        assertEquals(List.of("dev-1 ssh-ed25519 " + key.blob() + " isx:dev-1"),
+                Files.readAllLines(Environment.sshKnownHostsFile()));
+    }
+
+    /**
+     * The pin's address is the one isx stamped, never one the guest reports (#1863): the guest
+     * owns its interfaces, and pinning an address takes it off every other instance's line.
+     */
+    @Test
+    void aBranchPinsUnderItsStampedAddressNotTheGuestsOwn() throws IOException {
+        Files.createDirectories(Environment.sshDir());
+        Files.writeString(Environment.sshKeyFile(), "private\n");
+        Files.writeString(Environment.sshPubKeyFile(), "ssh-ed25519 AAAA isx\n");
+        var incus = spy(new FakeIncusDaemon().container("dev-1", Map.of()).client());
+        var key = TestHostKeys.key("ssh-ed25519", 9);
+        doReturn(TestHostKeys.printed(key)).when(incus)
+                .pollUntilReadyOutput(eq("dev-1"), anyInt(), anyMap(), any(String[].class));
+        // A sibling's address, which the guest put on one of its interfaces
+        doReturn("10.166.11.250").when(incus).getContainerIpv4("dev-1");
+        var prefetched = new RuntimeSetup.RuntimeConfig(null, true, null, null, null, null, "10.166.11.9", null, null);
+
+        RuntimeSetup.setupRuntime(incus, "dev-1", NetworkMode.FULL, prefetched, null, false, List.of(),
+                RecordingOutput.QUIET);
+
+        assertEquals(List.of("dev-1,10.166.11.9 ssh-ed25519 " + key.blob() + " isx:dev-1"),
+                Files.readAllLines(Environment.sshKnownHostsFile()));
     }
 
     @Test

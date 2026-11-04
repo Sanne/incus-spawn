@@ -70,7 +70,7 @@ class ProjectCommandTest {
         var daemon = new FakeIncusDaemon().container(PARENT, Map.of(Metadata.TYPE, Metadata.TYPE_BASE));
         if (previous) daemon.container(NAME, Map.of(Metadata.TYPE, Metadata.TYPE_PROJECT));
         var incus = spy(daemon.client());
-        doNothing().when(incus).waitForReady(anyString(), any(), anyString(), anyMap());
+        doReturn("").when(incus).waitForReady(anyString(), any(), anyString(), anyMap());
         doReturn(OK).when(incus).shellExec(anyString(), any(String[].class));
         doReturn(OK).when(incus).execInContainer(anyString(), eq("agentuser"), anyString());
         doAnswer(inv -> List.of(daemon.instance(inv.getArgument(0)).path("config").path(Metadata.STATIC_IP).asText()))
@@ -208,7 +208,7 @@ class ProjectCommandTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(Metadata.TYPE, Metadata.TYPE_PROJECT,
                 Metadata.UNTRUSTED_LINEAGE, Metadata.TYPE_PROJECT));
         var incus = spy(daemon.client());
-        doNothing().when(incus).waitForReady(anyString(), any(), anyString(), anyMap());
+        doReturn("").when(incus).waitForReady(anyString(), any(), anyString(), anyMap());
         doReturn(OK).when(incus).shellExec(anyString(), any(String[].class));
         doReturn(OK).when(incus).execInContainer(anyString(), eq("agentuser"), anyString());
         doAnswer(inv -> List.of(daemon.instance(inv.getArgument(0)).path("config").path(Metadata.STATIC_IP).asText()))
@@ -229,7 +229,7 @@ class ProjectCommandTest {
     void anUpdateOfAnUnstampedProjectTemplateLeavesItUntrusted() {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(Metadata.TYPE, Metadata.TYPE_PROJECT));
         var incus = spy(daemon.client());
-        doNothing().when(incus).waitForReady(anyString(), any(), anyString(), anyMap());
+        doReturn("").when(incus).waitForReady(anyString(), any(), anyString(), anyMap());
         doReturn(OK).when(incus).shellExec(anyString(), any(String[].class));
         doReturn(OK).when(incus).execInContainer(anyString(), eq("agentuser"), anyString());
         doAnswer(inv -> List.of(daemon.instance(inv.getArgument(0)).path("config").path(Metadata.STATIC_IP).asText()))

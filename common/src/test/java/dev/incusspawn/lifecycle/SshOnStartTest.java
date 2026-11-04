@@ -5,6 +5,9 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.ssh.HostKeys;
+import dev.incusspawn.ssh.SshKeyManager;
+import dev.incusspawn.ssh.TestHostKeys;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
@@ -40,12 +43,56 @@ class SshOnStartTest {
 
     /** Start {@code config}'s instance for use, and return the script its readiness probe ran. */
     private static String startScript(Map<String, String> config) {
+        return startScript(config, "");
+    }
+
+    /** {@link #startScript(Map)}, with the guest's script printing {@code answer} before its {@code ready}. */
+    private static String startScript(Map<String, String> config, String answer) {
         var daemon = new FakeIncusDaemon().container(NAME, config).ipFiltering(NAME, "true");
         var incus = spy(daemon.client());
         var script = ArgumentCaptor.forClass(String.class);
-        doNothing().when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), script.capture(), anyMap());
+        doReturn(answer).when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), script.capture(), anyMap());
         InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, RecordingOutput.QUIET);
         return script.getValue();
+    }
+
+    private static final HostKeys.HostKey HOST_KEY = TestHostKeys.key("ssh-ed25519", 7);
+
+    @Test
+    void aStartPinsTheHostKeyItsProbeReported() throws Exception {
+        // A client that forces strict checking, such as herdr, finds it by the name (#1863)
+        givenManagedKey();
+
+        var script = startScript(sshCapable(), TestHostKeys.printed(HOST_KEY));
+
+        assertTrue(script.contains(HostKeys.GUEST_SCRIPT), script);
+        assertEquals(List.of(NAME + ",10.166.11.42 ssh-ed25519 " + HOST_KEY.blob() + " isx:" + NAME),
+                Files.readAllLines(Environment.sshKnownHostsFile()));
+        assertTrue(Files.readString(Environment.sshConfigFile()).contains("HostKeyAlias " + NAME + "\n"));
+    }
+
+    @Test
+    void aStartWhoseProbeReportedNoKeyStillWritesTheBlock() throws Exception {
+        givenManagedKey();
+
+        startScript(sshCapable(), "");
+
+        assertTrue(Files.readString(Environment.sshConfigFile()).contains("Host " + NAME + "\n"));
+        assertFalse(Files.exists(Environment.sshKnownHostsFile()));
+    }
+
+    @Test
+    void aRestartFromTheTuiPinsTheHostKeyToo() throws Exception {
+        givenManagedKey();
+        var daemon = new FakeIncusDaemon().instance(NAME, "container", "Running", sshCapable());
+        var incus = spy(daemon.client());
+        doReturn(TestHostKeys.printed(HOST_KEY)).when(incus)
+                .waitForReady(eq(NAME), eq(MachineType.CONTAINER), anyString(), anyMap());
+
+        InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, false,
+                daemon.instance(NAME), RecordingOutput.QUIET);
+
+        assertTrue(SshKeyManager.hasHostKeys(NAME));
     }
 
     private static Map<String, String> sshCapable() {
@@ -73,7 +120,7 @@ class SshOnStartTest {
         var daemon = new FakeIncusDaemon().instance(NAME, "container", "Running", sshCapable());
         var incus = spy(daemon.client());
         var script = ArgumentCaptor.forClass(String.class);
-        doNothing().when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), script.capture(), anyMap());
+        doReturn("").when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), script.capture(), anyMap());
 
         InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, false,
                 daemon.instance(NAME), RecordingOutput.QUIET);

@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
 
 /**
@@ -46,7 +46,7 @@ class RunningInstanceSubnetMigrationTest {
     /** FakeIncusDaemon serves no exec: stand in for a guest that answers once started. */
     private static IncusClient answering(FakeIncusDaemon daemon) {
         var incus = spy(daemon.client());
-        doNothing().when(incus).waitForReady(eq("box"), any(), any(), anyMap());
+        doReturn("").when(incus).waitForReady(eq("box"), any(), any(), anyMap());
         return incus;
     }
 

@@ -171,6 +171,17 @@ class WaitForReadyTest {
                 "an exit 0 that did not run the probe must not end the wait");
         assertFalse(IncusClient.answeredReady(new IncusClient.ExecResult(0, "", "")));
         assertFalse(IncusClient.answeredReady(new IncusClient.ExecResult(1, "ready\n", "")));
+        assertFalse(IncusClient.answeredReady(new IncusClient.ExecResult(0, "ready\nError: gone\n", "")),
+                "ready must be the last thing the probe printed");
+    }
+
+    /** A guest script answers isx on the probe's stdout, before its ready (#1863: the SSH host keys). */
+    @Test
+    void whatTheGuestScriptPrintedBeforeReadyIsTheAnswer() {
+        var answered = new IncusClient.ExecResult(0, "isx-host-key a b\nisx-host-key c d\nready\n", "");
+        assertTrue(IncusClient.answeredReady(answered));
+        assertEquals("isx-host-key a b\nisx-host-key c d", IncusClient.answer(answered));
+        assertEquals("", IncusClient.answer(new IncusClient.ExecResult(0, "ready\n", "")));
     }
 
     @Test

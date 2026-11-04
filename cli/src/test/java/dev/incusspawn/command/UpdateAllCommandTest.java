@@ -48,7 +48,7 @@ class UpdateAllCommandTest {
     private IncusClient incus(String type) {
         daemon = new FakeIncusDaemon().instance(NAME, type, "Stopped", Map.of(Metadata.TYPE, Metadata.TYPE_BASE));
         var incus = spy(daemon.client());
-        doNothing().when(incus).waitForReady(anyString(), any(), any(), anyMap());
+        doReturn("").when(incus).waitForReady(anyString(), any(), any(), anyMap());
         doAnswer(inv -> {
             var args = inv.getArguments();
             // Matchers pass null while a stub is set up

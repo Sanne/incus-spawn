@@ -581,7 +581,9 @@ isx tells it instead: the `herdr` tool installs herdr in the template, and its h
 Installed in the template, herdr's first connection finds it and starts its server; without it herdr offers to install itself over SSH, which is the step Sanne did not want.
 `herdr machine add` runs without a terminal (checked against herdr 0.9.5: about a second, the remote server started and the machine saved).
 The target is the instance's name, which its Host block in isx's managed SSH config resolves.
-herdr is asked only once that holds: the managed config has the instance's block for its address, and `~/.ssh/config` includes it (`HerdrIntegration.SshAlias`).
+herdr is asked only once that holds: the managed config has the instance's block for its address, `~/.ssh/config` includes it, and the instance's host key is pinned (`HerdrIntegration.SshAlias`).
+herdr connects with `StrictHostKeyChecking=yes` on its command line, so without the pin it saves a machine it can never reach again (#1863, design/instances.md "Host keys pinned by the instance's name").
+Its `machine add` probe does not force strict checking, which is how that went unnoticed.
 Otherwise herdr would resolve the name as any host, a real machine of that name included, and install and start its server there; nothing is recorded, so a later start adds it.
 What isx did is recorded on the host, one file per instance name: the id of the machine it added, or `-` when it added none.
 So later starts check one file and run nothing, a copy or a renamed instance gets a record of its own, and an untrusted build is not retried or reported again on every start.

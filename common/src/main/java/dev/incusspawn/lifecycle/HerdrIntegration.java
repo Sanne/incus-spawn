@@ -56,13 +56,15 @@ public final class HerdrIntegration implements HostIntegration {
      * Whether {@code ssh <name>} on this host reaches the instance: the managed config holds its Host
      * block for its static address, and ~/.ssh/config includes that config. Without both, herdr
      * would resolve the name as any host, possibly a real machine of that name, and install and
-     * start its server there.
+     * start its server there. And its host key is pinned (#1863): herdr forces
+     * {@code StrictHostKeyChecking=yes}, so without the pin it saves a machine it never reaches.
      */
     @FunctionalInterface
     public interface SshAlias {
         boolean resolves(String name, String staticIp);
 
-        SshAlias MANAGED = (name, ip) -> SshKeyManager.hasSshConfigInclude() && SshKeyManager.hasHostEntry(name, ip);
+        SshAlias MANAGED = (name, ip) -> SshKeyManager.hasSshConfigInclude() && SshKeyManager.hasHostEntry(name, ip)
+                && SshKeyManager.hasHostKeys(name);
     }
 
     public HerdrIntegration(HostCommands host, Supplier<Path> records) {

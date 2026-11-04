@@ -12,6 +12,7 @@ import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.ProofToken;
+import dev.incusspawn.ssh.HostKeys;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Output;
@@ -127,14 +128,15 @@ public final class RuntimeSetup {
         var setupScript = buildSetupScript(prefetched, prefetched.buildSourceJson(), networkMode, sshKeys, secret != null);
         out.stepStart("Waiting for container");
         var env = secret != null ? InstanceSecret.guestEnv(secret, mcpCaller, placeholders) : Map.<String, String>of();
-        if (!incus.pollUntilReady(name, 30, env, "sh", "-c", setupScript)) {
+        var answer = incus.pollUntilReadyOutput(name, 30, env, "sh", "-c", setupScript);
+        if (answer == null) {
             out.stepBreak();
             out.warn("Container setup may not be complete.");
         } else {
             out.stepDone(null);
         }
 
-        configureSshHostEntry(incus, name, prefetched.hasSshKeys(), out);
+        configureSshHostEntry(incus, name, prefetched.hasSshKeys(), prefetched.staticIp(), HostKeys.parse(answer), out);
     }
 
     /**
@@ -172,6 +174,9 @@ public final class RuntimeSetup {
             // true takes the next step's separator, which may not follow a heredoc's end.
             sb.append('\n').append(Container.heredoc(asAgentuser(WRITE_KEYS), String.join("\n", sshKeys)))
               .append("\ntrue");
+            // The host keys to pin (#1863), on the answer this exec gives anyway. Before the
+            // checks below, which decide whether the script succeeded.
+            sb.append('\n').append(HostKeys.GUEST_SCRIPT);
         }
         // The static .network config is pushed into the stopped container before start
         // (see configureBranch), so the interface comes up immediately at boot — no DHCP
@@ -265,11 +270,12 @@ public final class RuntimeSetup {
     /**
      * What a start for use of an SSH-capable instance adds to the guest script its readiness probe
      * runs (#1640): the accepted keys, so a {@code --no-start} branch is reachable after its first
-     * start as a started branch is. Empty when there are none.
+     * start as a started branch is, and sshd's host keys, printed for the probe's answer to pin
+     * (#1863). Empty when there are none, when no key isx holds logs in.
      */
     static String sshStartScript() {
         var keys = acceptedKeys();
-        return keys.isEmpty() ? "" : "\n" + authorizeKeysScript(keys);
+        return keys.isEmpty() ? "" : "\n" + authorizeKeysScript(keys) + "\n" + HostKeys.GUEST_SCRIPT;
     }
 
     /**
@@ -350,13 +356,20 @@ public final class RuntimeSetup {
 
     /**
      * Give a started SSH-capable instance its {@code Host} entry if it has none, or one for an
-     * address it no longer has (#1640). A local file read when it is current, so the start path
-     * pays nothing on every later start; the address is the one {@code configureBranch} stamped,
-     * so it costs no request either.
+     * address it no longer has (#1640), and pin the host keys its probe reported (#1863). Local
+     * file reads when both are current, so the start path pays nothing on every later start; the
+     * address is the one {@code configureBranch} stamped, so it costs no request either.
+     *
+     * @param probeAnswer what the readiness probe's guest script printed ({@link HostKeys#parse});
+     *     null or without keys pins nothing, and the block still works for a client that does not
+     *     insist on checking
      */
-    static void ensureSshHostEntry(String name, JqValue instance) {
+    static void ensureSshHostEntry(String name, JqValue instance, String probeAnswer) {
+        if (!SshKeyManager.exists()) return;
         var address = instance.path("config").pathText(Metadata.STATIC_IP, "");
-        if (!SshKeyManager.exists() || SshKeyManager.hasHostEntry(name, address)) return;
+        // The pin first, so a strict client never meets a block whose key is not there yet
+        SshKeyManager.pinHostKeys(name, address, HostKeys.parse(probeAnswer));
+        if (SshKeyManager.hasHostEntry(name, address)) return;
         SshKeyManager.ensureSshConfigInclude();
         SshKeyManager.addHostEntry(name, address);
     }
@@ -364,8 +377,13 @@ public final class RuntimeSetup {
     /**
      * Configure the SSH host entry with Hostname directive. Must be called after
      * the container is started so the IPv4 address is available.
+     *
+     * @param staticIp the address {@code configureBranch} stamped, or "" for none: the keys are
+     *     pinned under it, never under one the guest reports, since its interfaces are its own and
+     *     pinning an address takes it off every other instance's line (#1863)
      */
-    static void configureSshHostEntry(IncusClient incus, String name, boolean hasSsh, Output out) {
+    static void configureSshHostEntry(IncusClient incus, String name, boolean hasSsh, String staticIp,
+                                      List<HostKeys.HostKey> hostKeys, Output out) {
         if (!SshKeyManager.exists()) return;
         if (!hasSsh) return;
 
@@ -373,6 +391,7 @@ public final class RuntimeSetup {
         boolean hostConfigured = false;
         try {
             var ipv4 = incus.getContainerIpv4(name);
+            SshKeyManager.pinHostKeys(name, staticIp, hostKeys);
             hostConfigured = SshKeyManager.addHostEntry(name, ipv4);
         } catch (Exception e) {
             out.warn("Failed to configure SSH host entry: " + e.getMessage());

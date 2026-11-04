@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
 
 /**
@@ -219,7 +219,7 @@ class AirgapGuardTest {
                 "source", tmp.resolve("deleted").toString(), "path", InstanceLifecycle.INBOX_PATH, "readonly", "true"));
         var listed = daemon.instance("box");
         var incus = spy(daemon.client());
-        doNothing().when(incus).waitForReady(eq("box"), any(), any(), anyMap());
+        doReturn("").when(incus).waitForReady(eq("box"), any(), any(), anyMap());
         var out = new RecordingOutput();
 
         InstanceLifecycle.restartForUse(incus, "box", MachineType.CONTAINER, false, listed, out);
@@ -237,7 +237,7 @@ class AirgapGuardTest {
         daemon.device("box", "fwd", Map.of("type", "proxy", "bind", "instance",
                 "listen", "tcp:127.0.0.1:8080", "connect", "tcp:192.0.2.1:80"));
         var incus = spy(daemon.client());
-        doNothing().when(incus).waitForReady(eq("box"), any(), any(), anyMap());
+        doReturn("").when(incus).waitForReady(eq("box"), any(), any(), anyMap());
 
         InstanceLifecycle.restartForUse(incus, "box", MachineType.CONTAINER, false, listed, RecordingOutput.QUIET);
 

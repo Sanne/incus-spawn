@@ -287,13 +287,14 @@ Each result reports how many bytes it consumed, and the caller feeds the rest of
 
 ## SSH Key Management
 
-incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration so tools like JetBrains Gateway and `ssh` work without passphrase prompts or host key warnings:
+incus-spawn manages a dedicated SSH key pair, per-instance SSH configuration and each instance's pinned host keys, so tools like JetBrains Gateway, `ssh` and herdr work without passphrase prompts or host key warnings:
 
 ```
 ~/.config/incus-spawn/ssh/
     id_ed25519          # managed private key (mode 600, no passphrase)
     id_ed25519.pub      # managed public key
     config              # per-instance Host blocks (managed by isx)
+    known_hosts         # each instance's pinned host keys (managed by isx)
 ```
 
 **Lifecycle:**
@@ -306,8 +307,9 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
    It runs after the home's chown and under `env -i`, since agentuser can read the environment of its own processes.
    The secret delivery before it already unsets what it delivered, so `env -i` keeps out whatever else the exec carries.
    A file agentuser does not own, which the root write used to repair, is removed first, as agentuser may in its own `~/.ssh`; a root-owned `~/.ssh` itself is not repaired.
-   Then, once the instance has an address (`RuntimeSetup.configureSshHostEntry`), it writes a `Host <instance-name>` block to the managed config with `Hostname <address>`, `ProxyCommand isx ssh-proxy <instance-name>`, `User agentuser`, `IdentityFile`, `IdentitiesOnly yes`, `StrictHostKeyChecking no` and `UserKnownHostsFile /dev/null`.
-   After this, `ssh <instance-name>` just works.
+   Then, once the instance has an address (`RuntimeSetup.configureSshHostEntry`), it writes a `Host <instance-name>` block to the managed config with `Hostname <address>`, `ProxyCommand isx ssh-proxy <instance-name>`, `User agentuser`, `IdentityFile`, `IdentitiesOnly yes`, `HostKeyAlias <instance-name>`, `HashKnownHosts no`, `StrictHostKeyChecking no` and `UserKnownHostsFile` naming the managed `known_hosts` by its absolute path.
+   Before the block, it pins the host keys the setup script printed (`HostKeys.GUEST_SCRIPT`, on the answer `pollUntilReadyOutput` returns), so the setup exec carries them (#1863).
+   After this, `ssh <instance-name>` just works, and so does a client that forces strict host key checking.
 3. **Every later start for use** (`InstanceLifecycle.startForUse`, behind `isx shell`, `isx run` and the TUI) does the same for an instance with SSH, so a `--no-start` branch is reachable after its first start (#1640).
    The keys ride in the readiness probe's guest script (`RuntimeSetup.sshStartScript`), which adds only the ones `authorized_keys` lacks, so a key added inside the box survives.
    A TUI restart (`restartForUse`) adds them to its probe the same way, from its listing.
@@ -318,9 +320,13 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
    It is skipped when `~/.ssh` or the file is a symlink, or the file is not a regular one.
    agentuser can still swap one in between that test and the read, which then only tells root whether another file holds a public key, within the same bound.
    A commented-out line does not count as the key.
-   The Host block is written only when the managed config has none, or one with another `Hostname`, from the stamped static address.
+   The probe also prints sshd's host keys, which `waitForReady` returns as its answer, and the start pins them before it checks the block (#1863).
+   The Host block is written only when the managed config has none, one with another `Hostname`, or one from before host keys were pinned, from the stamped static address.
+   The pin is rewritten only when it differs from what the probe reported.
    So a start pays no Incus request and no write for either.
-4. **`isx destroy`** (and TUI delete): removes the Host block from the managed config.
+   A TUI restart pins from its probe the same way.
+4. **`isx destroy`** (and TUI delete): removes the Host block from the managed config, and the instance's lines from the managed `known_hosts`.
+   A rename removes them under the old name; the stopped instance is pinned under the new one on its next start.
 
 **Design decisions:**
 
@@ -337,8 +343,18 @@ incus-spawn manages a dedicated SSH key pair and per-instance SSH configuration 
   The probe reads the socket table rather than connecting, so a ready instance pays one `grep` and sshd logs nothing.
 - **`Hostname` as a label** (4e271acb, #211): JetBrains Gateway resolves the host before it runs the `ProxyCommand`, and without the line it reported the instance name as not resolvable.
   It never dials that address: Gateway 2026.2 runs the `ProxyCommand` on macOS too, and logs the connection as `<Hostname>:<Port>` (#1600).
-- **No host key checking**: the host key is not harvested or pinned.
-  Every branch of a template shares the host keys the template's build generated (`ssh-keygen -A` in the `sshd` tool), and the `ProxyCommand` reaches the instance by name through Incus, which authenticates the channel.
+- **Host keys pinned by the instance's name** (#1863): `StrictHostKeyChecking no` alone leaves a client that forces `yes` on its command line with nothing to check.
+  herdr 0.9.5 does, and its `-o` beats the config file, so with `UserKnownHostsFile /dev/null` it could never connect.
+  The block keeps `no`, so plain `ssh` and Gateway behave as before and isx never prompts, and points at a managed `known_hosts` that holds the key.
+  `HostKeyAlias <instance-name>` looks the key up by the name routing goes by.
+  An address alone is no identity: `StaticIpAllocator` recycles addresses, and every branch of a template shares the host keys its build generated (`ssh-keygen -A` in the `sshd` tool), so an address-keyed pin would eventually report `REMOTE HOST IDENTIFICATION HAS CHANGED` (#1630 proposed that and was declined).
+  Each line also names the address, `<name>,<address> <type> <key> isx:<name>`, for a client that ignores `HostKeyAlias` and dials `Hostname`; pinning an address takes it off any other instance's line, which keeps its name.
+  Every key type sshd has is pinned, so no `HostKeyAlgorithms` restriction is needed.
+  The keys come from the guest on the readiness exec a start already makes, never from a build: a template rebuild changes nothing for existing branches, and a key regenerated inside an instance is pinned again on its next start.
+  The guest is not trusted with the host's files: `HostKeys.parse` takes only a checked type and a base64 blob that decodes to a key of that type, at most eight of them, and isx writes the host field itself.
+  A pin that has gone stale shows ssh's warning to plain `ssh`, which still logs in, and is replaced on the next start.
+  Until then that `ssh` also turns off port, agent and X11 forwarding, which `/dev/null` never did, so an IDE's forwards stop working.
+  A sibling branch of the same template passes another's pin, since they share keys; the `ProxyCommand` still reaches the instance by name through Incus, which authenticates the channel.
   An earlier design kept a managed `known_hosts` and copied entries into `~/.ssh/known_hosts`, on the belief that Gateway honoured neither `Include` nor `UserKnownHostsFile`; a1086a1e removed it, and Gateway 2026.2 honours both.
 - **Both keys injected**: the managed key (passphraseless) ensures tools always work, while the user's personal key is also injected so interactive SSH sessions can use their preferred key.
 - **Atomic writes**: config updates use temp-file-then-rename with restrictive permissions to avoid partial writes, and a config that would not change is not rewritten.
