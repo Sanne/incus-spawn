@@ -2,13 +2,13 @@ name: tpl-minimal
 description: Base OS only
 # Fedora's /tmp is a tmpfs, emptied by every restart: keep it on disk (#1561)
 mask_services: [tmp.mount]
-image: fedora-44-base
-image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}.tar.xz
-vm_image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}-vm-direct.tar.xz
-image_tag: fedora-44-20261101
+image: fedora-45-base
+image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-45-{arch}.tar.xz
+vm_image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-45-{arch}-vm-direct.tar.xz
+image_tag: fedora-45-v1
 image_sha256:
-  x86_64: e8c0abee8665ff3f927adcb862473716f119610e250f4fcd6717ceb7cf1dcca2
-  aarch64: 15b2aa0b65e9f82a7830534660c1ec329757488cb98ccec6aa77a872fb16c02c
+  x86_64: ffd3baeed2012162bc0362cb5981cca742ad17d847d5fdf9a73decd8712aa919
+  aarch64: 01cda4c156733855d9dae4039e80b0d83329d9d3cdffb080a81e0e10534b27f8
 vm_image_sha256:
-  x86_64: 653791b6f5b1663ee1e8329f6bccef65e382b4816b575bf71952fe71d40c0a65
-  aarch64: 7d5abbd4682f593270a23120d83c82cf8f6cad9926e6f04aab384d649ffb6fb7
+  x86_64: 719ce92f3b99bfd494e731ee1ec4a77de7a3c850ed92daa249c036025bee226a
+  aarch64: 6cd5d8ded9944c8b26d6ee6bfacbdaf8550790af1db34a55d8b2ae719b6b4ed5
