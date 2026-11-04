@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.OutputFormat;
+import dev.incusspawn.util.TerminalOutput;
 import dev.incusspawn.util.TerminalStreams;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -140,12 +141,14 @@ public class SshProxyCommand extends BaseCommand {
 
     /**
      * Whether the instance runs, saying why not as an error: ssh shows the ProxyCommand's stderr,
-     * and an error writes nothing to stdout, which is the connection's stream.
+     * and an error writes nothing to stdout, which is the connection's stream. A running one whose
+     * boot lacks its secret is given it, as {@code isx mcp} gives one (#1975); one read when it holds it.
      */
     boolean checkInstanceRunning(dev.incusspawn.incus.IncusClient incus) {
         var shown = OutputFormat.oneLine(instance);
         try {
-            var status = incus.getInstanceStatus(instance);
+            var read = incus.instanceMetadataOrThrow(instance);
+            var status = read == null ? "" : read.path("status").asText("");
             if (status.isEmpty()) {
                 BuildOutput.error("instance '" + shown + "' not found or not accessible.");
                 return false;
@@ -154,6 +157,16 @@ public class SshProxyCommand extends BaseCommand {
                 BuildOutput.error("instance '" + shown + "' is not running (status: " + OutputFormat.oneLine(status) + ").",
                         "Start it first: isx start " + shown);
                 return false;
+            }
+            // Restored running by Incus after a host reboot, it has an empty /run/isx: give it its
+            // secret and proofs, or its shell's agent gets a 401. Never a start. Free for a container
+            // whose boot holds them; stdout is the connection's stream, so what it says goes to stderr.
+            // A delivery that fails is warned, and never refuses the connection
+            try {
+                InstanceLifecycle.giveSecretIfMissing(incus, instance, read, TerminalOutput.stderrOnly());
+            } catch (RuntimeException e) {
+                TerminalOutput.stderrOnly().warn("could not give " + shown + " a new instance secret: "
+                        + OutputFormat.oneLine(failure(e)));
             }
             return true;
         } catch (Exception e) {

@@ -180,7 +180,8 @@ class SshProxyCommandTest {
     @Test
     void aStoppedInstanceIsAnErrorWithItsRemedy() {
         var incus = mock(IncusClient.class);
-        when(incus.getInstanceStatus("box")).thenReturn("Stopped");
+        when(incus.instanceMetadataOrThrow("box")).thenReturn(io.hyperfoil.tools.jjq.value.JqObject.builder(1)
+                .put("status", "Stopped").build());
         var command = new SshProxyCommand();
         command.instance = "box";
         var recorded = RecordingOutput.during(() -> assertFalse(command.checkInstanceRunning(incus)));
@@ -285,6 +286,37 @@ class SshProxyCommandTest {
                 () -> command.ensureRunning(daemon.client(), new StartStopCommandTest.Locks()))));
 
         assertEquals(List.of("box"), prepared);
+    }
+
+    /**
+     * A plain {@code ssh} into a box Incus restored running after a host reboot: its /run/isx is
+     * empty, so without its secret and proofs the agent in that shell got a 401. The connection
+     * gives it them, once per boot, without starting anything (#1975).
+     */
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(IsolatedHome.class)
+    void withoutStartARunningBoxWhoseBootHasNoSecretIsGivenItOnce() {
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon().instance("box", "container", "Running", java.util.Map.of(
+                dev.incusspawn.incus.Metadata.INSTANCE_SECRET_BOOT, "2026-11-02T19:04:00Z proofs-v4:"))
+                .lastUsedAt("box", "2026-11-03T16:33:00Z");
+        var delivered = new ArrayList<String>();
+        var incus = org.mockito.Mockito.spy(daemon.client());
+        org.mockito.Mockito.doAnswer(call -> {
+            java.util.Map<String, String> env = call.getArgument(1);
+            if (env.containsKey(dev.incusspawn.proxy.InstanceSecret.DELIVERY_ENV)) delivered.add(env.get(dev.incusspawn.proxy.InstanceSecret.DELIVERY_ENV));
+            return new IncusClient.ExecResult(0, "", "");
+        }).when(incus).shellExec(eq("box"), org.mockito.ArgumentMatchers.anyMap(), any(String[].class));
+        var command = new SshProxyCommand();
+        command.instance = "box";
+
+        assertTrue(command.checkInstanceRunning(incus));
+        assertEquals(1, delivered.size(), daemon.requests()::toString);
+        org.mockito.Mockito.verify(incus, org.mockito.Mockito.never()).start(org.mockito.ArgumentMatchers.anyString());
+
+        daemon.clearRequests();
+        assertTrue(command.checkInstanceRunning(incus));
+        assertEquals(1, delivered.size(), "once per boot, not once per connection");
+        assertEquals(List.of("GET /1.0/instances/box"), daemon.requests(), "one read per connection, as before");
     }
 
     /** Without {@code --start}, the ProxyCommand a plain {@code ssh} runs, nothing is started. */
