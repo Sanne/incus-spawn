@@ -52,6 +52,16 @@ A local action keeps the pair in one place with no third-party dependency in the
 Diagnostic uploads keep a single attempt, since nothing downloads them.
 `WorkflowArtifactUploadRetryTest` checks both the action and that no deliverable upload bypasses it.
 
+**A runner installs packages within a time bound.**
+A hosted Ubuntu runner reads its archive from a mirror list, Azure's mirror first.
+One afternoon that mirror crawled at about 90 kB/s, and every apt step took 4 to 19 minutes with no output; `macos-role` ran into its 20-minute timeout with no test run (#1993).
+apt's own `Acquire::http::Timeout` cannot help, since a slow mirror still sends data.
+So workflows install through `.github/scripts/apt-install.sh`, which bounds the index update and the package download with `timeout`, two minutes each.
+A phase that stalls or fails drops the mirror apt tries first (the lowest `priority:`) from `/etc/apt/apt-mirrors.txt`, while another remains, and runs again, three attempts in all.
+Killing either phase leaves the system as it was; dpkg runs once, after everything is downloaded, with `--no-download`.
+A bound with no fallback would only turn a lost job into a failed one, since the same mirror stays slow for the next attempt.
+`WorkflowAptInstallTest` fails on a workflow that runs apt directly, and drives the script against a stand-in `apt-get` that stalls on a named mirror.
+
 **The test JVM keeps `AESCrypt.makeSessionKey` out of the JIT.**
 CI tests on GraalVM 25, whose JIT now and then gives one AES-256 cipher a wrong key schedule while it deoptimizes the compiled and OSR versions of `com.sun.crypto.provider.AESCrypt.makeSessionKey` during warm-up.
 TLS 1.3 prefers `TLS_AES_256_GCM_SHA384`, so that connection fails with `bad_record_mac` (or `Tag mismatch`, followed by a "record" of zeros, which is the JDK wiping the plaintext it refused).

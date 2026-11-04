@@ -53,7 +53,7 @@ jobs:
 
       # ZshCompletionTest drives a real zsh and skips without one, which the runner does not ship.
       - name: Install zsh
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh
+        run: sudo .github/scripts/apt-install.sh zsh
 
       - name: Build and test
         run: mvn package
@@ -334,7 +334,7 @@ jobs:
       - name: Create disk image from rootfs tarball
         id: disk
         run: |
-          sudo apt-get install -y -qq btrfs-progs zstd
+          sudo .github/scripts/apt-install.sh btrfs-progs zstd
           truncate -s 4G appliance/build/disk.img
           LOOP=$(sudo losetup --find --show appliance/build/disk.img)
           sudo mkfs.btrfs -q -L isxroot "$LOOP"
@@ -365,7 +365,7 @@ jobs:
 
       - name: Install QEMU
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ${{ matrix.qemu_pkg }} socat \
+          sudo .github/scripts/apt-install.sh ${{ matrix.qemu_pkg }} socat \
             dnsmasq-base incus-client busybox-static
           # vsock for the guest: the same transport vfkit gives the appliance on macOS.
           # Loading the module fires a udev "add" event that is handled asynchronously; a bare
@@ -550,7 +550,7 @@ jobs:
 
       - name: Install QEMU and the stand-ins' tools
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 socat dnsmasq-base \
+          sudo .github/scripts/apt-install.sh qemu-system-x86 socat dnsmasq-base \
             incus-client net-tools btrfs-progs zstd
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -608,8 +608,7 @@ jobs:
           codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
           echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable $codename main" \
             | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq incus btrfs-progs qemu-system-x86
+          sudo .github/scripts/apt-install.sh incus btrfs-progs qemu-system-x86
           sudo usermod -aG incus-admin "$USER"
 
       - name: Enable KVM
@@ -1021,7 +1020,7 @@ jobs:
       # Last: it stops the shared proxy and runs its own, pointed at a stub, with egress blocked
       - name: Test a host-owned ChatGPT session through a stub (#1332)
         run: |
-          sudo apt-get install -y -qq nftables
+          sudo .github/scripts/apt-install.sh nftables
           # isx branch starts it, which delivers the per-start secret the proofs derive from
           sg incus-admin -c "isx branch test-chatgpt --from tpl-test-codex" </dev/null
           sg incus-admin -c "incus exec test-chatgpt -- dnf install -y -q python3"
@@ -1094,7 +1093,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Install QEMU
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 qemu-utils genisoimage
+        run: sudo .github/scripts/apt-install.sh qemu-system-x86 qemu-utils genisoimage
 
       - name: Cache the cloud image
         uses: actions/cache@v5
@@ -1202,8 +1201,7 @@ jobs:
           codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
           echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable $codename main" \
             | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq incus btrfs-progs busybox-static
+          sudo .github/scripts/apt-install.sh incus btrfs-progs busybox-static
           sudo usermod -aG incus-admin "$USER"
 
           # Create ONLY the storage pool — no admin init. This reproduces the reported broken
