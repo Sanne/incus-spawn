@@ -8,6 +8,9 @@ agent_note: |
   builds in the same repo, where it avoids JVM startup and keeps caches warm. It
   takes the same goals and flags as `mvn`.
 
+packages:
+  - bash-completion
+
 downloads:
   - url: https://archive.apache.org/dist/maven/mvnd/1.0.6/maven-mvnd-1.0.6-linux-amd64.zip
     sha256: 1a1c2ad0de53669c6d2bf64e2b6bcc7cb96f592c543230f00b4209002b19083c
