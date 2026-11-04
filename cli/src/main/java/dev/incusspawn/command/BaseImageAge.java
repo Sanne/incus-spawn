@@ -27,11 +27,14 @@ public final class BaseImageAge {
     static final String FINGERPRINT = "volatile.base_image";
 
     /**
-     * {@code fedora-44-20261021}: a distribution, its release (an int) and the build date, then
+     * A release tag: a distribution, its release (an int), then either the build date and
      * {@code -2}, {@code -3} ... for a later release the same day, as incus-spawn-images'
-     * {@code release-tag.sh} names it.
+     * {@code release-tag.sh} names it ({@code fedora-44-20261021}), or anything else, as the
+     * explicit tag its release workflow accepts ({@code fedora-45-v1}, #1988), which has no date.
+     * The distribution's words start with a letter, so the release is the first number after them.
      */
-    private static final Pattern RELEASE_TAG = Pattern.compile("(.+)-(\\d{1,9})-(\\d{8})(?:-(\\d{1,9}))?");
+    private static final Pattern RELEASE_TAG =
+            Pattern.compile("([A-Za-z][^-]*(?:-[A-Za-z][^-]*)*)-(\\d{1,9})-(?:(\\d{8})(?:-(\\d{1,9}))?|.+)");
 
     private BaseImageAge() {}
 
@@ -127,6 +130,7 @@ public final class BaseImageAge {
      * The order of two release tags of one distribution: release, build date, then the same day's
      * number, where a tag without one is that day's first; null
      * when either does not parse or they name different distributions.
+     * A tag without a date ({@code fedora-45-v1}) orders only against another release, or itself.
      */
     static Integer compareTags(String a, String b) {
         var ma = RELEASE_TAG.matcher(a);
@@ -134,6 +138,8 @@ public final class BaseImageAge {
         if (!ma.matches() || !mb.matches() || !ma.group(1).equals(mb.group(1))) return null;
         int byRelease = Integer.compare(Integer.parseInt(ma.group(2)), Integer.parseInt(mb.group(2)));
         if (byRelease != 0) return byRelease;
+        if (a.equals(b)) return 0;
+        if (ma.group(3) == null || mb.group(3) == null) return null;
         int byDate = ma.group(3).compareTo(mb.group(3));
         return byDate != 0 ? byDate : Integer.compare(sameDay(ma.group(4)), sameDay(mb.group(4)));
     }
