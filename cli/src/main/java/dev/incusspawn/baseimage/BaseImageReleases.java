@@ -34,6 +34,9 @@ public final class BaseImageReleases {
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
     private static final Pattern SHA256_HEX = Pattern.compile("[0-9a-fA-F]{64}");
 
+    /** A release tag, with its release line (distribution and release) as group 1: fedora-44 in fedora-44-20261101. */
+    private static final Pattern RELEASE_TAG = Pattern.compile("([a-z]+-[0-9]+)-[A-Za-z0-9._-]+");
+
     private static final Pattern GITHUB_RELEASE_URL =
             Pattern.compile("^https://github\\.com/([^/]+)/([^/]+)/releases/");
 
@@ -196,6 +199,50 @@ public final class BaseImageReleases {
     private static void putIfListed(Map<String, String> into, String arch, Map<String, String> manifest, String name) {
         var sha = manifest.get(name);
         if (sha != null) into.put(arch, sha);
+    }
+
+    /** The image alias and download URLs a base image is taken under; {@code vmImageUrl} may be null. */
+    public record Names(String image, String imageUrl, String vmImageUrl) {}
+
+    /** The release line {@code tag} is of, as {@code fedora-44} for {@code fedora-44-20261101}, or null. */
+    public static String releaseLine(String tag) {
+        if (tag == null) return null;
+        var m = RELEASE_TAG.matcher(tag);
+        return m.matches() ? m.group(1) : null;
+    }
+
+    /**
+     * The names a release {@code tag} is taken under, given {@code current}, the names of the
+     * release {@code currentTag}. A release of another line has its assets named for that line
+     * (#1967), so the alias and both URLs' file names move to it, as {@code update-base-image.yml}
+     * moves them for a bump; within one line, or when either tag names no line, they stay as they are.
+     *
+     * @throws IllegalArgumentException when a name does not hold the current line exactly once,
+     *         so it cannot be moved without guessing; the message says which
+     */
+    public static Names namesFor(Names current, String currentTag, String tag) {
+        var from = releaseLine(currentTag);
+        var to = releaseLine(tag);
+        if (from == null || to == null || from.equals(to)) return current;
+        return new Names(current.image() == null ? null : moveLine(current.image(), from, to),
+                moveFileLine(current.imageUrl(), from, to), moveFileLine(current.vmImageUrl(), from, to));
+    }
+
+    private static String moveFileLine(String url, String from, String to) {
+        if (url == null) return null;
+        var slash = url.lastIndexOf('/') + 1;
+        return url.substring(0, slash) + moveLine(url.substring(slash), from, to);
+    }
+
+    /** {@code name} with its one {@code <from>-} made {@code <to>-}, as the workflow's {@code move_line}. */
+    private static String moveLine(String name, String from, String to) {
+        var marker = from + "-";
+        var at = name.indexOf(marker);
+        if (at < 0 || at != name.lastIndexOf(marker)) {
+            throw new IllegalArgumentException("'" + name + "' does not name release line " + from
+                    + " exactly once, so it cannot be moved to " + to);
+        }
+        return name.substring(0, at) + to + "-" + name.substring(at + marker.length());
     }
 
     /** Whether {@code sums} has a checksum for every arch base images are published for. */

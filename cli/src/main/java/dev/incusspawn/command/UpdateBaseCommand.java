@@ -166,8 +166,22 @@ public class UpdateBaseCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
+        // A release of another Fedora line is named for that line, and pinned under its names (#1967)
+        BaseImageReleases.Names names;
+        try {
+            names = BaseImageReleases.namesFor(
+                    new BaseImageReleases.Names(current.getImage(), current.getImageUrl(), current.getVmImageUrl()),
+                    current.getImageTag(), selected.tag());
+        } catch (IllegalArgumentException e) {
+            BuildOutput.error("cannot pin " + selected.tag() + ", a release of "
+                    + BaseImageReleases.releaseLine(selected.tag()) + ": " + OutputFormat.oneLine(e.getMessage()) + ".",
+                    "Pin a release of " + BaseImageReleases.releaseLine(current.getImageTag())
+                            + ", or name the release line once in tpl-minimal's image and file names.");
+            return CommandResult.valueOf(1);
+        }
+
         BuildOutput.stepStart("Fetching checksums for " + selected.tag());
-        var checksums = releases.fetchChecksums(selected, current.getImageUrl(), current.getVmImageUrl());
+        var checksums = releases.fetchChecksums(selected, names.imageUrl(), names.vmImageUrl());
         if (checksums == null) {
             BuildOutput.stepFail("No readable SHA256SUMS.v2 or SHA256SUMS in release " + selected.tag() + ".");
             return CommandResult.valueOf(1);
@@ -176,13 +190,13 @@ public class UpdateBaseCommand extends BaseCommand {
         // download unverified there.
         if (!BaseImageReleases.coversEveryArch(checksums.container())) {
             BuildOutput.stepFail("Release " + selected.tag() + " does not list a checksum for "
-                    + BaseImageReleases.assetName(current.getImageUrl(), selected.tag(), "<arch>")
+                    + BaseImageReleases.assetName(names.imageUrl(), selected.tag(), "<arch>")
                     + " on every architecture.");
             return CommandResult.valueOf(1);
         }
         BuildOutput.stepDone();
 
-        writePin(current, selected.tag(), checksums);
+        writePin(names, selected.tag(), checksums);
         BuildOutput.success("Pinned base image to " + selected.tag());
         BuildOutput.note("The new base image will be downloaded on the next 'isx build tpl-minimal'.");
         return CommandResult.SUCCESS;
@@ -237,15 +251,15 @@ public class UpdateBaseCommand extends BaseCommand {
      * Writes the pin file: the release's base image and nothing else, so every other field of
      * {@code tpl-minimal} keeps coming from its definition (#1563).
      */
-    void writePin(ImageDef current, String tag, Checksums checksums) throws IOException {
+    void writePin(BaseImageReleases.Names names, String tag, Checksums checksums) throws IOException {
         // A VM image is only pinned with its checksums for every arch: without them it would
         // download unverified on the arch that has none.
-        var vm = current.getVmImageUrl() != null && BaseImageReleases.coversEveryArch(checksums.vm());
-        if (!vm && current.getVmImageUrl() != null) {
+        var vm = names.vmImageUrl() != null && BaseImageReleases.coversEveryArch(checksums.vm());
+        if (!vm && names.vmImageUrl() != null) {
             BuildOutput.warn("Release " + tag + " has no VM image this isx can use;"
                     + " VM templates built on this pin start from the Incus image server instead.");
         }
-        var pin = new BaseImagePin(current.getImage(), current.getImageUrl(), vm ? current.getVmImageUrl() : null,
+        var pin = new BaseImagePin(names.image(), names.imageUrl(), vm ? names.vmImageUrl() : null,
                 tag, new TreeMap<>(checksums.container()), vm ? new TreeMap<>(checksums.vm()) : null);
         var file = BaseImagePin.file();
         pin.write(file);

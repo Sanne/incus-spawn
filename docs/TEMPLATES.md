@@ -52,6 +52,9 @@ If isx cannot reach the release list, it falls back to the version baked into th
 Pinning writes the release to `~/.config/incus-spawn/base-image-pin.yaml`, which changes only the base image `tpl-minimal` downloads.
 Everything else still comes from the built-in definition, or from your own `minimal.yaml`.
 `--latest` removes that file to resume tracking.
+
+A pin may name another Fedora release, to go back to the last Fedora 44 image for instance.
+Its image name and file names then follow that release.
 After changing the base image version, rebuild with `isx build tpl-minimal`.
 
 An older isx pinned by replacing the whole built-in definition with `~/.config/incus-spawn/images/minimal.yaml`.

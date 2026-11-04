@@ -1,9 +1,11 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.util.RecordingOutput;
+import dev.incusspawn.baseimage.BaseImageReleases;
 import dev.incusspawn.baseimage.BaseImageReleases.Checksums;
 import dev.incusspawn.config.BaseImagePin;
 import dev.incusspawn.config.ImageDef;
+import org.aesh.command.CommandResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -13,6 +15,10 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 class UpdateBaseCommandTest {
 
@@ -24,7 +30,8 @@ class UpdateBaseCommandTest {
         var out = new String[1];
         InitCommandTest.withHome(home, () -> {
             try {
-                new UpdateBaseCommand().writePin(def, "fedora-44-20261020", sums);
+                new UpdateBaseCommand().writePin(new BaseImageReleases.Names(
+                        def.getImage(), def.getImageUrl(), def.getVmImageUrl()), "fedora-44-20261020", sums);
                 out[0] = Files.readString(BaseImagePin.file());
             } catch (java.io.IOException e) {
                 throw new AssertionError(e);
@@ -51,10 +58,10 @@ class UpdateBaseCommandTest {
     /** The same for the container image, which every template starts from: the pin is refused. */
     @Test
     void aReleaseWithTheContainerImageForOneArchIsNotPinned(@TempDir Path home) throws Exception {
-        var release = new dev.incusspawn.baseimage.BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
-        var releases = org.mockito.Mockito.mock(dev.incusspawn.baseimage.BaseImageReleases.class);
-        org.mockito.Mockito.when(releases.fetchChecksums(org.mockito.ArgumentMatchers.eq(release),
-                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+        var release = new BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
+        var releases = mock(BaseImageReleases.class);
+        when(releases.fetchChecksums(org.mockito.ArgumentMatchers.eq(release),
+                        org.mockito.ArgumentMatchers.anyString(), any()))
                 .thenReturn(new Checksums(Map.of("x86_64", "c1"), Map.of("x86_64", "v1", "aarch64", "v2")));
         InitCommandTest.withHome(home, () -> {
             try {
@@ -62,7 +69,7 @@ class UpdateBaseCommandTest {
                 cmd.releases = releases;
                 var result = cmd.pinToTag("fedora-44-20261020", java.util.List.of(release),
                         ImageDef.loadBuiltinByName("tpl-minimal"));
-                assertNotEquals(org.aesh.command.CommandResult.SUCCESS, result);
+                assertNotEquals(CommandResult.SUCCESS, result);
                 assertFalse(Files.exists(BaseImagePin.file()));
             } catch (java.io.IOException e) {
                 throw new AssertionError(e);
@@ -84,10 +91,10 @@ class UpdateBaseCommandTest {
     /** A minimal.yaml of the user's own, on another repository, keeps its choice of no VM image. */
     @Test
     void aPinOfTheUsersOwnDefinitionGetsNoBuiltInVmImage(@TempDir Path home) throws Exception {
-        var release = new dev.incusspawn.baseimage.BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
-        var releases = org.mockito.Mockito.mock(dev.incusspawn.baseimage.BaseImageReleases.class);
-        org.mockito.Mockito.when(releases.fetchChecksums(org.mockito.ArgumentMatchers.eq(release),
-                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+        var release = new BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
+        var releases = mock(BaseImageReleases.class);
+        when(releases.fetchChecksums(org.mockito.ArgumentMatchers.eq(release),
+                        org.mockito.ArgumentMatchers.anyString(), any()))
                 .thenReturn(new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of("x86_64", "v1", "aarch64", "v2")));
         InitCommandTest.withHome(home, () -> {
             try {
@@ -96,7 +103,7 @@ class UpdateBaseCommandTest {
                 own.setVmImageUrl(null);
                 var cmd = new UpdateBaseCommand();
                 cmd.releases = releases;
-                assertEquals(org.aesh.command.CommandResult.SUCCESS,
+                assertEquals(CommandResult.SUCCESS,
                         cmd.pinToTag("fedora-44-20261020", java.util.List.of(release), own));
                 var yaml = Files.readString(BaseImagePin.file());
                 assertFalse(yaml.contains("vm_image_url"), yaml);
@@ -105,6 +112,75 @@ class UpdateBaseCommandTest {
                 throw new AssertionError(e);
             }
         });
+    }
+
+    /** The built-in moved to {@code line}'s release, as a bump to another Fedora moves it (#1943). */
+    private static ImageDef builtinOn(String line, String tag) {
+        var def = ImageDef.loadBuiltinByName("tpl-minimal");
+        var tag0 = def.getImageTag();
+        var from = tag0.substring(0, tag0.indexOf('-', tag0.indexOf('-') + 1));
+        def.setImage(def.getImage().replace(from + "-", line + "-"));
+        def.setImageUrl(def.getImageUrl().replace("/" + from + "-", "/" + line + "-"));
+        def.setVmImageUrl(def.getVmImageUrl().replace("/" + from + "-", "/" + line + "-"));
+        def.setImageTag(tag);
+        return def;
+    }
+
+    private static final String RELEASES = "https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/";
+
+    /**
+     * A release of another Fedora line is pinned under its own line's names (#1967): its assets are
+     * named for it, so the sums are looked up, and the pin written, with the alias and both URLs
+     * moved to it. Either way: back to the last Fedora 44 from 45, and ahead to 45 from 44.
+     */
+    @Test
+    void aReleaseOfAnotherLineIsPinnedUnderItsOwnNames(@TempDir Path home) throws Exception {
+        pinAcrossLines(home, builtinOn("fedora-45", "fedora-45-20261201"), "fedora-44-20261101", "fedora-44");
+        pinAcrossLines(home, builtinOn("fedora-44", "fedora-44-20261101"), "fedora-45-20261201", "fedora-45");
+    }
+
+    private static void pinAcrossLines(Path home, ImageDef current, String tag, String line) throws Exception {
+        var release = new BaseImageReleases.Release(tag, "2026-11-01", null, "sums");
+        var url = RELEASES + line + "-{arch}.tar.xz";
+        var vmUrl = RELEASES + line + "-{arch}-vm-direct.tar.xz";
+        // The release lists only its own line's names: any other lookup finds nothing in it
+        var releases = mock(BaseImageReleases.class);
+        when(releases.fetchChecksums(any(),
+                        any(), any()))
+                .thenReturn(new Checksums(Map.of(), Map.of()));
+        when(releases.fetchChecksums(release, url, vmUrl))
+                .thenReturn(new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of("x86_64", "v1", "aarch64", "v2")));
+        inHome(home, () -> {
+            var cmd = new UpdateBaseCommand();
+            cmd.releases = releases;
+            assertEquals(CommandResult.SUCCESS, cmd.pinToTag(tag, List.of(release), current));
+            var pin = BaseImagePin.read(BaseImagePin.file());
+            assertEquals(line + "-base", pin.getImage());
+            assertEquals(url, pin.getImageUrl());
+            assertEquals(vmUrl, pin.getVmImageUrl());
+            assertEquals(tag, pin.getImageTag());
+        });
+    }
+
+    /** A definition whose names do not carry its line cannot be moved to another: refused, saying why. */
+    @Test
+    void aReleaseOfAnotherLineIsRefusedWhenTheNamesDoNotCarryTheLine(@TempDir Path home) throws Exception {
+        var release = new BaseImageReleases.Release("fedora-45-20261201", "2026-12-01", null, "sums");
+        var releases = mock(BaseImageReleases.class);
+        var own = ImageDef.loadBuiltinByName("tpl-minimal");
+        own.setImageUrl("https://github.com/someone/images/releases/download/{tag}/base-{arch}.tar.xz");
+        own.setVmImageUrl(null);
+        inHome(home, () -> {
+            var cmd = new UpdateBaseCommand();
+            cmd.releases = releases;
+            var recorded = RecordingOutput.during(() -> assertNotEquals(CommandResult.SUCCESS,
+                    cmd.pinToTag(release.tag(), List.of(release), own)));
+            assertFalse(Files.exists(BaseImagePin.file()));
+            var errors = recorded.events(RecordingOutput.Kind.ERROR);
+            assertEquals(1, errors.size(), recorded.events().toString());
+            assertTrue(errors.get(0).text().contains("fedora-45"), errors.get(0).text());
+        });
+        verifyNoInteractions(releases);
     }
 
     /** A release without the VM image the built-in names: pinning its URL with no checksum would download it unverified. */
@@ -116,18 +192,18 @@ class UpdateBaseCommandTest {
         assertTrue(yaml.contains("image_sha256:\n  aarch64: c2\n  x86_64: c1\n"), yaml);
     }
 
-    private static final dev.incusspawn.baseimage.BaseImageReleases.Release RELEASE =
-            new dev.incusspawn.baseimage.BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
+    private static final BaseImageReleases.Release RELEASE =
+            new BaseImageReleases.Release("fedora-44-20261020", "2026-10-20", "sums", null);
 
     /** Pins {@code RELEASE} as {@code isx update-base <tag>} does. */
     private static void pinRelease() throws java.io.IOException {
-        var releases = org.mockito.Mockito.mock(dev.incusspawn.baseimage.BaseImageReleases.class);
-        org.mockito.Mockito.when(releases.fetchChecksums(org.mockito.ArgumentMatchers.eq(RELEASE),
-                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any()))
+        var releases = mock(BaseImageReleases.class);
+        when(releases.fetchChecksums(org.mockito.ArgumentMatchers.eq(RELEASE),
+                        org.mockito.ArgumentMatchers.anyString(), any()))
                 .thenReturn(new Checksums(Map.of("x86_64", "c1", "aarch64", "c2"), Map.of("x86_64", "v1", "aarch64", "v2")));
         var cmd = new UpdateBaseCommand();
         cmd.releases = releases;
-        assertEquals(org.aesh.command.CommandResult.SUCCESS,
+        assertEquals(CommandResult.SUCCESS,
                 cmd.pinToTag(RELEASE.tag(), List.of(RELEASE), UpdateBaseCommand.unpinnedMinimal()));
     }
 

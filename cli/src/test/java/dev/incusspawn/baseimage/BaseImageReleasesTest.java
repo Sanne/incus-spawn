@@ -144,4 +144,32 @@ class BaseImageReleasesTest {
         assertEquals(java.util.List.of(new BaseImageReleases.Release("fedora-44-1", "2026-10-20", null, null)),
                 BaseImageReleases.parseReleases(clean.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     }
+
+    /** Another line's release moves the alias and the file names, never the path before them (#1967). */
+    @Test
+    void namesMoveToTheReleasesLine() {
+        var current = new BaseImageReleases.Names("fedora-45-base",
+                "https://github.com/o/fedora-45-images/releases/download/{tag}/fedora-45-{arch}.tar.xz",
+                "https://github.com/o/fedora-45-images/releases/download/{tag}/fedora-45-{arch}-vm.tar.xz");
+        assertEquals(new BaseImageReleases.Names("fedora-44-base",
+                        "https://github.com/o/fedora-45-images/releases/download/{tag}/fedora-44-{arch}.tar.xz",
+                        "https://github.com/o/fedora-45-images/releases/download/{tag}/fedora-44-{arch}-vm.tar.xz"),
+                BaseImageReleases.namesFor(current, "fedora-45-20261201", "fedora-44-20261101"));
+        assertSame(current, BaseImageReleases.namesFor(current, "fedora-45-20261201", "fedora-45-20261215"));
+        assertSame(current, BaseImageReleases.namesFor(current, null, "fedora-44-20261101"));
+        var noVm = new BaseImageReleases.Names(null, current.imageUrl(), null);
+        assertEquals(new BaseImageReleases.Names(null, "https://github.com/o/fedora-45-images/releases/download/{tag}/fedora-44-{arch}.tar.xz", null),
+                BaseImageReleases.namesFor(noVm, "fedora-45-20261201", "fedora-44-20261101"));
+    }
+
+    /** A name that does not hold the line once is not guessed at. */
+    @Test
+    void aNameWithoutTheLineOnceIsNotMoved() {
+        var twice = new BaseImageReleases.Names("fedora-44-base", "https://x/{tag}/fedora-44-fedora-44-{arch}.tar.xz", null);
+        assertThrows(IllegalArgumentException.class,
+                () -> BaseImageReleases.namesFor(twice, "fedora-44-20261101", "fedora-45-20261201"));
+        var none = new BaseImageReleases.Names("own", "https://x/{tag}/fedora-44-{arch}.tar.xz", null);
+        assertThrows(IllegalArgumentException.class,
+                () -> BaseImageReleases.namesFor(none, "fedora-44-20261101", "fedora-45-20261201"));
+    }
 }
