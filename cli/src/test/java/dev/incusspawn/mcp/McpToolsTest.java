@@ -172,6 +172,22 @@ class McpToolsTest {
     }
 
     @Test
+    void aRunningBoxIsGivenItsSecretBeforeAnythingRunsInIt() throws Exception {
+        // #1975: Incus restores a running box after a host reboot with an empty /run/isx, and
+        // isx mcp ran commands in it as it was, so every model call in it got a 401
+        var name = createJava();
+        backend.secretChecks.clear();
+        var before = backend.scripts.size();
+        call("exec", "{\"instance\":\"" + name + "\",\"command\":\"claude -p hi\"}");
+        assertEquals(List.of(name + "@" + before), backend.secretChecks, "checked once, before the command");
+
+        backend.secretChecks.clear();
+        var start = call("start_instance", "{\"instance\":\"" + name + "\"}");
+        assertTrue(start.path("structuredContent").path("already").asBoolean(false), text(start));
+        assertEquals(List.of(name + "@" + backend.scripts.size()), backend.secretChecks, "already running is not yet ready");
+    }
+
+    @Test
     void aTimeoutTheAgentSetIsReportedAsSuch() throws Exception {
         var name = createJava();
         backend.execExit = 124;

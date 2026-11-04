@@ -333,6 +333,16 @@ class DelegationToolsTest {
     }
 
     @Test
+    void anAgentDelegatedToARunningBoxGetsItsSecretFirst() throws Exception {
+        // #1975: without it, a box Incus restarted itself runs the agent with no proofs: a 401
+        var instance = structured(call("create_instance", "{\"template\":\"tpl-agent\"}")).path("instance").asText();
+        backend.secretChecks.clear();
+        var before = backend.scripts.size();
+        structured(call("delegate", "{\"instruction\":\"go\",\"instance\":\"" + instance + "\"}"));
+        assertEquals(instance + "@" + before, backend.secretChecks.getFirst(), "before anything runs in it");
+    }
+
+    @Test
     void aSecondAgentInTheSameInstanceIsRefused() throws Exception {
         var task = delegateFresh();
         var instance = backend.instances.keySet().stream().filter(n -> n.startsWith("mcp-")).findFirst().orElseThrow();

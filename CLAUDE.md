@@ -181,6 +181,7 @@ Only its hash is recorded on the host, and every isx start rotates it, for one P
 Rotating and delivering it are serialized per instance across isx processes by a `HostLock` (`InstanceLifecycle.secretLock`, #1065), and one that waited re-checks rather than rotating again.
 A container start, a branch's included, then records its boot (`last_used_at`, read once the guest answers and handed on to the CA check, so the stamp's write is the one request it adds), so `ensureReady` replaces a secret lost to a reboot isx did not do at no cost on the shell path.
 A VM's agent probe asks the guest instead (#1024).
+`isx mcp` does the same before it runs anything in a running box (`McpSession.requireRunning`, `InstanceBackend.giveSecretIfMissing`), so a box Incus restored after a host reboot gets its proofs back (#1975).
 Each start fills credential placeholders with stable per-instance namespace proofs (`CredentialProof`, `ProofToken`).
 A protected host key and a public random generation derive the credential seed; ordinary starts keep it, while branches and `isx account reset-proofs` replace it.
 The seed is separate from the rotating MCP secret and is delivered to `/run/isx/credential-secret`.

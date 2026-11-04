@@ -303,6 +303,14 @@ class FakeBackend implements InstanceBackend {
         return exec(name, script, null, stdout, null);
     }
 
+    /** Each {@link #giveSecretIfMissing} call, as {@code <instance>@<execs before it>}: which call came first. */
+    final List<String> secretChecks = new CopyOnWriteArrayList<>();
+
+    @Override
+    public void giveSecretIfMissing(String name, Map<String, String> metadata) {
+        secretChecks.add(name + "@" + scripts.size());
+    }
+
     @Override
     public int exec(String name, String script, InputStream stdin, OutputStream stdout, OutputStream stderr) {
         if (!instances.containsKey(name)) throw new IllegalStateException("Instance not found: " + name);
