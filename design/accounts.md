@@ -266,6 +266,7 @@ What it says goes to stderr only (`TerminalOutput.stderrOnly()`), since stdout i
 For a VM, whose readiness only its guest can answer, that is one probe per connection, as `--start` already prepares a running VM on every connection.
 The probe runs before the `secretLock`, so a VM that holds its secret never waits on another isx.
 A VM it finds without its secret is given it under the lock without a second probe, unless another isx held the lock meanwhile.
+An instance without isx's parent stamp, which `isx shell` refuses, is never given a secret, so isx writes nothing into an instance it did not make.
 A plain `incus exec` bypasses isx entirely, and stays without its proofs until isx next prepares the box.
 
 **Proof tokens: address and proof authorize credential injection (#1100, #1107).**

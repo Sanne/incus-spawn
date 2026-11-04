@@ -75,6 +75,7 @@ When hiding a new command: add it to `HIDDEN_COMMANDS` (which `NOT_COMPLETED` is
 `isx stop` stops under the lock and the `stopping` mark (`InstanceDestroyer.stopMarkedIf`, shared with `isx mcp`'s held stop), and a stopped instance is success.
 `isx ssh-proxy --start` uses a running container no isx process holds as it is only when its boot holds its secret (`InstanceLifecycle.readyForThisBoot`, one read per connection), and prepares any other.
 Without `--start` (a plain `ssh <name>`) it never starts anything, but a running box whose boot lacks its secret is given it from the same read (`InstanceLifecycle.giveSecretIfMissing`, reporting to stderr only), as `isx mcp` does (#1975).
+An instance without `Metadata.PARENT`, which `InstancePrep.prepare` refuses, is connected to but never given a secret.
 `isx branch --owner <name> [--owner-id <id>]` stamps `Metadata.OWNER`/`OWNER_ID`, ownership keys no copy inherits (`Metadata.isOwnershipKey`, used where copies drop `mcp-*`); `BranchCommand.ownerProblem` validates both before anything is made.
 Only the ProxyCommand `isx branch --format=json` hands out has `--start` (`SshKeyManager.proxyCommand`); the Host block never does.
 `isx ssh-proxy --start` installs `StdioGuard` and relays the guard's stdin and stdout, since a start prints progress and stdout is the SSH stream; without `--start` it relays `TerminalStreams` as before.

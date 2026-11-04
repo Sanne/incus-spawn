@@ -1,6 +1,8 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.Output;
 import dev.incusspawn.util.OutputFormat;
 import dev.incusspawn.util.TerminalOutput;
 import dev.incusspawn.util.TerminalStreams;
@@ -139,6 +141,11 @@ public class SshProxyCommand extends BaseCommand {
                         + " exec nc localhost 22"};
     }
 
+    /** Where giving a missed boot its secret reports: stderr only, as stdout is the connection's stream. */
+    Output secretOutput() {
+        return TerminalOutput.stderrOnly();
+    }
+
     /**
      * Whether the instance runs, saying why not as an error: ssh shows the ProxyCommand's stderr,
      * and an error writes nothing to stdout, which is the connection's stream. A running one whose
@@ -161,12 +168,14 @@ public class SshProxyCommand extends BaseCommand {
             // Restored running by Incus after a host reboot, it has an empty /run/isx: give it its
             // secret and proofs, or its shell's agent gets a 401. Never a start. Free for a container
             // whose boot holds them; stdout is the connection's stream, so what it says goes to stderr.
-            // A delivery that fails is warned, and never refuses the connection
+            // A delivery that fails is warned, and never refuses the connection. One isx did not make
+            // (no parent stamp, which isx shell refuses) is never written isx's secret
+            if (read.path("config").pathText(Metadata.PARENT, "").isEmpty()) return true;
+            var out = secretOutput();
             try {
-                InstanceLifecycle.giveSecretIfMissing(incus, instance, read, TerminalOutput.stderrOnly());
+                InstanceLifecycle.giveSecretIfMissing(incus, instance, read, out);
             } catch (RuntimeException e) {
-                TerminalOutput.stderrOnly().warn("could not give " + shown + " a new instance secret: "
-                        + OutputFormat.oneLine(failure(e)));
+                out.warn("could not give " + shown + " a new instance secret: " + OutputFormat.oneLine(failure(e)));
             }
             return true;
         } catch (Exception e) {
