@@ -595,9 +595,17 @@ class ArtifactCacheProxyTest {
 
     /** Polls every 10 ms, so a wait lasts barely longer than the condition takes. */
     static void await(String what, Condition condition) throws Exception {
+        awaitOr(what, condition, () -> null);
+    }
+
+    /** As {@link #await}, a timeout also reporting {@code state}, read when it happens. */
+    static void awaitOr(String what, Condition condition, Supplier<String> state) throws Exception {
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (!condition.holds()) {
-            if (System.nanoTime() - deadline > 0) fail("Timed out waiting for " + what);
+            if (System.nanoTime() - deadline > 0) {
+                var seen = state.get();
+                fail("Timed out waiting for " + what + (seen == null ? "" : " (" + seen + ")"));
+            }
             Thread.sleep(10);
         }
     }
@@ -955,10 +963,24 @@ class ArtifactCacheProxyTest {
         for (var jar : jars) confirmedAgo(cacheJar(CENTRAL, jar, jar), Duration.ofHours(3));
 
         hits.clear();
-        headDelayMs = 200;
+        // The first HEAD is held until the other two are seen queued behind it: no timing decides the order.
+        // Held past the read-idle check, its connection would be closed and the HEAD retried.
+        proxy.upstream.probeReadIdleSeconds = 30;
+        var gate = new CompletableFuture<Void>();
+        gates.put("HEAD " + CENTRAL + " " + JAR, gate);
         for (var jar : jars) assertEquals(jar, get(CENTRAL, jar).text());
+        await("the first background HEAD", () -> headsOn(CENTRAL, JAR) == 1);
+        // Awaited, not read once: a GET's reply can reach the client before its confirmation is queued
+        awaitOr("the other two queued behind it", () -> proxy.artifactCache.backgroundQueue().equals("1 in flight, 2 queued"),
+                proxy.artifactCache::backgroundQueue);
+        assertEquals(0, headsOn(CENTRAL, jars.get(1)) + headsOn(CENTRAL, jars.get(2)), "past the limit nothing went out");
+
+        gate.complete(null);
         for (var jar : jars) {
-            await("the background HEAD of " + jar, () -> headsOn(CENTRAL, jar) >= 1);
+            // Says which of the two ways the turn can fail to come (#1951): still queued, or run without a HEAD
+            awaitOr("the background HEAD of " + jar, () -> headsOn(CENTRAL, jar) >= 1,
+                    () -> proxy.artifactCache.backgroundQueue() + ", upstream backoff " + proxy.upstream.unreachableSince
+                            + ", HEADs " + hits.keySet().stream().filter(k -> k.startsWith("HEAD ")).sorted().toList());
         }
     }
 

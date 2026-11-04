@@ -1541,6 +1541,13 @@ class ArtifactCacheHandler {
         });
     }
 
+    /** For tests: background confirmations in flight, and those waiting their turn. */
+    String backgroundQueue() {
+        synchronized (queuedConfirmations) {
+            return confirmationsInFlight + " in flight, " + queuedConfirmations.size() + " queued";
+        }
+    }
+
     private void startNextConfirmation() {
         Runnable next;
         synchronized (queuedConfirmations) {
