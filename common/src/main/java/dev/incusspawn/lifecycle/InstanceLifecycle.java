@@ -32,8 +32,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.regex.Pattern;
 
 /**
@@ -687,24 +689,40 @@ public final class InstanceLifecycle {
             }
             return delivery;
         });
-        // The SSH keys ride in the same probe, and the Host entry is a local file (#1640): a
-        // --no-start branch is first started here, with neither
+        // A --no-start branch is first started here, with neither its SSH keys nor its Host entry (#1640)
+        return awaitReady(incus, name, machineType, instance, secret, Metadata.isMcpCaller(instance),
+                placeholders, out);
+    }
+
+    /**
+     * Wait for a started or restarted instance to answer, delivering its secret and recording
+     * the boot, and give one with SSH what it needs in the same probe: its authorized keys, then
+     * the Host entry and the host keys its answer reported (#1640, #1863), which are local files.
+     *
+     * @param instance the instance as read before the start, for its SSH capability and address
+     * @return {@link #recordSecretBoot}'s read of the booted instance, or null for a VM
+     */
+    private static JqValue awaitReady(IncusClient incus, String name, MachineType machineType, JqValue instance,
+                                      InstanceSecret.Delivery secret, boolean mcpCaller,
+                                      CompletableFuture<List<ProofToken.Placeholder>> placeholders,
+                                      Output out) {
         var ssh = RuntimeSetup.hasSshCapability(instance);
         var guestScript = InstanceSecret.GUEST_SCRIPT + (ssh ? RuntimeSetup.sshStartScript() : "");
-        var started = withCurrentProofs(incus, name, secret, current -> {
-            incus.waitForReady(name, machineType, guestScript,
-                    InstanceSecret.guestEnv(current, Metadata.isMcpCaller(instance), placeholders.join()));
+        var answer = new String[1];
+        var booted = withCurrentProofs(incus, name, secret, current -> {
+            answer[0] = incus.waitForReady(name, machineType, guestScript,
+                    InstanceSecret.guestEnv(current, mcpCaller, placeholders.join()));
             return recordSecretBoot(incus, name, machineType, current.proofGeneration());
         });
         if (ssh) {
             try {
-                RuntimeSetup.ensureSshHostEntry(name, instance);
+                RuntimeSetup.ensureSshHostEntry(name, instance, answer[0]);
             } catch (RuntimeException e) {
                 // A convenience: the instance is up, and isx shell still reaches it
                 out.warn("failed to configure SSH host entry: " + e.getMessage());
             }
         }
-        return started;
+        return booted;
     }
 
     /**
@@ -808,14 +826,8 @@ public final class InstanceLifecycle {
             incus.restart(name);
             return delivery;
         });
-        // The keys ride in the probe as on a start (#1640), from the listing: no request of their own
-        var guestScript = InstanceSecret.GUEST_SCRIPT
-                + (RuntimeSetup.hasSshCapability(instance) ? RuntimeSetup.sshStartScript() : "");
-        withCurrentProofs(incus, name, secret, current -> {
-            incus.waitForReady(name, machineType, guestScript,
-                    InstanceSecret.guestEnv(current, mcpCaller, placeholders.join()));
-            return recordSecretBoot(incus, name, machineType, current.proofGeneration());
-        });
+        // As on a start, from the listing: no request of its own, and the pin stays current (#1640, #1863)
+        awaitReady(incus, name, machineType, instance, secret, mcpCaller, placeholders, out);
     }
 
     /**

@@ -88,6 +88,11 @@ public final class Environment {
         return sshDir().resolve("config");
     }
 
+    /** The instances' pinned host keys, which their Host blocks name (#1863). */
+    public static Path sshKnownHostsFile() {
+        return sshDir().resolve("known_hosts");
+    }
+
     public static Path cacheDir() {
         return home().resolve(".cache/incus-spawn");
     }

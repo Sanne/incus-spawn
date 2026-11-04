@@ -171,7 +171,7 @@ class InstanceSecretRotationTest {
         var daemon = new FakeIncusDaemon().container("dev-1", Map.of(Metadata.PROFILE, "tpl-dev"));
         var incus = org.mockito.Mockito.spy(daemon.client());
         var env = org.mockito.ArgumentCaptor.<Map<String, String>>captor();
-        org.mockito.Mockito.doReturn(true).when(incus).pollUntilReady(org.mockito.ArgumentMatchers.eq("dev-2"),
+        org.mockito.Mockito.doReturn("").when(incus).pollUntilReadyOutput(org.mockito.ArgumentMatchers.eq("dev-2"),
                 org.mockito.ArgumentMatchers.anyInt(), env.capture(), org.mockito.ArgumentMatchers.any(String[].class));
         var request = new BranchFlow.Request("dev-1", "dev-2", false, false, NetworkMode.AIRGAP,
                 null, null, null, null, List.of(), true, Map.of());

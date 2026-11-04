@@ -2,6 +2,7 @@ package dev.incusspawn.ssh;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.Warnings;
+import dev.incusspawn.incus.CidrUtils;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.HostLock;
 import dev.incusspawn.util.HostPath;
@@ -14,6 +15,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 /**
  * Manages a dedicated SSH key pair and per-instance SSH configuration
@@ -217,8 +219,13 @@ public final class SshKeyManager {
             blocks.add("    User " + USER);
             blocks.add("    IdentityFile ~/.config/incus-spawn/ssh/id_ed25519");
             blocks.add("    IdentitiesOnly yes");
+            // The key is looked up by the instance's name, which routing goes by, never only by
+            // an address isx recycles (#1863); its pin also names the address, for a client that
+            // ignores the alias. Unhashed, so isx can find and replace an instance's lines.
+            blocks.add("    HostKeyAlias " + instanceName);
+            blocks.add("    HashKnownHosts no");
             blocks.add("    StrictHostKeyChecking no");
-            blocks.add("    UserKnownHostsFile /dev/null");
+            blocks.add("    " + knownHostsOption());
             blocks.add("");
 
             writeIfChanged(content, String.join("\n", blocks));
@@ -230,8 +237,18 @@ public final class SshKeyManager {
     }
 
     /**
-     * Whether the managed SSH config has a Host block for the instance, with {@code hostname} as
-     * its Hostname when one is given: a block for an address the instance no longer has is none.
+     * The block's {@code UserKnownHostsFile}: absolute, since a {@code ~} ssh expands to another
+     * home than the one isx wrote would hide every pin, quoted, and with ssh's {@code %} escaped.
+     */
+    static String knownHostsOption() {
+        var path = Environment.sshKnownHostsFile().toAbsolutePath().toString().replace("%", "%%");
+        return "UserKnownHostsFile \"" + path + "\"";
+    }
+
+    /**
+     * Whether the managed SSH config has a current Host block for the instance, with
+     * {@code hostname} as its Hostname when one is given: a block for an address the instance no
+     * longer has is none, and so is one written before isx pinned host keys (#1863).
      */
     public static boolean hasHostEntry(String instanceName, String hostname) {
         List<String> lines;
@@ -241,32 +258,152 @@ public final class SshKeyManager {
             // None yet, or unreadable: addHostEntry reports the latter
             return false;
         }
-        boolean in = false;
+        var block = blockOf(lines, instanceName);
+        return block != null && block.contains(knownHostsOption())
+                && (hostname == null || hostname.isEmpty() || block.contains("Hostname " + hostname));
+    }
+
+    /** The stripped lines of the instance's first Host block, or null when there is none. */
+    private static List<String> blockOf(List<String> lines, String instanceName) {
+        List<String> block = null;
         for (var line : lines) {
             var trimmed = line.strip();
             if (trimmed.startsWith("Host ")) {
-                in = isHostFor(trimmed, instanceName);
-                if (in && (hostname == null || hostname.isEmpty())) return true;
-            } else if (in && !trimmed.isEmpty() && !trimmed.startsWith("#") && !Character.isWhitespace(line.charAt(0))) {
+                if (block != null) return block;
+                if (isHostFor(trimmed, instanceName)) block = new ArrayList<>();
+            } else if (block != null && !trimmed.isEmpty() && !trimmed.startsWith("#")
+                    && !Character.isWhitespace(line.charAt(0))) {
                 // An unindented line ends the block, as parseWithoutHostBlocks reads it
-                in = false;
-            } else if (in && trimmed.equals("Hostname " + hostname)) {
-                return true;
+                return block;
+            } else if (block != null) {
+                block.add(trimmed);
             }
         }
+        return block;
+    }
+
+    private static final Pattern FIELD_SEPARATOR = Pattern.compile("\\s+");
+    private static final Pattern HOST_SEPARATOR = Pattern.compile(",");
+
+    /**
+     * Pin the instance's host keys in the managed {@code known_hosts} (#1863), under its name and
+     * its address: the name is what its Host block's {@code HostKeyAlias} looks up, the address
+     * what a client ignoring the alias dials. Replaces the instance's earlier lines where they
+     * stood, and takes the address off another instance's line, whose earlier tenant it was. A
+     * pin already current costs a file read and no lock.
+     *
+     * @param address the instance's static address, or "" for none
+     * @return whether the keys are pinned; false for no keys, or a write that failed (reported)
+     */
+    public static boolean pinHostKeys(String instanceName, String address, List<HostKeys.HostKey> keys) {
+        if (keys.isEmpty()) return false;
+        var ip = normalizedAddress(address);
+        var file = Environment.sshKnownHostsFile();
+        try {
+            var content = Files.exists(file) ? Files.readString(file) : "";
+            if (pinned(content, instanceName, ip, keys).equals(content)) return true;
+        } catch (IOException e) {
+            // Taken again under the lock, which reports it
+        }
+        try (var lock = lockManagedConfig()) {
+            Files.createDirectories(Environment.sshDir());
+            var content = Files.exists(file) ? Files.readString(file) : "";
+            afterConfigRead.run();
+            writeIfChanged(file, content, pinned(content, instanceName, ip, keys));
+            return true;
+        } catch (IOException | HostLock.HostLockException e) {
+            Warnings.warn("Failed to pin the SSH host key of " + instanceName + ": " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** Whether the managed {@code known_hosts} holds a key for the instance's name: what herdr checks. */
+    public static boolean hasHostKeys(String instanceName) {
+        try {
+            for (var line : Files.readAllLines(Environment.sshKnownHostsFile())) {
+                var hosts = hostsOf(line);
+                if (hosts != null && hosts.contains(instanceName)) return true;
+            }
+        } catch (IOException e) {
+            // None yet, or unreadable: no pin
+        }
         return false;
+    }
+
+    /** {@code content} with the instance's lines replaced by {@code keys}, at the first one's place. */
+    static String pinned(String content, String instanceName, String ip, List<HostKeys.HostKey> keys) {
+        var result = new ArrayList<String>();
+        int at = -1;
+        for (var line : content.lines().toList()) {
+            var hosts = hostsOf(line);
+            if (hosts == null) {
+                result.add(line);
+            } else if (hosts.contains(instanceName)) {
+                if (at < 0) at = result.size();
+            } else if (ip != null && hosts.remove(ip)) {
+                // The address was another instance's before isx gave it to this one
+                if (!hosts.isEmpty()) result.add(String.join(",", hosts) + " " + FIELD_SEPARATOR.split(line.strip(), 2)[1]);
+            } else {
+                result.add(line);
+            }
+        }
+        var lines = keys.stream().map(key -> (ip == null ? instanceName : instanceName + "," + ip)
+                + " " + key.type() + " " + key.blob() + " isx:" + instanceName).toList();
+        result.addAll(at < 0 ? result.size() : at, lines);
+        return String.join("\n", result) + "\n";
+    }
+
+    /** {@code content} without the instance's lines. */
+    static String unpinned(String content, String instanceName) {
+        var result = new ArrayList<String>();
+        for (var line : content.lines().toList()) {
+            var hosts = hostsOf(line);
+            if (hosts == null || !hosts.contains(instanceName)) result.add(line);
+        }
+        return result.isEmpty() ? "" : String.join("\n", result) + "\n";
+    }
+
+    /**
+     * The hosts a {@code known_hosts} line names, or null for a line that names none isx manages:
+     * blank, a comment, a marker ({@code @revoked}) or a hashed host, all left as they are.
+     */
+    private static List<String> hostsOf(String line) {
+        var trimmed = line.strip();
+        if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("@") || trimmed.startsWith("|")) return null;
+        var fields = FIELD_SEPARATOR.split(trimmed, 2);
+        if (fields.length < 2) return null;
+        return new ArrayList<>(List.of(HOST_SEPARATOR.split(fields[0])));
+    }
+
+    /** The address in dotted form, or null for none or one that is not an IPv4 address. */
+    private static String normalizedAddress(String address) {
+        if (address == null || address.isBlank()) return null;
+        try {
+            return CidrUtils.longToIp(CidrUtils.ipToLong(address.strip()));
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /**
      * Remove a Host block from the managed SSH config.
      */
     public static void removeHostEntry(String instanceName) {
-        if (!Files.exists(Environment.sshConfigFile())) return;
+        var config = Environment.sshConfigFile();
+        var knownHosts = Environment.sshKnownHostsFile();
+        if (!Files.exists(config) && !Files.exists(knownHosts)) return;
         try (var lock = lockManagedConfig()) {
-            var content = Files.readString(Environment.sshConfigFile());
-            afterConfigRead.run();
-            var blocks = parseWithoutHostBlocks(content, instanceName);
-            writeIfChanged(content, String.join("\n", blocks));
+            if (Files.exists(config)) {
+                var content = Files.readString(config);
+                afterConfigRead.run();
+                var blocks = parseWithoutHostBlocks(content, instanceName);
+                writeIfChanged(content, String.join("\n", blocks));
+            }
+            // Its pinned keys go with it: a later instance of that name has its own (#1863)
+            if (Files.exists(knownHosts)) {
+                var content = Files.readString(knownHosts);
+                writeIfChanged(knownHosts, content, unpinned(content, instanceName));
+            }
         } catch (IOException | HostLock.HostLockException e) {
             Warnings.warn("Failed to update SSH config: " + e.getMessage());
         }
@@ -277,9 +414,13 @@ public final class SshKeyManager {
      * or re-adding the last block unchanged, leaves it alone. An earlier block moves to the end.
      */
     private static void writeIfChanged(String content, String updated) throws IOException {
+        writeIfChanged(Environment.sshConfigFile(), content, updated);
+    }
+
+    private static void writeIfChanged(Path file, String content, String updated) throws IOException {
         // Removing drops the trailing newline adding writes, which is no change to ssh.
         if (!updated.stripTrailing().equals(content.stripTrailing())) {
-            writeAtomically(Environment.sshConfigFile(), updated);
+            writeAtomically(file, updated);
         }
     }
 

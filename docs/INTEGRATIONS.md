@@ -36,6 +36,9 @@ isx adds `agent-1` to herdr as a machine on its first start, and herdr starts it
 When you destroy the instance, isx removes the machine from herdr.
 A machine you added to herdr yourself is never removed by isx.
 
+herdr insists on checking a machine's host key, which isx pins on every start.
+A machine added by an older isx reaches its instance again after that instance's next start.
+
 In the TUI, the instance's details (F3) say isx added it to herdr.
 
 ## Orca

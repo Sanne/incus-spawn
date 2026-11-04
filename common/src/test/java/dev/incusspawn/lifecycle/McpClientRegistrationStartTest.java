@@ -85,7 +85,7 @@ class McpClientRegistrationStartTest {
         var incus = spy(daemon.client());
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> env = ArgumentCaptor.forClass(Map.class);
-        doReturn(true).when(incus).pollUntilReady(eq("copy"), anyInt(), env.capture(), any(String[].class));
+        doReturn("").when(incus).pollUntilReadyOutput(eq("copy"), anyInt(), env.capture(), any(String[].class));
         // The networked start's repairs (resolv.conf, the CA) exec in a guest the fake does not run
         doReturn(new IncusClient.ExecResult(0, "", "")).when(incus).shellExec(eq("copy"), any(String[].class));
         // Proxy only, as a coordinator is branched: the host's proxy is checked first, and this
@@ -174,7 +174,7 @@ class McpClientRegistrationStartTest {
         var incus = spy(daemon.client());
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> env = ArgumentCaptor.forClass(Map.class);
-        doNothing().when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), any(), env.capture());
+        doReturn("").when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), any(), env.capture());
 
         InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, mcpCaller, RecordingOutput.QUIET);
 

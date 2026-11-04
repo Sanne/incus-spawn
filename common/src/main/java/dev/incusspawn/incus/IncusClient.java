@@ -291,16 +291,26 @@ public class IncusClient {
 
     /** {@link #pollUntilReady(String, int, String...)} with {@code env} added to the command's environment. */
     public boolean pollUntilReady(String name, int timeoutSeconds, Map<String, String> env, String... command) {
+        return pollUntilReadyOutput(name, timeoutSeconds, env, command) != null;
+    }
+
+    /**
+     * {@link #pollUntilReady(String, int, Map, String...)}, answering with the stdout of the run
+     * that succeeded, so a step that only the guest can answer costs no request of its own; null
+     * when none did.
+     */
+    public String pollUntilReadyOutput(String name, int timeoutSeconds, Map<String, String> env, String... command) {
         long deadline = System.nanoTime() + timeoutSeconds * 1_000_000_000L;
         while (System.nanoTime() < deadline) {
             try {
-                if (shellExec(name, env, command).success()) return true;
+                var result = shellExec(name, env, command);
+                if (result.success()) return result.stdout();
             } catch (Exception ignored) {
                 failIfDied(name, startupState(name));
             }
             if (!pause(POLL_INTERVAL_MS)) break;
         }
-        return false;
+        return null;
     }
 
     /**
@@ -365,8 +375,11 @@ public class IncusClient {
      * of its own. It runs as root on every probe until one answers, so it must be idempotent, and
      * it must not fail: the probe answers only when the script lets it reach its end. {@code env}
      * is added to its environment.
+     *
+     * @return what the script printed before the probe's {@code ready}, which is how a guest
+     *     answers isx without a request of its own (its SSH host keys, #1863); "" for no script
      */
-    public void waitForReady(String name, MachineType type, String guestScript, Map<String, String> env) {
+    public String waitForReady(String name, MachineType type, String guestScript, Map<String, String> env) {
         var t = readyTimeouts;
         long start = System.nanoTime();
         long deadline = start + readyTimeout(type).toNanos();
@@ -400,7 +413,7 @@ public class IncusClient {
                             : shellExec(name, env, "sh", "-c", guestScript + "\necho ready");
                 } catch (Exception ignored) {
                 }
-                if (result != null && answeredReady(result)) return;
+                if (result != null && answeredReady(result)) return answer(result);
                 var instance = startupState(name);
                 if (!vm && machineType(instance) == MachineType.VM) {
                     vm = true;
@@ -437,7 +450,15 @@ public class IncusClient {
      * hand to a VM's agent has been seen to end with exit 0 and the error on stdout.
      */
     static boolean answeredReady(ExecResult result) {
-        return result.success() && result.stdout().strip().equals("ready");
+        if (!result.success()) return false;
+        var lines = result.stdout().strip().lines().toList();
+        return !lines.isEmpty() && lines.getLast().equals("ready");
+    }
+
+    /** What an answered probe printed before its {@code ready}. */
+    static String answer(ExecResult result) {
+        var stdout = result.stdout().strip();
+        return stdout.substring(0, stdout.length() - "ready".length()).strip();
     }
 
     /** Throw if {@code instance} has stopped or errored: waiting any longer cannot help. */

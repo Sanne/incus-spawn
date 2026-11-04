@@ -4,6 +4,7 @@ paths:
   - "cli/src/main/java/dev/incusspawn/command/**"
   - "cli/src/main/java/dev/incusspawn/tui/**"
   - "common/src/main/java/dev/incusspawn/util/OutputFormat.java"
+  - "common/src/main/java/dev/incusspawn/ssh/**"
   - "integrations/**"
 ---
 
@@ -78,6 +79,9 @@ Without `--start` (a plain `ssh <name>`) it never starts anything, but a running
 An instance without `Metadata.PARENT`, which `InstancePrep.prepare` refuses, is connected to but never given a secret.
 `isx branch --owner <name> [--owner-id <id>]` stamps `Metadata.OWNER`/`OWNER_ID`, ownership keys no copy inherits (`Metadata.isOwnershipKey`, used where copies drop `mcp-*`); `BranchCommand.ownerProblem` validates both before anything is made.
 Only the ProxyCommand `isx branch --format=json` hands out has `--start` (`SshKeyManager.proxyCommand`); the Host block never does.
+The Host block keeps `StrictHostKeyChecking no` and names isx's managed `known_hosts` with `HostKeyAlias <name>` (#1863), so a client that forces strict checking (herdr) finds the key.
+The readiness probe prints the guest's host keys (`HostKeys.GUEST_SCRIPT`), `waitForReady`/`pollUntilReadyOutput` return them, and `SshKeyManager.pinHostKeys` writes `<name>,<address>` lines only when they changed: no request is added to the branch or start path.
+`HostKeys.parse` trusts nothing from the guest but a checked type and blob; isx writes the host field (design/instances.md "Host keys pinned by the instance's name").
 `isx ssh-proxy --start` installs `StdioGuard` and relays the guard's stdin and stdout, since a start prints progress and stdout is the SSH stream; without `--start` it relays `TerminalStreams` as before.
 `isx branch --format=plain` stays the name alone; its new fields are in `json` only (`BranchCommand.record(name, owner, ownerId, reach)`).
 `isx destroy --owner` (`DestroyCommand.destroyOwned`) fails closed on `drivers:` (`Drivers`, config.yaml only), then deletes through `deleteHeldIf` on the owner stamps; a missing instance is success.

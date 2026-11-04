@@ -158,7 +158,7 @@ class InstanceSecretRebootTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true");
         var incus = spy(daemon.client());
         // FakeIncusDaemon serves no exec: stand in for a guest that answers
-        doNothing().when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), any(), anyMap());
+        doReturn("").when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), any(), anyMap());
 
         InstanceLifecycle.startForUse(incus, NAME, MachineType.CONTAINER, RecordingOutput.QUIET);
 
@@ -176,7 +176,7 @@ class InstanceSecretRebootTest {
     void aBranchRecordsItsFirstBoot() {
         var daemon = new FakeIncusDaemon().container("dev-1", Map.of(Metadata.PROFILE, "tpl-dev"));
         var incus = spy(daemon.client());
-        doReturn(true).when(incus).pollUntilReady(eq(NAME), anyInt(), anyMap(), any(String[].class));
+        doReturn("").when(incus).pollUntilReadyOutput(eq(NAME), anyInt(), anyMap(), any(String[].class));
         var request = new BranchFlow.Request("dev-1", NAME, false, false, NetworkMode.AIRGAP,
                 null, null, null, null, List.of(), true, Map.of());
 
@@ -199,7 +199,7 @@ class InstanceSecretRebootTest {
     void aRestartFromTheTuiRecordsItsBootToo() {
         var daemon = runningContainer(STARTED, STARTED);
         var incus = spy(daemon.client());
-        doNothing().when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), any(), anyMap());
+        doReturn("").when(incus).waitForReady(eq(NAME), eq(MachineType.CONTAINER), any(), anyMap());
 
         InstanceLifecycle.restartForUse(incus, NAME, MachineType.CONTAINER, false, RecordingOutput.QUIET);
 

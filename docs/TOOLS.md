@@ -419,9 +419,10 @@ Both VS Code and JetBrains IntelliJ can connect to an instance with their UI run
 isx manages the SSH keys: `isx init` generates a dedicated passphraseless key pair at `~/.config/incus-spawn/ssh/`.
 Each start of an instance with an SSH server injects it, along with your personal `~/.ssh` key: the first of `id_ed25519.pub`, `id_ecdsa.pub` and `id_rsa.pub`.
 
-isx writes a `Host` entry per instance to `~/.config/incus-spawn/ssh/config`, included from your `~/.ssh/config`, with host key checking off.
-So `ssh <instance-name>` just works: no passphrase prompt, no host key warning.
-isx removes the entry when it destroys an instance.
+isx writes a `Host` entry per instance to `~/.config/incus-spawn/ssh/config`, included from your `~/.ssh/config`.
+Each start pins the instance's host keys beside it, in `known_hosts`.
+So `ssh <instance-name>` just works, without a prompt, even for a client that insists on checking host keys.
+isx removes both when it destroys an instance.
 
 Both tools declare TUI actions: press F9 on a running instance to open a repo directly in your IDE.
 
