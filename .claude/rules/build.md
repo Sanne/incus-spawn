@@ -175,7 +175,11 @@ Only HTTPS, SSH and Git network URLs qualify, with a protocol allowlist blocking
 SSH uses batch mode unless the user supplied an SSH command or executable.
 The guest checks repository access using the template's accounts, and its complete advertised selection must match the snapshot before mounting.
 On a mismatch the guest reads again, and the snapshot is refreshed incrementally from its leased bytes (`GitPreparation.refresh`) up to `RepoCloner.REF_DRIFT_REFRESHES` times before the guest clones from the network (#1980).
+A refresh fetches only when the host's own advertisement equals the guest's latest reading, so its result matches that reading, and a different ref scope costs no fetch.
+It gives up, for the guest's network clone, when following the remote needs a rebuild, such as when an unmerged branch was deleted.
 All guest access checks finish before any prime can alter guest tools.
+The re-reads after a mismatch may run after another repo's prime started, and that is accepted (#1992).
+A prime can make the guest read anything, but a snapshot is mounted only on its exact selection, SHAs of refs the guest's accounts cannot see included, which the guest has no way to learn.
 The host's `ls-remote` (`GitPreparation.readRemote`) starts beside the guest's check, and a denied guest discards it unused.
 Only that remote's tracking tips are used for negotiation.
 A failed reference clone, dissociation or integrity check discards the partial output and retries once without a reference before publication.

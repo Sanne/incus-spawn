@@ -9,6 +9,7 @@ Never run build-time fetch or maintenance in a user checkout, or mount its full 
 Network-source preparation accepts only HTTPS, SSH and Git network URLs; file transport and remote helpers are blocked even after URL rewrites.
 Check the guest's template-account access before fetching, cloning or publishing (only the host's `ls-remote` runs beside it) and match its complete advertised selection before mounting any snapshot, including warm hits.
 Complete all access checks before priming; only raw shallow references gate other repos' primes once preparation begins.
+A guest re-read after the remote moved may follow another repo's prime; only the snapshot's exact selection still mounts it.
 The shallow transport/fixup path remains separate.
 Explicit `repos[].host-source` uses a separate offline export of local branches/tags and their reachable objects, including unpushed history.
 It never copies the source object store wholesale, fetches its remote, mounts its checkout or falls back to the network.

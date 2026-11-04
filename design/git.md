@@ -82,10 +82,15 @@ Paths, file transports and arbitrary helpers cannot turn a template URL into a h
 SSH defaults to batch mode unless an SSH command or executable was explicitly supplied.
 The guest first checks the remote with its template's accounts, and its full advertised selection must match the prepared snapshot before any bytes are mounted.
 A busy remote moves during a long preparation, so a mismatch reads the guest's refs again and refreshes the snapshot incrementally from its own leased bytes, up to three times, before giving up (#1980).
+The refresh fetches only when the host's advertisement equals the guest's latest reading, so a guest whose accounts see a different ref scope never costs a fetch.
 The refresh never clones in full, and only a selection the guest has just seen is mounted, so the guarantee is unchanged.
+When following the remote would need a rebuild, as when an unmerged branch was deleted, the refresh gives up and the guest clones from the network.
 Denied access, different credential-visible refs or a selection still racing after the refreshes uses the ordinary guest clone path instead.
 The host's `ls-remote` runs beside the guest's check, not after it: neither needs the other's result until the selections are compared, and it fetches nothing a denied guest could gain (#1934).
 All guest access checks finish before any prime runs; host credentials alone never authorize snapshot access, including warm-cache copies.
+The re-reads after a mismatch are the exception: a slow preparation does not hold back other repos' primes, so a re-read may follow one (#1992).
+That is accepted because a prime can change only what the guest reads, never the snapshot it must match.
+A match needs the snapshot's exact selection, including SHAs of refs the guest's accounts cannot see, so a prime that rewrites the guest's Git (`insteadOf`, a wrapper) can turn a match into a network clone but cannot forge one.
 The guest trusts only the mounted snapshot's own path, on the clone's command line, for Git's ownership check, since an unshifted macOS mount shows it owned by an unmapped uid (#1590).
 Changed refs first fetch incrementally into staging, with separate metadata and hardlinks only to the previous verified generation's owned immutable packs.
 Fetching checks incoming objects, forces packed storage and disables automatic maintenance; new packs also pass `index-pack --verify --strict`, while old pack/index hashes must still match their seal.

@@ -94,8 +94,16 @@ The guest's complete advertised selection must match the prepared snapshot befor
 A different account-visible ref scope or a race that changes selection uses the guest's network clone instead; a successful host credential check alone never authorizes a guest copy.
 A long preparation of a busy repository outlives the guest's first reading, so a mismatch is not final at once (#1980).
 The guest reads the remote again, which settles the common case of a snapshot newer than the access check.
-While the two still differ, the snapshot is brought up to date by an incremental fetch from its own leased bytes, and the guest reads again, up to three times (`RepoCloner.REF_DRIFT_REFRESHES`).
-That refresh never clones in full, even when the cache did not keep the snapshot, and stops when the host already sees exactly the snapshot's selection.
+While the two still differ, the snapshot is brought up to that reading by an incremental fetch from its own leased bytes, up to three times (`RepoCloner.REF_DRIFT_REFRESHES`).
+The host fetches only when its own advertisement equals the guest's latest reading, so the result matches it, and a different account-visible ref scope never costs a fetch.
+When the host sees another selection, or exactly the snapshot's, nothing is fetched and the guest reads again.
+That refresh never clones in full, even when the cache did not keep the snapshot.
+It gives up when following the remote needs a rebuild: selected history was removed, the remote moved during the fetch, validation failed or the packs would exceed 32.
+Removed history is the common case on nixpkgs, where a merge-queue branch is deleted without being merged.
+The guest then clones from the network.
+These re-reads may run after another repository's prime started, since a slow preparation never holds primes back (#1992).
+That is accepted: a prime can change what the guest reads, but a match needs the snapshot's exact selection, including SHAs of refs the guest's accounts cannot see.
+So a prime that rewrites the guest's Git, with `insteadOf` or a wrapper, can turn a match into a network clone but cannot forge one.
 Only a selection the guest has just seen is mounted; the ready line adds `(refreshed)` to the strategy, for example `via reference-seeded clean snapshot (refreshed)`.
 On nixpkgs a cold preparation with a host checkout took about 16 minutes, during which `master`, release and merge-queue branches moved: without the refresh, all of it was discarded for a full network clone in the guest.
 This applies to warm cache hits as well as new generations.
