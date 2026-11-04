@@ -76,7 +76,7 @@ Pushing a tag triggers a workflow that will:
 1. Detect the release channel from the tag (see table above)
 2. Set the project version from the tag
 3. Build self-contained uber-jars for both `isx` and `isx-proxy` (for JBang users)
-4. Build native binaries via GraalVM (Linux amd64/aarch64, macOS aarch64/x86_64) for both `isx` and `isx-proxy`
+4. Build native binaries via GraalVM (Linux amd64/aarch64, macOS aarch64; Intel Macs are not shipped, see design/native-image.md) for both `isx` and `isx-proxy`
 5. Create a GitHub Release (marked as pre-release for dev tags)
 6. Update the [Homebrew tap](https://github.com/Sanne/homebrew-tap): `incus-spawn.rb` for stable, `incus-spawn-dev.rb` for dev
 7. Publish RPM to [Fedora COPR](https://copr.fedorainfracloud.org/coprs/sanne/incus-spawn/): `incus-spawn` project for stable, `incus-spawn-dev` for dev

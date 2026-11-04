@@ -119,7 +119,7 @@ Tests that run `git credential` or log in over HTTPS configure Git with `Hermeti
 
 ## Tech Stack
 
-- **Java 25**, **Quarkus 3.x** with aesh for CLI commands
+- **Java 25**, **Quarkus 4.x** with aesh for CLI commands (the proxy runs on Vert.x 5 and Netty 4.2; see [docs/dev/QUARKUS-4.md](docs/dev/QUARKUS-4.md))
 - **Tamboui** for the interactive TUI (terminal UI framework)
 - **jjq** (`io.hyperfoil.tools:jjq-*`) for YAML and JSON: definitions and `config.yaml` bind through generated `@JqMapped` mappings (`Jjq`), and JSON is read with `JqValues.parseStrict` when isx or Incus wrote it, and with `Jjq.parseForeign` (a lone surrogate escape reads as U+FFFD, nothing else is let through) when another program did
 - **Quarkus CDI** for dependency injection (tool discovery, command wiring)
@@ -153,7 +153,7 @@ Three Maven modules under a parent POM:
 **PGO**: release binaries are built with profiles collected in the same release run (#1637, design/native-image.md "Profile-guided optimization").
 `release.yml`'s `profiles` job builds both binaries instrumented (`-Dnative.pgo.instrument`), runs `bench/pgo-collect.sh` against a real Incus, and merges each binary's dumps into one profile (`scripts/pgo-merge.sh`).
 The build jobs apply them with `-Dnative.pgo=<dir>`, and `.github/scripts/check-pgo-quality.sh` fails a build whose binaries did not both take their profile above a floor.
-The Intel macOS build, on GraalVM 25.0, stays unprofiled.
+Intel Macs are not shipped since Quarkus 4 (#1693): it needs GraalVM 25.0.4, and Oracle GraalVM has no macOS x64 build after 25.0.1 (design/native-image.md "Intel Macs are not shipped", `IntelMacNotShippedTest`).
 The arguments join the one list through the `native.pgo.args` placeholder; without `-Dnative.pgo` a build is unprofiled, so Community Edition still builds.
 A change to build flags, the GraalVM version or the collection flows is verified with a `workflow_dispatch` run of `release.yml` before merging; that run publishes nothing.
 

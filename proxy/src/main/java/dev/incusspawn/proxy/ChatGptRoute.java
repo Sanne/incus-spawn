@@ -16,7 +16,7 @@ import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.http.RequestOptions;
-import io.vertx.core.http.ServerWebSocket;
+import io.vertx.core.http.ServerWebSocketHandshake;
 import io.vertx.core.http.WebSocketConnectOptions;
 
 import javax.net.ssl.ExtendedSSLSession;
@@ -376,7 +376,7 @@ final class ChatGptRoute {
     }
 
     /** The TLS name a WebSocket's handshake asked for, or null when it sent none. */
-    private static String sni(ServerWebSocket ws) {
+    private static String sni(ServerWebSocketHandshake ws) {
         if (!(ws.sslSession() instanceof ExtendedSSLSession session)) return null;
         for (var name : session.getRequestedServerNames()) {
             if (name instanceof SNIHostName host) return host.getAsciiName();
@@ -674,9 +674,9 @@ final class ChatGptRoute {
 
     /**
      * A WebSocket to one of these hosts; returns whether it was accepted, as
-     * {@code MitmProxy.relayWebSocket} does. Unclaimed sockets go back to the ordinary relay.
+     * {@code MitmProxy.relayWebSocketWith} does. Unclaimed sockets go back to the ordinary relay.
      */
-    boolean handleWebSocket(ServerWebSocket ws, String domain, String sourceAddress, ApiActivity.Flow flow) {
+    boolean handleWebSocket(ServerWebSocketHandshake ws, String domain, String sourceAddress, ApiActivity.Flow flow) {
         if (!claims(ws.headers())) return proxy.relayWebSocketWith(ws, domain, flow, Future.succeededFuture(options -> {}), status -> {});
         var problem = shapeProblem(ws.headers(), domain, ws.uri(), sni(ws));
         if (problem != null) {

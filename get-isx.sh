@@ -4,6 +4,17 @@ set -e
 REPO="Sanne/incus-spawn"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
+OS=$(uname -s)
+if [ "$OS" = "Darwin" ]; then
+  # A shell under Rosetta reports x86_64 on Apple Silicon too, so ask the hardware
+  if [ "$(uname -m)" = "arm64" ] || [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+    echo "On macOS, install isx with Homebrew: brew install Sanne/tap/incus-spawn"
+  else
+    echo "Error: isx is not released for Intel Macs, only for Apple Silicon (v0.4.2 and v0.5.0-dev.2 were the last with an Intel build)."
+  fi
+  exit 1
+fi
+
 ARCH=$(uname -m)
 case "$ARCH" in
   x86_64)  ASSET="incus-spawn-linux-amd64"; PROXY_ASSET="isx-proxy-linux-amd64" ;;
@@ -11,7 +22,6 @@ case "$ARCH" in
   *) echo "Error: unsupported architecture: $ARCH (only x86_64 and aarch64 are supported)"; exit 1 ;;
 esac
 
-OS=$(uname -s)
 if [ "$OS" != "Linux" ]; then
   echo "Error: unsupported OS: $OS (only Linux is supported)"
   exit 1

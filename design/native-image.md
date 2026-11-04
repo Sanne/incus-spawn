@@ -2,7 +2,7 @@
 
 How the code is split into modules, how the binaries are built, and what the native images must not do.
 
-- **Java 25**, **Quarkus 3.x** with aesh for CLI commands
+- **Java 25**, **Quarkus 4.x** with aesh for CLI commands (the proxy runs on Vert.x 5 and Netty 4.2; see [docs/dev/QUARKUS-4.md](../docs/dev/QUARKUS-4.md))
 - **Tamboui** (https://tamboui.dev/) for interactive TUI (list view, modal dialogs, inline actions)
 - **GraalVM native image** for optional zero-dependency distribution
 - **jjq** for YAML and JSON (see "jjq rather than Jackson" below)
@@ -249,7 +249,6 @@ It then merges each binary's per-process dumps into one profile with `scripts/pg
 The merged profiles are a workflow artifact kept 90 days, so a local build can fetch them.
 Each build job applies them with `-Dnative.pgo=<dir>` and `-H:+PGOPrintProfileQuality`, and `check-pgo-quality.sh` fails it unless both binaries print an applicability and relevance above the floors.
 Profiles key on methods, so one collected on Linux x86_64 applies elsewhere, OS-specific code falling back to inferred profiles.
-The Intel macOS build runs GraalVM 25.0, whose builds would take a 25.4 profile only past its version check, so it stays unprofiled.
 Nothing is stored between releases, so the profile always matches the released commit, and a collection that fails fails the release: there is no older profile to fall back on.
 `ReleasePgoWorkflowTest` holds the profiled builds to the profiles job's GraalVM.
 
@@ -278,7 +277,8 @@ Three interleaved rounds of `bench/run.sh`, same commit, Oracle GraalVM 25.4.4.1
 G1 costs 9.0 MB of binary (+12%), 5.4 MB of idle RSS (+13%) and 6 to 12 MB more after load.
 A larger G1 heap (`MaxRAM=512m`, 128 MB) changes nothing either, so `MaxRAM` stays 256m on every platform.
 G1 on macOS is also an Oracle GraalVM feature: `native-image` from GraalVM Community Edition, which is what Homebrew's `graalvm` formula installs, stops with "'G1' is not an accepted value".
-So `install.sh --native` would fail on such a Mac. macOS x86_64 has no choice in any case: GraalVM dropped it after 25.0, before G1 reached macOS.
+So `install.sh --native` would fail on such a Mac.
+macOS x86_64 has no choice in any case: GraalVM dropped it after 25.0.1, before G1 reached macOS.
 
 The figures and their conditions are in `docs/dev/PERFORMANCE-NOTES.md`, "G1 on Apple Silicon".
 
@@ -286,8 +286,7 @@ The figures and their conditions are in `docs/dev/PERFORMANCE-NOTES.md`, "G1 on 
 
 isx supports **macOS 15 (Sequoia) or later**; macOS 14 and older were dropped by decision (#1086).
 Apple Silicon is supported, and the bot's Apple Silicon Mac (the `mac-runner` agent, not a CI runner) verified this change on it.
-Intel stays among the release artifacts as **best effort**.
-It is built on GitHub's `macos-15-intel`, linked for the same minimum, smoke-tested there and checked like the rest, but not verified on an Intel Mac (`isx vm`, the proxy service), as no Intel Mac is available to the project.
+Intel Macs are not shipped any more; see "Intel Macs are not shipped" below.
 
 The value lives once, as `macos.deployment.target` in the root pom, and a profile activated on any macOS host adds `-H:NativeLinkerOption=-mmacosx-version-min=<it>` to both modules' argument lists (`macos.min.args`), so release builds and local `./install.sh --native` alike link for it.
 
@@ -312,6 +311,29 @@ There is no runtime check in `isx`: on an older macOS, dyld refuses the native b
 `install.sh --native` refuses on an older Mac instead (reading the pom's value), where it would otherwise build a binary its own host cannot load; its JVM install is left alone, since that still runs there, unsupported.
 
 Raising the minimum is changing the pom value, `MACOS_MIN` and the docs that state it (README, `docs/dev/HOMEBREW.md`); the tests name `MACOS_MIN` if it is left behind, not the prose.
+
+## Intel Macs are not shipped
+
+isx is released for Apple Silicon Macs only, from the first release on Quarkus 4 (#1693).
+v0.4.2 and v0.5.0-dev.2 are the last releases with Intel macOS binaries (`incus-spawn-macos-x86_64`, `isx-proxy-macos-x86_64`).
+Quarkus 4 refuses a GraalVM before 25.0.4 (quarkusio/quarkus#57922), because 25.0.0 to 25.0.3 silently drop constant bootstrap registrations (oracle/graal#12453).
+Oracle GraalVM, and GraalVM Community Edition too, ship no macOS x64 build after 25.0.1, so no Oracle toolchain can build isx for an Intel Mac.
+BellSoft's Liberica NIK still ships one and built both binaries in a release dispatch, but Sanne decided against shipping a release built with another vendor's toolchain.
+Intel had been **best effort** since #1086: built on GitHub's `macos-15-intel` and smoke-tested there, never verified on an Intel Mac, as none is available to the project.
+
+What an Intel Mac user meets instead of a broken download:
+
+- Homebrew refuses before downloading, once the tap's formulas declare `depends_on arch: :arm64` and name no Intel asset.
+  That change is made in `Sanne/homebrew-tap` by hand, before the first release on Quarkus 4, since the tap step will not rewrite an Intel formula.
+  The release's tap step refuses to update a formula that still names an Intel asset or lacks that line.
+  Rewritten, such a formula would point an Intel Mac at a missing `v#{version}` binary beside the previous release's `isx-proxy`.
+  A refusal is not fatal, since the step is `continue-on-error`: the release still publishes, with an `::error::` annotation, and every Mac stays on the previous formula until the tap is edited and that formula is bumped by hand, or the next release updates it.
+- `get-isx.sh` says isx is not released for Intel Macs, and on Apple Silicon points to Homebrew.
+- `./install.sh --native` stops with the reason on an Intel Mac.
+- The JBang jars still run wherever Java 25 does, but an Intel Mac is not supported or tested.
+  The x86_64 appliance is still published, since its build and tests also serve Linux CI, so such a user gets no broken download either.
+
+`IntelMacNotShippedTest` fails if a release build targets an Intel Mac, if `release.yml` names an Intel macOS asset, or if the tap step stops refusing such a formula.
 
 ## Build-time initialization must not capture host paths
 
@@ -375,7 +397,7 @@ That works without registration because the mappings are initialized at image-bu
 Putting a mapping, or `Jjq`, on either run-time list would move that lookup to run time, where it needs reflection metadata again.
 Cold Jackson databind cost about 108 ms of a ~194 ms CLI start; with jjq `isx tools` takes 4.8 ms native instead of 9.6 (with 100 user tools), and the JVM distribution no longer carries Jackson or SnakeYAML.
 Tests read and write JSON with jjq too (#1702): `FakeIncusDaemon` parses and answers requests with the parser production uses, and hands its instances to the lifecycle code as `JqValue`s.
-No test imports Jackson; networknt's schema validator brings Jackson 3 into the `cli` tests, beside the Jackson 2 core Vert.x carries in production.
+No test imports Jackson; networknt's schema validator brings Jackson 3 into the `cli` tests, and Vert.x 5 carries Jackson 3 core into the proxy in production.
 Jackson's semantics are the ones users' files were written against, so where jjq differs isx restores them rather than following it:
 - A plain scalar bound to a `String` keeps its source text (`0022`, `3.10`, `yes`); converters that read the tree themselves use `Jjq.text`, which reads `JqValue.sourceText()`, since `asText()` renders the resolved number or boolean.
 - `asList()` on a JSON object is empty, where Jackson iterated its values: an object (a devices map, `state.network`) is walked as a `JqObject`.

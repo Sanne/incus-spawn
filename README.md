@@ -360,7 +360,7 @@ Windows is not supported.
 **macOS**: `isx init` provisions a lightweight Linux VM with [vfkit](https://github.com/crc-org/vfkit), which starts when needed.
 `isx vm start|stop|restart|status|resize|reset|console|check-version` manages it, and [its reference](docs/CLI.md#when-the-vm-stops-answering) says what to do when it stops answering.
 Apple Silicon is supported.
-Intel Macs get a binary built for the same macOS 15 minimum on a best-effort basis: it is released, but not verified on an Intel Mac.
+Intel Macs are no longer supported: v0.4.2 and v0.5.0-dev.2 were the last releases built for them.
 
 On macOS isx runs containers only.
 These are Linux-only:

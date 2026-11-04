@@ -18,12 +18,12 @@ Where the implementation differs from the plan, this page says so beside the pla
 Still open:
 
 - **Done:** the quality floors in `.github/scripts/check-pgo-quality.sh` are 12% applicability and 90% relevance.
-  The lowest figures measured are 15.04% applicability (the macOS aarch64 CLI, in dispatch run 40183611322 and in v0.5.0-dev.1; 15.05% in the table below) and 97.04% relevance (the macOS aarch64 proxy, Phase 3 dispatch run 40186966586).
-  That leaves 3 points of applicability and 7 of relevance for drift between releases, while a profile that did not apply or fit, which reads near zero, still fails.
+  The lowest figures measured are 14.98% applicability (the macOS aarch64 CLI, on Quarkus 4.0.0.Beta2 in dispatch run 40313492040, at an earlier head of #1693, and 15.03% on Beta3 in run 42024366815 below; 15.04% on Quarkus 3, in dispatch run 40183611322 and in v0.5.0-dev.1) and 97.04% relevance (the macOS aarch64 proxy, Phase 3 dispatch run 40186966586).
+  That leaves about 3 points of applicability and 7 of relevance for drift between releases, while a profile that did not apply or fit, which reads near zero, still fails.
 - Host routes and the MCP bridge have no load, so they compile as cold code.
   **Done (#1651):** the npm path and the WebSocket relay now have loads (`--load=npm`, `--load=websocket`) and are in the release profile, collected at a lighter weight so they do not outweigh the rest.
   Throughput on both is unchanged on the measuring host, since TLS and the network bound them, for about 1.5 MB more proxy; see the performance notes, "The npm and WebSocket paths".
-- The Intel macOS build stays unprofiled (Phase 3 below).
+- The Intel macOS build stayed unprofiled (Phase 3 below); it is not built since Quarkus 4 (#1693).
 
 ## Goal
 
@@ -151,8 +151,8 @@ Adopted.
 The PR that turns PGO on for releases carries the evidence for each axis of the goal, in this order:
 
 1. The phase 2 A/B tables, added to the performance notes, with the conditions they were measured under.
-2. The `PGOPrintProfileQuality` output of the optimized build on each of the four release platforms, from a `workflow_dispatch` run of the release's `profiles` and `build` jobs on the PR's commit, so a collection failure, a macOS build failure or an unusable profile is found before a tag.
-3. The binary sizes from that run beside the previous release's, for both binaries and all four platforms.
+2. The `PGOPrintProfileQuality` output of the optimized build on each release platform, from a `workflow_dispatch` run of the release's `profiles` and `build` jobs on the PR's commit, so a collection failure, a macOS build failure or an unusable profile is found before a tag.
+3. The binary sizes from that run beside the previous release's, for both binaries and every release platform.
 4. The release smoke test passing on the PGO binaries.
 
 A later PR that changes build flags, bumps GraalVM or changes the collection flows repeats items 2 and 3, and item 1 when it claims a speed or memory change.
@@ -167,6 +167,20 @@ A later PR that changes build flags, bumps GraalVM or changes the collection flo
 | macOS x86_64 | unprofiled | unprofiled | 83.31 → 83.56 MB | 38.51 → 38.64 MB |
 
 Item 4: the release smoke test passed on all four platforms, and the keychain smoke on both macOS builds.
+
+**Repeated for the Quarkus 4 upgrade (#1693)**, from `workflow_dispatch` run 42024366815 of `release.yml` on the PR's branch at f7e8516b, on Quarkus 4.0.0.Beta3.
+Every build passed its floors and its smoke test, the macOS build the keychain smoke, and the profiles were collected against the Vert.x 5 proxy.
+There are three builds: Intel Macs are not shipped since Quarkus 4 (design/native-image.md "Intel Macs are not shipped").
+An earlier run, 41919773942, stopped at the Intel build, whose Oracle GraalVM 25.0.1 Quarkus 4 refuses; run 41928844885 built it with Liberica NIK 25.0.4 instead, which is not shipped (Q-12 in `QUARKUS-4.md`).
+Sizes are against v0.5.0-dev.2, the last release on Quarkus 3.
+The proxy no longer carries the DNS resolver substitution (Q-1), which accounts for most of its growth:
+
+| Platform | CLI applicability / relevance | Proxy applicability / relevance | `isx-proxy`, v0.5.0-dev.2 → Quarkus 4 | `isx`, v0.5.0-dev.2 → Quarkus 4 |
+|---|---|---|---|---|
+| Linux amd64 | 15.20% / 100.00% | 20.94% / 100.00% | 43.72 → 46.14 MB | 39.46 → 39.59 MB |
+| Linux aarch64 | 15.15% / 99.76% | 20.90% / 99.96% | 44.17 → 46.40 MB | 40.96 → 41.03 MB |
+| macOS aarch64 | 15.03% / 98.56% | 20.51% / 97.25% | 41.41 → 42.40 MB | 41.16 → 41.26 MB |
+| macOS x86_64 | not shipped | not shipped | 86.06 → none | 39.55 → none |
 
 ## Phase 3: collecting and applying profiles in the release run
 
@@ -193,7 +207,7 @@ Each `build` job then downloads the artifact and builds both binaries once, with
   Each build also refuses profiles collected from another commit (the artifact's `commit` file).
 - The Intel macOS build runs GraalVM 25.0, so its profile version may mismatch.
   Use `PGOIgnoreVersionCheck` there or skip PGO on that legacy platform.
-  **Implemented:** skipped; that build stays unprofiled (`pgo: false` in the matrix), and `ReleasePgoWorkflowTest` holds every profiled build to the profiles job's GraalVM.
+  **Implemented:** skipped; that build stayed unprofiled (`pgo: false` in the matrix) until it was dropped with Quarkus 4 (#1693), and `ReleasePgoWorkflowTest` holds every profiled build to the profiles job's GraalVM.
 - A release whose collection fails, fails.
   There is no older profile to fall back on, and shipping an unprofiled binary silently would defeat the goal.
   A flaky collection step is fixed, not tolerated, and the job can be rerun.

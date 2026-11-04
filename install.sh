@@ -206,6 +206,14 @@ if $NATIVE; then
         done
         NATIVE_ARGS="$NATIVE_ARGS -Dquarkus.native.container-build=true -Dquarkus.native.container-runtime=$CTR -Dquarkus.native.builder-image=$BUILDER_TAG -Dquarkus.native.builder-image.pull=never"
     elif [ "$(uname -s)" = "Darwin" ]; then
+        # A shell under Rosetta reports x86_64 on Apple Silicon too, so ask the hardware
+        if [ "$(uname -m)" != "arm64" ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" != "1" ]; then
+            # Quarkus 4 needs GraalVM 25.0.4, and Oracle GraalVM has no macOS x64 build after 25.0.1 (#1693)
+            echo "Error: native builds are not supported on Intel Macs."
+            echo "  isx needs GraalVM 25.0.4 or later, and Oracle GraalVM ships no Intel macOS build of it."
+            echo "  isx is released for Apple Silicon Macs only; v0.4.2 and v0.5.0-dev.2 were the last with an Intel build."
+            exit 1
+        fi
         if [ -z "$GRAALVM_HOME" ] || [ ! -x "$GRAALVM_HOME/bin/native-image" ]; then
             GRAALVM_HOME=$(/usr/libexec/java_home -V 2>&1 | grep -i graal | awk '{print $NF}' | head -1)
         fi
