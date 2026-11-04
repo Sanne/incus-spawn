@@ -119,6 +119,20 @@ class KernelRoleTest {
         }
     }
 
+    @Test
+    void bothKernelsRunRootfulPodmanAndDockerOnABridge() throws IOException {
+        // Rootful container runtimes in an instance (#2003). netavark's FORWARD chain accepts by
+        // "ct mark", and nft refuses the whole ruleset without NF_CONNTRACK_MARK. Docker drops
+        // outside traffic to a container in the raw table, which legacy iptables (Fedora's incus
+        // package installs it) has only with IP_NF_RAW. Either gap fails every start on a bridge.
+        // isx.config is read by both roles: the appliance kernel runs macOS's containers.
+        var shared = enabled(Files.readString(KERNEL_DIR.resolve("isx.config")));
+        for (var option : List.of("CONFIG_NETFILTER_ADVANCED=y", "CONFIG_NF_CONNTRACK=y", "CONFIG_NFT_CT=y",
+                "CONFIG_NF_CONNTRACK_MARK=y", "CONFIG_IP_NF_RAW=y", "CONFIG_IP6_NF_RAW=y")) {
+            assertTrue(shared.contains(option), "isx.config must set " + option);
+        }
+    }
+
     private static List<String> enabled(String fragment) {
         return fragment.lines().filter(l -> l.startsWith("CONFIG_")).toList();
     }
