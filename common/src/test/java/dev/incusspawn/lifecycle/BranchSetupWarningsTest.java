@@ -26,10 +26,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 
 /**
  * Which warnings a branch's setup raises (#1646), under the binding the TUI makes for a branch
@@ -81,12 +83,12 @@ class BranchSetupWarningsTest {
         Files.writeString(Environment.sshPubKeyFile(), "ssh-ed25519 AAAA isx\n");
         var daemon = new FakeIncusDaemon().container("tpl-dev", Map.of(Metadata.TYPE, Metadata.TYPE_BASE,
                 Metadata.PROFILE, "tpl-dev", Metadata.SSH_SETUP, "true"));
-        var incus = settingUp(daemon, true);
-        doThrow(new IllegalStateException("no address yet")).when(incus).getContainerIpv4("dev-1");
+        // Where the managed config goes, something it cannot be written over
+        Files.createDirectories(Environment.sshConfigFile());
 
-        var warnings = branchWarnings(incus);
+        var warnings = branchWarnings(settingUp(daemon, true));
 
-        assertTrue(warnings.stream().anyMatch(w -> w.contains("Failed to configure SSH host entry: no address yet")),
+        assertTrue(warnings.stream().anyMatch(w -> w.contains("Failed to update SSH config")),
                 "warned " + warnings);
     }
 
@@ -103,7 +105,6 @@ class BranchSetupWarningsTest {
         var script = org.mockito.ArgumentCaptor.forClass(String[].class);
         doReturn(TestHostKeys.printed(key)).when(incus)
                 .pollUntilReadyOutput(eq("dev-1"), anyInt(), anyMap(), script.capture());
-        doReturn("10.166.11.9").when(incus).getContainerIpv4("dev-1");
 
         assertEquals(List.of(), branchWarnings(incus));
 
@@ -126,7 +127,7 @@ class BranchSetupWarningsTest {
         var key = TestHostKeys.key("ssh-ed25519", 9);
         doReturn(TestHostKeys.printed(key)).when(incus)
                 .pollUntilReadyOutput(eq("dev-1"), anyInt(), anyMap(), any(String[].class));
-        // A sibling's address, which the guest put on one of its interfaces
+        // A sibling's address, which the guest put on one of its interfaces: never asked for
         doReturn("10.166.11.250").when(incus).getContainerIpv4("dev-1");
         var prefetched = new RuntimeSetup.RuntimeConfig(null, true, null, null, null, null, "10.166.11.9", null, null);
 
@@ -135,6 +136,8 @@ class BranchSetupWarningsTest {
 
         assertEquals(List.of("dev-1,10.166.11.9 ssh-ed25519 " + key.blob() + " isx:dev-1"),
                 Files.readAllLines(Environment.sshKnownHostsFile()));
+        assertTrue(Files.readString(Environment.sshConfigFile()).contains("Hostname 10.166.11.9"));
+        verify(incus, never()).getContainerIpv4(anyString());
     }
 
     @Test
