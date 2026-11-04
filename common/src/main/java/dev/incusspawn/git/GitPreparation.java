@@ -32,6 +32,7 @@ public final class GitPreparation {
     private static final Pattern PACK_FILE = Pattern.compile("pack-[0-9a-f]{40}(?:[0-9a-f]{24})?\\.(pack|idx)");
     private static final String POLICY = "isx-clean-full-snapshot-v1";
     static final int MAX_INCREMENTAL_PACKS = 32;
+    private static final String REFRESHED = " (refreshed)";
     private final PreparationCache cache;
     private final GitTransferConfig transfer;
 
@@ -253,32 +254,70 @@ public final class GitPreparation {
                 }
             }
             validatePin(result, request.branch());
-
-            start = System.nanoTime();
-            // Recreate only the selected refs and pack/index pairs in a minimal bare repository.
-            // Discard clone config (including credentials), reflogs and generated object sidecars.
-            var clean = lease.path.resolve("prepared.git");
-            sanitize(result, clean);
-            delete(result);
-            Files.move(clean, result);
-            manifest = manifest(result);
-            Files.writeString(staged.resolve("seal"), seal(key, manifest));
-            elapsed(timings, "verify", start);
-
-            start = System.nanoTime();
-            phase.accept("Publishing Git snapshot");
-            // The lease pins immutable owned files before publication can move/evict the staging tree.
-            PreparationCache.copyTree(result, clean, true);
-            var notRetained = cache.publishSnapshot(key, staged);
-            delete(staged);
             delete(previous);
             Files.deleteIfExists(tips);
-            elapsed(timings, "publish", start);
-            return new Prepared(lease, clean, incremental ? "incremental clean snapshot"
+            return publish(key, lease, staged, incremental ? "incremental clean snapshot"
                     : reference != null ? "reference-seeded clean snapshot"
                     : retried ? "new clean snapshot (reference retry)" : "new clean snapshot",
-                    objectChecksums(manifest), timings, notRetained);
+                    timings, phase);
         }
+    }
+
+    /**
+     * Bring {@code prior} up to the remote's current refs with an incremental fetch from its own leased bytes,
+     * whether or not the cache kept it. Null when the host already sees exactly {@code prior}'s selection, or
+     * when only a full rebuild could follow the remote: that is the cost a refresh exists to avoid (#1980).
+     * {@code prior} stays open; the caller closes it once it holds the result.
+     */
+    public Prepared refresh(Request request, Prepared prior, Phases phase) throws IOException {
+        if (!isRemoteUrl(request.url())) throw new IOException("Git preparation requires an HTTPS, SSH or Git remote");
+        var key = hash(POLICY + "\n" + request.url());
+        // The ready line and --verbose timings describe the whole preparation, the refreshes included.
+        var timings = new LinkedHashMap<>(prior.timings);
+        var strategy = prior.strategy().endsWith(REFRESHED) ? prior.strategy() : prior.strategy() + REFRESHED;
+        var lease = cache.lease();
+        boolean success = false;
+        try (var ignored = cache.writer(key)) {
+            long start = System.nanoTime();
+            var advertised = advertisement(lease.path, request.url(), phase);
+            elapsed(timings, "remote", start);
+            if (advertised == null || advertised.equals(selection(prior.repository()))) return null;
+            var staged = Files.createDirectory(lease.path.resolve("snapshot"));
+            var result = staged.resolve("repo.git");
+            if (!refreshSnapshot(request.url(), prior.repository(), prior.checksums(), advertised,
+                    lease.path, result, phase, timings)) return null;
+            validatePin(result, request.branch());
+            var refreshed = publish(key, lease, staged, strategy, timings, phase);
+            success = true;
+            return refreshed;
+        } finally {
+            if (!success) lease.close();
+        }
+    }
+
+    /** Seal and publish {@code staged}'s repository; the result reads a pinned copy in {@code lease}. */
+    private Prepared publish(String key, PreparationCache.Lease lease, Path staged, String strategy,
+                             Map<String, Long> timings, Phases phase) throws IOException {
+        var result = staged.resolve("repo.git");
+        long start = System.nanoTime();
+        // Recreate only the selected refs and pack/index pairs in a minimal bare repository.
+        // Discard clone config (including credentials), reflogs and generated object sidecars.
+        var clean = lease.path.resolve("prepared.git");
+        sanitize(result, clean);
+        delete(result);
+        Files.move(clean, result);
+        var manifest = manifest(result);
+        Files.writeString(staged.resolve("seal"), seal(key, manifest));
+        elapsed(timings, "verify", start);
+
+        start = System.nanoTime();
+        phase.accept("Publishing Git snapshot");
+        // The lease pins immutable owned files before publication can move/evict the staging tree.
+        PreparationCache.copyTree(result, clean, true);
+        var notRetained = cache.publishSnapshot(key, staged);
+        delete(staged);
+        elapsed(timings, "publish", start);
+        return new Prepared(lease, clean, strategy, objectChecksums(manifest), timings, notRetained);
     }
 
     /**
@@ -519,6 +558,7 @@ public final class GitPreparation {
     }
 
     /** Extend a verified generation without rewriting or decoding its old packs. */
+    /** {@code previousManifest} needs only its {@code objects/} entries. */
     private boolean refreshSnapshot(String url, Path previous, Map<String, String> previousManifest,
                                            String advertised, Path work, Path result,
                                            Phases phase, Map<String, Long> timings) throws IOException {

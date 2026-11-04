@@ -492,6 +492,23 @@ A first run of three rounds of twenty drifted by a factor of two between rounds 
 **Against the plan's goal**, on shipped artifacts: faster on every compiled-code path (model calls, CLI startup, the relay loop), with TLS-bound cache serving flat; leaner, with proxy idle RSS down 40% and peak RSS down on every load; and smaller, with the proxy at 44% of its size and the CLI 2% larger.
 The short ssh connection is flat because it is dominated by the exec setup in Incus, not by the CLI.
 
+## Git preparation of a very large repository: nixpkgs (issue #1980)
+
+Measured 2026-11-04 by hand, running the commands `GitPreparation` runs, on a 32-core isx instance with Git 2.56 and about 5 MiB/s to GitHub.
+nixpkgs had 8,980,547 objects in a 3.4 GiB pack; the snapshot is 3.6 GiB.
+
+| Step | Time |
+| --- | --- |
+| Strict network clone (`fetch.fsckObjects=true`), no reference | 12m39s wall, network-bound |
+| `index-pack` of the pack, plain vs `--strict` | 83 s vs 218 s |
+| Reference clone from a host checkout (`--reference --dissociate`) | 262 s, mostly the repack |
+| `fsck --full --no-dangling` | 708 s, 5 GB resident |
+| Guest-style `clone --no-hardlinks` plus SHA-256 of the packs | about 5 s |
+
+Within 40 minutes `master`, `release-26.05`, a `backport-*` branch and a `gh-readonly-queue/*` branch moved.
+Before #1980 that made the guest's selection differ from any cold snapshot, which was then discarded for a full network clone in the guest.
+Faster cold paths for such repositories are researched in #1991, and a reachability-based match in #1990.
+
 ## Measurement caveats worth remembering
 
 - **Native builds are not byte-reproducible here.** The same commit and toolchain produced

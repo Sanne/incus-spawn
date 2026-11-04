@@ -81,7 +81,9 @@ Network-source preparation allows only HTTPS, SSH and Git network URLs and enfor
 Paths, file transports and arbitrary helpers cannot turn a template URL into a host filesystem read.
 SSH defaults to batch mode unless an SSH command or executable was explicitly supplied.
 The guest first checks the remote with its template's accounts, and its full advertised selection must match the prepared snapshot before any bytes are mounted.
-Denied access, different credential-visible refs or a selection race uses the ordinary guest clone path instead.
+A busy remote moves during a long preparation, so a mismatch reads the guest's refs again and refreshes the snapshot incrementally from its own leased bytes, up to three times, before giving up (#1980).
+The refresh never clones in full, and only a selection the guest has just seen is mounted, so the guarantee is unchanged.
+Denied access, different credential-visible refs or a selection still racing after the refreshes uses the ordinary guest clone path instead.
 The host's `ls-remote` runs beside the guest's check, not after it: neither needs the other's result until the selections are compared, and it fetches nothing a denied guest could gain (#1934).
 All guest access checks finish before any prime runs; host credentials alone never authorize snapshot access, including warm-cache copies.
 The guest trusts only the mounted snapshot's own path, on the clone's command line, for Git's ownership check, since an unshifted macOS mount shows it owned by an unmapped uid (#1590).

@@ -29,7 +29,7 @@ class RepoClonerTest {
         doAnswer(inv -> {
             RepoCloner.RepoReference ref = inv.getArgument(1);
             return reference(ref.deviceName(), ref.containerPath(), ref.source(), null);
-        }).when(cloner).prepareReference(any(), any(), any(), anyInt(), any());
+        }).when(cloner).prepareReference(any(), any(), any(), anyInt(), any(), any());
         return cloner;
     }
 
@@ -109,7 +109,7 @@ class RepoClonerTest {
             var held = reference(ref.deviceName(), ref.containerPath(), ref.source(), null);
             doThrow(new java.io.IOException("staging busy")).when(held.prepared()).close();
             return held;
-        }).when(cmd).prepareReference(any(), any(), any(), anyInt(), any());
+        }).when(cmd).prepareReference(any(), any(), any(), anyInt(), any(), any());
 
         String shown = shown(() -> cmd.cloneRepos(new Container(incus, "test"), def, java.util.Map.of(), MachineType.CONTAINER));
 
@@ -1057,7 +1057,7 @@ class RepoClonerTest {
                 assertTrue(primed.await(5, java.util.concurrent.TimeUnit.SECONDS), "fast prime waited for slow preparation");
             }
             return reference(ref.deviceName(), ref.containerPath(), "/owned/snapshot", null);
-        }).when(cmd).prepareReference(any(), any(), any(), anyInt(), any());
+        }).when(cmd).prepareReference(any(), any(), any(), anyInt(), any(), any());
         var def = trusted("tpl-test");
         def.setRepos(List.of(fast, slow));
         assertTimeoutPreemptively(java.time.Duration.ofSeconds(15),

@@ -174,6 +174,7 @@ It never fetches into or maintains the user's repository.
 Only HTTPS, SSH and Git network URLs qualify, with a protocol allowlist blocking local/file transports and remote helpers, including rewritten URLs.
 SSH uses batch mode unless the user supplied an SSH command or executable.
 The guest checks repository access using the template's accounts, and its complete advertised selection must match the snapshot before mounting.
+On a mismatch the guest reads again, and the snapshot is refreshed incrementally from its leased bytes (`GitPreparation.refresh`) up to `RepoCloner.REF_DRIFT_REFRESHES` times before the guest clones from the network (#1980).
 All guest access checks finish before any prime can alter guest tools.
 The host's `ls-remote` (`GitPreparation.readRemote`) starts beside the guest's check, and a denied guest discards it unused.
 Only that remote's tracking tips are used for negotiation.
