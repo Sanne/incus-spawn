@@ -136,7 +136,7 @@ public final class RuntimeSetup {
             out.stepDone(null);
         }
 
-        configureSshHostEntry(incus, name, prefetched.hasSshKeys(), prefetched.staticIp(), HostKeys.parse(answer), out);
+        configureSshHostEntry(name, prefetched.hasSshKeys(), prefetched.staticIp(), HostKeys.parse(answer), out);
     }
 
     /**
@@ -375,14 +375,16 @@ public final class RuntimeSetup {
     }
 
     /**
-     * Configure the SSH host entry with Hostname directive. Must be called after
-     * the container is started so the IPv4 address is available.
+     * Configure the SSH host entry with Hostname directive, and pin the host keys the setup
+     * reported (#1863).
      *
-     * @param staticIp the address {@code configureBranch} stamped, or "" for none: the keys are
-     *     pinned under it, never under one the guest reports, since its interfaces are its own and
-     *     pinning an address takes it off every other instance's line (#1863)
+     * @param staticIp the address {@code configureBranch} stamped, or "" for none (airgapped): the
+     *     block's {@code Hostname} and the pin both name it, as on a start
+     *     ({@link #ensureSshHostEntry}), so this costs no request. Never one the guest reports,
+     *     since its interfaces are its own and pinning an address takes it off every other
+     *     instance's line.
      */
-    static void configureSshHostEntry(IncusClient incus, String name, boolean hasSsh, String staticIp,
+    static void configureSshHostEntry(String name, boolean hasSsh, String staticIp,
                                       List<HostKeys.HostKey> hostKeys, Output out) {
         if (!SshKeyManager.exists()) return;
         if (!hasSsh) return;
@@ -390,10 +392,9 @@ public final class RuntimeSetup {
         boolean includeConfigured = SshKeyManager.ensureSshConfigInclude();
         boolean hostConfigured = false;
         try {
-            var ipv4 = incus.getContainerIpv4(name);
             SshKeyManager.pinHostKeys(name, staticIp, hostKeys);
-            hostConfigured = SshKeyManager.addHostEntry(name, ipv4);
-        } catch (Exception e) {
+            hostConfigured = SshKeyManager.addHostEntry(name, staticIp);
+        } catch (RuntimeException e) {
             out.warn("Failed to configure SSH host entry: " + e.getMessage());
         }
 

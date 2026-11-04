@@ -307,8 +307,11 @@ incus-spawn manages a dedicated SSH key pair, per-instance SSH configuration and
    It runs after the home's chown and under `env -i`, since agentuser can read the environment of its own processes.
    The secret delivery before it already unsets what it delivered, so `env -i` keeps out whatever else the exec carries.
    A file agentuser does not own, which the root write used to repair, is removed first, as agentuser may in its own `~/.ssh`; a root-owned `~/.ssh` itself is not repaired.
-   Then, once the instance has an address (`RuntimeSetup.configureSshHostEntry`), it writes a `Host <instance-name>` block to the managed config with `Hostname <address>`, `ProxyCommand isx ssh-proxy <instance-name>`, `User agentuser`, `IdentityFile`, `IdentitiesOnly yes`, `HostKeyAlias <instance-name>`, `HashKnownHosts no`, `StrictHostKeyChecking no` and `UserKnownHostsFile` naming the managed `known_hosts` by its absolute path.
+   Then, once the instance is up (`RuntimeSetup.configureSshHostEntry`), it writes a `Host <instance-name>` block to the managed config with `Hostname <address>`, `ProxyCommand isx ssh-proxy <instance-name>`, `User agentuser`, `IdentityFile`, `IdentitiesOnly yes`, `HostKeyAlias <instance-name>`, `HashKnownHosts no`, `StrictHostKeyChecking no` and `UserKnownHostsFile` naming the managed `known_hosts` by its absolute path.
    Before the block, it pins the host keys the setup script printed (`HostKeys.GUEST_SCRIPT`, on the answer `pollUntilReadyOutput` returns), so the setup exec carries them (#1863).
+   The address in both is the static one `configureBranch` stamped, as on a start, so this costs no Incus request.
+   It is never one the guest reports: the guest owns its interfaces, and pinning an address takes it off every other instance's line.
+   An airgapped branch has no address, so its block has no `Hostname` and its keys are pinned under its name alone.
    After this, `ssh <instance-name>` just works, and so does a client that forces strict host key checking.
 3. **Every later start for use** (`InstanceLifecycle.startForUse`, behind `isx shell`, `isx run` and the TUI) does the same for an instance with SSH, so a `--no-start` branch is reachable after its first start (#1640).
    The keys ride in the readiness probe's guest script (`RuntimeSetup.sshStartScript`), which adds only the ones `authorized_keys` lacks, so a key added inside the box survives.
