@@ -46,6 +46,16 @@ class ProxyHolderTest {
     }
 
     @Test
+    void aSnapshotHolderIsNamedByItsDisplayVersion() {
+        // #2007: every snapshot's POM version is 0.0.0-SNAPSHOT.
+        var info = new ProxyHealthCheck.ProxyInfo("0.0.0-SNAPSHOT", "abc", "native", "fp", false, true, "", 80914,
+                "0.5.0-dev.2+3");
+        var table = new Table(Map.of(80914L, 1L, 6710L, 1L), Map.of(80914L, "runner"));
+        var holder = ProxyHolder.notTheService(info, 6710, table, SELF);
+        assertEquals("isx-proxy 0.5.0-dev.2+3, pid 80914, owned by user runner", holder.describe());
+    }
+
+    @Test
     void whateverAnswersWhileTheServiceHasNoProcessIsNotIt() {
         // launchd between two retries of a job that cannot bind: no pid at all.
         var table = new Table(Map.of(), Map.of(80914L, "runner"));

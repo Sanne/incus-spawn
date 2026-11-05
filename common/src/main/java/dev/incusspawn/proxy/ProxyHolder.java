@@ -85,7 +85,8 @@ public record ProxyHolder(long pid, String version, String user, boolean otherUs
     /** What is known about the proxy answering {@code info}, which must report its pid. */
     static ProxyHolder of(ProxyHealthCheck.ProxyInfo info, Processes processes, String self) {
         var user = processes.owner(info.pid()).filter(u -> !u.isBlank()).orElse(null);
-        return new ProxyHolder(info.pid(), info.version(), user, user != null && !user.equals(self));
+        // Named for people: every snapshot shares the POM version (#2007).
+        return new ProxyHolder(info.pid(), info.displayVersion(), user, user != null && !user.equals(self));
     }
 
     /** The holder of the ports a proxy of this user's could not bind, as {@link #of} describes it. */
