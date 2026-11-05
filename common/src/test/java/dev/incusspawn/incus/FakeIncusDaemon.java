@@ -52,7 +52,9 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** An exec asked for: its command, and the environment it asked for on top of the defaults. */
     public record Exec(List<String> command, Map<String, String> environment) {}
     private final List<String> refusedWrites = new ArrayList<>();
-    private final List<String> apiExtensions = new ArrayList<>();
+    /** Bridged-NIC ACLs by default, as every Incus isx is tested against has them (#1979). */
+    private final List<String> apiExtensions = new ArrayList<>(List.of(NIC_ACL_EXTENSION));
+    private static final String NIC_ACL_EXTENSION = "network_bridge_acl_devices";
     private record Pushed(String mode, String content) {}
     private final Map<String, Pushed> pushed = new LinkedHashMap<>();
     private final Map<String, String> consoleLogs = new LinkedHashMap<>();
@@ -585,7 +587,11 @@ public final class FakeIncusDaemon implements IncusTransport {
         return networkAcls.get(name);
     }
 
-    /** Advertise these in {@code GET /1.0}'s {@code api_extensions}. */
+    /**
+     * Advertise these in {@code GET /1.0}'s {@code api_extensions}, and only these: without
+     * {@code network_bridge_acl_devices} a NIC's ACL keys are refused as unknown options, as
+     * Incus 6.0.0 refuses them.
+     */
     public synchronized FakeIncusDaemon apiExtensions(String... extensions) {
         apiExtensions.clear();
         apiExtensions.addAll(List.of(extensions));
@@ -943,14 +949,15 @@ public final class FakeIncusDaemon implements IncusTransport {
     private static final String NO_ACLS = "Security ACLs are only supported when using nftables firewall";
 
     /**
-     * Why Incus refuses the NIC ACLs this write sets, or null: it validates them against its
-     * firewall driver and the ACLs that exist.
+     * Why Incus refuses the NIC ACLs this write sets, or null: it validates them against its API
+     * extensions, its firewall driver and the ACLs that exist.
      */
     private String aclRefusal(JqValue patch) {
         for (var e : patch.path("devices").asMap().entrySet()) {
             var acls = e.getValue().path("security.acls").asText("");
             if (acls.isEmpty()) continue;
             var prefix = "Invalid devices: Device validation failed for \"" + e.getKey() + "\": ";
+            if (!apiExtensions.contains(NIC_ACL_EXTENSION)) return prefix + "Invalid device option \"security.acls\"";
             if (!firewall.equals("nftables")) return prefix + NO_ACLS;
             for (var acl : acls.split(",")) {
                 if (!networkAcls.containsKey(acl.strip())) return prefix + "Network ACL \"" + acl.strip() + "\" not found";

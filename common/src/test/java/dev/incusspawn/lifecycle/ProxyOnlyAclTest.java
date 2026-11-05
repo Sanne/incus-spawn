@@ -106,6 +106,43 @@ class ProxyOnlyAclTest {
     }
 
     @Test
+    void aHostWhoseIncusCannotPutAnAclOnABridgedNicGetsNoProxyOnlyBranch() {
+        // Incus 6.0.0, Ubuntu 24.04's own package: no network_bridge_acl_devices (#1979)
+        var daemon = template().apiExtensions();
+
+        var e = assertThrows(BranchFlow.BranchException.class,
+                () -> branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY));
+
+        assertTrue(e.getMessage().contains("network_bridge_acl_devices") && e.getMessage().contains("6.9")
+                && e.getMessage().contains("6.0.4"), e.getMessage());
+        assertFalse(daemon.client().exists("dev-2"), "refused before anything was created");
+        assertNull(daemon.networkAcl(ProxyOnlyAcl.NAME));
+    }
+
+    @Test
+    void aProxyOnlyBranchThatFailsAfterItsCopyLeavesNoCopyBehind() {
+        var daemon = template();
+        var request = new BranchFlow.Request("tpl-dev", "dev-2", false, false, NetworkMode.PROXY_ONLY,
+                null, null, null, null, List.of(), false, Map.of());
+        var original = BranchFlow.proxyHealthCheck;
+        BranchFlow.proxyHealthCheck = i -> true;
+        try {
+            var preflight = BranchFlow.preflight(daemon.client(), request, Map.of());
+            // Incus refuses the NIC's ACL keys only once the copy is made, as #1979's did
+            daemon.apiExtensions();
+
+            var e = assertThrows(RuntimeException.class, () -> BranchFlow.create(daemon.client(), preflight));
+
+            assertTrue(e.getMessage().contains("security.acls"), e.getMessage());
+        } finally {
+            BranchFlow.proxyHealthCheck = original;
+        }
+        assertTrue(daemon.requests().contains("POST /1.0/instances"), "precondition: the copy was made");
+        assertFalse(daemon.client().exists("dev-2"), "an unrestricted copy under the proxy-only name was left");
+        assertTrue(daemon.client().exists("tpl-dev"), "the source stays");
+    }
+
+    @Test
     void aBranchWithNetworkOfAProxyOnlyInstanceIsNotRestricted() {
         var daemon = template();
         branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY);

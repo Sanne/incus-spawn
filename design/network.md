@@ -55,8 +55,13 @@ Two isx processes creating the ACL at once both succeed: a POST answered "alread
 
 *Fail closed.*
 Incus accepts NIC ACLs only from its nftables firewall driver, and rejects them under xtables.
+It accepts them on a bridged NIC only with the `network_bridge_acl_devices` API extension, which Incus 6.9 and 6.0.4 added and Ubuntu 24.04's own 6.0.0 lacks (#1979).
+Preflight reads both from one `GET /1.0` (`IncusClient.networkFiltering`).
 On such a host `isx branch --proxy-only` is refused before anything is created, saying why and what to change, and an existing proxy-only instance is not started or shelled into.
 Incus itself refuses every write to and start of an instance whose NIC names an ACL once it runs xtables (the host gained legacy rules after the branch); isx asks for the driver only after such a refusal (`ProxyOnlyAcl.explaining`), so an instance already restricted costs its start no request, and reports the same reason instead of a failed write.
+A proxy-only branch that fails after its copy, for any reason, deletes the copy (`BranchFlow.removeFailedCopy`): until its configuration lands it is unrestricted, under the name chosen for a restricted one.
+A copy that cannot be deleted is named in a warning.
+Branches in the other modes keep a failed copy, listed as an instance (#1036).
 There is no fallback to rules in the guest: they would make the mode look in force while root in the guest can remove it, and they are why images needed `iptables` (#1312).
 The IP spoofing fallback (`startInstance`, below) never strips a NIC that carries the ACL keys.
 A failure of the ACL means the instance cannot start, so the fallback could only turn a refused start into an unrestricted one.
