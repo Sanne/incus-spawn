@@ -222,7 +222,7 @@ public class ProxyCommand extends BaseCommand {
         }
 
         /**
-         * The last fields of {@link #record}: {@code pid} and {@code pid_owner} of the proxy that
+         * The fields before {@code display_version} in {@link #record}: {@code pid} and {@code pid_owner} of the proxy that
          * answered ({@code null} when it did not say), and {@code foreign_holder}, whether the
          * installed service's process is not that proxy ({@code null} with no service).
          */
@@ -259,7 +259,8 @@ public class ProxyCommand extends BaseCommand {
          * contain commas, so a list would not survive {@code plain}; {@code restart_helps} says
          * whether restarting the service clears it ({@code null} for none). A {@code null}
          * {@code status} is {@code unknown}: the state could not be checked, and
-         * {@code check_error} says why.
+         * {@code check_error} says why. {@code display_version} names a snapshot by its commit
+         * ({@code 1.2.3+5}), where {@code version} is the POM version every snapshot shares.
          */
         static Map<String, Object> record(ProxyHealthCheck.ProxyStatus status, ProxyHealthCheck.ProxyInfo info,
                                           String healthIp, boolean serviceInstalled, String managedBy,
@@ -286,6 +287,8 @@ public class ProxyCommand extends BaseCommand {
             record.put("pid", null);
             record.put("pid_owner", null);
             record.put("foreign_holder", null);
+            // version stays the POM version, which every snapshot shares; this names the build (#2007).
+            record.put("display_version", known ? info.displayVersion() : null);
             return record;
         }
     }

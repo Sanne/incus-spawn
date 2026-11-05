@@ -284,6 +284,16 @@ class ProxyHealthCheckTest {
     }
 
     @Test
+    void checkVersionDriftNamesEachSnapshotByItsDisplayVersion() {
+        // #2007: every snapshot's POM version is 0.0.0-SNAPSHOT, so only the display version tells them apart.
+        var cli = new BuildInfo("0.0.0-SNAPSHOT", "cli1234567", "JVM", "1.2.3+5");
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo("0.0.0-SNAPSHOT", "old1234567", "JVM",
+                "somefp", false, true, "", -1, "1.2.3+4");
+        assertEquals("Proxy is 1.2.3+4 (old1234), CLI is 1.2.3+5 (cli1234).",
+                ProxyHealthCheck.checkVersionDrift(proxyInfo, cli));
+    }
+
+    @Test
     void checkVersionDriftDetectsLegacy() {
         var proxyInfo = new ProxyHealthCheck.ProxyInfo("", "", "", "", false, true, "");
         var drift = ProxyHealthCheck.checkVersionDrift(proxyInfo);

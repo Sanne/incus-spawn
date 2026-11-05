@@ -353,15 +353,19 @@ public final class ProxyHealthCheck {
     }
 
     static String checkVersionDrift(ProxyInfo proxyInfo) {
+        return checkVersionDrift(proxyInfo, BuildInfo.instance());
+    }
+
+    static String checkVersionDrift(ProxyInfo proxyInfo, BuildInfo cliInfo) {
         if (proxyInfo == null) return "";
         if (proxyInfo.isLegacy()) {
             return "The proxy is running a pre-versioning build. Restart recommended.";
         }
-        var cliInfo = BuildInfo.instance();
         if (!cliInfo.version().equals(proxyInfo.version())
                 || !cliInfo.gitSha().equals(proxyInfo.gitSha())) {
-            return "Proxy is " + proxyInfo.version() + " (" + shortSha(proxyInfo.gitSha()) + ")"
-                    + ", CLI is " + cliInfo.version() + " (" + shortSha(cliInfo.gitSha()) + ").";
+            // Compared by POM version and commit, named by display version: snapshots share the former (#2007).
+            return "Proxy is " + proxyInfo.displayVersion() + " (" + shortSha(proxyInfo.gitSha()) + ")"
+                    + ", CLI is " + cliInfo.displayVersion() + " (" + shortSha(cliInfo.gitSha()) + ").";
         }
         return "";
     }
