@@ -42,7 +42,9 @@ A rule set there also stops traffic to other instances on the bridge, which a ru
 
 *Where it is set.*
 `BranchFlow.preflight` writes the ACL for the current gateway before anything is created (one PUT, a POST the first time).
-`configureBranch` puts the three NIC keys in the branch's one write, before its first start, so a `--no-start` branch is restricted from the moment it exists (#1311).
+The copy request itself carries the three NIC keys and the `network-mode` stamp (#2009).
+So a branch killed before its configuration, which runs no cleanup, leaves a copy that starts restricted, whether isx starts it or Incus does.
+`configureBranch` writes the keys again in the branch's one write, before its first start, so a `--no-start` branch is restricted from the moment it exists (#1311).
 A branch with network of a proxy-only instance drops them in that write.
 A subnet move rewrites the ACL when it moves a proxy-only instance's gateway (`InstanceNetwork.fixStaticIp`).
 Until then the ACL allows only the old gateway, so the instance reaches nothing.
@@ -59,7 +61,8 @@ It accepts them on a bridged NIC only with the `network_bridge_acl_devices` API 
 Preflight reads both from one `GET /1.0` (`IncusClient.networkFiltering`).
 On such a host `isx branch --proxy-only` is refused before anything is created, saying why and what to change, and an existing proxy-only instance is not started or shelled into.
 Incus itself refuses every write to and start of an instance whose NIC names an ACL once it runs xtables (the host gained legacy rules after the branch); isx asks for the driver only after such a refusal (`ProxyOnlyAcl.explaining`), so an instance already restricted costs its start no request, and reports the same reason instead of a failed write.
-A proxy-only branch that fails after its copy, for any reason, deletes the copy (`BranchFlow.removeFailedCopy`): until its configuration lands it is unrestricted, under the name chosen for a restricted one.
+A proxy-only branch that fails after its copy, for any reason, deletes the copy (`BranchFlow.removeFailedCopy`): it is restricted, but may not be fully configured, under the name chosen for a working one.
+An Incus that refuses the NIC keys after preflight refuses the copy request, so no copy exists.
 A copy that cannot be deleted is named in a warning.
 Branches in the other modes keep a failed copy, listed as an instance (#1036).
 There is no fallback to rules in the guest: they would make the mode look in force while root in the guest can remove it, and they are why images needed `iptables` (#1312).

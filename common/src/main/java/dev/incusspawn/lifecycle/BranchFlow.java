@@ -272,10 +272,13 @@ public final class BranchFlow {
      * @param template the leaf template the source was built from ({@link Inherited#template}), which
      *                 the new branch's default action is resolved against
      * @param defaults the {@link #defaultsFor defaults} for the source, worked out once
+     * @param proxyOnlyNic for a proxy-only branch, the bridge NIC as the copy will have it, before
+     *                     its restriction; null for any other branch, or a source with no such NIC
      */
     public record Preflight(Request request, Map<String, ImageDef> defs,
                             Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins,
-                            JqValue sourceInstance, String template, Defaults defaults) {}
+                            JqValue sourceInstance, String template, Defaults defaults,
+                            IncusClient.NicDevice proxyOnlyNic) {}
 
     /** An account selection and who chose each pin in it. */
     /** @param template the leaf template the source was built from ({@link Inherited#template}) */
@@ -374,12 +377,14 @@ public final class BranchFlow {
         }
         // Last, and before anything is created: a host that cannot enforce proxy-only on its side
         // gets no proxy-only instance at all (#1137)
+        IncusClient.NicDevice proxyOnlyNic = null;
         if (req.networkMode() == NetworkMode.PROXY_ONLY) {
             // The branch copies its source's devices and profiles, so it would have the same NICs;
             // an airgapped source's are masked, and the branch puts the profile's back. Outside the
             // try: a profile that cannot be read is no firewall problem.
             var asBranched = NetworkMode.isAirgapped(sourceInstance)
                     ? InstanceNetwork.unmaskNics(incus, sourceInstance, new InstanceUpdate()) : sourceInstance;
+            proxyOnlyNic = IncusClient.nic(asBranched, BridgeAddress.BRIDGE);
             try {
                 ProxyOnlyAcl.requireOneNic("'" + req.source() + "', the source of this proxy-only branch,", asBranched,
                         "Remove the device from it or its profile, or use full network or --airgap.");
@@ -392,7 +397,7 @@ public final class BranchFlow {
         }
         var defaults = defaultsFor(req.source(), sourceInstance, defs);
         return new Preflight(withMcpClient(req, defaults), defs, accounts.accounts(), accounts.origins(),
-                sourceInstance, accounts.inherited().template(), defaults);
+                sourceInstance, accounts.inherited().template(), defaults, proxyOnlyNic);
     }
 
     /**
@@ -466,14 +471,27 @@ public final class BranchFlow {
                 if (Metadata.isOwnershipKey(key)) copyConfig.putIfAbsent(key, "");
             });
         }
+        // A proxy-only copy is restricted from the copy request on (#2009): a branch killed before
+        // configureBranch runs no cleanup, and its copy must not then start with full network,
+        // whether isx starts it (the stamp, which ProxyOnlyAcl.enforce reads) or Incus does (the ACL)
+        var copyDevices = new LinkedHashMap<String, Map<String, String>>();
+        if (networkMode == NetworkMode.PROXY_ONLY) {
+            copyConfig.put(Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name());
+            var nic = preflight.proxyOnlyNic();
+            if (nic != null) {
+                copyDevices.put(nic.name(), ProxyOnlyAcl.restricted(nic.config()));
+                // Preflight left no other network device, so nothing airgap masked remains masked
+                copyConfig.put(Metadata.AIRGAP_MASKED, "");
+            }
+        }
         BuildOutput.stepStart("Copying from template");
-        incus.copy(source, name, copyPlan, copyConfig);
+        incus.copy(source, name, copyPlan, copyConfig, copyDevices);
         BuildOutput.stepDone();
         try {
             return configureAndStart(incus, preflight, secret, placeholders.join());
         } catch (RuntimeException | Error e) {
-            // A proxy-only copy is unrestricted until its configuration lands, and anyone could
-            // start it under the name chosen for a restricted one (#1979)
+            // A proxy-only copy is restricted from the copy request on, but it may not be fully
+            // configured, and anyone could start it under the name chosen for a working one (#1979)
             if (networkMode == NetworkMode.PROXY_ONLY) removeFailedCopy(incus, name, e);
             throw e;
         }
@@ -492,7 +510,7 @@ public final class BranchFlow {
         } catch (RuntimeException cleanup) {
             failure.addSuppressed(cleanup);
             BuildOutput.warn("Could not remove " + name + ", the copy of the failed branch: " + cleanup.getMessage(),
-                    "It may not be restricted to the proxy; remove it with 'isx destroy " + name + "' before using it.");
+                    "It may not be fully configured; remove it with 'isx destroy " + name + "'.");
             return;
         }
         try {
