@@ -1,5 +1,6 @@
 package dev.incusspawn.ai;
 
+import dev.incusspawn.BuildInfo;
 import dev.incusspawn.FileTrees;
 import dev.incusspawn.command.IsolatedHome;
 import dev.incusspawn.config.ImageDef;
@@ -54,6 +55,14 @@ class HelpContextTest {
             var glob = resource.substring(0, resource.lastIndexOf('/') + 1) + "*.md";
             assertTrue(includes.contains(glob), resource + " is not in quarkus.native.resources.includes (" + glob + ")");
         }
+    }
+
+    /** Every snapshot shares the POM version 0.0.0-SNAPSHOT; the assistant is told which one it is (#2007). */
+    @Test
+    void thePromptNamesASnapshotByItsDisplayVersion() {
+        var snapshot = new BuildInfo("0.0.0-SNAPSHOT", "abc1234", "JVM", "1.2.3+5");
+        assertEquals("You are the built-in help assistant for incus-spawn (isx) version 1.2.3+5.\n\n",
+                HelpContext.introduction(snapshot));
     }
 
     /** Answers cite the sections they rely on, so a reader can check them against the docs (#1675). */

@@ -31,12 +31,15 @@ public class HelpContext {
             "help/design/storage.md", "help/design/templates.md", "help/design/terminal.md", "help/design/testing.md");
     private static volatile String cachedBasePrompt;
 
+    static String introduction(BuildInfo build) {
+        return "You are the built-in help assistant for incus-spawn (isx) version " + build.displayVersion() + ".\n\n";
+    }
+
     private static String basePrompt() {
         var cached = cachedBasePrompt;
         if (cached != null) return cached;
         var sb = new StringBuilder();
-        sb.append("You are the built-in help assistant for incus-spawn (isx) version ")
-          .append(BuildInfo.instance().version()).append(".\n\n");
+        sb.append(introduction(BuildInfo.instance()));
         sb.append("""
                 Output renders in a plain-text terminal. Do not use markdown \
                 formatting: no **bold**, no *italic*, no # headings. Use UPPERCASE \

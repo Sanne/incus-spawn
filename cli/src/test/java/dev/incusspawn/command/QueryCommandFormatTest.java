@@ -272,7 +272,8 @@ class QueryCommandFormatTest {
                   "check_error" : null,
                   "pid" : null,
                   "pid_owner" : null,
-                  "foreign_holder" : null
+                  "foreign_holder" : null,
+                  "display_version" : "1.2.3+5"
                 }
                 """.formatted(build.version(), build.gitSha()),
                 json(ProxyCommand.Status.record(ProxyStatus.RUNNING, info, "10.166.11.1", true, "systemd", null)));
@@ -297,7 +298,8 @@ class QueryCommandFormatTest {
                   "check_error" : null,
                   "pid" : null,
                   "pid_owner" : null,
-                  "foreign_holder" : null
+                  "foreign_holder" : null,
+                  "display_version" : null
                 }
                 """, json(ProxyCommand.Status.record(ProxyStatus.STALE_DNS, null, "10.166.11.1", false, null, null)));
     }
@@ -321,7 +323,8 @@ class QueryCommandFormatTest {
                   "check_error" : "Could not determine Incus bridge gateway IP: no socket",
                   "pid" : null,
                   "pid_owner" : null,
-                  "foreign_holder" : null
+                  "foreign_holder" : null,
+                  "display_version" : null
                 }
                 """, json(ProxyCommand.Status.record(null, null, null, true, null,
                 "Could not determine Incus bridge gateway IP: no socket")));
@@ -345,8 +348,8 @@ class QueryCommandFormatTest {
         var record = ProxyCommand.Status.record(ProxyStatus.RUNNING, info, "10.166.11.1", true, "systemd", null);
         ProxyCommand.Status.addHolder(record, info, true,
                 new dev.incusspawn.proxy.ProxyHolder(80914, "0.3.12", "runner", true));
-        assertEquals(List.of("check_error", "pid", "pid_owner", "foreign_holder"),
-                List.copyOf(record.keySet()).subList(record.size() - 4, record.size()), "added at the end");
+        assertEquals(List.of("check_error", "pid", "pid_owner", "foreign_holder", "display_version"),
+                List.copyOf(record.keySet()).subList(record.size() - 5, record.size()), "added at the end");
         assertEquals(80914L, record.get("pid"));
         assertEquals("runner", record.get("pid_owner"));
         assertEquals(true, record.get("foreign_holder"));
