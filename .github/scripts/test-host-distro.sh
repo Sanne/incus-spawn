@@ -258,25 +258,26 @@ shell() {
 
 # --- proxy-only ------------------------------------------------------------------------------
 
-# The Incus API extension a bridged NIC's ACL needs (Incus 6.1); Ubuntu 24.04 ships 6.0
+# The Incus API extension a bridged NIC's ACL needs (Incus 6.9, or 6.0.4 on the LTS line); Ubuntu 24.04 ships 6.0.0
 has_nic_acls() { incus query /1.0 | jq -e '.api_extensions | index("network_bridge_acl_devices")' >/dev/null; }
 
-# Without NIC ACLs a proxy-only branch cannot be restricted: it must fail, and nothing it left
-# behind may run (#1979).
+# Without NIC ACLs a proxy-only branch cannot be restricted: it must be refused, saying why, before
+# anything is created (#1979).
 refused_without_nic_acls() {
-    local name=host-distro-proxy-only rc=0
-    isx branch "$name" --from tpl-minimal --proxy-only </dev/null || rc=$?
-    local status
-    status=$(incus list "^$name\$" -c s -f csv)
+    local name=host-distro-proxy-only rc=0 out
+    out=$(isx branch "$name" --from tpl-minimal --proxy-only </dev/null 2>&1) || rc=$?
+    echo "$out"
+    local left
+    left=$(incus list "^$name\$" -c n -f csv)
     incus delete -f "$name" >/dev/null 2>&1 || true
-    [ "$rc" -ne 0 ] && [ "$status" != RUNNING ]
+    [ "$rc" -ne 0 ] && [ -z "$left" ] && grep -q network_bridge_acl_devices <<<"$out"
 }
 
 proxy_only() {
     echo "=== Proxy-only branches on this host's netfilter ==="
     if ! has_nic_acls; then
         echo "  This Incus ($(incus version | sed -n 's/^Server version: //p')) has no ACLs on bridged NICs"
-        check "a proxy-only branch is refused, and nothing it left runs" refused_without_nic_acls
+        check "a proxy-only branch is refused, and leaves nothing behind" refused_without_nic_acls
         finish
         return
     fi
