@@ -3,9 +3,15 @@ set -euo pipefail
 
 # Boot a PR's appliance on the Mac and record it for the kernel-mac-verified
 # check (#1355, .claude/rules/ci.md). Runs on a bare-metal Apple silicon Mac,
-# the only place vfkit runs (#791), from a checkout of main: the test scripts
-# are this checkout's, and only the PR's build is under test.
+# the only place vfkit runs (#791), from a clean checkout of origin/main: the
+# test scripts are this checkout's, and only the PR's build is under test.
 #
+#   0. refuses before anything else unless this checkout is origin/main with no
+#      local change, gh is logged in as one of the check's VERIFIERS, and the
+#      PR's author and head repository are both Sanne or the bot (#1385): an
+#      external PR's image is built by that PR's own workflow, and the boot
+#      shares this user's home, gh token included, with the guest. There is
+#      no override; Sanne re-pushes an external kernel change as her own branch
 #   1. takes the newest successful build-appliance.yml run of the PR's head and
 #      its appliance-aarch64 artifact, whose kernel-inputs names the commit it
 #      built (on a PR, the merge), and refuses it unless that is the PR's
@@ -25,26 +31,58 @@ set -euo pipefail
 # Usage:  ./test-kernel-on-mac.sh <pr-number>
 #
 # Needs gh logged in as an account kernel-mac-verified.yml lists in VERIFIERS,
-# and what test-boot.sh and test-with-isx.sh need (vfkit, isx on PATH or
-# ISX=...). Stops any appliance VM isx runs.
+# strings (the Xcode command line tools), and what test-boot.sh and
+# test-with-isx.sh need (vfkit, isx on PATH or ISX=...). Stops any appliance VM
+# isx runs.
 
 REPO=Sanne/incus-spawn
 CONTEXT=isx/mac-kernel-boot
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Whose PRs the Mac boots: their images are built from branches only they push (#1385). Apart
+# from VERIFIERS, which says whose boots the check takes and may come to name a Mac-only login.
+TRUSTED="Sanne Sanne-ai-bot"
 PR="${1:?Usage: $0 <pr-number>}"
 ISX="${ISX:-isx}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
+listed() { case " $2 " in *" $1 "*) return 0 ;; esac; return 1; }
 
 [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] \
     || die "this records a vfkit boot, so it runs only on an Apple silicon Mac"
 
+# Everything below runs with the verifier's credentials, so it must be main's code: a PR branch
+# checked out here would run its own scripts and fingerprint with its own input lists.
+git -C "$ROOT" fetch -q --no-tags origin +refs/heads/main:refs/remotes/origin/main \
+    || die "cannot fetch origin's main"
+[ "$(git -C "$ROOT" rev-parse HEAD)" = "$(git -C "$ROOT" rev-parse refs/remotes/origin/main)" ] \
+    || die "$ROOT is not at origin/main; run this from a checkout of origin/main (git checkout --detach origin/main)"
+[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ] \
+    || die "$ROOT has local changes; run this from a clean checkout of origin/main"
+
+# A missing tool or the wrong login would only be found after the boot, and post for nothing or
+# post a failure that withdraws an earlier success.
+command -v strings > /dev/null || die "strings is missing; install the Xcode command line tools (xcode-select --install)"
+verifiers="$(sed -n 's/^ *VERIFIERS: *//p' "$ROOT/.github/workflows/kernel-mac-verified.yml")"
+[ -n "$verifiers" ] || die "kernel-mac-verified.yml lists no VERIFIERS"
+login="$(gh api user --jq .login)"
+listed "$login" "$verifiers" \
+    || die "gh is logged in as $login, and kernel-mac-verified.yml takes a boot only from $verifiers"
+
+read -r head author owner <<< "$(gh pr view "$PR" -R "$REPO" --json headRefOid,author,headRepositoryOwner \
+    --jq '"\(.headRefOid) \(.author.login) \(.headRepositoryOwner.login // "-")"')"
+# The PR's own build-appliance.yml built its image, so an external PR's image is its author's,
+# and the boot shares this user's home, gh token included, with the guest.
+if ! listed "$author" "$TRUSTED" || ! listed "$owner" "$TRUSTED"; then
+    die "PR #$PR is by $author from $owner's repository: the Mac boots only PRs by and from $TRUSTED. Sanne re-pushes an external kernel change as her own branch to have it booted."
+fi
+echo "==> PR #$PR at $head"
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-head="$(gh pr view "$PR" -R "$REPO" --json headRefOid --jq .headRefOid)"
-echo "==> PR #$PR at $head"
-run="$(gh run list -R "$REPO" --workflow build-appliance.yml --commit "$head" --status success \
+# --event pull_request: a push or dispatch run of the same head builds the head, not the merge.
+run="$(gh run list -R "$REPO" --workflow build-appliance.yml --commit "$head" --event pull_request --status success \
     --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
 [ -n "$run" ] || die "no successful build-appliance.yml run of $head yet"
 run_url="https://github.com/$REPO/actions/runs/$run"
@@ -56,13 +94,14 @@ done
 built="$(sed -n 's/^commit \([0-9a-f]\{40\}\)$/\1/p' "$WORK/build/kernel-inputs")"
 [ -n "$built" ] || die "kernel-inputs of run $run names no commit"
 
-# The PR's merge as GitHub has it now, read as data: nothing of the PR runs here.
-git -C "$SCRIPT_DIR" fetch -q --no-tags --depth 2 origin "+refs/pull/$PR/merge:refs/remotes/pr/merge" \
+# The PR's merge as GitHub has it now, read as data: nothing of the PR runs here. Not --depth:
+# that would turn this full clone shallow.
+git -C "$SCRIPT_DIR" fetch -q --no-tags origin "+refs/pull/$PR/merge:refs/remotes/pr/merge" \
     || die "PR #$PR has no merge; it may conflict"
 merge="$(git -C "$SCRIPT_DIR" rev-parse refs/remotes/pr/merge)"
 [ "$(git -C "$SCRIPT_DIR" rev-parse refs/remotes/pr/merge^2)" = "$head" ] || die "GitHub has not merged $head yet; try again shortly"
 [ "$built" = "$merge" ] || die "run $run built $built, but the PR now merges as $merge (its base moved); push to the PR to build that"
-fingerprint="$(cd "$SCRIPT_DIR/.." && appliance/kernel/kernel-fingerprint.sh "$merge")"
+fingerprint="$(cd "$ROOT" && appliance/kernel/kernel-fingerprint.sh "$merge")"
 pinned="$(git -C "$SCRIPT_DIR" show "$merge:appliance/kernel/build-kernel.sh" | sed -n 's/^KERNEL_VERSION="\(.*\)"$/\1/p')"
 # A series' first release is pinned as X.Y and reports X.Y.0.
 expected="$pinned"
@@ -135,6 +174,8 @@ check_run="$(gh run list -R "$REPO" --workflow kernel-mac-verified.yml --commit 
     --json databaseId --jq '.[0].databaseId // empty')"
 if [ -n "$check_run" ]; then
     gh run rerun "$check_run" -R "$REPO" > /dev/null && echo "==> Re-running kernel-mac-verified"
+    echo "    A re-run repeats the workflow as it was when that run started. If main has changed"
+    echo "    kernel-mac-verified.yml or the kernel's input lists since, it stays red until a push to the PR."
 else
     echo "==> No kernel-mac-verified run of $now to re-run; push or re-open the PR to start one."
 fi
