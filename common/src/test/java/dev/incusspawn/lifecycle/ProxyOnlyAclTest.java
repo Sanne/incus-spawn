@@ -303,6 +303,41 @@ class ProxyOnlyAclTest {
                 () -> String.join("\n", daemon.requests()));
     }
 
+    /**
+     * With no bridge NIC there is nothing for the ACL to go on, so a source whose network is
+     * elsewhere is refused before its copy: one left by an interrupted branch would have direct
+     * network on a plain {@code incus start} (#2016).
+     */
+    @Test
+    void aSourceWhoseOnlyNicIsOffTheBridgeGetsNoProxyOnlyBranch() {
+        var daemon = template();
+        daemon.device("tpl-dev", "eth0", Map.of("type", "nic", "nictype", "macvlan", "parent", "enp1s0", "name", "eth0"));
+
+        var e = assertThrows(BranchFlow.BranchException.class, () -> branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY));
+        assertTrue(e.getMessage().contains("not on incusbr0 (eth0)") && e.getMessage().contains("--airgap"), e::getMessage);
+        assertFalse(daemon.requests().stream().anyMatch(r -> r.startsWith("POST /1.0/instances")),
+                () -> String.join("\n", daemon.requests()));
+        assertFalse(daemon.client().exists("dev-2"));
+    }
+
+    /** No network device at all is no network, which is within the mode: preflight does not refuse it. */
+    @Test
+    void aSourceWithNoNetworkAtAllPassesTheProxyOnlyPreflight() {
+        var daemon = template();
+        daemon.device("tpl-dev", "eth0", Map.of("type", "none"));
+        var request = new BranchFlow.Request("tpl-dev", "dev-2", false, false, NetworkMode.PROXY_ONLY,
+                null, null, null, null, List.of(), false, Map.of());
+        var original = BranchFlow.proxyHealthCheck;
+        BranchFlow.proxyHealthCheck = i -> true;
+        try {
+            BranchFlow.preflight(daemon.client(), request, Map.of());
+        } finally {
+            BranchFlow.proxyHealthCheck = original;
+        }
+        // Past the NIC check to its last step
+        assertTrue(daemon.networkAcl(ProxyOnlyAcl.NAME) != null, "the ACL was not ensured");
+    }
+
     @Test
     void aSourceWithASecondNicStillBranchesWithFullNetwork() {
         var daemon = template();

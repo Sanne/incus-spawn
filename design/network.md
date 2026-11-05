@@ -50,6 +50,7 @@ Every start for use (`prepareForStart`), `isx shell` into a running instance (`e
 An instance that has them costs no request.
 That repair writes the ACL for the bridge's current gateway, never the one the instance recorded: the ACL is every proxy-only instance's, and a record from before a subnet move would take the proxy away from all of them.
 A proxy-only instance whose NIC is on another network is not started or used, since nothing restricts it there; one with no NIC at all has no network, which is within the mode.
+A branch whose source's only network is off the bridge is refused the same way before its copy (#2016), since a copy left by an interrupted branch would have direct network on a plain `incus start`.
 Two isx processes creating the ACL at once both succeed: a POST answered "already exists" is followed by the PUT.
 `isx reset` deletes the ACL, which Incus refuses while an instance that was kept still uses it.
 

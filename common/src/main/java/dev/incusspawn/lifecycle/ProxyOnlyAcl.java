@@ -144,7 +144,9 @@ public final class ProxyOnlyAcl {
 
     /**
      * Refuse proxy-only for {@code instance} when Incus would attach a network device besides the
-     * bridge NIC isx restricts. One with no bridge NIC is left to the callers, which refuse it themselves.
+     * bridge NIC isx restricts, or any network device when it has no bridge NIC: there is then
+     * nothing to put the ACL on (#2016). No network device at all is no network, which is within
+     * the mode.
      *
      * @param subject how the refusal names it: the instance, or the branch to be made from it
      * @param remedy what the user can do about it
@@ -152,7 +154,14 @@ public final class ProxyOnlyAcl {
      */
     static void requireOneNic(String subject, JqValue instance, String remedy) {
         var nic = IncusClient.nicDeviceName(instance, BridgeAddress.BRIDGE);
-        if (nic == null) return;
+        if (nic == null) {
+            var devices = networkDevices(instance);
+            if (devices.isEmpty()) return;
+            throw new NotEnforceableException(subject + " has "
+                    + (devices.size() == 1 ? "a network device that is" : "network devices that are") + " not on "
+                    + BridgeAddress.BRIDGE + " (" + String.join(", ", devices) + "), where --proxy-only restricts"
+                    + " its network. " + remedy);
+        }
         var others = otherNetworkDevices(instance, nic);
         if (others.isEmpty()) return;
         throw new NotEnforceableException(subject + " has a network device besides the one on " + BridgeAddress.BRIDGE
@@ -183,24 +192,11 @@ public final class ProxyOnlyAcl {
         if (!NetworkMode.isProxyOnly(instance)) return;
         var passthrough = InstanceNetwork.passthroughRefusal(name, "proxy-only", instance);
         if (passthrough != null) throw new NotEnforceableException(passthrough);
+        requireOneNic("'" + name + "' is proxy-only, but it", instance, "isx will not use it until such a device is no longer"
+                + " on it or its profile; 'isx destroy " + name + "' removes it.");
         var nic = IncusClient.nic(instance, BridgeAddress.BRIDGE);
-        if (nic == null) {
-            // No network device at all is no network, which is within the mode; a network device
-            // elsewhere is unrestricted
-            var devices = networkDevices(instance);
-            if (!devices.isEmpty()) {
-                var one = devices.size() == 1;
-                throw new NotEnforceableException("'" + name + "' is proxy-only, but it has "
-                        + (one ? "a network device that is" : "network devices that are") + " not on "
-                        + BridgeAddress.BRIDGE + " (" + String.join(", ", devices) + "), where isx restricts its network;"
-                        + " isx will not use it until " + (one ? "it is" : "they are")
-                        + " removed from the instance or its profile."
-                        + " 'isx destroy " + name + "' removes it.");
-            }
-            return;
-        }
-        requireOneNic("'" + name + "' is proxy-only, but it", instance, "isx will not use it until the device is"
-                + " removed from it or its profile; 'isx destroy " + name + "' removes it.");
+        // No network device at all is no network, which is within the mode
+        if (nic == null) return;
         if (inForce(nic.config())) return;
         try {
             // The bridge's gateway, not the one the instance recorded: the ACL is every proxy-only
