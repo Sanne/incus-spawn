@@ -77,20 +77,43 @@ public final class ProxyOnlyAcl {
     }
 
     /**
+     * The API extension that lets a NIC on a bridged network carry ACLs. An Incus without it
+     * refuses {@link #NIC_KEYS} on the NIC as unknown options, which a branch would learn only
+     * after its copy (#1979).
+     */
+    static final String NIC_ACL_EXTENSION = "network_bridge_acl_devices";
+
+    /**
      * Check that this Incus can enforce the ACL, and write it for {@code gateway}. Incus accepts
-     * NIC ACLs only from its nftables firewall driver.
+     * NIC ACLs only with {@link #NIC_ACL_EXTENSION} and from its nftables firewall driver.
      *
      * @throws NotEnforceableException when it cannot
      */
     public static void ensure(IncusClient incus, String gateway) {
-        var driver = incus.firewallDriver();
-        if (!"nftables".equals(driver)) throw new NotEnforceableException(refusal(driver));
+        var refusal = refusal(incus.networkFiltering());
+        if (refusal != null) throw new NotEnforceableException(refusal);
         write(incus, gateway);
     }
 
     /** Write the ACL for {@code gateway}, as after the bridge moved to another subnet. */
     static void write(IncusClient incus, String gateway) {
         incus.putNetworkAcl(NAME, DESCRIPTION, egressRules(gateway));
+    }
+
+    /** Why this Incus cannot enforce the ACL, or null when it can. */
+    static String refusal(IncusClient.NetworkFiltering filtering) {
+        if (!filtering.apiExtensions().contains(NIC_ACL_EXTENSION)) return extensionRefusal();
+        var driver = filtering.firewallDriver();
+        return "nftables".equals(driver) ? null : refusal(driver);
+    }
+
+    static String extensionRefusal() {
+        return "--proxy-only is enforced by Incus on the host, with an ACL on the instance's network device,"
+                + " and this Incus cannot put one there: it lacks the " + NIC_ACL_EXTENSION + " API extension.\n"
+                + "Rules inside the instance would not hold against its root user, so isx does not fall back to them.\n"
+                + "Incus 6.9 or later has it, and so does 6.0.4 or later on the 6.0 LTS line;"
+                + " Ubuntu 24.04's own incus package is 6.0.0, so install Incus from the Zabbly repository instead.\n"
+                + "Until then, use full network or --airgap.";
     }
 
     static String refusal(String driver) {
@@ -194,22 +217,23 @@ public final class ProxyOnlyAcl {
     /**
      * Run {@code start}, a write to or start of {@code name}, and when it fails because this Incus
      * cannot enforce the ACL the instance already has, throw the refusal instead. An Incus that
-     * moved to xtables since the branch refuses every write to such an instance and every start
-     * of it, which isx would otherwise report only as a failed write. A restriction in force costs
-     * {@link #enforce} no request, so the driver is asked here, once Incus has refused.
+     * moved to xtables since the branch, or lost {@link #NIC_ACL_EXTENSION} to a downgrade, refuses
+     * every write to such an instance and every start of it, which isx would otherwise report only
+     * as a failed write. A restriction in force costs {@link #enforce} no request, so Incus is asked
+     * here, once it has refused.
      */
     static <T> T explaining(IncusClient incus, String name, JqValue instance, Supplier<T> start) {
         try {
             return start.get();
         } catch (RuntimeException e) {
             if (e instanceof NotEnforceableException || !NetworkMode.isProxyOnly(instance)) throw e;
-            String driver;
+            String refusal;
             try {
-                driver = incus.firewallDriver();
+                refusal = refusal(incus.networkFiltering());
             } catch (RuntimeException unread) {
                 throw e;
             }
-            throw "nftables".equals(driver) ? e : notEnforceable(name, refusal(driver));
+            throw refusal == null ? e : notEnforceable(name, refusal);
         }
     }
 

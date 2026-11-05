@@ -417,7 +417,6 @@ public final class BranchFlow {
         var req = preflight.request();
         var name = req.name();
         var source = req.source();
-        var defs = preflight.defs();
         var networkMode = req.networkMode();
 
         BuildOutput.branchHeader(name, source);
@@ -425,9 +424,8 @@ public final class BranchFlow {
         // the current directory's own, which must not decide what the branch is given
         var placeholders = ProofToken.declaredInBackground();
 
-        // The source as preflight read it: the copy plan, its machine type and every default the request leaves open
+        // The source as preflight read it, for the copy plan
         var sourceInstance = preflight.sourceInstance();
-        var defaults = preflight.defaults();
 
         var copyPlan = incus.planCopy(sourceInstance);
         if (!copyPlan.cow()) {
@@ -471,6 +469,52 @@ public final class BranchFlow {
         BuildOutput.stepStart("Copying from template");
         incus.copy(source, name, copyPlan, copyConfig);
         BuildOutput.stepDone();
+        try {
+            return configureAndStart(incus, preflight, secret, placeholders.join());
+        } catch (RuntimeException | Error e) {
+            // A proxy-only copy is unrestricted until its configuration lands, and anyone could
+            // start it under the name chosen for a restricted one (#1979)
+            if (networkMode == NetworkMode.PROXY_ONLY) removeFailedCopy(incus, name, e);
+            throw e;
+        }
+    }
+
+    /**
+     * Delete {@code name}, the copy of a branch that failed with {@code failure}, and what isx set
+     * up for it on the host. One that cannot be deleted is named in a warning, and the failure
+     * still stands.
+     */
+    static void removeFailedCopy(IncusClient incus, String name, Throwable failure) {
+        // The failure may have struck mid-step
+        BuildOutput.abandonStep();
+        try {
+            incus.delete(name, true);
+        } catch (RuntimeException cleanup) {
+            failure.addSuppressed(cleanup);
+            BuildOutput.warn("Could not remove " + name + ", the copy of the failed branch: " + cleanup.getMessage(),
+                    "It may not be restricted to the proxy; remove it with 'isx destroy " + name + "' before using it.");
+            return;
+        }
+        try {
+            InstanceLifecycle.removeHostIntegration(name, BuildOutput.bound());
+        } catch (RuntimeException cleanup) {
+            failure.addSuppressed(cleanup);
+        } finally {
+            // It may have taken a static IP, which the proxy would map to it
+            InstanceDestroyer.refreshProxy();
+        }
+        BuildOutput.step("Removed " + name + ", the copy of the failed branch.");
+    }
+
+    /** The branch after its copy: configured and, unless the request says otherwise, started. */
+    private static RuntimeSetup.RuntimeConfig configureAndStart(IncusClient incus, Preflight preflight,
+                                                                InstanceSecret.Delivery secret,
+                                                                List<ProofToken.Placeholder> placeholders) {
+        var req = preflight.request();
+        var name = req.name();
+        var source = req.source();
+        var networkMode = req.networkMode();
+        var defaults = preflight.defaults();
         // Well before the start; a VM takes its SMBIOS UUID at every boot instead (design/instances.md "Branching")
         if (defaults.machineType() == MachineType.CONTAINER) MachineId.giveOwn(incus, name);
 
@@ -544,7 +588,7 @@ public final class BranchFlow {
         // The grant is the request's own: a copy never carries its source's (configureBranch)
         var booted = InstanceLifecycle.withCurrentProofs(incus, name, secret, current -> {
             RuntimeSetup.setupRuntime(incus, name, networkMode, prefetched, current,
-                    Metadata.isMcpCaller(req.extraConfig()), placeholders.join(), BuildOutput.bound());
+                    Metadata.isMcpCaller(req.extraConfig()), placeholders, BuildOutput.bound());
             // Or the first shell would take this boot for one isx did not start.
             return InstanceLifecycle.recordSecretBoot(incus, name, machineType, current.proofGeneration());
         });

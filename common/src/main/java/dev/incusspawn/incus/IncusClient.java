@@ -1223,15 +1223,32 @@ public class IncusClient {
     }
 
     /**
-     * The firewall driver Incus installs network filters with, as {@code GET /1.0} reports it:
-     * {@code nftables} or {@code xtables}, empty when it does not say.
+     * What decides whether this Incus can filter an instance's NIC, from one {@code GET /1.0}.
+     *
+     * @param firewallDriver the driver Incus installs network filters with: {@code nftables} or
+     *        {@code xtables}, empty when it does not say
+     * @param apiExtensions what it advertises in {@code api_extensions}
      */
-    public String firewallDriver() {
+    public record NetworkFiltering(String firewallDriver, Set<String> apiExtensions) {
+        public NetworkFiltering {
+            apiExtensions = Set.copyOf(apiExtensions);
+        }
+    }
+
+    /**
+     * {@link NetworkFiltering} as {@code GET /1.0} reports it.
+     *
+     * @throws IncusException when the daemon cannot be asked
+     */
+    public NetworkFiltering networkFiltering() {
         var resp = http().get("/1.0");
         if (!resp.isSuccess()) {
             throw new IncusException("Failed to read the Incus server info (HTTP " + resp.statusCode() + ")");
         }
-        return resp.body().path("metadata").path("environment").pathText("firewall", "");
+        var metadata = resp.body().path("metadata");
+        var extensions = new HashSet<String>();
+        for (var ext : metadata.path("api_extensions").asList()) extensions.add(ext.asText());
+        return new NetworkFiltering(metadata.path("environment").pathText("firewall", ""), extensions);
     }
 
     /**
