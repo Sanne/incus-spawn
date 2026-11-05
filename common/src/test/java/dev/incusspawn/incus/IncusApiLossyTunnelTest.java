@@ -320,13 +320,17 @@ class IncusApiLossyTunnelTest {
     @Timeout(10)
     void keepalivePingsReachAQuietStdin() throws IOException {
         server.sendCloseFrames = false;
-        server.runMillis = 600;
+        // The command ends once stdin was pinged twice, never after a fixed time (#2012).
+        server.runsUntilPinged = Map.of("0", 2);
         // An ssh-proxy session nobody types into: stdin stays open and sends nothing, and only
         // a ping keeps its forwarder child from reaping the connection.
         try (var quiet = new java.io.PipedInputStream(); var typist = new java.io.PipedOutputStream(quiet)) {
             // Hang up only near the end, so the exec need not wait out an abandoned stdin read.
             Thread.ofVirtual().start(() -> {
-                try { Thread.sleep(500); typist.close(); } catch (Exception ignored) {}
+                try {
+                    while (server.pings("0") < 2) Thread.sleep(10);
+                    typist.close();
+                } catch (Exception ignored) {}
             });
             new IncusApi(new UnixSocketTransport(server.socketPath()), 50).execBidirectional(
                     "c1", List.of("cat"), null, null, null, null,
