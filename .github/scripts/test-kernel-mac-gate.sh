@@ -85,7 +85,8 @@ FP=$(fp "$M_BUMP")
 [ "$FP" != "$(fp "$BASE")" ] || fail "a version bump did not move the fingerprint"
 [ "$(fp "$BASE")" != "$(fp "$BUILD_SH")" ] || fail "a change to build.sh did not move the fingerprint"
 
-status() { printf '{"context": "isx/mac-kernel-boot", "state": "%s", "description": "fingerprint %s", "creator": {"login": "%s"}, "target_url": "https://example.invalid/%s"}' "$@"; }
+# status <state> <fingerprint> <creator> <url> [<created_at>]
+status() { printf '{"context": "isx/mac-kernel-boot", "state": "%s", "description": "fingerprint %s", "creator": {"login": "%s"}, "target_url": "https://example.invalid/%s", "created_at": "%s"}' "$1" "$2" "$3" "$4" "${5:-2026-10-01T00:00:00Z}"; }
 record_of() { printf '{"user": {"login": "%s"}, "body": "### Mac kernel verification\\nResult: success\\nCommit: %s\\nFingerprint: %s"}' "$@"; }
 
 # serve <merge>: origin's refs/pull/9/merge
@@ -139,6 +140,18 @@ expect not-withdrawn-by-stranger "$(gate not-withdrawn-by-stranger "$BUMP" "$M_B
     "$BUMP=[$(status failure "$FP" someone y), $(status success "$FP" Sanne x)]")" PASS
 # Rebased: the head is new, and the boot is on the old head, which a verifier's record names.
 expect rebased "$(gate rebased "$REBASED" "$(merge "$BASE" "$REBASED")" "[$(record_of Sanne-ai-bot "$BUMP" "$FP")]" "$(booted)")" PASS
+# A verifier's later failed boot of the same inputs, on the new head, withdraws the old head's success;
+# a later success does not need one.
+expect rebased-then-failed "$(gate rebased-then-failed "$REBASED" "$(merge "$BASE" "$REBASED")" "[$(record_of Sanne-ai-bot "$BUMP" "$FP")]" \
+    "$(booted)" "$REBASED=[$(status failure "$FP" Sanne-ai-bot y 2026-10-02T00:00:00Z)]")" FAIL
+expect rebased-failed-before "$(gate rebased-failed-before "$REBASED" "$(merge "$BASE" "$REBASED")" "[$(record_of Sanne-ai-bot "$BUMP" "$FP")]" \
+    "$BUMP=[$(status success "$FP" Sanne-ai-bot x 2026-10-02T00:00:00Z)]" "$REBASED=[$(status failure "$FP" Sanne-ai-bot y)]")" PASS
+# A failure as old as the success, to the second, withdraws it.
+expect rebased-failed-same-time "$(gate rebased-failed-same-time "$REBASED" "$(merge "$BASE" "$REBASED")" "[$(record_of Sanne-ai-bot "$BUMP" "$FP")]" \
+    "$(booted)" "$REBASED=[$(status failure "$FP" Sanne-ai-bot y)]")" FAIL
+# On one commit, a verifier's newer status of another fingerprint hides an older success of this one.
+expect other-kernel-newer "$(gate other-kernel-newer "$BUMP" "$M_BUMP" '[]' \
+    "$BUMP=[$(status failure "$(fp "$BASE")" Sanne y 2026-10-02T00:00:00Z), $(status success "$FP" Sanne x)]")" FAIL
 expect rebased-stranger "$(gate rebased-stranger "$REBASED" "$(merge "$BASE" "$REBASED")" "[$(record_of someone "$BUMP" "$FP")]" "$(booted)")" FAIL
 # main changed the kernel under the PR: the merged result was never booted.
 expect base-moved "$(gate base-moved "$BUMP" "$(merge "$MOVED" "$BUMP")" '[]' "$(booted)")" FAIL
