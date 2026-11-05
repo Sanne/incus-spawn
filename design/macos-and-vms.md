@@ -246,6 +246,13 @@ The check compares it with the fingerprint of the PR merged into its base as it 
 **What it does not cover:** the compiler, which `build.sh` takes from `fedora:44` at build time; a base that moves after the check passed, which only branch protection's "require branches to be up to date" catches; and the artifact is the PR's own build, so the check proves a boot happened, not that a PR's workflow was honest, which review still does.
 The verifiers are Sanne and the bot account the Mac runner uses, which the worker boxes use too.
 
+**The Mac boots only what Sanne or the bot pushed (#1385).**
+A PR's appliance image is built by that PR's own `build-appliance.yml`, so an external PR's image is its author's.
+The boot runs it under isx's VM manager, which shares the Mac user's whole home with the guest, and that home holds the `gh` token that records a boot.
+So `test-kernel-on-mac.sh` refuses a PR whose author or head repository is anyone else, with no flag to override it, and Sanne re-pushes an external kernel change as her own branch to have it booted.
+It also runs only from a clean checkout of `origin/main`: run from a PR's branch, it would run that PR's scripts with the verifier's credentials and fingerprint with the PR's input lists.
+**Alternatives:** an override flag for a reviewed external PR, which a misled verifier could pass as easily as Sanne; booting external images with no credentials in the shared home, which is still open for trusted PRs as well (#1385).
+
 **Where the sum comes from.**
 `update-kernel-pin.sh` verifies `sha256sums.asc` with `gpgv` against `appliance/kernel/kernel.org-autosigner.asc`, the kernel.org checksum autosigner's key, and also requires the one valid signature to be by `AUTOSIGNER_FPR`, the same key's fingerprint pinned in the script.
 It reads only the text gpgv reports as signed, so a line added after the signature never counts.

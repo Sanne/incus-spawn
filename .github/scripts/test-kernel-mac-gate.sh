@@ -6,7 +6,9 @@
 # verifier's newest success for the merge's fingerprint, on the head or a commit a verifier's
 # record names; that a stale merge, an unclassified file in appliance/kernel/ and an API error
 # fail; and that the record carries what the build says it built and marks a failed boot or the
-# wrong kernel as failure. Needs bash, git and jq.
+# wrong kernel as failure, and that the Mac refuses, before posting anything, to run from anything
+# but a clean origin/main, under a login the check does not take, without strings, or on a PR not by
+# and from Sanne or the bot (#1385). Needs bash, git and jq.
 set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 WORK="$(mktemp -d)"
@@ -24,6 +26,7 @@ jqf=""; args=()
 while [ $# -gt 0 ]; do case "$1" in --jq) jqf=$2; shift ;; --paginate) ;; *) args+=("$1") ;; esac; shift; done
 set -- "${args[@]}"
 case "$1 ${2:-}" in
+    "api user") echo "{\"login\": \"${GH_LOGIN:-Sanne-ai-bot}\"}" | jq -r "$jqf" ;;
     "api repos/"*)
         p="${2#repos/*/*/}"; f="$FIX/$(echo "${p%%\?*}" | tr / _)"
         [ -f "$f.err" ] && { cat "$f.err" >&2; exit 1; }
@@ -41,18 +44,25 @@ chmod +x "$WORK/bin/gh"
 
 # The fixture: main at BASE, PR heads branching from it, and merges as GitHub makes them.
 SRC="$WORK/src"
-mkdir -p "$SRC/appliance/kernel" "$SRC/.github/scripts"
+mkdir -p "$SRC/appliance/kernel" "$SRC/.github/scripts" "$SRC/.github/workflows"
 cp "$REPO_DIR/appliance/kernel/kernel-fingerprint.sh" "$SRC/appliance/kernel/"
 cp "$REPO_DIR/.github/scripts/kernel-mac-gate.sh" "$SRC/.github/scripts/"
+cp "$REPO_DIR/.github/workflows/kernel-mac-verified.yml" "$SRC/.github/workflows/"
+# The Mac runs main's copies of these, so they are main's in the fixture too; the boots are faked.
+cp "$REPO_DIR/appliance/test-kernel-on-mac.sh" "$SRC/appliance/"
+printf '#!/bin/bash\necho booting "$@"\nexit "${FAKE_BOOT_EXIT:-0}"\n' > "$SRC/appliance/test-boot.sh"
+printf '#!/bin/bash\n[ -f "$APPLIANCE_DIR/disk.img.gz" ] || exit 9\necho isx ok\n' > "$SRC/appliance/test-with-isx.sh"
+chmod +x "$SRC/appliance/"*.sh
 for f in isx.config isx-x86_64.config isx-aarch64.config vm.config update-kernel-pin.sh; do echo "# $f" > "$SRC/appliance/kernel/$f"; done
 echo "# build" > "$SRC/appliance/build.sh"
 printf 'KERNEL_VERSION="7.2.9"\n' > "$SRC/appliance/kernel/build-kernel.sh"
 git -C "$SRC" init -q -b main
-git init -q --bare "$WORK/origin.git"
+git init -q --bare -b main "$WORK/origin.git"
 git -C "$SRC" remote add origin "$WORK/origin.git"
 G() { git -C "$SRC" -c user.name=t -c user.email=t@t "$@"; }
 commit() { G add -A && G commit -qm "$1" && G rev-parse HEAD; }
 BASE=$(commit base)
+git -C "$SRC" push -q origin "$BASE:refs/heads/main"
 # branch <from> <file> <line>: a commit on <from> appending <line> to <file>
 branch() { G checkout -q "$1" && echo "$3" >> "$SRC/$2" && commit "change $2"; }
 # pin <from> <version>: a commit on <from> moving the pin
@@ -154,33 +164,42 @@ printf '#!/bin/bash\necho Mac16,10\n' > "$WORK/bin/sysctl"
 printf '#!/bin/bash\n[ "$1 $2" = "-a 256" ] && sha256sum "$3"\n' > "$WORK/bin/shasum"
 printf '#!/bin/bash\n[ "$1" = --version ] && echo "isx 0.3.11"\nexit 0\n' > "$WORK/bin/isx"
 chmod +x "$WORK/bin/"*
-# The Mac's checkout of main: a clone of the fixture, whose origin serves the PR's merge.
-git -c advice.detachedHead=false clone -q --no-local "$SRC" "$WORK/mac" && git -C "$WORK/mac" remote set-url origin "$WORK/origin.git"
+# The Mac's checkout of main: a full clone of origin, which serves main and the PR's merge.
+git -c advice.detachedHead=false clone -q --no-local "$WORK/origin.git" "$WORK/mac"
 MAC="$WORK/mac/appliance"
-cp "$REPO_DIR/appliance/test-kernel-on-mac.sh" "$MAC/"
+# PATH without strings, for the case that needs it missing.
+mkdir "$WORK/nostrings"
+for f in /usr/bin/* /bin/*; do [ "${f##*/}" = strings ] || ln -sf "$f" "$WORK/nostrings/" 2> /dev/null || true; done
 
 # record <name> <banner version> <test-boot exit> [<kernel-inputs> [<merge origin serves> [<head>]]]:
-# runs test-kernel-on-mac.sh 9, by default on BUMP's build
+# runs test-kernel-on-mac.sh 9, by default on BUMP's build. AUTHOR, OWNER (the head repository's,
+# "null" for a deleted one), GH_LOGIN and SYS_PATH (where the system's tools come from) override
+# the defaults for one case.
 record() {
-    local fix="$WORK/rec-$1"
+    local fix="$WORK/rec-$1" owner="\"${OWNER:-Sanne-ai-bot}\""
     mkdir -p "$fix/artifact"
     serve "${5:-$M_BUMP}"
-    printf '{"headRefOid": "%s"}' "${6:-$BUMP}" > "$fix/pr.json"
+    [ "${OWNER:-}" = null ] && owner=null
+    printf '{"headRefOid": "%s", "author": {"login": "%s"}, "headRepositoryOwner": {"login": %s}}' \
+        "${6:-$BUMP}" "${AUTHOR:-Sanne-ai-bot}" "$owner" > "$fix/pr.json"
     printf '[{"databaseId": 42}]' > "$fix/runs-build-appliance.yml.json"
     printf '[{"databaseId": 43}]' > "$fix/runs-kernel-mac-verified.yml.json"
     printf 'MZ\0\0Linux version %s (builder@ci) #1 SMP\0' "$2" > "$fix/artifact/vmlinuz"
     echo disk | gzip > "$fix/artifact/disk.img.gz"
     printf '%s' "${4:-$(printf 'commit %s\nfingerprint %s\nversion 7.2.10\n' "$M_BUMP" "$FP")}" > "$fix/artifact/kernel-inputs"
-    printf '#!/bin/bash\necho booting "$@"\nexit %s\n' "$3" > "$MAC/test-boot.sh"
-    printf '#!/bin/bash\n[ -f "$APPLIANCE_DIR/disk.img.gz" ] || exit 9\necho isx ok\n' > "$MAC/test-with-isx.sh"
-    chmod +x "$MAC/test-boot.sh" "$MAC/test-with-isx.sh"
     set +e
-    PATH="$WORK/bin:$PATH" CALLS="$fix/calls" FIX="$fix" "$MAC/test-kernel-on-mac.sh" 9 > "$fix/out" 2>&1
+    PATH="$WORK/bin:${SYS_PATH:-$PATH}" CALLS="$fix/calls" FIX="$fix" FAKE_BOOT_EXIT="$3" "$MAC/test-kernel-on-mac.sh" 9 > "$fix/out" 2>&1
     echo $? > "$fix/exit"
     set -e
     touch "$fix/calls"
 }
 posted() { grep -- "$2" "$WORK/rec-$1/calls" | head -1; }
+# refused <name> <reason>: the case failed for <reason> before downloading or posting anything
+refused() {
+    [ "$(cat "$WORK/rec-$1/exit")" != 0 ] || fail "$1: the Mac went ahead"
+    grep -q -- "$2" "$WORK/rec-$1/out" || { cat "$WORK/rec-$1/out" >&2; fail "$1: the reason '$2' is not given"; }
+    [ -z "$(posted "$1" 'run download')$(posted "$1" 'pr comment')$(posted "$1" statuses/)" ] || fail "$1: it went on after refusing"
+}
 
 record good 7.2.10 0
 [ "$(cat "$WORK/rec-good/exit")" = 0 ] || { cat "$WORK/rec-good/out" >&2; fail "good: the record failed"; }
@@ -193,6 +212,8 @@ done
 [[ "$(posted good "statuses/$BUMP")" == *"state=success"*"context=isx/mac-kernel-boot"*"description=fingerprint $FP"* ]] \
     || fail "good: no success status for the fingerprint: $(cat "$WORK/rec-good/calls")"
 [ -n "$(posted good 'run rerun 43')" ] || fail "good: the check was not re-run"
+[[ "$(posted good 'run list' )" == *"--event pull_request"* ]] || fail "good: a push run's build of the head could be taken"
+[ "$(git -C "$WORK/mac" rev-parse --is-shallow-repository)" = false ] || fail "good: fetching the merge made the Mac's clone shallow"
 # What the record posts is what the gate accepts.
 expect recorded "$(gate recorded "$BUMP" "$M_BUMP" "[$(record_of Sanne-ai-bot "$BUMP" "$FP")]" "$(booted)")" PASS
 
@@ -222,5 +243,29 @@ FIRST=$(pin "$BASE" 7.3)
 M_FIRST=$(merge "$BASE" "$FIRST")
 record first 7.3.0 0 "$(printf 'commit %s\n' "$M_FIRST")" "$M_FIRST" "$FIRST"
 [[ "$(posted first 'pr comment')" == *"kernel release: 7.3.0"* ]] || { cat "$WORK/rec-first/out" >&2; fail "first: 7.3.0 was not taken for 7.3"; }
+
+# The Mac boots no image an external PR built, with no way around it (#1385).
+AUTHOR=someone record external 7.2.10 0
+refused external "the Mac boots only PRs by and from Sanne Sanne-ai-bot"
+OWNER=someone record external-head-repo 7.2.10 0
+refused external-head-repo "from someone's repository"
+OWNER=null record deleted-head-repo 7.2.10 0
+refused deleted-head-repo "from -'s repository"
+GH_LOGIN=someone record not-a-verifier 7.2.10 0
+refused not-a-verifier "logged in as someone"
+SYS_PATH="$WORK/nostrings" record no-strings 7.2.10 0
+refused no-strings "strings is missing"
+# The checkout is what runs with the verifier's credentials: only a clean origin/main.
+touch "$WORK/mac/appliance/extra.sh"
+record dirty 7.2.10 0
+refused dirty "has local changes"
+rm "$WORK/mac/appliance/extra.sh"
+git -C "$WORK/mac" -c advice.detachedHead=false checkout -q "$BUMP"
+record pr-branch 7.2.10 0
+refused pr-branch "is not at origin/main"
+git -C "$WORK/mac" checkout -q main
+git -C "$SRC" push -q origin "$OTHER:refs/heads/main"
+record behind-main 7.2.10 0
+refused behind-main "is not at origin/main"
 
 echo "kernel-mac-verified gate and Mac record: all cases pass"
