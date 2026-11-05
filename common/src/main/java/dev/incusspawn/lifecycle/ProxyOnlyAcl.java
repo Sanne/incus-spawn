@@ -160,6 +160,17 @@ public final class ProxyOnlyAcl {
                 + " directly. " + remedy);
     }
 
+    /**
+     * {@code nicConfig} as a copy request sends it for a proxy-only branch: with the ACL in force,
+     * and without an address, which only {@code StaticIpAllocator} gives (#815).
+     */
+    static Map<String, String> restricted(Map<String, String> nicConfig) {
+        var config = new LinkedHashMap<>(nicConfig);
+        config.remove("ipv4.address");
+        config.putAll(NIC_KEYS);
+        return config;
+    }
+
     /** Whether a NIC's config has the ACL in force, exactly as isx sets it. */
     static boolean inForce(Map<String, String> nicConfig) {
         return NIC_KEYS.entrySet().stream().allMatch(e -> e.getValue().equals(nicConfig.get(e.getKey())));

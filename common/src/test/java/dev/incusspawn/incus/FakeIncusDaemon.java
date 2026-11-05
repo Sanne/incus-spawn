@@ -52,6 +52,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** An exec asked for: its command, and the environment it asked for on top of the defaults. */
     public record Exec(List<String> command, Map<String, String> environment) {}
     private final List<String> refusedWrites = new ArrayList<>();
+    private boolean refuseDeletes;
     /** Bridged-NIC ACLs by default, as every Incus isx is tested against has them (#1979). */
     private final List<String> apiExtensions = new ArrayList<>(List.of(NIC_ACL_EXTENSION));
     private static final String NIC_ACL_EXTENSION = "network_bridge_acl_devices";
@@ -328,6 +329,15 @@ public final class FakeIncusDaemon implements IncusTransport {
      */
     public synchronized FakeIncusDaemon writeAfterRead(String instanceName, Runnable... writes) {
         writesAfterRead.computeIfAbsent(instanceName, n -> new ArrayDeque<>()).addAll(List.of(writes));
+        return this;
+    }
+
+    /**
+     * Refuse every instance DELETE, leaving the instance: as if the process making it were killed
+     * before any cleanup could run.
+     */
+    public synchronized FakeIncusDaemon refuseDeletes() {
+        refuseDeletes = true;
         return this;
     }
 
@@ -753,6 +763,7 @@ public final class FakeIncusDaemon implements IncusTransport {
             return async();
         }
         if (rest.isEmpty() && method.equals("DELETE")) {
+            if (refuseDeletes) return error(500, "refused");
             instances.remove(name);
             return async();
         }
@@ -868,6 +879,9 @@ public final class FakeIncusDaemon implements IncusTransport {
         var source = request.path("source");
         var original = instances.get(source.path("source").asText(""));
         if (!"copy".equals(source.path("type").asText("")) || original == null) return notFound();
+        // Incus validates the devices a copy request sets as it would a write's
+        var aclRefusal = aclRefusal(request);
+        if (aclRefusal != null) return badRequest(aclRefusal);
         var name = request.path("name").asText("");
         var config = object(original.path("config"));
         for (var e : request.path("config").asMap().entrySet()) {

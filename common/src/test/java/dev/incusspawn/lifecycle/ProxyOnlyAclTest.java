@@ -121,6 +121,18 @@ class ProxyOnlyAclTest {
 
     @Test
     void aProxyOnlyBranchThatFailsAfterItsCopyLeavesNoCopyBehind() {
+        // The branch's configuration write fails once the copy is made
+        var daemon = template().refuseWritesContaining("limits.memory");
+
+        assertThrows(RuntimeException.class, () -> branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY));
+
+        assertTrue(daemon.requests().contains("POST /1.0/instances"), "precondition: the copy was made");
+        assertFalse(daemon.client().exists("dev-2"), "a copy under the proxy-only name was left");
+        assertTrue(daemon.client().exists("tpl-dev"), "the source stays");
+    }
+
+    @Test
+    void anIncusThatRefusesTheAclOnlyOnceAskedMakesNoProxyOnlyCopy() {
         var daemon = template();
         var request = new BranchFlow.Request("tpl-dev", "dev-2", false, false, NetworkMode.PROXY_ONLY,
                 null, null, null, null, List.of(), false, Map.of());
@@ -128,7 +140,7 @@ class ProxyOnlyAclTest {
         BranchFlow.proxyHealthCheck = i -> true;
         try {
             var preflight = BranchFlow.preflight(daemon.client(), request, Map.of());
-            // Incus refuses the NIC's ACL keys only once the copy is made, as #1979's did
+            // Incus refuses the NIC's ACL keys after preflight, as #1979's did: the copy request carries them
             daemon.apiExtensions();
 
             var e = assertThrows(RuntimeException.class, () -> BranchFlow.create(daemon.client(), preflight));
@@ -137,9 +149,48 @@ class ProxyOnlyAclTest {
         } finally {
             BranchFlow.proxyHealthCheck = original;
         }
-        assertTrue(daemon.requests().contains("POST /1.0/instances"), "precondition: the copy was made");
+        assertTrue(daemon.requests().contains("POST /1.0/instances"), "precondition: the copy was asked for");
         assertFalse(daemon.client().exists("dev-2"), "an unrestricted copy under the proxy-only name was left");
         assertTrue(daemon.client().exists("tpl-dev"), "the source stays");
+    }
+
+    @Test
+    void aProxyOnlyCopyIsRestrictedFromItsCopyRequestOnEvenIfNothingAfterItRuns() {
+        // A branch killed right after its copy runs no cleanup (#2009): the configuration write
+        // fails, and so does the delete, which leaves the copy as a kill would
+        var daemon = template().refuseWritesContaining("limits.memory").refuseDeletes();
+
+        assertThrows(RuntimeException.class, () -> branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY));
+
+        assertTrue(daemon.client().exists("dev-2"), "precondition: the copy was left");
+        assertEquals(NetworkMode.PROXY_ONLY.name(),
+                daemon.instance("dev-2").path("config").path(Metadata.NETWORK_MODE).asText(),
+                "an isx start must know it is proxy-only");
+        // So is an 'incus start', which knows nothing of the stamp
+        assertRestricted(nic(daemon, "dev-2"));
+        assertFalse(nic(daemon, "dev-2").has("ipv4.address"), "and it takes no address of its source's");
+    }
+
+    @Test
+    void aProxyOnlyCopyOfAnAirgappedSourceHasItsNicBackRestrictedFromItsCopyRequest() {
+        var daemon = new FakeIncusDaemon().profile("default", Map.of(
+                "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0"),
+                "root", Map.of("type", "disk", "path", "/", "pool", "default")));
+        daemon.container("tpl-dev", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev",
+                Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name(), Metadata.AIRGAP_MASKED, "eth0"));
+        daemon.device("tpl-dev", "eth0", Map.of("type", "none"));
+
+        // Killed after its copy: what the copy request alone made
+        daemon.refuseWritesContaining("limits.memory").refuseDeletes();
+        assertThrows(RuntimeException.class, () -> branch(daemon, "tpl-dev", NetworkMode.PROXY_ONLY));
+
+        var nic = nic(daemon, "dev-2");
+        assertEquals("nic", nic.path("type").asText(), nic::toString);
+        assertEquals("incusbr0", nic.path("network").asText(), nic::toString);
+        assertRestricted(nic);
+        assertFalse(daemon.instance("dev-2").path("config").has(Metadata.AIRGAP_MASKED));
+        assertEquals("none", daemon.instance("tpl-dev").path("devices").path("eth0").path("type").asText(),
+                "the source stays airgapped");
     }
 
     @Test

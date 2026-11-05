@@ -1546,6 +1546,16 @@ public class IncusClient {
      * metadata its creator stamps, with no window in which it exists without it.
      */
     public void copy(String source, String target, CopyPlan plan, Map<String, String> configOverrides) {
+        copy(source, target, plan, configOverrides, Map.of());
+    }
+
+    /**
+     * {@link #copy(String, String, CopyPlan, Map)} with {@code devices} set on the copy in the same
+     * request, each replacing the source's device of that name whole, and laid over the plan's
+     * {@link CopyPlan#addressedNics}. A device given here keeps no address unless it names one.
+     */
+    public void copy(String source, String target, CopyPlan plan, Map<String, String> configOverrides,
+                     Map<String, Map<String, String>> deviceOverrides) {
         var http = http();
         if (plan.targetPool() == null) {
             throw new IncusException("No target storage pool for copy — " + plan.fullCopyReason());
@@ -1557,7 +1567,9 @@ public class IncusClient {
         // A device in the request replaces the source's whole; an empty config value unsets.
         // The copy keeps no address, on its NIC or in the metadata the proxy identifies it by,
         // and none of its source's secret, credential grant or delivery stamp (#934, #1107).
-        if (!plan.addressedNics().isEmpty()) body.put("devices", plan.addressedNics());
+        var devices = new LinkedHashMap<String, Map<String, String>>(plan.addressedNics());
+        devices.putAll(deviceOverrides);
+        if (!devices.isEmpty()) body.put("devices", devices);
         var config = new LinkedHashMap<String, String>();
         config.put(Metadata.STATIC_IP, "");
         config.put(Metadata.STATIC_GATEWAY, "");
@@ -1570,7 +1582,7 @@ public class IncusClient {
         config.putAll(configOverrides);
         body.put("config", config);
         var resp = http.requestAndWait("POST", "/1.0/instances", body);
-        if (!resp.isSuccess()) throw new IncusException("Failed to copy " + source + " to " + target);
+        if (!resp.isSuccess()) throw failedOp(resp, "Failed to copy " + source + " to " + target);
     }
 
     public String getLog(String instance) {

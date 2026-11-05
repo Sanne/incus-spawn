@@ -34,6 +34,7 @@ The transports keep the `ETag` header on `RawResponse`/`ApiResponse`; `FakeIncus
 **`--proxy-only` is a host-side Incus network ACL** (`ProxyOnlyAcl`, #1137; design/network.md "Network Modes"): `isx-proxy-only` on the bridge NIC, egress default `drop`, ingress default `allow`.
 Never enforce it, or add to it, from inside the guest: root there can undo anything the guest holds, and the tests must exercise the boundary that actually holds.
 Incus accepts NIC ACLs only under its nftables firewall driver and with the `network_bridge_acl_devices` API extension (Incus 6.9, 6.0.4; #1979); anything else refuses proxy-only (preflight, and every start of an existing one through `prepareForStart`/`ensureReady`), never falls back.
+A proxy-only branch's copy request already carries the NIC's ACL keys and the `network-mode` stamp, so a branch killed before `configureBranch` leaves a restricted copy (#2009).
 A proxy-only branch that fails after its copy deletes the copy (`BranchFlow.removeFailedCopy`).
 A new path that starts an instance for use goes through `prepareForStart`, or proxy-only instances from before #1137 start unrestricted, and airgapped ones start with any network device a profile gained since their branch (`AirgapGuard`, #1518).
 What counts as a way out is `IncusClient.isNetworkDevice` (masked by airgap, refused by proxy-only) and `isPassthrough` (`pci`/`usb`, refused by both); a new device type that can reach a network goes in one of them, not in a mode's own check.
