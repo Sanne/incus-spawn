@@ -165,16 +165,16 @@ while IFS= read -r line; do
 done < <(grep '^CONFIG_' "$CONFIG_FRAGMENT" \
     | awk -F= '!($1 in last) { order[++n] = $1 } { last[$1] = $0 } END { for (i = 1; i <= n; i++) print last[order[i]] }')
 echo "  $APPLIED applied, $SKIPPED skipped"
-# The appliance's fragments tolerate an option its arch cannot take, but each
-# vm option was added because a guest failed without it: one that no longer
-# applies fails the build rather than the guest.
+# The vm kernel relies on every fragment it reads, isx.config included (rootful
+# Podman and Docker need its conntrack and raw-table options), so any option
+# that no longer applies fails the build rather than a guest. Each fragment
+# holds only options that apply on the arches that read it, so none is
+# expected to skip. The appliance build still only warns.
 if [ "$ROLE" = vm ]; then
     for key in ${SKIPPED_KEYS[@]+"${SKIPPED_KEYS[@]}"}; do
-        if grep -q "^${key}=" "$SCRIPT_DIR/vm.config" "$SCRIPT_DIR/vm-${BUILD_ARCH}.config"; then
-            echo "ERROR: $key from a vm fragment did not apply" >&2
-            exit 1
-        fi
+        echo "ERROR: $key did not apply" >&2
     done
+    [ "$SKIPPED" -eq 0 ] || exit 1
 fi
 
 echo "==> Building ($TARGET)..."
