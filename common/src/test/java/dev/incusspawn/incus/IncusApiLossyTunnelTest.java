@@ -306,7 +306,8 @@ class IncusApiLossyTunnelTest {
     @Timeout(10)
     void keepalivePingsReachEveryExecFd() {
         server.sendCloseFrames = false;
-        server.runMillis = 600; // a quiet command: no output while it runs
+        // A quiet command: no output while it runs, and it ends once every fd was pinged twice.
+        server.runsUntilPinged = Map.of("control", 2, "1", 2, "2", 2);
         exec(new IncusApi(new UnixSocketTransport(server.socketPath()), 50));
         // Each fd is its own vsock stream and its own forwarder child in the VM, so an inactivity
         // reaper would collect whichever one went quiet -- they all have to be pinged.
