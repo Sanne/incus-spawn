@@ -89,6 +89,9 @@ An instance airgapped before that stamp existed masked NICs only, so without the
 Airgapping an airgapped instance keeps its source's names in the stamp, since the copy carries those masks.
 A `proxy` device with `bind: instance` is a network device here too, masked and put back like a NIC (#1518).
 An airgapped branch of a source with a `pci` or `usb` device is refused, as on proxy-only above.
+The copy request itself carries the masks and both stamps (#2014), as a proxy-only copy carries its ACL.
+So a branch killed before its configuration, which runs no cleanup, leaves a copy with no network device, whether isx starts it or Incus does.
+`configureBranch` masks the copy again in the branch's one write (`InstanceNetwork.masks`), which then masks only what it gained since preflight.
 Masks are written at branch time, and a profile that gains a network device later attaches it at the next start, so every start for use (`prepareForStart`), `isx shell` into a running instance and the TUI's restart mask what the instance gained, add it to the stamp and say so (`AirgapGuard.enforce`).
 This also masks the InfiniBand devices of an instance airgapped before #1507.
 The TUI restarts an airgapped instance as a stop and a start for use, reading it after the stop, so the mask is written while it is down; `isx shell` into a running instance masks it live, and a device Incus will not take from a running guest refuses that shell, with the advice to stop it.

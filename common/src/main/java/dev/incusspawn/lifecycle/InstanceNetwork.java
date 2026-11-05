@@ -289,16 +289,30 @@ public final class InstanceNetwork {
      * those of an airgapped source, whose masks the copy carried.
      */
     static void maskNics(IncusClient incus, JqValue instance, InstanceUpdate update) {
+        var masks = masks(incus, instance);
+        masks.devices().forEach((name, mask) -> update.replaceDevice(name, mask));
+        update.config(Metadata.AIRGAP_MASKED, masks.stamp());
+    }
+
+    /**
+     * What {@link #maskNics} writes: a {@code type: none} device over each network device, and
+     * the {@link Metadata#AIRGAP_MASKED} stamp naming them with those an airgapped source masked.
+     */
+    record Masks(Map<String, Map<String, String>> devices, String stamp) {}
+
+    /** The {@link Masks} that airgap {@code instance}, or a copy of it with its devices. */
+    static Masks masks(IncusClient incus, JqValue instance) {
         var masked = new LinkedHashSet<String>();
         if (NetworkMode.isAirgapped(instance)) {
             var stamped = stampedMasks(instance);
             masked.addAll(stamped != null ? stamped : preStampMasks(instance, profileDevices(incus, instance)));
         }
+        var devices = new LinkedHashMap<String, Map<String, String>>();
         for (var name : expandedDevices(instance, IncusClient::isNetworkDevice)) {
-            update.replaceDevice(name, MASKED_DEVICE);
+            devices.put(name, MASKED_DEVICE);
             masked.add(name);
         }
-        update.config(Metadata.AIRGAP_MASKED, masked.isEmpty() ? "," : String.join(",", masked));
+        return new Masks(devices, masked.isEmpty() ? "," : String.join(",", masked));
     }
 
     /** The devices airgap stamped as masked, or null when it predates the stamp. */

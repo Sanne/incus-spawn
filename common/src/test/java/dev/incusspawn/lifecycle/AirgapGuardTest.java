@@ -64,6 +64,31 @@ class AirgapGuardTest {
     }
 
     @Test
+    void anAirgappedCopyIsMaskedFromItsCopyRequestOnEvenIfNothingAfterItRuns() {
+        // A branch killed right after its copy runs no cleanup (#2014): the configuration write
+        // fails, and so does the delete, which leaves the copy as a kill would
+        var daemon = template();
+        daemon.device("tpl-dev", "eth1", Map.of("type", "nic", "nictype", "macvlan", "parent", "enp1s0"));
+        daemon.refuseWritesContaining("limits.memory").refuseDeletes();
+
+        assertThrows(RuntimeException.class, () -> branch(daemon, "tpl-dev", NetworkMode.AIRGAP));
+
+        assertTrue(daemon.client().exists("dev-2"), "precondition: the copy was left");
+        var copy = daemon.instance("dev-2");
+        assertEquals(NetworkMode.AIRGAP.name(), copy.path("config").path(Metadata.NETWORK_MODE).asText(),
+                "an isx start must know it is airgapped");
+        // So is an 'incus start', which knows nothing of the stamp
+        for (var device : List.of("eth0", "eth1")) {
+            assertEquals("none", copy.path("expanded_devices").path(device).path("type").asText(),
+                    () -> device + " is not masked: " + copy.path("expanded_devices"));
+        }
+        assertEquals("eth0,eth1", copy.path("config").path(Metadata.AIRGAP_MASKED).asText(),
+                "a later branch with network puts back only what airgap masked");
+        assertEquals("nic", daemon.instance("tpl-dev").path("expanded_devices").path("eth0").path("type").asText(),
+                "the source keeps its network");
+    }
+
+    @Test
     void anAirgappedBranchOfASourceWithAPciDeviceIsRefused() {
         var daemon = template();
         daemon.device("tpl-dev", "card0", Map.of("type", "pci", "address", "0000:03:00.0"));

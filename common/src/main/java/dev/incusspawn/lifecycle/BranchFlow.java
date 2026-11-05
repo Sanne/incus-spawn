@@ -484,6 +484,16 @@ public final class BranchFlow {
                 copyConfig.put(Metadata.AIRGAP_MASKED, "");
             }
         }
+        // So is an airgapped copy (#2014): the stamp makes any isx start mask what it gains
+        // (AirgapGuard.enforce), and the masks leave an 'incus start' no network device at all.
+        // configureBranch masks the copy again from its own read, which then finds only what the
+        // source gained since preflight read it, and keeps the stamp
+        if (networkMode == NetworkMode.AIRGAP) {
+            var masks = InstanceNetwork.masks(incus, sourceInstance);
+            copyConfig.put(Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name());
+            copyConfig.put(Metadata.AIRGAP_MASKED, masks.stamp());
+            copyDevices.putAll(masks.devices());
+        }
         BuildOutput.stepStart("Copying from template");
         incus.copy(source, name, copyPlan, copyConfig, copyDevices);
         BuildOutput.stepDone();
