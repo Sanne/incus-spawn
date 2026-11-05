@@ -82,6 +82,15 @@ final class LossyIncusServer implements AutoCloseable {
     volatile String finalStatus = "Success";
     /** How long the "command" runs after all fds connect, before it writes output and exits. */
     volatile long runMillis = 0;
+    /**
+     * When set, the command runs until each named fd has drawn that many PINGs, after any
+     * {@link #runMillis}. A test counting pings is then paced by the client's pings themselves,
+     * never by how promptly a slow runner wakes the client's ping timer (#2012). The wait gives up
+     * after {@link #PING_WAIT_MS}, so a client that stops pinging fails the test's own assertion
+     * rather than its timeout, and the command's thread never outlives the test.
+     */
+    volatile Map<String, Integer> runsUntilPinged = Map.of();
+    private static final long PING_WAIT_MS = 5_000;
     /** How many /wait calls answer "Running" before the operation reports its result. */
     volatile int runningWaits = 0;
     /** Output sent on stdout <em>after</em> the operation completes, one chunk per write. */
@@ -94,8 +103,8 @@ final class LossyIncusServer implements AutoCloseable {
     volatile boolean diesOnSignal = false;
     /**
      * An interactive exec, as {@code isx shell} starts: only fds "0" and "control", started once
-     * both connect. Its command ends after {@link #runMillis} by closing both, unless it
-     * {@link #runsForever}.
+     * both connect. Its command ends after {@link #runMillis} or {@link #runsUntilPinged} by
+     * closing both, unless it {@link #runsForever}.
      */
     volatile boolean interactive = false;
     /** false is a silent link: client PINGs still arrive and are counted, but no PONG comes back. */
@@ -373,6 +382,7 @@ final class LossyIncusServer implements AutoCloseable {
         if (runsForever) return; // only a signal, if anything, ends it
         try {
             if (runMillis > 0) Thread.sleep(runMillis);
+            awaitPings(runsUntilPinged);
             if (interactive) { // the shell exited: Incus closes control, and the client hangs up fd "0"
                 execFds.get("control").closeWithFrame();
                 return;
@@ -392,6 +402,18 @@ final class LossyIncusServer implements AutoCloseable {
             // The client force-closed an fd, or the test is over: nothing more can be sent.
         } finally {
             operationDone.countDown();
+        }
+    }
+
+    /** Block until each fd in {@code wanted} has drawn its number of PINGs, or {@link #PING_WAIT_MS} passed. */
+    private void awaitPings(Map<String, Integer> wanted) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(PING_WAIT_MS);
+        synchronized (pingsByFd) {
+            while (wanted.entrySet().stream().anyMatch(e -> pings(e.getKey()) < e.getValue())) {
+                long left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+                if (left <= 0) return;
+                pingsByFd.wait(left);
+            }
         }
     }
 
@@ -437,8 +459,14 @@ final class LossyIncusServer implements AutoCloseable {
                     }
                 }
                 if (opcode == 0x9) {
-                    pingsByFd.computeIfAbsent(fd, k -> new AtomicInteger()).incrementAndGet();
-                    if (answersPings) peer.send(0xA, payload);
+                    try {
+                        if (answersPings) peer.send(0xA, payload);
+                    } finally { // counted after its PONG went out, and even if the client is gone
+                        synchronized (pingsByFd) {
+                            pingsByFd.computeIfAbsent(fd, k -> new AtomicInteger()).incrementAndGet();
+                            pingsByFd.notifyAll();
+                        }
+                    }
                 }
             }
         } catch (IOException ignored) {

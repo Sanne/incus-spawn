@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -376,8 +377,13 @@ class IncusApiLossyTunnelTest {
     @Timeout(value = 10, threadMode = Timeout.ThreadMode.SEPARATE_THREAD) // a hung session ignores interrupts
     void aQuietShellWhoseLinkAnswersIsNotCut() throws IOException {
         // Idle for well past the silence limit, but every ping draws a PONG: the link is there.
-        server.runMillis = 1_000;
+        // Ten pings 50 ms apart outlast the 300 ms limit. The shell ends on the tenth, not after
+        // a fixed time: a slow runner's timer oversleeps each interval (#2012).
+        server.runsUntilPinged = Map.of("control", 10);
+        long start = System.nanoTime();
         assertFalse(shell(), "the shell exited by itself; that is no lost connection");
+        long lastedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        assertTrue(lastedMillis > 300, "the session must outlast the silence limit: " + lastedMillis + "ms");
         assertTrue(server.pings("control") >= 10, "pinged throughout: " + server.pings("control"));
     }
 
