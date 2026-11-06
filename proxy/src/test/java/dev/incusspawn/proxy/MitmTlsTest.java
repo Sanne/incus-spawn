@@ -104,7 +104,7 @@ class MitmTlsTest {
     /**
      * Minting a leaf generates an RSA key and writes it to disk, so the SNI lookup must stay
      * off the event loop, or every connection on that loop stalls behind it. Vert.x 4 always
-     * runs the lookup on a worker; Vert.x 5 runs it on the event loop unless the SSL engine is
+     * ran the lookup on a worker; Vert.x 5 runs it on the event loop unless the SSL engine is
      * told to use worker threads.
      * <p>
      * The mint is observed through the line {@code InterceptedCertOptions} logs for it, which
@@ -143,11 +143,11 @@ class MitmTlsTest {
     }
 
     /**
-     * What keeps the SNI lookup off the event loop under Vert.x 5. Vert.x 4 runs the lookup on a
-     * worker whatever the engine is told, so {@link #theSniLookupRunsOffTheEventLoop} passes
-     * without the flag until the upgrade: this pins the flag itself until then. It reads the
-     * options {@link MitmProxy#start} and {@link MitmProxy#reload} both take, not the bound
-     * server, which exposes no engine options.
+     * What keeps the SNI lookup off the event loop under Vert.x 5, checked at its cause. It reads
+     * the options {@link MitmProxy#start} listens with, not the bound server, which exposes no
+     * engine options, and it names the flag instead of a thread the lookup happened to run on.
+     * A reloaded server keeps the flag because {@code updateSSLOptions} leaves the engine options
+     * as {@code start()} set them: {@link MitmProxy#reload} passes only {@code getSslOptions()}.
      */
     @Test
     void theSslEngineRunsItsDelegatedTasksOnWorkers() {
