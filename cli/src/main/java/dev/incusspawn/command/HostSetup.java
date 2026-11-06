@@ -561,7 +561,7 @@ class HostSetup {
 
     /** Whether every command updating the PREROUTING redirect, stale-rule removals included, succeeded. */
     boolean configureMitmProxyFirewalld(String gatewayIp) {
-        var rulesOutput = captureOutput("firewall-cmd", "--direct", "--get-all-rules");
+        var rulesOutput = captureOutput("sudo", "firewall-cmd", "--direct", "--get-all-rules");
         boolean hasRedirect = FirewalldCheck.isPreRoutingRulePresent(rulesOutput, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp);
 
         boolean ok = true;
