@@ -137,6 +137,14 @@ final class LaunchdJob {
         return awaitUnloaded(out) ? load(out) : Outcome.STILL_UNLOADING;
     }
 
+    /**
+     * Unloads the job. Whether it is gone when this returns is what the result says.
+     */
+    boolean stop() {
+        launchctl.run("bootout", target);
+        return !isLoaded();
+    }
+
     /** Loads a job launchd does not have, and starts it. */
     private Outcome load(Output out) {
         if (!step(out, "bootstrap", domain, plist.toString()) || !step(out, "kickstart", target)) return Outcome.FAILED;

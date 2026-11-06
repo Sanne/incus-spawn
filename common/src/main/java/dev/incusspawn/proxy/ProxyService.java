@@ -563,9 +563,7 @@ public final class ProxyService {
         if (isActive()) {
             if (!Platform.isMacOS()) return stopSystemdUnit(ProxyService::isActive);
             BuildOutput.stepStart("Stopping proxy service");
-            // launchd's bootout answers as soon as the job is told to go (see LaunchdJob), so its
-            // result proves nothing and is not asked
-            runQuiet("launchctl", "bootout", "gui/" + getUid() + "/" + PROXY_LABEL);
+            proxyJob().stop();
             BuildOutput.stepDone();
             BuildOutput.stepNote("Re-enable it with: isx proxy install");
             return true;
