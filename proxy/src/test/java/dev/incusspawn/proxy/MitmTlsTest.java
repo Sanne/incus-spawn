@@ -432,6 +432,28 @@ class MitmTlsTest {
     }
 
     /**
+     * The shutdown hook stops a proxy whose start failed after Quarkus has closed Vert.x (#1953):
+     * its event loops are terminated, so a close can no longer be awaited. That stop says nothing
+     * more than the failed start did, and does not throw out of the hook as a second fault.
+     */
+    @Test
+    void aStopAfterAFailedStartAndAClosedVertxDoesNotThrow() throws Exception {
+        var loopback = InetAddress.getByName("127.0.0.1");
+        try (var taken = new ServerSocket(0, 1, loopback)) {
+            var failed = new MitmProxy(vertx, "127.0.0.1", 0, taken.getLocalPort(), "127.0.0.1",
+                    ConfigFingerprint.load());
+            assertThrows(Exception.class, () -> startInBackground(failed), "the health port was taken");
+            vertx.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+
+            var log = assertDoesNotThrow(() -> captureLog(failed::stop),
+                    "stopping after Vert.x closed threw out of the shutdown hook");
+            assertTrue(log.contains("Stopping proxy"), log);
+            assertFalse(log.contains("close") || log.contains("Exception"),
+                    "the stop reported a second fault after the failed start:\n" + log);
+        }
+    }
+
+    /**
      * A stand-in for an older proxy that is stopping: it frees {@code health} and {@code alsoFree}
      * as it answers its first health probe with 200, counted in {@code probes}.
      */
@@ -461,6 +483,12 @@ class MitmTlsTest {
 
     /** {@link MitmProxy#reload} reports a failure instead of throwing it; surface it here, not as a later handshake error. */
     private void reload() {
+        var out = captureLog(proxy::reload);
+        assertTrue(out.contains("Configuration reloaded (CA fingerprint"), "the reload failed:\n" + out);
+    }
+
+    /** What {@code action} logs, on the console {@link ProxyLog} writes to. */
+    private static String captureLog(Runnable action) {
         var out = new ByteArrayOutputStream();
         var originalOut = System.out;
         var originalErr = System.err;
@@ -469,13 +497,13 @@ class MitmTlsTest {
         // Its info line is what is read, whatever an earlier test left suppressed
         var suppressed = ProxyLog.setSuppressStderr(false);
         try {
-            proxy.reload();
+            action.run();
         } finally {
             ProxyLog.setSuppressStderr(suppressed);
             System.setOut(originalOut);
             System.setErr(originalErr);
         }
-        assertTrue(out.toString().contains("Configuration reloaded (CA fingerprint"), "the reload failed:\n" + out);
+        return out.toString();
     }
 
     private static Map<String, ContainerTls.Handshake> handshakeAll(int port, X509Certificate ca) throws Exception {
