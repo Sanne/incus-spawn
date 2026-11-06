@@ -78,7 +78,7 @@ class PiSetupTest {
                         arg.contains("defaultProvider") &&
                         arg.contains("anthropic") &&
                         arg.contains("defaultModel") &&
-                        arg.contains("claude-sonnet-4-6") &&
+                        arg.contains("claude-sonnet-5-5") &&
                         arg.contains("defaultThinkingLevel") &&
                         arg.contains("medium")));
     }

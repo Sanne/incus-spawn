@@ -888,7 +888,7 @@ class CredentialSetup {
             var host = ProxyConfig.vertexHost(region);
             var url = "https://" + host + "/v1/projects/" + projectId
                     + "/locations/" + region
-                    + "/publishers/anthropic/models/claude-sonnet-4-6:rawPredict";
+                    + "/publishers/anthropic/models/claude-sonnet-5-5:rawPredict";
             var client = getHttpClient();
             var request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
