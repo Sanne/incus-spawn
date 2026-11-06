@@ -59,14 +59,16 @@ public final class FirewalldCheck {
      * through {@code sudo -n}, which works when sudo needs no password now and never prompts (#1441).
      */
     public static String readDirectRules() {
-        var query = List.of("firewall-cmd", "--direct", "--get-all-rules");
-        var viaSudo = new java.util.ArrayList<>(List.of("sudo", "-n"));
-        viaSudo.addAll(query);
-        return readDirectRules(List.of(query, viaSudo));
+        return readDirectRules(DIRECT_RULE_QUERIES);
     }
 
+    /** The queries {@link #readDirectRules()} tries in order: as the user, then through {@code sudo -n}. */
+    public static final List<List<String>> DIRECT_RULE_QUERIES = List.of(
+            List.of("firewall-cmd", "--direct", "--get-all-rules"),
+            List.of("sudo", "-n", "firewall-cmd", "--direct", "--get-all-rules"));
+
     /** The first of {@code attempts} that succeeds, its output; null when none does. */
-    static String readDirectRules(List<List<String>> attempts) {
+    public static String readDirectRules(List<List<String>> attempts) {
         for (var command : attempts) {
             if (!HostPath.isOnPath(command.getFirst())) continue;
             try {
