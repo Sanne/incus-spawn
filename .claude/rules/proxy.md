@@ -512,4 +512,4 @@ Key design:
   Whether ChatGPT's hosts are intercepted is `ChatGptAccounts.enabledBy`, the one decision the proxy and `ToolProxyResolver.resolvedDomains` (the CLI's DNS rewrites) share; a host route cannot clash with them, since its name must lie under `.internal`.
   A proven backend request streams through `Upstream.relayRequest` with `RelayHooks` (#1315), and a refused caller gets `CallerCheck`'s one registry refresh and retry.
   See design/proxy.md "Codex ChatGPT sessions stay on the host".
-- `ISX_BENCH_UPSTREAM` reaches WebSockets too: Vert.x 4 ignores `setServer()` for them, so an overridden WebSocket is dialled to the override's address with `Host` set to the real name and no SNI.
+- `ISX_BENCH_UPSTREAM` reaches WebSockets too: a `WebSocketClient` reads `setServer()` only when no host is set (Vert.x 5, V-W5 in `docs/dev/QUARKUS-4.md`), so an overridden WebSocket is dialled to the override's address with `Host` set to the real name and no SNI.

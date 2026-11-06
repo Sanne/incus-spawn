@@ -448,9 +448,9 @@ class WebSocketProxyTest {
      * unwired socket would be dropped. Many sockets at once, each writing in the turn
      * its handshake completed, to give that window a chance.
      * <p>
-     * On Vert.x 4 the existing relay tests already fail when that window is mishandled;
-     * this one and {@link #upstreamFrameSentRightAfterTheHandshakeIsNotLost} are canaries
-     * for Vert.x 5, which hands over the accepted socket later and already flowing.
+     * On Vert.x 4 the existing relay tests already failed when that window was mishandled;
+     * this one and {@link #upstreamFrameSentRightAfterTheHandshakeIsNotLost} guard that window
+     * on Vert.x 5, which hands over the accepted socket later and already flowing.
      */
     @Test
     void framesSentRightAfterTheHandshakeAreNotLost() throws Exception {

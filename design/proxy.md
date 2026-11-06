@@ -423,9 +423,9 @@ A deeper name such as `results-receiver.actions.githubusercontent.com` (where `g
 Vert.x then fell back to an arbitrary keystore entry.
 The container was offered `*.api.openai.com` for a GitHub host, an error that points at the wrong domain entirely.
 `InterceptedCertOptions` (proxy module) now implements Vert.x's `KeyCertOptions.keyManagerFactoryMapper`: `certNameFor()` maps the SNI name to the exact domain, or to a wildcard for the name's own parent (`*.actions.githubusercontent.com`), minted through `CertStore` on first use and so persisted like every other leaf.
-Vert.x runs this mapping on a worker thread, so the RSA key generation never blocks the event loop.
-Vert.x 4 does so regardless, while Vert.x 5 runs it wherever the SSL engine's delegated tasks run, so `MitmProxy.mitmServerOptions()` sets `useWorkerThread` on the engine.
-On Vert.x 4 the flag still changes something: the rest of every handshake's delegated tasks move from the event loop to the worker pool as well.
+With `useWorkerThread` set, Vert.x runs this mapping on a worker thread, so the RSA key generation never blocks the event loop.
+Vert.x 4 did so regardless, while Vert.x 5 runs it wherever the SSL engine's delegated tasks run, so `MitmProxy.mitmServerOptions()` sets `useWorkerThread` on the engine.
+The flag also moves the rest of every handshake's delegated tasks from the event loop to the worker pool.
 A reload builds its SSL options from those same server options, because the update replaces the server's whole SSL configuration.
 The `<domain>`/`*.<domain>` certs are still pre-minted at start.
 Because the container picks the names, two bounds apply.
@@ -501,7 +501,7 @@ There is no upload size limit: a body passes as long as the host has disk for it
   The age check bounds that: at most `fresh` with no lookup, then the background confirmation evicts it for the next request.
   The per-version shasum is looked up asynchronously through `probeClient`, the same client and verification as Maven/Gradle checksums, so a cold install's lookups run concurrently over shared HTTP/2 connections (#960).
   They used to be a raw `SSLSocket` per tarball inside an *ordered* `executeBlocking`.
-  In Vert.x 4.5 an ordered task on a request's duplicated context joins its parent context's single queue, which every MITM connection shares.
+  An ordered task on a request's duplicated context joins its parent context's single queue, which every MITM connection shares (measured on Vert.x 4.5, unchanged in 5.2.3's `DuplicatedContext.executeBlocking`).
   Every lookup from every instance ran one after another, so 540 packages took 195s through the proxy against 53s direct.
   So nothing that waits on the network runs in an ordered `executeBlocking`.
   The npm path's disk checks still do, on purpose: ordering keeps a tarball's ETag read behind the packument's ETag write (`relayNpmPackument`), which an unordered read could overtake and serve a tarball on a stale ETag without a shasum check

@@ -917,8 +917,8 @@ public class MitmProxy {
      * The SSL engine runs its delegated tasks on worker threads, because the SNI lookup can mint
      * a leaf (an RSA key generation and a file write). Vert.x 4 ran that lookup on a worker
      * regardless; Vert.x 5 runs it wherever the engine's delegated tasks run, which is the event
-     * loop unless {@code useWorkerThread} is set. {@code MitmTlsTest} pins the flag, since on
-     * Vert.x 4 the lookup's own thread does not depend on it.
+     * loop unless {@code useWorkerThread} is set. {@code MitmTlsTest} pins the flag, and checks
+     * that the lookup runs off the event loop.
      */
     static HttpServerOptions mitmServerOptions() {
         return new HttpServerOptions()
