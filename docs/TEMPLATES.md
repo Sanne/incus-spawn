@@ -71,9 +71,9 @@ isx ignores a key it does not know, such as `repo:` for `repos:`, with a warning
 `isx templates` lists, creates and edits templates:
 
 ```shell
-# List all available templates
+# List all available templates, with what each is for
 isx templates list
-isx templates list -v          # with source path and description
+isx templates list -v          # and where each definition comes from
 isx templates list --format=json  # for scripts: adds whether each is built and out of sync
 
 # Create a new template (opens in $EDITOR with a skeleton listing every field, commented out)

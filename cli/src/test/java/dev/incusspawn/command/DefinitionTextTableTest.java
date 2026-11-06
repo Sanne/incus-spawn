@@ -41,7 +41,7 @@ class DefinitionTextTableTest {
         var defs = Map.of("tpl\u001b[31m-evil", def);
 
         assertSafe(print(out -> TemplatesCommand.ListSub.printTable(out, defs, true)), 2);
-        assertSafe(print(out -> TemplatesCommand.ListSub.printTable(out, defs, false)), 1);
+        assertSafe(print(out -> TemplatesCommand.ListSub.printTable(out, defs, false)), 2);
     }
 
     @Test

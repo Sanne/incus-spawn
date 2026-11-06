@@ -56,11 +56,11 @@ public class TemplatesCommand extends BaseCommand {
 
     // ── list ────────────────────────────────────────────────────────────────────
 
-    @CommandDefinition(name = "list", description = "List available template names",
+    @CommandDefinition(name = "list", description = "List available templates and what each is for",
             generateHelp = true)
     public static class ListSub extends BaseCommand {
 
-        @Option(shortName = 'v', name = "verbose", description = "Show source and description",
+        @Option(shortName = 'v', name = "verbose", description = "Also show where each definition comes from",
                 hasValue = false)
         boolean verbose;
 
@@ -92,22 +92,22 @@ public class TemplatesCommand extends BaseCommand {
         }
 
         /**
-         * The {@code table} format: the names, or with {@code verbose} a name, source and
-         * description per row. A project-local template ships with a cloned repository, so its
-         * text is shown as {@code --format=plain} shows it: nothing in it can drive the terminal (#1133).
+         * The {@code table} format: a name and description per row, which says which to build (#1441),
+         * and with {@code verbose} the source as well. A project-local template ships with a cloned
+         * repository, so its text is shown as {@code --format=plain} shows it: nothing in it can drive
+         * the terminal (#1133).
          */
         static void printTable(PrintStream out, Map<String, ImageDef> defs, boolean verbose) {
-            if (!verbose) {
-                defs.keySet().forEach(name -> out.println(cell(name)));
-                return;
-            }
-            int maxName = defs.keySet().stream().mapToInt(String::length).max().orElse(10);
-            int maxSource = defs.values().stream().mapToInt(d -> d.getSource().length()).max().orElse(7);
-            var fmt = "%-" + maxName + "s  %-" + maxSource + "s  %s%n";
-            out.printf(fmt, "NAME", "SOURCE", "DESCRIPTION");
+            int maxName = Math.max(4, defs.keySet().stream().mapToInt(name -> cell(name).length()).max().orElse(0));
+            int maxSource = Math.max(6, defs.values().stream().mapToInt(d -> cell(d.getSource()).length()).max().orElse(0));
+            var fmt = verbose ? "%-" + maxName + "s  %-" + maxSource + "s  %s%n" : "%-" + maxName + "s  %s%n";
+            if (verbose) out.printf(fmt, "NAME", "SOURCE", "DESCRIPTION");
+            else out.printf(fmt, "NAME", "DESCRIPTION");
             for (var entry : defs.entrySet()) {
                 var def = entry.getValue();
-                out.printf(fmt, cell(entry.getKey()), cell(def.getSource()), cell(def.getDescription()));
+                var description = cell(java.util.Objects.toString(def.getDescription(), ""));
+                if (verbose) out.printf(fmt, cell(entry.getKey()), cell(def.getSource()), description);
+                else out.printf(fmt, cell(entry.getKey()), description);
             }
         }
 
@@ -415,7 +415,7 @@ public class TemplatesCommand extends BaseCommand {
             # Required: unique name, conventionally prefixed with 'tpl-'
             name: tpl-CHANGEME
 
-            # Human-readable description, shown in the TUI and 'isx templates list -v'
+            # Human-readable description, shown in the TUI and 'isx templates list'
             # description: My custom template
 
             # Parent template to inherit from (packages, tools, repos are additive)
