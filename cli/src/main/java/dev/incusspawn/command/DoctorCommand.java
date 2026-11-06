@@ -1723,16 +1723,20 @@ public class DoctorCommand extends BaseCommand {
                 new Remediation("Enable firewalld and re-run 'isx init'", false, null));
     }
 
+    /**
+     * firewalld lets only root read its direct rules on a server or cloud Fedora, so a user without
+     * a sudo that asks for nothing just now cannot check them: a note, as nothing is known to be wrong (#1441).
+     */
+    static Finding directRulesUnreadable() {
+        return Finding.note("Firewall PREROUTING redirect",
+                "(not checked: could not read firewalld's direct rules, which a server Fedora shows only to root;"
+                        + " 'sudo firewall-cmd --direct --get-all-rules' lists them)");
+    }
+
     private Finding checkFirewalldRedirect() {
         try {
-            var pb = new ProcessBuilder("firewall-cmd", "--direct", "--get-all-rules");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes());
-            int exitCode = process.waitFor();
-            if (exitCode != 0) {
-                return Finding.warn("Firewall PREROUTING redirect", "(could not query firewalld rules)", null);
-            }
+            var output = FirewalldCheck.readDirectRules();
+            if (output == null) return directRulesUnreadable();
             var gatewayIp = ProxyConfig.resolveGatewayIp(incus());
             if (isPreRoutingRulePresent(output, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp)) {
                 return Finding.ok("Firewall PREROUTING redirect (firewalld)", "443 -> " + ProxyConfig.DEFAULT_MITM_PORT);

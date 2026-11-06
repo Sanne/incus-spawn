@@ -52,6 +52,40 @@ public final class FirewalldCheck {
         return probeState(List.of("systemctl", "is-active", "firewalld"));
     }
 
+    /**
+     * The direct rules, as {@code firewall-cmd --direct --get-all-rules} prints them, or null when
+     * they could not be read. The policy a server or cloud Fedora installs lets only an admin read
+     * them (polkit's {@code direct.info}), so a plain user's query fails there; this then asks
+     * through {@code sudo -n}, which works when sudo needs no password now and never prompts (#1441).
+     */
+    public static String readDirectRules() {
+        var query = List.of("firewall-cmd", "--direct", "--get-all-rules");
+        var viaSudo = new java.util.ArrayList<>(List.of("sudo", "-n"));
+        viaSudo.addAll(query);
+        return readDirectRules(List.of(query, viaSudo));
+    }
+
+    /** The first of {@code attempts} that succeeds, its output; null when none does. */
+    static String readDirectRules(List<List<String>> attempts) {
+        for (var command : attempts) {
+            if (!HostPath.isOnPath(command.getFirst())) continue;
+            try {
+                var pb = new ProcessBuilder(command);
+                pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+                pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")));
+                var process = pb.start();
+                var output = new String(process.getInputStream().readAllBytes());
+                if (process.waitFor() == 0) return output;
+            } catch (IOException e) {
+                // the next attempt, or none
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+        return null;
+    }
+
     /** The states systemctl is-active counts as active: a reload keeps the rules loaded. */
     private static final Set<String> RUNNING = Set.of("active", "reloading", "refreshing");
 
