@@ -16,13 +16,13 @@ import java.util.function.Consumer;
 
 @CommandDefinition(
         name = "ask",
-        description = "AI-powered help — ask any question about incus-spawn (uses AI tokens)",
+        description = "AI-powered help — ask any question about isx (uses AI tokens)",
         generateHelp = true
 )
 public class AskCommand extends BaseCommand {
 
 
-    @Arguments(description = "Your question about incus-spawn")
+    @Arguments(description = "Your question about isx")
     List<String> questionWords;
 
     @Option(name = "with-templates", hasValue = false,

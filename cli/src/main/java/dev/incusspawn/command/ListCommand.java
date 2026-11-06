@@ -23,7 +23,7 @@ import static dev.incusspawn.command.InstanceListing.collectEntries;
 
 @CommandDefinition(
         name = "list",
-        description = "List all incus-spawn environments",
+        description = "List all isx instances and templates",
         generateHelp = true
 )
 public class ListCommand extends BaseCommand {
@@ -121,7 +121,7 @@ public class ListCommand extends BaseCommand {
                         out.println("The VM's data disk was reset on " + resetOn + "; it holds no instances or templates.");
                         out.println("Recreate your templates with: isx build --all");
                     } else {
-                        out.println("No incus-spawn environments found.");
+                        out.println("No isx instances or templates found.");
                         out.println("Run 'isx build tpl-minimal' to create your first template.");
                     }
                 } else {

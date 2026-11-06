@@ -9,7 +9,7 @@
 
 
                     ╔ AI Help ═════════════════════════════════════════════════════════════════════╗
-                    ║ Ask anything about incus-spawn: an AI model answers from the project's       ║
+                    ║ Ask anything about isx: an AI model answers from the project's               ║
                     ║ documentation. Your question is sent to the AI account below, which is       ║
                     ║ billed for it.                                                               ║
                     ║                                                                              ║

@@ -516,7 +516,7 @@ isx reset
 
 ## `isx vm`
 
-Manage the incus-spawn VM appliance, on macOS only.
+Manage the VM that runs Incus on macOS; the command exists only there.
 
 ```shell
 isx vm <subcommand>
@@ -603,7 +603,7 @@ Rebuild your templates afterwards with `isx build --all`.
 
 ## `isx ask`
 
-Ask the AI any question about incus-spawn; it uses AI tokens.
+Ask the AI any question about isx; it uses AI tokens.
 It needs an Anthropic API key, Vertex AI or an OpenAI key, since a Claude subscription token only serves Claude Code.
 Claude Max and Team plans include [monthly API credits](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers) that pay for such a key.
 `isx init` offers to add one beside a subscription account.

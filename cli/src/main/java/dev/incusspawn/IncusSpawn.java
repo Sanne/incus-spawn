@@ -114,7 +114,7 @@ public class IncusSpawn implements QuarkusApplication {
         if (versionRequested) {
             var info = BuildInfo.instance();
             var results = BuildOutput.results();
-            results.println("incus-spawn " + info.displayVersion() + " (" + info.gitSha() + ")");
+            results.println("isx " + info.displayVersion() + " (" + info.gitSha() + ")");
             results.println("incus client " + info.incusClient() + ", server " + info.incusServer());
             results.println(info.runtime());
             return CommandResult.SUCCESS;
@@ -123,7 +123,7 @@ public class IncusSpawn implements QuarkusApplication {
     }
 
     // macOS variant: includes the `vm` appliance command group.
-    @CommandDefinition(name = "incus-spawn",
+    @CommandDefinition(name = "isx",
             description = "Manage isolated Incus development environments",
             groupCommands = {
                 InitCommand.class, BuildCommand.class, ProjectCommand.class,
@@ -146,7 +146,7 @@ public class IncusSpawn implements QuarkusApplication {
 
     // Linux variant: identical to {@link IncusSpawnCommand} but without the macOS-only `vm` group,
     // so `isx vm` is an unknown command and never appears in `isx --help` on Linux.
-    @CommandDefinition(name = "incus-spawn",
+    @CommandDefinition(name = "isx",
             description = "Manage isolated Incus development environments",
             groupCommands = {
                 InitCommand.class, BuildCommand.class, ProjectCommand.class,

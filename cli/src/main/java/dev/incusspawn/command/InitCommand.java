@@ -126,7 +126,7 @@ public class InitCommand extends BaseCommand {
     static void printSetupBanner(String platform, String info) {
         var configured = Files.exists(Environment.initCompleteMarker())
                 || Files.exists(Environment.configDir().resolve("config.yaml"));
-        printBanner("incus-spawn — " + (configured ? "Setup" : "First-Time Setup") + platform,
+        printBanner("isx — " + (configured ? "Setup" : "First-Time Setup") + platform,
                 configured ? "Reviewing your existing configuration"
                         : "Configuring your isolated development environment",
                 info);
@@ -267,10 +267,10 @@ public class InitCommand extends BaseCommand {
      */
     public static boolean requireLinux() {
         if (!Platform.isLinux()) {
-            BuildOutput.error("incus-spawn requires Linux.",
+            BuildOutput.error("isx requires Linux.",
                     "Incus system containers require a Linux kernel.",
                     "Detected OS: " + System.getProperty("os.name"),
-                    "Run incus-spawn on a Linux host or inside a Linux VM.");
+                    "Run isx on a Linux host or inside a Linux VM.");
             return false;
         }
         return true;
@@ -288,7 +288,7 @@ public class InitCommand extends BaseCommand {
         if (Platform.isMacOS()) {
             return VmManager.ensureRunning();
         }
-        BuildOutput.error("incus-spawn requires Linux or macOS.", "Detected OS: " + System.getProperty("os.name"));
+        BuildOutput.error("isx requires Linux or macOS.", "Detected OS: " + System.getProperty("os.name"));
         return false;
     }
 
