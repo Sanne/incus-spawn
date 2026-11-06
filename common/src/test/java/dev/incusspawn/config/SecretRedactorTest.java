@@ -839,6 +839,26 @@ class SecretRedactorTest {
     }
 
     @Test
+    void aGuestsTextKeepsNoTokenARowShiftJoinsAboveThePiecesFirstRow() {
+        // A piece below a terminal's top lets the cursor above its first row, from where SU, or DL
+        // with no margins, brings the head onto the cursor's row (#1957)
+        var head = "x ghp_" + "A".repeat(10);
+        var tail = "B".repeat(10);
+        var su = "junk\n" + head + "\u001b[0A\u001b[A\r\n\u001b[S\u001b[16C" + tail + "\n";
+        var dl = "junk\n" + head + "\u001b[0A\u001b[0A\n\r\u001b[3D\u001b[M\u001b[16C" + tail + "\n";
+        // Counted from the first absolute row used, row 1 is above the piece's first row, as it is
+        // on a terminal where the piece starts on row 2
+        var absolute = head + "\r\n\u001b[3;1H\u001b[1;1H\u001b[M\u001b[16C" + tail + "\n";
+        for (var raw : new String[] {su, dl, absolute}) {
+            var scrubbed = SecretRedactor.scrubGuest(raw);
+            assertFalse(scrubbed.contains("ghp_") || scrubbed.contains(tail), scrubbed.replace("\u001b", "ESC"));
+        }
+        // A piece at a terminal's top stops its cursor on its first row, where the B join the head
+        var atTop = SecretRedactor.scrubGuest(head + "\n\u001b[5A\u001b[16C" + tail + "\n");
+        assertFalse(atTop.contains("ghp_") || atTop.contains(tail), atTop);
+    }
+
+    @Test
     void aGuestsTextKeepsNoTokenAGuestsTabStopJoins() {
         // A guest that clears the tab stops and sets its own moves a tab where a terminal does: to
         // the dash's column, which the B then overwrites (#1919)
@@ -930,6 +950,9 @@ class SecretRedactorTest {
             SecretRedactor.scrubGuest(gaps);
             SecretRedactor.scrubGuest(stops);
             SecretRedactor.scrubGuest(rowShifts);
+            // Every reading at once, sixteen screens: absolute rows, VTE's stops, rows left in place
+            // and a cursor above the first row (#1957)
+            SecretRedactor.scrubGuest("\u001b[A\u001b[2g\u001b[3;1H" + rows + "\u001b[L\u001b[M\u001b[S\u001b[T".repeat(30_000) + "\n");
         });
     }
 
