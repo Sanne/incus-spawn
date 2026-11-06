@@ -45,6 +45,7 @@ public class IncusSpawn implements QuarkusApplication {
                         "Use 'isx --help' for command usage.");
                 return 1;
             }
+            if (refuseMacOsOnly(args, Platform.isMacOS())) return 1;
             var topCommand = Platform.isMacOS()
                     ? IncusSpawnCommand.class
                     : IncusSpawnLinuxCommand.class;
@@ -73,6 +74,17 @@ public class IncusSpawn implements QuarkusApplication {
             BuildOutput.error(BaseCommand.failure(e));
             return 1;
         }
+    }
+
+    /**
+     * {@code isx vm} on Linux: the command exists, only not here, so say that rather than let aesh
+     * call it unknown (#1441).
+     */
+    static boolean refuseMacOsOnly(String[] args, boolean macOS) {
+        if (macOS || args.length == 0 || !args[0].equals("vm")) return false;
+        BuildOutput.error("'isx vm' is macOS only.",
+                "On macOS it manages the Linux VM that runs Incus; on Linux, Incus runs on the host itself.");
+        return true;
     }
 
     private static boolean isTopLevelHelp(String[] args) {
@@ -145,7 +157,7 @@ public class IncusSpawn implements QuarkusApplication {
     }
 
     // Linux variant: identical to {@link IncusSpawnCommand} but without the macOS-only `vm` group,
-    // so `isx vm` is an unknown command and never appears in `isx --help` on Linux.
+    // so `isx vm` never appears in `isx --help` on Linux; {@link #refuseMacOsOnly} says it is macOS only.
     @CommandDefinition(name = "isx",
             description = "Manage isolated Incus development environments",
             groupCommands = {
