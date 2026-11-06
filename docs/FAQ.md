@@ -27,6 +27,12 @@ Agents copy with OSC 52, which isx forwards but cannot apply: your host terminal
 In tmux set `set -g set-clipboard on` and `set -as terminal-features '*:clipboard'` (tmux 3.2 or newer).
 This goes in every tmux between the agent and your terminal, on the host and in the instance: one that is missing them drops the copy silently.
 
+### What do I do when an agent in an instance reports an authentication error?
+
+Run `isx doctor` on the host, never a login inside the instance.
+The credential lives on the host, so an agent's advice to log in there would put a real credential in the instance.
+`isx doctor` reports a credential the provider rejected, and the command that replaces it.
+
 ### Why does a tool I installed fail with a certificate error?
 
 The proxy signs intercepted traffic with the isx CA, which the system store trusts.
