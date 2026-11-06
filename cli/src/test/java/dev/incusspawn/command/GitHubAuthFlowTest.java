@@ -208,6 +208,18 @@ class GitHubAuthFlowTest {
         assertNothingSaved();
     }
 
+    /** As in the Claude step, a token whose check failed may be saved anyway, rather than dropped (#1441). */
+    @Test
+    void aTokenThatFailedVerificationCanBeSavedAnyway() {
+        var init = new FakeInit();
+        var out = reported(() -> run(init, declineBrowser().secret("ghp_unchecked").line("s").line(FINISHED)));
+
+        assertEquals(List.of("ghp_unchecked"), init.verified);
+        assertEquals("ghp_unchecked", saved("github.accounts.default.token"));
+        assertEquals("", saved("github.accounts.default.email"));
+        assertTrue(out.contains("saved (unverified"), out);
+    }
+
     @Test
     void retryingAfterARejectedTokenSavesTheNextOne() {
         run(new FakeInit().acceptAgentPat(), declineBrowser().secret("ghp_bad").line("").secret(AGENT_PAT).line(FINISHED));

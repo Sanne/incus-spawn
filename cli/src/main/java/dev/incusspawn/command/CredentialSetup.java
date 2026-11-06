@@ -1541,11 +1541,24 @@ class CredentialSetup {
 
             var result = verifyPastedGitHubToken(token, prompts);
             if (result == null) {
-                if (!askYesNo(prompts, "Try again?", true)) {
-                    reportGitHubSkipped(config);
-                    return false;
+                // As for Claude: a check that failed for want of a network need not cost the token (#1441)
+                switch (askVerificationFailureAction(prompts)) {
+                    case SKIP -> {
+                        reportGitHubSkipped(config);
+                        return false;
+                    }
+                    case SAVE_UNVERIFIED -> {
+                        saveAccount(config, GhSetup.NAMESPACE,
+                                dev.incusspawn.config.AccountResolver.shapeOf(config, GhSetup.NAMESPACE),
+                                account, Map.of("token", token));
+                        config.save();
+                        BuildOutput.step("GitHub configuration saved (unverified, without email).");
+                        return true;
+                    }
+                    case RETRY -> {
+                        continue;
+                    }
                 }
-                continue;
             }
 
             if (result.email == null) {
