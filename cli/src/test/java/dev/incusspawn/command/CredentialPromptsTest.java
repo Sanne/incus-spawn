@@ -320,6 +320,25 @@ class CredentialPromptsTest {
         assertEquals(List.of("acme"), select(" 2 , 2, 9, x, 0"));
     }
 
+    /** A feature-gated tool is offered only once its feature is enabled, as the proxy uses it only then (#1441). */
+    @Test
+    void aFeatureGatedToolIsOfferedOnlyWithItsFeature() {
+        var tools = new LinkedHashMap<String, ToolSetup>();
+        tools.put("acme", tokenTool("acme"));
+        var gated = (YamlToolSetup) tokenTool("gated");
+        gated.toolDef().setFeature("gated");
+        tools.put("gated", gated);
+
+        var prompts = ScriptedPrompts.lines("all");
+        assertEquals(List.of("acme"), new CredentialSetup().selectCredentials(tools, new SpawnConfig(), prompts));
+        assertFalse(String.join("\n", prompts.conversation()).contains("gated credentials"), prompts.conversation().toString());
+
+        var enabled = new SpawnConfig();
+        enabled.setFeatures(List.of("gated"));
+        assertEquals(List.of("acme", "gated"),
+                new CredentialSetup().selectCredentials(tools, enabled, ScriptedPrompts.lines("all")));
+    }
+
     @Test
     void closedStdinSelectsNothing() {
         var tools = Map.of("acme", tokenTool("acme"));
