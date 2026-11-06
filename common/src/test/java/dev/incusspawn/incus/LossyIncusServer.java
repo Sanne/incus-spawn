@@ -107,8 +107,12 @@ final class LossyIncusServer implements AutoCloseable {
      * closing both, unless it {@link #runsForever}.
      */
     volatile boolean interactive = false;
-    /** false is a silent link: client PINGs still arrive and are counted, but no PONG comes back. */
-    volatile boolean answersPings = true;
+    /**
+     * PINGs answered per fd before the link goes silent: later client PINGs still arrive and are
+     * counted, but no PONG comes back. A test that wants a silent link pinged a number of times
+     * sets that number here, so the pings it counts came before the silence by construction.
+     */
+    volatile int answersPings = Integer.MAX_VALUE;
     /** Each operation /wait is held this long before it is answered: a tunnel slower than its slack. */
     volatile long waitStallMillis = 0;
     /** Data messages the client sent on the control fd, in order. */
@@ -460,7 +464,7 @@ final class LossyIncusServer implements AutoCloseable {
                 }
                 if (opcode == 0x9) {
                     try {
-                        if (answersPings) peer.send(0xA, payload);
+                        if (pings(fd) < answersPings) peer.send(0xA, payload);
                     } finally { // counted after its PONG went out, and even if the client is gone
                         synchronized (pingsByFd) {
                             pingsByFd.computeIfAbsent(fd, k -> new AtomicInteger()).incrementAndGet();
