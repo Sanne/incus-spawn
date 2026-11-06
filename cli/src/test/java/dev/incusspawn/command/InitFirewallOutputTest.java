@@ -174,6 +174,32 @@ class InitFirewallOutputTest {
         assertTrue(mitm.output().err().contains(command), mitm.output().err());
     }
 
+    /**
+     * On server or cloud Fedora only an admin may read firewalld's direct rules, so init reads them
+     * through sudo, as its firewall step does; read as the user, the redirect looked missing on every
+     * re-run, and a rule left at a previous gateway was never seen or removed.
+     */
+    @Test
+    void mitmFirewalldReadsTheRulesAsRoot() throws Exception {
+        var ran = new java.util.ArrayList<String>();
+        var init = new InitCommand() {
+            @Override
+            String captureOutput(String... command) {
+                return command[0].equals("sudo")
+                        ? "ipv4 nat PREROUTING 0 -i incusbr0 -d 10.0.0.9 -p tcp --dport 443 -j REDIRECT --to-port 18443\n"
+                        : "";
+            }
+
+            @Override
+            int runHostQuiet(String... command) {
+                ran.add(String.join(" ", command));
+                return 0;
+            }
+        };
+        capture(() -> init.host().configureMitmProxyFirewalld(GATEWAY));
+        assertTrue(ran.stream().anyMatch(c -> c.contains("--remove-rule") && c.contains("-d 10.0.0.9")), ran.toString());
+    }
+
     @Test
     void mitmFirewalldReportsSuccessWhenEveryCommandSucceeds() throws Exception {
         var mitm = mitmFirewalld("");
