@@ -303,31 +303,41 @@ public final class ProxyConfig {
     }
 
     private static boolean clearFirewalldRedirect() {
+        return clearFirewalldRedirect(FirewalldCheck.DIRECT_RULE_QUERIES, ProxyService::runQuiet,
+                ProxyConfig::clearFirewalldRedirectPersistent);
+    }
+
+    /**
+     * {@link #clearFirewalldRedirect()} with its rule queries, its command runner and its
+     * {@code direct.xml} fallback given, so a test can say which query answers and see what ran.
+     */
+    static boolean clearFirewalldRedirect(java.util.List<java.util.List<String>> ruleQueries,
+                                          java.util.function.Predicate<String[]> run,
+                                          java.util.function.BooleanSupplier persistentFallback) {
         try {
-            var pb = new ProcessBuilder("firewall-cmd", "--direct", "--get-all-rules");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes());
-            if (process.waitFor() != 0) {
-                return clearFirewalldRedirectPersistent();
+            // Read as root when the user may not (a server Fedora's policy), else the runtime
+            // rule would go unseen and stay loaded while only direct.xml is cleaned (#1441)
+            var output = FirewalldCheck.readDirectRules(ruleQueries);
+            if (output == null) {
+                return persistentFallback.getAsBoolean();
             }
 
             var ip = FirewalldCheck.extractRedirectGatewayIp(output, DEFAULT_MITM_PORT);
             if (ip == null) {
-                return clearFirewalldRedirectPersistent();
+                return persistentFallback.getAsBoolean();
             }
 
             BuildOutput.stepStart("Removing PREROUTING redirect rule (" + ip + ":443 -> " + DEFAULT_MITM_PORT + ")");
-            if (!ProxyService.runQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+            if (!run.test(new String[] {"sudo", "firewall-cmd", "--permanent", "--direct",
                     "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
                     "-i", "incusbr0", "-d", ip, "-p", "tcp", "--dport",
                     String.valueOf(CONTAINER_FACING_PORT),
                     "-j", "REDIRECT", "--to-port",
-                    String.valueOf(DEFAULT_MITM_PORT))) {
+                    String.valueOf(DEFAULT_MITM_PORT)})) {
                 BuildOutput.stepFail("failed to remove firewalld redirect rule.");
                 return false;
             }
-            if (!ProxyService.runQuiet("sudo", "firewall-cmd", "--reload")) {
+            if (!run.test(new String[] {"sudo", "firewall-cmd", "--reload"})) {
                 BuildOutput.stepFail("failed to reload firewalld.");
                 return false;
             }
