@@ -478,7 +478,7 @@ public final class SecretRedactor {
         if (!asPrinted) {
             for (var piece : raw) {
                 if (piece != null && Screen.mayMoveBack(piece)) {
-                    screen = new Screen(rawLength, true, false, true);
+                    screen = new Screen(rawLength, true, false, true, false);
                     break;
                 }
             }
@@ -506,20 +506,26 @@ public final class SecretRedactor {
         }
         // Where terminals or the screen's start can differ, a screen for each other reading: absolute
         // rows counted from the first one used instead of the top, tab stops set as VTE sets them,
-        // and rows left where they are by a row shift a terminal may not make
-        for (int other = 1; screen != null && other < 8; other++) {
+        // rows left where they are by a row shift a terminal may not make, and a cursor that goes
+        // above a piece's first row, as on a terminal whose top is above it (#1957). Any reading may
+        // send the cursor there, such as an absolute row counted from the first one used, and every
+        // reading without headroom is printed before any with it
+        boolean aboveFirstRow = screen != null && screen.aboveFirstRowMayDiffer();
+        for (int other = 1; screen != null && other < 16; other++) {
             boolean fromTop = (other & 1) == 0;
             boolean vteStops = (other & 2) != 0;
             boolean shiftsRows = (other & 4) == 0;
+            boolean headroom = (other & 8) != 0;
             if (!fromTop && !screen.absoluteRowsMayDiffer() || vteStops && !screen.tabStopsMayDiffer()
-                    || !shiftsRows && !screen.rowShiftsMayDiffer()) continue;
-            var otherScreen = new Screen(rawLength, fromTop, vteStops, shiftsRows);
+                    || !shiftsRows && !screen.rowShiftsMayDiffer() || headroom && !aboveFirstRow) continue;
+            var otherScreen = new Screen(rawLength, fromTop, vteStops, shiftsRows, headroom);
             int offset = 0;
             for (var piece : raw) {
                 if (piece == null) continue;
                 otherScreen.print(piece, offset);
                 offset += piece.length();
             }
+            aboveFirstRow |= otherScreen.aboveFirstRowMayDiffer();
             if (otherScreen.moved()) {
                 var view = otherScreen.view();
                 wider |= addSpans(view.text, view.start, view.end, source, seen.spans, spans);
@@ -640,7 +646,9 @@ public final class SecretRedactor {
      * the escapes DECBI and DECFI do so here, a saved position is restored (DECSC and DECRC,
      * SCOSC and SCORC, xterm's 1048 and 1049), REP repeats the character last drawn, and DCH
      * and ICH shift the cells right of the cursor along its row (#1919); the rest move nothing.
-     * Rows are counted from where each piece starts. An absolute row (CUP, VPA) counts from there
+     * Rows are counted from where each piece starts, and the cursor stops at its first row as at a
+     * terminal's top; a second screen lets it go a terminal's height above that, into blank rows
+     * of its own, as on a terminal the piece starts far below the top of (#1957). An absolute row (CUP, VPA) counts from there
      * too, as if the piece started at the top of the screen, and on a second screen from where
      * the first absolute row is, as output that has scrolled addresses it ({@link #absoluteRow},
      * #1916 review). Where xterm and VTE set tab stops differently, a screen reads them as each
@@ -676,6 +684,8 @@ public final class SecretRedactor {
         /** The first row of the alternate screen's region, past every row of the main one. */
         static final long ALTERNATE = MAX_ROW + 1;
         static final int MAX_REPEATS_PER_CHAR = 1;
+        /** Taller than any terminal: how far above a piece's first row the cursor goes on a screen that lets it. */
+        static final int HEADROOM = 4096;
         private static final byte NARROW = 1, WIDE_HEAD = 2, WIDE_TAIL = 3, CLEARED = 4, GAP = 5, ROW = 6;
 
         private boolean moved;
@@ -697,6 +707,13 @@ public final class SecretRedactor {
         private boolean margins;
         /** Whether a row shift was one a terminal may not make: after margins were set, or SU or SD, whose top is a guess. */
         private boolean rowShiftsDiffer;
+        /**
+         * The rows above the piece's first row the cursor may go to: none, as on a terminal the
+         * piece starts at the top of, or {@link #HEADROOM}, as on one it starts far below it (#1957).
+         */
+        private final int headroom;
+        /** Whether the cursor was sent above the piece's first row, so a screen with other headroom differs. */
+        private boolean aboveFirstRow;
         /** Whether a first absolute row was not on the piece's first row, so counting the other way differs. */
         private boolean absoluteRowsDiffer;
         /** Where the first absolute row of each screen is, counted from the first one used, or unset. */
@@ -763,8 +780,9 @@ public final class SecretRedactor {
         /** Per scrub, so a guest cannot unbalance a treap. */
         private final long seed = ThreadLocalRandom.current().nextLong();
 
-        Screen(int rawLength, boolean fromTop, boolean vteStops, boolean shiftsRows) {
+        Screen(int rawLength, boolean fromTop, boolean vteStops, boolean shiftsRows, boolean headroom) {
             this.fromTop = fromTop;
+            this.headroom = headroom ? HEADROOM : 0;
             this.shiftsRows = shiftsRows;
             this.vteStops = vteStops;
             repeats = (long) MAX_REPEATS_PER_CHAR * rawLength + MAX_COLUMN;
@@ -834,7 +852,7 @@ public final class SecretRedactor {
         void print(String piece, int offset) {
             // A piece starts on a line of its own, below the last
             alternate = false;
-            rowBase = Math.min(size[regions[0]], MAX_ROW);
+            rowBase = Math.min(size[regions[0]] + headroom, MAX_ROW);
             row = rowBase;
             column = 0;
             Arrays.fill(savedRow, 0);
@@ -995,17 +1013,17 @@ public final class SecretRedactor {
                     }
                 }
                 // SU and SD scroll from the screen's top and leave the cursor where it is. The
-                // piece's first row stands for the top, as for an absolute row, but is not known to
-                // be it: the other screen reads the top as above every row, where scrolling moves
-                // the cursor along fixed rows instead
+                // highest row the cursor may reach stands for the top, as the piece's first row does
+                // for an absolute row, but is not known to be it: the other screen reads the top as
+                // above every row, where scrolling moves the cursor along fixed rows instead
                 case 'S' -> {
-                    if (shiftRows(true)) deleteRows(rowBase, n);
+                    if (shiftRows(true)) deleteRows(top(), n);
                     else if (!margins) row = Math.min(row + n, lastRegionRow());
                 }
                 case 'T' -> {
                     // With more parameters, or an explicit 0, xterm reads it as mouse tracking, VTE as SD 1
                     boolean tracking = !numbers[0].isEmpty() && mode(numbers[0]) == 0;
-                    if (numbers.length == 1 && shiftRows(true)) insertRows(rowBase, n);
+                    if (numbers.length == 1 && shiftRows(true)) insertRows(top(), n);
                     else if (numbers.length == 1 && !margins && !tracking) move(row - n, column);
                 }
                 case 'D' -> move(row, column - n);
@@ -1098,7 +1116,7 @@ public final class SecretRedactor {
                 mainBase = rowBase;
                 if (alternateBase < 0) {
                     // A cleared alternate screen: its absolute rows count afresh, never from rows it left
-                    alternateBase = Math.min(ALTERNATE + size[regions[1]], lastRegionRow());
+                    alternateBase = Math.min(ALTERNATE + size[regions[1]] + headroom, lastRegionRow());
                     firstAbsolute[1] = Long.MIN_VALUE;
                 } else {
                     moved = true;
@@ -1109,6 +1127,16 @@ public final class SecretRedactor {
                 moved = true;
             }
             row = Math.min(rowBase + fromBase, lastRegionRow());
+        }
+
+        /** The highest row the cursor may reach: blank rows above the piece, never those of a piece before it. */
+        private long top() {
+            return rowBase - headroom;
+        }
+
+        /** Whether a screen with the other headroom can differ from this one. */
+        boolean aboveFirstRowMayDiffer() {
+            return aboveFirstRow;
         }
 
         private long lastRegionRow() {
@@ -1137,7 +1165,8 @@ public final class SecretRedactor {
          * does, the screen shows what the shown text does, with blanks where it moved ahead.
          */
         private void move(long toRow, int toColumn) {
-            long newRow = Math.max(rowBase, Math.min(toRow, lastRegionRow()));
+            if (toRow < rowBase) aboveFirstRow = true;
+            long newRow = Math.max(top(), Math.min(toRow, lastRegionRow()));
             int newColumn = Math.max(0, Math.min(toColumn, MAX_COLUMN));
             if (newRow < row || newRow == row && newColumn < column) moved = true;
             row = newRow;
@@ -1833,14 +1862,14 @@ public final class SecretRedactor {
 
     /** Whether a screen printing {@code raw} keeps its rows heap-ordered treaps, for the test that keeps a shift cheap. */
     static boolean screenRowsHeapOrdered(String raw) {
-        var screen = new Screen(raw.length(), true, false, true);
+        var screen = new Screen(raw.length(), true, false, true, false);
         screen.print(raw, 0);
         return screen.heapOrdered();
     }
 
     /** How deep a screen printing {@code raw} leaves its deepest treap, of rows or of a row's cells, for the test that keeps a shift cheap. */
     static int screenRowDepth(String raw) {
-        var screen = new Screen(raw.length(), true, false, true);
+        var screen = new Screen(raw.length(), true, false, true, false);
         screen.print(raw, 0);
         return screen.depth();
     }

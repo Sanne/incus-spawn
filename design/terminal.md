@@ -224,6 +224,10 @@ A span there redacts every raw character written to its cells, so no overwritten
 That holds when the cell was drawn over from another row too, so a row repainted from further down also redacts what lies between: it fails closed, losing log lines around a secret rather than half of one.
 Erasing is not modelled, since a cell the screen shows blank never holds a token's character.
 Rows count from the start of each piece.
+The cursor stops at a piece's first row, as at the top of a terminal the piece starts at.
+On a terminal where the piece starts further down it goes higher, and from there SU or DL can bring a row onto the cursor's (#1957).
+So once a guest sends the cursor above that row, a screen that lets it go a terminal's height higher, into blank rows of its own, is scrubbed as well.
+There SU and SD shift the rows from the highest of those.
 An absolute row (CUP, VPA) counts from there too, as if the piece started at the top of a screen it cleared.
 Output that has scrolled addresses rows from a top long gone, so a second screen counts them from where the first absolute row is, and both are scrubbed.
 The alternate screen (xterm's 47, 1047 and 1049) is a region of rows of its own, with its own saved cursor, so what a program draws there neither overwrites the main screen nor is lost.
