@@ -23,6 +23,7 @@ import org.aesh.command.option.Option;
 import org.aesh.command.option.OptionList;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -316,8 +317,30 @@ public class BranchCommand extends BaseCommand {
             return projectConfig.getName();
         }
 
-        BuildOutput.error("no --from specified and no incus-spawn.yaml found in current directory.",
-                "Usage: isx branch <name> --from <source-instance>");
+        List<String> built = null;
+        try {
+            built = InstanceListing.builtTemplates(incus.listJsonConfig()).stream()
+                    .map(TemplateStaleness.Built::name).toList();
+        } catch (dev.incusspawn.incus.IncusException e) {
+            // The error stands without the list: it is advice, not the failure
+        }
+        reportNoSource(built);
         return null;
+    }
+
+    /**
+     * Why there is nothing to branch from, and what there is: the built templates, when Incus could
+     * say ({@code built} is null when it could not), else how to build the first (#1441).
+     */
+    static void reportNoSource(List<String> built) {
+        var details = new ArrayList<String>();
+        details.add("Usage: isx branch <name> --from <template>");
+        if (built != null) {
+            details.add(built.isEmpty()
+                    ? "No template is built yet: 'isx build tpl-minimal' builds the base one, and 'isx templates list' lists the others."
+                    : "Built templates: " + String.join(", ", built.stream().map(OutputFormat::oneLine).toList()) + ".");
+        }
+        BuildOutput.error("no --from given, and no incus-spawn.yaml (a project's definition) in this directory names a template.",
+                details.toArray(String[]::new));
     }
 }
