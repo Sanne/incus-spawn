@@ -139,7 +139,7 @@ Your own extensions in `~/.pi/agent/extensions/` load as usual.
 | Parameter | Default | What it does |
 | --- | --- | --- |
 | `provider` | `anthropic` | The API Pi talks to; also accepts `openai`, `google`, `google-vertex` or `vertex` |
-| `model` | `claude-sonnet-4-6` for `anthropic`, otherwise Pi's own | The model Pi uses |
+| `model` | `claude-sonnet-5-5` for `anthropic`, otherwise Pi's own | The model Pi uses |
 
 The `openai` provider uses your OpenAI key, as shown below.
 A provider isx does not manage needs no credential from isx: Pi signs in to it itself.
