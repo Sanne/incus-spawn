@@ -89,6 +89,8 @@ public class InitCommand extends BaseCommand {
 
     private final HostSetup host = new HostSetup(this);
     private int totalSteps;
+    /** Whether {@link #totalSteps} is final: until Credential Setup, the credentials chosen may still add to it. */
+    private boolean totalKnown = true;
     private int currentStep;
     private final CredentialSetup credentials = new CredentialSetup();
 
@@ -135,7 +137,7 @@ public class InitCommand extends BaseCommand {
     void startStep(String title, String... hintLines) {
         currentStep++;
         String left = "  " + currentStep + "  " + title;
-        String right = "[" + currentStep + "/" + totalSteps + "]  ";
+        String right = "[" + currentStep + "/" + totalSteps + (totalKnown ? "" : "+") + "]  ";
         int gap = BOX_WIDTH - left.length() - right.length();
 
         var out = new ArrayList<String>();
@@ -523,7 +525,8 @@ public class InitCommand extends BaseCommand {
      * Runs init's numbered steps: {@code setup}, Credential Setup, a step for each credential
      * chosen there, then {@code finish}. The total is counted from these lists rather than written
      * down, so {@code [n/N]} adds up on every path and the last step reads {@code [N/N]} (#906).
-     * Until the choice is made it assumes no credentials, which is what Enter picks.
+     * Until the choice is made it counts no credentials, which is what Enter picks, and reads
+     * {@code [n/N+]}, so a total that grows at the choice was never shown as final (#1441).
      */
     void runSteps(List<Step> setup, List<Step> finish) throws Exception {
         runSteps(setup, finish, 0);
@@ -533,9 +536,11 @@ public class InitCommand extends BaseCommand {
     void runSteps(List<Step> setup, List<Step> finish, int done) throws Exception {
         currentStep = done;
         totalSteps = setup.size() + 1 + finish.size();
+        totalKnown = false;
         for (var step : setup.subList(done, setup.size())) step.run();
         var credentialSteps = credentialSteps();
         totalSteps += credentialSteps.size();
+        totalKnown = true;
         for (var step : credentialSteps) step.run();
         credentials.closeHttpClient();
         installGitRemoteShim();
@@ -574,7 +579,9 @@ public class InitCommand extends BaseCommand {
         List<Step> steps;
         if (name == null) {
             totalSteps = 1;
+            totalKnown = false;
             steps = credentialSteps();
+            totalKnown = true;
         } else {
             var tools = new ToolDefLoader().allToolSetups();
             var toolName = CredentialCheck.credentialTool(name, tools);
@@ -1224,10 +1231,10 @@ public class InitCommand extends BaseCommand {
                 "Directories on your host containing git repositories (e.g.",
                 "~/code). Enables fast reference clones inside containers",
                 "and automatic git remote management — repos cloned from",
-                "these paths get an 'isx' remote, letting you push and pull",
-                "directly between container and host without round-tripping",
-                "through GitHub. Your host files are never directly exposed",
-                "to containers.");
+                "these paths get a remote named after the instance, to push",
+                "and pull directly between container and host without",
+                "round-tripping through GitHub. Your host files are never",
+                "directly exposed to containers.");
         setupPathList(
                 SpawnConfig::getHostPaths,
                 SpawnConfig::setHostPaths,

@@ -199,7 +199,7 @@ class InitGroupContinuationTest {
                 init.runSteps(setup, Collections.nCopies(5, () -> init.startStep("A step")), 1)).frameLines());
         assertEquals(List.of(2, 3, 4, 5, 6), ran);
         assertFalse(frames.contains("[1/12]"));
-        assertTrue(frames.contains("[2/12]"));
+        assertTrue(frames.contains("[2/12+]"));
         assertTrue(frames.contains("[12/12]"));
     }
 }

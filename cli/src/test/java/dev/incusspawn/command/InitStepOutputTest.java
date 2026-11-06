@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /** How {@code isx init} reports its steps: a counter that adds up, and outcomes, not attempts (#906). */
 class InitStepOutputTest {
 
-    private static final Pattern COUNTER = Pattern.compile("\\[(\\d+)/(\\d+)]");
+    private static final Pattern COUNTER = Pattern.compile("\\[(\\d+)/(\\d+)(\\+?)]");
 
     /**
      * What a test step reported, as a terminal splits it: what it did ({@code out}) and its
@@ -68,7 +68,8 @@ class InitStepOutputTest {
         var counters = new ArrayList<int[]>();
         var matcher = COUNTER.matcher(out);
         while (matcher.find()) {
-            counters.add(new int[]{Integer.parseInt(matcher.group(1)), Integer.parseInt(matcher.group(2))});
+            counters.add(new int[]{Integer.parseInt(matcher.group(1)), Integer.parseInt(matcher.group(2)),
+                    matcher.group(3).isEmpty() ? 0 : 1});
         }
         return counters;
     }
@@ -79,18 +80,22 @@ class InitStepOutputTest {
         var counters = counters(6, 0, 5);
         assertEquals(12, counters.size());
         for (int i = 0; i < counters.size(); i++) {
-            assertArrayEquals(new int[]{i + 1, 12}, counters.get(i), "step " + (i + 1));
+            assertArrayEquals(new int[]{i + 1, 12, i < 7 ? 1 : 0}, counters.get(i), "step " + (i + 1));
         }
     }
 
-    /** The credentials chosen add to the total from the next step on, and it still ends at [N/N]. */
+    /**
+     * The credentials chosen add to the total from the next step on, and it still ends at [N/N].
+     * Until the choice the total reads {@code 8+}, so the jump to 11 never contradicts it (#1441).
+     */
     @Test
     void credentialsChosenGrowTheTotalAndItStillAddsUp() throws Exception {
         var counters = counters(2, 3, 5);
         assertEquals(11, counters.size());
-        assertArrayEquals(new int[]{3, 8}, counters.get(2), "Credential Setup, before the choice");
-        assertArrayEquals(new int[]{4, 11}, counters.get(3), "the first credential");
-        assertArrayEquals(new int[]{11, 11}, counters.getLast());
+        assertArrayEquals(new int[]{1, 8, 1}, counters.get(0), "a setup step: more may follow");
+        assertArrayEquals(new int[]{3, 8, 1}, counters.get(2), "Credential Setup, before the choice");
+        assertArrayEquals(new int[]{4, 11, 0}, counters.get(3), "the first credential");
+        assertArrayEquals(new int[]{11, 11, 0}, counters.getLast());
         for (var counter : counters) assertTrue(counter[0] <= counter[1], counter[0] + "/" + counter[1]);
     }
 
