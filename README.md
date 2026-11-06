@@ -318,13 +318,13 @@ isx build --out-of-sync              # rebuilds what changed since it was built
 ## Agents
 
 An agent is a tool in a template's `tools:` list, set up for unattended work.
-It signs in through the proxy with an account you configured in `isx init`:
+It signs in through the proxy with an account you configured in `isx init`, whose menu names the credential, not every agent that shares it:
 
 | Agent | Tool | Signs in with |
 |-------|------|---------------|
 | Claude Code | `claude` | an Anthropic API key, Claude Pro/Max, or Vertex AI |
 | Codex CLI | `codex` | an OpenAI API key |
-| Pi | `pi` | Claude's credentials, or the OpenAI key |
+| Pi | `pi` | Claude's credentials, the OpenAI key or the Gemini key |
 | Gemini CLI | `gemini-cli` | a Gemini API key |
 | Bob Shell | `bob` | an IBM API key |
 | GitHub Copilot CLI | `copilot` | the GitHub token `gh` uses |
