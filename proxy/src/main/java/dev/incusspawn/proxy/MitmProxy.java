@@ -1103,7 +1103,7 @@ public class MitmProxy {
     /**
      * Waits for {@code closing} until {@code deadline} ({@link System#nanoTime()}), and says so when
      * it does not complete: a listener still closing once the wait is over is a port a restart may
-     * find bound (#1219).
+     * find bound (#1219). A close Vert.x can no longer schedule, once it is closed, is passed over.
      */
     static void awaitClose(String what, Future<?> closing, long deadline) {
         try {
@@ -1115,7 +1115,12 @@ public class MitmProxy {
             Thread.currentThread().interrupt();
             ProxyLog.warn(what + " did not close: the stop was interrupted, so its port or connections may still be bound");
         } catch (java.util.concurrent.ExecutionException e) {
+            // The rejection below, reported through the future instead
+            if (e.getCause() instanceof java.util.concurrent.RejectedExecutionException) return;
             ProxyLog.warn(what + " failed to close (" + e.getCause() + "): its port or connections may still be bound");
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // Its event loop is gone: Vert.x was closed first, which closed what it ran, as Quarkus
+            // does before the shutdown hook stops a proxy whose start failed (#1953). Nothing is bound.
         }
     }
 
