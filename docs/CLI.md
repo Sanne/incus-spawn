@@ -250,7 +250,7 @@ isx templates <subcommand>
 
 ### `isx templates list`
 
-List the available template names.
+List the available templates, each with its description.
 
 ```shell
 isx templates list [options]
@@ -258,7 +258,7 @@ isx templates list [options]
 
 | Option | What it does |
 |--------|--------------|
-| `-v`, `--verbose` | Show source and description |
+| `-v`, `--verbose` | Also show where each definition comes from |
 | `--format=<format>` | `table` (the default), `plain` or `json`; bare `isx templates` takes it too |
 
 ### `isx templates new`
