@@ -126,4 +126,22 @@ class FirewalldCheckTest {
     void forwardEmptyOutput() {
         assertFalse(FirewalldCheck.isForwardRulePresent("", "-i", "incusbr0"));
     }
+
+    /**
+     * A plain user's query fails where firewalld's server policy lets only an admin read the direct
+     * rules; the next attempt (sudo -n) answers instead, and with none left the rules are unknown (#1441).
+     */
+    @Test
+    void directRulesComeFromTheFirstQueryThatSucceeds() {
+        assertEquals("rule\n", FirewalldCheck.readDirectRules(java.util.List.of(
+                java.util.List.of("false"), java.util.List.of("echo", "rule"))));
+        assertEquals("first\n", FirewalldCheck.readDirectRules(java.util.List.of(
+                java.util.List.of("echo", "first"), java.util.List.of("echo", "second"))));
+    }
+
+    @Test
+    void directRulesNoQueryCanReadAreUnknown() {
+        assertNull(FirewalldCheck.readDirectRules(java.util.List.of(
+                java.util.List.of("false"), java.util.List.of("no-such-command-isx-test"))));
+    }
 }

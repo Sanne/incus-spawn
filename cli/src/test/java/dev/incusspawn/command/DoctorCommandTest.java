@@ -863,6 +863,14 @@ class DoctorCommandTest {
         assertTrue(f.remediation().description().startsWith("Enable firewalld"));
     }
 
+    /** Direct rules only root may read are not checked, which is a note, not a warning right after init (#1441). */
+    @Test
+    void unreadableDirectRulesAreANoteNotAWarning() {
+        var f = DoctorCommand.directRulesUnreadable();
+        assertEquals(DoctorCommand.Status.NOTE, f.status());
+        assertTrue(f.detail().contains("sudo firewall-cmd --direct --get-all-rules"), f.detail());
+    }
+
     // ---- UFW forward block written into a comment (#1944) ----
 
     private static final String STOCK_FILTER = """
