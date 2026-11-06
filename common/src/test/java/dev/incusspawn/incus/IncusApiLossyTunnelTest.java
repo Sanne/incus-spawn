@@ -372,10 +372,22 @@ class IncusApiLossyTunnelTest {
     void aShellOnASilentLinkIsCutAndReadAsALostConnection() throws IOException {
         // The client is alive, but nothing comes back: no output, and no PONG to its pings (#1996).
         // Without a silence limit the session, and the guest's shell with it, lasts forever.
+        // The link answers two pings, then goes silent: the count asserted below comes before
+        // the silence, never from how many pings a slow runner's timer fits into it (#2020).
         server.runsForever = true;
-        server.answersPings = false;
+        server.answersPings = 2;
         assertTrue(shell(), "a silent link must end the session as a lost connection, so the shell reconnects");
         assertTrue(server.pings("control") >= 2, "the control fd was pinged: " + server.pings("control"));
+    }
+
+    @Test
+    @Timeout(value = 10, threadMode = Timeout.ThreadMode.SEPARATE_THREAD) // a hung session ignores interrupts
+    void aShellOnALinkSilentFromTheStartIsCut() throws IOException {
+        // A half-open tunnel that never answers even the first ping must be cut too. No ping
+        // count here: how many fit into the silence depends on the runner's timer.
+        server.runsForever = true;
+        server.answersPings = 0;
+        assertTrue(shell(), "a link silent from the start must end the session as a lost connection");
     }
 
     @Test
