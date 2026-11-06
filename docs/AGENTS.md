@@ -36,13 +36,13 @@ The key or token stays on the host, and the proxy adds it to Claude Code's reque
 | `attribution-commit` | Claude Code's own default | The trailer Claude Code adds to its commits, such as `Assisted-By: Claude Code <noreply@anthropic.com>` |
 | `attribution-pr` | Claude Code's own default | The text Claude Code adds to its pull requests; an empty string omits it |
 
-Model IDs follow the `claude-*` naming convention: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`.
+Model IDs follow the `claude-*` naming convention: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`.
 A child template can set any of these parameters again without reinstalling Claude Code.
 
 ```yaml
 tools:
   - claude:
-      model: claude-sonnet-4-6
+      model: claude-sonnet-5-5
 ```
 
 ### What the build sets up
