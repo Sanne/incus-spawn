@@ -118,6 +118,9 @@ class CredentialSetup {
 
         var toolsWithProxy = new ArrayList<Map.Entry<String, ToolSetup>>();
         for (var entry : allTools.entrySet()) {
+            // A tool behind a feature gate is offered once its feature is on: until then the
+            // proxy would not use its credential, and its name alone tells a newcomer nothing (#1441)
+            if (BuildTools.isFeatureGated(entry.getValue(), config)) continue;
             if (CredentialCheck.hasCredentialStep(entry.getValue())) toolsWithProxy.add(entry);
         }
 
