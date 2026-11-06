@@ -198,8 +198,9 @@ class HostSetup {
         startStep("Firewall Configuration",
                 "Configures the host firewall so containers can reach the",
                 "internet and resolve DNS. Detects whether firewalld or UFW",
-                "is active, adds the Incus bridge to a trusted zone, enables",
-                "NAT masquerading, and sets up FORWARD rules.");
+                "is active (and installs firewalld when neither is), adds the",
+                "Incus bridge to a trusted zone, enables NAT masquerading, and",
+                "sets up FORWARD rules.");
 
         var detection = FirewallDetector.detect();
         switch (detection) {

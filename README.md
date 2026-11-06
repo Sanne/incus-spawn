@@ -48,8 +48,8 @@ brew install Sanne/tap/incus-spawn
 #### Fedora / RHEL
 
 ```shell
+sudo dnf install -y 'dnf5-command(copr)'   # on RHEL 9: 'dnf-command(copr)'
 sudo dnf copr enable sanne/incus-spawn
-sudo rpm --import https://download.copr.fedorainfracloud.org/results/sanne/incus-spawn/pubkey.gpg
 sudo dnf install incus-spawn
 ```
 
@@ -75,6 +75,8 @@ jbang app install isx-proxy@Sanne/incus-spawn
 ```
 
 <!-- tabs:end -->
+
+The package is called `incus-spawn`, and it installs the `isx` command.
 
 ```shell
 # One-time host setup (Incus, firewall, auth)
@@ -192,10 +194,10 @@ The storage backend (btrfs, zfs or lvm) shares the unchanged data, so a branch c
 `isx init` creates a btrfs storage pool if there is none.
 
 ```
-tpl-java  (stopped template, ~2GB)
-  ├── fix-nasty-bug    (running, uses ~50MB extra)
-  ├── review-pr-423    (running, uses ~30MB extra)
-  └── experiment       (stopped, uses ~10MB extra)
+tpl-agent  (stopped template, ~2GB)
+  ├── fix-nasty-bug     (running, uses ~50MB extra)
+  ├── review-pr-423     (running, uses ~30MB extra)
+  └── experiment        (stopped, uses ~10MB extra)
 ```
 
 Install packages, break things, and destroy the branch when done.
@@ -356,6 +358,7 @@ isx runs on Linux, and on macOS 15 (Sequoia) or later.
 Windows is not supported.
 
 **Linux**: `isx init` installs [Incus](https://linuxcontainers.org/incus/) with your package manager.
+It also installs and enables firewalld when the host has neither firewalld nor UFW, since the proxy's redirect needs a firewall.
 
 **macOS**: `isx init` provisions a lightweight Linux VM with [vfkit](https://github.com/crc-org/vfkit), which starts when needed.
 `isx vm start|stop|restart|status|resize|reset|console|check-version` manages it, and [its reference](docs/CLI.md#when-the-vm-stops-answering) says what to do when it stops answering.
