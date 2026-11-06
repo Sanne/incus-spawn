@@ -434,7 +434,7 @@ final class HelpChatModal {
                 ? Style.EMPTY.fg(theme.focusedLabel()).bg(theme.inputBg())
                 : Style.EMPTY.fg(modal.fg()).bg(theme.inputInactiveBg());
         TextArea.builder()
-                .placeholder("ask anything about incus-spawn…")
+                .placeholder("ask anything about isx…")
                 .style(inputStyle)
                 .overflow(Overflow.WRAP_WORD)
                 .build()
@@ -483,7 +483,7 @@ final class HelpChatModal {
                 .map(l -> Line.styled(indent + l, style)).toList())), area);
     }
 
-    private static final String INTRO = "Ask anything about incus-spawn: an AI model answers from the"
+    private static final String INTRO = "Ask anything about isx: an AI model answers from the"
             + " project's documentation. Your question is sent to the AI account below, which is billed for it.";
 
     private static final String ACCOUNT_LABEL = "AI account:";

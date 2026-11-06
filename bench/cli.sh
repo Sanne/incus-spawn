@@ -200,7 +200,7 @@ PROXY_BUILD=$(python3 -c 'import json, sys; h = json.load(sys.stdin); print(h.ge
 echo "  proxy:  $PROXY_BUILD"
 for spec in "${RUNTIMES[@]}"; do
     # shellcheck disable=SC2086  # "java -jar <path>" for the JVM
-    CLI_BUILD=$(${spec#*=} --version 2>/dev/null | sed -nE '1s/^incus-spawn (.*)$/\1/p') || true
+    CLI_BUILD=$(${spec#*=} --version 2>/dev/null | sed -nE '1s/^(isx|incus-spawn) (.*)$/\2/p') || true
     [ -n "$CLI_BUILD" ] || die "Could not read the ${spec%%=*} CLI's version (${spec#*=} --version)"
     [ "$CLI_BUILD" = "$PROXY_BUILD" ] && continue
     if $ALLOW_DRIFT; then

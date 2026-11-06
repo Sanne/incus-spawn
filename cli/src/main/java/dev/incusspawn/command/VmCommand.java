@@ -27,7 +27,7 @@ import java.util.Map;
 // exist on Linux at all.
 @CommandDefinition(
         name = "vm",
-        description = "Manage the incus-spawn VM appliance (macOS)",
+        description = "Manage the VM that runs Incus on macOS",
         generateHelp = true,
         groupCommands = {
                 VmCommand.Start.class,

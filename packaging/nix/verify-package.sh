@@ -241,7 +241,7 @@ done
 info "Testing binary functionality..."
 
 # --version
-if VERSION_OUT=$("$PKG/bin/isx" --version 2>&1) && echo "$VERSION_OUT" | grep -q "incus-spawn"; then
+if VERSION_OUT=$("$PKG/bin/isx" --version 2>&1) && echo "$VERSION_OUT" | grep -qE '^(isx|incus-spawn) '; then
     pass "isx --version: $(echo "$VERSION_OUT" | head -1)"
 else
     fail "isx --version failed"

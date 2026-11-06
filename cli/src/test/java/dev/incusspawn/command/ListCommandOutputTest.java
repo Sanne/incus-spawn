@@ -171,7 +171,7 @@ class ListCommandOutputTest {
                 output);
         assertTrue(output.contains("isx build --all"), output);
 
-        assertTrue(list(cmd(null), new FakeIncusDaemon()).startsWith("No incus-spawn environments found."));
+        assertTrue(list(cmd(null), new FakeIncusDaemon()).startsWith("No isx instances or templates found."));
     }
 
     @Test
