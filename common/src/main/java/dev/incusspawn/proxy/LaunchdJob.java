@@ -8,7 +8,8 @@ import java.nio.file.Path;
  * One launchd job, started and restarted through {@code launchctl}.
  * <p>
  * A loaded job is restarted in place with {@code kickstart -k}; only a changed plist is unloaded
- * and loaded again, and then not before launchd has finished removing the old job. A restart
+ * and loaded again, and then not before launchd has finished removing the old job. A stop
+ * waits for that removal too. A restart
  * has worked when {@code launchctl} said so and the job is running, not when {@code print} can
  * still find it. design/native-image.md says why: {@code bootout} returns while the job is still being torn
  * down, and until it is gone {@code bootstrap} fails although {@code print} succeeds (#916).
@@ -117,9 +118,7 @@ final class LaunchdJob {
         if (!isLoaded()) return load(out);
         if (!plistChanged) return kick(out, "kickstart", "-k", target);
 
-        // The result of bootout says nothing useful: it is 0 as soon as the job was told to go.
-        launchctl.run("bootout", target);
-        return awaitUnloaded(out) ? load(out) : Outcome.STILL_UNLOADING;
+        return stop() ? load(out) : stillUnloading(out);
     }
 
     /**
@@ -134,15 +133,20 @@ final class LaunchdJob {
             report(out, kickstart[0], kicked);
             return Outcome.FAILED;
         }
-        return awaitUnloaded(out) ? load(out) : Outcome.STILL_UNLOADING;
+        return unloaded() ? load(out) : stillUnloading(out);
     }
 
     /**
-     * Unloads the job. Whether it is gone when this returns is what the result says.
+     * Unloads the job and waits until launchd has removed it, so that what comes next, a start
+     * above all, finds nothing loaded rather than a job about to vanish (#1959). {@code bootout}
+     * answers as soon as the job is told to go, and a proxy that closes slowly keeps it loaded
+     * until it exits or launchd kills it at {@code ExitTimeOut}, which {@link #UNLOAD_POLLS}
+     * outlasts. False when launchd still has the job after that.
      */
     boolean stop() {
+        // The result of bootout says nothing useful: it is 0 as soon as the job was told to go.
         launchctl.run("bootout", target);
-        return !isLoaded();
+        return unloaded();
     }
 
     /** Loads a job launchd does not have, and starts it. */
@@ -151,10 +155,14 @@ final class LaunchdJob {
         return awaitUp() ? Outcome.RUNNING : Outcome.EXITED;
     }
 
-    private boolean awaitUnloaded(Output out) {
-        if (await(UNLOAD_POLLS, () -> !isLoaded())) return true;
+    /** Waits, at most {@link #UNLOAD_POLLS}, until launchd no longer has the job. */
+    private boolean unloaded() {
+        return await(UNLOAD_POLLS, () -> !isLoaded());
+    }
+
+    private Outcome stillUnloading(Output out) {
         out.warn("launchd is still unloading the proxy service; not loading it again.");
-        return false;
+        return Outcome.STILL_UNLOADING;
     }
 
     /** The job came up and the process it came up as is still there a moment later. */

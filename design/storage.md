@@ -255,7 +255,7 @@ The launch agents name the binaries by path, `reinstallIfChanged` rewrites only 
 The VM agent was left naming a removed `isx` in every case, to fail at the next login.
 So when a plist names the directory the binaries were removed from, the script runs `isx proxy stop` and then `isx proxy install` with the isx that remains on `PATH`.
 The stop is needed: `isx proxy install` writes both agents only for a service that is not loaded (`installMacOs`), and on a loaded one rewrites the proxy's alone.
-The VM keeps running throughout; the proxy is down for the second or two between the two commands.
+The VM keeps running throughout; the proxy is down for the second or two between the two commands, longer only when it is slow to stop, since `isx proxy stop` returns once launchd has removed the job.
 The script then looks at the plists again and warns, naming the two commands, when they still name a removed binary, or when no isx remains to run them.
 Agents written by another install are left alone.
 The script refuses an unknown option rather than ignoring it, so a mistyped `--binaries-only` cannot run a full uninstall.

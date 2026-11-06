@@ -180,6 +180,35 @@ class LaunchdJobTest {
         assertEquals(List.of(), out.events());
     }
 
+    /**
+     * `isx proxy stop && isx proxy start` (#1959): a stop that returned while launchd was still
+     * tearing the job down left the start to find it loaded, call it running, and be followed by
+     * nothing loaded at all.
+     */
+    @Test
+    void aStoppedJobIsGoneSoAStartRightAfterRunsIt() {
+        aRunningJob();
+
+        assertTrue(job.stop(), "stop must report the job gone");
+
+        assertFalse(job.isLoaded(), "launchd must have finished unloading the job when stop returns");
+        assertEquals(LaunchdJob.Outcome.RUNNING, job.start(out), out.events().toString());
+        assertTrue(launchd.loaded && launchd.running);
+        assertEquals(List.of(), out.events());
+    }
+
+    /** A job launchd never finishes unloading is waited for no longer than it would be on a reload. */
+    @Test
+    void stopGivesUpOnAJobThatNeverFinishesUnloading() {
+        aRunningJob();
+        launchd.printsUntilUnloaded = -1;
+
+        assertFalse(job.stop());
+
+        assertEquals(LaunchdJob.UNLOAD_POLLS, pauses);
+        assertEquals(1, launchd.count("bootout"));
+    }
+
     /** Only "being unloaded" is answered by loading afresh; anything else must not unload a loaded job. */
     @Test
     void aRefusedRestartLeavesTheJobLoaded() {

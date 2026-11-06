@@ -563,7 +563,12 @@ public final class ProxyService {
         if (isActive()) {
             if (!Platform.isMacOS()) return stopSystemdUnit(ProxyService::isActive);
             BuildOutput.stepStart("Stopping proxy service");
-            proxyJob().stop();
+            if (!proxyJob().stop()) {
+                BuildOutput.stepBreak();
+                BuildOutput.error("launchd is still unloading the proxy service.",
+                        "Check it with: launchctl print gui/" + getUid() + "/" + PROXY_LABEL);
+                return false;
+            }
             BuildOutput.stepDone();
             BuildOutput.stepNote("Re-enable it with: isx proxy install");
             return true;

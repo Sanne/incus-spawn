@@ -83,6 +83,10 @@ The proxy's plist sets that `ExitTimeOut` to 15 s, past the proxy's own 10 s for
 Only a changed plist has to be unloaded and loaded again, and then the restart waits until `print` no longer finds the job.
 In both cases the restart has worked when `launchctl` returned 0 and the job is running.
 Sleeping between `bootout` and `bootstrap` was rejected as timing-dependent and still blind to a failed `bootstrap`; retrying `bootstrap` on error 5 was rejected because 5 is also what a rejected plist returns.
+`isx proxy stop` waits the same way until `print` no longer finds the job, and fails when it still does after that wait (#1959).
+Returning at `bootout` let an `isx proxy start` straight after it find the dying job loaded, answer "already running", and leave nothing loaded once launchd was done.
+Making the start treat a job being unloaded as not running was the alternative, but a stop that returns with the job still there misleads every caller, not only the start, and `isActive()` would have to read launchd's state names to tell the two apart.
+The price is a stop of a hung proxy that takes until launchd kills it, about 15 s.
 
 Two gaps surfaced once `kickstart -k` restarted a loaded job in place rather than always reloading it.
 First, comparing the plist on disk to what this build would generate (`needsMacOsPlistUpdate`) cannot see every reason to reload.
