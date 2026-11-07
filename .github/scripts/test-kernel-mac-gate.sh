@@ -50,8 +50,32 @@ cp "$REPO_DIR/.github/scripts/kernel-mac-gate.sh" "$SRC/.github/scripts/"
 cp "$REPO_DIR/.github/workflows/kernel-mac-verified.yml" "$SRC/.github/workflows/"
 # The Mac runs main's copies of these, so they are main's in the fixture too; the boots are faked.
 cp "$REPO_DIR/appliance/test-kernel-on-mac.sh" "$SRC/appliance/"
-printf '#!/bin/bash\necho booting "$@"\nexit "${FAKE_BOOT_EXIT:-0}"\n' > "$SRC/appliance/test-boot.sh"
-printf '#!/bin/bash\n[ -f "$APPLIANCE_DIR/disk.img.gz" ] || exit 9\necho isx ok\n' > "$SRC/appliance/test-with-isx.sh"
+# A failed boot prints a long log, a failed check with its counts, the tally, and this machine's
+# work directory, home, name and user, as test-boot.sh and test-tunnel.sh do (#2033).
+cat > "$SRC/appliance/test-boot.sh" <<'EOF'
+#!/bin/bash
+echo booting "$@"
+if [ "${FAKE_BOOT_EXIT:-0}" != 0 ]; then
+    echo "  the first line of a long log"
+    for i in $(seq 60); do echo "  serial line $i"; done
+    echo "  FAIL: forwarder children exit with their connections (count 3, baseline 1)"
+    echo "  ERROR: cannot read $1/disk.img"
+    echo "  see $HOME/.local/state/incus-spawn/vm.log on $(uname -n) as $(id -un)"
+    echo "1 of 30 checks failed."
+    echo
+    echo "Last 40 log lines:"
+    echo "ERROR: a line the guest wrote"
+    [ -z "${SERIAL_LOG:-}" ] || echo "the guest's whole console" > "$SERIAL_LOG"
+fi
+exit "${FAKE_BOOT_EXIT:-0}"
+EOF
+# It boots isx's VM, which writes vm.log, unless FAKE_NO_VM is set.
+cat > "$SRC/appliance/test-with-isx.sh" <<'EOF'
+#!/bin/bash
+[ -f "$APPLIANCE_DIR/disk.img.gz" ] || exit 9
+[ -n "${FAKE_NO_VM:-}" ] || echo "the VM's console" > "$HOME/.local/state/incus-spawn/vm.log"
+echo isx ok
+EOF
 chmod +x "$SRC/appliance/"*.sh
 for f in isx.config isx-x86_64.config isx-aarch64.config vm.config update-kernel-pin.sh; do echo "# $f" > "$SRC/appliance/kernel/$f"; done
 echo "# build" > "$SRC/appliance/build.sh"
@@ -170,7 +194,7 @@ grep -q "HTTP 403" "$WORK/gate-api-error/out" || fail "api-error: the API's erro
 # The record, on a faked Apple silicon Mac.
 cat > "$WORK/bin/uname" <<'EOF'
 #!/bin/bash
-case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac
+case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; -n) echo Fake-Mac.local ;; esac
 EOF
 printf '#!/bin/bash\necho 15.6\n' > "$WORK/bin/sw_vers"
 printf '#!/bin/bash\necho Mac16,10\n' > "$WORK/bin/sysctl"
@@ -199,9 +223,15 @@ record() {
     printf '[{"databaseId": 43}]' > "$fix/runs-kernel-mac-verified.yml.json"
     printf 'MZ\0\0Linux version %s (builder@ci) #1 SMP\0' "$2" > "$fix/artifact/vmlinuz"
     echo disk | gzip > "$fix/artifact/disk.img.gz"
+    echo rootfs > "$fix/artifact/rootfs.tar.zst"
     printf '%s' "${4:-$(printf 'commit %s\nfingerprint %s\nversion 7.2.10\n' "$M_BUMP" "$FP")}" > "$fix/artifact/kernel-inputs"
     set +e
-    PATH="$WORK/bin:${SYS_PATH:-$PATH}" CALLS="$fix/calls" FIX="$fix" FAKE_BOOT_EXIT="$3" "$MAC/test-kernel-on-mac.sh" 9 > "$fix/out" 2>&1
+    # Its own home and temporary directory, so what a run leaves behind can be told.
+    mkdir -p "$fix/home/.local/state/incus-spawn" "$fix/tmp"
+    echo "an older VM's console" > "$fix/home/.local/state/incus-spawn/vm.log"
+    touch -t 202601010000 "$fix/home/.local/state/incus-spawn/vm.log"
+    env -u XDG_CACHE_HOME -u XDG_STATE_HOME HOME="$fix/home" TMPDIR="$fix/tmp" PATH="$WORK/bin:${SYS_PATH:-$PATH}" \
+        CALLS="$fix/calls" FIX="$fix" FAKE_BOOT_EXIT="$3" "$MAC/test-kernel-on-mac.sh" 9 > "$fix/out" 2>&1
     echo $? > "$fix/exit"
     set -e
     touch "$fix/calls"
@@ -227,14 +257,47 @@ done
 [ -n "$(posted good 'run rerun 43')" ] || fail "good: the check was not re-run"
 [[ "$(posted good 'run list' )" == *"--event pull_request"* ]] || fail "good: a push run's build of the head could be taken"
 [ "$(git -C "$WORK/mac" rev-parse --is-shallow-repository)" = false ] || fail "good: fetching the merge made the Mac's clone shallow"
+# A pass leaves nothing behind.
+[ -z "$(ls -A "$WORK/rec-good/tmp")" ] || fail "good: the work directory was kept: $(ls -A "$WORK/rec-good/tmp")"
+[ ! -e "$WORK/rec-good/home/.cache/incus-spawn/kernel-mac" ] || fail "good: logs were saved"
 # What the record posts is what the gate accepts.
 expect recorded "$(gate recorded "$BUMP" "$M_BUMP" "[$(record_of Sanne-ai-bot "$BUMP" "$FP")]" "$(booted)")" PASS
 
 record boot-fails 7.2.10 1
 [ "$(cat "$WORK/rec-boot-fails/exit")" != 0 ] || fail "boot-fails: a failed boot exited 0"
-[[ "$(posted boot-fails 'pr comment')" == *"Result: failure"*"test-boot.sh: FAIL (exit 1)"*"booting"* ]] \
+[[ "$(posted boot-fails 'pr comment')" == *"Result: failure"*"test-boot.sh: FAIL (exit 1)"*"last 40 lines"*"serial line 60"* ]] \
     || fail "boot-fails: the record does not show the failure and its log"
 [[ "$(posted boot-fails "statuses/$BUMP")" == *"state=failure"* ]] || fail "boot-fails: the status is not failure"
+# The record names the failed checks with their counts, past the tail, and none of this machine (#2033).
+comment=$(posted boot-fails 'pr comment')
+for want in "test-boot.sh, failing checks:" "FAIL: forwarder children exit with their connections (count 3, baseline 1)" \
+        "1 of 30 checks failed." "ERROR: cannot read <work>/boot/disk.img" \
+        "see ~/.local/state/incus-spawn/vm.log on <host> as <user>" \
+        "Logs: kept on the Mac in ~/.cache/incus-spawn/kernel-mac/pr-9"; do
+    [[ "$comment" == *"$want"* ]] || fail "boot-fails: the record lacks '$want': $comment"
+done
+for leak in "$WORK/rec-boot-fails" "Fake-Mac"; do
+    [[ "$comment" != *"$leak"* ]] || fail "boot-fails: the record names '$leak': $comment"
+done
+! grep -qw -- "$(id -un)" <<< "$comment" || fail "boot-fails: the record names the user: $comment"
+# The full logs outlive the run: in the work directory, left without its disk images, and per PR.
+kept=$(ls -d "$WORK/rec-boot-fails/tmp/"*)
+[ "$(echo "$kept" | wc -l)" = 1 ] && grep -q "Kept the logs of this run in $kept" "$WORK/rec-boot-fails/out" \
+    || fail "boot-fails: the work directory was not kept and named: $kept"
+grep -q "the first line of a long log" "$kept/test-boot.sh.log" || fail "boot-fails: the kept log is not whole"
+# Of the artifact, only kernel-inputs: the images and the kernel are tens of MB each.
+left=$(cd "$kept" && find . -type f | sort | tr '\n' ' ')
+[ "$left" = "./build/kernel-inputs ./serial.log ./started ./test-boot.sh.log ./test-with-isx.sh.log " ] \
+    || fail "boot-fails: the work directory kept more than its logs and kernel-inputs: $left"
+saved="$WORK/rec-boot-fails/home/.cache/incus-spawn/kernel-mac/pr-9"
+grep -q "the first line of a long log" "$saved/test-boot.sh.log" && [ -f "$saved/test-with-isx.sh.log" ] \
+    && grep -q "the guest's whole console" "$saved/serial.log" && grep -q "^the VM's console" "$saved/vm.log" \
+    || fail "boot-fails: the logs were not saved per PR: $(ls -A "$saved" 2>&1)"
+# A guest's line in the console tail is not one of the scripts' failed checks.
+[[ "${comment%%last 40 lines*}" != *"a line the guest wrote"* ]] || fail "boot-fails: a guest's line was taken for a check: $comment"
+# A vm.log this run's boots did not write is not kept as theirs.
+FAKE_NO_VM=1 record boot-fails-no-vm 7.2.10 1
+[ ! -e "$WORK/rec-boot-fails-no-vm/home/.cache/incus-spawn/kernel-mac/pr-9/vm.log" ] || fail "boot-fails-no-vm: an older vm.log was kept"
 
 record wrong-kernel 7.2.9 0
 [[ "$(posted wrong-kernel 'pr comment')" == *"kernel release: FAIL (7.2.9, but it was built from KERNEL_VERSION 7.2.10)"* ]] \

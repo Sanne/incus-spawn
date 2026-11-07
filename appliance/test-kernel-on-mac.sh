@@ -23,9 +23,14 @@ set -euo pipefail
 #   3. boots it with test-boot.sh (vfkit, ISX READY and the tunnel checks), then
 #      with test-with-isx.sh (isx's own VM manager, over vsock)
 #   4. posts a "### Mac kernel verification" record on the PR (the head, the
-#      build, the fingerprint, the artifact's sums, the machine, each result)
-#      and sets the status isx/mac-kernel-boot on the head, success only if
-#      every step passed, with the fingerprint as its description
+#      build, the fingerprint, the artifact's sums, the machine, each result,
+#      and for a failed step the checks it failed and its log's tail) and sets
+#      the status isx/mac-kernel-boot on the head, success only if every step
+#      passed, with the fingerprint as its description. A failed step's full
+#      logs are kept on the Mac (#2033): in its work directory, which is left
+#      without the disk images, and in ~/.cache/incus-spawn/kernel-mac/pr-<pr>/
+#      (replaced by the next failed run of that PR). The record names neither
+#      this machine, its user nor its home: they are scrubbed from the logs
 #   5. re-runs the PR's kernel-mac-verified check, which reads that status
 #
 # Usage:  ./test-kernel-on-mac.sh <pr-number>
@@ -43,6 +48,8 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # from VERIFIERS, which says whose boots the check takes and may come to name a Mac-only login.
 TRUSTED="Sanne Sanne-ai-bot"
 PR="${1:?Usage: $0 <pr-number>}"
+# A number: it names the record's PR and the directory a failed run's logs are kept in.
+[[ "$PR" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: $PR is not a PR number" >&2; exit 1; }
 ISX="${ISX:-isx}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -79,7 +86,9 @@ fi
 echo "==> PR #$PR at $head"
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# A failed boot keeps its logs (#2033); everything else, a pass included, leaves nothing.
+keep=0
+trap '[ "$keep" = 1 ] || rm -rf "$WORK"' EXIT
 
 # --event pull_request: a push or dispatch run of the same head builds the head, not the merge.
 run="$(gh run list -R "$REPO" --workflow build-appliance.yml --commit "$head" --event pull_request --status success \
@@ -122,7 +131,14 @@ step() {
     else
         results+=("$name: FAIL (exit $?)")
         failed=1
-        logs+=$'\n'"<details><summary>$name, last 40 lines</summary>"$'\n\n```\n'"$(tail -n 40 "$WORK/$name.log")"$'\n```\n</details>\n'
+        # The lines the boot scripts print for a failed check, which carry its counts, and their
+        # tally. A tail alone does not name them (#2033).
+        # Not from the guest's console that test-boot.sh quotes after its summary, whose lines are
+        # the guest's own. Lines are cut short so the record stays under GitHub's comment limit.
+        checks="$(perl -ne 'last if /^Last 40 log lines:$/; s/\e\[[0-9;]*m//g; print' "$WORK/$name.log" \
+            | grep -E '^[[:space:]]*(FAIL|FAILED|ERROR):|checks failed\.$' | head -n 40 | cut -c 1-300 || true)"
+        logs+=$'\n'"$name, failing checks:"$'\n\n```\n'"${checks:-none named; see the log}"$'\n```\n'
+        logs+=$'\n'"<details><summary>$name, last 40 lines</summary>"$'\n\n```\n'"$(tail -n 40 "$WORK/$name.log" | cut -c 1-300)"$'\n```\n</details>\n'
     fi
 }
 
@@ -141,9 +157,43 @@ disk_sum="$(sum disk.img.gz)"
 mkdir "$WORK/boot"
 cp "$WORK/build/vmlinuz" "$WORK/boot/"
 gunzip -c "$WORK/build/disk.img.gz" > "$WORK/boot/disk.img"
-step test-boot.sh "$SCRIPT_DIR/test-boot.sh" "$WORK/boot"
+# Marks the boots' start, so only a vm.log they wrote is kept with their logs.
+: > "$WORK/started"
+step test-boot.sh env SERIAL_LOG="$WORK/serial.log" "$SCRIPT_DIR/test-boot.sh" "$WORK/boot"
 step test-with-isx.sh env APPLIANCE_DIR="$WORK/build" ISX="$ISX" "$SCRIPT_DIR/test-with-isx.sh"
 "$ISX" vm stop > /dev/null 2>&1 || true
+
+# The record is public: what it takes from the logs must not name this machine, its user or its
+# home. Longest first, so a home inside the work directory's path is not split.
+scrub() {
+    local host; host="$(uname -n)"
+    W="$WORK" WP="$(cd "$WORK" && pwd -P)" H="$HOME" N="$host" S="${host%%.*}" U="$(id -un)" perl -pe '
+        for my $k (qw(WP W H)) { my $v = $ENV{$k}; s/\Q$v\E(?![\w.-])/$k eq "H" ? "~" : "<work>"/ge if length $v > 1 }
+        for my $k (qw(N S)) { my $v = $ENV{$k}; s/\b\Q$v\E\b/<host>/gi if length $v }
+        my $u = $ENV{U}; s/\b\Q$u\E\b/<user>/g if length $u;'
+}
+
+# What decides a failure is in the full logs, so they outlive this run. Of the artifact only
+# kernel-inputs: its images and kernel are tens of MB, and an unattended Mac would fill up with
+# them. Saving is best effort, since the record must still be posted. The paths are isx's own
+# (Environment.cacheDir, vmLogFile), which do not follow XDG_CACHE_HOME or XDG_STATE_HOME.
+if [ "$failed" = 1 ]; then
+    keep=1
+    rm -rf "${WORK:?}/boot" || true
+    find "${WORK:?}/build" -mindepth 1 -maxdepth 1 ! -name kernel-inputs -exec rm -rf {} + || true
+    echo "==> Kept the logs of this run in $WORK"
+    saved="$HOME/.cache/incus-spawn/kernel-mac/pr-$PR"
+    if rm -rf "$saved" && mkdir -p "$saved" && cp "$WORK"/*.log "$saved/"; then
+        state_log="$HOME/.local/state/incus-spawn/vm.log"
+        [ ! "$state_log" -nt "$WORK/started" ] || cp "$state_log" "$saved/vm.log" || true
+        echo "==> Saved them in $saved"
+    else
+        saved=""
+    fi
+    logs="$(printf '%s' "$logs" | scrub)"
+    # Only the path is scrubbed: a short host name such as "mac" would take this line's own words.
+    [ -z "$saved" ] || logs=$'\n'"Logs: kept on the Mac in $(printf '%s' "$saved" | scrub)"$'\n'"$logs"
+fi
 
 state=success
 [ "$failed" = 0 ] || state=failure
