@@ -327,6 +327,8 @@ Key design:
   - Every path through `routeWebSocket` must `accept()` or `reject()` the `ServerWebSocketHandshake`: Vert.x 5 leaves an undecided one, even one whose handler threw, hanging until the MITM idle timeout.
   - `pause()` must stay the first call on the accepted socket, in `routeWebSocket` and in `relayWebSocketWith`, which ChatGPT's route accepts through.
   - A frame pipelined with the upgrade request fails `accept()` (Vert.x 5.2.3), so nothing is dialled for it; `WebSocketProxyTest#framePipelinedWithTheUpgradeRequestClosesTheConnectionAndIsNeverDialled` pins that.
+  - A Vert.x client stays referenced until it is closed, in tests too: Vert.x 5 closes an unreachable `HttpClient` or `WebSocketClient` through a cleaner, so a GC mid-connect fails it with `Connection closed` (#2006).
+    `HostRouteProxyTest#aWebSocketIsRefused` forces a GC right after its connect to hold that.
   - Cert reloads build their `ServerSSLOptions` from `mitmServerOptions()`, never a bare object, because the update replaces client auth, protocols and ciphers.
   - `HttpClientRequest.authority()` is the request's own `Host`, not the `setServer()` target, which is what the redirect and resume paths want.
     That holds because every upstream request sets a host: without one, Vert.x falls back to the server address.

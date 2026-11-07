@@ -43,6 +43,10 @@ Every remaining change is in the proxy; `common` and `cli` compile and pass unch
   `HttpServerOptions.getSslOptions()` returns one, so the reload from `mitmServerOptions()` (#1687) compiles unchanged.
 - **`sendHead()` became `writeHead()`** for the 100-continue relay; `sendHead()` is deprecated for removal in Vert.x 6.
 - **Test doubles**: `WriteStream.write(Buffer, Handler)` and `end(Handler)` are gone, and `HttpServerRequest.host()` became `authority()`.
+- **An unreachable client is closed.**
+  Vert.x 5 wraps every `HttpClient` and `WebSocketClient` in a cleanable client, which a cleaner closes once it is unreachable.
+  A test that kept no reference to its WebSocket client after `connect()` failed now and then on a loaded runner, when a GC closed it mid-handshake (#2006).
+  Every client is now held until it is closed, and `HostRouteProxyTest#aWebSocketIsRefused` forces a GC after its connect.
 - **A frame pipelined with the upgrade request closes the connection.**
   The Vert.x 4 proxy relayed such a frame, though RFC 6455 says a client must wait for the 101.
   Vert.x 5.2.2 dropped it and leaked its buffer, and still handed the proxy an accepted socket (V-W1, eclipse-vertx/vert.x#6475).

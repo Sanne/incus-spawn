@@ -386,17 +386,27 @@ class HostRouteProxyTest {
         // WebSocket clients dial the name, so this one resolves it as an instance's bridge DNS would
         var wsVertx = Vertx.vertx(new io.vertx.core.VertxOptions().setAddressResolverOptions(
                 new io.vertx.core.dns.AddressResolverOptions().setHostsValue(Buffer.buffer("127.0.0.1 " + WORK + "\n"))));
+        // Held until the end: Vert.x 5 closes a client it finds unreachable, so one only the
+        // pending connect referred to was closed by a GC mid-handshake ("Connection closed", #2006)
+        var wsClient = wsVertx.createWebSocketClient(
+                new io.vertx.core.http.WebSocketClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
         try {
             var connect = new io.vertx.core.http.WebSocketConnectOptions()
                     .setHost(WORK).setPort(port).setSsl(true).setURI("/ws")
                     .addHeader(InstanceSecret.HEADER, SECRET);
-            var failure = assertThrows(Exception.class, () -> wsVertx.createWebSocketClient(
-                            new io.vertx.core.http.WebSocketClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false))
-                    .connect(connect).toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS));
+            var pending = wsClient.connect(connect);
+            // As a loaded run may: a client left unreachable failed here in 5 of 5 runs (#2006)
+            System.gc();
+            var failure = assertThrows(Exception.class,
+                    () -> pending.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS));
             assertTrue(String.valueOf(failure.getCause()).contains("404"), String.valueOf(failure.getCause()));
             assertEquals(List.of(), seen);
         } finally {
-            wsVertx.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+            try {
+                wsClient.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+            } finally {
+                wsVertx.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+            }
         }
     }
 
