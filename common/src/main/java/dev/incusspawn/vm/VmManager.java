@@ -330,11 +330,13 @@ public final class VmManager {
         int memoryMiB = detectMemoryMiB();
 
         if (!Files.exists(Environment.vmLogFile())) {
-            BuildOutput.note("macOS may show permission dialogs for home folder access and");
-            BuildOutput.note("local network connectivity. These are safe to approve:");
-            BuildOutput.note("  - Your home directory is mounted read-only (nothing is modified)");
-            BuildOutput.note("  - Agents run in sandboxed containers that only see paths you configure");
-            BuildOutput.note("  - Network access enables connectivity for the Linux containers");
+            // The share is read-only because the appliance mounts it so (rcS); vfkit cannot make it
+            // read-only at the hypervisor (crc-org/vfkit#495, #2031), so say no more than that.
+            BuildOutput.note("macOS may ask to allow access to your home folder and the local network.");
+            BuildOutput.note("Both are safe to approve.");
+            BuildOutput.note("isx's Linux VM mounts your home folder read-only, to share host paths you configure.");
+            BuildOutput.note("Instances see only those paths, never your whole home folder.");
+            BuildOutput.note("Local network access gives the Linux containers their network.");
         }
 
         BuildOutput.stepStart("Launching VM (vfkit, cpus=" + cpus + ", memory=" + memoryMiB + "M)");
