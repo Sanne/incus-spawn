@@ -49,6 +49,7 @@ A fast operation still costs one wait, which the request budgets pin; `Operation
 ## macOS vsock robustness
 
 The vfkit vsock tunnel (`AF_VSOCK` across `host unix socket → vfkit → in-VM socat → Incus`) does **not reliably propagate connection close/EOF** — particularly after macOS sleep/resume, when in-flight streams are left half-open.
+Where the host-to-guest half of it most likely comes from is in "Where the vsock leak comes from" below.
 That single fault surfaced in two directions and shaped several design choices:
 
 - **Exec completion is derived from the operation, not the socket.**
@@ -140,6 +141,69 @@ That single fault surfaced in two directions and shaped several design choices:
   Recovery is provided by a small **allowlisted in-VM control agent** (`isx-agent`) on its own vsock port — verbs `ping`, `version`, `socat-count`, `sshd-status`, `forwarder-restart`, `btrfs-usage`, `btrfs-status`, `btrfs-rescan`, no arbitrary exec — reached over an independent channel so it works even when the Incus tunnel is wedged.
   `forwarder-restart` drops and relaunches the forwarder **without rebooting the VM or stopping containers**, and now verifies the new process started (polls `pgrep` 4×0.5s) before confirming; stderr goes to `/dev/console` (the virtio-serial feeding `vm.log`) so startup errors are visible.
   See appliance/DESIGN.md for the in-VM side.
+
+## Where the vsock leak comes from
+
+The mitigations above treat the tunnel's lost closes as a given.
+Reading the code of vfkit and the libraries it is built on points to a concrete cause for the host-to-guest direction.
+This is a source analysis, not yet reproduced on a Mac.
+
+### A close from isx never reaches the guest
+
+vfkit relays each connection on `vm.incus.sock` to the guest with `inetaf/tcpproxy` (`pkg/vf/vsock.go`, `connectVsock`).
+Two behaviours combine:
+
+1. **tcpproxy waits for both directions.**
+   Since its half-close change (inetaf/tcpproxy#38, 2023), `DialProxy.HandleConn` closes neither socket until both copy directions have ended.
+   When one direction reaches EOF, it only half-closes the other socket, through `CloseWrite()`, and only when the connection implements it.
+   vfkit has used this version since v0.5.1 (its go.mod bump `a371dff`, January 2024), so every vfkit isx has shipped with behaves this way.
+2. **The vsock side cannot half-close.**
+   Code-Hex/vz's `VirtioSocketConnection` keeps the real `*net.UnixConn` in a private field and exposes no `CloseWrite()`.
+   tcpproxy's type assertion fails, so its half-close of the vsock side does nothing.
+
+So when isx closes a tunnel connection, the unix-to-vsock copy ends and nothing is sent to the guest.
+The vsock-to-unix copy keeps blocking on its read, and vfkit holds both fds.
+The guest's socat learns nothing until incusd closes its side (30s `IdleTimeout` on a keep-alive connection) or `socat -T` reaps it (180s).
+Connections opened faster than those timeouts reap them pile up as vfkit-held host fds, which is the leak the section above describes.
+
+isx never half-closes on purpose: `UnixSocketTransport` must not call `shutdownOutput()`, because Incus cancels the request on a half-close.
+So the tunnel has no use for half-close, and closing both sides on the first EOF is correct for it.
+
+### A second suspect: who owns the vsock fd
+
+vz duplicates the framework's fd (`net.FileConn`) and then closes the original itself (`socket.go`, `newVirtioSocketConnection`).
+Apple's API closes a connection with `VZVirtioSocketConnection.close()`, after which `fileDescriptor` reads `-1`.
+The documentation does not say whether the framework also closes the fd when the connection object is deallocated.
+If it does, it may close a reused fd number that now belongs to another connection, which would show up as unexplained EOFs or hangs.
+This is unconfirmed.
+
+### What may still be Virtualization.framework's
+
+Whether the framework reliably turns a guest-side close into EOF on the host fd, in particular across sleep and resume, is internal to Apple and cannot be read from source.
+The "particularly after sleep/resume" observation may be such a separate fault.
+It may also be the leak above, made visible by a backlog that builds up while the Mac sleeps.
+
+### How to confirm it, and what follows
+
+The check is to send one keep-alive `GET /1.0` to `vm.incus.sock` and close it.
+The guest's socat child count (agent `socat-count`) should then stay up until incusd's idle close, instead of dropping at once.
+Running the same check against a vfkit whose vsock connection implements `CloseWrite()`, or closes both sides on the first EOF, separates this cause from Apple's part.
+
+Two fixes follow, and they are not exclusive:
+
+- **Patch the relay upstream.**
+  Adding `CloseWrite()` and `CloseRead()` to vz's `VirtioSocketConnection` fixes the leak, if the framework turns `shutdown(SHUT_WR)` into a vsock shutdown.
+  Closing both sides on the first EOF does not depend on that.
+  It waits on vz and vfkit releases and then on Homebrew.
+- **Replace vfkit with an isx launcher.**
+  A small Swift binary on Virtualization.framework covers the devices isx uses: three virtio-blk disks, NAT networking with a fixed MAC, a serial log, one virtio-fs share and two vsock ports.
+  Its relay closes both sides on the first EOF and closes through the framework's `close()`, so fd ownership is never in doubt.
+  It can also drop relayed connections on wake, report its connection counts instead of the `lsof` guess in `leakLayer()`, and make the home share read-only at the hypervisor, which vfkit cannot (crc-org/vfkit#495).
+  The cost is a third macOS binary to build, sign with the `com.apple.security.virtualization` entitlement and ship, and the session handling `VmManager` does for vfkit today.
+
+vfkit itself is maintained but slow: in the year to November 2026 it had 19 commits by people, all from its two maintainers, and outside pull requests waited months.
+No fork is more active.
+The alternatives fit less well: krunkit is a different engine that hardcodes a writable virtio-fs share as well, and Lima and Tart are whole VM managers.
 
 ## The macOS VM outlives whatever started it
 
