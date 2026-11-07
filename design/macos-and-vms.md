@@ -317,6 +317,13 @@ So `test-kernel-on-mac.sh` refuses a PR whose author or head repository is anyon
 It also runs only from a clean checkout of `origin/main`: run from a PR's branch, it would run that PR's scripts with the verifier's credentials and fingerprint with the PR's input lists.
 **Alternatives:** an override flag for a reviewed external PR, which a misled verifier could pass as easily as Sanne; booting external images with no credentials in the shared home, which is still open for trusted PRs as well (#1385).
 
+**A failed Mac boot keeps what decides it (#2033).**
+The Mac runner boots PRs unattended, so the person reading a failure has only the record and what the Mac kept.
+The record names each failed check with its counts, since a tail of the log does not, which is what tells a known tunnel fault (#785) from a regression.
+The full logs, the guest's serial console included, stay on the Mac, in the run's work directory and per PR under `~/.cache/incus-spawn/kernel-mac/`, but of the artifact only `kernel-inputs` does, or an unattended Mac would fill up with copies of the artifact.
+The record is public, so the work directory, home, host name and user name are scrubbed from what it quotes.
+**Alternatives:** posting the whole log, which the guest writes and which buries the failed checks; keeping the whole work directory, a few gigabytes per failure.
+
 **Where the sum comes from.**
 `update-kernel-pin.sh` verifies `sha256sums.asc` with `gpgv` against `appliance/kernel/kernel.org-autosigner.asc`, the kernel.org checksum autosigner's key, and also requires the one valid signature to be by `AUTOSIGNER_FPR`, the same key's fingerprint pinned in the script.
 It reads only the text gpgv reports as signed, so a line added after the signature never counts.

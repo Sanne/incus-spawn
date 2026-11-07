@@ -7,6 +7,9 @@ set -euo pipefail
 # On Linux: uses QEMU (with KVM if available)
 #
 # Usage:  ./test-boot.sh [build-dir] [timeout-seconds]
+#
+# SERIAL_LOG=<file> keeps the guest's serial console in <file>, which is
+# otherwise a temporary file deleted on exit (test-kernel-on-mac.sh, #2033).
 
 BUILD_DIR="${1:-$(dirname "$0")/build}"
 TIMEOUT="${2:-300}"
@@ -50,14 +53,15 @@ REMOTE
     fi
 fi
 
-LOGFILE=$(mktemp)
+LOGFILE="${SERIAL_LOG:-$(mktemp)}"
+: > "$LOGFILE"
 VSOCK_RESULT=$(mktemp)
 VSOCK_DIR=""
 BACKEND=""
 TUNNEL_RC=0
 # An `if`, not `[ ] && rm`: the trap's last status becomes the script's exit
 # status, and VSOCK_DIR is always empty on the QEMU path.
-cleanup() { rm -f "$LOGFILE" "$VSOCK_RESULT"; if [ -n "$VSOCK_DIR" ]; then rm -rf "$VSOCK_DIR"; fi; }
+cleanup() { [ -n "${SERIAL_LOG:-}" ] || rm -f "$LOGFILE"; rm -f "$VSOCK_RESULT"; if [ -n "$VSOCK_DIR" ]; then rm -rf "$VSOCK_DIR"; fi; }
 trap cleanup EXIT
 
 boot_vfkit() {
