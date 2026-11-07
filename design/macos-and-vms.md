@@ -215,7 +215,9 @@ The VM base image isx uses (`-vm-direct.tar.xz`, from the first incus-spawn-imag
   A kernel security fix reaches VMs when that bump merges, then `ISX_REF` in the images repo follows, and an images release ships it.
   The same pin builds the macOS appliance's kernel, which already works this way.
   Kernel development happens in a nested VM inside a `--kvm` branch, never by replacing the box's own kernel.
-  What a template needs from the kernel goes into `vm.config` when a template asks for it, and the `vm` build fails when an option there stops applying.
+  What a template needs from the kernel goes into `vm.config` when a template asks for it.
+  The `vm` build fails when any option of its fragments stops applying, `isx.config` included, since the VM kernel relies on it too (#2005).
+  So each fragment holds only options its arches can take, and the build expects none to skip.
 - **How it ships.**
   Every isx release before the reader of `SHA256SUMS.v2` tracks the newest release's `-vm.tar.xz` and starts it with Secure Boot on and the root on virtio-scsi, which this image cannot boot.
   So a Fedora 44 release keeps that stock-based image and `SHA256SUMS` exactly as they were and adds this one as `-vm-direct.tar.xz`, listed only in `SHA256SUMS.v2` (see design/templates.md "Base image").
@@ -285,7 +287,7 @@ Measured on 2026-10-11 under nested KVM (the same host as docs/dev/PERFORMANCE-N
 Firmware here includes QEMU's own start.
 Two options the plan asked to measure did not show at this level of nesting, where the kernel time alone varied by ±0.15 s between runs (on the stock image of 2026-10-09).
 `DEFERRED_STRUCT_PAGE_INIT` averaged 0.58 s of kernel time against 0.66 s over eight interleaved pairs, so it is left out.
-Turning `CPU_MITIGATIONS` back on measured no worse either, so the vm role keeps the appliance's `n`.
+Turning `CPU_MITIGATIONS` back on measured no worse either, so the vm role keeps the appliance's `n` on x86_64, the only arch that can switch it off (`isx-x86_64.config`).
 Both are for step 6 to measure again on bare metal.
 aarch64 boots to `basic.target` under TCG with this kernel and AAVMF, which no one had tried before.
 
