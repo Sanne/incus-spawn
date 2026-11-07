@@ -335,7 +335,7 @@ public final class VmManager {
             BuildOutput.note("macOS may ask to allow access to your home folder and the local network.");
             BuildOutput.note("Both are safe to approve.");
             BuildOutput.note("isx's Linux VM mounts your home folder read-only, to share host paths you configure.");
-            BuildOutput.note("Instances see only those paths, never your whole home folder.");
+            BuildOutput.note("Your agents' machines see only those paths, never your whole home folder.");
             BuildOutput.note("Local network access gives the Linux containers their network.");
         }
 
