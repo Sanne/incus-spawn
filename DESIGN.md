@@ -135,6 +135,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
 - [macOS, the appliance and VMs](design/macos-and-vms.md)
   - Incus Daemon Connection
   - macOS vsock robustness
+  - Where the vsock leak comes from
   - The macOS VM outlives whatever started it
   - VM Appliance
   - The VM image's boot chain (#1255)
