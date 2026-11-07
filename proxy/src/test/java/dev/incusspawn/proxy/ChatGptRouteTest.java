@@ -969,14 +969,14 @@ class ChatGptRouteTest {
 
     @Test
     void aWebSocketWithTheCurrentProofIsDialledToTheOverrideWithTheRealToken() throws Exception {
-        var client = vertx.createWebSocketClient(new io.vertx.core.http.WebSocketClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
         var options = new WebSocketConnectOptions().setHost(ChatGptRoute.CHATGPT).setPort(mitmPort).setSsl(true)
                 .setURI("/backend-api/codex/responses")
                 // As a container sends it: it connects to 443, which the bridge redirects here
                 .putHeader("Host", ChatGptRoute.CHATGPT)
                 .addHeader("Authorization", "Bearer " + accessPlaceholder(proofs().access()));
         var echoed = new CompletableFuture<String>();
-        client.connect(options).onSuccess(ws -> {
+        // The class's client, held by its field: Vert.x 5 closes a client it finds unreachable (#2006)
+        wsClient.connect(options).onSuccess(ws -> {
             ws.textMessageHandler(echoed::complete);
             ws.writeTextMessage("{\"type\":\"response.create\"}");
         }).onFailure(echoed::completeExceptionally);
