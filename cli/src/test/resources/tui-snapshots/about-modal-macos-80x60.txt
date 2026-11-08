@@ -1,6 +1,5 @@
 
 
-
   ╔ About incus-spawn ═══════════════════════════════════════════════════════╗
   ║ incus-spawn (isx) 1.2.3                                                  ║
   ║ Commit 0000000                                                           ║
@@ -42,19 +41,20 @@
   ║   g/Home  Jump to top               G/End        Jump to bottom          ║
   ║                                                                          ║
   ║ No F-keys? Use the number row instead:                                   ║
-  ║   1–9, 0  stand in for F1–F9, F10        (so 2 = F2, 0 = F10)            ║
-  ║   Alt+1–9, Alt+0  stand in for ⇧F1–⇧F10  (so Alt+7 = ⇧F7)                ║
+  ║   1–9, 0          stand in for F1–F9, F10  (so 2 = F2, 0 = F10)          ║
+  ║   Alt+1–9, Alt+0  stand in for ⇧F1–⇧F10    (so Alt+7 = ⇧F7)              ║
   ║                                                                          ║
   ║ macOS shortcuts:                                                         ║
   ║   Fn+←/→  Home / End                Fn+↑/↓       PgUp / PgDn             ║
-  ║ Alt is the Option key, once your terminal's Settings send it:            ║
-  ║   Terminal.app  Profiles > Keyboard > "Use Option as Meta key"           ║
-  ║   iTerm2        Profiles > Keys > Left Option key: "Esc+"                ║
+  ║ Alt is Option once your terminal is set to send it:                      ║
+  ║   Terminal.app  Settings > Profiles > Keyboard >                         ║
+  ║                 "Use Option as Meta key"                                 ║
+  ║   iTerm2        Settings > Profiles > Keys > General >                   ║
+  ║                 Left Option key: Esc+                                    ║
   ║   Ghostty       macos-option-as-alt = true in the config                 ║
   ║                                                                          ║
   ║  F1/Esc Close   ? AI-assisted help                                       ║
   ╚══════════════════════════════════════════════════════════════════════════╝
-
 
 
 

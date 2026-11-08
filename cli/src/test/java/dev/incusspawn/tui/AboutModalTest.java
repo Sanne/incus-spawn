@@ -2,9 +2,11 @@ package dev.incusspawn.tui;
 
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The F1 dialog on its own, with fixed versions in place of this build's and the host's. */
 class AboutModalTest {
@@ -48,5 +50,38 @@ class AboutModalTest {
     void rendersEveryShortcutOnMacOs() {
         var dialog = dialog(true);
         TuiSnapshot.assertMatches("about-modal-macos-80x60", TuiSnapshot.render(80, 60, f -> dialog.render(f, f.area())));
+    }
+
+    /**
+     * A 70-column split pane shows the number-row rule and the macOS directions whole: the dialog does
+     * not wrap. A short pane scrolls, and its scrollbar takes one more column from the text.
+     */
+    @Test
+    void aSeventyColumnPaneShowsTheNumberRowRuleAndTheOptionKeyPathsWhole() {
+        var tall = dialog(true);
+        assertShowsWhole(TuiSnapshot.toText(TuiSnapshot.render(70, 60, f -> tall.render(f, f.area()))));
+        var shortPane = dialog(true);
+        var scrolled = new StringBuilder();
+        for (int i = 0; i < 60; i++) {
+            scrolled.append(TuiSnapshot.toText(TuiSnapshot.render(70, 24, f -> shortPane.render(f, f.area()))));
+            shortPane.handleKey(KeyEvent.ofKey(KeyCode.DOWN));
+        }
+        assertShowsWhole(scrolled.toString());
+    }
+
+    private static void assertShowsWhole(String text) {
+        for (var expected : List.of(
+                "No F-keys? Use the number row instead:",
+                "1–9, 0          stand in for F1–F9, F10  (so 2 = F2, 0 = F10)",
+                "Alt+1–9, Alt+0  stand in for ⇧F1–⇧F10    (so Alt+7 = ⇧F7)",
+                "Terminal.app  Settings > Profiles > Keyboard >",
+                "\"Use Option as Meta key\"",
+                "iTerm2        Settings > Profiles > Keys > General >",
+                "Left Option key: Esc+",
+                "Ghostty       macos-option-as-alt = true in the config",
+                "Jump to bottom",
+                "Join its task")) {
+            assertTrue(text.contains(expected), "missing or clipped: " + expected + "\n" + text);
+        }
     }
 }
