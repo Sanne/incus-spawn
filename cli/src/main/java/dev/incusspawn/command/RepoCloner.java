@@ -423,7 +423,7 @@ class RepoCloner {
                 try {
                     // Neither check needs the other to start; the selections are compared before mounting.
                     if (!repo.isHostSource() && preparation != null) {
-                        var read = RemoteRead.start(preparation, repo.getUrl(), remoteReadSlots);
+                        var read = RemoteRead.start(preparation, repo.getUrl(), repo.getBranch(), remoteReadSlots);
                         startedReads.add(read);
                         remoteReads.put(idx, read);
                     }
@@ -542,13 +542,17 @@ class RepoCloner {
         return refs;
     }
 
-    /** The remote's refs as the template's own accounts see them, from the guest; null when it is denied. */
+    /**
+     * The requested ref as the template's own accounts see it, from the guest; null when it is denied.
+     * It asks for the same refs as the host's reading (#1990), never every branch and tag.
+     */
     String readTemplateRefs(Container container, ImageDef.RepoEntry repo) {
         var access = container.shAsUser("agentuser", "export GIT_TERMINAL_PROMPT=0; "
                 + "if [ -z \"${GIT_SSH_COMMAND+x}${GIT_SSH+x}\" ]; then export GIT_SSH_COMMAND='ssh -o BatchMode=yes'; fi; "
                 + "git -c protocol.allow=never -c protocol.https.allow=always -c protocol.ssh.allow=always"
                 + " -c protocol.git.allow=always -c protocol.file.allow=never ls-remote --symref -- "
-                + shellQuote(repo.getUrl()) + " HEAD 'refs/heads/*' 'refs/tags/*'");
+                + shellQuote(repo.getUrl()) + GitPreparation.lsRemotePatterns(repo.getBranch()).stream()
+                        .map(pattern -> " " + shellQuote(pattern)).collect(java.util.stream.Collectors.joining()));
         return access.success() ? access.stdout() : null;
     }
 
@@ -590,8 +594,8 @@ class RepoCloner {
                     matched = result.matchesAdvertisement(seen);
                     if (matched || read == REF_DRIFT_REFRESHES) break;
                     var next = refreshSnapshot(request, result, seen, phases, idx);
-                    if (next == null) break;
-                    if (next == result) continue; // the host saw another selection: read the guest again
+                    if (next == null) break; // no later reading would settle it: the guest clones from the network
+                    if (next == result) continue; // the ref moved again before the host fetched it: read the guest again
                     var stale = result;
                     result = next;
                     if (next.notRetained() != null) notRetained = next.notRetained();
@@ -667,7 +671,7 @@ class RepoCloner {
                 new java.util.concurrent.CompletableFuture<>();
         private Thread thread;
 
-        static RemoteRead start(GitPreparation preparation, String url, java.util.concurrent.Semaphore slots) {
+        static RemoteRead start(GitPreparation preparation, String url, String branch, java.util.concurrent.Semaphore slots) {
             var read = new RemoteRead();
             // Its phases stay quiet: the repo's line shows the guest's access check meanwhile.
             read.thread = Thread.ofVirtual().name("isx-git-remote-refs").start(() -> {
@@ -676,7 +680,7 @@ class RepoCloner {
                     slots.acquire();
                     GitPreparation.RemoteRefs result;
                     try {
-                        result = preparation.readRemote(url, phase -> {});
+                        result = preparation.readRemote(url, branch, phase -> {});
                     } finally {
                         slots.release();
                     }
@@ -1146,6 +1150,12 @@ class RepoCloner {
                     .append(" || { echo 'fatal: prepared Git pack checksum failed' >&2; false; }");
         }
         command.append("); }");
+        if (repo.hasBranch() && !repo.isHostSource()) {
+            // The snapshot's HEAD is the pinned ref, which need not be the remote's default branch: name none
+            // rather than a wrong one. A later fetch brings every other branch, as the refspec stays broad.
+            command.append(" && { ! git -C ").append(path).append(" symbolic-ref -q refs/remotes/origin/HEAD >/dev/null")
+                    .append(" || git -C ").append(path).append(" symbolic-ref --delete refs/remotes/origin/HEAD; }");
+        }
         if (repo.isHostSource()) {
             // Preserve every exported branch as a local branch before removing the temporary origin.
             // No remote points at the host mount or at its corporate upstream in the finished guest.

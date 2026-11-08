@@ -3,13 +3,14 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 Full Git clone acceleration is specified in [Git preparation](docs/dev/GIT-PREPARATION.md): remote-authoritative selection, bare reference/dissociation, immutable bounded clean snapshots and reader leases.
+A snapshot holds only the ref a template requests, its branch or tag or else the remote's default branch, with its history; the guest fetches other branches itself, lazily (#1990).
 Borrow host objects directly, without a preliminary pack copy; a failed reference attempt retries once from the remote before publication.
 Refresh verified snapshots incrementally when their old history remains selected, sharing owned packs and validating new objects; removed history and pack compaction use a clean rebuild.
 Never run build-time fetch or maintenance in a user checkout, or mount its full object store for a full clone.
 Network-source preparation accepts only HTTPS, SSH and Git network URLs; file transport and remote helpers are blocked even after URL rewrites.
-Check the guest's template-account access before fetching, cloning or publishing (only the host's `ls-remote` runs beside it) and match its complete advertised selection before mounting any snapshot, including warm hits.
+Check the guest's template-account access before fetching, cloning or publishing (only the host's `ls-remote` runs beside it) and mount a snapshot, warm hits included, only when the guest's own reading shows its ref at the same ID.
 Complete all access checks before priming; only raw shallow references gate other repos' primes once preparation begins.
-A guest re-read after the remote moved may follow another repo's prime; only the snapshot's exact selection still mounts it.
+A guest re-read after the remote moved may follow another repo's prime; a refresh fetches the ref by name and keeps it only at the ID the guest read, never fetching an ID a reading names.
 The shallow transport/fixup path remains separate.
 Explicit `repos[].host-source` uses a separate offline export of local branches/tags and their reachable objects, including unpushed history.
 It never copies the source object store wholesale, fetches its remote, mounts its checkout or falls back to the network.

@@ -273,9 +273,9 @@ class RepoClonerShallowTest {
 
         var guest = prepare(repo(null, null), host);
 
-        assertEquals("v1", git(guest, "tag", "-l"), "the remote's tags stay, the host's own go");
-        assertEquals(git(upstream, "rev-parse", "v1"), git(guest, "rev-parse", "v1"));
-        assertEquals("refs/heads/main\nrefs/remotes/origin/HEAD\nrefs/remotes/origin/main\nrefs/remotes/origin/stable",
+        // Only the requested branch is copied (#1990): no host ref, and the remote's other refs come with a fetch.
+        assertEquals("", git(guest, "tag", "-l"), "no tag of the host's reaches the guest");
+        assertEquals("refs/heads/main\nrefs/remotes/origin/HEAD\nrefs/remotes/origin/main",
                 git(guest, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"));
         assertEquals("main", git(guest, "branch", "--show-current"));
         assertEquals("branch.main.remote origin\nbranch.main.merge refs/heads/main",

@@ -1128,7 +1128,7 @@ class RepoClonerTest {
         var incus = guestCheckingAccess(hostReading, overlapped, true);
         var preparation = mock(dev.incusspawn.git.GitPreparation.class);
         var refs = mock(dev.incusspawn.git.GitPreparation.RemoteRefs.class);
-        when(preparation.readRemote(anyString(), any())).thenAnswer(inv -> { hostReading.countDown(); return refs; });
+        when(preparation.readRemote(anyString(), any(), any())).thenAnswer(inv -> { hostReading.countDown(); return refs; });
         var snapshot = reference("ref", "/mnt/ref", "/owned/snapshot", null).prepared();
         when(snapshot.matchesAdvertisement("advertised")).thenReturn(true);
         when(snapshot.repository()).thenReturn(Path.of("/owned/snapshot"));
@@ -1152,7 +1152,7 @@ class RepoClonerTest {
         var preparation = mock(dev.incusspawn.git.GitPreparation.class);
         var refs = mock(dev.incusspawn.git.GitPreparation.RemoteRefs.class);
         var closed = closing(refs);
-        when(preparation.readRemote(anyString(), any())).thenAnswer(inv -> { hostReading.countDown(); return refs; });
+        when(preparation.readRemote(anyString(), any(), any())).thenAnswer(inv -> { hostReading.countDown(); return refs; });
         var repo = repo("https://example.invalid/repo", "~/repo", null);
         var states = new java.util.concurrent.atomic.AtomicReferenceArray<dev.incusspawn.command.BuildProgress.StepProgress>(1);
 
@@ -1178,7 +1178,7 @@ class RepoClonerTest {
         var tester = Thread.currentThread();
         // Still reading when the guest is denied, and done only once the test waits for the close (or after
         // a second, as verify(refs, timeout(..)) polls without parking): the late close that verify missed.
-        when(preparation.readRemote(anyString(), any())).thenAnswer(inv -> {
+        when(preparation.readRemote(anyString(), any(), any())).thenAnswer(inv -> {
             hostReading.countDown();
             try {
                 new java.util.concurrent.CountDownLatch(1).await();

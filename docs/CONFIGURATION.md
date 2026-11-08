@@ -140,7 +140,8 @@ If the outer instance later switches GitHub accounts, branch again or run `isx a
 ## Git cache
 
 Builds can read Git objects directly from linked host checkouts without changing them or copying their object stores first.
-Full clones select all remote branches and tags; shallow clones retain their configured depth.
+A full clone's snapshot holds the branch or tag the template asks for, or else the remote's default branch, with all its history.
+The instance fetches other branches itself when it needs them; shallow clones retain their configured depth.
 
 For full clones, a bounded cache of clean snapshots avoids repeated downloads and packing, including when a linked checkout exists.
 Normal upstream updates add new objects to the verified cache without repacking its history.
