@@ -28,6 +28,8 @@ class HerdrIntegrationTest {
 
     private static final String ID = "ae376ca7bf702d2ab8ae75ad49cd411b";
     private static final String USERS = "0123456789abcdef0123456789abcdef";
+    /** The machine's target: the alias that starts a stopped instance (#2038). */
+    private static final String TARGET = "ws.start.isx";
 
     @TempDir
     Path records;
@@ -93,8 +95,8 @@ class HerdrIntegrationTest {
         var herdr = herdr(host);
 
         var first = started(herdr, daemon, "ws");
-        assertEquals(List.of("herdr machine add ws --label ws"), host.ran);
-        assertEquals(ID, recorded("ws"));
+        assertEquals(List.of("herdr machine add ws.start.isx --label ws"), host.ran);
+        assertEquals(ID + "\n" + TARGET, recorded("ws"));
         assertEquals(List.of("Added ws to herdr."), first.events(RecordingOutput.Kind.STEP).stream()
                 .map(RecordingOutput.Event::msg).toList());
         assertTrue(herdr.done("ws"));
@@ -158,7 +160,7 @@ class HerdrIntegrationTest {
                 recorded.events(RecordingOutput.Kind.STEP).stream().map(RecordingOutput.Event::msg).toList());
 
         started(herdr(host), daemon, "ws");
-        assertEquals(List.of("herdr machine add ws --label ws"), host.ran, "added once the alias resolves");
+        assertEquals(List.of("herdr machine add ws.start.isx --label ws"), host.ran, "added once the alias resolves");
     }
 
     /**
@@ -182,7 +184,7 @@ class HerdrIntegrationTest {
 
         var second = started(herdr, daemon, "ws");
         assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.WARN,
-                "could not add ws to herdr: error: could not reach ws", "Add it yourself: herdr machine add ws")),
+                "could not add ws to herdr: error: could not reach ws", "Add it yourself: herdr machine add ws.start.isx --label ws")),
                 second.events(RecordingOutput.Kind.WARN));
         assertEquals(HerdrIntegration.NOT_ADDED, recorded("ws"));
         assertTrue(herdr.done("ws"));
@@ -204,10 +206,102 @@ class HerdrIntegrationTest {
 
         host.answers.put("herdr machine add", works);
         var retry = started(herdr, daemon, "ws");
-        assertEquals(ID, recorded("ws"));
+        assertEquals(ID + "\n" + TARGET, recorded("ws"));
         assertEquals(List.of(), retry.events(RecordingOutput.Kind.WARN));
         assertEquals(List.of("Added ws to herdr."), retry.events(RecordingOutput.Kind.STEP).stream()
                 .map(RecordingOutput.Event::msg).toList());
+    }
+
+    /**
+     * herdr keeps its machines across a stop and reconnects to them by itself, so the machine's
+     * target is the alias whose connection starts a stopped instance, never the instance's name,
+     * whose Host block a plain ssh reads and which never starts one (#2038).
+     */
+    @Test
+    @org.junit.jupiter.api.extension.ExtendWith(TempHome.class)
+    void theMachinesTargetStartsAStoppedInstance() throws Exception {
+        assertTrue(dev.incusspawn.ssh.SshKeyManager.addHostEntry("ws", "10.0.0.5"));
+        assertEquals(TARGET, HerdrIntegration.SshAlias.MANAGED.startTarget("ws"));
+        var config = Files.readString(dev.incusspawn.Environment.sshConfigFile());
+        assertTrue(config.contains("Host ws.start.isx\n"), config);
+        assertTrue(config.contains(" ssh-proxy --start ws\n"), config);
+        assertTrue(config.contains(" ssh-proxy ws\n"), "ssh ws still never starts it: " + config);
+
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("herdr", false)));
+        var host = new FakeHost(true);
+        started(herdr(host), daemon, "ws");
+        assertEquals(List.of("herdr machine add " + TARGET + " --label ws"), host.ran,
+                "labelled with the name, so herdr --machine ws still finds it");
+    }
+
+    /**
+     * A machine an older isx added for the instance's name never starts it, and herdr cannot change
+     * a machine's target: the next start removes it and adds the instance again, once (#2038).
+     */
+    @Test
+    void aMachineAnOlderIsxAddedIsReplacedOnceSoItStartsTheInstance() throws Exception {
+        Files.writeString(records.resolve("ws"), ID + "\n");
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("herdr", false)));
+        var host = new FakeHost(true);
+        var next = "fedcba9876543210fedcba9876543210";
+        host.answers.put("herdr machine add", new HostCommands.Result(0, "Saved SSH machine " + next + "."));
+        var herdr = herdr(host);
+        assertFalse(herdr.done("ws"), "asked again on its next start");
+        assertTrue(herdr.registered("ws"), "still listed until then");
+
+        var recorded = started(herdr, daemon, "ws");
+
+        assertEquals(List.of("herdr machine list --json", "herdr machine remove " + ID,
+                "herdr machine add " + TARGET + " --label ws"), host.ran);
+        assertEquals(next + "\n" + TARGET, recorded("ws"));
+        assertEquals(List.of(), recorded.events(RecordingOutput.Kind.WARN));
+        assertTrue(herdr.done("ws"));
+        host.ran.clear();
+        RecordingOutput.during(() -> HostIntegration.startedAll(daemon.client(), "ws",
+                daemon.client().instanceMetadataOrThrow("ws"), BuildOutput.bound()));
+        assertEquals(List.of(), host.ran, "once");
+    }
+
+    /** herdr failing to list its machines is asked again on the next start, never taken for a refusal. */
+    @Test
+    void aMachineAnOlderIsxAddedIsReplacedOnTheNextStartWhenHerdrCannotListIt() throws Exception {
+        Files.writeString(records.resolve("ws"), ID + "\n");
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("herdr", false)));
+        var host = new FakeHost(true);
+        var lists = host.answers.get("herdr machine list --json");
+        host.answers.put("herdr machine list --json", new HostCommands.Result(-1, "timed out after 10 seconds"));
+        var herdr = herdr(host);
+
+        var first = started(herdr, daemon, "ws");
+        assertEquals(List.of(), first.events(RecordingOutput.Kind.WARN));
+        assertEquals(ID, recorded("ws"), "left as it was");
+        assertFalse(herdr.done("ws"));
+
+        host.answers.put("herdr machine list --json", lists);
+        started(herdr, daemon, "ws");
+        assertEquals(ID + "\n" + TARGET, recorded("ws"));
+        assertTrue(herdr.usesStartAlias("ws"));
+    }
+
+    /** One that cannot be removed is kept, and recorded as reaching the name: warned once, never tried again. */
+    @Test
+    void aMachineAnOlderIsxAddedThatCannotBeRemovedIsKeptAndWarnedOnce() throws Exception {
+        Files.writeString(records.resolve("ws"), ID + "\n");
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("herdr", false)));
+        var host = new FakeHost(true);
+        host.answers.put("herdr machine remove", new HostCommands.Result(1, "error: catalog is read-only"));
+        var herdr = herdr(host);
+
+        var recorded = started(herdr, daemon, "ws");
+
+        assertEquals(List.of(new RecordingOutput.Event(RecordingOutput.Kind.WARN,
+                "could not replace ws in herdr: error: catalog is read-only",
+                "While it is stopped, herdr cannot reach it: start it with isx start ws")),
+                recorded.events(RecordingOutput.Kind.WARN));
+        assertEquals(ID + "\nws", recorded("ws"));
+        assertTrue(herdr.done("ws"));
+        assertFalse(herdr.usesStartAlias("ws"), "its start alias is not written again for it");
+        assertTrue(herdr.registered("ws"), "a destroy still removes it");
     }
 
     /**
@@ -311,9 +405,9 @@ class HerdrIntegrationTest {
         host.answers.put("herdr machine add", new HostCommands.Result(0, "Saved SSH machine " + next + "."));
         started(herdr(host), daemon, "ws");
 
-        assertEquals(List.of("herdr machine list --json", "herdr machine remove " + ID, "herdr machine add ws --label ws"), host.ran);
+        assertEquals(List.of("herdr machine list --json", "herdr machine remove " + ID, "herdr machine add ws.start.isx --label ws"), host.ran);
         assertFalse(Files.exists(records.resolve(".orphaned").resolve(ID)), "forgotten once removed");
-        assertEquals(next, recorded("ws"), "the new ws has its own machine");
+        assertEquals(next + "\n" + TARGET, recorded("ws"), "the new ws has its own machine");
     }
 
     /**

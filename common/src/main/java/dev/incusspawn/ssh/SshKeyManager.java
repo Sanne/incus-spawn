@@ -203,19 +203,64 @@ public final class SshKeyManager {
      *     runs the ProxyCommand but never dials (design/instances.md "`Hostname` as a label")
      */
     public static boolean addHostEntry(String instanceName, String hostname) {
+        return writeHostBlock(instanceName, instanceName, hostname, false);
+    }
+
+    /**
+     * Set to {@code 1} in the environment of every command a host integration runs, and so of the
+     * ssh it may run: {@code isx ssh-proxy --start} then starts nothing. Such a command runs from a
+     * start that is preparing the instance, and would otherwise wait for that start or prepare it
+     * again, as herdr's {@code machine add} through {@link #startAlias} would (#2038).
+     */
+    public static final String NO_START_ENV = "ISX_SSH_PROXY_NO_START";
+
+    /** What ends the Host alias of {@link #startAlias}; no instance name holds a dot. */
+    static final String START_SUFFIX = ".start.isx";
+
+    /**
+     * The SSH target that starts the instance when it is stopped, for a program that keeps a target
+     * and reconnects through it, such as herdr (#2038). {@code ssh <name>} never starts one (#1720).
+     */
+    public static String startAlias(String instanceName) {
+        return instanceName + START_SUFFIX;
+    }
+
+    /**
+     * Add or replace the Host block of {@link #startAlias}: the instance's own block, but with
+     * {@code isx ssh-proxy --start} and no {@code Hostname}, which only Gateway reads. Its host
+     * key is the instance's, under the same {@code HostKeyAlias}. Removed with the instance's block.
+     * @return true if the block is written, or already was
+     */
+    public static boolean addStartEntry(String instanceName) {
+        return writeHostBlock(startAlias(instanceName), instanceName, null, true);
+    }
+
+    /** Whether the managed SSH config has the current Host block of {@link #startAlias}. */
+    public static boolean hasStartEntry(String instanceName) {
+        try {
+            var block = blockOf(Files.readAllLines(Environment.sshConfigFile()), startAlias(instanceName));
+            return block != null && block.contains(knownHostsOption())
+                    && block.stream().anyMatch(line -> line.startsWith("ProxyCommand ")
+                            && line.endsWith(" ssh-proxy --start " + instanceName));
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static boolean writeHostBlock(String host, String instanceName, String hostname, boolean startIfStopped) {
         var isxPath = resolveIsxPath(); // a subprocess: not under the lock
         try (var lock = lockManagedConfig()) {
             ensureManagedConfigExists();
             var content = Files.readString(Environment.sshConfigFile());
             afterConfigRead.run();
-            var blocks = parseWithoutHostBlocks(content, instanceName);
+            var blocks = parseWithoutHostBlocks(content, host);
 
             blocks.add("");
-            blocks.add("Host " + instanceName);
+            blocks.add("Host " + host);
             if (hostname != null && !hostname.isEmpty()) {
                 blocks.add("    Hostname " + hostname);
             }
-            blocks.add("    ProxyCommand " + proxyCommand(isxPath, instanceName, false));
+            blocks.add("    ProxyCommand " + proxyCommand(isxPath, instanceName, startIfStopped));
             blocks.add("    User " + USER);
             blocks.add("    IdentityFile ~/.config/incus-spawn/ssh/id_ed25519");
             blocks.add("    IdentitiesOnly yes");
@@ -386,7 +431,7 @@ public final class SshKeyManager {
     }
 
     /**
-     * Remove a Host block from the managed SSH config.
+     * Remove the instance's Host block, and the one of its {@link #startAlias}, from the managed SSH config.
      */
     public static void removeHostEntry(String instanceName) {
         var config = Environment.sshConfigFile();
@@ -397,6 +442,7 @@ public final class SshKeyManager {
                 var content = Files.readString(config);
                 afterConfigRead.run();
                 var blocks = parseWithoutHostBlocks(content, instanceName);
+                blocks = parseWithoutHostBlocks(String.join("\n", blocks), startAlias(instanceName));
                 writeIfChanged(content, String.join("\n", blocks));
             }
             // Its pinned keys go with it: a later instance of that name has its own (#1863)

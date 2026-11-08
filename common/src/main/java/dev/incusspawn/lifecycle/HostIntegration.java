@@ -47,6 +47,19 @@ public interface HostIntegration {
      */
     boolean registered(String name);
 
+    /**
+     * Whether the tool reaches the instance through its {@link dev.incusspawn.ssh.SshKeyManager#startAlias},
+     * whose Host block is then written again whenever the instance's own is. A read of host state only.
+     */
+    default boolean usesStartAlias(String name) {
+        return false;
+    }
+
+    /** Whether any integration {@link #usesStartAlias uses} the instance's start alias. */
+    static boolean anyUsesStartAlias(String name) {
+        return BUILT_IN.stream().anyMatch(integration -> integration.usesStartAlias(name));
+    }
+
     /** The built-in host integrations; the directory is looked up per call, never at image build time. */
     List<HostIntegration> BUILT_IN = List.of(new HerdrIntegration(HostCommands.SYSTEM, dev.incusspawn.Environment::herdrMachinesDir));
 

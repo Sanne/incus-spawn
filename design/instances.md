@@ -313,6 +313,7 @@ incus-spawn manages a dedicated SSH key pair, per-instance SSH configuration and
    It is never one the guest reports: the guest owns its interfaces, and pinning an address takes it off every other instance's line.
    An airgapped branch has no address, so its block has no `Hostname` and its keys are pinned under its name alone.
    After this, `ssh <instance-name>` just works, and so does a client that forces strict host key checking.
+   An instance added to herdr also gets a `Host <instance-name>.start.isx` block (`SshKeyManager.addStartEntry`), the same but for `ProxyCommand isx ssh-proxy --start` and no `Hostname`, so herdr's connection starts it when it is stopped (#2038).
 3. **Every later start for use** (`InstanceLifecycle.startForUse`, behind `isx shell`, `isx run` and the TUI) does the same for an instance with SSH, so a `--no-start` branch is reachable after its first start (#1640).
    The keys ride in the readiness probe's guest script (`RuntimeSetup.sshStartScript`), which adds only the ones `authorized_keys` lacks, so a key added inside the box survives.
    A TUI restart (`restartForUse`) adds them to its probe the same way, from its listing.
@@ -328,7 +329,7 @@ incus-spawn manages a dedicated SSH key pair, per-instance SSH configuration and
    The pin is rewritten only when it differs from what the probe reported.
    So a start pays no Incus request and no write for either.
    A TUI restart pins from its probe the same way.
-4. **`isx destroy`** (and TUI delete): removes the Host block from the managed config, and the instance's lines from the managed `known_hosts`.
+4. **`isx destroy`** (and TUI delete): removes the Host block, and the start alias's, from the managed config, and the instance's lines from the managed `known_hosts`.
    A rename removes them under the old name; the stopped instance is pinned under the new one on its next start.
 
 **Design decisions:**

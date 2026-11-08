@@ -369,9 +369,16 @@ public final class RuntimeSetup {
         var address = instance.path("config").pathText(Metadata.STATIC_IP, "");
         // The pin first, so a strict client never meets a block whose key is not there yet
         SshKeyManager.pinHostKeys(name, address, HostKeys.parse(probeAnswer));
-        if (SshKeyManager.hasHostEntry(name, address)) return;
-        SshKeyManager.ensureSshConfigInclude();
-        SshKeyManager.addHostEntry(name, address);
+        if (!SshKeyManager.hasHostEntry(name, address)) {
+            SshKeyManager.ensureSshConfigInclude();
+            SshKeyManager.addHostEntry(name, address);
+        }
+        // herdr's machine targets the start alias (#2038), whose block may be lost or stale with the
+        // instance's or alone. Only for an instance herdr reaches that way: one record read, then the
+        // config read a current block costs
+        if (HostIntegration.anyUsesStartAlias(name) && !SshKeyManager.hasStartEntry(name)) {
+            SshKeyManager.addStartEntry(name);
+        }
     }
 
     /**

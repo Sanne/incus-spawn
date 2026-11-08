@@ -38,7 +38,13 @@ public class SshProxyCommand extends BaseCommand {
 
     @Override
     protected CommandResult doExecute() throws Exception {
-        var incus = dev.incusspawn.RuntimeServices.incus();
+        return run(dev.incusspawn.RuntimeServices.incus(), dev.incusspawn.RuntimeServices.lockManager(), System.getenv());
+    }
+
+    /** {@link #doExecute} with its Incus, its locks and the environment it was started with. */
+    CommandResult run(IncusClient incus, InstanceLockManager locks, java.util.Map<String, String> env)
+            throws InterruptedException {
+        start = starts(start, env);
 
         if (!start) {
             if (!checkInstanceRunning(incus)) {
@@ -50,10 +56,20 @@ public class SshProxyCommand extends BaseCommand {
         // A start prints progress, and stdout is the SSH stream: the guard takes the real stdin and
         // stdout for the connection and sends everything else isx says to stderr (#1720)
         var guard = StdioGuard.install();
-        if (!ensureRunning(incus, dev.incusspawn.RuntimeServices.lockManager())) {
+        if (!ensureRunning(incus, locks)) {
             return CommandResult.valueOf(1);
         }
         return CommandResult.valueOf(relay(incus, guard.protocolIn, guard.protocolOut, TerminalStreams.err()));
+    }
+
+    /**
+     * Whether this connection starts a stopped instance: {@code --start}, unless a host integration's
+     * command made it ({@link dev.incusspawn.ssh.SshKeyManager#NO_START_ENV}). That command runs from
+     * a start preparing the instance, such as herdr adding it (#2038), so it is served as a plain
+     * {@code ssh} is: waiting for that start, or preparing it again, would stall both.
+     */
+    static boolean starts(boolean start, java.util.Map<String, String> env) {
+        return start && !"1".equals(env.get(dev.incusspawn.ssh.SshKeyManager.NO_START_ENV));
     }
 
     /**

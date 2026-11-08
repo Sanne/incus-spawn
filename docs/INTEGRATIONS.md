@@ -33,11 +33,17 @@ Agents still get no credentials in their instance: the proxy on your host adds t
 
 isx adds `agent-1` to herdr as a machine on its first start, and herdr starts its server there.
 `herdr --machine agent-1 agent list` then reaches it.
+When the instance is stopped, connecting to it from herdr starts it.
+
 When you destroy the instance, isx removes the machine from herdr.
 A machine you added to herdr yourself is never removed by isx.
 
 herdr insists on checking a machine's host key, which isx pins on every start.
 A machine added by an older isx reaches its instance again after that instance's next start.
+From then on herdr can start it too.
+
+An open herdr reconnects to its machines by itself, so it starts a stopped instance again within two minutes.
+To keep one stopped, run `herdr machine disable` with the id `herdr machine list` shows, and `herdr machine enable` later.
 
 In the TUI, the instance's details (F3) say isx added it to herdr.
 
