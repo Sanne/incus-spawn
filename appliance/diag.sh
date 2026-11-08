@@ -7,7 +7,8 @@ set -euo pipefail
 #
 # Usage: sudo ./appliance/diag.sh
 
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/incus-spawn"
+# isx's own VM state directory (Environment.vmStateDir), which does not follow XDG_STATE_HOME.
+STATE_DIR="$HOME/.local/state/incus-spawn"
 APPLIANCE_DIR="${APPLIANCE_DIR:-$(dirname "$0")/build}"
 DISK_IMG="$STATE_DIR/disk.img"
 

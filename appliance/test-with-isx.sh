@@ -22,7 +22,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="${APPLIANCE_DIR:-$SCRIPT_DIR/build}"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/incus-spawn"
+# isx's own VM state directory (Environment.vmStateDir), which does not follow XDG_STATE_HOME.
+STATE_DIR="$HOME/.local/state/incus-spawn"
 ISX="${ISX:-isx}"
 KEEP_DATA=0
 [ "${1:-}" = "--keep-data" ] && KEEP_DATA=1

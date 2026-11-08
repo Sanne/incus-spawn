@@ -15,7 +15,8 @@ set -euo pipefail
 #   ./patch-disk.sh -- grep unix.socket /mnt/disk/usr/local/sbin/incus-spawn-vm-init
 #   ./patch-disk.sh -- sed -i 's|old|new|' /mnt/disk/usr/local/sbin/incus-spawn-vm-init
 
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/incus-spawn"
+# isx's own VM state directory (Environment.vmStateDir), which does not follow XDG_STATE_HOME.
+STATE_DIR="$HOME/.local/state/incus-spawn"
 PID_FILE="$STATE_DIR/vm.pid"
 MOUNT_POINT="/mnt/disk"
 

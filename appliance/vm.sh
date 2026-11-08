@@ -9,7 +9,8 @@ set -euo pipefail
 # Usage:  vm.sh start|stop|status|console
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/incus-spawn"
+# isx's own VM state directory (Environment.vmStateDir), which does not follow XDG_STATE_HOME.
+STATE_DIR="$HOME/.local/state/incus-spawn"
 APPLIANCE_DIR="${APPLIANCE_DIR:-$SCRIPT_DIR/build}"
 PID_FILE="$STATE_DIR/vm.pid"
 LOG_FILE="$STATE_DIR/vm.log"
