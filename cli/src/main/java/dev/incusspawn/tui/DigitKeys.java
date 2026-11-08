@@ -14,9 +14,6 @@ import dev.tamboui.tui.event.KeyModifiers;
  */
 final class DigitKeys {
 
-    /** The rule as the context line and the F1 dialog state it. */
-    static final String RULE = "digit = F-key  Alt+digit = ⇧F-key";
-
     private DigitKeys() {
     }
 

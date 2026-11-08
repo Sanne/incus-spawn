@@ -20,5 +20,5 @@
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- tpl-dev  Development tools  Space Mark  digit = F-key  Alt+digit = ⇧F-key
+ tpl-dev  Development tools  Space Mark
 │F1Info │F2Shell│F3Detai│F4Branc│F5Build│F6Renam│F7Stop │F8Destr│F9Actio│F10Quit

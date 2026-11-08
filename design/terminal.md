@@ -522,7 +522,7 @@ A dropped key reads as a timeout rather than a second wait, since a release foll
 **Keyboards without F-keys** (#1824).
 Many keyboards have no F row, or give it to media keys, as MacBooks and 60% boards do.
 So a digit is its F-key, 0 being F10, and Alt with a digit is Shift with that F-key.
-The key bar keeps its F-key labels and draws each one's digit bold, and the context line above it states the rule, `digit = F-key  Alt+digit = ⇧F-key`, whole or not at all, since half of it reads as another rule.
+The key bar keeps its F-key labels and draws each one's digit bold, and the rule is stated only in the F1 dialog, as what to press (`1–9, 0 stand in for F1–F9, F10`): on the context line it was constant noise that confused more than it helped.
 The F1 dialog lists both forms of every key, and on macOS how to make Option send Alt.
 The rule is the same on every keyboard layout.
 A terminal sends a digit as the digit however the layout types it, and Alt as an Esc before it, which tamboui reports as `ALT`.

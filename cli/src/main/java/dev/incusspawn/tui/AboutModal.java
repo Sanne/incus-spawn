@@ -144,19 +144,20 @@ final class AboutModal {
                 shortcutRow("/", "Search / filter", null, null),
                 shortcutRow("g/Home", "Jump to top", "G/End", "Jump to bottom"),
                 Line.styled("", Style.EMPTY),
-                Line.styled("Without F-keys:  " + DigitKeys.RULE, Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
-                text("A digit is its F-key, 0 being F10, and Alt with a"),
-                text("digit is Shift with that F-key, on every keyboard.")));
+                Line.styled("No F-keys? Use the number row instead:", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
+                text("  1–9, 0  stand in for F1–F9, F10        (so 2 = F2, 0 = F10)"),
+                text("  Alt+1–9, Alt+0  stand in for ⇧F1–⇧F10  (so Alt+7 = ⇧F7)")));
         if (source.isMacOS()) {
             lines.add(Line.styled("", Style.EMPTY));
             lines.add(Line.styled("macOS shortcuts:", Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
             lines.add(shortcutRow("Fn+←/→", "Home / End", "Fn+↑/↓", "PgUp / PgDn"));
-            lines.add(text("Alt is Option once the terminal sends it as Alt:"));
-            lines.add(text("\"Use Option as Meta key\" in Terminal.app, \"Esc+\""));
-            lines.add(text("for Option in iTerm2, macos-option-as-alt in Ghostty."));
+            lines.add(text("Alt is the Option key, but only if your terminal is set to send it:"));
+            lines.add(text("  Terminal.app  Preferences > Keyboard > \"Use Option as Meta key\""));
+            lines.add(text("  iTerm2        Preferences > Keys > Left Option key: \"Esc+\""));
+            lines.add(text("  Ghostty       macos-option-as-alt = true in the config"));
         }
 
-        int width = 60;
+        int width = Math.min(76, screen.width());
         int maxHeight = screen.height() - 2;
         int modalHeight = Math.min(lines.size() + 4, maxHeight);
 
@@ -192,9 +193,9 @@ final class AboutModal {
         var keyStr = key != null ? key : "";
         var descStr = desc != null ? desc : "";
         spans.add(Span.styled(String.format("  %-8s", keyStr), Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())));
-        spans.add(Span.styled(String.format("%-20s", descStr), Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
+        spans.add(Span.styled(String.format("%-26s", descStr), Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
         if (shiftKey != null) {
-            spans.add(Span.styled(String.format("%-10s", shiftKey), Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())));
+            spans.add(Span.styled(String.format("%-13s", shiftKey), Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())));
             spans.add(Span.styled(shiftDesc, Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
         }
         return Line.from(spans);
