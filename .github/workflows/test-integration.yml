@@ -951,7 +951,8 @@ jobs:
       - name: Test rootless podman
         run: |
           sg incus-admin -c "isx branch test-podman --from tpl-test-podman"
-          echo "Waiting for container network..."
+          echo "Waiting for agentuser's manager and the container network..."
+          sg incus-admin -c "incus exec test-podman -- bash -s agentuser < .github/scripts/wait-for-user-manager.sh"
           sg incus-admin -c "incus exec test-podman -- bash -c '
             systemctl start systemd-networkd 2>/dev/null
             for i in \$(seq 1 30); do
@@ -969,7 +970,8 @@ jobs:
         run: |
           sg incus-admin -c "isx branch test-podman-rootless --from tpl-test-podman-rootless --no-start"
           sg incus-admin -c "incus start test-podman-rootless"
-          echo "Waiting for container network..."
+          echo "Waiting for agentuser's manager and the container network..."
+          sg incus-admin -c "incus exec test-podman-rootless -- bash -s agentuser < .github/scripts/wait-for-user-manager.sh"
           sg incus-admin -c "incus exec test-podman-rootless -- bash -c '
             systemctl start systemd-networkd 2>/dev/null
             for i in \$(seq 1 30); do
