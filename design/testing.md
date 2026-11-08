@@ -62,6 +62,16 @@ Killing either phase leaves the system as it was; dpkg runs once, after everythi
 A bound with no fallback would only turn a lost job into a failed one, since the same mirror stays slow for the next attempt.
 `WorkflowAptInstallTest` fails on a workflow that runs apt directly, and drives the script against a stand-in `apt-get` that stalls on a named mirror.
 
+**A github.com outage is ridden out, never skipped.**
+For most of an hour GitHub answered release downloads with 503s and 504s and let connections time out, failing the gitleaks install, isx's base-image download and host-distro's HTTPS check on `main` and on unrelated PRs (#2042).
+isx's own `DownloadCache` retries a transient failure for about four minutes, which suits a user but not an outage that long.
+So `allowlist-test` downloads gitleaks with `curl --retry 8 --retry-all-errors`, about four minutes of backoff, and `sha256sum -c` still decides.
+Every CI build of a template from its base image runs through `.github/scripts/net-retry.sh`'s `retry_download_outage`, which runs it again after 60, 120 and 240 seconds only when its output holds `DownloadCache`'s message for retries that ran out (`Download failed:` and `(after N attempts)`).
+Any other failure, a checksum mismatch included, is returned at once, and a rerun verifies its download as the first run did.
+host-distro's check that an HTTPS reply comes back through the host's firewall asks github.com, Cloudflare and Fedora's mirror in three rounds (`https_reply_from_any`).
+Any status from any of them passes, since a reply from any host proves the firewall passes it, and the log names which one answered when github.com did not.
+`NetRetryScriptTest` drives both against stand-in commands, and checks the workflows and scripts call them.
+
 **The test JVM keeps `AESCrypt.makeSessionKey` out of the JIT.**
 CI tests on GraalVM 25, whose JIT now and then gives one AES-256 cipher a wrong key schedule while it deoptimizes the compiled and OSR versions of `com.sun.crypto.provider.AESCrypt.makeSessionKey` during warm-up.
 TLS 1.3 prefers `TLS_AES_256_GCM_SHA384`, so that connection fails with `bad_record_mac` (or `Tag mismatch`, followed by a "record" of zeros, which is the JDK wiping the plaintext it refused).

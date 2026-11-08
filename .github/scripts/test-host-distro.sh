@@ -28,6 +28,8 @@ INSTANCE=host-distro
 # Exit code of 'init' when isx init stopped for a new login: the user was added to incus-admin,
 # and without sg (Arch removed it) nothing in this login can take the group.
 NEEDS_LOGIN=75
+# shellcheck source=SCRIPTDIR/net-retry.sh
+source "$HERE/net-retry.sh"
 
 TESTS=0
 FAIL=0
@@ -126,11 +128,10 @@ loopback_answers() {
     return $ok
 }
 
-# Any HTTP status proves the reply came back through the host's firewall
+# Any HTTP status proves the reply came back through the host's firewall. Hosts on other
+# networks than GitHub's, asked in rounds, so a github.com outage is told apart (#2042).
 https_reply_arrives() {
-    local code
-    code=$(curl -sS -m 20 -o /dev/null -w '%{http_code}' https://github.com/ || true)
-    [ -n "$code" ] && [ "$code" != 000 ]
+    https_reply_from_any https://github.com/ https://www.cloudflare.com/ https://dl.fedoraproject.org/
 }
 
 # What isx init configures on the host: the firewall, the bridge and the default profile
@@ -313,7 +314,7 @@ case "$phase" in
     init)        init ;;
     host-checks) host_checks "$@" ;;
     proxy)       proxy ;;
-    build)       isx build tpl-minimal --yes ;;
+    build)       retry_download_outage isx build tpl-minimal --yes ;;
     instance)    instance ;;
     shell)       shell ;;
     proxy-only)  proxy_only ;;

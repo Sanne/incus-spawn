@@ -106,6 +106,13 @@ A step that adds an apt source (zabbly's Incus) writes it before calling the scr
 `WorkflowAptInstallTest` fails on a workflow that runs `apt-get update` or `install` itself, or calls the script before the checkout.
 Scripts pushed into a guest (`test-host-distro.sh`) are not runner installs and keep their own apt calls.
 
+**A github.com download in CI rides out an outage, never skips its check** (#2042, design/testing.md "Testing").
+The gitleaks install retries with `curl --retry 8 --retry-all-errors` before `sha256sum -c`.
+A template build that downloads a base image runs as `.github/scripts/net-retry.sh retry_download_outage isx build ...` (sourced in `test-host-distro.sh` and `appliance/test-macos-role.sh`), which runs it again only when isx's own download retries ran out.
+host-distro's HTTPS check passes on a reply from github.com or one of two hosts on other networks (`https_reply_from_any`), so a GitHub outage no longer reads as the host blocking HTTPS.
+`NetRetryScriptTest` holds the helpers and their callers, so a new template build in `test-integration.yml` must go through the retry.
+`test-host-distro.sh` needs `net-retry.sh` pushed beside it.
+
 **No CI job boots the appliance under vfkit.**
 Both arches boot under QEMU; this is worth stating precisely, because the runner list makes it look like more:
 

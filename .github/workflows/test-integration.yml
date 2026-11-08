@@ -822,14 +822,14 @@ jobs:
 
       - name: Build templates
         run: |
-          sg incus-admin -c "isx build tpl-minimal --yes"
-          sg incus-admin -c "isx build tpl-test-podman --yes"
-          sg incus-admin -c "isx build tpl-test-podman-rootless --yes"
-          sg incus-admin -c "isx build tpl-test-vm --yes"
-          sg incus-admin -c "isx build tpl-test-accounts --yes"
-          sg incus-admin -c "isx build tpl-test-codex --yes"
-          sg incus-admin -c "isx build tpl-test-mcp --yes"
-          sg incus-admin -c "isx build tpl-test-ssh --yes"
+          sg incus-admin -c "bash .github/scripts/net-retry.sh retry_download_outage isx build tpl-minimal --yes"
+          sg incus-admin -c "bash .github/scripts/net-retry.sh retry_download_outage isx build tpl-test-podman --yes"
+          sg incus-admin -c "bash .github/scripts/net-retry.sh retry_download_outage isx build tpl-test-podman-rootless --yes"
+          sg incus-admin -c "bash .github/scripts/net-retry.sh retry_download_outage isx build tpl-test-vm --yes"
+          sg incus-admin -c "bash .github/scripts/net-retry.sh retry_download_outage isx build tpl-test-accounts --yes"
+          sg incus-admin -c "bash .github/scripts/net-retry.sh retry_download_outage isx build tpl-test-codex --yes"
+          sg incus-admin -c "bash .github/scripts/net-retry.sh retry_download_outage isx build tpl-test-mcp --yes"
+          sg incus-admin -c "bash .github/scripts/net-retry.sh retry_download_outage isx build tpl-test-ssh --yes"
 
       - name: Test published templates have no build credential grant
         run: sg incus-admin -c "bash .github/scripts/test-build-proofs.sh"
@@ -1155,7 +1155,7 @@ jobs:
       # Packages first, then a reboot: an upgraded Arch kernel has no modules for the one running
       - name: Prepare the host
         run: |
-          scripts/distro-vm.sh push "$VM" .github/scripts/test-host-distro.sh .github/scripts/test-instance.sh \
+          scripts/distro-vm.sh push "$VM" .github/scripts/test-host-distro.sh .github/scripts/net-retry.sh .github/scripts/test-instance.sh \
             .github/scripts/test-proxy-only.sh .github/scripts/dump-incus-logs.sh bench/isxbench.py isx-test
           scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh prepare "$SHAPE" </dev/null
           scripts/distro-vm.sh reboot "$VM"
