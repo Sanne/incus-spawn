@@ -127,20 +127,18 @@ The definition itself is left as loaded, so `definition-sha` and `build-source` 
 Swapping the release into the definition made every rebuild stamp a fingerprint the check could never match, so the root stayed "definition changed" and `--out-of-sync` rebuilt the whole chain on every run (#1244).
 So a plain `isx build tpl-minimal` always installs the latest base image.
 Any failure to reach or read the release list leaves the built-in tag in place and the build proceeds.
-An event-driven CI job (`.github/workflows/update-base-image.yml`) keeps that built-in fallback from drifting by opening a PR to bump it whenever the images repo publishes a newer release.
-`Sanne/incus-spawn-images` fires a `base-image-released` `repository_dispatch` (carrying the new tag and the container/VM checksums it just computed), so this repo does not poll.
-A manual `workflow_dispatch` takes the newest release from the images repo's release list as a backstop if a dispatch is ever missed.
+The upstream watch keeps that built-in fallback from drifting: its `base-image` item opens a PR to bump it when the images repo publishes a newer release of the same Fedora line, polled every six hours (design/upstream.md "The model", #2036).
+It replaced the event-driven `update-base-image.yml`, which the images repo woke with a `repository_dispatch` carrying the tag and the checksums it had just computed.
 
 **The bump takes only the tag on trust** (#1678).
 The checksums in `minimal.yaml` are what every base-image download is verified against, and they were merged wrong more than once while the dispatch path copied them from the payload.
-Both events now read every checksum from the release's own `SHA256SUMS` and `SHA256SUMS.v2` (`.github/scripts/base-image-sums.sh`).
+The watch reads every checksum from the release's own `SHA256SUMS` and `SHA256SUMS.v2` (`.github/scripts/base-image-sums.sh`, sourced by the engine's `github-release` source type).
 The names looked up are those `image_url` and `vm_image_url` download, with the tag and arch filled in.
-A release of a newer Fedora moves them first (#1862): the image alias and both URLs' file names go from the built-in's release line, such as `fedora-44`, to the tag's.
-The PR is titled as a move, and a release of an older line stops the run.
+A release of a newer Fedora is an issue for a person, never a PR, since every template rebuilds on it; that bump moves the image alias and both URLs' file names from the built-in's release line, such as `fedora-44`, to the tag's (`release_line`, `move_line`, #1862).
 A missing or malformed sum, or one the two files disagree on, stops the run naming the asset.
-A payload whose checksums differ from the release's also stops it, printing both, since the images repo's release and its dispatch are then out of step.
-The PR lists each checksum beside its asset, with the `gh release download` command that repeats the check.
-`verify-base-image-checksums.yml` checks the four checksums against the release on every PR that changes `minimal.yaml`, a bump by hand included, so the pairing of rootfs, VM disk and arch is checked as well as the digits.
+The PR lists each checksum beside its asset.
+`upstream-verify` checks the four checksums against the release on every PR that changes `minimal.yaml`, a bump by hand included, so the pairing of rootfs, VM disk and arch is checked as well as the digits.
+The watch's own PR must also be exactly the engine's regeneration of the item, or it fails the same check (design/upstream.md "The model").
 
 `isx update-base` manages the pin: it fetches the release list from the GitHub API, retrieves per-architecture container **and VM** SHA256 checksums, and writes them to `~/.config/incus-spawn/base-image-pin.yaml` when pinning a specific version.
 `--latest` (or menu option 1) simply removes that file, restoring build-time latest tracking — it does not itself download anything.
@@ -176,7 +174,7 @@ Incus keeps one image per fingerprint, so the expected file already imported und
 Incus also resolves a fingerprint by prefix, so a checksum that is not a full SHA-256 would match any image starting with it: such a checksum fails the build before anything is looked up.
 An unchecked import by an isx before this recorded no URL, and is imported once more.
 If the request for `SHA256SUMS.v2` fails or returns an error status, `SHA256SUMS` is read instead; a v2 that downloads but does not parse is not read around.
-`update-base-image.yml` points `vm_image_url` at `-vm-direct` in the bump of the first release that has it for both arches, says so in the PR, and refuses a later release without it rather than move the built-in back to the stock image.
+The upstream watch's `base-image` item (`upstream/engine/source-github-release.sh`) points `vm_image_url` at `-vm-direct` in the bump of the first release that has it for both arches, says so in the PR, and refuses a later release without it rather than move the built-in back to the stock image.
 `isx update-base` pins only what the release lists a checksum for on every arch, since a pin is used wherever it is copied: a release without the container image for every arch is not pinned, and one without the VM image the definition names for every arch is pinned without `vm_image_url`, with a warning, so its VM templates start from the Incus image server; the next pin is taken from the definition with no pin applied, so it names the VM image again.
 See the [incus-spawn-images README](https://github.com/Sanne/incus-spawn-images#releasing-a-new-version) for the full release process.
 

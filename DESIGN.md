@@ -148,3 +148,13 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Doctor and build remediations act through isx, never name an `incus` command
   - Support bundles: redaction by construction
   - Secret Scanning in CI
+- [The upstream watch](design/upstream.md)
+  - The model: a manifest, an engine, two workflows and a merge gate
+  - The items
+  - Threat model
+  - Why not Sanne's own token
+  - Why not approving from Actions
+  - Why not GitHub auto-merge
+  - Why not Dependabot
+  - Why not one engine copy per repo
+  - What is never done
