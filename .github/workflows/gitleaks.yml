@@ -81,7 +81,10 @@ jobs:
 
       - name: Install gitleaks ${{ env.GITLEAKS_VERSION }}
         run: |
-          curl -sSfL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          # GitHub has answered this download with 503s, 504s and resets for most of an hour
+          # (#2042): curl retries any error with backoff, about four minutes of pauses and no
+          # new attempt after ten, and the checksum below still decides
+          curl -sSfL --retry 8 --retry-all-errors --retry-max-time 600 --connect-timeout 30 --max-time 300 -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
 

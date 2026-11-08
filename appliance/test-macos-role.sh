@@ -46,6 +46,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=SCRIPTDIR/../.github/scripts/net-retry.sh
+source "$ROOT/.github/scripts/net-retry.sh"
 BUILD_DIR="${1:-}"
 CLI_JAR="${2:-}"
 PROXY_JAR="${3:-}"
@@ -339,7 +341,8 @@ check 'listening' "isx-proxy listens on the VM network's host address"
 
 echo
 echo "-- A template build that runs gh is served the template's account --"
-require 'isx build tpl-minimal --yes > "$WORK/build-minimal.log" 2>&1' "built tpl-minimal through the tunnel" "see build-minimal.log"
+# A github.com outage outlasting isx's own download retries runs it again (#2042)
+require 'retry_download_outage isx build tpl-minimal --yes > "$WORK/build-minimal.log" 2>&1' "built tpl-minimal through the tunnel" "see build-minimal.log"
 # Its status is kept: the failure message's grep runs before require does.
 isx build tpl-macos-role --yes > "$WORK/build-gh.log" 2>&1
 # shellcheck disable=SC2034
