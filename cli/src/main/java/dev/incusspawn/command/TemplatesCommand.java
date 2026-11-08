@@ -156,9 +156,8 @@ public class TemplatesCommand extends BaseCommand {
 
         @Override
         public CommandResult doExecute() throws Exception {
-            name = normalizeName(name);
-
             var defs = ImageDef.loadAll();
+            name = resolveExisting(name, defs.keySet());
             var def = defs.get(name);
             if (def == null) {
                 BuildOutput.error("Template '" + cell(name) + "' not found.",
@@ -282,6 +281,14 @@ public class TemplatesCommand extends BaseCommand {
 
     public static String normalizeName(String input) {
         return input.startsWith("tpl-") ? input : "tpl-" + input;
+    }
+
+    /**
+     * The template an existing name refers to: the name itself when a template has it, since
+     * {@code tpl-} is a convention and not a requirement, else its {@code tpl-} form as a shorthand.
+     */
+    static String resolveExisting(String input, java.util.Set<String> known) {
+        return known.contains(input) ? input : normalizeName(input);
     }
 
     private static String resolveEditor() {
