@@ -37,6 +37,7 @@ prepare() {
             return 1
         fi
     fi
+    incus exec "$instance" -- bash -s agentuser < "$(dirname "${BASH_SOURCE[0]}")/wait-for-user-manager.sh" || return 1
     incus exec "$instance" -- bash -c '
         systemctl start systemd-networkd
         for n in $(seq 1 30); do
@@ -50,6 +51,7 @@ cleanup() {
     incus exec "$instance" -- rm -f /home/agentuser/test-stable-proofs.sh >/dev/null 2>&1 || true
     incus delete -f "$copy" >/dev/null 2>&1 || true
 }
+[ "${BASH_SOURCE[0]}" = "$0" ] || return 0
 trap cleanup EXIT
 # /tmp is cleared on reboot; the helper must survive beside Podman's saved configuration.
 incus file push .github/scripts/test-stable-proofs.sh "$instance/home/agentuser/"
