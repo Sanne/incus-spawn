@@ -38,6 +38,14 @@ The CoW storage backend (btrfs/zfs/lvm) deduplicates unchanged data transparentl
 **Static IP assignment**: Each branch receives a deterministic static IP on the bridge subnet at creation time.
 `StaticIpAllocator` scans all existing instances for claimed `ipv4.address` values on NIC devices and picks the lowest free host address (`.2`–`.254`).
 The IP is set on the Incus NIC device (so Incus is authoritative) and a `systemd-networkd` `.network` file is pushed into the stopped container before start, so the interface comes up statically at boot with no DHCP lease to expire.
+A container does not wait for networkd to apply it (#801).
+networkd is ordered after udev and configures eth0 about 200 ms into boot, while exec answers at about 80 ms, and every branch used to wait out the difference.
+So the first exec after a start, the branch's setup script or the readiness probe of a stopped container's start, applies the file with `ip` (`InstanceNetwork.APPLY_STATIC_ADDRESS`).
+That also gives a cold start what a branch has: its address before the shell is handed over, where it used to win a race against networkd by about 45 ms.
+networkd adopts both when it comes up, since they are what it would have configured: the address is set with `brd +` and the route with `proto static`, without which systemd 262 deletes and re-adds each (docs/dev/PERFORMANCE-NOTES.md "Branch setup: the static address").
+The file stays the one source of truth, so subnet migration, copies and existing instances need nothing.
+Only a file for `eth0` with one address is applied: a VM's matches its NIC by MAC, and DHCP gives it the address before its agent answers.
+`raw.lxc` `lxc.net.0.ipv4.*` keys would be as fast but were rejected: LXC numbers NICs in device order, so an added NIC puts the address on the wrong one, and naming `lxc.net.0` on a masked NIC (airgap) fails the start.
 It is pushed root-owned `0644` explicitly: pushed with the local temp file's `0600`, `systemd-networkd` (which runs as `systemd-network`) could not read it, and only templates that already carried a `10-eth0.network` hid that, since overwriting keeps a file's mode.
 Nothing reserves an address between the listing that finds it free and the write that sets it, so `StaticIpAllocator.claim()` holds a `HostLock` (`~/.cache/incus-spawn/locks/.static-ip.lock`; see "Lifecycle locking") from the listing until the caller's write returns (#815).
 The name is dot-prefixed because the TUI's per-instance locks share that directory as `<instance>.lock`: an instance called `static-ip` would otherwise open, close and delete the claim's file.

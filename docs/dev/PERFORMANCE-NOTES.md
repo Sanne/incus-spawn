@@ -736,3 +736,28 @@ What was decided (Sanne, 2026-10-10, on #1240):
 - **Of the services #1238 listed, only `dnf-makecache.timer` is masked** (incus-spawn-images, `configure-base.sh`, container and VM alike).
   The LVM units have a user in a nested Incus with an LVM pool, and `upower` and `rtkit-daemon` come from templates, rtkit for GUI audio.
 - **Resuming a VM from a stateful snapshot is deferred**; it would need its own design.
+
+## Branch setup: the static address (issue #801)
+
+A branch's setup script used to wait for systemd-networkd to configure the static address isx had already written into `/etc/systemd/network/10-eth0.network`.
+Measured on 2026-11-06 on `main` @ `7c01a242` with base image `fedora-45-v1` (systemd 262.1, iproute 7.0.0), Incus 6.23 on a btrfs pool, in a KVM guest with 8 vCPUs, `tpl-minimal`; medians, with the range in brackets:
+
+| What | Waiting for networkd | Applying the file with `ip` |
+|---|---|---|
+| Guest uptime at the first exec / at the default route | 0.08 s / 0.235 s [0.22–0.29] | – |
+| `incus start` return to address and default route (n=10) | 252 ms [239–276] | 56 ms [52–66] |
+| Branch setup exec, `bench/trace-branch.sh` | 283 ms [229–297] (n=20) | 83.5 ms [75–89] (n=10) |
+| `isx branch` to prompt, JVM | 1448 ms [1323–1543] | 1244 ms [1217–1317] |
+
+- **The wait was boot ordering.**
+  networkd is ordered after `systemd-udevd` and was active about 226 ms into boot.
+  The script's `systemctl start systemd-networkd` failed at once in 10 of 10 runs, since D-Bus is not up at the first exec.
+- **networkd adopts what `ip` set only when it is identical** (`ip -ts monitor address route`, five runs per variant).
+  With plain `ip addr replace` and `ip route replace default`, it deleted and re-added the address (0.20 ms) and the route (0.35 ms).
+  With `brd +` on the address and `proto static` on the route, it deleted neither, in 5 of 5.
+- **`raw.lxc` with `lxc.net.0.ipv4.*` was as fast (50 ms) and was rejected.**
+  With an extra NIC device the address landed on `eth1` as well, and with the NIC masked (airgap) the start failed.
+- **VMs have nothing to gain.**
+  DHCP gave the reserved address about 1.5 s before `incus-agent` was up, so their first exec already sees it.
+- **A cold start won its race by little.**
+  A native `isx shell` of a stopped container handed over at uptime 0.27–0.29 s, against the route at 0.22–0.29 s, so its probe now applies the address too.

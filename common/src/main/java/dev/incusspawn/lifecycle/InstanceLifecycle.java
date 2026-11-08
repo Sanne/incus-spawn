@@ -707,7 +707,12 @@ public final class InstanceLifecycle {
                                       CompletableFuture<List<ProofToken.Placeholder>> placeholders,
                                       Output out) {
         var ssh = RuntimeSetup.hasSshCapability(instance);
-        var guestScript = InstanceSecret.GUEST_SCRIPT + (ssh ? RuntimeSetup.sshStartScript() : "");
+        // A container's address before the shell, as a branch has it (#801): exec answers before
+        // networkd is up. First, so a slow secret delivery or MCP registration does not delay it
+        var applyAddress = machineType == MachineType.CONTAINER && !NetworkMode.isAirgapped(instance);
+        var guestScript = (applyAddress ? InstanceNetwork.APPLY_STATIC_ADDRESS + "\n" : "")
+                + InstanceSecret.GUEST_SCRIPT
+                + (ssh ? RuntimeSetup.sshStartScript() : "");
         var answer = new String[1];
         var booted = withCurrentProofs(incus, name, secret, current -> {
             answer[0] = incus.waitForReady(name, machineType, guestScript,
