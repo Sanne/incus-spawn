@@ -295,7 +295,7 @@ class TuiDigitKeysTest {
         press(tui, KeyEvent.ofKey(KeyCode.F1), KeyEvent.ofKey(KeyCode.END));
         var screen = TuiSnapshot.toText(TuiSnapshot.render(80, 60, tui::render));
         assertTrue(screen.contains("No F-keys? Use the number row instead:"), screen);
-        assertTrue(screen.contains("1–9, 0  stand in for F1–F9, F10"), screen);
+        assertTrue(screen.contains("1–9, 0          stand in for F1–F9, F10"), screen);
         assertTrue(screen.contains("Alt+1–9, Alt+0  stand in for ⇧F1–⇧F10"), screen);
     }
 
