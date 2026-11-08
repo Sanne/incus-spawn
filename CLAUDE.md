@@ -41,10 +41,10 @@ Probing instances, running package managers and reading build output by hand fil
 **Base-image checksums are verified against the release, never trusted.**
 The `image_sha256` and `vm_image_sha256` values in `common/src/main/resources/images/minimal.yaml` are what makes a base-image download safe, so a wrong one is either a broken install or a silently unverified image.
 They have been wrong on `main` more than once -- most recently `fedora-44-20261001`, merged wrong in `99d8d9dc` and repaired in `cf7be662`.
-The cause was structural: the `repository_dispatch` path of `update-base-image.yml` copied the sums from the payload the images repo sent.
-Both paths now derive them from the release's own sums files and stop on a payload that disagrees, and `verify-base-image-checksums.yml` checks all four on every PR that changes `minimal.yaml` (#1678).
-**Never merge a base-image bump whose `verify-base-image-checksums` job did not run or did not pass.**
-Mind that the pairing is as easy to get wrong as the digits (`-vm` is the VM disk, the bare name is the container rootfs, and each has an x86_64 and an aarch64); the job checks it, and its log and the bump's PR give the command to repeat the check:
+The cause was structural: the `repository_dispatch` path of the retired `update-base-image.yml` copied the sums from the payload the images repo sent.
+The upstream watch (`upstream-watch.yml`, item `base-image` of `upstream/manifest.yaml`) now derives them from the release's own sums files, and `upstream-verify` checks all four against the release on every PR that changes `minimal.yaml`, a bump by hand included (#1678, #2036).
+**Never merge a base-image bump whose `upstream-verify` job did not run or did not pass.**
+Mind that the pairing is as easy to get wrong as the digits (`-vm` is the VM disk, the bare name is the container rootfs, and each has an x86_64 and an aarch64); the check holds it, its log and the bump's PR list each checksum beside its asset, and this command repeats the check:
 
 ```shell
 gh release download <tag> -R Sanne/incus-spawn-images -p SHA256SUMS -O -
@@ -54,6 +54,11 @@ Four lines, four fields, and every one has to match the asset it names.
 When the bump moves `vm_image_url` to `-vm-direct.tar.xz` (its PR says `VM image: direct`), the two VM sums come from `SHA256SUMS.v2` instead (`-p SHA256SUMS.v2`), which lists those as well as the four.
 Fedora 45 releases publish `SHA256SUMS.v2` alone (#1862), so for them every sum comes from it.
 The same applies to a tool download added to `ToolDef` or a tool YAML, to the appliance kernel's `KERNEL_SHA256` in `appliance/kernel/build-kernel.sh` (from kernel.org's signed `sha256sums.asc`, which `appliance/kernel/update-kernel-pin.sh` verifies against the committed autosigner key: `bump` writes the pin, and `kernel-pin-signed.yml` fails a wrong one with `main`'s copy of the script and key, never the PR's), to `INCUS_SHA512` in `appliance/build.sh` (from Alpine's `incus-feature` APKBUILD), and to its `ALPINE_SHA256` per arch (from the release's `.sha256` file, its `.asc` signature checked, #2045): take the checksum from the publisher, never from a build log or another PR.
+The `idea-backend` pin (`common/src/main/resources/tools/idea-backend.yaml`) is bumped by the watch the same way, from JetBrains' products API and the `.sha256` beside each tarball.
+
+**The upstream watch is the one place a pin moves by itself** (#2036).
+`upstream/manifest.yaml` declares each watched item, `upstream/engine` proposes a bump PR as the `isx-upstream[bot]` app for a `mechanical` item and an issue for a `judgement` one, `upstream-verify` re-derives every PR's pins from the publisher and requires an app PR to be exactly the engine's regeneration, and only such a PR may the bot merge.
+The mechanics and the threat model are in design/upstream.md, the CI jobs in `.claude/rules/ci.md`, and what Sanne sets up by hand in [docs/dev/UPSTREAM-SETUP.md](docs/dev/UPSTREAM-SETUP.md).
 
 **Latency on the branch/start/shell path is never noise.**
 A container starts in well under a second, so a few milliseconds or a handful of redundant Incus round trips are a real share of the wait.

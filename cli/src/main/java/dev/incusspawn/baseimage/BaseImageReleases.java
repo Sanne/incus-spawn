@@ -214,8 +214,9 @@ public final class BaseImageReleases {
     /**
      * The names a release {@code tag} is taken under, given {@code current}, the names of the
      * release {@code currentTag}. A release of another line has its assets named for that line
-     * (#1967), so the alias and both URLs' file names move to it, as {@code update-base-image.yml}
-     * moves them for a bump; within one line, or when either tag names no line, they stay as they are.
+     * (#1967), so the alias and both URLs' file names move to it, as {@code move_line} in
+     * {@code .github/scripts/base-image-sums.sh} moves them for a bump to another line; within one
+     * line, or when either tag names no line, they stay as they are.
      *
      * @throws IllegalArgumentException when a name does not hold the current line exactly once,
      *         so it cannot be moved without guessing; the message says which

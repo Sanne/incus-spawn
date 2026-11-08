@@ -76,7 +76,7 @@ When the root def is unpinned (`pinned: false`), `BuildCommand.resolveTrackedBas
 It never rewrites the definition: `definition-sha` and `build-source` fingerprint it as loaded, the tracked tag goes in `build-source`'s `trackedImageTag`, and a newer release being published does not mark the root as changed (#1244).
 Any network/API failure falls back to the built-in tag with a `note()`.
 `isx update-base` only manages the *pin* -- pinning writes `~/.config/incus-spawn/base-image-pin.yaml` (`BaseImagePin`) with the selected release's `image`, URLs, tag and both `image_sha256`+`vm_image_sha256`; `--latest`/menu option 1 just deletes it to resume build-time tracking (it downloads nothing).
-A tag of another release line is pinned under that line's names (`BaseImageReleases.namesFor`, #1967): the alias and both URLs' file names move from the definition's line to the tag's, as `update-base-image.yml` moves them for a bump, in either direction, and a name that does not hold the line exactly once is refused rather than guessed.
+A tag of another release line is pinned under that line's names (`BaseImageReleases.namesFor`, #1967): the alias and both URLs' file names move from the definition's line to the tag's, as `move_line` in `.github/scripts/base-image-sums.sh` moves them for a bump to another line, in either direction, and a name that does not hold the line exactly once is refused rather than guessed.
 `ImageDef` applies the pin to the trusted `tpl-minimal` before the project layer, setting `pinned`, so every other field still comes from the definition in effect (#1563).
 A pin taken from another release repository than the definition's is ignored with a warning, and one that cannot be read is a parse failure, so `isx build` refuses.
 A user `minimal.yaml` with `pinned: true`, only the keys older `isx update-base` wrote, and the built-in's masks and removals where it lists them is a legacy pin (`BaseImagePin.isLegacyPin`): `isx update-base` removes it when it pins or unpins, `isx build` notes it, and any other `minimal.yaml` is never touched.
@@ -86,12 +86,11 @@ A tracked release without the definition's VM image keeps the VM on the built-in
 `BuildCommand.vmImageAlias` picks the VM alias by file: the stock `-vm.tar.xz` under `<image>-vm`, which isx releases before #1255 share, and `-vm-direct.tar.xz` under `<image>-vm-direct`, which they never read.
 Before downloading, an image whose fingerprint is the expected checksum, imported by the same project, is aliased as it is, since Incus keeps one image per fingerprint.
 Incus resolves a fingerprint by prefix, so `downloadAndAliasImage` refuses a checksum that is not 64 hex digits before it looks anything up.
-An event-driven CI job (`.github/workflows/update-base-image.yml`) opens a PR to bump the built-in fallback when the images repo publishes a newer release.
-The images repo (`Sanne/incus-spawn-images`) fires a `base-image-released` `repository_dispatch` carrying the tag + container/VM checksums, so the consumer does not poll (a manual `workflow_dispatch` backstop takes the newest release from the release list if a dispatch is missed).
-Either way only the tag is taken as given: every checksum comes from the release's `SHA256SUMS`/`SHA256SUMS.v2` for the names the definition's URLs download, and a payload that disagrees stops the run (`.github/scripts/base-image-sums.sh`, #1678).
-A release of a newer Fedora moves the image alias and both URLs' file names to its own release line first (`release_line`, `move_line`, #1862); an older line stops the run.
+The upstream watch (`.github/workflows/upstream-watch.yml`, item `base-image` of `upstream/manifest.yaml`, #2036) opens a PR to bump the built-in fallback when the images repo (`Sanne/incus-spawn-images`) publishes a newer release of the same Fedora line, polled every six hours (design/upstream.md "The model").
+Only the tag is taken as given: every checksum comes from the release's `SHA256SUMS`/`SHA256SUMS.v2` for the names the definition's URLs download (`.github/scripts/base-image-sums.sh`, sourced by `upstream/engine/source-github-release.sh`, #1678).
+A release of a newer Fedora opens an issue instead of a PR, since every template rebuilds on it; `release_line` and `move_line` move the image alias and both URLs' file names to the tag's line when a person makes that bump (#1862).
 Fedora 45 releases publish `SHA256SUMS.v2` alone, so `fetch_release_sums` needs only one of the two files.
-`verify-base-image-checksums.yml` checks `minimal.yaml`'s four checksums against the release on every PR that changes it.
+`upstream-verify` checks `minimal.yaml`'s four checksums against the release on every PR that changes it, and requires the watch's own PR to be exactly the engine's regeneration.
 This tracking behavior is unrelated to `INIT_VERSION`.
 
 **DNF output and parallelism**: dnf steps are one live step of the output seam (`BuildProgress.runStep`, #1791) instead of flooding the terminal -- so isx's own warnings stay visible.
