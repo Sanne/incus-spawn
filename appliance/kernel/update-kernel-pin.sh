@@ -13,8 +13,13 @@ set -euo pipefail
 #   pinned print KERNEL_VERSION as this script reads it
 #   eol    print the pinned series when kernel.org's releases.json marks it
 #          end of life or no longer lists it, nothing otherwise
+#   releases [<major>]
+#          print every version of that major (default: the pinned one) the
+#          signed file lists a tarball for, one per line, oldest first
+#   sum <version>
+#          print the signed sum of linux-<version>.tar.xz, or fail
 #
-# Usage:  ./update-kernel-pin.sh check [<build-kernel.sh>] | bump | pinned | eol
+# Usage:  ./update-kernel-pin.sh check [<build-kernel.sh>] | bump | pinned | eol | releases [<major>] | sum <version>
 #
 # Every sum comes out of the signed file, and only out of the part gpgv reports
 # as signed: never from a downloaded tarball, a build log or a PR. The file is
@@ -79,7 +84,7 @@ fetch() {
 # made by AUTOSIGNER_FPR's primary key; text outside the signed block never
 # reaches its --output.
 signed_sums() {
-    fetch "https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/sha256sums.asc" "$WORK/sums.asc"
+    fetch "https://cdn.kernel.org/pub/linux/kernel/v${1:-$MAJOR}.x/sha256sums.asc" "$WORK/sums.asc"
     mkdir -m 700 "$WORK/gnupg"
     gpg --homedir "$WORK/gnupg" --batch --quiet --dearmor < "$KEY" > "$WORK/keyring.gpg"
     if ! gpgv --homedir "$WORK/gnupg" --keyring "$WORK/keyring.gpg" --status-fd 3 \
@@ -155,8 +160,24 @@ case "${1:-}" in
                     | if .iseol then "eol" else "live" end] | first // "gone"' "$WORK/releases.json")"
         [ "$state" = live ] || echo "$SERIES"
         ;;
+    releases)
+        # The upstream engine's view of kernel.org (upstream/engine/source-kernel-org.sh): every
+        # version the signed file speaks for, so a series' newest and a new series both come from it.
+        [[ "${2:-$MAJOR}" =~ ^[0-9]+$ ]] || { echo "ERROR: not a major version: '${2:-}'" >&2; exit 1; }
+        signed_sums "${2:-$MAJOR}" > "$WORK/body"
+        awk '$1 ~ /^[0-9a-f]{64}$/ && $2 ~ /^linux-[0-9.]+\.tar\.xz$/ {
+                v = $2; sub(/^linux-/, "", v); sub(/\.tar\.xz$/, "", v); print v
+             }' "$WORK/body" | sort -uV
+        ;;
+    sum)
+        [[ "${2:-}" =~ ^[0-9]+(\.[0-9]+)+$ ]] || { echo "ERROR: not a kernel version: '${2:-}'" >&2; exit 1; }
+        signed_sums "${2%%.*}" > "$WORK/body"
+        sum="$(sum_for "$WORK/body" "$2")"
+        [ -n "$sum" ] || { echo "ERROR: linux-$2.tar.xz is not in kernel.org's signed sha256sums.asc" >&2; exit 1; }
+        echo "$sum"
+        ;;
     *)
-        echo "Usage: $0 check [<build-kernel.sh>] | bump | pinned | eol" >&2
+        echo "Usage: $0 check [<build-kernel.sh>] | bump | pinned | eol | releases [<major>] | sum <version>" >&2
         exit 2
         ;;
 esac

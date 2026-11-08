@@ -84,11 +84,12 @@ class KernelPinUpdateTest {
     void setUp() throws IOException {
         served = Files.createDirectory(dir.resolve("served"));
         var bin = Files.createDirectory(dir.resolve("bin"));
-        // Serves the file named like the URL's last segment to curl's -o.
+        // Serves the file named like the URL's last segment to curl's -o, and logs every URL asked for.
         Files.writeString(bin.resolve("curl"), """
                 #!/bin/bash
                 out=""; url=""
                 while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift ;; https://*) url=$1 ;; esac; shift; done
+                printf '%s\\n' "$url" >> "$REQUESTS"
                 [ -f "$SERVED/${url##*/}" ] || exit 22
                 cp "$SERVED/${url##*/}" "$out"
                 """);
@@ -283,6 +284,66 @@ class KernelPinUpdateTest {
         assertEquals("7.2", script(copy, "eol").output.strip());
     }
 
+    /**
+     * {@code releases} is the upstream engine's view of kernel.org ({@code source-kernel-org.sh}):
+     * every tarball version the signed file speaks for, oldest first, so a series' newest and a new
+     * series both come out of it. Patches and ChangeLogs are not releases, and a major that is not
+     * a number is refused before anything is fetched.
+     */
+    @Test
+    void releasesListsEveryVersionTheSignedFileSpeaksForOldestFirst() throws Exception {
+        var copy = install("7.2.9", sum(9), testFpr);
+        serveSigned("signer", sums("7.20.1", "7.2.10", "7.3", "7.2.2", "7.2.9")
+                + sum(11) + "  patch-7.2.11.xz\n" + sum(12) + "  ChangeLog-7.2.12\n");
+
+        var seven = script(copy, "releases", "7");
+        assertEquals(0, seven.exit, seven.output);
+        assertEquals(List.of("7.2.2", "7.2.9", "7.2.10", "7.3", "7.20.1"), seven.output.strip().lines().toList());
+        assertEquals(List.of("https://cdn.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc"), requested());
+
+        var six = script(copy, "releases", "6");
+        assertEquals(0, six.exit, six.output);
+        assertEquals("https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc", requested().getLast(),
+                "an explicit major names that major's signed file");
+
+        var pinned = script(copy, "releases");
+        assertEquals(0, pinned.exit, pinned.output);
+        assertEquals(seven.output, pinned.output, "with no major, the pinned one");
+        assertEquals("https://cdn.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc", requested().getLast());
+
+        var before = requested().size();
+        var bad = script(copy, "releases", "7.2");
+        assertNotEquals(0, bad.exit, bad.output);
+        assertTrue(bad.output.contains("not a major version"), bad.output);
+        assertEquals(before, requested().size(), "a refused major fetches nothing");
+    }
+
+    /**
+     * {@code sum} is how the engine takes one version's sum from the signed file: present, it is
+     * the sum; absent, a failure, never an empty line a caller could take for a value; and a
+     * version that is not one is refused before the file is fetched.
+     */
+    @Test
+    void sumPrintsTheSignedSumOfOneVersionOrFails() throws Exception {
+        var copy = install("7.2.9", sum(9), testFpr);
+        serveSigned("signer", sums("7.2.9", "7.2.10"));
+
+        var present = script(copy, "sum", "7.2.10");
+        assertEquals(0, present.exit, present.output);
+        assertEquals(sumOf("7.2.10"), present.output.strip());
+        assertEquals(List.of("https://cdn.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc"), requested());
+
+        var absent = script(copy, "sum", "7.2.99");
+        assertNotEquals(0, absent.exit, absent.output);
+        assertTrue(absent.output.contains("linux-7.2.99.tar.xz is not in kernel.org's signed sha256sums.asc"), absent.output);
+
+        var before = requested().size();
+        var nonsense = script(copy, "sum", "nonsense");
+        assertNotEquals(0, nonsense.exit, nonsense.output);
+        assertTrue(nonsense.output.contains("not a kernel version"), nonsense.output);
+        assertEquals(before, requested().size(), "a refused version fetches nothing");
+    }
+
     @Test
     void theCommittedKeyIsThePinnedFingerprintAndNothingElse() throws Exception {
         var shown = gpg("--with-colons", "--import-options", "show-only", "--import",
@@ -315,7 +376,14 @@ class KernelPinUpdateTest {
         var pb = new ProcessBuilder(cmd);
         pb.environment().put("PATH", dir.resolve("bin") + ":" + System.getenv("PATH"));
         pb.environment().put("SERVED", served.toString());
+        pb.environment().put("REQUESTS", dir.resolve("requests.log").toString());
         return run(pb);
+    }
+
+    /** Every URL the stub curl was asked for so far, in order. */
+    private List<String> requested() throws IOException {
+        var log = dir.resolve("requests.log");
+        return Files.exists(log) ? Files.readAllLines(log) : List.of();
     }
 
     private void serveSigned(String signer, String body) throws Exception {
