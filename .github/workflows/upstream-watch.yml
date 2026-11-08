@@ -1,0 +1,159 @@
+name: Upstream watch
+
+# The upstream watch (#2036, design/upstream.md): for every item of upstream/manifest.yaml, the engine
+# in upstream/engine asks the publisher for its releases, and either prepares a bump commit whose
+# every value is the publisher's, verified (a mechanical item), or writes an issue for a person (a
+# judgement item, a new series, a pin the publisher no longer confirms). Prepared commits are pushed
+# and their PRs opened as the isx-upstream GitHub App, one PR per item on upstream/<item>; the
+# upstream-verify check then regenerates each PR from main's engine, and only a PR that is exactly
+# that may be approved and merged by the bot (isx-workflow, "Upstream bumps").
+#
+# Isolation: schedule and workflow_dispatch only, never a PR, issue or comment event; main of
+# Sanne/incus-spawn only; the app's id and key are environment secrets of `upstream-watch`, whose
+# branch policy admits main alone, read by exactly one step of a job of its own that downloads
+# nothing, on another runner than the one that fetched publisher data; nothing from an upstream
+# reaches a `run:` line through `${{ }}`; the checkouts keep no credential; issues are opened with
+# the run's own token.
+
+on:
+  schedule:
+    - cron: '41 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      item:
+        description: 'One item of upstream/manifest.yaml to plan (default: all)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-watch
+  cancel-in-progress: false
+
+jobs:
+  # Planning downloads and untars publisher data, so it runs with no credential of Sanne's in reach:
+  # steps of one job share a runner, and ordering them is not isolation. The plan (the decisions,
+  # the issues to open and each prepared commit as a bundle) goes to the publish job as an artifact.
+  plan:
+    if: github.repository == 'Sanne/incus-spawn' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    outputs:
+      login: ${{ steps.app.outputs.login }}
+      email: ${{ steps.app.outputs.email }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Validate the manifest
+        run: upstream/engine/upstream.sh validate
+
+      # The app's user id, for commits GitHub attributes to it (the ruleset asks an extra approval
+      # for unattributed changes). A public read, with the run's own token.
+      - name: Resolve the app identity
+        id: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          login="$(yq -r '.app.login' upstream/manifest.yaml)"
+          [[ "$login" =~ ^[A-Za-z0-9-]+\[bot\]$ ]] || { echo "::error::manifest app.login is not an app login"; exit 1; }
+          enc="${login//\[/%5B}"; enc="${enc//\]/%5D}"
+          id="$(gh api "users/$enc" --jq .id)"
+          [[ "$id" =~ ^[0-9]+$ ]] || { echo "::error::no user id for $login"; exit 1; }
+          {
+            echo "login=$login"
+            echo "email=$id+$login@users.noreply.github.com"
+          } >> "$GITHUB_OUTPUT"
+
+      # Every download and signature check happens here, with the run's read-only token for GitHub's
+      # own API (release sums files, this repository's open PRs) and no credential of Sanne's anywhere.
+      - name: Plan every item
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_LOGIN: ${{ steps.app.outputs.login }}
+          APP_EMAIL: ${{ steps.app.outputs.email }}
+          ONLY: ${{ inputs.item }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$ONLY" ]]; then
+            yq -e ".items[\"$ONLY\"]" upstream/manifest.yaml > /dev/null 2>&1 \
+              || { echo "::error::no item '$ONLY' in upstream/manifest.yaml"; exit 1; }
+            export UPSTREAM_ONLY="$ONLY"
+          fi
+          upstream/engine/upstream.sh plan "$RUNNER_TEMP/plan"
+
+      - name: Open issues for what needs a person
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN: ${{ runner.temp }}/plan
+        run: upstream/engine/upstream.sh issues "$PLAN"
+
+      - name: Hand the plan to the publish job
+        uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: upstream-plan
+          path: |
+            ${{ runner.temp }}/plan/plan.tsv
+            ${{ runner.temp }}/plan/*.json
+            ${{ runner.temp }}/plan/*.bundle
+          retention-days: 1
+
+  # The one job in the upstream-watch environment, so the only one that can read the app's key. It
+  # fetches nothing from an upstream: it pushes the prepared commits and opens or refreshes their
+  # PRs, through a one-hour installation token minted here for this repository, with contents and
+  # pull_requests write only.
+  publish:
+    needs: plan
+    if: github.repository == 'Sanne/incus-spawn' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    environment: upstream-watch
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          # publish compares a bump against the open PR's merge base, which a shallow clone lacks.
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v6
+        with:
+          name: upstream-plan
+          path: ${{ runner.temp }}/plan
+
+      - name: Push the bumps and open their PRs as the app
+        env:
+          UPSTREAM_APP_ID: ${{ secrets.UPSTREAM_APP_ID }}
+          UPSTREAM_APP_PRIVATE_KEY: ${{ secrets.UPSTREAM_APP_PRIVATE_KEY }}
+          REPO: ${{ github.repository }}
+          APP_LOGIN: ${{ needs.plan.outputs.login }}
+          APP_EMAIL: ${{ needs.plan.outputs.email }}
+          PLAN: ${{ runner.temp }}/plan
+        run: |
+          set -euo pipefail
+          GH_TOKEN="$(upstream/engine/app-token.sh "$REPO")"
+          echo "::add-mask::$GH_TOKEN"
+          export GH_TOKEN
+          unset UPSTREAM_APP_PRIVATE_KEY UPSTREAM_APP_ID
+          upstream/engine/upstream.sh publish "$PLAN"
+
+  # One issue for a failing run, opened on the first failure and closed by the next good one: the
+  # run's status is both jobs', judged once, after both, so a plan that passed never closes the
+  # issue a publish that failed is about to open (the review of #2047).
+  track:
+    needs: [plan, publish]
+    if: always() && github.repository == 'Sanne/incus-spawn' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Track a failing run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ (needs.plan.result == 'success' && needs.publish.result == 'success') && 'success' || 'failure' }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: upstream/engine/upstream.sh track "$STATUS" "$RUN"
