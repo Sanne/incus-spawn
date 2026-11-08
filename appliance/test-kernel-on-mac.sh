@@ -46,7 +46,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Whose PRs the Mac boots: their images are built from branches only they push (#1385). Apart
 # from VERIFIERS, which says whose boots the check takes and may come to name a Mac-only login.
-TRUSTED="Sanne Sanne-ai-bot"
+# The upstream watch's app (upstream/manifest.yaml app.login, #2036) as gh's --json author renders
+# it, app/<slug>: its PRs are booted only once upstream-verify is green at the head, which
+# isx-workflow's bin/mac-pick.sh requires before it lists one, since the boot runs the PR's build.
+APP_SLUG=isx-upstream
+TRUSTED="Sanne Sanne-ai-bot app/$APP_SLUG"
 PR="${1:?Usage: $0 <pr-number>}"
 # A number: it names the record's PR and the directory a failed run's logs are kept in.
 [[ "$PR" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: $PR is not a PR number" >&2; exit 1; }
@@ -82,6 +86,19 @@ read -r head author owner <<< "$(gh pr view "$PR" -R "$REPO" --json headRefOid,a
 # and the boot shares this user's home, gh token included, with the guest.
 if ! listed "$author" "$TRUSTED" || ! listed "$owner" "$TRUSTED"; then
     die "PR #$PR is by $author from $owner's repository: the Mac boots only PRs by and from $TRUSTED. Sanne re-pushes an external kernel change as her own branch to have it booted."
+fi
+# The app's PR is booted only once upstream-verify proved this very head is main's engine's own
+# regeneration (#2036): its image is the PR's build, and a stolen app key could push any code to
+# upstream/kernel. The check run at $head, by GitHub Actions, not a rollup read earlier by whoever
+# picked the PR: a push between the pick and this boot would otherwise boot an unverified head.
+# --paginate prints one count per page, and a head has more than one passing run when publish
+# refreshed the PR (upstream-verify runs on the body edit too), so the counts are summed and one
+# or more passes.
+if [ "$author" = "app/${APP_SLUG}" ]; then
+    verified="$(gh api --paginate "repos/$REPO/commits/$head/check-runs" \
+        --jq '[(try .check_runs catch []) // [] | .[] | select(.name == "upstream-verify" and .conclusion == "success" and .app.slug == "github-actions")] | length' \
+        | awk '{ s += $1 } END { print s + 0 }')"
+    [ "$verified" -ge 1 ] 2> /dev/null || die "PR #$PR by $author: upstream-verify has not passed on $head, so the Mac does not boot its build"
 fi
 echo "==> PR #$PR at $head"
 

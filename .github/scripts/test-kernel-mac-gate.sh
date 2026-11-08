@@ -320,6 +320,29 @@ M_FIRST=$(merge "$BASE" "$FIRST")
 record first 7.3.0 0 "$(printf 'commit %s\n' "$M_FIRST")" "$M_FIRST" "$FIRST"
 [[ "$(posted first 'pr comment')" == *"kernel release: 7.3.0"* ]] || { cat "$WORK/rec-first/out" >&2; fail "first: 7.3.0 was not taken for 7.3"; }
 
+# The upstream watch's app (#2036): its PR is booted only with upstream-verify passed on this head by
+# GitHub Actions; without that check run, or with one from another app, the Mac refuses.
+AUTHOR=app/isx-upstream record app-unverified 7.2.10 0
+refused app-unverified "upstream-verify has not passed on"
+mkdir -p "$WORK/rec-app-other"; printf '{"check_runs": [{"name": "upstream-verify", "conclusion": "success", "app": {"slug": "someone-else"}}]}' > "$WORK/rec-app-other/commits_${BUMP}_check-runs.json"
+AUTHOR=app/isx-upstream record app-other 7.2.10 0
+refused app-other "upstream-verify has not passed on"
+mkdir -p "$WORK/rec-app-verified"; printf '{"check_runs": [{"name": "upstream-verify", "conclusion": "success", "app": {"slug": "github-actions"}}]}' > "$WORK/rec-app-verified/commits_${BUMP}_check-runs.json"
+AUTHOR=app/isx-upstream record app-verified 7.2.10 0
+[ "$(cat "$WORK/rec-app-verified/exit")" = 0 ] || { cat "$WORK/rec-app-verified/out" >&2; fail "app-verified: a verified app PR was not booted"; }
+[ -n "$(posted app-verified 'pr comment')" ] || fail "app-verified: no record posted"
+# A refreshed PR has two passing runs at the head, and a head with many check runs answers in two
+# pages (one count per page): both boot.
+mkdir -p "$WORK/rec-app-twice"; printf '{"check_runs": [{"name": "upstream-verify", "conclusion": "success", "app": {"slug": "github-actions"}}, {"name": "upstream-verify", "conclusion": "success", "app": {"slug": "github-actions"}}]}' > "$WORK/rec-app-twice/commits_${BUMP}_check-runs.json"
+AUTHOR=app/isx-upstream record app-twice 7.2.10 0
+[ "$(cat "$WORK/rec-app-twice/exit")" = 0 ] || { cat "$WORK/rec-app-twice/out" >&2; fail "app-twice: a PR with two passing runs was refused"; }
+mkdir -p "$WORK/rec-app-paged"; printf '{"check_runs": [{"name": "unit-tests", "conclusion": "success", "app": {"slug": "github-actions"}}]}\n{"check_runs": [{"name": "upstream-verify", "conclusion": "success", "app": {"slug": "github-actions"}}]}' > "$WORK/rec-app-paged/commits_${BUMP}_check-runs.json"
+AUTHOR=app/isx-upstream record app-paged 7.2.10 0
+[ "$(cat "$WORK/rec-app-paged/exit")" = 0 ] || { cat "$WORK/rec-app-paged/out" >&2; fail "app-paged: a passing run on the second page was refused"; }
+mkdir -p "$WORK/rec-app-paged-none"; printf '{"check_runs": [{"name": "unit-tests", "conclusion": "success", "app": {"slug": "github-actions"}}]}\n{"check_runs": [{"name": "upstream-verify", "conclusion": "failure", "app": {"slug": "github-actions"}}]}' > "$WORK/rec-app-paged-none/commits_${BUMP}_check-runs.json"
+AUTHOR=app/isx-upstream record app-paged-none 7.2.10 0
+refused app-paged-none "upstream-verify has not passed on"
+
 # The Mac boots no image an external PR built, with no way around it (#1385).
 AUTHOR=someone record external 7.2.10 0
 refused external "the Mac boots only PRs by and from Sanne Sanne-ai-bot"

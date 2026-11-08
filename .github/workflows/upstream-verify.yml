@@ -1,0 +1,39 @@
+name: Upstream verify
+
+# The upstream-verify check (#2036, design/upstream.md): on every PR, for each item of
+# upstream/manifest.yaml whose files the PR changes, the pinned values must be what the publisher
+# gives the pinned version (the signed sum, the release's sums file, the .sha256 beside the tarball,
+# re-hashed), a bump by hand and one by the watch alike. A PR by the upstream-watch app must be,
+# whole, main's engine's regeneration of that one item at that version: nothing else may differ.
+# It runs on every PR, so it can be a required check, and passes at once when no item is touched.
+#
+# pull_request_target, not pull_request: a check that decides what the bot may merge must not run
+# the PR's own copy of itself. This runs main's engine and manifest with a read-only token and no
+# secrets, and reads the PR only as git trees and through the API. Never add a step here that runs,
+# builds or sources anything from the PR.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  upstream-verify:
+    name: upstream-verify
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify the PR's pins against their publishers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: upstream/engine/upstream.sh verify-pr "$PR"
