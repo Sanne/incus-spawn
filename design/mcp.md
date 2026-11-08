@@ -580,12 +580,23 @@ herdr keeps a list of SSH machines and has no lifecycle hooks, so nothing in it 
 isx tells it instead: the `herdr` tool installs herdr in the template, and its host half (`HerdrIntegration`, a `HostIntegration`) runs `herdr machine add <name>` on the instance's first start and `herdr machine remove` when it is destroyed, when the host has `herdr`.
 Installed in the template, herdr's first connection finds it and starts its server; without it herdr offers to install itself over SSH, which is the step Sanne did not want.
 `herdr machine add` runs without a terminal (checked against herdr 0.9.5: about a second, the remote server started and the machine saved).
-The target is the instance's name, which its Host block in isx's managed SSH config resolves.
+The target is the instance's start alias, `<name>.start.isx`, which a Host block of its own in isx's managed SSH config resolves (#2038).
+That block is the instance's with `isx ssh-proxy --start`, so herdr's connection starts a stopped instance, as an orchestrator's ProxyCommand from `isx branch --format=json` does.
+herdr keeps its machines across a stop and cannot start one, and the instance's own block never starts it (#1720), so the machine sat dead in herdr's sidebar.
+Its label is the instance's name, so `herdr --machine <name>` still finds it.
+Unregistering on stop and adding again on start was the alternative; Sanne chose to keep the machine and start on connect.
+herdr's client reconnects to a lost machine by itself, every 0.5 s to 2 minutes, so while one is open it starts a stopped instance again; `herdr machine disable` keeps it stopped.
+herdr's own add runs from a start that is preparing the instance, so every command a host integration runs has `ISX_SSH_PROXY_NO_START=1` in its environment (`SshKeyManager.NO_START_ENV`), which ssh hands its ProxyCommand: that connection starts nothing.
+A nested start would wait for the start's lock, or, on a path holding none, prepare the instance again, a VM always, and wait for the herdr records lock its parent holds.
+A connection marked that way can only do less than one without the mark, so any host process may set it.
+A lost or stale config loses the alias with the instance's block, or the alias alone, so every start writes the alias again when it is not current and herdr's record targets it (`HostIntegration.usesStartAlias`).
 herdr is asked only once that holds: the managed config has the instance's block for its address, `~/.ssh/config` includes it, and the instance's host key is pinned (`HerdrIntegration.SshAlias`).
 herdr connects with `StrictHostKeyChecking=yes` on its command line, so without the pin it saves a machine it can never reach again (#1863, design/instances.md "Host keys pinned by the instance's name").
 Its `machine add` probe does not force strict checking, which is how that went unnoticed.
 Otherwise herdr would resolve the name as any host, a real machine of that name included, and install and start its server there; nothing is recorded, so a later start adds it.
-What isx did is recorded on the host, one file per instance name: the id of the machine it added, or `-` when it added none.
+What isx did is recorded on the host, one file per instance name: the id of the machine it added and its target, or `-` when it added none.
+A record with an id and no target is a machine an older isx added for the name, which never starts the instance.
+herdr cannot change a machine's target, so the next start removes that machine and adds the instance again, once; one it cannot remove is kept, warned about once and recorded as reaching the name.
 So later starts check one file and run nothing, a copy or a renamed instance gets a record of its own, and an untrusted build is not retried or reported again on every start.
 A failed add (a timeout, a refused connection) is tried once more, on the next start, since the guest's sshd may not have been up; a second failure warns with the command to run and is recorded as not added (Sanne's decision on #1823).
 A destroy removes only the recorded machine: herdr may hold a machine the user added for a real host that shares the instance's name, which a match on the SSH target alone would have removed.

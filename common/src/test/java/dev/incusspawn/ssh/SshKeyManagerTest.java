@@ -307,6 +307,39 @@ class SshKeyManagerTest {
         assertFalse(content.contains("Host remove-me"));
     }
 
+    /**
+     * The start alias (#2038) is the instance's block with {@code --start}, under the same host key
+     * alias and without a Hostname; the instance's own block never starts it, and a destroy removes both.
+     */
+    @Test
+    void theStartAliasStartsTheInstanceAndGoesWithIt() throws IOException {
+        SshKeyManager.addHostEntry("keep-me", "10.0.0.4");
+        SshKeyManager.addHostEntry("dev", "10.0.0.5");
+        assertFalse(SshKeyManager.hasStartEntry("dev"));
+        assertTrue(SshKeyManager.addStartEntry("dev"));
+        assertTrue(SshKeyManager.hasStartEntry("dev"));
+        assertFalse(SshKeyManager.hasStartEntry("keep-me"));
+        assertEquals("dev.start.isx", SshKeyManager.startAlias("dev"));
+
+        var config = Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config"));
+        var alias = config.substring(config.indexOf("Host dev.start.isx\n"));
+        alias = alias.substring(0, alias.indexOf("\n\n") < 0 ? alias.length() : alias.indexOf("\n\n"));
+        assertTrue(alias.contains(" ssh-proxy --start dev\n"), alias);
+        assertTrue(alias.contains("HostKeyAlias dev\n"), alias);
+        assertTrue(alias.contains(SshKeyManager.knownHostsOption()), alias);
+        assertFalse(alias.contains("Hostname"), alias);
+        assertTrue(SshKeyManager.hasHostEntry("dev", "10.0.0.5"), "the instance's own block stays as it was");
+        assertFalse(config.substring(config.indexOf("Host dev\n"), config.indexOf("Host dev.start.isx")).contains("--start"));
+
+        SshKeyManager.addHostEntry("dev", "10.0.0.6");
+        assertTrue(SshKeyManager.hasStartEntry("dev"), "a new address rewrites only the instance's block");
+
+        SshKeyManager.removeHostEntry("dev");
+        config = Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config"));
+        assertFalse(config.contains("Host dev"), config);
+        assertTrue(config.contains("Host keep-me"), config);
+    }
+
     @Test
     void removeHostEntryNonexistent() {
         SshKeyManager.addHostEntry("keep-me");

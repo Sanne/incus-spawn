@@ -20,6 +20,14 @@ class HostCommandsTest {
         assertTrue(result.output().contains("out") && result.output().contains("err"), result.output());
     }
 
+    /** So no ssh a host integration's command runs starts an instance: herdr's add runs from a start (#2038). */
+    @Test
+    void aCommandRunsWithSshProxyStartsTurnedOff() {
+        var result = HostCommands.SYSTEM.run(Duration.ofSeconds(10),
+                List.of("sh", "-c", "echo \"$" + dev.incusspawn.ssh.SshKeyManager.NO_START_ENV + "\""));
+        assertEquals("1", result.output().strip());
+    }
+
     @Test
     void aCommandPastItsTimeIsKilled() {
         var start = System.nanoTime();

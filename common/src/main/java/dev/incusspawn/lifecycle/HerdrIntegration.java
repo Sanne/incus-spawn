@@ -23,13 +23,17 @@ import java.util.regex.Pattern;
  * destroyed, so the user never runs {@code herdr machine add} and herdr never installs itself
  * over SSH (the tool did). Only when the host has {@code herdr} on its {@code PATH}.
  *
- * <p>The machine's SSH target is the instance's name, which its Host block in isx's managed SSH
- * config resolves. What isx did is recorded on the host, one file per instance name in
- * {@code records}: the id of the machine it added, or {@link #NOT_ADDED} when it decided not to
+ * <p>The machine's SSH target is the instance's {@link SshKeyManager#startAlias}, whose Host block in
+ * isx's managed SSH config starts a stopped instance (#2038): herdr keeps its machines across a stop
+ * and reconnects to them by itself, which the instance's own block never answers. What isx did is
+ * recorded on the host, one file per instance name in {@code records}: the id of the machine it
+ * added and, on a second line, its target, or {@link #NOT_ADDED} when it decided not to
  * (an untrusted build) or could not (a failed add, whose warning says how to add it by hand). So a
  * later start reads one file and runs nothing, a copy or a renamed instance (another name) gets
  * its own, and a destroy removes only the machine isx added: never one the user added for a real
- * host that happens to share the instance's name. A destroy with no record runs nothing.
+ * host that happens to share the instance's name. A destroy with no record runs nothing. A record
+ * with no target is a machine an older isx added for the instance's name, which never starts it:
+ * the next start replaces it once.
  */
 public final class HerdrIntegration implements HostIntegration {
 
@@ -59,12 +63,30 @@ public final class HerdrIntegration implements HostIntegration {
      * start its server there. And its host key is pinned (#1863): herdr forces
      * {@code StrictHostKeyChecking=yes}, so without the pin it saves a machine it never reaches.
      */
-    @FunctionalInterface
     public interface SshAlias {
         boolean resolves(String name, String staticIp);
 
-        SshAlias MANAGED = (name, ip) -> SshKeyManager.hasSshConfigInclude() && SshKeyManager.hasHostEntry(name, ip)
-                && SshKeyManager.hasHostKeys(name);
+        /**
+         * The target herdr is given, which starts the instance when it is stopped, or null when its
+         * Host block could not be written (reported).
+         */
+        default String startTarget(String name) {
+            return SshKeyManager.startAlias(name);
+        }
+
+        SshAlias MANAGED = new SshAlias() {
+            @Override
+            public boolean resolves(String name, String staticIp) {
+                return SshKeyManager.hasSshConfigInclude() && SshKeyManager.hasHostEntry(name, staticIp)
+                        && SshKeyManager.hasHostKeys(name);
+            }
+
+            @Override
+            public String startTarget(String name) {
+                return SshKeyManager.hasStartEntry(name) || SshKeyManager.addStartEntry(name)
+                        ? SshKeyManager.startAlias(name) : null;
+            }
+        };
     }
 
     public HerdrIntegration(HostCommands host, Supplier<Path> records) {
@@ -87,7 +109,10 @@ public final class HerdrIntegration implements HostIntegration {
         var record = record(name);
         if (!Files.exists(record)) return false;
         try {
-            return !RETRY.equals(Files.readString(record).strip());
+            var lines = Files.readString(record).strip().lines().toList();
+            var first = lines.isEmpty() ? "" : lines.getFirst();
+            // A machine an older isx added has no target, and is replaced once
+            return !RETRY.equals(first) && !(HERDR_ID_PATTERN.matcher(first).matches() && lines.size() < 2);
         } catch (IOException e) {
             return true;
         }
@@ -96,10 +121,27 @@ public final class HerdrIntegration implements HostIntegration {
     /** A recorded machine id: not {@link #NOT_ADDED}, not {@link #RETRY}. */
     @Override
     public boolean registered(String name) {
+        return recordedId(name) != null;
+    }
+
+    /** The machine isx added targets the instance's start alias. */
+    @Override
+    public boolean usesStartAlias(String name) {
         try {
-            return HERDR_ID_PATTERN.matcher(Files.readString(record(name)).strip()).matches();
+            var lines = Files.readString(record(name)).strip().lines().toList();
+            return lines.size() > 1 && lines.get(1).equals(SshKeyManager.startAlias(name));
         } catch (IOException | IllegalArgumentException e) {
             return false;
+        }
+    }
+
+    /** The id of the machine isx added for {@code name}, or null when it added none. */
+    private String recordedId(String name) {
+        try {
+            var lines = Files.readString(record(name)).strip().lines().toList();
+            return !lines.isEmpty() && HERDR_ID_PATTERN.matcher(lines.getFirst()).matches() ? lines.getFirst() : null;
+        } catch (IOException | IllegalArgumentException e) {
+            return null;
         }
     }
 
@@ -121,8 +163,27 @@ public final class HerdrIntegration implements HostIntegration {
                 out.step("Not adding " + shown + " to herdr yet: ssh " + shown + " does not reach it through isx's SSH config.");
                 return;
             }
-            var retrying = Files.exists(record(name));
-            var added = host.run(ADD_TIMEOUT, List.of(TOOL, "machine", "add", name, "--label", name));
+            var target = alias.startTarget(name);
+            if (target == null) {
+                out.step("Not adding " + shown + " to herdr yet: isx could not write its SSH alias.");
+                return;
+            }
+            var previous = recordedId(name);
+            if (previous != null) {
+                var listed = listedOrNull(previous);
+                if (listed == null) {
+                    // Asked again on the next start, as a first failed add is
+                    out.step("Could not replace " + shown + " in herdr yet (herdr machine list failed); isx tries again on its next start.");
+                    return;
+                }
+                if (listed && !removed(previous, shown, out)) {
+                    // Kept as it is, and not tried again: its record now says what it reaches
+                    record(name, previous + "\n" + name);
+                    return;
+                }
+            }
+            var retrying = Files.exists(record(name)) && RETRY.equals(Files.readString(record(name)).strip());
+            var added = host.run(ADD_TIMEOUT, List.of(TOOL, "machine", "add", target, "--label", name));
             var id = added.ok() ? addedId(added.output()) : null;
             if (id == null) {
                 if (!retrying) {
@@ -132,14 +193,36 @@ public final class HerdrIntegration implements HostIntegration {
                     return;
                 }
                 out.warn("could not add " + shown + " to herdr: " + lastLine(added.output()),
-                        "Add it yourself: herdr machine add " + shown);
+                        "Add it yourself: herdr machine add " + OutputFormat.oneLine(target) + " --label " + shown);
                 record(name, NOT_ADDED);
                 return;
             }
-            record(name, id);
+            record(name, id + "\n" + target);
             out.step("Added " + shown + " to herdr.");
         } catch (HostLock.HostLockException | IOException e) {
             out.warn("could not add " + shown + " to herdr: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Remove {@code id}, a machine an older isx added for the instance's name, whose connection never
+     * starts it, so the instance can be added again under its {@link SshKeyManager#startAlias}.
+     * herdr cannot change a machine's target. Whether it is gone; why not is warned.
+     */
+    private boolean removed(String id, String shown, Output out) {
+        var removed = host.run(QUICK, List.of(TOOL, "machine", "remove", id));
+        if (removed.ok()) return true;
+        out.warn("could not replace " + shown + " in herdr: " + lastLine(removed.output()),
+                "While it is stopped, herdr cannot reach it: start it with isx start " + shown);
+        return false;
+    }
+
+    /** {@link #listed}, or null when herdr could not say. */
+    private Boolean listedOrNull(String id) {
+        try {
+            return listed(id);
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 
@@ -149,7 +232,8 @@ public final class HerdrIntegration implements HostIntegration {
         if (!Files.exists(record)) return;
         var shown = OutputFormat.oneLine(name);
         try {
-            var id = Files.readString(record).strip();
+            var id = recordedId(name);
+            if (id == null) id = "";
             if (HERDR_ID_PATTERN.matcher(id).matches() && !host.onPath(TOOL)) {
                 // Kept so a later isx with herdr removes it, but not under the name: a new instance
                 // of that name must not be taken as already added (review of #1823)

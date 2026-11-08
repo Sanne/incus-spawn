@@ -280,6 +280,43 @@ class SshProxyCommandTest {
     }
 
     /**
+     * A connection a host integration's command made starts nothing: herdr's add runs from a start
+     * that is preparing the instance and dials its start alias (#2038), and a nested start would
+     * wait for that start or prepare it again, a VM always, stalling both until herdr gave up.
+     */
+    @Test
+    void aConnectionAHostIntegrationMadeNeverStarts() {
+        assertTrue(SshProxyCommand.starts(true, Map.of()));
+        assertTrue(SshProxyCommand.starts(true, Map.of(dev.incusspawn.ssh.SshKeyManager.NO_START_ENV, "")));
+        assertFalse(SshProxyCommand.starts(true, Map.of(dev.incusspawn.ssh.SshKeyManager.NO_START_ENV, "1")));
+        assertFalse(SshProxyCommand.starts(false, Map.of()));
+    }
+
+    /**
+     * The command itself honours the mark: with it, {@code --start} leaves a stopped instance stopped
+     * and refuses the connection as a plain {@code ssh} would, taking no lock (#2038).
+     */
+    @Test
+    void withStartAndTheMarkAStoppedInstanceIsNotStarted() throws Exception {
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon().container("box", java.util.Map.of());
+        var locks = new StartStopCommandTest.Locks();
+        var prepared = new ArrayList<String>();
+        var command = new SshProxyCommand();
+        command.instance = "box";
+        command.start = true;
+        command.preparer = (incus, name, out) -> prepared.add(name);
+
+        var recorded = RecordingOutput.during(() -> assertEquals(1, assertDoesNotThrow(() -> command.run(daemon.client(),
+                locks, Map.of(dev.incusspawn.ssh.SshKeyManager.NO_START_ENV, "1"))).getResultValue()));
+
+        assertEquals(List.of(), prepared, "never started");
+        assertEquals(List.of(), locks.taken);
+        assertEquals("Stopped", daemon.instance("box").path("status").asText());
+        assertEquals(List.of("instance 'box' is not running (status: Stopped)."),
+                recorded.events(RecordingOutput.Kind.ERROR).stream().map(RecordingOutput.Event::msg).toList());
+    }
+
+    /**
      * After a host reboot Incus restores an instance running, with an empty /run/isx: its boot is
      * not the one its secret was stamped for, so the connection prepares it rather than reaching an
      * agent with no secret or credential proofs (#1720, review of #1815).

@@ -138,6 +138,56 @@ class SshOnStartTest {
         assertFalse(Files.exists(Environment.sshConfigFile()));
     }
 
+    /**
+     * A config that lost the instance's block lost its start alias too, which herdr's machine
+     * targets: the start that writes the block again writes the alias with it (#2038).
+     */
+    @Test
+    void aStartThatWritesTheBlockAgainWritesTheStartAliasHerdrUses() throws Exception {
+        givenManagedKey();
+        Files.createDirectories(Environment.herdrMachinesDir());
+        Files.writeString(Environment.herdrMachinesDir().resolve(NAME),
+                "ae376ca7bf702d2ab8ae75ad49cd411b\n" + dev.incusspawn.ssh.SshKeyManager.startAlias(NAME) + "\n");
+
+        startScript(sshCapable());
+
+        assertTrue(dev.incusspawn.ssh.SshKeyManager.hasStartEntry(NAME), Files.readString(Environment.sshConfigFile()));
+    }
+
+    /** A start alias lost alone, beside a current block of the instance's, is written again too (#2038). */
+    @Test
+    void aStartWritesAgainAStartAliasLostAlone() throws Exception {
+        givenManagedKey();
+        Files.createDirectories(Environment.herdrMachinesDir());
+        Files.writeString(Environment.herdrMachinesDir().resolve(NAME),
+                "ae376ca7bf702d2ab8ae75ad49cd411b\n" + dev.incusspawn.ssh.SshKeyManager.startAlias(NAME) + "\n");
+        startScript(sshCapable());
+        assertTrue(dev.incusspawn.ssh.SshKeyManager.hasStartEntry(NAME));
+
+        // The user removes the alias's block by hand: the instance's own stays current
+        var config = Files.readString(Environment.sshConfigFile());
+        var alias = "Host " + dev.incusspawn.ssh.SshKeyManager.startAlias(NAME) + "\n";
+        var at = config.indexOf(alias);
+        var end = config.indexOf("\nHost ", at + 1);
+        Files.writeString(Environment.sshConfigFile(), config.substring(0, at) + (end < 0 ? "" : config.substring(end + 1)));
+        assertFalse(dev.incusspawn.ssh.SshKeyManager.hasStartEntry(NAME));
+        assertTrue(dev.incusspawn.ssh.SshKeyManager.hasHostEntry(NAME, "10.166.11.42"));
+
+        startScript(sshCapable());
+
+        assertTrue(dev.incusspawn.ssh.SshKeyManager.hasStartEntry(NAME), Files.readString(Environment.sshConfigFile()));
+    }
+
+    /** One herdr does not reach through the alias gets none. */
+    @Test
+    void aStartWritesNoStartAliasNobodyUses() throws Exception {
+        givenManagedKey();
+
+        startScript(sshCapable());
+
+        assertFalse(Files.readString(Environment.sshConfigFile()).contains(".start.isx"));
+    }
+
     @Test
     void aStartRefreshesAHostEntryForAnOldAddress() throws Exception {
         givenManagedKey();

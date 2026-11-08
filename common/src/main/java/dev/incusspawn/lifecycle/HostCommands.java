@@ -23,7 +23,10 @@ public interface HostCommands {
     /** Whether {@code command} is an executable on this process's {@code PATH}; looked up, never run. */
     boolean onPath(String command);
 
-    /** Run {@code command} with no stdin, killed after {@code timeout}. */
+    /**
+     * Run {@code command} with no stdin, killed after {@code timeout}, and with
+     * {@link dev.incusspawn.ssh.SshKeyManager#NO_START_ENV} set, so no ssh it runs starts an instance.
+     */
     Result run(Duration timeout, List<String> command);
 
     /** The real host. */
@@ -36,8 +39,10 @@ public interface HostCommands {
         @Override
         public Result run(Duration timeout, List<String> command) {
             try {
-                var process = new ProcessBuilder(command).redirectErrorStream(true)
-                        .redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null"))).start();
+                var builder = new ProcessBuilder(command).redirectErrorStream(true)
+                        .redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
+                builder.environment().put(dev.incusspawn.ssh.SshKeyManager.NO_START_ENV, "1");
+                var process = builder.start();
                 // Read while it runs, so a chatty command cannot fill the pipe and stall
                 var output = new StringBuilder();
                 var reader = Thread.ofVirtual().start(() -> {
