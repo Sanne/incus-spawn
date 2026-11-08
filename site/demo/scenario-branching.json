@@ -14,21 +14,57 @@
   "timeout": 10
  },
  {
-  "type": "# fork it:\n"
+  "sleep": 0.6
+ },
+ {
+  "type": "# fork it into 'exp-a', and time it:\n"
  },
  {
   "wait": "\u279c \\Z",
   "timeout": 10
  },
  {
-  "type": "isx branch --from workbench exp-a\n"
+  "sleep": 0.6
  },
  {
-  "wait": "\u276f \\Z",
+  "type": "time isx branch --from workbench exp-a --format=plain\n"
+ },
+ {
+  "wait": "\u279c \\Z",
   "timeout": 90
  },
  {
-  "sleep": 3.0
+  "sleep": 1.2
+ },
+ {
+  "type": "# that's the whole fork: a running copy, database and all. step in:\n"
+ },
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 10
+ },
+ {
+  "sleep": 0.6
+ },
+ {
+  "type": "isx shell exp-a\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 60
+ },
+ {
+  "sleep": 1.0
+ },
+ {
+  "type": "# same data?\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 10
+ },
+ {
+  "sleep": 0.6
  },
  {
   "type": "psql -c 'select count(*) from orders'\n"
@@ -41,11 +77,14 @@
   "sleep": 1.0
  },
  {
-  "type": "# run the destructive experiment here:\n"
+  "type": "# yes. now a destructive experiment, in exp-a only:\n"
  },
  {
   "wait": "\u276f \\Z",
   "timeout": 10
+ },
+ {
+  "sleep": 0.6
  },
  {
   "type": "psql -c 'drop table orders'\n"
@@ -58,6 +97,16 @@
   "sleep": 0.8
  },
  {
+  "type": "# exp-a is wrecked. leave it, and fork workbench again:\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 10
+ },
+ {
+  "sleep": 0.6
+ },
+ {
   "type": "exit\n"
  },
  {
@@ -65,14 +114,34 @@
   "timeout": 30
  },
  {
-  "type": "isx branch --from workbench exp-b\n"
+  "type": "time isx branch --from workbench exp-b --format=plain\n"
  },
  {
-  "wait": "\u276f \\Z",
+  "wait": "\u279c \\Z",
   "timeout": 90
  },
  {
-  "sleep": 3.0
+  "sleep": 1.2
+ },
+ {
+  "type": "isx shell exp-b\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 60
+ },
+ {
+  "sleep": 1.0
+ },
+ {
+  "type": "# exp-b is a fresh copy of workbench, untouched by exp-a:\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 10
+ },
+ {
+  "sleep": 0.6
  },
  {
   "type": "psql -c 'select count(*) from orders'\n"
@@ -85,7 +154,7 @@
   "sleep": 1.2
  },
  {
-  "type": "# forked a live database in seconds \u2014 each experiment fully isolated.  \u220e"
+  "type": "# every fork is instant, and no experiment touches another.  \u220e"
  },
  {
   "sleep": 2.5

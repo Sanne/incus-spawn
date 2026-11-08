@@ -34,7 +34,7 @@
   "sleep": 1.4
  },
  {
-  "type": "# \"placeholder\"?! yes \u2014 these are fakes. yet watch:\n"
+  "type": "# \"isx_\"? proofs, not keys: useless outside isx. yet watch:\n"
  },
  {
   "wait": "\u276f \\Z",
@@ -49,6 +49,16 @@
  },
  {
   "sleep": 1.4
+ },
+ {
+  "type": "# a real Anthropic key starts with sk-ant-api. look for one:\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 10
+ },
+ {
+  "sleep": 0.6
  },
  {
   "type": "sudo grep -rl 'sk-ant-ap[i]' /etc /home /root 2>/dev/null || echo 'none here'\n"
