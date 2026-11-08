@@ -18,6 +18,7 @@ set -eu
 VERSION="$1" SHA512="$2" OUT="$3"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
+apk upgrade --no-cache -q
 apk add --no-cache -q curl patch go gcc musl-dev \
     acl-dev cowsql-dev raft-cowsql-dev eudev-dev gettext-dev libcap-dev libuv-dev \
     linux-headers lxc-dev lz4-dev sqlite-dev

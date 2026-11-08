@@ -106,25 +106,43 @@ cleanup() {
     echo "Cleaning up..."
     unmount_chroot "$ROOTFS_DIR"
     unmount_chroot "$INCUS_BUILD_DIR"
-    rm -rf --one-file-system "$ROOTFS_DIR" "$INCUS_BUILD_DIR" "$INCUS_BUILD_DIR.minirootfs.tar.gz"
+    rm -rf --one-file-system "$ROOTFS_DIR" "$INCUS_BUILD_DIR" "$INCUS_BUILD_DIR".minirootfs.tar.gz*
 }
 trap cleanup EXIT
 
-ALPINE_VERSION="3.23.0"
+# The latest Alpine stable release (#2045). The sha256 of each arch's minirootfs is the one the
+# release publishes (its .sha256 file and latest-releases.yaml), checked against the release's
+# .asc signature by Natanael Copa's key (0482 D840 22F5 2DF1 C4E7 CD43 293A CD09 07D9 495A).
+# Take a new one from there, never from a build log.
+ALPINE_VERSION="3.24.4"
 ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION%.*}/releases/${ISX_ARCH}/alpine-minirootfs-${ALPINE_VERSION}-${ISX_ARCH}.tar.gz"
+case "$ISX_ARCH" in
+    x86_64)  ALPINE_SHA256="cdaa38cb8de3537967ee5b6c9b6cd00cc962da2b018e6eea48696bb274923012" ;;
+    aarch64) ALPINE_SHA256="4b14c18f7e90a063b61462ea1462a5732c154bf6adad594974fe6487cd98a8de" ;;
+    *) echo "ERROR: no Alpine $ALPINE_VERSION minirootfs checksum pinned for $ISX_ARCH" >&2; exit 1 ;;
+esac
 
 # The Incus release Alpine's incus-feature is built from, and the sha512 its APKBUILD pins for
 # the source tarball. incusd is rebuilt from it with incus/*.patch applied (#1313), so the
 # package must be this release too: apk's ~ takes any revision of it and nothing else, and a
 # new Alpine release fails the build here instead of mixing versions.
-INCUS_VERSION="6.21.0"
-INCUS_SHA512="5bc687a6e0ede6928354a71177ee63c164dbc5b328c34e841c2ba1972dcb8118b37609c41d340bd0e6e0a2f9945b281f239edbe00504c9ba637271a01dc4d9dc"
+INCUS_VERSION="7.0.0"
+INCUS_SHA512="a0b24732b6d5f35dde0081d50ab0ce710f41a10396d2ce940912b3dee1c44b0c6d9215a1a54d4517606f806a611f70e288401659a6992d73441f926c7fed6f5e"
 
-# Unpack the minirootfs into $1 (downloaded once, for both chroots), then make it a chroot:
-# /dev, /proc and /sys bound, and DNS.
+# Unpack the minirootfs into $1 (downloaded once, for both chroots, and unpacked only once it
+# matches ALPINE_SHA256), then make it a chroot: /dev, /proc and /sys bound, and DNS.
 fetch_rootfs() {
-    [ -f "$INCUS_BUILD_DIR.minirootfs.tar.gz" ] || curl -fsSL -o "$INCUS_BUILD_DIR.minirootfs.tar.gz" "$ALPINE_URL"
-    tar xzf "$INCUS_BUILD_DIR.minirootfs.tar.gz" -C "$1"
+    local tarball="$INCUS_BUILD_DIR.minirootfs.tar.gz"
+    if [ ! -f "$tarball" ]; then
+        curl -fsSL -o "$tarball.part" "$ALPINE_URL"
+        if ! echo "$ALPINE_SHA256  $tarball.part" | sha256sum -c --status; then
+            rm -f "$tarball.part"
+            echo "ERROR: Alpine minirootfs checksum mismatch: $ALPINE_URL is not the pinned $ALPINE_SHA256" >&2
+            exit 1
+        fi
+        mv "$tarball.part" "$tarball"
+    fi
+    tar xzf "$tarball" -C "$1"
 }
 mount_chroot() {
     mount --bind /dev "$1/dev"
@@ -139,6 +157,12 @@ echo "    Base size: $(du -sh "$ROOTFS_DIR" | cut -f1)"
 
 echo "==> Setting up chroot..."
 mount_chroot "$ROOTFS_DIR"
+
+# apk upgrade first: the minirootfs carries the point release's packages, and the branch's
+# security fixes since then reach the image only through it. Before the overlay, so a package
+# owning an overlaid file never leaves an .apk-new beside it.
+echo "==> Upgrading the minirootfs's packages..."
+chroot "$ROOTFS_DIR" /bin/sh -c "export PATH=/usr/sbin:/usr/bin:/sbin:/bin; apk upgrade --no-cache"
 
 if [ -d "$SCRIPT_DIR/root" ]; then
     echo "==> Copying overlay files..."

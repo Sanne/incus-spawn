@@ -1,7 +1,7 @@
-Backport of lxc/incus@2cb2549252b0551561f6e7e7afdb153947a3d290 to v6.21.0 for the
-isx appliance (Sanne/incus-spawn#1313). The only change from upstream is the
-module path in the import context (v7 -> v6). Remove this file once Alpine ships an
-incus-feature release that contains the commit.
+Backport of lxc/incus@2cb2549252b0551561f6e7e7afdb153947a3d290 to v7.0.0 for the
+isx appliance (Sanne/incus-spawn#1313), unchanged from upstream: v7.0.0 predates
+the commit. Remove this file once Alpine ships an incus-feature release that
+contains the commit.
 
 From 2cb2549252b0551561f6e7e7afdb153947a3d290 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
@@ -29,8 +29,8 @@ index a6dfe395a64..a20497fb779 100644
  	"sync"
 +	"time"
  
- 	"github.com/lxc/incus/v6/internal/server/util"
- 	localtls "github.com/lxc/incus/v6/shared/tls"
+ 	"github.com/lxc/incus/v7/internal/server/util"
+ 	localtls "github.com/lxc/incus/v7/shared/tls"
 @@ -18,22 +19,57 @@ type StarttlsListener struct {
  	net.Listener
  	mu     sync.RWMutex
