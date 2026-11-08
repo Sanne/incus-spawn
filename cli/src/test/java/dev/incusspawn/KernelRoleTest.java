@@ -133,6 +133,17 @@ class KernelRoleTest {
         }
     }
 
+    @Test
+    void bothKernelsCanStartAnIncus7Container() throws IOException {
+        // Incus 7 sets lxc.sched.core=1 on every container, and liblxc aborts the start on a
+        // kernel without core scheduling (#2045: the appliance moved to Alpine 3.24's Incus 7.0.0).
+        // SCHED_CORE depends on SCHED_SMT, which allnoconfig leaves off, so both are set.
+        var shared = enabled(Files.readString(KERNEL_DIR.resolve("isx.config")));
+        for (var option : List.of("CONFIG_SCHED_SMT=y", "CONFIG_SCHED_CORE=y")) {
+            assertTrue(shared.contains(option), "isx.config must set " + option);
+        }
+    }
+
     private static List<String> enabled(String fragment) {
         return fragment.lines().filter(l -> l.startsWith("CONFIG_")).toList();
     }
