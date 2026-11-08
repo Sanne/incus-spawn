@@ -151,7 +151,7 @@ final class AboutModal {
             lines.add(Line.styled("", Style.EMPTY));
             lines.add(Line.styled("macOS shortcuts:", Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
             lines.add(shortcutRow("Fn+←/→", "Home / End", "Fn+↑/↓", "PgUp / PgDn"));
-            lines.add(text("Alt is Option once your terminal is set to send it:"));
+            lines.add(text("Alt is the Option key, once your terminal is set to send it:"));
             lines.add(text("  Terminal.app  Settings > Profiles > Keyboard >"));
             lines.add(text("                \"Use Option as Meta key\""));
             lines.add(text("  iTerm2        Settings > Profiles > Keys > General >"));

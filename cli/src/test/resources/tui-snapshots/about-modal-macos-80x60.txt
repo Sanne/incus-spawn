@@ -46,7 +46,7 @@
   ║                                                                          ║
   ║ macOS shortcuts:                                                         ║
   ║   Fn+←/→  Home / End                Fn+↑/↓       PgUp / PgDn             ║
-  ║ Alt is Option once your terminal is set to send it:                      ║
+  ║ Alt is the Option key, once your terminal is set to send it:             ║
   ║   Terminal.app  Settings > Profiles > Keyboard >                         ║
   ║                 "Use Option as Meta key"                                 ║
   ║   iTerm2        Settings > Profiles > Keys > General >                   ║
