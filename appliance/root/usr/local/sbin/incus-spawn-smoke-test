@@ -126,6 +126,13 @@ fi
 nft delete table inet isx_smoke
 echo "  PASS: connection marks available (rootful Podman's bridge networks)"
 
+# Incus 7 sets lxc.sched.core=1 on every container, and liblxc aborts every start on a kernel
+# without core scheduling (CONFIG_SCHED_CORE, #2045). The container check below is skipped
+# when no image is cached, so look for the prctl's handler in the kernel's symbols instead.
+grep -qw sched_core_share_pid /proc/kallsyms \
+    || fail "kernel lacks core scheduling (CONFIG_SCHED_CORE); Incus 7 cannot start a container"
+echo "  PASS: core scheduling available (Incus 7 containers start)"
+
 # Filter to CONTAINER images — picking a VIRTUAL-MACHINE image would fail creation spuriously.
 IMAGE=$(incus image list --format csv --columns ft 2>/dev/null \
     | grep -i ',container' | head -n1 | cut -d, -f1)

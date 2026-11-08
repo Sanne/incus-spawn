@@ -115,6 +115,7 @@ Key dependencies discovered during development:
 - `CONFIG_FILE_LOCKING=y` -- required by lxcfs PID file locking; without it `flock()` returns ENOSYS
 - `CONFIG_POSIX_TIMERS=y` -- required by dbus metrics; without it `clock_gettime()` fails with assertion crash
 - `CONFIG_FAIR_GROUP_SCHED=y` -- dependency for `CONFIG_CFS_BANDWIDTH` (cgroup cpu.weight/cpu.max)
+- `CONFIG_SCHED_CORE=y` (with its dependency `CONFIG_SCHED_SMT=y`) -- Incus 7 sets `lxc.sched.core=1` on every container, unconditionally, and liblxc aborts the start with `The kernel does not support core scheduling` without it (#2045). No Incus setting turns it off. The VM base image's kernel reads `isx.config` too, so both kernels take it once that image moves its pin of this repository. The smoke test asserts the kernel has it.
 - `CONFIG_VLAN_8021Q=y` -- dependency for `CONFIG_BRIDGE_VLAN_FILTERING` (Incus bridge)
 - `CONFIG_NETFILTER_XTABLES_LEGACY=y` -- dependency for iptables filter/nat/mangle in kernel 7.x
 - `CONFIG_NETFILTER_XT_TARGET_CHECKSUM=y` -- required by Incus for DHCP checksum fixup on bridge
