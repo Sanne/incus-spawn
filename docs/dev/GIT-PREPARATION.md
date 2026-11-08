@@ -1,9 +1,11 @@
 # Full Git clone preparation
 
 Full template clones use a bounded cache of clean, independent bare repositories.
-A fresh remote advertisement decides whether the cached snapshot can be reused.
+Each holds one ref with all of its history: the branch or tag the template requests, or else the remote's default branch (#1990).
+The guest fetches any other branch it needs itself, later, with its own account.
+A fresh remote advertisement of that ref decides whether the cached snapshot can be reused.
 When upstream changes preserve the selected history, a new generation reuses verified packs and fetches the additional objects.
-Initial snapshots and updates that remove selected history use `clone --bare --no-local --reference … --dissociate`, borrowing objects from the previous clean snapshot or the user's existing checkout directly.
+Initial snapshots and updates that remove selected history fetch the ref into a fresh bare repository, borrowing objects from the previous clean snapshot or the user's existing checkout directly, as `clone --reference … --dissociate` does.
 The guest copies the resulting repository with `--no-hardlinks` and verifies its object bytes before priming.
 
 This is the clean-snapshot alternative to the certificate/bitmap implementation in [PR #1400](https://github.com/Sanne/incus-spawn/pull/1400), addressing [#1395](https://github.com/Sanne/incus-spawn/issues/1395).
@@ -43,7 +45,7 @@ Host-source entries are excluded from `HostRepoRefresh`, including explicit `upd
 ## When and why we use a clean snapshot
 
 A user's checkout can contain private branches, stashes and other objects that the template's remote does not expose.
-A clean snapshot contains only objects reachable from the selected remote branches, tags and HEAD, with fresh repository metadata and no dependency on the user's checkout.
+A clean snapshot contains only objects reachable from the one selected remote ref, with fresh repository metadata and no dependency on the user's checkout.
 Keeping this independent bare repository lets later builds reuse the validated objects.
 
 The table applies to repositories being cloned in the current template layer; inherited repositories need no new clone.
@@ -53,15 +55,15 @@ Full clones have no depth limit and use snapshots only for eligible network URLs
 | --- | --- | --- |
 | Full clone, no usable cached snapshot, eligible host checkout available | Create a snapshot by borrowing directly from the checkout with `--reference … --dissociate`: `via reference-seeded clean snapshot` | Reuse local objects while excluding private history and removing the dependency on the checkout. |
 | Full clone, neither a usable cached snapshot nor an eligible reference | Create a snapshot from the remote: `via new clean snapshot` | Establish a validated, independent copy for this build and later reuse. |
-| Full clone, cached bytes verify and all advertised refs, HEAD and object format are unchanged | Reuse it: `via cached clean snapshot` | Avoid another full-history clone, repack and fsck; still check current remote access, selection and cached bytes. |
-| Full clone, upstream changes preserve all previously selected history | Fetch into a new generation, retaining verified old packs: `via incremental clean snapshot` | Ordinary new commits and merges need only the additional objects and their validation, plus checks of retained bytes and reachability. |
+| Full clone, cached bytes verify and the selected ref and object format are unchanged | Reuse it: `via cached clean snapshot` | Avoid another full-history clone, repack and fsck; still check current remote access, selection and cached bytes. |
+| Full clone, upstream changes preserve the previously selected history | Fetch into a new generation, retaining verified old packs: `via incremental clean snapshot` | Ordinary new commits and merges need only the additional objects and their validation, plus checks of retained bytes and reachability. |
 | Full clone, changes remove selected history, incremental validation fails, or the result would exceed 32 packs | Rebuild a clean snapshot, preferably borrowing from the previous verified generation: usually `via reference-seeded clean snapshot` | Drop objects no longer selected, recover from failed validation, or compact accumulated packs. |
 | Reference cloning, dissociation or full validation fails | Discard the partial snapshot and retry from the remote: `via new clean snapshot (reference retry)` | A changing or damaged reference must not produce an incomplete guest repository. |
 | Shallow clone (`depth: N`, including `depth: 1`) | Bypass this cache: `via host reference (shallow, depth N)` or `via remote (shallow, depth N)` | The separate shallow path reconciles with the remote and repacks on every build; limiting history still requires copying current large binaries. |
-| Guest's refs moved while the snapshot was prepared | Read the guest's refs again and refresh the snapshot incrementally, up to three times: `via … (refreshed)` | A busy repository changes during a long preparation, and discarding the snapshot costs a full network clone in the guest. |
-| Project-local template, ineligible URL, denied guest access, guest/host refs still differing after the refreshes, or preparation/mount/copy-verification failure | Use the ordinary guest clone path | Host preparation must respect the template's trust and access scope; failures must not expose an unchecked snapshot. |
+| Guest's ref moved while the snapshot was prepared | Read the guest's ref again and refresh the snapshot incrementally, up to three times: `via … (refreshed)` | A busy repository changes during a long preparation, and discarding the snapshot costs a full network clone in the guest. |
+| Project-local template, ineligible URL, denied guest access, a remote HEAD naming no branch, guest/host refs still differing after the refreshes, or preparation/mount/copy-verification failure | Use the ordinary guest clone path | Host preparation must respect the template's trust and access scope; failures must not expose an unchecked snapshot. |
 
-`Cached` means the freshly checked remote selection matches the snapshot; it never means using stale data while the remote is unavailable.
+`Cached` means the freshly checked remote ref matches the snapshot; it never means using stale data while the remote is unavailable.
 Guest access and selection checks apply to every snapshot, including cache hits.
 Frequent upstream commits normally take the incremental row, followed by cached reuse on builds that see no further changes.
 A corrupt cached snapshot is discarded and rebuilt without borrowing its damaged bytes.
@@ -72,10 +74,14 @@ Snapshots that exceed the retention budget, or builds with retention disabled, c
 
 ## Selection and independence
 
-Every full clone includes all advertised remote branches and tags.
-The guest checks out the remote's default HEAD unless a branch or tag was requested.
-Branches take precedence over same-named tags; annotated tags are peeled to commits and tag checkouts detach HEAD.
-Both prepared and network full clones use this selection and the normal broad future-fetch refspec.
+A prepared full clone holds one ref: the requested branch, else the requested tag, else the branch the remote's HEAD names (#1990).
+Branches take precedence over same-named tags, as clone resolves them; annotated tags are peeled to commits and tag checkouts detach HEAD.
+That ref's whole history is copied, and no other branch or tag is.
+Sanne's direction on #1990: the snapshot accelerates checking out the branch a template asks for, and other branches are fetched lazily as needed.
+The guest's copy keeps the normal broad future-fetch refspec, so its first `git fetch` brings every other branch its own account can see.
+A pinned branch is not necessarily the remote's default, so the guest's copy names no `origin/HEAD` for it.
+A remote whose HEAD names no branch, such as a detached or unborn HEAD, is not prepared without a pin: the guest clones it from the network.
+A network full clone, the fallback, still takes every branch and tag, as `git clone` does.
 Shallow clones retain their existing transport, depth, narrow refspec and fixup behavior.
 They bypass this cache: a shallow host clone is followed by remote reconciliation and repacking the selected objects on every build.
 Depth limits historical objects, but current binary contents still need copying; the ready line identifies the shallow depth, and shallow/network clones also report guest and mount timings.
@@ -85,40 +91,47 @@ Host preparation accepts HTTPS, SSH (including SCP spelling) and Git network URL
 Paths, `file:` URLs and arbitrary remote helpers are rejected before preparation; Git also runs with an explicit protocol allowlist and `protocol.file.allow=never`, covering URL rewrites.
 SSH never waits on a prompt; "Creating a snapshot" says how.
 
-Before preparing a full snapshot, the guest runs `ls-remote --symref` with the template's own accounts.
+Before preparing a full snapshot, the guest runs `ls-remote --symref` with the template's own accounts, for the requested ref alone: `refs/heads/<branch>` and `refs/tags/<branch>`, or `HEAD`.
 All such checks finish before any prime runs, so primes cannot interfere with another repository's authorization check.
 Denied access skips host preparation and uses the ordinary guest clone path, which must obtain its own access.
 The host's own `ls-remote` starts beside the guest's check rather than after it, since it transfers no objects (#1934).
 A denied guest discards that advertisement, and nothing is fetched, cloned or published until the guest's check succeeded.
-The guest's complete advertised selection must match the prepared snapshot before any prepared bytes are mounted.
-A different account-visible ref scope or a race that changes selection uses the guest's network clone instead; a successful host credential check alone never authorizes a guest copy.
+The guest's own reading must resolve the request to the snapshot's ref at the snapshot's ID, in the same object format, before any prepared bytes are mounted.
+Every object in the snapshot is reachable from that ref, so the guest receives nothing its own account could not fetch.
+A guest whose account sees that ref at another ID, or not at all, uses its own network clone instead; a successful host credential check alone never authorizes a guest copy.
+Refs the guest's account cannot see are never in the snapshot unless the requested ref reaches them.
 A long preparation of a busy repository outlives the guest's first reading, so a mismatch is not final at once (#1980).
 The guest reads the remote again, which settles the common case of a snapshot newer than the access check.
 While the two still differ, the snapshot is brought up to that reading by an incremental fetch from its own leased bytes, up to three times (`RepoCloner.REF_DRIFT_REFRESHES`).
-The host fetches only when its own advertisement equals the guest's latest reading, so the result matches it, and a different account-visible ref scope never costs a fetch.
-When the host sees another selection, or exactly the snapshot's, nothing is fetched and the guest reads again.
+The host fetches the snapshot's own ref, by name, and keeps the result only when that fetch brought it to the guest's ID (`GitPreparation.refresh`).
+That name is the template's pin or the one the host's own reading chose, never one only the guest's reading names.
+A reading that names another ref, such as a default branch the remote just switched, or none, ends the refreshes: the guest clones from the network, and the next preparation follows the host's own reading.
+A ref that moved again before the host's fetch waits for the guest's next reading.
 That refresh never clones in full, even when the cache did not keep the snapshot.
-It gives up when following the remote needs a rebuild: selected history was removed, the remote moved during the fetch, validation failed or the packs would exceed 32.
-Removed history is the common case on nixpkgs, where a merge-queue branch is deleted without being merged.
+It gives up when following the remote needs a rebuild: the old tip is no longer reachable, as after a force-push, validation failed or the packs would exceed 32.
 The guest then clones from the network.
 These re-reads may run after another repository's prime started, since a slow preparation never holds primes back (#1992).
-That is accepted: a prime can change what the guest reads, but a match needs the snapshot's exact selection, including SHAs of refs the guest's accounts cannot see.
+That is accepted: a prime can change what the guest reads, but the host keeps a ref only at the ID its own fetch of that ref brought.
+A forged reading therefore reaches a ref the guest's accounts cannot see only by naming that ref and its current tip, which the guest has no way to learn.
+The host never fetches an ID a reading names: a protocol version 2 server serves any object by ID, even one no ref points at.
+A HEAD target that is no plain branch name, holding a refspec, glob or control character, names nothing to fetch.
 So a prime that rewrites the guest's Git, with `insteadOf` or a wrapper, can turn a match into a network clone but cannot forge one.
 Only a selection the guest has just seen is mounted; the ready line adds `(refreshed)` to the strategy, for example `via reference-seeded clean snapshot (refreshed)`.
 On nixpkgs a cold preparation with a host checkout took about 16 minutes, during which `master`, release and merge-queue branches moved: without the refresh, all of it was discarded for a full network clone in the guest.
+Since #1990 only the requested branch is read and selected, so other branches moving, appearing or being deleted no longer matter at all.
 This applies to warm cache hits as well as new generations.
 
 A warm host-cache hit additionally requires a successful `ls-remote --symref` using the host's current remote credentials.
-The exact URL and selection policy identify the cache entry.
-All heads and tags, the default HEAD target and object ID, and the object format inferred from advertised IDs must match the verified snapshot.
-Different branch/tag pins share the same complete snapshot; each pin is validated separately.
-Unborn or ambiguous HEAD advertisements cannot produce a hit, since `ls-remote` does not reliably describe their target and object format.
+The exact URL, the requested branch or tag (none meaning the remote's default) and the selection policy identify the cache entry.
+The selected ref's name and object ID, and the object format inferred from that ID, must match the verified snapshot.
+Each pin has a snapshot of its own; templates asking for the same ref of the same URL share one.
+Unborn or detached HEAD advertisements cannot produce a snapshot without a pin, since they name no branch.
 A remote failure does not authorize an offline snapshot.
 The early advertisement only decides a cache hit, so a hit costs one `ls-remote` however long the guest's check and the limiter took.
 On a miss with a snapshot to refresh, the host reads the advertisement again under the cache entry's writer lock before it fetches.
 A concurrent build's publication of that advertisement still hits.
 A push after the early read costs this build an incremental refresh, never a full host clone.
-A cold clone may observe a newer remote state than the preceding advertisement; its snapshot records its actual repository bytes, never the earlier advertisement.
+A cold fetch or a host refresh may observe a newer remote state than the preceding advertisement; its snapshot records its actual repository bytes, never the earlier advertisement.
 
 The snapshot carries a SHA-256 seal over its entire file inventory and contents, bound to its URL/policy key.
 This covers refs, HEAD, config, pack/index pairs and any added object or alternate files.
@@ -129,23 +142,22 @@ A hit does not access the user checkout or perform object enumeration, repacking
 
 ## Incremental updates
 
-A changed branch or tag does not invalidate the object validation of unchanged clean packs.
+A moved branch or tag does not invalidate the object validation of unchanged clean packs.
 Preparation first creates separate staging metadata and hardlinks the previous verified generation's owned pack/index files.
 It never fetches into a published snapshot or a user's checkout.
-An atomic fetch selects all remote heads and tags plus HEAD, prunes obsolete refs and checks incoming objects with `fetch.fsckObjects=true`.
-HEAD is fetched into a temporary ref to verify its actual fetched ID, including detached remote HEADs with no branch pointing at them.
+A fetch of the selected ref alone, by name, checks incoming objects with `fetch.fsckObjects=true` and lands in a temporary ref, so its actual fetched ID is what is checked.
 Received objects stay packed; automatic maintenance, commit-graph writes and submodule recursion are disabled.
 New pack/index pairs additionally pass `index-pack --verify --strict`, including checks of links to existing objects.
 Retained pack/index bytes must still match their sealed SHA-256 hashes.
 
-Reusing the old physical object store is safe only if every previously selected root remains reachable from the new selection.
-Unchanged root IDs and fast-forward branch ancestry establish the common case without an object walk.
-For remaining roots, a streamed reachability difference checks the old object closure against the new heads, tags and HEAD.
+Reusing the old physical object store is safe only if the previously selected object remains reachable from the new one.
+An unchanged ID needs no walk; otherwise a streamed reachability difference checks the old object's closure against the new ref.
 This includes annotated tag objects, not just their peeled commits.
-A merged branch can be deleted without rebuilding, while an unmerged deletion, destructive force-push or removed annotated tag requires a clean rebuild when it removes objects.
-Adding branches/tags and switching the default HEAD also support incremental publication.
+A fast-forward reuses the old packs, while a force-push or a moved annotated tag requires a clean rebuild when it removes objects.
+A remote whose default branch switched selects the new branch, which is incremental only when it reaches the old one.
 
-Fetched refs and the advertised HEAD must reproduce the fresh advertisement exactly; a mismatch falls back to a fresh clone with its own authoritative selection.
+On the host's own refresh, a ref that moved between its advertisement and its fetch is recorded as fetched, as a cold fetch records it.
+A refresh following the guest's reading insists on the guest's ID instead, and waits for the next reading when the fetch brought another.
 More than 32 packs also triggers a rebuild to compact accumulated incremental packs.
 Any failed fetch or incremental validation discards the entire staging repository before rebuilding from the previous snapshot or remote.
 Failed staging is never used as a reference: fetch can leave unchecked objects behind when it fails.
@@ -193,15 +205,17 @@ When preparation fails, the build warns after its repository lines with isx's re
 Local steps such as `fsck` and `repack` keep a fixed 15-minute limit and no stall budget, and reaching it still allows the retry without a reference.
 After successful dissociation, verification, publication and guest copying no longer access the user checkout.
 
-The authoritative remote supplies refs to a new bare transport clone.
-With a reference, Git's `--dissociate` repacks the selected objects into a standalone, non-thin store and removes the alternate.
+The authoritative remote supplies the selected ref, fetched by name into a new bare repository.
+It is a fetch rather than `clone --single-branch --no-tags`, because clone still asks the remote to include every annotated tag pointing into what it sends.
+Those tag objects would sit in the snapshot with no ref of it reaching them, and a tag the guest's account cannot see would come with them.
+With a reference, its object directory is the new repository's alternate for the fetch; `repack -a -d` then copies the selected objects into a standalone, non-thin store, and the alternate is removed, as `--dissociate` does.
 This rewrites mixed public/private packs, including public objects whose stored delta base is private.
-The fresh-clone approach also drops objects retained only by deleted branches or moved tags; fetching and pruning refs in an old snapshot would leave those objects behind.
-Without a reference, a normal bare transport clone supplies the objects; small clones that unpack received objects are packed once.
+The fresh repository also drops objects retained only by a rewritten ref or a moved tag; fetching into an old snapshot would leave those objects behind.
+Without a reference, the fetch supplies the objects and keeps each received pack (`fetch.unpackLimit=1`); loose objects, as dumb HTTP writes them, are packed once.
 Initial and rebuilt output must be full and independent, and pass `git fsck --full` or, cloned without a reference, a strict check of every received object (see below).
-Only its pack/index pairs and freshly installed heads, tags and HEAD enter the final minimal bare repository, discarding clone configuration and generated sidecars.
+Only its pack/index pairs and the freshly installed ref and HEAD enter the final minimal bare repository, discarding configuration and generated sidecars.
 
-Using `--bare` avoids the historical in-process checkout failure in older Git's `--dissociate` path.
+A bare repository avoids the historical in-process checkout failure in older Git's `--dissociate` path.
 [Upstream commit 3d8e4004](https://github.com/git/git/commit/3d8e4004c604b206d70240a087816907cce70a08) fixes the commit-graph lifetime bug; the research reproduces it on Git 2.54.0 and verifies bare dissociation there.
 The guest's later local clone checks out in a separate Git process from a repository containing no borrowed graph metadata.
 
@@ -219,7 +233,7 @@ The test `aCheckoutObjectWhoseBytesDoNotMatchItsNameIsCaughtAfterDissociation` k
 `index-pack --verify --strict` on the single pack would catch it as well, in 43 s against 62 s; it is not adopted (#1553, option (a)).
 
 A clone without a reference, the first build's and the retry's, skips the separate fsck when the transfer has already done its work (#1557).
-Every object then arrives over the transport, and with `fetch.fsckObjects=true` `index-pack --strict` computes each ID as it receives it, checks each object's structure and fails on a link that does not resolve; clone's connectivity check covers the refs.
+Every object then arrives over the transport, and with `fetch.fsckObjects=true` `index-pack --strict` computes each ID as it receives it, checks each object's structure and fails on a link that does not resolve; fetch's connectivity check covers the ref.
 On camel that receive cost nothing measurable (37 s either way), and the separate fsck took 59 s with nothing new to find.
 A first snapshot without a reference now takes 33.6–33.7 s there instead of 89.6–90.3 s.
 That holds only when every object really arrived that way, so the clone runs with `GIT_TRACE`, and the fsck is skipped only when each `index-pack` it ran had a bare `--strict`, one ran for every pack in the result, and no loose object was written.
@@ -240,7 +254,7 @@ Indexing also gets faster, 28 s instead of 50 s on camel: with the source attach
 ## Retention and readers
 
 The cache lives under `~/.cache/incus-spawn/git/`, private to the host user.
-It retains one immutable snapshot per exact URL, whether or not a host checkout exists.
+It retains one immutable snapshot per exact URL and requested ref, whether or not a host checkout exists.
 That extra clean payload is the deliberate space tradeoff for eliminating per-pack certificates and owned bitmap caches.
 
 ```yaml
@@ -264,7 +278,7 @@ Existing readers keep their pinned files.
 Setting either limit to zero disables retention; malformed values use the defaults.
 Active work occupies temporary space in addition to the retained-cache budget.
 
-Writers serialize through one stable lock file per complete URL key, with a two-hour wait covering long Git operations, validation and retry.
+Writers serialize through one stable lock file per complete URL and ref key, with a two-hour wait covering long Git operations, validation and retry.
 Different URLs never share a writer lock.
 Lock files are never unlinked while another process might have them open.
 A short catalogue lock protects publication, reader pinning and eviction across processes.
@@ -293,11 +307,12 @@ Each prepared clone detaches its own clean snapshot before priming; other clean 
 Preparation tests serve disposable remotes through `git daemon`, exercising the production transport policy without enabling file transport for tests.
 The daemon executable must be installed (`git-daemon` on Fedora).
 Real-Git tests compare the physical object inventory with the selected remote closure, including mixed private commits, stashes, staged blobs and a forced private delta base, for both clean snapshots and host-source exports.
-They cover ref rewrites/deletions, moved tags, default HEAD changes, branch/tag pins, SHA-256 repositories, empty remotes, source removal, corruption and pruning while borrowing, integrity-failure retry, snapshot corruption and an unavailable remote.
-Incremental tests cover repeated SHA-1/SHA-256 updates, unchanged pack inodes, independent old readers and guest copies, new branches/tags, detached remote HEADs, merged branch deletion, removed history, advertisement races, new/retained pack corruption, failed fetches, cancellation and compaction.
+They cover ref rewrites, moved tags, default HEAD changes, a snapshot per branch or tag pin, a HEAD naming no branch, SHA-256 repositories, empty remotes, source removal, corruption and pruning while borrowing, integrity-failure retry, snapshot corruption and an unavailable remote.
+Incremental tests cover repeated SHA-1/SHA-256 updates, unchanged pack inodes, independent old readers and guest copies, other refs changing without a fetch, removed history, a push during the fetch, new/retained pack corruption, failed fetches, cancellation and compaction.
+Refresh tests cover a ref that moved again before the host's fetch and a forged reading naming an object no ref points at.
 Concurrency tests cover independent readers, replacement and eviction, cross-process leases and dead-reader reclamation.
 Review regressions cover local paths, rewritten file transports, SSH defaults, denied or narrower guest access, writer waits beyond 30 seconds, unrelated URL locks, prime pipelining and oversized replacement with active readers.
-Guest-command tests exercise independent copies, later fetches, corruption fallback, the macOS checksum-input requirement and a snapshot owned by another uid.
+Guest-command tests exercise independent copies, later fetches of other branches, a pinned branch, a branch hidden from the guest's account, corruption fallback, the macOS checksum-input requirement and a snapshot owned by another uid.
 Existing shallow, project-local, hotplug, timeout and detach-failure tests remain regression coverage.
 
 `bench/GitPreparationBench.java` runs the production preparation code with a fresh cache and reports cold/warm phase timings.
@@ -306,6 +321,7 @@ With `isx build --verbose`, build diagnostics report guest access checks, remote
 A build without it shows none of them, only a note when a repository's Git staging area could not be removed yet.
 Credential-bearing command lines are not included in failure diagnostics.
 
+The measurements below predate #1990 and selected every branch and tag; a snapshot now holds one ref's history, which is never more (docs/dev/PERFORMANCE-NOTES.md has the Quarkus comparison).
 The [incremental Quarkus measurements](../../bench/data/git-incremental-snapshots-2026-10-13.json) use Git 2.56.0, four packing threads, loopback transport, tmpfs and a warm filesystem cache.
 The initial fixture contains 1,097,673 selected objects, with private objects mixed into the host's packs.
 Each of the two upstream advances adds one commit without changing its tree; new file contents would add transfer and validation work.

@@ -169,33 +169,38 @@ A physical core is its `core_cpus_list` (`thread_siblings_list` before 5.3), nev
 Whatever leaves the tier in doubt (an unreadable capacity, a capacity on some CPUs only, a missing core list) makes it unknown, which the VM default treats as one tier.
 The scan of the real sysfs is made once per process.
 `CpuInfoTest` pins each source with sysfs fixtures (an i7-12700H, a Ryzen AI 300, an X3D, a three-tier ARM SoC, an RK3588 device-tree layout).
-For full network clones, `GitPreparation` selects all advertised remote branches and tags in owned host staging, borrowing objects directly from a matching checkout without copying its packs first.
+For full network clones, `GitPreparation` selects one ref in owned host staging: the requested branch, else tag, else the branch the remote's HEAD names, with all of its history (#1990).
+Its cache is keyed by URL and requested ref, and the host and the guest `ls-remote` only that ref (`GitPreparation.lsRemotePatterns`).
+It fetches the ref by name into a fresh bare repository, never `clone`, which asks for every annotated tag pointing into its history even with `--no-tags`.
+It borrows objects directly from a matching checkout through an alternate, then `repack -a -d` and removes it, as `--dissociate` does, without copying the checkout's packs first.
 It never fetches into or maintains the user's repository.
 Only HTTPS, SSH and Git network URLs qualify, with a protocol allowlist blocking local/file transports and remote helpers, including rewritten URLs.
 SSH uses batch mode unless the user supplied an SSH command or executable.
-The guest checks repository access using the template's accounts, and its complete advertised selection must match the snapshot before mounting.
+The guest checks repository access using the template's accounts, and its own reading must show the snapshot's ref at the snapshot's ID before mounting.
+Every object in a snapshot is reachable from its one ref, so the guest receives nothing its account could not fetch.
 On a mismatch the guest reads again, and the snapshot is refreshed incrementally from its leased bytes (`GitPreparation.refresh`) up to `RepoCloner.REF_DRIFT_REFRESHES` times before the guest clones from the network (#1980).
-A refresh fetches only when the host's own advertisement equals the guest's latest reading, so its result matches that reading, and a different ref scope costs no fetch.
-It gives up, for the guest's network clone, when following the remote needs a rebuild, such as when an unmerged branch was deleted.
+A refresh fetches the snapshot's own ref by name, never one only the guest's reading names, and keeps the result only at the guest's ID: a ref that moved again waits for the next reading, and a reading naming another ref or none ends the refreshes.
+It never fetches an ID a reading names, since a protocol v2 server serves any object by ID, even one no ref points at.
+It gives up, for the guest's network clone, when following the remote needs a rebuild, such as after a force-push.
 All guest access checks finish before any prime can alter guest tools.
 The re-reads after a mismatch may run after another repo's prime started, and that is accepted (#1992).
-A prime can make the guest read anything, but a snapshot is mounted only on its exact selection, SHAs of refs the guest's accounts cannot see included, which the guest has no way to learn.
+A prime can make the guest read anything, but a forged reading reaches a ref the guest's accounts cannot see only by naming that ref and its current tip, which the guest has no way to learn.
 The host's `ls-remote` (`GitPreparation.readRemote`) starts beside the guest's check, and a denied guest discards it unused.
 Only that remote's tracking tips are used for negotiation.
 A failed reference clone, dissociation or integrity check discards the partial output and retries once without a reference before publication.
-A warm snapshot requires matching fresh remote heads, tags, default HEAD and object format, plus a valid SHA-256 seal over all repository bytes.
+A warm snapshot requires the fresh remote's ref at the same ID and object format, plus a valid SHA-256 seal over all repository bytes.
 Changed refs first fetch into staging that shares only the verified snapshot's immutable packs, with separate metadata and no automatic maintenance.
-Incoming objects and new packs are checked, retained bytes must still match their sealed hashes, and every old root must remain reachable from the new selection.
-Fast-forwards, merged branch deletions and HEAD changes can therefore reuse old packs without full-history repacking or fsck.
-Removed history, a fetch/verification failure, an advertisement mismatch or more than 32 packs uses a fresh `clone --bare --no-local --reference … --dissociate` instead.
+Incoming objects and new packs are checked, retained bytes must still match their sealed hashes, and the old tip must remain reachable from the new one.
+A fast-forward can therefore reuse old packs without full-history repacking or fsck; the host's own refresh records a ref that moved during its fetch as fetched.
+Removed history, a fetch/verification failure or more than 32 packs uses a fresh reference fetch and dissociation instead.
 Failed staging is discarded before the rebuild; it never becomes a reference.
 Bare dissociation avoids older Git's commit-graph/checkout bug, and rebuilt output passes full fsck before publication.
 A clone without a reference skips that fsck only when its `GIT_TRACE` shows every pack came from `index-pack --strict` (`fetch.fsckObjects`) and no object is loose; dumb HTTP, packfile URIs, bundles and user `fetch.fsck.*` settings still get it.
 When that strict receive rejects an object (it makes fsck warnings fatal), the clone is repeated without it and the fsck runs.
 A host-source export is indexed with `--strict` after its source alternate is removed, which proves it self-contained without a fsck.
-`PreparationCache` uses per-URL writer locks with a two-hour wait for slow preparation, coordinates leased readers, publishes complete generations atomically, and bounds retained snapshots even when a host checkout exists.
+`PreparationCache` uses writer locks per URL and requested ref with a two-hour wait for slow preparation, coordinates leased readers, publishes complete generations atomically, and bounds retained snapshots even when a host checkout exists.
 Only the clean prepared bare repository is mounted for `clone --no-hardlinks`; guest SHA-256 checks precede priming, and a failed check falls back to the remote.
-Both prepared and network full clones start with all advertised branches and tags and a broad future-fetch refspec.
+A prepared full clone starts with its one ref and a broad future-fetch refspec, and names no `origin/HEAD` for a pinned branch; a network full clone starts with every branch and tag, as `git clone` does.
 Shallow clones bypass the snapshot cache and report their depth plus guest/attach/detach timings.
 See [Git preparation](../../docs/dev/GIT-PREPARATION.md) for the selection, retention and failure contracts.
 Explicit `host-source` entries use `GitPreparation.prepareHost`: local branches/tags select an offline pack, with no remote authentication, refresh or fallback.

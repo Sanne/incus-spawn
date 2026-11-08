@@ -120,7 +120,7 @@ class RepoClonerReferenceTest {
 
         var cmd = spy(new RepoCloner(incus));
         var preparation = mock(dev.incusspawn.git.GitPreparation.class);
-        when(preparation.readRemote(anyString(), any())).thenAnswer(readRemote);
+        when(preparation.readRemote(anyString(), any(), any())).thenAnswer(readRemote);
         doReturn(preparation).when(cmd).preparation(any());
         doAnswer(inv -> {
             RepoCloner.RepoReference ref = inv.getArgument(1);

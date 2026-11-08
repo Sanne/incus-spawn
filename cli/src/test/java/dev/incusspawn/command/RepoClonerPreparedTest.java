@@ -166,10 +166,14 @@ class RepoClonerPreparedTest {
         }
     }
 
-    @Test void differentGuestCredentialRefScopeUsesOnlyTheGuestRemote() throws Exception {
+    @Test void aGuestThatSeesTheRequestedBranchAtAnotherIdUsesOnlyTheGuestRemote() throws Exception {
+        // The guest's account is served another main than the host's: the host's must never be mounted.
         var visible = tmp.resolve("visible.git");
         git(tmp, "clone", "--bare", remote.toString(), visible.toString());
-        git(visible, "config", "uploadpack.hideRefs", "refs/heads/stable");
+        var work = tmp.resolve("guest-work");
+        git(tmp, "clone", "-q", visible.toString(), work.toString());
+        commitBinary(work, "only the guest's account sees this");
+        git(work, "push", "-q", "origin", "main");
         guestConfig = tmp.resolve("guest.config");
         git(tmp, "config", "--file", guestConfig.toString(),
                 "url." + server.url(visible) + ".insteadOf", server.url(remote));
@@ -178,9 +182,31 @@ class RepoClonerPreparedTest {
         assertEquals("template and host repository refs differ", result.note());
         // The fallback clone in the guest says so, rather than leaving the last preparation phase up.
         assertEquals(List.of(BuildProgress.StepProgress.running("Cloning")), statesWhileCloning);
-        assertTrue(mounts.isEmpty(), "the wider host selection must never be mounted");
-        assertEquals("", git(tmp.resolve("guest"), "for-each-ref", "refs/remotes/origin/stable"));
+        assertTrue(mounts.isEmpty(), "a snapshot of another ID must never be mounted");
+        assertEquals(git(work, "rev-parse", "HEAD"), git(tmp.resolve("guest"), "rev-parse", "HEAD"));
         assertEquals("", git(tmp.resolve("guest"), "fsck", "--full", "--no-dangling"));
+    }
+
+    @Test void aBranchHiddenFromTheGuestIsNeitherInItsSnapshotNorFetchedLater() throws Exception {
+        // Before #1990 a guest whose account saw fewer refs never matched; the snapshot now holds main alone.
+        var visible = tmp.resolve("visible.git");
+        git(tmp, "clone", "--bare", remote.toString(), visible.toString());
+        git(visible, "config", "uploadpack.hideRefs", "refs/heads/stable");
+        guestConfig = tmp.resolve("guest.config");
+        git(tmp, "config", "--file", guestConfig.toString(),
+                "url." + server.url(visible) + ".insteadOf", server.url(remote));
+        var hidden = git(remote, "rev-parse", "stable");
+        var result = run(null);
+        assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
+        assertEquals("via reference-seeded clean snapshot", result.note());
+        assertEquals(1, mounts.size());
+        var guest = tmp.resolve("guest");
+        assertFalse(allObjects(guest.resolve(".git")).contains(hidden));
+        // A later fetch is the guest's own, so it brings only what the guest's account sees.
+        git(guest, "-c", "url." + server.url(visible) + ".insteadOf=" + server.url(remote), "fetch", "-q", "--tags", "origin");
+        assertEquals("", git(guest, "for-each-ref", "refs/remotes/origin/stable"));
+        assertFalse(allObjects(guest.resolve(".git")).contains(hidden));
+        assertEquals("", git(guest, "fsck", "--full", "--no-dangling"));
     }
 
     private void advanceRemote(String message) {
@@ -216,25 +242,25 @@ class RepoClonerPreparedTest {
         var guest = tmp.resolve("guest");
         assertEquals(git(remote, "rev-parse", "HEAD"), git(guest, "rev-parse", "HEAD"));
         assertEquals("", git(guest, "fsck", "--full", "--no-dangling"));
-        assertEquals(new java.util.HashSet<>(git(remote, "rev-list", "--objects", "--all", "--no-object-names").lines().toList()),
+        assertEquals(new java.util.HashSet<>(git(remote, "rev-list", "--objects", "HEAD", "--no-object-names").lines().toList()),
                 new java.util.HashSet<>(git(guest, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)").lines().toList()));
     }
 
     @Test void aRemoteThatNeverHoldsStillFallsBackToTheGuestAfterBoundedReadings() throws Exception {
-        // The guest's second reading is newer than the snapshot, and every later push lands between
-        // the guest's reading and the host's, so the two never agree and no refresh may fetch.
+        // The guest's second reading is newer than the snapshot, and every later push lands between the
+        // guest's reading and the host's fetch, so the host never holds the guest's ID for the branch.
         beforeGuestRead = n -> { if (n == 2) advanceRemote("pushed while the snapshot was prepared"); };
         afterGuestRead = n -> advanceRemote("push " + n);
         var result = run(null);
         assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
         assertEquals("template and host repository refs differ", result.note());
-        // The access check, the reading after preparation, and one after each refresh the host declined.
+        // The access check, the reading after preparation, and one after each refresh that could not settle.
         assertEquals(2 + RepoCloner.REF_DRIFT_REFRESHES, guestReads);
         assertTrue(mounts.isEmpty(), "a snapshot the guest did not see last must never be mounted");
         assertEquals(git(remote, "rev-parse", "HEAD"), git(tmp.resolve("guest"), "rev-parse", "HEAD"));
     }
 
-    @Test void guestIsIndependentAndHasTheSameRefScopeAsAFullNetworkClone() throws Exception {
+    @Test void guestIsIndependentAndFetchesOtherBranchesItself() throws Exception {
         var secret = git(host, "rev-parse", "HEAD");
         var result = run(null);
         assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
@@ -245,8 +271,11 @@ class RepoClonerPreparedTest {
         var guest = tmp.resolve("guest");
         assertEquals(git(remote, "rev-parse", "HEAD"), git(guest, "rev-parse", "HEAD"));
         assertFalse(git(guest, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)").contains(secret));
-        assertEquals(git(remote, "rev-parse", "stable"), git(guest, "rev-parse", "origin/stable"));
+        // Only the requested branch is copied (#1990); the broad refspec brings the others with a fetch.
+        assertEquals("", git(guest, "for-each-ref", "refs/remotes/origin/stable"));
         assertEquals("+refs/heads/*:refs/remotes/origin/*", git(guest, "config", "remote.origin.fetch"));
+        git(guest, "fetch", "-q", "origin");
+        assertEquals(git(remote, "rev-parse", "stable"), git(guest, "rev-parse", "origin/stable"));
         commitBinary(remote, "later public change");
         git(guest, "pull", "--ff-only");
         assertEquals(git(remote, "rev-parse", "HEAD"), git(guest, "rev-parse", "HEAD"));
@@ -283,12 +312,31 @@ class RepoClonerPreparedTest {
         var guest = tmp.resolve("guest");
         assertEquals(git(remote, "rev-parse", "HEAD"), git(guest, "rev-parse", "HEAD"));
         assertEquals("", git(guest, "fsck", "--full", "--no-dangling"));
-        assertEquals(new java.util.HashSet<>(git(remote, "rev-list", "--objects", "--all", "--no-object-names").lines().toList()),
+        assertEquals(new java.util.HashSet<>(git(remote, "rev-list", "--objects", "HEAD", "--no-object-names").lines().toList()),
                 new java.util.HashSet<>(git(guest, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)").lines().toList()));
         try (var packs = Files.list(guest.resolve(".git/objects/pack"))) {
             assertEquals(2, packs.filter(p -> p.toString().endsWith(".pack")).count());
         }
         assertTrue(mounts.stream().noneMatch(Files::exists), "all generations must detach before lease cleanup");
+    }
+
+    @Test void aPinnedBranchGetsOnlyItsOwnHistoryAndNamesNoWrongDefault() throws Exception {
+        // The template asks for stable: the snapshot is stable's history alone, not every branch (#1990).
+        commitBinary(remote, "only on main");
+        var onlyMain = git(remote, "rev-parse", "main");
+        var result = run("stable");
+        assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
+        assertTrue(result.note().startsWith("via "), result.note());
+        assertEquals(1, mounts.size());
+        var guest = tmp.resolve("guest");
+        assertEquals("stable", git(guest, "branch", "--show-current"));
+        assertEquals(git(remote, "rev-parse", "stable"), git(guest, "rev-parse", "HEAD"));
+        assertFalse(allObjects(guest.resolve(".git")).contains(onlyMain));
+        assertEquals("refs/remotes/origin/stable", git(guest, "for-each-ref", "--format=%(refname)", "refs/remotes"),
+                "no origin/HEAD naming stable as the remote's default");
+        assertEquals("", git(guest, "fsck", "--full", "--no-dangling"));
+        git(guest, "fetch", "-q", "origin");
+        assertEquals(onlyMain, git(guest, "rev-parse", "origin/main"));
     }
 
     @Test void requestedAnnotatedTagChecksOutDetached() throws Exception {

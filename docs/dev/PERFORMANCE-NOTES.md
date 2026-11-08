@@ -507,7 +507,20 @@ nixpkgs had 8,980,547 objects in a 3.4 GiB pack; the snapshot is 3.6 GiB.
 
 Within 40 minutes `master`, `release-26.05`, a `backport-*` branch and a `gh-readonly-queue/*` branch moved.
 Before #1980 that made the guest's selection differ from any cold snapshot, which was then discarded for a full network clone in the guest.
-Faster cold paths for such repositories are researched in #1991, and a reachability-based match in #1990.
+Faster cold paths for such repositories are researched in #1991.
+Since #1990 a snapshot holds only the branch its template requests, so the other branches moving no longer discard it.
+
+## Git preparation: one ref instead of every branch (issue #1990)
+
+Measured 2026-11-08 on the Quarkus checkout with Git 2.56 on 32 cores, counting objects with `rev-list --objects`.
+
+| Selection | Objects | `rev-list` time |
+| --- | --- | --- |
+| `main` alone, what a snapshot now holds | 1,114,795 | 1.8 s |
+| Every branch and tag (657 refs: the checkout's `origin/*` tracking refs, which mirror the remote's branches, and its tags), what it held before | 2,482,104 | 3.1 s |
+
+So the snapshot of `main` holds 45% of the objects it used to, which every build copies into the guest and every rebuild packs and checks.
+The guest's and the host's `ls-remote` now ask for one ref instead of every branch and tag, which on nixpkgs is thousands of refs.
 
 ## Measurement caveats worth remembering
 

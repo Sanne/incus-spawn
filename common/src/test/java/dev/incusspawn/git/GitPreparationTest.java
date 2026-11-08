@@ -125,10 +125,10 @@ class GitPreparationTest {
         var phases = new ArrayList<String>();
         try (var first = unkept.prepare(request, s -> {})) {
             assertNotNull(first.notRetained());
-            assertSame(first, unkept.refresh(request, first, guestReading(), phases::add),
+            assertSame(first, unkept.refresh(request, first, guestReading(null), phases::add),
                     "nothing to refresh while the remote is unchanged");
             commitBinary(remote, "pushed during preparation");
-            try (var refreshed = unkept.refresh(request, first, guestReading(), phases::add)) {
+            try (var refreshed = unkept.refresh(request, first, guestReading(null), phases::add)) {
                 assertNotNull(refreshed);
                 assertNotSame(first, refreshed);
                 assertEquals("reference-seeded clean snapshot (refreshed)", refreshed.strategy());
@@ -146,21 +146,78 @@ class GitPreparationTest {
         assertEquals(List.of(), PreparationGit.children(tmp.resolve("unkept/work")));
     }
 
-    /** What the guest's {@code ls-remote} would print for {@link #remote} now. */
-    private String guestReading() throws Exception {
-        return git(tmp, "ls-remote", "--symref", "--", server.url(remote), "HEAD", "refs/heads/*", "refs/tags/*");
+    /** What the guest's {@code ls-remote} would print for {@link #remote} now, for a request of {@code branch}. */
+    private String guestReading(String branch) throws Exception {
+        var command = new ArrayList<>(List.of("ls-remote", "--symref", "--", server.url(remote)));
+        command.addAll(GitPreparation.lsRemotePatterns(branch));
+        return git(tmp, command.toArray(String[]::new));
     }
 
-    @Execution(CONCURRENT) @Test void refreshFetchesNothingWhileTheHostSeesAnotherSelectionThanTheGuest() throws Exception {
+    @Execution(CONCURRENT) @Test void aRefThatMovedAgainBeforeTheHostFetchedWaitsForTheNextReading() throws Exception {
         start();
         var request = new GitPreparation.Request(server.url(remote), null, host);
         var phases = new ArrayList<String>();
         try (var first = preparation.prepare(request, s -> {})) {
-            // A guest whose accounts see another ref scope, or a push between the two readings (#1992).
-            var guest = guestReading();
+            commitBinary(remote, "pushed before the guest read");
+            var guest = guestReading(null);
+            // A push between the guest's reading and the host's fetch (#1992): the host never keeps an ID it
+            // fetched for the guest's ref unless it is the guest's own.
             commitBinary(remote, "pushed after the guest read");
             assertSame(first, preparation.refresh(request, first, guest, phases::add));
-            assertFalse(phases.contains("Fetching incremental Git snapshot"), phases.toString());
+            assertTrue(phases.contains("Remote ref moved during the incremental Git fetch"), phases.toString());
+            try (var refreshed = preparation.refresh(request, first, guestReading(null), s -> {})) {
+                assertTrue(refreshed.matchesAdvertisement(guestReading(null)));
+            }
+        }
+    }
+
+    @Execution(CONCURRENT) @Test void aGuestReadingCannotMakeTheHostFetchAnObjectItNames() throws Exception {
+        start();
+        var request = new GitPreparation.Request(server.url(remote), null, host);
+        // Like history force-pushed away: still on the server, which protocol v2 serves by ID to anyone naming it.
+        git(remote, "checkout", "-q", "-b", "removed");
+        commitBinary(remote, "removed secret");
+        var secret = git(remote, "rev-parse", "HEAD");
+        git(remote, "checkout", "-q", "main");
+        git(remote, "branch", "-D", "removed");
+        try (var first = preparation.prepare(request, s -> {})) {
+            // A forged reading: the requested branch at the secret's ID. The host fetches the branch by name.
+            var forged = "ref: refs/heads/main\tHEAD\n" + secret + "\tHEAD\n";
+            assertSame(first, preparation.refresh(request, first, forged, s -> {}));
+            assertFalse(allObjects(first.repository()).contains(secret));
+            assertFalse(first.matchesAdvertisement(forged));
+            // A name the host would read as a refspec or a glob is no branch to fetch at all, and a reading that
+            // names another branch than the snapshot's never chooses what the host fetches: both end the refresh.
+            for (var name : List.of("refs/heads/*", "refs/heads/a:refs/heads/b", "refs/heads/../x", "refs/heads/a b",
+                    "refs/heads/.x", "refs/heads/stable")) {
+                var phases = new ArrayList<String>();
+                var id = name.equals("refs/heads/stable") ? git(remote, "rev-parse", "stable") : secret;
+                assertNull(preparation.refresh(request, first, "ref: " + name + "\tHEAD\n" + id + "\tHEAD\n",
+                        phases::add), name);
+                assertFalse(phases.contains("Fetching incremental Git snapshot"), name);
+            }
+            assertNull(preparation.refresh(request, first, "", s -> {}), "a reading naming no ref will not settle");
+            assertTrue(PreparationGit.children(cache.resolve("snapshots")).stream().allMatch(snapshot -> {
+                try { return !allObjects(snapshot.resolve("repo.git")).contains(secret); }
+                catch (Exception e) { throw new AssertionError(e); }
+            }), "nothing the forged reading named was published");
+        }
+    }
+
+    @Execution(CONCURRENT) @Test void theGuestsReadingMatchesOnlyTheRequestedRefAtTheSnapshotsId() throws Exception {
+        start();
+        var pinned = new GitPreparation.Request(server.url(remote), "stable", host);
+        try (var main = prepare(host, null); var stable = preparation.prepare(pinned, s -> {})) {
+            assertTrue(main.matchesAdvertisement(guestReading(null)));
+            assertTrue(stable.matchesAdvertisement(guestReading("stable")));
+            // Other branches and tags in a reading are not the snapshot's to match: the guest fetches them itself.
+            var everything = git(tmp, "ls-remote", "--symref", "--", server.url(remote), "HEAD", "refs/heads/*", "refs/tags/*");
+            assertTrue(main.matchesAdvertisement(everything));
+            assertTrue(stable.matchesAdvertisement(everything));
+            assertFalse(main.matchesAdvertisement(guestReading("stable")), "a reading without HEAD names no default branch");
+            commitBinary(remote, "moved");
+            assertFalse(main.matchesAdvertisement(guestReading(null)), "at the same ID");
+            assertTrue(stable.matchesAdvertisement(guestReading("stable")));
         }
     }
 
@@ -169,10 +226,10 @@ class GitPreparationTest {
         var request = new GitPreparation.Request(server.url(remote), null, host);
         var phases = new ArrayList<String>();
         try (var first = preparation.prepare(request, s -> {})) {
-            // Like a merge-queue branch dropped unmerged: following it needs a rebuild, which a refresh never does.
-            git(remote, "branch", "-D", "stable");
-            commitBinary(remote, "pushed during preparation");
-            assertNull(preparation.refresh(request, first, guestReading(), phases::add));
+            // A force-push: following it needs a rebuild, which a refresh never does.
+            git(remote, "reset", "--hard", "HEAD~2");
+            commitBinary(remote, "rewritten history");
+            assertNull(preparation.refresh(request, first, guestReading(null), phases::add));
             assertTrue(phases.contains("Rebuilding Git snapshot: selected history was removed"), phases.toString());
             assertFalse(phases.contains("Creating clean Git snapshot"), phases.toString());
         }
@@ -182,22 +239,22 @@ class GitPreparationTest {
         start();
         var url = server.url(remote);
         // Discarded, as when the guest's access check is denied: nothing fetched, its lease released.
-        try (var denied = preparation.readRemote(url, s -> {}); var files = Files.walk(cache)) {
+        try (var denied = preparation.readRemote(url, null, s -> {}); var files = Files.walk(cache)) {
             assertEquals(List.of(), files.filter(f -> f.getFileName().toString().endsWith(".pack")
                     || f.getFileName().toString().equals("objects")).toList(), "reading refs fetches no objects");
         }
         assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
 
-        var other = preparation.readRemote(url, s -> {});
+        var other = preparation.readRemote(url, null, s -> {});
         assertThrows(IOException.class, () -> preparation.prepare(
                 new GitPreparation.Request(url + "-other", null, null), other, s -> {}), "refs read for another URL");
         assertEquals(List.of(), PreparationGit.children(cache.resolve("work")), "a refused handoff releases its lease");
 
-        try (var first = preparation.prepare(new GitPreparation.Request(url, null, null), preparation.readRemote(url, s -> {}), s -> {})) {
+        try (var first = preparation.prepare(new GitPreparation.Request(url, null, null), preparation.readRemote(url, null, s -> {}), s -> {})) {
             assertEquals("new clean snapshot", first.strategy());
             assertTrue(first.timingsMillis().containsKey("remote"));
         }
-        var refs = preparation.readRemote(url, s -> {});
+        var refs = preparation.readRemote(url, null, s -> {});
         try (var second = preparation.prepare(new GitPreparation.Request(url, null, null), refs, s -> {})) {
             assertEquals("cached clean snapshot", second.strategy());
             refs.close(); // the snapshot's reader owns the lease now
@@ -213,7 +270,7 @@ class GitPreparationTest {
         var url = server.url(remote);
         try (var first = prepare(host, null)) { }
         commitBinary(remote, "makes the early read miss");
-        var refs = preparation.readRemote(url, s -> {});
+        var refs = preparation.readRemote(url, null, s -> {});
         commitBinary(remote, "pushed after the early read");
         try (var next = preparation.prepare(new GitPreparation.Request(url, null, null), refs, s -> {})) {
             assertEquals("incremental clean snapshot", next.strategy());
@@ -228,7 +285,7 @@ class GitPreparationTest {
         var url = server.url(remote);
         try (var first = prepare(host, null)) { }
         commitBinary(remote, "seen by the early read");
-        var refs = preparation.readRemote(url, s -> {});
+        var refs = preparation.readRemote(url, null, s -> {});
         commitBinary(remote, "published by another build");
         try (var other = prepare(null, null)) { assertEquals("incremental clean snapshot", other.strategy()); }
         try (var next = preparation.prepare(new GitPreparation.Request(url, null, null), refs, s -> {})) {
@@ -267,27 +324,28 @@ class GitPreparationTest {
                 assertFalse(objects.contains(staged));
                 assertFalse(objects.contains(stash));
                 assertEquals("", git(result.repository(), "fsck", "--full", "--no-dangling"));
-                assertEquals("v1", git(result.repository(), "tag", "-l"));
+                // Only the branch the request names; the guest fetches tags and other branches when it needs them.
+                assertEquals("refs/heads/main", git(result.repository(), "for-each-ref", "--format=%(refname)"));
             }
         }
         assertEquals(before, contents(host.resolve(".git")), "preparation must not run maintenance in the source");
         assertFalse(Files.exists(cache.resolve("metadata")));
     }
 
-    @Execution(CONCURRENT) @Test void remoteAdvanceRewindDeletedBranchAndMovedTagsRefreshTheSnapshot() throws Exception {
+    @Execution(CONCURRENT) @Test void remoteAdvanceAndRewindRefreshTheSnapshot() throws Exception {
         start();
         try (var result = prepare(host, null)) { assertTrue(result.strategy().startsWith("reference-seeded")); }
         commitBinary(remote, "new public commit");
-        try (var result = prepare(host, null)) { sameObjects(remote, result.repository()); }
-        var removed = git(remote, "rev-parse", "stable");
-        git(remote, "branch", "-D", "stable");
+        try (var result = prepare(host, null)) {
+            assertEquals("incremental clean snapshot", result.strategy());
+            sameObjects(remote, result.repository());
+        }
+        var removed = git(remote, "rev-parse", "HEAD");
         git(remote, "reset", "--hard", "HEAD~3");
-        git(remote, "tag", "-f", "v1", "HEAD");
         try (var result = prepare(host, null)) {
             sameObjects(remote, result.repository());
             assertEquals("reference-seeded clean snapshot", result.strategy());
             assertFalse(allObjects(result.repository()).contains(removed));
-            assertEquals(git(remote, "rev-parse", "v1"), git(result.repository(), "rev-parse", "v1"));
         }
     }
 
@@ -330,80 +388,57 @@ class GitPreparationTest {
         try (var hit = prepare(null, null)) { assertEquals("cached clean snapshot", hit.strategy()); }
     }
 
+    @Execution(CONCURRENT) @Test void aRemoteHeadThatNamesNoBranchIsPreparedOnlyForAPin() throws Exception {
+        start();
+        git(remote, "checkout", "-q", "--detach");
+        commitBinary(remote, "detached public commit");
+        var failure = assertThrows(IOException.class, () -> prepare(null, null));
+        assertEquals("Remote HEAD names no branch to prepare", failure.getMessage());
+        try (var pinned = prepare(null, "main")) {
+            assertEquals("ref: refs/heads/main", Files.readString(pinned.repository().resolve("HEAD")).strip());
+            sameObjects(remote, pinned.repository());
+        }
+    }
+
     @Execution(CONCURRENT)
     @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void detachedRemoteHeadIsFetchedEvenWithoutAnyBranches(boolean removeBranch) throws Exception {
-        remote = tmp.resolve("detached");
-        git(tmp, "init", "-b", "main", remote.toString());
-        commitBinary(remote, "initial public commit");
+    @ValueSource(strings = {"merged-branch", "renamed-branch", "new-branch", "deleted-tag"})
+    void otherRefsChangingLeaveTheSnapshotCached(String change) throws Exception {
         start();
         try (var first = prepare(null, null)) { }
-        git(remote, "checkout", "--detach");
-        if (removeBranch) git(remote, "branch", "-D", "main");
-        for (int i = 0; i < 2; i++) {
-            commitBinary(remote, "detached public commit " + i);
-            try (var next = prepare(null, null)) {
-                assertEquals("incremental clean snapshot", next.strategy());
-                assertEquals(git(remote, "rev-parse", "HEAD"), git(next.repository(), "rev-parse", "HEAD"));
-                sameObjects(remote, next.repository());
-                assertEquals("", git(next.repository(), "fsck", "--full", "--no-dangling"));
-            }
-            try (var hit = prepare(null, null)) { assertEquals("cached clean snapshot", hit.strategy()); }
+        switch (change) {
+            case "merged-branch" -> git(remote, "branch", "-D", "stable");
+            case "renamed-branch" -> git(remote, "branch", "-m", "stable", "renamed");
+            case "new-branch" -> git(remote, "branch", "added", "HEAD~1");
+            case "deleted-tag" -> git(remote, "tag", "-d", "v1");
         }
+        // Only the requested ref is read and selected, so no other ref costs a fetch or a rebuild (#1990).
+        try (var next = prepare(null, null)) { assertEquals("cached clean snapshot", next.strategy()); }
     }
 
     @Execution(CONCURRENT)
     @ParameterizedTest
-    @ValueSource(strings = {"merged-branch", "renamed-branch", "rewind-retained", "lightweight-tag"})
-    void refsCanDisappearIncrementallyWhenTheirObjectsRemainSelected(String change) throws Exception {
-        start();
-        git(remote, "tag", "lightweight", "HEAD");
-        try (var first = prepare(null, null)) {
-            switch (change) {
-                case "merged-branch" -> {
-                    git(remote, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "--no-ff", "stable", "-m", "merge stable");
-                    git(remote, "branch", "-D", "stable");
-                }
-                case "renamed-branch" -> git(remote, "branch", "-m", "stable", "renamed");
-                case "rewind-retained" -> git(remote, "reset", "--hard", "HEAD~2");
-                case "lightweight-tag" -> git(remote, "tag", "-d", "lightweight");
-            }
-            try (var next = prepare(null, null)) {
-                assertEquals("incremental clean snapshot", next.strategy());
-                sameObjects(remote, next.repository());
-                for (var file : first.checksums().keySet()) {
-                    assertTrue(Files.isSameFile(first.repository().resolve(file), next.repository().resolve(file)));
-                }
-            }
-        }
-    }
-
-    @Execution(CONCURRENT)
-    @ParameterizedTest
-    @ValueSource(strings = {"unmerged-branch", "rewind", "moved-tag", "deleted-tag"})
+    @ValueSource(strings = {"rewind", "moved-tag"})
     void removedHistoryRebuildsAndExcludesFormerlySelectedObjects(String change) throws Exception {
         start();
-        try (var first = prepare(null, null)) {
+        var pin = change.equals("moved-tag") ? "v1" : null;
+        try (var first = prepare(null, pin)) {
             var before = contents(first.repository());
             switch (change) {
-                case "unmerged-branch" -> git(remote, "branch", "-D", "stable");
-                case "rewind" -> {
-                    git(remote, "branch", "-D", "stable");
-                    git(remote, "reset", "--hard", "HEAD~2");
-                }
+                case "rewind" -> git(remote, "reset", "--hard", "HEAD~2");
                 case "moved-tag" -> git(remote, "tag", "-f", "v1", "HEAD");
-                case "deleted-tag" -> git(remote, "tag", "-d", "v1");
             }
             var removed = allObjects(first.repository());
-            removed.removeAll(reachable(remote));
+            removed.removeAll(new HashSet<>(git(remote, "rev-list", "--objects", "--no-object-names",
+                    pin == null ? "HEAD" : "v1").lines().toList()));
             assertFalse(removed.isEmpty(), "fixture must remove selected objects, including annotated tag objects");
             var phases = new ArrayList<String>();
-            try (var next = preparation.prepare(new GitPreparation.Request(server.url(remote), null, null), phases::add)) {
+            try (var next = preparation.prepare(new GitPreparation.Request(server.url(remote), pin, null), phases::add)) {
                 assertEquals("reference-seeded clean snapshot", next.strategy());
                 assertTrue(phases.contains("Rebuilding Git snapshot: selected history was removed"));
                 assertTrue(phases.contains("Verifying Git snapshot"));
                 sameObjects(remote, next.repository());
+                assertTrue(java.util.Collections.disjoint(removed, allObjects(next.repository())));
                 assertEquals(before, contents(first.repository()));
             }
         }
@@ -466,12 +501,8 @@ class GitPreparationTest {
         assertTrue(PreparationGit.children(cache.resolve("work")).isEmpty());
     }
 
-    @Execution(CONCURRENT)
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void incrementalFetchRacingAnUpstreamChangeFallsBackToFreshSelection(boolean detachedHead) throws Exception {
+    @Execution(CONCURRENT) @Test void aPushDuringTheHostsIncrementalFetchIsRecordedAsFetched() throws Exception {
         start();
-        if (detachedHead) git(remote, "checkout", "--detach");
         try (var first = prepare(null, null)) { }
         commitBinary(remote, "advertised update");
         var phases = new ArrayList<String>();
@@ -482,8 +513,9 @@ class GitPreparationTest {
                 catch (Exception e) { throw new RuntimeException(e); }
             }
         })) {
-            assertEquals("reference-seeded clean snapshot", next.strategy());
-            assertTrue(phases.contains("Rebuilding Git snapshot: remote refs changed during fetch"));
+            // The snapshot describes the bytes it holds, as a clone does; the guest compares its own reading.
+            assertEquals("incremental clean snapshot", next.strategy());
+            assertEquals(git(remote, "rev-parse", "HEAD"), git(next.repository(), "rev-parse", "HEAD"));
             sameObjects(remote, next.repository());
         }
         try (var hit = prepare(null, null)) { assertEquals("cached clean snapshot", hit.strategy()); }
@@ -698,7 +730,7 @@ class GitPreparationTest {
         start();
         var phases = new ArrayList<String>();
         var failure = assertThrows(IOException.class, () -> preparation.prepare(
-                new GitPreparation.Request(server.url(remote), null, null), phases::add));
+                new GitPreparation.Request(server.url(remote), "bad", null), phases::add));
         assertTrue(phases.contains("Verifying Git snapshot"), "the strict receive's rejection falls back to the fsck, which rejects it too");
         assertEquals("Git preparation failed: fsck", failure.getMessage());
         assertTrue(GitPreparation.fsckRejected(((GitCommandException) failure.getSuppressed()[0]).details()),
@@ -711,13 +743,13 @@ class GitPreparationTest {
         literalTreeBranch("old", "0100644", 1);
         start();
         var phases = new ArrayList<String>();
-        try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), null, null), phases::add)) {
+        try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), "old", null), phases::add)) {
             assertEquals("new clean snapshot", result.strategy());
             assertTrue(phases.contains("Recloning Git snapshot for a full check"));
             assertTrue(phases.contains("Verifying Git snapshot"));
             sameObjects(remote, result.repository());
         }
-        try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }
+        try (var result = prepare(null, "old")) { assertEquals("cached clean snapshot", result.strategy()); }
     }
 
     /** A branch whose commit's tree, written without Git's checks, lists {@code isx.deb} as "a" {@code copies} times. */
@@ -886,20 +918,30 @@ class GitPreparationTest {
         }
     }
 
-    @Execution(CONCURRENT) @Test void remoteHeadSwitchAndBranchTagPinsShareOnlyTheSameFullSelection() throws Exception {
+    @Execution(CONCURRENT) @Test void eachPinHasItsOwnSnapshotOfOnlyItsRef() throws Exception {
         start();
         try (var result = prepare(host, null)) { }
         for (var pin : List.of("stable", "v1", "main")) {
             try (var result = prepare(null, pin)) {
-                assertEquals("cached clean snapshot", result.strategy());
+                assertEquals("new clean snapshot", result.strategy());
                 sameObjects(remote, result.repository());
             }
+            try (var result = prepare(null, pin)) { assertEquals("cached clean snapshot", result.strategy()); }
+        }
+        try (var tag = prepare(null, "v1")) {
+            assertEquals(git(remote, "rev-parse", "v1^{commit}"), Files.readString(tag.repository().resolve("HEAD")).strip(),
+                    "a tag leaves HEAD detached at its commit, as clone does");
+        }
+        // A branch is picked before a tag of the same name, as clone picks it.
+        git(remote, "branch", "v1", "stable");
+        try (var both = prepare(null, "v1")) {
+            assertEquals("refs/heads/v1", git(both.repository(), "for-each-ref", "--format=%(refname)"));
         }
         assertThrows(IOException.class, () -> prepare(null, "private"));
         git(remote, "symbolic-ref", "HEAD", "refs/heads/stable");
         try (var result = prepare(null, null)) {
-            assertEquals("incremental clean snapshot", result.strategy());
             assertEquals("ref: refs/heads/stable", Files.readString(result.repository().resolve("HEAD")).strip());
+            assertEquals("refs/heads/stable", git(result.repository(), "for-each-ref", "--format=%(refname)"));
         }
         try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }
     }
@@ -931,21 +973,16 @@ class GitPreparationTest {
         assertEquals(List.of(), PreparationGit.children(cache.resolve("work")));
     }
 
-    @Execution(CONCURRENT) @Test void emptyRemotesAreIndependentAndRefreshedWithoutGuessingTheUnbornHead() throws Exception {
+    @Execution(CONCURRENT) @Test void anEmptyRemoteIsNotPreparedUntilItHasTheBranch() throws Exception {
         remote = tmp.resolve("empty.git");
         git(tmp, "init", "--bare", "-b", "next", remote.toString());
         start();
-        for (int i = 0; i < 2; i++) {
-            try (var result = prepare(null, null)) {
-                assertTrue(result.checksums().isEmpty());
-                assertNotEquals("cached clean snapshot", result.strategy());
-                assertEquals("ref: refs/heads/next", Files.readString(result.repository().resolve("HEAD")).strip());
-            }
-        }
+        assertThrows(IOException.class, () -> prepare(null, null), "an unborn HEAD names no branch to prepare");
+        assertTrue(PreparationGit.children(cache.resolve("snapshots")).isEmpty());
         commitBinary(host, "first published commit");
         git(host, "push", "origin", "HEAD:refs/heads/next");
         try (var result = prepare(null, null)) {
-            assertEquals("incremental clean snapshot", result.strategy());
+            assertEquals("new clean snapshot", result.strategy());
             sameObjects(remote, result.repository());
         }
         try (var result = prepare(null, null)) { assertEquals("cached clean snapshot", result.strategy()); }
@@ -1072,8 +1109,12 @@ class GitPreparationTest {
         }
     }
 
+    /** {@code actual} holds exactly what its one selected ref reaches in {@code expected}, nothing else (#1990). */
     private static void sameObjects(Path expected, Path actual) throws Exception {
-        assertEquals(reachable(expected), allObjects(actual), "the physical object store must equal the selected remote closure");
+        var roots = git(actual, "for-each-ref", "--format=%(objectname)", "refs/heads/", "refs/tags/");
+        assertEquals(1, roots.lines().count(), "one selected ref: " + roots);
+        assertEquals(new HashSet<>(git(expected, "rev-list", "--objects", "--no-object-names", roots).lines().toList()),
+                allObjects(actual), "the physical object store must equal the selected remote closure");
     }
 
     private static java.util.Set<String> reachable(Path repo) throws Exception {

@@ -11,7 +11,6 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,14 +22,23 @@ import java.util.regex.Pattern;
 import static dev.incusspawn.git.PreparationGit.*;
 import static dev.incusspawn.incus.Container.shellQuote;
 
-/** Standalone full clones selected by the remote, retained as bounded immutable snapshots. */
+/**
+ * Standalone full-history clones of the one ref a template requests, selected by the remote and retained
+ * as bounded immutable snapshots (#1990): the guest fetches any other branch it needs itself, later.
+ */
 public final class GitPreparation {
     private static final Pattern DRIVE_LETTER = Pattern.compile("^[A-Za-z]:.*");
     private static final Pattern SCP_LIKE = Pattern.compile("(?:[^/@:]+@)?(?:\\[[0-9a-fA-F:]+\\]|[^/@:]+):[^:].*");
     private static final Pattern OBJECT_ID = Pattern.compile("[0-9a-f]{40}(?:[0-9a-f]{24})?");
+    /**
+     * A branch name a reading may name as HEAD's target, which the host then fetches by name: no refspec or
+     * glob character, no control character or space, none of the sequences {@code check-ref-format} refuses.
+     */
+    private static final Pattern FETCHABLE_BRANCH = Pattern.compile(
+            "refs/heads/(?!\\.)(?!.*(?:\\.\\.|@\\{|//|/\\.|\\.lock(?:/|$)))[^\\x00-\\x20\\x7f:?*\\[\\\\^~]+(?<![./])");
     private static final Pattern LOOSE_OBJECT_DIR = Pattern.compile("[0-9a-f]{2}");
     private static final Pattern PACK_FILE = Pattern.compile("pack-[0-9a-f]{40}(?:[0-9a-f]{24})?\\.(pack|idx)");
-    private static final String POLICY = "isx-clean-full-snapshot-v1";
+    private static final String POLICY = "isx-clean-branch-snapshot-v1";
     static final int MAX_INCREMENTAL_PACKS = 32;
     private static final String REFRESHED = " (refreshed)";
     private final PreparationCache cache;
@@ -62,9 +70,11 @@ public final class GitPreparation {
         private final Map<String, String> checksums;
         private final Map<String, Long> timings;
         private final String notRetained;
+        private final String branch;
 
         private Prepared(PreparationCache.Lease lease, Path repository, String strategy,
-                         Map<String, String> checksums, Map<String, Long> timings, String notRetained) {
+                         Map<String, String> checksums, Map<String, Long> timings, String notRetained, String branch) {
+            this.branch = branch;
             this.lease = lease;
             this.repository = repository;
             this.strategy = strategy;
@@ -75,9 +85,12 @@ public final class GitPreparation {
 
         public Path repository() { return repository; }
         public String strategy() { return strategy; }
-        /** The guest must independently see exactly this selection before any prepared bytes are mounted. */
+        /**
+         * The guest's own reading must resolve the requested ref to exactly this snapshot's, at the same ID,
+         * before any prepared bytes are mounted. The snapshot holds only what that ref reaches.
+         */
         public boolean matchesAdvertisement(String advertisement) throws IOException {
-            var visible = parseAdvertisement(advertisement);
+            var visible = parseAdvertisement(advertisement, branch);
             return visible != null && visible.equals(selection(repository));
         }
         /** Relative to the bare repository; checked again on the guest's independent copy. */
@@ -114,13 +127,15 @@ public final class GitPreparation {
     public static final class RemoteRefs implements AutoCloseable {
         private final PreparationCache.Lease lease;
         private final String url;
+        private final String branch;
         private final String advertised;
         private final long millis;
         private boolean taken;
 
-        private RemoteRefs(PreparationCache.Lease lease, String url, String advertised, long millis) {
+        private RemoteRefs(PreparationCache.Lease lease, String url, String branch, String advertised, long millis) {
             this.lease = lease;
             this.url = url;
+            this.branch = branch;
             this.advertised = advertised;
             this.millis = millis;
         }
@@ -141,13 +156,14 @@ public final class GitPreparation {
     }
 
     /** Always authenticate/contact the remote, even on a hit: never serve a stale offline snapshot. */
-    public RemoteRefs readRemote(String url, Phases phase) throws IOException {
+    public RemoteRefs readRemote(String url, String branch, Phases phase) throws IOException {
         if (!isRemoteUrl(url)) throw new IOException("Git preparation requires an HTTPS, SSH or Git remote");
         var lease = cache.lease();
         boolean success = false;
         try {
             long start = System.nanoTime();
-            var refs = new RemoteRefs(lease, url, advertisement(lease.path, url, phase), (System.nanoTime() - start) / 1_000_000);
+            var refs = new RemoteRefs(lease, url, branch, advertisement(lease.path, url, branch, phase),
+                    (System.nanoTime() - start) / 1_000_000);
             success = true;
             return refs;
         } finally {
@@ -156,7 +172,7 @@ public final class GitPreparation {
     }
 
     public Prepared prepare(Request request, Phases phase) throws IOException {
-        return prepare(request, readRemote(request.url(), phase), phase);
+        return prepare(request, readRemote(request.url(), request.branch(), phase), phase);
     }
 
     /** Continues from {@code remote}, which it takes over whatever the outcome; it must have read {@code request}'s URL. */
@@ -165,6 +181,7 @@ public final class GitPreparation {
         boolean success = false;
         try {
             if (!remote.url.equals(request.url())) throw new IOException("Remote refs were read for another URL");
+            if (!pin(remote.branch).equals(pin(request.branch()))) throw new IOException("Remote refs were read for another branch");
             var prepared = prepare(request, lease, remote.advertised, remote.millis, phase);
             success = true;
             return prepared;
@@ -177,7 +194,7 @@ public final class GitPreparation {
                              Phases phase) throws IOException {
         var timings = new LinkedHashMap<String, Long>();
         timings.put("remote", remoteMillis);
-        var key = hash(POLICY + "\n" + request.url());
+        var key = key(request);
         try (var ignored = cache.writer(key)) {
             long start = System.nanoTime();
             phase.accept("Checking Git snapshot");
@@ -192,19 +209,23 @@ public final class GitPreparation {
             boolean hit = manifest != null && advertised != null && advertised.equals(selection(previousRepo));
             elapsed(timings, "check", start);
             if (manifest != null && !hit) {
-                // The early read may predate the access barrier, the limiter wait and this writer lock. A push
-                // since then would fail the refresh's selection check and rebuild in full, so read again first.
-                // A concurrent build may also have published exactly what it reads now.
+                // The early read may predate the access barrier, the limiter wait and this writer lock, and a
+                // concurrent build may have published exactly what the remote shows now: read again first.
                 start = System.nanoTime();
-                advertised = advertisement(lease.path, request.url(), phase);
+                advertised = advertisement(lease.path, request.url(), request.branch(), phase);
                 elapsed(timings, "remote", start);
                 hit = advertised != null && advertised.equals(selection(previousRepo));
             }
             if (hit) {
                 validatePin(previousRepo, request.branch());
-                return new Prepared(lease, previousRepo, "cached clean snapshot", objectChecksums(manifest), timings, null);
+                return new Prepared(lease, previousRepo, "cached clean snapshot", objectChecksums(manifest), timings, null,
+                        request.branch());
             }
 
+            if (advertised == null) {
+                throw new IOException(request.branch() == null || request.branch().isBlank()
+                        ? "Remote HEAD names no branch to prepare" : "Remote has no requested branch or tag");
+            }
             start = System.nanoTime();
             phase.accept("Selecting Git reference");
             Reference reference = manifest == null ? null : new Reference(previousRepo, null);
@@ -226,10 +247,10 @@ public final class GitPreparation {
             var staged = Files.createDirectory(lease.path.resolve("snapshot"));
             var result = staged.resolve("repo.git");
             boolean incremental = false;
-            if (manifest != null && advertised != null) {
+            if (manifest != null) {
                 try {
-                    incremental = refreshSnapshot(request.url(), previousRepo, manifest, advertised,
-                            lease.path, result, phase, timings);
+                    incremental = refreshSnapshot(request.url(), previousRepo, manifest, advertised, false,
+                            lease.path, result, phase, timings) == Refreshed.YES;
                 } catch (IOException failedRefresh) {
                     // A stalled remote stalls a full clone too: fail now and let the build clone in the guest.
                     if (Thread.currentThread().isInterrupted() || failedRefresh instanceof TransferStopped) throw failedRefresh;
@@ -240,7 +261,7 @@ public final class GitPreparation {
                 // Failed fetches can leave unchecked objects behind. Never borrow from this staging tree.
                 delete(result);
                 try {
-                    cloneSnapshot(request.url(), lease.path, result, reference, phase, timings);
+                    cloneSnapshot(request.url(), advertised, lease.path, result, reference, phase, timings);
                 } catch (IOException failedReference) {
                     if (reference == null || Thread.currentThread().isInterrupted()
                             || failedReference instanceof TransferStopped) throw failedReference;
@@ -250,13 +271,13 @@ public final class GitPreparation {
                     reference = null;
                     retried = true;
                     phase.accept("Retrying Git snapshot without reference");
-                    cloneSnapshot(request.url(), lease.path, result, null, phase, timings);
+                    cloneSnapshot(request.url(), advertised, lease.path, result, null, phase, timings);
                 }
             }
             validatePin(result, request.branch());
             delete(previous);
             Files.deleteIfExists(tips);
-            return publish(key, lease, staged, incremental ? "incremental clean snapshot"
+            return publish(key, request, lease, staged, incremental ? "incremental clean snapshot"
                     : reference != null ? "reference-seeded clean snapshot"
                     : retried ? "new clean snapshot (reference retry)" : "new clean snapshot",
                     timings, phase);
@@ -265,43 +286,65 @@ public final class GitPreparation {
 
     /**
      * Bring {@code prior} up to {@code guestAdvertisement}, the guest's latest {@code ls-remote}, with an
-     * incremental fetch from its own leased bytes, whether or not the cache kept it (#1980).
-     * The host fetches only when its own advertisement equals the guest's, so a result matches that reading
-     * by construction, and a guest whose accounts see a different ref scope never costs a fetch.
-     * Returns {@code prior} itself when the host sees a different selection than the guest, which a later
-     * reading may settle, or already sees exactly {@code prior}'s, and null when only a full rebuild could
-     * follow the remote, such as when selected history was removed: that is the cost a refresh exists to avoid.
+     * incremental fetch from its own leased bytes, whether or not the cache kept it (#1980, #1990).
+     * The host fetches only {@code prior}'s own ref, by name, and keeps the result only when that fetch brought
+     * it to the guest's ID: so the result matches that reading, and a guest's reading can name an ID but never
+     * make the host hand over what the host's fetch did not confirm. The fetched name is the template's pin or
+     * the one the host's own reading chose, never one only the guest's reading names.
+     * Returns {@code prior} when the reading cannot be followed yet: the guest sees exactly {@code prior}'s
+     * selection, or the ref moved again before the host fetched it. Returns null when no later reading would
+     * settle it in this build: the reading names no such ref, or another ref, such as a default branch the
+     * remote has just switched, which a later preparation rebuilds from the host's own reading; or only a full
+     * rebuild could follow the remote, such as after a force-push, which is the cost a refresh exists to avoid.
      * {@code prior} stays open; the caller closes it once it holds the result.
      */
     public Prepared refresh(Request request, Prepared prior, String guestAdvertisement, Phases phase) throws IOException {
         if (!isRemoteUrl(request.url())) throw new IOException("Git preparation requires an HTTPS, SSH or Git remote");
-        var key = hash(POLICY + "\n" + request.url());
+        var guest = parseAdvertisement(guestAdvertisement, request.branch());
+        if (guest == null) return null;
+        var own = selection(prior.repository());
+        if (guest.equals(own)) return prior;
+        if (own == null || !refName(guest).equals(refName(own))) return null;
+        var key = key(request);
         // The ready line and --verbose timings describe the whole preparation, the refreshes included.
         var timings = new LinkedHashMap<>(prior.timings);
         var strategy = prior.strategy().endsWith(REFRESHED) ? prior.strategy() : prior.strategy() + REFRESHED;
         var lease = cache.lease();
         boolean success = false;
         try (var ignored = cache.writer(key)) {
-            long start = System.nanoTime();
-            var advertised = advertisement(lease.path, request.url(), phase);
-            elapsed(timings, "remote", start);
-            if (advertised == null || !advertised.equals(parseAdvertisement(guestAdvertisement))
-                    || advertised.equals(selection(prior.repository()))) return prior;
             var staged = Files.createDirectory(lease.path.resolve("snapshot"));
             var result = staged.resolve("repo.git");
-            if (!refreshSnapshot(request.url(), prior.repository(), prior.checksums(), advertised,
-                    lease.path, result, phase, timings)) return null;
+            var refreshed = refreshSnapshot(request.url(), prior.repository(), prior.checksums(), guest, true,
+                    lease.path, result, phase, timings);
+            if (refreshed == Refreshed.MOVED) return prior;
+            if (refreshed == Refreshed.NO) return null;
             validatePin(result, request.branch());
-            var refreshed = publish(key, lease, staged, strategy, timings, phase);
+            var published = publish(key, request, lease, staged, strategy, timings, phase);
             success = true;
-            return refreshed;
+            return published;
         } finally {
             if (!success) lease.close();
         }
     }
 
+    /** The ref a {@link #selection} names. */
+    private static String refName(String selection) {
+        var ref = selection.split("\n", 2)[1];
+        return ref.substring(0, ref.indexOf(' '));
+    }
+
+    /** One cache entry per URL and requested branch or tag; none requested is the remote's default branch. */
+    private static String key(Request request) {
+        return hash(POLICY + "\n" + request.url() + "\n" + pin(request.branch()));
+    }
+
+    /** A requested branch or tag, with none and a blank one both the empty string: the remote's default branch. */
+    private static String pin(String branch) {
+        return branch == null || branch.isBlank() ? "" : branch;
+    }
+
     /** Seal and publish {@code staged}'s repository; the result reads a pinned copy in {@code lease}. */
-    private Prepared publish(String key, PreparationCache.Lease lease, Path staged, String strategy,
+    private Prepared publish(String key, Request request, PreparationCache.Lease lease, Path staged, String strategy,
                              Map<String, Long> timings, Phases phase) throws IOException {
         var result = staged.resolve("repo.git");
         long start = System.nanoTime();
@@ -322,7 +365,7 @@ public final class GitPreparation {
         var notRetained = cache.publishSnapshot(key, staged);
         delete(staged);
         elapsed(timings, "publish", start);
-        return new Prepared(lease, clean, strategy, objectChecksums(manifest), timings, notRetained);
+        return new Prepared(lease, clean, strategy, objectChecksums(manifest), timings, notRetained, request.branch());
     }
 
     /**
@@ -401,7 +444,7 @@ public final class GitPreparation {
             elapsed(timings, "export", start);
             var checksums = objectChecksums(manifest(result));
             success = true;
-            return new Prepared(lease, result, "host source", checksums, timings, null);
+            return new Prepared(lease, result, "host source", checksums, timings, null, branch);
         } finally {
             if (!success) lease.close();
         }
@@ -437,7 +480,8 @@ public final class GitPreparation {
         return progress -> phase.progress(label, progress.summary());
     }
 
-    private void cloneSnapshot(String url, Path work, Path result, Reference reference,
+    /** Create a snapshot of {@code target}'s ref alone, a {@link #selection}, with all of its history. */
+    private void cloneSnapshot(String url, String target, Path work, Path result, Reference reference,
                                Phases phase, Map<String, Long> timings) throws IOException {
         long start = System.nanoTime();
         var progress = live(phase, "Creating clean Git snapshot");
@@ -446,7 +490,7 @@ public final class GitPreparation {
         Received received;
         try {
             try {
-                received = clone(url, work, result, reference, trace, phase, progress);
+                received = clone(url, target, result, reference, trace, phase, progress);
                 if (Files.exists(result.resolve("shallow")) || Files.exists(result.resolve("objects/info/alternates"))) {
                     throw new IOException("Git snapshot is not a standalone full repository");
                 }
@@ -500,29 +544,28 @@ public final class GitPreparation {
     /** {@code strict}: the strict receive was kept. {@code rejected}: why it was not, when it was cloned again. */
     private record Received(boolean strict, GitCommandException rejected) {}
 
-    /** Clone {@code url}; without a reference, with a strict receive traced to {@code trace}. */
-    private Received clone(String url, Path work, Path result, Reference reference, Path trace, Phases phase,
+    /** Fetch {@code target} from {@code url}; without a reference, with a strict receive traced to {@code trace}. */
+    private Received clone(String url, String target, Path result, Reference reference, Path trace, Phases phase,
                           Consumer<GitProcess.Progress> progress) throws IOException {
         if (reference != null) {
-            run(work, null, null, cloneCommand(url, result, reference, false), transfer, progress);
+            fetchSnapshot(url, target, result, reference, false, progress, Map.of());
             return new Received(false, null);
         }
         GitCommandException rejected;
         try {
             // Git's trace shows how the objects arrived. It names the URL, so it stays in the private lease.
-            run(work, null, null, cloneCommand(url, result, null, true), transfer, progress, Map.of("GIT_TRACE", trace.toString()));
+            fetchSnapshot(url, target, result, null, true, progress, Map.of("GIT_TRACE", trace.toString()));
             return new Received(true, null);
         } catch (GitCommandException e) {
             if (e instanceof TransferStopped || !fsckRejected(e.details())) throw e;
             rejected = e;
         }
         // --strict also makes fsck's warnings fatal, such as zero-padded modes or bad dates in old history.
-        // Clone again without it and let the full fsck decide, as it alone did before the receive was strict.
+        // Fetch again without it and let the full fsck decide, as it alone did before the receive was strict.
         delete(result);
         Files.deleteIfExists(trace);
         try {
-            run(work, null, null, cloneCommand(url, result, null, false), transfer,
-                    live(phase, "Recloning Git snapshot for a full check"));
+            fetchSnapshot(url, target, result, null, false, live(phase, "Recloning Git snapshot for a full check"), Map.of());
         } catch (IOException failed) {
             failed.addSuppressed(rejected);
             throw failed;
@@ -530,22 +573,44 @@ public final class GitPreparation {
         return new Received(false, rejected);
     }
 
-    private static List<String> cloneCommand(String url, Path result, Reference reference, boolean strict) {
-        var clone = new ArrayList<String>();
-        if (reference != null && reference.tips() != null) {
-            // Git appends the alternate's repository path. Ignore it: emitting only captured
-            // public tracking tips also overrides a global alternateRefsCommand/prefix policy.
-            clone.addAll(List.of("-c", "core.alternateRefsCommand=sh -c 'cat \"$1\"' - "
-                    + shellQuote(reference.tips().toString())));
+    /**
+     * A fresh bare repository holding only {@code target}'s ref, fetched by name. Not a clone: clone asks the
+     * remote to include every annotated tag pointing into what it sends, even with {@code --no-tags}, and those
+     * tag objects would sit in the snapshot with no ref of it reaching them. With a reference, its objects are
+     * borrowed through an alternate and then copied, as {@code clone --reference --dissociate} does: a bare
+     * repository avoids older Git's commit-graph/checkout bug there, and the non-thin repack walks only our ref,
+     * so the reference's private objects stay behind.
+     */
+    private void fetchSnapshot(String url, String target, Path result, Reference reference, boolean strict,
+                               Consumer<GitProcess.Progress> progress, Map<String, String> environment) throws IOException {
+        var name = refName(target);
+        init(result, target.substring(0, target.indexOf('\n')));
+        var alternates = result.resolve("objects/info/alternates");
+        var fetch = new ArrayList<String>();
+        if (reference != null) {
+            Files.createDirectories(alternates.getParent());
+            Files.writeString(alternates, git(reference.repository(), "rev-parse", "--path-format=absolute",
+                    "--git-path", "objects") + "\n");
+            if (reference.tips() != null) {
+                // Git appends the alternate's repository path. Ignore it: emitting only captured
+                // public tracking tips also overrides a global alternateRefsCommand/prefix policy.
+                fetch.addAll(List.of("-c", "core.alternateRefsCommand=sh -c 'cat \"$1\"' - "
+                        + shellQuote(reference.tips().toString())));
+            }
         }
         // fetch.fsckObjects, not transfer.fsckObjects, which a user's fetch.fsckObjects=false would override.
-        if (strict) clone.addAll(List.of("-c", "fetch.fsckObjects=true"));
-        // A bare clone avoids the commit-graph/checkout bug in older Git's --dissociate.
-        // The real remote selects refs; Git's non-thin repack excludes private reference objects.
-        clone.addAll(List.of("clone", "--progress", "--bare", "--no-local", "--template="));
-        if (reference != null) clone.addAll(List.of("--reference", reference.repository().toString(), "--dissociate"));
-        clone.addAll(List.of("--", url, result.toString()));
-        return clone;
+        if (strict) fetch.addAll(List.of("-c", "fetch.fsckObjects=true"));
+        // A pack is kept as received, so index-pack sees every object and the trace can count the receives.
+        fetch.addAll(List.of("-c", "fetch.unpackLimit=1", "fetch", "--progress", "--no-tags", "--no-write-fetch-head",
+                "--no-auto-maintenance", "--no-write-commit-graph", "--no-recurse-submodules",
+                "--", url, "+" + name + ":" + name));
+        run(result, null, null, fetch, transfer, progress, environment);
+        if (reference != null) {
+            git(result, "repack", "-a", "-d");
+            Files.delete(alternates);
+            git(result, "prune-packed");
+        }
+        writeHead(result, name);
     }
 
     private static final Pattern RECEIVE = Pattern.compile("trace: built-in: git index-pack(?: (.*))?$");
@@ -562,22 +627,29 @@ public final class GitPreparation {
                 && Arrays.asList(receive.group(1).replace("'", "").split(" ")).contains("--strict")) ? receives.size() : 0;
     }
 
+    /** Whether a refresh holds its target: yes, not until a later reading ({@code MOVED}), or only by a rebuild. */
+    enum Refreshed { YES, MOVED, NO }
+
     /**
-     * Extend a verified generation without rewriting or decoding its old packs.
+     * Extend a verified generation towards {@code target}, a {@link #selection}, without rewriting or decoding
+     * its old packs. Only the target's ref is fetched, by name. With {@code exact}, a fetch that found the ref
+     * at another ID is {@link Refreshed#MOVED}; without, the snapshot records what was fetched, as a clone does.
      * {@code previousManifest} needs only its {@code objects/} entries.
      */
-    private boolean refreshSnapshot(String url, Path previous, Map<String, String> previousManifest,
-                                           String advertised, Path work, Path result,
-                                           Phases phase, Map<String, Long> timings) throws IOException {
+    private Refreshed refreshSnapshot(String url, Path previous, Map<String, String> previousManifest,
+                                      String target, boolean exact, Path work, Path result,
+                                      Phases phase, Map<String, Long> timings) throws IOException {
+        var ref = target.split("\n", 2)[1];
+        var name = refName(target);
         long start = System.nanoTime();
         var progress = live(phase, "Fetching incremental Git snapshot");
         try {
             // Only owned immutable packs are linked. Config, HEAD and refs are recreated independently.
             sanitize(previous, result);
             run(result, null, null, List.of("-c", "fetch.fsckObjects=true", "-c", "fetch.unpackLimit=1",
-                    "fetch", "--progress", "--atomic", "--prune", "--no-tags", "--no-write-fetch-head",
+                    "fetch", "--progress", "--no-tags", "--no-write-fetch-head",
                     "--no-auto-maintenance", "--no-write-commit-graph", "--no-recurse-submodules",
-                    "--", url, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*", "+HEAD:refs/isx/remote-head"),
+                    "--", url, "+" + name + ":refs/isx/fetched"),
                     transfer, progress);
         } finally {
             elapsed(timings, "fetch", start);
@@ -585,23 +657,34 @@ public final class GitPreparation {
         start = System.nanoTime();
         phase.accept("Verifying incremental Git snapshot");
         try {
-            var advertisedParts = advertised.split("\n", 4);
-            // A detached remote HEAD need not be reachable from any branch or tag. Fetch it too,
-            // recording its actual fetched ID so a concurrent HEAD update cannot pass selection checks.
-            var fetchedHead = git(result, "rev-parse", "--verify", "refs/isx/remote-head");
-            git(result, "update-ref", "-d", "refs/isx/remote-head");
-            Files.writeString(result.resolve("HEAD"), advertisedParts[1] + "\n");
-            if (!fetchedHead.equals(advertisedParts[2]) || !advertised.equals(selection(result))) {
-                phase.accept("Rebuilding Git snapshot: remote refs changed during fetch");
-                return false;
+            // The fetch lands in a temporary ref, so its actual ID is what is checked. The batch below replaces the
+            // previous ref, which on the host's own refresh may be another one when the default branch changed;
+            // retainsHistory reads the old ID from previous, so it still walks it.
+            var fetched = git(result, "rev-parse", "--verify", "refs/isx/fetched");
+            if (!ref.equals(name + " " + fetched)) {
+                if (exact) {
+                    phase.accept("Remote ref moved during the incremental Git fetch");
+                    return Refreshed.MOVED;
+                }
+                target = target.substring(0, target.indexOf('\n') + 1) + name + " " + fetched;
             }
+            var input = work.resolve("refs.in");
+            var lines = new ArrayList<String>();
+            refMap(result).keySet().forEach(old -> { if (!old.equals(name)) lines.add("delete " + old); });
+            lines.add("update " + name + " " + fetched);
+            lines.add("delete refs/isx/fetched");
+            Files.write(input, lines);
+            run(result, input, null, List.of("update-ref", "--stdin"));
+            Files.delete(input);
+            writeHead(result, name);
+            if (!target.equals(selection(result))) throw new IOException("Incremental Git snapshot has another selection");
             if (Files.exists(result.resolve("shallow")) || Files.exists(result.resolve("objects/info/alternates"))
                     || hasLooseObjects(result)) throw new IOException("Incremental Git snapshot is not standalone and packed");
             var packs = children(result.resolve("objects/pack")).stream()
                     .filter(p -> p.toString().endsWith(".pack")).toList();
             if (packs.size() > MAX_INCREMENTAL_PACKS) {
                 phase.accept("Compacting Git snapshot");
-                return false;
+                return Refreshed.NO;
             }
             // Reuse the old object validation only for exactly the sealed bytes. Check new packs and
             // indexes independently, including object structure and links into the verified old store.
@@ -617,36 +700,31 @@ public final class GitPreparation {
             }
             if (!retainsHistory(previous, result, work)) {
                 phase.accept("Rebuilding Git snapshot: selected history was removed");
-                return false;
+                return Refreshed.NO;
             }
-            return true;
+            return Refreshed.YES;
         } finally {
             elapsed(timings, "verify", start);
         }
     }
 
-    /** Every formerly selected root must remain reachable, including annotated tag objects and HEAD. */
+    /** A branch is HEAD's symbolic target; a tag leaves HEAD detached at its commit, as clone does. */
+    private static void writeHead(Path repo, String name) throws IOException {
+        Files.writeString(repo.resolve("HEAD"), (name.startsWith("refs/heads/") ? "ref: " + name
+                : git(repo, "rev-parse", "--verify", name + "^{commit}")) + "\n");
+    }
+
+    /** The formerly selected ref's object, annotated tag included, must remain reachable from the new one. */
     private static boolean retainsHistory(Path previous, Path result, Path work) throws IOException {
-        var oldRefs = refMap(previous);
-        var newRefs = refMap(result);
-        var retained = new HashSet<>(newRefs.values());
-        for (var entry : oldRefs.entrySet()) {
-            var old = entry.getValue();
-            var next = newRefs.get(entry.getKey());
-            if (!retained.contains(old) && next != null && entry.getKey().startsWith("refs/heads/")
-                    && git(result, "merge-base", old, next).equals(old)) retained.add(old);
-        }
-        var remaining = new HashSet<>(oldRefs.values());
-        var oldSelection = selection(previous);
-        if (oldSelection != null) remaining.add(oldSelection.split("\n", 4)[2]);
-        remaining.removeAll(retained);
-        if (remaining.isEmpty()) return true;
-        // Deleting a merged branch is safe; deleting an unmerged one or an annotated tag may not be.
+        var old = refMap(previous).values();
+        var next = refMap(result).values();
+        if (next.containsAll(old)) return true;
+        // A fast-forward keeps everything; a force-push or a moved annotated tag may not.
         // Stream a potentially large difference to disk instead of capturing it in the JVM heap.
         var input = work.resolve("retained-tips");
         var output = work.resolve("removed-objects");
         try {
-            Files.write(input, remaining);
+            Files.write(input, old);
             run(result, input, output, List.of("rev-list", "--objects", "--no-object-names", "--stdin", "--not", "--all"));
             return Files.size(output) == 0;
         } finally {
@@ -655,45 +733,61 @@ public final class GitPreparation {
         }
     }
 
-    /** Canonical heads, tags, HEAD target and inferred object format. Unborn/ambiguous HEADs cannot hit. */
-    private String advertisement(Path work, String url, Phases phase) throws IOException {
-        return parseAdvertisement(run(work, null, null,
-                List.of("ls-remote", "--symref", "--", url, "HEAD", "refs/heads/*", "refs/tags/*"),
-                transfer, live(phase, "Reading remote refs")));
+    /**
+     * The remote's view of the requested ref: the branch, else the tag, named {@code branch}, or with none
+     * the branch the remote's HEAD names. Only those refs are read, as the guest reads them.
+     */
+    private String advertisement(Path work, String url, String branch, Phases phase) throws IOException {
+        var command = new ArrayList<>(List.of("ls-remote", "--symref", "--", url));
+        command.addAll(lsRemotePatterns(branch));
+        return parseAdvertisement(run(work, null, null, command, transfer, live(phase, "Reading remote refs")), branch);
     }
 
-    private static String parseAdvertisement(String output) throws IOException {
+    /** What {@code ls-remote} is asked for a request of {@code branch}; the guest asks for the same. */
+    public static List<String> lsRemotePatterns(String branch) {
+        return branch == null || branch.isBlank() ? List.of("HEAD")
+                : List.of("refs/heads/" + branch, "refs/tags/" + branch);
+    }
+
+    /**
+     * The {@link #selection} an {@code ls-remote --symref} reading gives a request of {@code branch}: a branch
+     * before a tag, as clone resolves it, or the branch HEAD names. Null when it names no such ref, including
+     * a remote whose HEAD is unborn or detached.
+     */
+    private static String parseAdvertisement(String output, String branch) throws IOException {
         var refs = new TreeMap<String, String>();
         String head = null;
         for (var line : output.lines().toList()) {
             var parts = line.split("\t", 2);
             if (parts.length != 2) throw new IOException("Invalid Git advertisement");
             if (parts[0].startsWith("ref: ")) {
-                if (parts[1].equals("HEAD")) head = parts[0];
+                if (parts[1].equals("HEAD")) head = parts[0].substring(5);
             } else if (!parts[1].endsWith("^{}") && (parts[1].equals("HEAD")
                     || parts[1].startsWith("refs/heads/") || parts[1].startsWith("refs/tags/"))) {
-                // The HEAD pattern also matches the tail of other refs, such as a mirror's refs/remotes/origin/HEAD.
+                // A pattern also matches the tail of other refs, such as a mirror's refs/remotes/origin/HEAD.
                 if (!OBJECT_ID.matcher(parts[0]).matches()) throw new IOException("Invalid Git object ID");
                 refs.put(parts[1], parts[0]);
             }
         }
-        var oid = refs.remove("HEAD");
-        if (oid == null) return null; // ls-remote cannot describe an unborn remote's HEAD/format reliably.
-        return (oid.length() == 64 ? "sha256" : "sha1") + "\n" + (head == null ? oid : head)
-                + "\n" + oid + "\n" + refText(refs);
+        String name;
+        if (branch == null || branch.isBlank()) {
+            if (head == null || !FETCHABLE_BRANCH.matcher(head).matches() || !refs.containsKey("HEAD")) return null;
+            name = head;
+            refs.putIfAbsent(name, refs.get("HEAD"));
+        } else {
+            name = refs.containsKey("refs/heads/" + branch) ? "refs/heads/" + branch : "refs/tags/" + branch;
+        }
+        var oid = refs.get(name);
+        if (oid == null) return null;
+        return (oid.length() == 64 ? "sha256" : "sha1") + "\n" + name + " " + oid;
     }
 
+    /** A snapshot's object format and its one ref; null unless it holds exactly one branch or tag. */
     private static String selection(Path repo) throws IOException {
-        var head = Files.readString(repo.resolve("HEAD")).strip();
-        var refs = refs(repo);
-        String oid = head;
-        if (head.startsWith("ref: ")) {
-            var prefix = head.substring(5) + " ";
-            oid = refs.lines().filter(s -> s.startsWith(prefix)).map(s -> s.substring(prefix.length())).findFirst().orElse(null);
-        }
-        // An empty snapshot can seed a newly populated remote, but cannot match its advertised HEAD.
-        if (oid == null) return null;
-        return git(repo, "rev-parse", "--show-object-format") + "\n" + head + "\n" + oid + "\n" + refs;
+        var refs = refMap(repo);
+        if (refs.size() != 1) return null;
+        var ref = refs.entrySet().iterator().next();
+        return git(repo, "rev-parse", "--show-object-format") + "\n" + ref.getKey() + " " + ref.getValue();
     }
 
     private static String refs(Path repo) throws IOException {
