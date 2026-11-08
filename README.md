@@ -88,7 +88,7 @@ Other terminals get the group at your next login, or in each one with `newgrp in
 
 A template is a machine image you build once: an OS, tools and repos.
 This one adds Claude Code to the built-in `tpl-minimal`.
-Save it as `~/.config/incus-spawn/images/agent.yaml`, or run `isx templates new tpl-agent` and paste it over the skeleton that opens in your editor:
+Save it as `~/.config/incus-spawn/images/tpl-agent.yaml`, or run `isx templates new tpl-agent` and paste it over the skeleton that opens in your editor:
 
 ```yaml
 name: tpl-agent
