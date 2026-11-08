@@ -47,9 +47,9 @@
   ║                                                                          ║
   ║ macOS shortcuts:                                                         ║
   ║   Fn+←/→  Home / End                Fn+↑/↓       PgUp / PgDn             ║
-  ║ Alt is the Option key, but only if your terminal is set to send it:      ║
-  ║   Terminal.app  Preferences > Keyboard > "Use Option as Meta key"        ║
-  ║   iTerm2        Preferences > Keys > Left Option key: "Esc+"             ║
+  ║ Alt is the Option key, once your terminal's Settings send it:            ║
+  ║   Terminal.app  Profiles > Keyboard > "Use Option as Meta key"           ║
+  ║   iTerm2        Profiles > Keys > Left Option key: "Esc+"                ║
   ║   Ghostty       macos-option-as-alt = true in the config                 ║
   ║                                                                          ║
   ║  F1/Esc Close   ? AI-assisted help                                       ║
