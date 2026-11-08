@@ -80,10 +80,24 @@ public class ImageDef extends DefinitionOrigin {
     }
 
     /**
-     * Derive the YAML filename from a template name (e.g. {@code tpl-java} -> {@code java.yaml}).
+     * The YAML filename a new template is written to: its name as given, since {@code tpl-} is a
+     * convention and not part of any rule (e.g. {@code isx-presentation} -> {@code isx-presentation.yaml}).
      */
     public static String filenameForName(String name) {
-        return (name.startsWith("tpl-") ? name.substring(4) : name) + ".yaml";
+        return name + ".yaml";
+    }
+
+    /**
+     * The resource file of the built-in template named {@code name}, which is also the filename of
+     * its user-level override (e.g. {@code tpl-java} -> {@code java.yaml}), or null when no
+     * built-in has that name.
+     */
+    public static String builtinFilenameFor(String name) {
+        for (var filename : BUILTIN_FILES) {
+            var def = loadResource(RESOURCE_DIR + filename, w -> {});
+            if (def != null && name.equals(def.getName())) return filename;
+        }
+        return null;
     }
 
     private String name;
@@ -1192,7 +1206,7 @@ public class ImageDef extends DefinitionOrigin {
      * instance, so its name and its parent's must be names Incus accepts for one. Checked at load,
      * this also keeps a cloned repository's name from reaching the terminal raw wherever isx shows it.
      */
-    static String notAnInstanceName(String what, String name) {
+    public static String notAnInstanceName(String what, String name) {
         if (InstanceNames.isValid(name)) return null;
         return what + " '" + OutputFormat.oneLine(String.valueOf(name)) + "' is not a valid Incus instance name ("
                 + InstanceNames.RULE + ")";

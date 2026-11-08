@@ -1319,9 +1319,15 @@ public class Tui {
 
     /** Enter in the new-template dialog: check the name and parent, then leave the creation pending. */
     private boolean confirmNewTemplate(TuiRunner tui) {
-        var rawName = newTemplate.name();
-        if (rawName.isEmpty()) return false;
-        var name = TemplatesCommand.normalizeName(rawName);
+        // The name is used as typed: 'tpl-' is a convention, never added
+        var name = newTemplate.name();
+        if (name.isEmpty()) return false;
+        var invalid = dev.incusspawn.config.ImageDef.notAnInstanceName("Template name", name);
+        if (invalid != null) {
+            statusMessage = invalid;
+            mode = Mode.BROWSE;
+            return true;
+        }
         if (imageDefs.containsKey(name)) {
             statusMessage = "Template '" + name + "' already exists.";
             mode = Mode.BROWSE;

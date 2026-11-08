@@ -157,7 +157,6 @@ public class TemplatesCommand extends BaseCommand {
         @Override
         public CommandResult doExecute() throws Exception {
             var defs = ImageDef.loadAll();
-            name = resolveExisting(name, defs.keySet());
             var def = defs.get(name);
             if (def == null) {
                 BuildOutput.error("Template '" + cell(name) + "' not found.",
@@ -169,7 +168,12 @@ public class TemplatesCommand extends BaseCommand {
             Path editPath;
 
             if (def.isBuiltIn()) {
-                var filename = ImageDef.filenameForName(name);
+                // The override keeps the built-in's filename (tpl-java is java.yaml), as older isx wrote it
+                var filename = ImageDef.builtinFilenameFor(name);
+                if (filename == null) {
+                    BuildOutput.error("Built-in template '" + cell(name) + "' has no definition file.");
+                    return CommandResult.valueOf(1);
+                }
                 editPath = ImageDef.userImagesDir().resolve(filename);
 
                 if (Files.exists(editPath)) {
@@ -212,7 +216,7 @@ public class TemplatesCommand extends BaseCommand {
             generateHelp = true)
     public static class New extends BaseCommand {
 
-        @Argument(required = false, description = "Template name (e.g. my-app or tpl-my-app)")
+        @Argument(required = false, description = "Template name, used as given (e.g. tpl-my-app)")
         String name;
 
         @Option(name = "project",
@@ -222,7 +226,12 @@ public class TemplatesCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            var templateName = name != null ? normalizeName(name) : null;
+            var templateName = name;
+            var invalid = templateName == null ? null : ImageDef.notAnInstanceName("template name", templateName);
+            if (invalid != null) {
+                BuildOutput.error(invalid);
+                return CommandResult.valueOf(1);
+            }
 
             var defs = ImageDef.loadAll();
             if (templateName != null && defs.containsKey(templateName)) {
@@ -266,6 +275,9 @@ public class TemplatesCommand extends BaseCommand {
     // ── shared helpers ──────────────────────────────────────────────────────────
 
     public static Path createTemplateFile(String name, String parent, Path dir) throws IOException {
+        // The name becomes the filename, so it must be one a template may have before it touches the disk
+        var invalid = ImageDef.notAnInstanceName("template name", name);
+        if (invalid != null) throw new IOException(invalid);
         var targetPath = dir.resolve(ImageDef.filenameForName(name));
         if (Files.exists(targetPath)) {
             throw new IOException("File already exists: " + targetPath);
@@ -277,18 +289,6 @@ public class TemplatesCommand extends BaseCommand {
         }
         Files.writeString(targetPath, skeleton);
         return targetPath;
-    }
-
-    public static String normalizeName(String input) {
-        return input.startsWith("tpl-") ? input : "tpl-" + input;
-    }
-
-    /**
-     * The template an existing name refers to: the name itself when a template has it, since
-     * {@code tpl-} is a convention and not a requirement, else its {@code tpl-} form as a shorthand.
-     */
-    static String resolveExisting(String input, java.util.Set<String> known) {
-        return known.contains(input) ? input : normalizeName(input);
     }
 
     private static String resolveEditor() {

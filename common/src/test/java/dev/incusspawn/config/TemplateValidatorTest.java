@@ -92,17 +92,17 @@ class TemplateValidatorTest {
     }
 
     @Test
-    void missingTplPrefix(@TempDir Path dir) throws Exception {
+    void aNameWithoutTheTplPrefixIsValid(@TempDir Path dir) throws Exception {
+        // 'tpl-' is a convention, not a rule: a template named otherwise draws no warning
         var file = dir.resolve("test.yaml");
         Files.writeString(file, """
-                name: my-template
+                name: isx-presentation
                 description: No tpl- prefix
-                parent: tpl-dev
+                parent: tpl-minimal
                 """);
         var result = TemplateValidator.validate(file, knownTemplates());
-        assertFalse(result.hasErrors());
-        assertTrue(result.hasWarnings());
-        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("tpl-")));
+        assertEquals(List.of(), result.errors());
+        assertEquals(List.of(), result.warnings());
     }
 
     @Test

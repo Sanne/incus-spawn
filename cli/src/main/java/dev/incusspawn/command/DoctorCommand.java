@@ -1149,11 +1149,20 @@ public class DoctorCommand extends BaseCommand {
         return null;
     }
 
+    /**
+     * Whether a listed instance is a template, or one being built: by the {@code base} type every
+     * build stamps and the build's temporary name, never by a {@code tpl-} prefix, which is only a convention.
+     */
+    static boolean isTemplate(Map<String, String> inst) {
+        return Metadata.TYPE_BASE.equals(inst.get("isx-type"))
+                || inst.getOrDefault("name", "").endsWith(BuildCommand.REBUILDING_SUFFIX);
+    }
+
     private Finding findStoppedInstances(List<Map<String, String>> instances) {
         var stopped = new ArrayList<String>();
         for (var inst : instances) {
             var name = inst.get("name");
-            if (name.startsWith("tpl-")) continue;
+            if (isTemplate(inst)) continue;
             if (name.endsWith("-failed-build")) continue;
             if ("Stopped".equals(inst.get("status"))) {
                 stopped.add(name);
@@ -2161,7 +2170,7 @@ public class DoctorCommand extends BaseCommand {
 
             for (var inst : running) {
                 var name = inst.get("name");
-                if (name.startsWith("tpl-")) continue;
+                if (isTemplate(inst)) continue;
                 findings.addAll(checkSingleInstance(incus, name, gatewayIp));
             }
         } catch (Exception e) {

@@ -2273,7 +2273,8 @@ public class IncusClient {
 
     /**
      * List containers/VMs with their status and type.
-     * Returns a list of maps with keys: name, status, type.
+     * Returns a list of maps with keys: name, status, type (Incus's: container or virtual-machine),
+     * and isx-type (isx's {@link Metadata#TYPE} stamp, such as {@code base} for a template; empty when unstamped).
      */
     public List<Map<String, String>> list() {
         var resp = http().get("/1.0/instances?recursion=1");
@@ -2285,7 +2286,8 @@ public class IncusClient {
             result.add(Map.of(
                     "name", instance.path("name").asText(""),
                     "status", instance.path("status").asText(""),
-                    "type", instance.path("type").asText("")
+                    "type", instance.path("type").asText(""),
+                    "isx-type", instance.path("config").path(Metadata.TYPE).asText("")
             ));
         }
         return result;
