@@ -143,6 +143,9 @@ systemd-networkd manages the network; NetworkManager is not installed.
 Each branch gets a static address, gateway and DNS in `/etc/systemd/network/10-eth0.network`, written into a container before its first boot, so it boots onto its address with no DHCP round trip.
 The proxy identifies an instance by that address, which is why the file is isx's to write.
 
+A container does not wait for systemd-networkd to apply that file.
+isx sets the address and default route with `ip` as soon as the container answers, and systemd-networkd adopts them when it starts.
+
 A VM's file is pushed once the VM is up, applies at its next boot or `networkctl reload`, and matches its NIC by MAC address rather than by name.
 
 A watchdog (`isx-network-watchdog.timer`, 10 seconds after boot and every 30 seconds) restarts systemd-networkd when the address is missing or the gateway does not answer, as after the host sleeps.

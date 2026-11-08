@@ -111,7 +111,8 @@ class SetupScriptTest {
         assertEquals(0, syntaxCheck(script), script);
         assertFalse(script.contains("authorized_keys"));
         assertFalse(script.contains("tic "));
-        assertTrue(script.startsWith("chown agentuser:agentuser /home/agentuser || true\n{"));
+        assertTrue(script.startsWith(InstanceNetwork.APPLY_STATIC_ADDRESS
+                + "\nchown agentuser:agentuser /home/agentuser || true\n{"), script);
     }
 
     @Test
@@ -161,6 +162,71 @@ class SetupScriptTest {
         // Another interface's address is not the instance's: a docker0 up first is no answer.
         stub(stubs, "ip", "echo '3: docker0    inet 172.17.0.1/16 scope global docker0'");
         assertEquals(1, run(script, stubs), script);
+    }
+
+    /**
+     * The static address is the pushed {@code .network} file's, applied at once rather than waited
+     * for (#801): networkd is ordered after udev and comes up ~200 ms into boot, while exec answers
+     * at ~80 ms, and every branch paid the difference. The stub's address appears only once the
+     * script itself has set it, with the flags networkd adopts in place.
+     */
+    @Test
+    void appliesTheStaticNetworkFileBeforeWaiting(@TempDir Path stubs) throws Exception {
+        var daemon = new FakeIncusDaemon().container("c", Map.of(Metadata.STATIC_IP, "10.166.11.7"));
+        var prefetched = RuntimeSetup.prefetchRuntimeConfig(daemon.client(), "c");
+        var file = networkFile(stubs, "Name=eth0", "Address=10.166.11.7/24");
+        var script = RuntimeSetup.buildSetupScript(prefetched, null, NetworkMode.FULL, List.of())
+                .replace(InstanceNetwork.NETWORK_FILE, file.toString());
+        stub(stubs, "chown", "exit 0");
+        stub(stubs, "seq", "echo 1");
+        stub(stubs, "sleep", "exit 0");
+        stubIp(stubs);
+
+        assertEquals(0, run(script, stubs), script);
+        assertEquals(List.of("addr replace 10.166.11.7/24 brd + dev eth0", "link set eth0 up",
+                "route replace default via 10.166.11.1 dev eth0 proto static"), ipCalls(stubs));
+    }
+
+    @Test
+    void appliesOnlyAFileForEth0WithOneAddress(@TempDir Path stubs) throws Exception {
+        stubIp(stubs);
+        var apply = InstanceNetwork.APPLY_STATIC_ADDRESS;
+        // A VM's file matches its NIC by MAC (#997): its address comes from the agent's push
+        var vm = networkFile(stubs, "PermanentMACAddress=10:66:6f:00:00:01", "Address=10.166.11.7/24");
+        assertEquals(0, run(apply.replace(InstanceNetwork.NETWORK_FILE, vm.toString()), stubs));
+        // A hand-edited file networkd may read otherwise is left to networkd
+        var twice = networkFile(stubs, "Name=eth0", "Address=10.166.11.7/24\nAddress=10.166.11.8/24");
+        assertEquals(0, run(apply.replace(InstanceNetwork.NETWORK_FILE, twice.toString()), stubs));
+        assertEquals(0, run(apply.replace(InstanceNetwork.NETWORK_FILE, stubs.resolve("none").toString()), stubs));
+        assertEquals(List.of(), ipCalls(stubs));
+
+        // No eth0, as in an airgapped instance whose NIC is masked: still not a failure
+        stub(stubs, "ip", "exit 1");
+        var eth0 = networkFile(stubs, "Name=eth0", "Address=10.166.11.7/24");
+        assertEquals(0, run(apply.replace(InstanceNetwork.NETWORK_FILE, eth0.toString()), stubs));
+    }
+
+    /** A {@code .network} file as {@code InstanceNetwork} pushes it, with {@code match} and {@code address}. */
+    private static Path networkFile(Path dir, String match, String address) throws Exception {
+        var file = Files.createTempFile(dir, "eth0", ".network");
+        Files.writeString(file, "[Match]\n" + match + "\n\n[Network]\n" + address
+                + "\nGateway=10.166.11.1\nDNS=10.166.11.1\n");
+        return file;
+    }
+
+    /** An {@code ip} that logs each change and shows the address only once it was set. */
+    private static void stubIp(Path stubs) throws Exception {
+        stub(stubs, "ip", """
+                case "$1" in
+                  -4) [ -f "$0.addr" ] && echo '2: eth0    inet 10.166.11.7/24 brd 10.166.11.255 scope global eth0'; exit 0;;
+                esac
+                echo "$*" >> "$0.calls"
+                case "$*" in "addr replace "*) touch "$0.addr";; esac""");
+    }
+
+    private static List<String> ipCalls(Path stubs) throws Exception {
+        var calls = stubs.resolve("ip.calls");
+        return Files.exists(calls) ? Files.readAllLines(calls) : List.of();
     }
 
     @Test

@@ -454,6 +454,26 @@ public final class InstanceNetwork {
     /** Incus names a container's NIC after the device's {@code name}, which isx sets to eth0. */
     private static final String CONTAINER_NIC_MATCH = "Name=eth0";
 
+    /**
+     * Shell that puts a container's static address and default route from {@link #NETWORK_FILE} in
+     * place at once, so the first exec after a start need not wait for networkd (#801). networkd is
+     * ordered after udev and configures eth0 ~200 ms into boot, while exec answers at ~80 ms; it then
+     * adopts what it finds, since it is the configuration it would have applied. {@code brd +} and
+     * {@code proto static} are what make the two identical to its own, so systemd 262 replaces
+     * neither and the guest is never without them.
+     *
+     * <p>Only a file for eth0 with one address, as {@link #pushStaticNetworkConfig} writes it: a VM's
+     * matches its NIC by MAC (#997), and any other file stays networkd's to read. Best-effort and
+     * idempotent: an airgapped container has no eth0, and the readiness probe may run it twice.
+     */
+    static final String APPLY_STATIC_ADDRESS = "{ isx_net='" + NETWORK_FILE + "'; "
+            + "if grep -qx '" + CONTAINER_NIC_MATCH + "' \"$isx_net\" && [ \"$(grep -c '^Address=' \"$isx_net\")\" = 1 ]; then "
+            + "isx_addr=$(sed -n 's/^Address=//p' \"$isx_net\"); "
+            + "isx_gw=$(sed -n '/^Gateway=/{s///p;q;}' \"$isx_net\"); "
+            + "ip addr replace \"$isx_addr\" brd + dev eth0 && ip link set eth0 up "
+            + "&& { [ -z \"$isx_gw\" ] || ip route replace default via \"$isx_gw\" dev eth0 proto static; }; "
+            + "fi; } >/dev/null 2>&1; unset isx_net isx_addr isx_gw; true";
+
     private static final Pattern MAC = Pattern.compile("[0-9a-f]{2}(:[0-9a-f]{2}){5}");
 
     /**

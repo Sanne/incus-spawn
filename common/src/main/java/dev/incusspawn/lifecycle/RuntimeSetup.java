@@ -161,6 +161,11 @@ public final class RuntimeSetup {
     static String buildSetupScript(RuntimeConfig prefetched, String buildSourceJson,
                                    NetworkMode networkMode, List<String> sshKeys, boolean deliverSecret) {
         var sb = new StringBuilder();
+        // The static .network config is pushed into the stopped container before start
+        // (see configureBranch). A container applies it first thing rather than waiting ~200 ms
+        // for networkd, which is ordered after udev, to come up and apply it (#801); a VM's
+        // address is DHCP's until then, and there already. Airgap branches have no NIC.
+        if (networkMode != NetworkMode.AIRGAP) sb.append(InstanceNetwork.APPLY_STATIC_ADDRESS).append('\n');
         if (prefetched != null && prefetched.terminfo() != null) {
             sb.append(Container.heredoc("tic -x - 2>/dev/null", prefetched.terminfo())).append('\n');
         }
@@ -178,15 +183,12 @@ public final class RuntimeSetup {
             // checks below, which decide whether the script succeeded.
             sb.append('\n').append(HostKeys.GUEST_SCRIPT);
         }
-        // The static .network config is pushed into the stopped container before start
-        // (see configureBranch), so the interface comes up immediately at boot — no DHCP
-        // wait. Here we only ensure the service is running and confirm the address is up.
-        // Polled every 50 ms: the address usually appears within a few hundred ms of start,
-        // and a coarser interval is paid in full by every branch. Airgap branches have no
-        // NIC, so the wait would always time out — skip it.
+        // Confirm the address is up, polled every 50 ms, since a coarser interval is paid in
+        // full by every branch that waits. Airgap branches have no NIC, so the wait would always
+        // time out — skip it.
         if (networkMode != NetworkMode.AIRGAP) {
             var addressUp = addressUpCheck(prefetched != null ? prefetched.staticIp() : null);
-            sb.append("\n{ systemctl start systemd-networkd 2>/dev/null; ")
+            sb.append("\n{ ")
               .append("for i in $(seq 1 300); do ").append(addressUp).append(" && break; sleep 0.05; done; ")
               .append(addressUp).append("; }");
         }
