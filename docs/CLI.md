@@ -264,6 +264,8 @@ isx templates list [options]
 ### `isx templates new`
 
 Create a new template definition.
+The name is used exactly as given, and the file is named after it: `isx templates new my-app` writes `my-app.yaml`.
+Without a name, it writes `new-template.yaml` for you to name in the editor.
 
 ```shell
 isx templates new [<name>]
@@ -276,6 +278,8 @@ isx templates new [<name>]
 ### `isx templates edit`
 
 Edit a template definition in `$EDITOR`.
+It takes the template's exact name, as `isx build` and `isx branch` do.
+Editing a built-in template creates a user-level override of it.
 
 ```shell
 isx templates edit <name>
