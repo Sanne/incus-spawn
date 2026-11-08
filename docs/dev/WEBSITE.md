@@ -103,7 +103,7 @@ block in `style.css`). Inter, JetBrains Mono and Space Grotesk are self-hosted: 
 The script's output is reproducible. After changing it, compare screenshots of the pages before and after: the core
 files were checked to render pixel-identically to Google's.
 
-**Demo casts** (`site/demo/`, made with `record.py` and `compress.py`, see `SCRIPT.md`). The asciinema player is
+**Demo casts** (`site/demo/`, made with `record-all.sh`, which drives `record.py` and `compress.py`, see `SCRIPT.md`). The asciinema player is
 loaded with `defer`, so it does not hold up the first paint. How the player is set up matters:
 - It sizes the terminal from one character it measures in `terminalFontFamily` at a hard-coded 15px, ignoring both
   `terminalFontSize` and the theme's font. So `index.html` passes JetBrains Mono as `terminalFontFamily`, creates each

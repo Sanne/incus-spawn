@@ -14,7 +14,7 @@
   "timeout": 10
  },
  {
-  "type": "isx branch --from tpl-demo fix-bug\n"
+  "type": "isx branch --from tpl-demo fix-bug --shell\n"
  },
  {
   "wait": "\u276f \\Z",
@@ -41,7 +41,7 @@
   "sleep": 1.0
  },
  {
-  "type": "# placeholders \u2014 worthless anywhere else. yet everything authenticates:\n"
+  "type": "# stand-ins, not keys: no use outside isx. yet everything authenticates:\n"
  },
  {
   "wait": "\u276f \\Z",
@@ -84,8 +84,17 @@
   "send": "\r"
  },
  {
+  "sleep": 10.0
+ },
+ {
+  "mark": "agent-start"
+ },
+ {
   "settle": 12.0,
   "timeout": 420
+ },
+ {
+  "mark": "agent-done"
  },
  {
   "sleep": 1.0

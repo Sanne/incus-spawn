@@ -11,6 +11,8 @@ Step kinds:
   {"sleep": 2.0}                      idle pause (recorded, so keep short; player idle-limit trims)
   {"send": "..."}                     send raw bytes immediately (no typing cadence)
   {"settle": 1.0}                     wait until no output arrives for N seconds
+  {"mark": "agent-start"}             write an asciicast marker ("m" event) at this moment;
+                                      compress.py --cut-mark cuts between two of them
 
 Usage: record.py scenario.json out.cast [--cols 100] [--rows 28] [--cmd "zsh -f"]
 """
@@ -37,6 +39,7 @@ def main():
         steps = json.load(f)
     events = []
     t0 = None
+    timed_out = False
 
     pid, fd = pty.fork()
     if pid == 0:
@@ -101,7 +104,11 @@ def main():
             else:
                 sys.stderr.write(f"TIMEOUT waiting for {step['wait']!r}\n")
                 sys.stderr.write("tail: " + clean_tail(tail)[-500:].decode("utf-8", "replace") + "\n")
+                timed_out = True
                 break
+        elif "mark" in step:
+            pump(0.05)
+            events.append([round(time.monotonic() - t0, 4), "m", step["mark"]])
         elif "settle" in step:
             quiet = step["settle"]
             last = time.monotonic()
@@ -111,6 +118,12 @@ def main():
                     last = time.monotonic()
                 elif time.monotonic() - last >= quiet:
                     break
+            else:
+                # Still busy at the timeout: a mark after this would land mid-work.
+                sys.stderr.write(f"TIMEOUT waiting for {quiet}s of quiet\n")
+                sys.stderr.write("tail: " + clean_tail(tail)[-500:].decode("utf-8", "replace") + "\n")
+                timed_out = True
+                break
 
     pump(0.3)
     try:
@@ -127,8 +140,13 @@ def main():
             f.write(json.dumps(ev, ensure_ascii=False) + "\n")
     dur = events[-1][0] if events else 0
     sys.stderr.write(f"wrote {out_path}: {len(events)} events, {dur:.1f}s\n")
+    if timed_out:
+        sys.exit(f"{scenario_path}: the take stopped at a timeout; {out_path} is incomplete")
 
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\r")
+# What is drawn between save-cursor and restore-cursor (ESC 7 ... ESC 8) lands elsewhere on the
+# screen, not at the cursor: isx shell's status bar is redrawn this way after every prompt.
+SAVED_CURSOR = re.compile(rb"\x1b7.*?\x1b8", re.S)
 
 def clean_tail(tail):
     """Strip ANSI/OSC sequences so wait patterns match visible text.
@@ -136,7 +154,7 @@ def clean_tail(tail):
     Patterns should end-anchor with \\Z to match the *current* prompt,
     not a stale one earlier in the buffer.
     """
-    return ANSI.sub(b"", tail)
+    return ANSI.sub(b"", SAVED_CURSOR.sub(b"", tail))
 
 def arg(name, default):
     if name in sys.argv:
