@@ -151,12 +151,14 @@ final class AboutModal {
             lines.add(Line.styled("", Style.EMPTY));
             lines.add(Line.styled("macOS shortcuts:", Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
             lines.add(shortcutRow("Fn+←/→", "Home / End", "Fn+↑/↓", "PgUp / PgDn"));
-            lines.add(text("Alt is the Option key, but only if your terminal is set to send it:"));
-            lines.add(text("  Terminal.app  Preferences > Keyboard > \"Use Option as Meta key\""));
-            lines.add(text("  iTerm2        Preferences > Keys > Left Option key: \"Esc+\""));
+            lines.add(text("Alt is the Option key, once your terminal's Settings send it:"));
+            lines.add(text("  Terminal.app  Profiles > Keyboard > \"Use Option as Meta key\""));
+            lines.add(text("  iTerm2        Profiles > Keys > Left Option key: \"Esc+\""));
             lines.add(text("  Ghostty       macos-option-as-alt = true in the config"));
         }
 
+        // Lines are not wrapped, so every line above stays within 66 columns: the dialog's inner
+        // width in a 70-column split pane.
         int width = Math.min(76, screen.width());
         int maxHeight = screen.height() - 2;
         int modalHeight = Math.min(lines.size() + 4, maxHeight);

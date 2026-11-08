@@ -286,6 +286,17 @@ class TuiDigitKeysTest {
         press(tui, TAB);
         var wide = TuiSnapshot.toText(TuiSnapshot.render(80, 24, tui::render)).split("\n")[22];
         assertFalse(wide.contains("digit"), "the rule lives in the F1 dialog: " + wide);
+        assertFalse(wide.contains("F-key"), wide);
+    }
+
+    @Test
+    void theF1DialogStatesTheNumberRowRule() {
+        var tui = tui();
+        press(tui, KeyEvent.ofKey(KeyCode.F1), KeyEvent.ofKey(KeyCode.END));
+        var screen = TuiSnapshot.toText(TuiSnapshot.render(80, 60, tui::render));
+        assertTrue(screen.contains("No F-keys? Use the number row instead:"), screen);
+        assertTrue(screen.contains("1–9, 0  stand in for F1–F9, F10"), screen);
+        assertTrue(screen.contains("Alt+1–9, Alt+0  stand in for ⇧F1–⇧F10"), screen);
     }
 
     private void runQueued() {
