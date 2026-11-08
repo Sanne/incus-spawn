@@ -774,6 +774,24 @@ class DoctorCommandTest {
     }
 
     @Test
+    void templatesAreToldApartByTheirTypeNeverByATplPrefix() {
+        // 'tpl-' is a convention: a template may be named otherwise, and a branch may be called tpl-anything
+        var type = dev.incusspawn.incus.Metadata.TYPE;
+        var daemon = dirDefaultWithCowPool()
+                .container("isx-presentation", Map.of(type, dev.incusspawn.incus.Metadata.TYPE_BASE))
+                .container("tpl-looks-like-one", Map.of(type, dev.incusspawn.incus.Metadata.TYPE_CLONE))
+                .container("isx-presentation" + BuildCommand.REBUILDING_SUFFIX, Map.of())
+                .container("dev-1", Map.of());
+
+        var templates = new java.util.TreeSet<String>();
+        for (var inst : daemon.client().list()) {
+            if (DoctorCommand.isTemplate(inst)) templates.add(inst.get("name"));
+        }
+
+        assertEquals(Set.of("isx-presentation", "isx-presentation-rebuilding"), templates);
+    }
+
+    @Test
     void anInstanceLeftInErrorIsMovedAFrozenOneIsNot() {
         var daemon = dirDefaultWithCowPool()
                 .instance("failed-start", "container", "Error", Map.of())

@@ -1753,4 +1753,18 @@ class ImageDefTest {
         assertEquals("file:///guest/staging/repo", repo.getUrl());
     }
 
+    @Test
+    void aNewTemplatesFileIsNamedAfterItExactly() {
+        // 'tpl-' is a convention: it is neither stripped from nor added to the filename
+        assertEquals("isx-presentation.yaml", ImageDef.filenameForName("isx-presentation"));
+        assertEquals("tpl-agent.yaml", ImageDef.filenameForName("tpl-agent"));
+    }
+
+    @Test
+    void aBuiltinsOverrideKeepsItsResourceFilename() {
+        assertEquals("java.yaml", ImageDef.builtinFilenameFor("tpl-java"));
+        assertEquals("minimal.yaml", ImageDef.builtinFilenameFor("tpl-minimal"));
+        assertNull(ImageDef.builtinFilenameFor("isx-presentation"));
+    }
+
 }

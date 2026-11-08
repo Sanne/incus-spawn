@@ -30,6 +30,8 @@ import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The skeleton {@code isx templates new} and the TUI write is the template format's reference
@@ -67,6 +69,23 @@ class TemplateSkeletonTest {
         var result = TemplateValidator.validate(file, Map.of("tpl-minimal", new ImageDef()));
         assertEquals(List.of(), result.errors());
         assertFalse(ImageDef.parseFile(file).getRepos().isEmpty());
+    }
+
+    @Test
+    void aNewTemplateKeepsTheNameItWasGiven(@TempDir Path dir) throws Exception {
+        // 'tpl-' is a convention, never added: the name and the file are what was typed
+        var file = TemplatesCommand.createTemplateFile("isx-presentation", null, dir);
+        assertEquals(dir.resolve("isx-presentation.yaml"), file);
+        assertEquals("isx-presentation", ImageDef.parseFile(file).getName());
+    }
+
+    @Test
+    void aNewTemplateNeedsANameThatIsAlsoAFilename(@TempDir Path dir) {
+        // The name becomes the filename: one that is not a valid template name never touches the disk
+        var e = assertThrows(java.io.IOException.class,
+                () -> TemplatesCommand.createTemplateFile("../escape", null, dir));
+        assertTrue(e.getMessage().contains("not a valid Incus instance name"), e.getMessage());
+        assertFalse(Files.exists(dir.getParent().resolve("escape.yaml")));
     }
 
     @Test

@@ -44,9 +44,6 @@ public class TemplateValidator {
         var invalidName = ImageDef.notAnInstanceName("template name", def.getName());
         if (invalidName != null) {
             errors.add(invalidName);
-        } else if (!def.getName().startsWith("tpl-")) {
-            warnings.add("Template name '" + def.getName()
-                    + "' does not follow the 'tpl-' prefix convention");
         }
 
         if (!def.isRoot()) {

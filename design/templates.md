@@ -19,6 +19,12 @@ A definition sets `deprecated: true` or `deprecated: <what to use instead>` (#11
 `deprecated` is left out of the content fingerprint, so marking a template deprecated, or switching to a copy that is not, rebuilds nothing.
 Removing a template outright was the alternative: every template derived from it would stop building on upgrade, with no warning beforehand.
 
+**The `tpl-` prefix is a convention, never a rule.**
+A template is named exactly as its `name:` says, and `isx templates new` and `edit` and the TUI use the name as given, never adding `tpl-` (`TemplatesCommand`).
+A new template's file is named after it (`ImageDef.filenameForName`); a built-in's user override keeps the built-in's filename, `java.yaml` for `tpl-java` (`ImageDef.builtinFilenameFor`).
+Code that must tell templates from instances reads the `base` type every build stamps (`isx list`, `isx doctor`), never the name.
+The TUI's F4 once looked for `tpl-isx-presentation` when asked to edit `isx-presentation`, because the edit command added the prefix.
+
 **`/tmp` is on disk** (#1561): `tpl-minimal` masks `tmp.mount`; what that means for users is in `docs/FEDORA.md`.
 It is in the root template, not in one template (yrodiere/incus-spawn-templates#68 did it in `tpl-dev-base`), because the restarts that empty a tmpfs come from isx itself and hit every template.
 It is not in the base image either, which would put an isx choice in a Fedora image other tools could use.

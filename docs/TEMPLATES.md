@@ -85,6 +85,9 @@ isx templates new              # creates new-template.yaml, to be named in the e
 isx templates edit tpl-java    # opens in $EDITOR, validates on save
 ```
 
+A template's name is used exactly as you give it, and its file is named after it.
+The `tpl-` prefix of the built-in templates is a convention, which isx never adds or requires.
+
 Editing a built-in template creates a user-level override in `~/.config/incus-spawn/images/`.
 The override takes precedence over the built-in, but isx upgrades do not update it.
 isx validates a template after editing: YAML syntax, required fields and parent references.
