@@ -561,19 +561,6 @@ final class MainScreen {
         }
     }
 
-    /**
-     * {@code line} followed by the one rule that makes the key bar's F-keys usable without an F row
-     * (#1824), when it fits whole in {@code width}: last on the line, so it goes first on a narrow
-     * terminal, and never cut short, since half a rule reads as a different one.
-     */
-    private Line withDigitRule(Line line, int width) {
-        var rule = Span.styled("  " + DigitKeys.RULE, Style.EMPTY.fg(tui.theme.textDim()).bg(tui.theme.contextBg()));
-        if (line.width() + rule.width() > width) return line;
-        var spans = new ArrayList<>(line.spans());
-        spans.add(rule);
-        return Line.from(spans);
-    }
-
     private void renderContextLine(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Line line) {
         fillBackground(frame, area, tui.theme.contextBg());
 
@@ -587,13 +574,13 @@ final class MainScreen {
                 var parts = Layout.horizontal()
                         .constraints(Constraint.fill(), Constraint.length(allocatedWidth))
                         .split(area);
-                frame.renderWidget(Paragraph.from(withDigitRule(line, parts.get(0).width())), parts.get(0));
+                frame.renderWidget(Paragraph.from(line), parts.get(0));
                 renderBackgroundTasksInline(frame, parts.get(1), tasks);
                 return;
             }
         }
 
-        frame.renderWidget(Paragraph.from(withDigitRule(line, area.width())), area);
+        frame.renderWidget(Paragraph.from(line), area);
     }
 
     private int estimateBackgroundTaskWidth(List<dev.incusspawn.tui.BackgroundTask> tasks) {

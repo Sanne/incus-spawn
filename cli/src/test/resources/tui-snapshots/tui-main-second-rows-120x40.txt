@@ -36,5 +36,5 @@
 │                                                                                                                      │
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- vm-1  from tpl-minimal  [proxy]  Space Mark  digit = F-key  Alt+digit = ⇧F-key
+ vm-1  from tpl-minimal  [proxy]  Space Mark
 │F1Info     │F2Shell    │F3Details  │F4Branch…  │F5Build…   │F6Rename…  │F7Stop     │F8Destroy… │F9Actions  │F10Quit

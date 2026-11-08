@@ -281,13 +281,11 @@ class TuiDigitKeysTest {
     }
 
     @Test
-    void theContextLineStatesTheRuleWholeOrNotAtAll() {
+    void theContextLineDoesNotRepeatTheRule() {
         var tui = tui();
         press(tui, TAB);
         var wide = TuiSnapshot.toText(TuiSnapshot.render(80, 24, tui::render)).split("\n")[22];
-        assertTrue(wide.endsWith(DigitKeys.RULE), wide);
-        var narrow = TuiSnapshot.toText(TuiSnapshot.render(60, 24, tui::render)).split("\n")[22];
-        assertFalse(narrow.contains("digit"), "a cut rule reads as another: " + narrow);
+        assertFalse(wide.contains("digit"), "the rule lives in the F1 dialog: " + wide);
     }
 
     private void runQueued() {

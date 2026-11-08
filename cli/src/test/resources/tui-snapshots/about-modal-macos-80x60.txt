@@ -1,59 +1,59 @@
 
 
 
-
-          ╔ About incus-spawn ═══════════════════════════════════════╗
-          ║ incus-spawn (isx) 1.2.3                                  ║
-          ║ Commit 0000000                                           ║
-          ║ Incus  client REST API, server 6.0                       ║
-          ║ Java 25                                                  ║
-          ║ VM     Linux 6.1                                         ║
-          ║                                                          ║
-          ║ Copyright 2026 Sanne Grinovero                           ║
-          ║ Licensed under the Apache License 2.0                    ║
-          ║ github.com/Sanne/incus-spawn                             ║
-          ║                                                          ║
-          ║ Manage isolated Incus development environments.          ║
-          ║ Templates define base images; Instances are              ║
-          ║ lightweight copy-on-write branches of them.              ║
-          ║                                                          ║
-          ║ Keyboard shortcuts:                                      ║
-          ║                                                          ║
-          ║   Enter   Default instance action                        ║
-          ║   ?       AI Help — ask a question                       ║
-          ║   Tab     Switch panels       ⇧Tab      Reverse          ║
-          ║   F1/1    This dialog                                    ║
-          ║   F2/2    Shell into instance ⇧F2/Alt+2 Join its task    ║
-          ║   F3/3    View details                                   ║
-          ║   F4/4    Branch                                         ║
-          ║   F5/5    Build menu                                     ║
-          ║   Space   Mark for F5/F7/F8   Esc       Clear marks      ║
-          ║   F6/6    Rename instance                                ║
-          ║   F7/7    Stop instance       ⇧F7/Alt+7 Restart          ║
-          ║   F8/8    Destroy             ⇧F8/Alt+8 Destroy all      ║
-          ║   Del     Destroy             ⇧Del      Destroy all      ║
-          ║   F9/9    Tool actions                                   ║
-          ║   F10/0   Quit                                           ║
-          ║   a       Credential accounts                            ║
-          ║   C       Clean pool storage                             ║
-          ║   r       Refresh                                        ║
-          ║   w       Warnings                                       ║
-          ║   n       New template…                                  ║
-          ║   /       Search / filter                                ║
-          ║   g/Home  Jump to top         G/End     Jump to bottom   ║
-          ║                                                          ║
-          ║ Without F-keys:  digit = F-key  Alt+digit = ⇧F-key       ║
-          ║ A digit is its F-key, 0 being F10, and Alt with a        ║
-          ║ digit is Shift with that F-key, on every keyboard.       ║
-          ║                                                          ║
-          ║ macOS shortcuts:                                         ║
-          ║   Fn+←/→  Home / End          Fn+↑/↓    PgUp / PgDn      ║
-          ║ Alt is Option once the terminal sends it as Alt:         ║
-          ║ "Use Option as Meta key" in Terminal.app, "Esc+"         ║
-          ║ for Option in iTerm2, macos-option-as-alt in Ghostty.    ║
-          ║                                                          ║
-          ║  F1/Esc Close   ? AI-assisted help                       ║
-          ╚══════════════════════════════════════════════════════════╝
+  ╔ About incus-spawn ═══════════════════════════════════════════════════════╗
+  ║ incus-spawn (isx) 1.2.3                                                  ║
+  ║ Commit 0000000                                                           ║
+  ║ Incus  client REST API, server 6.0                                       ║
+  ║ Java 25                                                                  ║
+  ║ VM     Linux 6.1                                                         ║
+  ║                                                                          ║
+  ║ Copyright 2026 Sanne Grinovero                                           ║
+  ║ Licensed under the Apache License 2.0                                    ║
+  ║ github.com/Sanne/incus-spawn                                             ║
+  ║                                                                          ║
+  ║ Manage isolated Incus development environments.                          ║
+  ║ Templates define base images; Instances are                              ║
+  ║ lightweight copy-on-write branches of them.                              ║
+  ║                                                                          ║
+  ║ Keyboard shortcuts:                                                      ║
+  ║                                                                          ║
+  ║   Enter   Default instance action                                        ║
+  ║   ?       AI Help — ask a question                                       ║
+  ║   Tab     Switch panels             ⇧Tab         Reverse                 ║
+  ║   F1/1    This dialog                                                    ║
+  ║   F2/2    Shell into instance       ⇧F2/Alt+2    Join its task           ║
+  ║   F3/3    View details                                                   ║
+  ║   F4/4    Branch                                                         ║
+  ║   F5/5    Build menu                                                     ║
+  ║   Space   Mark for F5/F7/F8         Esc          Clear marks             ║
+  ║   F6/6    Rename instance                                                ║
+  ║   F7/7    Stop instance             ⇧F7/Alt+7    Restart                 ║
+  ║   F8/8    Destroy                   ⇧F8/Alt+8    Destroy all             ║
+  ║   Del     Destroy                   ⇧Del         Destroy all             ║
+  ║   F9/9    Tool actions                                                   ║
+  ║   F10/0   Quit                                                           ║
+  ║   a       Credential accounts                                            ║
+  ║   C       Clean pool storage                                             ║
+  ║   r       Refresh                                                        ║
+  ║   w       Warnings                                                       ║
+  ║   n       New template…                                                  ║
+  ║   /       Search / filter                                                ║
+  ║   g/Home  Jump to top               G/End        Jump to bottom          ║
+  ║                                                                          ║
+  ║ No F-keys? Use the number row instead:                                   ║
+  ║   1–9, 0  stand in for F1–F9, F10        (so 2 = F2, 0 = F10)            ║
+  ║   Alt+1–9, Alt+0  stand in for ⇧F1–⇧F10  (so Alt+7 = ⇧F7)                ║
+  ║                                                                          ║
+  ║ macOS shortcuts:                                                         ║
+  ║   Fn+←/→  Home / End                Fn+↑/↓       PgUp / PgDn             ║
+  ║ Alt is the Option key, but only if your terminal is set to send it:      ║
+  ║   Terminal.app  Preferences > Keyboard > "Use Option as Meta key"        ║
+  ║   iTerm2        Preferences > Keys > Left Option key: "Esc+"             ║
+  ║   Ghostty       macos-option-as-alt = true in the config                 ║
+  ║                                                                          ║
+  ║  F1/Esc Close   ? AI-assisted help                                       ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
 
 
 
