@@ -61,9 +61,17 @@ public class ImageDef extends DefinitionOrigin {
     public static Path projectImagesDir() { return PROJECT_IMAGES_DIR; }
 
     public static ImageDef loadBuiltinByName(String name) {
+        var builtin = findBuiltin(name);
+        return builtin == null ? null : builtin.def();
+    }
+
+    /** A built-in definition and the resource file it is read from. */
+    private record Builtin(String filename, ImageDef def) {}
+
+    private static Builtin findBuiltin(String name) {
         for (var filename : BUILTIN_FILES) {
             var def = loadResource(RESOURCE_DIR + filename, w -> {});
-            if (def != null && name.equals(def.getName())) return def;
+            if (def != null && name.equals(def.getName())) return new Builtin(filename, def);
         }
         return null;
     }
@@ -93,11 +101,8 @@ public class ImageDef extends DefinitionOrigin {
      * built-in has that name.
      */
     public static String builtinFilenameFor(String name) {
-        for (var filename : BUILTIN_FILES) {
-            var def = loadResource(RESOURCE_DIR + filename, w -> {});
-            if (def != null && name.equals(def.getName())) return filename;
-        }
-        return null;
+        var builtin = findBuiltin(name);
+        return builtin == null ? null : builtin.filename();
     }
 
     private String name;

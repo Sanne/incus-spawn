@@ -154,6 +154,10 @@ public class TemplatesCommand extends BaseCommand {
         @Argument(required = true, completer = Completers.Template.class, description = "Template name (e.g. tpl-minimal)")
         public String name;
 
+        /** The editor and where it asks to re-edit, which a test replaces. */
+        Editor editor = TemplatesCommand::launchEditor;
+        Supplier<Prompts> reEdit = Prompts::terminal;
+
         @Override
         public CommandResult doExecute() throws Exception {
             var defs = ImageDef.loadAll();
@@ -177,6 +181,15 @@ public class TemplatesCommand extends BaseCommand {
                 editPath = ImageDef.userImagesDir().resolve(filename);
 
                 if (Files.exists(editPath)) {
+                    // A file of that name that defines another template is not the override; one that
+                    // cannot be read, or names nothing, is a broken override the user needs to fix
+                    var overrides = overrideName(editPath);
+                    if (overrides != null && !name.equals(overrides)) {
+                        BuildOutput.error("'" + editPath + "' is not an override of '" + cell(name)
+                                        + "': it defines '" + cell(overrides) + "'.",
+                                "Rename that file to edit the built-in '" + cell(name) + "'.");
+                        return CommandResult.valueOf(1);
+                    }
                     BuildOutput.step("Editing existing user override: " + editPath);
                 } else {
                     BuildOutput.note("Built-in template '" + name + "' cannot be edited directly.");
@@ -196,7 +209,16 @@ public class TemplatesCommand extends BaseCommand {
                 editPath = Path.of(def.getSource());
             }
 
-            return editLoop(editPath, name, isBuiltinCopy) ? CommandResult.SUCCESS : CommandResult.valueOf(1);
+            return editLoop(editPath, name, isBuiltinCopy, editor, reEdit) ? CommandResult.SUCCESS : CommandResult.valueOf(1);
+        }
+
+        /** The name the file at {@code path} defines, or null when it cannot be read or names none. */
+        private static String overrideName(Path path) {
+            try {
+                return ImageDef.parseFile(path).getName();
+            } catch (IOException | RuntimeException e) {
+                return null;
+            }
         }
 
         private void copyBuiltinResource(String filename, Path target) throws IOException {
@@ -227,7 +249,7 @@ public class TemplatesCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             var templateName = name;
-            var invalid = templateName == null ? null : ImageDef.notAnInstanceName("template name", templateName);
+            var invalid = templateName == null ? null : newTemplateNameProblem(templateName);
             if (invalid != null) {
                 BuildOutput.error(invalid);
                 return CommandResult.valueOf(1);
@@ -276,7 +298,7 @@ public class TemplatesCommand extends BaseCommand {
 
     public static Path createTemplateFile(String name, String parent, Path dir) throws IOException {
         // The name becomes the filename, so it must be one a template may have before it touches the disk
-        var invalid = ImageDef.notAnInstanceName("template name", name);
+        var invalid = newTemplateNameProblem(name);
         if (invalid != null) throw new IOException(invalid);
         var targetPath = dir.resolve(ImageDef.filenameForName(name));
         if (Files.exists(targetPath)) {
@@ -289,6 +311,28 @@ public class TemplatesCommand extends BaseCommand {
         }
         Files.writeString(targetPath, skeleton);
         return targetPath;
+    }
+
+    /**
+     * Why {@code name} cannot be a new template's, or null when it can: it must be a valid instance
+     * name short enough to rebuild, and its file must not be the one a built-in's override uses
+     * ({@code dev} would be {@code dev.yaml}, which {@code isx templates edit tpl-dev} opens).
+     */
+    public static String newTemplateNameProblem(String name) {
+        var invalid = ImageDef.notAnInstanceName("Template name", name);
+        if (invalid != null) return invalid;
+        if (name.length() > BuildCommand.MAX_TEMPLATE_NAME_LENGTH) {
+            return "Template name '" + name + "' is too long: a template is rebuilt as '<name>"
+                    + BuildCommand.REBUILDING_SUFFIX + "', so its name may have at most "
+                    + BuildCommand.MAX_TEMPLATE_NAME_LENGTH + " characters";
+        }
+        var filename = ImageDef.filenameForName(name);
+        // Case-blind: on a case-insensitive filesystem (macOS by default) Dev.yaml is dev.yaml
+        if (ImageDef.BUILTIN_FILES.stream().anyMatch(filename::equalsIgnoreCase)) {
+            return "Template name '" + name + "' would be written to " + filename
+                    + ", the file a built-in template's override uses: choose another name";
+        }
+        return null;
     }
 
     private static String resolveEditor() {
