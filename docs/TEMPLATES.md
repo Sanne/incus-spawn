@@ -325,7 +325,7 @@ default-action: claude
 |-------|--------------|---------|
 | `workdir` | The directory to `cd` into when opening a shell | the first repo of the nearest template that declares any |
 | `shell-command` | A command to run instead of the default login shell, such as `claude` or `pi` | the login shell |
-| `default-action` | A tool action to run when pressing Enter on an instance in the TUI, or on `isx run <instance>` from the CLI | a shell |
+| `default-action` | A tool action to run when pressing Enter on an instance in the TUI, or on `isx run <instance>` from the CLI, or `-` for a shell | the parent's, else a shell |
 
 `workdir` inherits from parent templates: the nearest one that sets it wins, even when a child adds repos of its own.
 When no template in the chain sets it, it defaults to the first repo of the nearest template that declares any.
@@ -335,7 +335,7 @@ When no template in the chain sets it, it defaults to the first repo of the near
 `default-action` is a tool name, such as `claude`, if the tool has a single action, or `tool:action-id`, such as `claude:launch`, if the tool has several (see [Tool Actions](TOOLS.md#tool-actions) for the `id` field).
 
 When set, Enter runs the action and F2 opens a shell; when unset, Enter and `isx run` open a shell.
-It inherits from parent templates, and a child overrides the parent's default action.
+It inherits from parent templates, and a child overrides the parent's default action, or sets `-` to open a shell instead.
 Changing this field needs no rebuild.
 
 ## Host Resources

@@ -2663,11 +2663,11 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
+    /** The nearest layer's default-action, child over parent, or null for a shell ({@code -} included). */
     static String resolveEffectiveDefaultAction(ImageDef imageDef, Map<String, ImageDef> defs) {
         for (var current : ImageDef.chain(imageDef, defs).reversed()) {
-            if (current.getDefaultAction() != null) {
-                return current.getDefaultAction();
-            }
+            var ref = current.getDefaultAction();
+            if (ref != null) return ImageDef.NO_DEFAULT_ACTION.equals(ref) ? null : ref;
         }
         return null;
     }

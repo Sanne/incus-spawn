@@ -1059,6 +1059,27 @@ class BuildCommandTest {
                 BuildCommand.resolveEffectiveDefaultAction(child, defs));
     }
 
+    /** {@code default-action: -} stops inheriting: the child opens a shell (#2058). */
+    @Test
+    void resolveEffectiveDefaultActionDashClearsTheParents() {
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setDefaultAction("claude");
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setDefaultAction("-");
+
+        var grandchild = new ImageDef();
+        grandchild.setName("tpl-grandchild");
+        grandchild.setParent("tpl-child");
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child, "tpl-grandchild", grandchild);
+        assertNull(BuildCommand.resolveEffectiveDefaultAction(child, defs));
+        assertNull(BuildCommand.resolveEffectiveDefaultAction(grandchild, defs));
+    }
+
 
 
     // --- findDroppedTools ---
@@ -1651,6 +1672,23 @@ class BuildCommandTest {
 
         verify(incus).configUnset("tpl-parent", Metadata.DEFAULT_ACTION);
         verify(incus, never()).configUnset(eq("tpl-child"), anyString());
+    }
+
+    /** A child's {@code default-action: -} unstamps it, so the layer-gone fallback is a shell too. */
+    @Test
+    void clearedDefaultActionIsUnstamped() throws Exception {
+        var parent = ImageDef.parseYaml("name: tpl-parent\npackages: [git]\ndefault-action: claude\n");
+        var child = ImageDef.parseYaml("name: tpl-child\nparent: tpl-parent\ndefault-action: -\n");
+        var defs = Map.of("tpl-parent", parent, "tpl-child", child);
+        var incus = mock(IncusClient.class);
+        var cmd = commandListing(incus,
+                template("tpl-parent", defs, "claude"),
+                template("tpl-child", defs, "claude"));
+
+        cmd.syncDefaultActions(defs);
+
+        verify(incus).configUnset("tpl-child", Metadata.DEFAULT_ACTION);
+        verify(incus, never()).configSet(eq("tpl-child"), anyString(), anyString());
     }
 
     /** One list request covers every template, and a current stamp costs no write. */

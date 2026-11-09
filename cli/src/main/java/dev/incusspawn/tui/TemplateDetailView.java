@@ -514,7 +514,9 @@ final class TemplateDetailView {
                 treeRow(lines, contentIndent, "Shell command: ", def.getShellCommand(), lineStyle);
             }
             if (def.getDefaultAction() != null) {
-                treeRow(lines, contentIndent, "Default action: ", def.getDefaultAction(), lineStyle);
+                treeRow(lines, contentIndent, "Default action: ",
+                        ImageDef.NO_DEFAULT_ACTION.equals(def.getDefaultAction()) ? "(shell)" : def.getDefaultAction(),
+                        lineStyle);
             }
 
             if (!def.getPackages().isEmpty()) {

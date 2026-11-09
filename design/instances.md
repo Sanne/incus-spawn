@@ -439,6 +439,8 @@ A project-local definition, parent overrides included, never reaches a template 
 The build-source snapshots a build borrows for a template whose YAML is gone are not used, since they can be older than the template they describe.
 Hooking each skip branch instead (a parent `buildChain` leaves alone, the untouched templates of `--out-of-sync`) was tried first: it missed `--missing`, the type-change path and templates outside the chain built, and cost a round trip per template.
 Folding `default-action` into the fingerprint was rejected: a whole rebuild to change one metadata key.
+A layer's `default-action: -` (#2058) is none, nearer than any parent's: the walk stops there, and the build and the sync unset the stamp, so the layer-gone fallback also opens a shell.
+It is a `-` rather than a blank value, since a blank value is a mistake the loader warns about rather than a choice.
 
 **Staleness detection**: The TUI uses `build-version`, `definition-sha` and `created` to display staleness indicators next to template names, and `isx templates --format=plain|json` reports the same three as fields.
 Both come from `TemplateStaleness.assess` (`cli/.../command/`), which is also what `isx build --out-of-sync` rebuilds on.

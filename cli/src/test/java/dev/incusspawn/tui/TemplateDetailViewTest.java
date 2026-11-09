@@ -232,6 +232,22 @@ class TemplateDetailViewTest {
         assertEquals(1, screen.split("⚠", -1).length - 1, screen);
     }
 
+    /** A layer's {@code default-action: -} reads as a shell, in the effective view and its own layer. */
+    @Test
+    void aClearedDefaultActionReadsAsAShell() throws Exception {
+        var defs = defs();
+        defs.get("tpl-root").setDefaultAction("claude");
+        defs.get("tpl-kvm").setDefaultAction(ImageDef.NO_DEFAULT_ACTION);
+        var view = view(defs, Set.of(), Map.of(), Map.of());
+        var screen = text(view, NOT_BUILT, 120, 50);
+        assertTrue(screen.contains("Default action: (shell)"), screen);
+        view.handleKey(KeyEvent.ofKey(KeyCode.TAB));
+        var tree = text(view, NOT_BUILT, 120, 50);
+        assertTrue(tree.contains("Default action: (shell)"), tree);
+        assertTrue(tree.contains("Default action: claude"), tree);
+        assertFalse(tree.contains("Default action: -"), tree);
+    }
+
     /** The build stamp of tpl-kvm from before its definition and its parent's changed. */
     private static BuildSource earlierBuild() throws Exception {
         var kvm = ImageDef.parseYaml("""

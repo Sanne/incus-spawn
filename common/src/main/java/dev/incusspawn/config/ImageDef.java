@@ -219,6 +219,13 @@ public class ImageDef extends DefinitionOrigin {
     public void setShellCommand(String shellCommand) { this.shellCommand = shellCommand; }
     public List<EnvEntry> getEnv() { return env; }
     public void setEnv(List<EnvEntry> env) { this.env = items(env); }
+    /**
+     * The {@code default-action} that stops inheriting a parent's: Enter and {@code isx run}
+     * open a shell (#2058).
+     */
+    public static final String NO_DEFAULT_ACTION = "-";
+
+    /** The {@code default-action} as written: null inherits, {@link #NO_DEFAULT_ACTION} clears. */
     public String getDefaultAction() { return defaultAction; }
     public void setDefaultAction(String defaultAction) { this.defaultAction = defaultAction; }
     public String getAgentNote() { return agentNote; }

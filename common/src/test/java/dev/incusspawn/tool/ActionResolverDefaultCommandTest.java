@@ -250,6 +250,26 @@ class ActionResolverDefaultCommandTest {
         assertNull(resolver.defaultActionRef(TEMPLATE, () -> "agent"));
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void aChildsDashClearsItsParentsDefaultAction(boolean parentYamlGone) {
+        // default-action: - stops inheriting (#2058), even over a stale stamp and a gone parent.
+        var parent = new ImageDef();
+        parent.setName("tpl-base");
+        parent.setDefaultAction("agent");
+        parent.setTools(List.of(new ToolDef.ToolRef("agent")));
+        var leaf = template("-");
+        leaf.setParent("tpl-base");
+        var defs = parentYamlGone ? Map.of(TEMPLATE, leaf) : Map.of(TEMPLATE, leaf, "tpl-base", parent);
+        var resolver = new ActionResolver(null, new ToolDefLoader(List.of()), List.of(new Tool("agent")), defs);
+        assertNull(resolver.defaultActionRef(TEMPLATE, () -> "agent"));
+        var config = clone(new BuildSource(Map.of(TEMPLATE, leaf, "tpl-base", parent),
+                Map.of(), Map.of(), Map.of()).toJson());
+        config.put(Metadata.DEFAULT_ACTION, "agent");
+        var daemon = new FakeIncusDaemon().container(SOURCE, config);
+        assertNull(resolve(daemon, SOURCE, defs, new Tool("agent")));
+    }
+
     @Test
     void noDefaultActionMeansAPlainShell() {
         var daemon = new FakeIncusDaemon().container(SOURCE, clone(buildSource("agent")));
