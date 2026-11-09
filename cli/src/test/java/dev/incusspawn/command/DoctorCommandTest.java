@@ -779,6 +779,7 @@ class DoctorCommandTest {
         var type = dev.incusspawn.incus.Metadata.TYPE;
         var daemon = dirDefaultWithCowPool()
                 .container("isx-presentation", Map.of(type, dev.incusspawn.incus.Metadata.TYPE_BASE))
+                .container("my-project", Map.of(type, dev.incusspawn.incus.Metadata.TYPE_PROJECT))
                 .container("tpl-looks-like-one", Map.of(type, dev.incusspawn.incus.Metadata.TYPE_CLONE))
                 .container("isx-presentation" + BuildCommand.REBUILDING_SUFFIX, Map.of())
                 .container("dev-1", Map.of());
@@ -788,7 +789,7 @@ class DoctorCommandTest {
             if (DoctorCommand.isTemplate(inst)) templates.add(inst.get("name"));
         }
 
-        assertEquals(Set.of("isx-presentation", "isx-presentation-rebuilding"), templates);
+        assertEquals(Set.of("isx-presentation", "isx-presentation-rebuilding", "my-project"), templates);
     }
 
     @Test
