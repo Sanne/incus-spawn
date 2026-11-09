@@ -290,6 +290,26 @@ shell-command: copilot
 Run `isx init` to configure your GitHub token if you have not already.
 The build auto-approves every tool call, in interactive and headless runs alike, the same as `--yolo`.
 
+### Parameters
+
+By default Copilot picks the model, the reasoning effort and the context window tier.
+
+| Parameter | Default | What it does |
+| --- | --- | --- |
+| `model` | Copilot picks | Any model your Copilot plan offers, such as `claude-opus-5.5`, or `auto` |
+| `effort` | Copilot picks | Reasoning effort: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`; the levels a model supports vary |
+| `context` | Copilot picks | Context window tier: `default` or `long_context`, for models that offer one |
+
+```yaml
+tools:
+  - copilot:
+      model: claude-opus-5.5
+      effort: medium
+      context: long_context
+```
+
+They are written to Copilot's `~/.copilot/settings.json` as `model`, `effortLevel` and `contextTier`, and a child template can set any of them again without reinstalling Copilot.
+
 ## Agent Skills
 
 A template can declare [agent skills](https://skills.sh) to bake in at build time.

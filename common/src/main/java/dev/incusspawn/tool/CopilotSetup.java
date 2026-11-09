@@ -4,6 +4,7 @@ import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.util.BuildOutput;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -61,6 +62,39 @@ public class CopilotSetup implements ToolSetup {
     }
 
     @Override
+    public Map<String, ToolDef.ParameterDef> parameters() {
+        var params = new LinkedHashMap<String, ToolDef.ParameterDef>();
+
+        // None declares a default: Copilot resolves them from a server-side catalog that moves,
+        // so see settingsJson().
+        var model = new ToolDef.ParameterDef();
+        model.setType("string");
+        model.setDescription("Copilot model ID (e.g. claude-opus-5.5, gpt-5.6-sol, auto)");
+        model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
+        model.setOptional(true);
+        model.setReconfigurable(true);
+        params.put("model", model);
+
+        var effort = new ToolDef.ParameterDef();
+        effort.setType("string");
+        effort.setDescription("Reasoning effort (none, minimal, low, medium, high, xhigh, max)");
+        effort.setPattern("^(none|minimal|low|medium|high|xhigh|max)$");
+        effort.setOptional(true);
+        effort.setReconfigurable(true);
+        params.put("effort", effort);
+
+        var context = new ToolDef.ParameterDef();
+        context.setType("enum");
+        context.setDescription("Context window tier: default or long_context");
+        context.setOptions(List.of("default", "long_context"));
+        context.setOptional(true);
+        context.setReconfigurable(true);
+        params.put("context", context);
+
+        return params;
+    }
+
+    @Override
     public List<EnvEntry> envEntries(Map<String, String> resolvedParams) {
         return List.of(
                 EnvEntry.set("COPILOT_GITHUB_TOKEN", PLACEHOLDER_TOKEN),
@@ -75,7 +109,13 @@ public class CopilotSetup implements ToolSetup {
         BuildOutput.stepStart("Installing GitHub Copilot CLI");
         installCopilotCli(c);
         configureCopilotSettings(c);
+        configureModelSettings(c, resolvedParams);
         BuildOutput.stepDone();
+    }
+
+    @Override
+    public void reconfigure(Container c, Map<String, String> resolvedParams) {
+        configureModelSettings(c, resolvedParams);
     }
 
     private void installCopilotCli(Container c) {
@@ -100,5 +140,42 @@ public class CopilotSetup implements ToolSetup {
                 }
                 """);
         c.chown("/home/agentuser/.copilot", "agentuser:agentuser");
+    }
+
+    private static final String COPILOT_SETTINGS_PATH = "/home/agentuser/.copilot/settings.json";
+
+    private void configureModelSettings(Container c, Map<String, String> resolvedParams) {
+        var settings = settingsJson(resolvedParams);
+        if (settings == null) {
+            return;
+        }
+        c.sh("mkdir -p /home/agentuser/.copilot");
+        c.writeFile(COPILOT_SETTINGS_PATH, settings);
+        c.chown("/home/agentuser/.copilot", "agentuser:agentuser");
+    }
+
+    /**
+     * Copilot's user settings, or null when the template asked for none of them. Each key appears
+     * only when set: Copilot picks the model, effort and context tier from a catalog that moves,
+     * so a value baked in here would silently override whatever it currently promotes. The
+     * parameter patterns keep the values free of characters that need JSON escaping.
+     */
+    static String settingsJson(Map<String, String> resolvedParams) {
+        var entries = new java.util.ArrayList<String>();
+        addSetting(entries, resolvedParams, "model", "model");
+        addSetting(entries, resolvedParams, "effort", "effortLevel");
+        addSetting(entries, resolvedParams, "context", "contextTier");
+        if (entries.isEmpty()) {
+            return null;
+        }
+        return "{\n" + String.join(",\n", entries) + "\n}\n";
+    }
+
+    private static void addSetting(List<String> entries, Map<String, String> params,
+                                   String paramKey, String jsonKey) {
+        var value = params.get(paramKey);
+        if (value != null) {
+            entries.add("  \"" + jsonKey + "\": \"" + value + "\"");
+        }
     }
 }
