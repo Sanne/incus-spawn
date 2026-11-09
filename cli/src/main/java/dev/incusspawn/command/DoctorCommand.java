@@ -25,6 +25,8 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceNetwork;
 import dev.incusspawn.proxy.BridgeDns;
 import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.proxy.CredentialProof;
+import dev.incusspawn.proxy.InheritedProof;
 import dev.incusspawn.proxy.InstanceRegistry;
 import dev.incusspawn.proxy.InstanceSecret;
 import dev.incusspawn.proxy.ProofToken;
@@ -603,8 +605,8 @@ public class DoctorCommand extends BaseCommand {
 
     private List<Finding> checkCredentials() {
         var config = SpawnConfig.load();
-        var unresolved = ToolProxyResolver.findUnresolved(config);
-        var findings = new ArrayList<>(credentialFindings(config.getClaude().hasAuth(), unresolved, toolInUse()));
+        var findings = new ArrayList<>(credentialFindings(config, ToolProxyResolver.proxyToolSetups(config),
+                toolInUse(), Inheritance.here()));
         findings.addAll(unreadKeyFindings(config.tree(), UnreadConfigKeys.trustedTools(config)));
         return findings;
     }
@@ -658,16 +660,51 @@ public class DoctorCommand extends BaseCommand {
      *
      * <p>Anthropic credentials are the exception: isx itself uses them (`isx ask`), so there is
      * no template to check against and a missing one is always worth flagging.
+     *
+     * <p>A namespace whose default is {@link AccountResolver#INHERIT} holds no credential here by
+     * design (#2055): inside an isx instance the outer instance's account serves it, so it counts
+     * as configured; outside one there is nothing to inherit from, and that is what is reported.
+     *
+     * @param inheritance whether this isx can inherit, the test a selection of it must pass
      */
+    static List<Finding> credentialFindings(SpawnConfig config, Map<String, ToolSetup> toolSetups,
+            Predicate<String> toolInUse, Inheritance inheritance) {
+        var tree = config.tree();
+        return credentialFindings(config.getClaude().hasAuth(),
+                ToolProxyResolver.findUnresolved(tree, toolSetups), toolInUse,
+                namespace -> AccountResolver.inherits(tree, namespace, null), inheritance);
+    }
+
+    /** Whether the account {@code inherit} can be served here, and if not, why not. */
+    enum Inheritance {
+        /** In an isx instance whose secret this isx reads: the outer instance's account serves it. */
+        AVAILABLE,
+        /** Not in an isx instance: there is nothing to inherit from. */
+        NOT_NESTED,
+        /** In an instance whose secret is missing its content or is not one isx wrote. */
+        SECRET_UNUSABLE;
+
+        static Inheritance here() {
+            if (InheritedProof.parentSecret() != null) return AVAILABLE;
+            return InheritedProof.nested() ? SECRET_UNUSABLE : NOT_NESTED;
+        }
+    }
+
     static List<Finding> credentialFindings(boolean claudeConfigured,
             List<ToolProxyResolver.UnresolvedToolProxy> unresolved,
-            Predicate<String> toolInUse) {
+            Predicate<String> toolInUse, Predicate<String> inherits, Inheritance inheritance) {
         var needed = new ArrayList<String>();
         var unused = new ArrayList<String>();
+        var inherited = new LinkedHashSet<String>();
         if (!claudeConfigured) {
-            needed.add("claude");
+            if (inherits.test(SpawnConfig.ClaudeConfig.NAMESPACE)) inherited.add(SpawnConfig.ClaudeConfig.NAMESPACE);
+            else needed.add("claude");
         }
         for (var u : unresolved) {
+            if (!u.namespace().isBlank() && inherits.test(u.namespace())) {
+                inherited.add(u.namespace());
+                continue;
+            }
             var entry = u.toolName() + " " + u.configKey();
             if (toolInUse.test(u.toolName())) needed.add(entry); else unused.add(entry);
         }
@@ -676,9 +713,26 @@ public class DoctorCommand extends BaseCommand {
         if (!needed.isEmpty()) {
             findings.add(Finding.warn("Missing credentials", "(" + String.join(", ", needed) + ")",
                     new Remediation("Run 'isx account add' to configure", false, null)));
-        } else {
-            findings.add(Finding.ok("Credentials",
-                    unused.isEmpty() ? "configured" : "configured for the tools in use"));
+        } else if (inherited.isEmpty() || inheritance == Inheritance.AVAILABLE) {
+            // An inherited credential that cannot be served here is not configured: its own warning follows
+            var detail = unused.isEmpty() ? "configured" : "configured for the tools in use";
+            if (!inherited.isEmpty()) {
+                detail += "; " + String.join(", ", inherited) + " inherited from the outer instance";
+            }
+            findings.add(Finding.ok("Credentials", detail));
+        }
+        if (inheritance == Inheritance.NOT_NESTED && !inherited.isEmpty()) {
+            findings.add(Finding.warn("Credentials set to inherit outside an isx instance",
+                    "(" + String.join(", ", inherited) + ")",
+                    new Remediation("Set 'default:' to an account of yours in config.yaml,"
+                            + " adding one with 'isx account add' if there is none", false, null)));
+        } else if (inheritance == Inheritance.SECRET_UNUSABLE && !inherited.isEmpty()) {
+            findings.add(Finding.warn("Credentials set to inherit, but this instance's secret cannot be read",
+                    "(" + String.join(", ", inherited) + ")",
+                    new Remediation("Run this isx as the instance user, who can read "
+                            + CredentialProof.GUEST_PATH
+                            + ", or run 'isx shell' for this instance on the host, which restores its secret",
+                            false, null)));
         }
         if (!unused.isEmpty()) {
             findings.add(Finding.note("Credentials not configured",

@@ -449,12 +449,19 @@ class DoctorCommandTest {
 
     private static final DoctorCommand.Status NOTE = DoctorCommand.Status.NOTE;
 
-    private static List<ToolProxyResolver.UnresolvedToolProxy> unresolved(String... pairs) {
+    /** Triples of tool, key and namespace. */
+    private static List<ToolProxyResolver.UnresolvedToolProxy> unresolved(String... triples) {
         var list = new ArrayList<ToolProxyResolver.UnresolvedToolProxy>();
-        for (int i = 0; i < pairs.length; i += 2) {
-            list.add(new ToolProxyResolver.UnresolvedToolProxy(pairs[i], pairs[i + 1]));
+        for (int i = 0; i < triples.length; i += 3) {
+            list.add(new ToolProxyResolver.UnresolvedToolProxy(triples[i], triples[i + 1], triples[i + 2]));
         }
         return list;
+    }
+
+    private static List<DoctorCommand.Finding> credentialFindings(boolean claudeConfigured,
+            List<ToolProxyResolver.UnresolvedToolProxy> unresolved, java.util.function.Predicate<String> toolInUse) {
+        return DoctorCommand.credentialFindings(claudeConfigured, unresolved, toolInUse, ns -> false,
+                DoctorCommand.Inheritance.AVAILABLE);
     }
 
     // ---- Transitive `requires:` expansion (toolInUse's building block) ----
@@ -513,8 +520,7 @@ class DoctorCommandTest {
     /** A credential under a key no tool reads is named with the key it belongs in (#1733). */
     @Test
     void anUnreadCredentialKeyIsAWarning() throws Exception {
-        var tools = new java.util.LinkedHashMap<String, dev.incusspawn.tool.ToolSetup>();
-        dev.incusspawn.RuntimeConstants.CDI_TOOLS.forEach(t -> tools.put(t.name(), t));
+        var tools = builtInTools();
         var tree = dev.incusspawn.config.Jjq.spawnConfig("openai:\n  token: sk-x\ngithub:\n  token: ghp_x\n").tree();
 
         var findings = DoctorCommand.unreadKeyFindings(tree, tools);
@@ -529,7 +535,7 @@ class DoctorCommandTest {
 
     @Test
     void credentialsOkWhenNothingIsMissing() {
-        var findings = DoctorCommand.credentialFindings(true, List.of(), name -> true);
+        var findings = credentialFindings(true, List.of(), name -> true);
 
         assertEquals(1, findings.size());
         assertEquals(DoctorCommand.Status.OK, findings.getFirst().status());
@@ -538,7 +544,7 @@ class DoctorCommandTest {
 
     @Test
     void unconfiguredCredentialForAnUnusedToolIsANeutralNote() {
-        var findings = DoctorCommand.credentialFindings(true, unresolved("codex", "api-key"), name -> false);
+        var findings = credentialFindings(true, unresolved("codex", "api-key", "openai"), name -> false);
 
         assertEquals(2, findings.size());
         assertEquals(DoctorCommand.Status.OK, findings.get(0).status());
@@ -560,7 +566,7 @@ class DoctorCommandTest {
 
     @Test
     void unconfiguredCredentialForATemplatesToolWarns() {
-        var findings = DoctorCommand.credentialFindings(true, unresolved("codex", "api-key"),
+        var findings = credentialFindings(true, unresolved("codex", "api-key", "openai"),
                 name -> name.equals("codex"));
 
         assertEquals(1, findings.size());
@@ -571,8 +577,8 @@ class DoctorCommandTest {
 
     @Test
     void usedAndUnusedToolsAreReportedSeparately() {
-        var findings = DoctorCommand.credentialFindings(true,
-                unresolved("codex", "api-key", "bob", "api-key"), name -> name.equals("codex"));
+        var findings = credentialFindings(true,
+                unresolved("codex", "api-key", "openai", "bob", "api-key", "bob"), name -> name.equals("codex"));
 
         assertEquals(2, findings.size());
         assertEquals(DoctorCommand.Status.WARN, findings.get(0).status());
@@ -585,11 +591,75 @@ class DoctorCommandTest {
     @Test
     void missingClaudeCredentialWarnsEvenWithNoTemplate() {
         // isx itself uses the Anthropic credential (isx ask), so there is no template to check.
-        var findings = DoctorCommand.credentialFindings(false, List.of(), name -> false);
+        var findings = credentialFindings(false, List.of(), name -> false);
 
         assertEquals(1, findings.size());
         assertEquals(DoctorCommand.Status.WARN, findings.getFirst().status());
         assertTrue(findings.getFirst().detail().contains("claude"));
+    }
+
+    private static final String INHERITING = "claude:\n  default: inherit\ngithub:\n  default: inherit\n";
+
+    private static Map<String, dev.incusspawn.tool.ToolSetup> builtInTools() {
+        var tools = new java.util.LinkedHashMap<String, dev.incusspawn.tool.ToolSetup>();
+        dev.incusspawn.RuntimeConstants.CDI_TOOLS.forEach(t -> tools.put(t.name(), t));
+        return tools;
+    }
+
+    /**
+     * Inside an isx instance, a namespace whose default is {@code inherit} is served by the outer
+     * instance's account, so it is configured, not missing (#2055).
+     */
+    @Test
+    void anInheritedDefaultInsideAnInstanceCountsAsConfigured() throws Exception {
+        var config = dev.incusspawn.config.Jjq.spawnConfig(INHERITING);
+
+        var findings = DoctorCommand.credentialFindings(config, builtInTools(), "gh"::equals,
+                DoctorCommand.Inheritance.AVAILABLE);
+
+        assertTrue(findings.stream().noneMatch(f -> f.status() == DoctorCommand.Status.WARN), findings.toString());
+        assertEquals(DoctorCommand.Status.OK, findings.getFirst().status(), findings.toString());
+        assertTrue(findings.getFirst().detail().contains("claude, github inherited from the outer instance"),
+                findings.getFirst().detail());
+        assertTrue(findings.stream().noneMatch(f -> f.detail().contains("gh token")), findings.toString());
+    }
+
+    /** Outside an instance there is nothing to inherit from, and doctor says that, not "missing". */
+    @Test
+    void anInheritedDefaultOutsideAnInstanceIsNamedAsSuch() throws Exception {
+        var config = dev.incusspawn.config.Jjq.spawnConfig(INHERITING);
+
+        var findings = DoctorCommand.credentialFindings(config, builtInTools(), "gh"::equals,
+                DoctorCommand.Inheritance.NOT_NESTED);
+
+        assertTrue(findings.stream().noneMatch(f -> f.label().equals("Missing credentials")), findings.toString());
+        assertTrue(findings.stream().noneMatch(f -> f.label().equals("Credentials")),
+                "a credential that cannot be served is not configured: " + findings);
+        var finding = findings.stream()
+                .filter(f -> f.label().equals("Credentials set to inherit outside an isx instance"))
+                .findFirst().orElseThrow(() -> new AssertionError(findings.toString()));
+        assertEquals(DoctorCommand.Status.WARN, finding.status());
+        assertEquals("(claude, github)", finding.detail());
+        assertTrue(finding.remediation().description().contains("default"), finding.remediation().description());
+    }
+
+    /** Inside an instance whose secret cannot be read, the cause is the secret, not the place. */
+    @Test
+    void anInheritedDefaultWithAnUnusableSecretNamesTheSecret() throws Exception {
+        var config = dev.incusspawn.config.Jjq.spawnConfig(INHERITING);
+
+        var findings = DoctorCommand.credentialFindings(config, builtInTools(), "gh"::equals,
+                DoctorCommand.Inheritance.SECRET_UNUSABLE);
+
+        assertTrue(findings.stream().noneMatch(f -> f.label().contains("Missing") || f.label().contains("outside")),
+                findings.toString());
+        assertTrue(findings.stream().noneMatch(f -> f.label().equals("Credentials")),
+                "a credential that cannot be served is not configured: " + findings);
+        var finding = findings.stream()
+                .filter(f -> f.label().equals("Credentials set to inherit, but this instance's secret cannot be read"))
+                .findFirst().orElseThrow(() -> new AssertionError(findings.toString()));
+        assertEquals(DoctorCommand.Status.WARN, finding.status());
+        assertEquals("(claude, github)", finding.detail());
     }
 
     @Test

@@ -133,6 +133,8 @@ A nested process with no proof, a forged proof-shaped token, or an independent a
 Outside an isx instance, `inherit` is refused when you branch, and so is any request that relies on it.
 You cannot name an account of your own `inherit`.
 
+`isx doctor` counts an inherited default as configured inside an instance whose secret it can read, and warns about it otherwise.
+
 A template whose own `accounts:` says `claude: inherit` builds Claude for an API key, the form the outer proxy turns into whichever account it serves.
 The git identity of an instance that inherits GitHub is the outer account's when it starts inheriting.
 If the outer instance later switches GitHub accounts, branch again or run `isx account set` to pick up the new one.

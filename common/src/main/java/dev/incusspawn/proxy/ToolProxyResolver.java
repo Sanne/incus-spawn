@@ -270,17 +270,13 @@ public final class ToolProxyResolver {
         return namespaces;
     }
 
-    public record UnresolvedToolProxy(String toolName, String configKey) {}
+    /** A configuration entry of {@code toolName} that resolves to nothing, in {@code namespace} or {@code ""}. */
+    public record UnresolvedToolProxy(String toolName, String configKey, String namespace) {}
 
     /**
      * Find tool proxy configuration entries that could not be resolved.
      * Excludes {@code type: anthropic} entries (those use relaxed resolution).
      */
-    public static List<UnresolvedToolProxy> findUnresolved(SpawnConfig config) {
-        return findUnresolved(config.tree(), proxyToolSetups(config));
-    }
-
-    /** As above, against a config tree the caller already serialized. */
     public static List<UnresolvedToolProxy> findUnresolved(JqValue configTree, Map<String, ToolSetup> toolSetups) {
         var result = new ArrayList<UnresolvedToolProxy>();
 
@@ -301,7 +297,7 @@ public final class ToolProxyResolver {
                 // its credential just because the flat field is empty.
                 var value = resolveConfigValue(proxyDef, configDef, configTree, toolSetups, Map.of());
                 if (value == null || value.isBlank()) {
-                    result.add(new UnresolvedToolProxy(toolName, configKey));
+                    result.add(new UnresolvedToolProxy(toolName, configKey, proxyDef.namespaceOf(configDef)));
                 }
             }
         }
