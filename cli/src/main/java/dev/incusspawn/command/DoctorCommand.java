@@ -1150,11 +1150,12 @@ public class DoctorCommand extends BaseCommand {
     }
 
     /**
-     * Whether a listed instance is a template, or one being built: by the {@code base} type every
-     * build stamps and the build's temporary name, never by a {@code tpl-} prefix, which is only a convention.
+     * Whether a listed instance is a template, or one being built: by the {@code base} or {@code project}
+     * type a build stamps and the build's temporary name, never by a {@code tpl-} prefix, which is only a convention.
      */
     static boolean isTemplate(Map<String, String> inst) {
-        return Metadata.TYPE_BASE.equals(inst.get("isx-type"))
+        var type = inst.get("isx-type");
+        return Metadata.TYPE_BASE.equals(type) || Metadata.TYPE_PROJECT.equals(type)
                 || inst.getOrDefault("name", "").endsWith(BuildCommand.REBUILDING_SUFFIX);
     }
 
