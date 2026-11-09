@@ -387,7 +387,8 @@ public class ActionResolver {
     // --- Private helpers ---
 
     /**
-     * The default-action reference, or null for none: the YAML chain's, child over parent, else
+     * The default-action reference, or null for none: the YAML chain's, child over parent (a
+     * nearest layer's {@code -} is none and stops the walk), else
      * the snapshot's when a layer's YAML is gone, the leaf's or a parent's. With a layer gone the
      * inherited value is unknown, and the stamp, kept in step with the chain while it was whole
      * ({@code BuildCommand.syncDefaultActions}), is the fallback for exactly that. A blank
@@ -404,7 +405,7 @@ public class ActionResolver {
             ref = chain.get(i).getDefaultAction();
         }
         if (ref == null && layerGone(chain)) ref = snapshot.get();
-        return (ref == null || ref.isBlank()) ? null : ref;
+        return (ref == null || ref.isBlank() || ImageDef.NO_DEFAULT_ACTION.equals(ref)) ? null : ref;
     }
 
     /** Whether the YAML chain stops at a layer whose YAML is gone, not at a root or a parent cycle. */

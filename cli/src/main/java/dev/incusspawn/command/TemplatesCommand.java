@@ -565,7 +565,8 @@ public class TemplatesCommand extends BaseCommand {
             # Command to run instead of the login shell
             # shell-command: claude
 
-            # Tool action that Enter in the TUI and 'isx run' start: a tool, or tool:action-id
+            # Tool action that Enter in the TUI and 'isx run' start: a tool, or tool:action-id,
+            # or - for a shell instead of the parent's
             # default-action: claude
 
             # Always-true fact an agent must know before acting. It costs tokens in
