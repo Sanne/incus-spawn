@@ -3,31 +3,9 @@
   "sleep": 3.2
  },
  {
-  "send": "\u001b[B"
- },
- {
-  "sleep": 0.4
- },
- {
-  "send": "\u001b[B"
- },
- {
-  "sleep": 0.4
- },
- {
-  "send": "\u001b[B"
- },
- {
-  "sleep": 0.4
- },
- {
-  "send": "\u001b[B"
- },
- {
-  "sleep": 0.4
- },
- {
-  "send": "\u001b[B"
+  "send": "\u001b[B",
+  "repeat": "TPL_DEMO_ROW",
+  "gap": 0.4
  },
  {
   "sleep": 0.9

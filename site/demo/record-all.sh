@@ -14,6 +14,9 @@
 #
 # The shell's TIMEFORMAT makes 'time' print one line, for the branching cast's timed forks.
 # Environment: ISX_DEMO_REPO (default ~/sources/isx-demo). The TUI cast shows your own board.
+#   ISX_DEMO_SETTLE  a command run before each take, to wait until the storage pool has finished
+#                    the work an earlier destroy left it: forks are several times slower until
+#                    btrfs has cleaned up deleted instances (#2061). record-in-vm.sh sets it.
 # Runs on macOS's bash 3.2.
 set -euo pipefail
 
@@ -55,11 +58,19 @@ step "Preflight"
 problems=()
 problem() { problems+=("$*"); }
 
-isx templates --format=json | python3 -c '
+# tpl-demo's place in the template list is its row on the TUI board, which lists every
+# template, built or not, in that order: the TUI scenario presses Down that many times.
+if TPL_DEMO_ROW=$(isx templates --format=json | python3 -c '
 import json, sys
-t = {r["name"]: r for r in json.load(sys.stdin)}
-sys.exit(0 if t.get("tpl-demo", {}).get("built") else 1)' \
-  || problem "tpl-demo is not built: see SCRIPT.md, appendix A"
+templates = json.load(sys.stdin)
+names = [t["name"] for t in templates]
+if not any(t["name"] == "tpl-demo" and t["built"] for t in templates):
+    sys.exit(1)
+print(names.index("tpl-demo"))'); then
+  export TPL_DEMO_ROW
+else
+  problem "tpl-demo is not built: see SCRIPT.md, appendix A"
+fi
 
 if ! $clean; then
   for n in $LEFTOVERS; do
@@ -130,6 +141,10 @@ failed=""
 skip_tui=false
 for c in "${casts[@]}"; do
   if [ "$c" = tui ] && $skip_tui; then continue; fi
+  if [ -n "${ISX_DEMO_SETTLE:-}" ]; then
+    step "Waiting for the storage pool to settle"
+    sh -c "$ISX_DEMO_SETTLE" || echo "Warning: '$ISX_DEMO_SETTLE' failed, so forks in this take may be slow" >&2
+  fi
   step "Recording $c.cast"
   if [ "$c" = tui ]; then
     cmd="PATH=\$HOME/.local/bin:\$PATH exec isx"

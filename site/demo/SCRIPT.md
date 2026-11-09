@@ -114,6 +114,21 @@ site/demo/record-all.sh --clean            # all five
 site/demo/record-all.sh --clean hero tui   # just these
 ```
 
+### In a clean VM: `record-in-vm.sh`
+
+On your own host the casts show your own state: your templates and instances on the TUI board, your paths in the git remote lines, your isx build. `record-in-vm.sh` records them in a fresh, disposable VM instead, on a Linux host with KVM:
+
+```shell
+site/demo/record-in-vm.sh                  # all five
+site/demo/record-in-vm.sh --keep tui       # just this one, and keep the VM to look inside
+```
+
+It builds `tpl-demo-recorder` (`.incus-spawn/images/demo-recorder.yaml`, a Fedora VM with Incus, python3 and git) when it is missing or stale, and branches a VM from it. It copies this directory and `scripts/local-incus.sh` into the VM. There, it installs the isx release `ISX_RECORD_VERSION` names (default 0.5.0) from COPR and writes a fresh `config.yaml` whose `claude` and `github` accounts are `inherit`, with `host-paths: [~/sources]` and `features: [shell-status-bar]`. It then brings Incus up with `scripts/local-incus.sh`, starts the proxy, builds `tpl-demo` from `tpl-demo.yaml`, seeds `workbench` (appendix C), clones isx-demo into `~/sources` and runs `record-all.sh`. The casts it recorded come back into this directory, and the VM is destroyed, whether or not every take worked.
+
+No credential enters the VM: its instances borrow the VM's own grants through your proxy, so your `claude` and `github` accounts must work on the host. Under `inherit`, Claude's banner reads "API Usage Billing" whatever your own account is. A full run takes 15 to 25 minutes, most of it building tpl-demo, and needs a real Claude for the hero cast.
+
+The fork the branching cast times on camera takes about 0.6s in the VM, against about 0.4s on bare metal. A fork right after instances were destroyed is several times slower until btrfs has cleaned them up, so in the VM `record-all.sh` waits for that (`btrfs subvolume sync`) before each take: it runs the command `ISX_DEMO_SETTLE` names, which `record-in-vm.sh` sets.
+
 Post-processing with `compress.py` (idle-gap capping, fast-forward cuts, speed scaling) produces the embeddable `-web.cast` files, e.g.:
 
 ```shell
@@ -141,6 +156,8 @@ The `.cast` file is newline-delimited JSON — editable. Two passes:
 Drop the final `hero.cast` into `site/demo/` — embedding it in the homepage (asciinema-player, self-hosted, poster frame on the diff payoff) is a separate small task I can do once the file exists.
 
 ## Appendix A — demo template
+
+The definition is `tpl-demo.yaml` in this directory, which `record-in-vm.sh` installs in its VM. To record on your own host, copy it to `~/.config/incus-spawn/images/tpl-demo.yaml`:
 
 ```yaml
 # ~/.config/incus-spawn/images/tpl-demo.yaml
@@ -220,7 +237,7 @@ psql -qc 'create table orders as select generate_series(1,100000) as id, md5(ran
 
 The scenario branches `exp-a`/`exp-b` from `workbench`; destroy those after each take, keep `workbench` for retakes. The 1.2s pause after each branch, then `isx shell` into it, give postgres time to finish WAL recovery from the fork before `psql` runs.
 
-**tui.cast**: the TUI runs as plain `isx` against your own home, so the board shows your own templates and instances. (A staged home through `-Duser.home` no longer works: the native binary is built with `-H:-ParseRuntimeOptions` and rejects `-D` arguments.) The scenario presses ↓ five times to reach `tpl-demo`, its place on the board this was recorded from; check the template order on your board first and adjust the count in `scenario-tui.json`. Destroy leftover build debris first. The scenario drives the TUI blind (arrows, F4, modal typing) and waits on Claude's `bypass` status-bar text as the readiness marker; the clip deliberately ends frozen on Claude open — no exit choreography. Destroy `review-pr-512` after each take.
+**tui.cast**: the TUI runs as plain `isx` against your own home, so the board shows your own templates and instances. (A staged home through `-Duser.home` no longer works: the native binary is built with `-H:-ParseRuntimeOptions` and rejects `-D` arguments.) The scenario presses ↓ as many times as `tpl-demo`'s row on the board, which `record-all.sh` reads from `isx templates --format=json` (the board lists every template, built or not, in that order) and hands `record.py` as `TPL_DEMO_ROW`. Destroy leftover build debris first. The scenario drives the TUI blind (arrows, F4, modal typing) and waits on Claude's `bypass` status-bar text as the readiness marker; the clip deliberately ends frozen on Claude open — no exit choreography. Destroy `review-pr-512` after each take.
 
 **realmachine.cast** needs an `experiment` without btop or the `quay.io/podman/hello` image, so the on-camera install is honest. A fresh branch of `tpl-demo` is one, and `record-all.sh` branches it fresh for creds and realmachine, then destroys it after the last of them so the TUI board does not show it. Its dnf metadata is cold, so the btop install refreshes the repositories on camera first.
 
