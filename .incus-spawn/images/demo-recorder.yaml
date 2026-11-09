@@ -1,0 +1,14 @@
+name: tpl-demo-recorder
+description: Records the isx.run demo casts in a clean VM (site/demo/record-in-vm.sh)
+parent: tpl-minimal
+type: vm
+package_repos:
+  - type: copr
+    name: sanne/incus-spawn
+packages:
+  - python3
+  - git
+  - jq
+  - incus
+  - btrfs-progs
+  - virtiofsd

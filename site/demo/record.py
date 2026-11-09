@@ -10,6 +10,9 @@ Step kinds:
   {"wait": "\\$ $"}                   wait until output tail matches regex (prompt), then continue
   {"sleep": 2.0}                      idle pause (recorded, so keep short; player idle-limit trims)
   {"send": "..."}                     send raw bytes immediately (no typing cadence)
+  {"send": "...", "repeat": N, "gap": 0.4}
+                                      send it N times, pausing gap seconds between sends; N is a
+                                      number or the name of an environment variable holding one
   {"settle": 1.0}                     wait until no output arrives for N seconds
   {"mark": "agent-start"}             write an asciicast marker ("m" event) at this moment;
                                       compress.py --cut-mark cuts between two of them
@@ -37,6 +40,12 @@ def main():
 
     with open(scenario_path, encoding="utf-8") as f:
         steps = json.load(f)
+    # Before the take starts, so a bad count never cuts one short.
+    for step in steps:
+        if "repeat" in step:
+            repeat_count(step["repeat"])
+        if "gap" in step:
+            gap_seconds(step["gap"])
     events = []
     t0 = None
     timed_out = False
@@ -76,6 +85,11 @@ def main():
         tail = (tail + got)[-4096:]
         return got
 
+    def idle(seconds):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            pump(0.05)
+
     def type_text(text):
         for ch in text:
             os.write(fd, ch.encode())
@@ -88,12 +102,13 @@ def main():
         if "type" in step:
             type_text(step["type"])
         elif "send" in step:
-            os.write(fd, step["send"].encode())
-            pump(0.05)
-        elif "sleep" in step:
-            deadline = time.monotonic() + step["sleep"]
-            while time.monotonic() < deadline:
+            for i in range(repeat_count(step.get("repeat", 1))):
+                if i:
+                    idle(gap_seconds(step.get("gap", 0)))
+                os.write(fd, step["send"].encode())
                 pump(0.05)
+        elif "sleep" in step:
+            idle(step["sleep"])
         elif "wait" in step:
             pat = re.compile(step["wait"].encode())
             deadline = time.monotonic() + step.get("timeout", 120)
@@ -155,6 +170,29 @@ def clean_tail(tail):
     not a stale one earlier in the buffer.
     """
     return ANSI.sub(b"", SAVED_CURSOR.sub(b"", tail))
+
+def repeat_count(value):
+    """A step's repeat: a count, or the name of the environment variable that holds one."""
+    if isinstance(value, str):
+        if value not in os.environ:
+            sys.exit(f"repeat names {value}, which is not set")
+        value = os.environ[value]
+    elif isinstance(value, bool) or not isinstance(value, int):
+        # int() would read true as 1 and cut 2.5 to 2
+        sys.exit(f"repeat must be a whole number, not {value!r}")
+    try:
+        count = int(value)
+    except ValueError:
+        sys.exit(f"repeat must be a whole number, not {value!r}")
+    if count < 0:
+        sys.exit(f"repeat must not be negative, not {count}")
+    return count
+
+def gap_seconds(value):
+    """A step's gap: a number of seconds, not negative."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        sys.exit(f"gap must be a number of seconds, not {value!r}")
+    return value
 
 def arg(name, default):
     if name in sys.argv:

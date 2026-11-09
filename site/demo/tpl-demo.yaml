@@ -1,0 +1,15 @@
+# The demo template every cast branches from (SCRIPT.md, appendix A).
+# record-in-vm.sh installs it as ~/.config/incus-spawn/images/tpl-demo.yaml in the recording VM;
+# to record on your own host, copy it there yourself.
+name: tpl-demo
+description: Demo template for the isx.run hero cast
+parent: tpl-java
+repos:
+  - url: https://github.com/Sanne/isx-demo.git
+    path: ~/demo-app
+    prime: mvn -B -q test-compile
+workdir: ~/demo-app
+tools:
+  - claude
+  - maven-3        # tpl-java has it too, but is deprecated; the prime step and the agent's tests run mvn
+default-action: claude
