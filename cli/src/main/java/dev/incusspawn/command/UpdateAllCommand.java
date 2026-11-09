@@ -55,7 +55,7 @@ public class UpdateAllCommand extends BaseCommand {
             var name = instance.get("name");
             // A build's or an update's copy, which the update of its template deletes (#1760)
             if (name.endsWith(BuildCommand.REBUILDING_SUFFIX)) continue;
-            var type = Metadata.getType(incus, name);
+            var type = instance.get("isx-type"); // the listing carries the type: no request per instance
             if (Metadata.TYPE_BASE.equals(type)) {
                 templates.add(0, name); // bases first
             } else if (Metadata.TYPE_PROJECT.equals(type)) {

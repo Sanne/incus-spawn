@@ -294,7 +294,7 @@ public class DestroyCommand extends BaseCommand {
             var name = inst.get("name");
             if (definedSet.contains(name)) continue;
             if (name.endsWith(BuildCommand.REBUILDING_SUFFIX)) continue;
-            var type = Metadata.getType(incus, name);
+            var type = inst.get("isx-type"); // the listing carries the type: no request per instance
             if (Metadata.TYPE_BASE.equals(type) || Metadata.TYPE_PROJECT.equals(type)) {
                 orphans.add(name);
             }
