@@ -1322,7 +1322,7 @@ public class Tui {
         // The name is used as typed: 'tpl-' is a convention, never added
         var name = newTemplate.name();
         if (name.isEmpty()) return false;
-        var invalid = dev.incusspawn.config.ImageDef.notAnInstanceName("Template name", name);
+        var invalid = TemplatesCommand.newTemplateNameProblem(name);
         if (invalid != null) {
             statusMessage = invalid;
             mode = Mode.BROWSE;
