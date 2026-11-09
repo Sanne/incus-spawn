@@ -49,4 +49,41 @@ class CopilotSetupTest {
                     argThat(arg -> arg.contains("/home/agentuser/.copilot/config.json")));
         }
     }
+
+    @Test
+    void settingsJsonIsOmittedWhenNoParameterIsSet() {
+        assertNull(CopilotSetup.settingsJson(Map.of()));
+    }
+
+    @Test
+    void settingsJsonMapsParametersToCopilotSettingKeys() {
+        var json = CopilotSetup.settingsJson(Map.of(
+                "model", "claude-opus-5.5", "effort", "medium", "context", "long_context"));
+
+        assertEquals("""
+                {
+                  "model": "claude-opus-5.5",
+                  "effortLevel": "medium",
+                  "contextTier": "long_context"
+                }
+                """, json);
+    }
+
+    @Test
+    void reconfigureWritesSettingsOnlyWhenParametersAreSet() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new CopilotSetup().reconfigure(new Container(incus, CONTAINER), Map.of());
+        verifyNoInteractions(incus);
+
+        new CopilotSetup().reconfigure(new Container(incus, CONTAINER), Map.of("effort", "high"));
+        var written = mockingDetails(incus).getInvocations().stream()
+                .flatMap(i -> java.util.Arrays.stream(i.getRawArguments()))
+                .flatMap(a -> a instanceof Object[] arr ? java.util.Arrays.stream(arr) : java.util.stream.Stream.of(a))
+                .map(String::valueOf)
+                .anyMatch(a -> a.contains("/home/agentuser/.copilot/settings.json")
+                        && a.contains("\"effortLevel\": \"high\""));
+        assertTrue(written);
+    }
 }
