@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -18,19 +19,35 @@ import static org.junit.jupiter.api.Assertions.*;
  * The helpers of {@code .github/scripts/test-instance.sh}, sourced without running its checks.
  * Maven Central sometimes answers a CI runner with a 403, which the proxy relays unchanged:
  * the check must say so, with the status and Server header, rather than fail silently (#1810).
+ * A refusal is retried first, since Maven Central's rate limit (429) passes within seconds (#2063).
  */
 class TestInstanceScriptTest {
 
     private static final Path SCRIPT = Path.of("../.github/scripts/test-instance.sh").toAbsolutePath();
 
     private HttpServer server;
+    private final AtomicInteger limitedRequests = new AtomicInteger();
+    private final AtomicInteger refused = new AtomicInteger();
 
     @BeforeEach
     void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/refused", exchange -> {
+            refused.incrementAndGet();
             exchange.getResponseHeaders().add("Server", "AkamaiGHost");
             exchange.sendResponseHeaders(403, -1);
+            exchange.close();
+        });
+        server.createContext("/limited", exchange -> {
+            if (limitedRequests.getAndIncrement() == 0) {
+                exchange.getResponseHeaders().add("Server", "cloudflare");
+                exchange.getResponseHeaders().add("Retry-After", "1");
+                exchange.sendResponseHeaders(429, -1);
+            } else {
+                byte[] body = "<artifactId>junit</artifactId>".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            }
             exchange.close();
         });
         server.createContext("/pom", exchange -> {
@@ -53,6 +70,15 @@ class TestInstanceScriptTest {
         assertEquals(1, result.exitCode, result.output);
         assertTrue(result.output.contains("HTTP 403 (Server: AkamaiGHost)"), result.output);
         assertTrue(result.output.contains("the TLS handshake with the proxy succeeded"), result.output);
+        assertTrue(result.output.contains("after 3 attempts"), result.output);
+        assertEquals(3, refused.get(), result.output);
+    }
+
+    @Test
+    void aRateLimitedAnswerIsRetried() throws Exception {
+        var result = fetchMatching("/limited", "<artifactId>junit</artifactId>");
+        assertEquals(0, result.exitCode, result.output);
+        assertEquals(2, limitedRequests.get(), result.output);
     }
 
     @Test
@@ -127,6 +153,8 @@ class TestInstanceScriptTest {
                     "source \"$1\" && fetch_matching \"$2\" \"$3\"", "test", SCRIPT.toString(), url, pattern)
                     .redirectErrorStream(true).redirectOutput(output.toFile());
             builder.environment().keySet().removeIf(name -> name.toLowerCase().endsWith("_proxy"));
+            // Every retry's wait, Retry-After included, is capped at 0 s, so the tests do not sleep.
+            builder.environment().put("FETCH_MAX_DELAY", "0");
             var process = builder.start();
             boolean finished = process.waitFor(30, TimeUnit.SECONDS);
             process.destroyForcibly();
