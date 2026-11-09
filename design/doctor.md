@@ -21,6 +21,12 @@ Templates are only the triage signal, not the gate — `isx branch` already refu
 Anthropic credentials stay a `WARN` regardless: isx itself uses them for `isx ask`, so there is no template to check against.
 If the definitions can't be read at all, every tool counts as in use — the conservative direction is to keep reporting.
 
+A namespace whose default is the reserved account `inherit` holds no credential on purpose (#2055).
+Inside an isx instance whose secret this isx can read, the outer instance's account serves it, so doctor counts it as configured and says it is inherited.
+Outside one there is nothing to inherit from, and doctor names that as its own `WARN` rather than as a missing credential, since `isx account add` would not be the fix.
+The test is the one a selection of `inherit` must pass (`AccountSelection`): `InheritedProof.parentSecret()` answers.
+Inside an instance whose secret is unusable, the warning names the secret instead, as `InheritedProof.notNestedMessage` does (`DoctorCommand.Inheritance`).
+
 ## Doctor and build remediations act through isx, never name an `incus` command
 
 A remediation says *what* is done, and isx does it: through `IncusClient` over REST where it can, so it works the same over the Unix socket and over the macOS vsock tunnel (#986).
