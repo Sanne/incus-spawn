@@ -70,20 +70,32 @@ class CopilotSetupTest {
     }
 
     @Test
-    void reconfigureWritesSettingsOnlyWhenParametersAreSet() {
+    void reconfigureWithoutParametersRemovesTheParentsSettings() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         new CopilotSetup().reconfigure(new Container(incus, CONTAINER), Map.of());
-        verifyNoInteractions(incus);
+
+        assertTrue(invocationArguments(incus).anyMatch(
+                a -> a.contains("rm -f /home/agentuser/.copilot/settings.json")));
+    }
+
+    @Test
+    void reconfigureWritesSettingsWhenParametersAreSet() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         new CopilotSetup().reconfigure(new Container(incus, CONTAINER), Map.of("effort", "high"));
-        var written = mockingDetails(incus).getInvocations().stream()
+
+        assertTrue(invocationArguments(incus).anyMatch(
+                a -> a.contains("/home/agentuser/.copilot/settings.json")
+                        && a.contains("\"effortLevel\": \"high\"")));
+    }
+
+    private static java.util.stream.Stream<String> invocationArguments(IncusClient incus) {
+        return mockingDetails(incus).getInvocations().stream()
                 .flatMap(i -> java.util.Arrays.stream(i.getRawArguments()))
                 .flatMap(a -> a instanceof Object[] arr ? java.util.Arrays.stream(arr) : java.util.stream.Stream.of(a))
-                .map(String::valueOf)
-                .anyMatch(a -> a.contains("/home/agentuser/.copilot/settings.json")
-                        && a.contains("\"effortLevel\": \"high\""));
-        assertTrue(written);
+                .map(String::valueOf);
     }
 }

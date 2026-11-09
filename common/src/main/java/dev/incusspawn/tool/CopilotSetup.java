@@ -109,13 +109,13 @@ public class CopilotSetup implements ToolSetup {
         BuildOutput.stepStart("Installing GitHub Copilot CLI");
         installCopilotCli(c);
         configureCopilotSettings(c);
-        configureModelSettings(c, resolvedParams);
+        configureModelSettings(c, resolvedParams, false);
         BuildOutput.stepDone();
     }
 
     @Override
     public void reconfigure(Container c, Map<String, String> resolvedParams) {
-        configureModelSettings(c, resolvedParams);
+        configureModelSettings(c, resolvedParams, true);
     }
 
     private void installCopilotCli(Container c) {
@@ -144,12 +144,19 @@ public class CopilotSetup implements ToolSetup {
 
     private static final String COPILOT_SETTINGS_PATH = "/home/agentuser/.copilot/settings.json";
 
-    private void configureModelSettings(Container c, Map<String, String> resolvedParams) {
+    /**
+     * On reconfigure, a child that sets none of the parameters drops what its parent pinned, so
+     * the file is removed; at install there is nothing to remove.
+     */
+    private void configureModelSettings(Container c, Map<String, String> resolvedParams,
+                                        boolean reconfigure) {
         var settings = settingsJson(resolvedParams);
         if (settings == null) {
+            if (reconfigure) {
+                c.sh("rm -f " + COPILOT_SETTINGS_PATH).assertSuccess("Failed to remove " + COPILOT_SETTINGS_PATH);
+            }
             return;
         }
-        c.sh("mkdir -p /home/agentuser/.copilot");
         c.writeFile(COPILOT_SETTINGS_PATH, settings);
         c.chown("/home/agentuser/.copilot", "agentuser:agentuser");
     }
