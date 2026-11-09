@@ -265,6 +265,7 @@ isx templates list [options]
 
 Create a new template definition.
 The name is used exactly as given, and the file is named after it: `isx templates new my-app` writes `my-app.yaml`.
+A name whose file a built-in template's override uses, such as `dev`, is refused.
 Without a name, it writes `new-template.yaml` for you to name in the editor.
 
 ```shell
