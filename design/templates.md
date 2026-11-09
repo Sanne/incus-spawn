@@ -22,6 +22,8 @@ Removing a template outright was the alternative: every template derived from it
 **The `tpl-` prefix is a convention, never a rule.**
 A template is named exactly as its `name:` says, and `isx templates new` and `edit` and the TUI use the name as given, never adding `tpl-` (`TemplatesCommand`).
 A new template's file is named after it (`ImageDef.filenameForName`); a built-in's user override keeps the built-in's filename, `java.yaml` for `tpl-java` (`ImageDef.builtinFilenameFor`).
+So a new name whose file is a built-in's, such as `dev`, is refused, and `edit` opens an existing override only while its `name:` is the built-in's (`TemplatesCommand.newTemplateNameProblem`).
+A new name must also be short enough to rebuild under its temporary name (`BuildCommand.MAX_TEMPLATE_NAME_LENGTH`).
 Code that must tell templates from instances reads the `base` type every build stamps (`isx list`, `isx doctor`), never the name.
 The TUI's F4 once looked for `tpl-isx-presentation` when asked to edit `isx-presentation`, because the edit command added the prefix.
 
