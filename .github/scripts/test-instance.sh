@@ -47,19 +47,36 @@ assert_eq() {
 # Fetches a URL and checks its body against an extended regex. An answer other than 200 is
 # reported with its status and Server header: Maven Central sometimes refuses a runner's
 # address with a 403, which the proxy relays unchanged, and that is not a TLS failure (#1810).
+# Such an answer is retried first, FETCH_ATTEMPTS times in all: Maven Central's rate limit (429)
+# and its passing 403s and 404s clear within seconds (#2063). Each wait is the answer's
+# Retry-After in seconds, else 5 then 10 seconds, capped at FETCH_MAX_DELAY. A failed
+# connection is not retried, since that one is the proxy's.
 fetch_matching() {
-    local url="$1" pattern="$2" dir status server
+    local url="$1" pattern="$2" dir status server delay attempt=1
+    local attempts="${FETCH_ATTEMPTS:-3}" max_delay="${FETCH_MAX_DELAY:-30}"
     dir=$(mktemp -d)
-    if ! status=$(curl -sS -D "$dir/headers" -o "$dir/body" -w '%{http_code}' "$url"); then
-        rm -rf "$dir"
-        return 1
-    fi
-    if [ "$status" != 200 ]; then
-        server=$(grep -i '^server:' "$dir/headers" | tail -n 1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//')
-        echo "HTTP $status (Server: ${server:-none}) for $url: the TLS handshake with the proxy succeeded, an answer without the upstream Server header is the proxy's own"
-        rm -rf "$dir"
-        return 1
-    fi
+    while :; do
+        if ! status=$(curl -sS -D "$dir/headers" -o "$dir/body" -w '%{http_code}' "$url"); then
+            rm -rf "$dir"
+            return 1
+        fi
+        [ "$status" = 200 ] && break
+        if [ "$attempt" -ge "$attempts" ]; then
+            server=$(grep -i '^server:' "$dir/headers" | tail -n 1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//')
+            echo "HTTP $status (Server: ${server:-none}) for $url after $attempt attempts: the TLS handshake with the proxy succeeded, an answer without the upstream Server header is the proxy's own"
+            rm -rf "$dir"
+            return 1
+        fi
+        # Retry-After in seconds; an HTTP-date, or any other form, takes the default wait.
+        delay=$(grep -i '^retry-after:' "$dir/headers" | tail -n 1 | cut -d: -f2- | tr -d '\r ')
+        case "$delay" in
+            ''|*[!0-9]*) delay=$((5 * attempt)) ;;
+            ?????*) delay="$max_delay" ;;
+        esac
+        [ "$delay" -gt "$max_delay" ] && delay="$max_delay"
+        sleep "$delay"
+        attempt=$((attempt + 1))
+    done
     local found=0
     grep -qE "$pattern" "$dir/body" || { echo "the body of $url does not match $pattern"; found=1; }
     rm -rf "$dir"

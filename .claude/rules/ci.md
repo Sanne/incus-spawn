@@ -232,6 +232,7 @@ Test scripts live in `.github/scripts/`; a script pushed into a guest cannot use
 - **`test-instance.sh`**: pushed into containers and VMs, tests proxy interception (Maven/GitHub HTTPS), git clone, passwordless sudo, systemd lifecycle, `/tmp` on disk (#1561), DNS interception (A to the gateway, no `::` or real AAAA answer, #814), login shell env vars, the stored agent instructions, with each location in `EXPECT_AGENT_LINKS` a hardlink to them and the others absent (#1788), TLS certificate quality, and tool-contributed proxy credential injection (section 9 verifies bearer token injection via a test fixture tool `.github/test-fixtures/tools/test-proxy-tool.yaml` and a local HTTPS echo server at `echo.incus-spawn.test`).
   Uses `assert()` / `assert_eq()` shell helpers.
   Its Maven downloads go through `fetch_matching`, which reports an non-200 answer (Maven Central sometimes refuses a runner with a 403) with the status and `Server` header, and its TLS checks pass on any HTTP answer, so a refusal fails section 1 alone (#1810).
+  It first retries such an answer, three attempts in all, waiting its `Retry-After` or 5 then 10 s, at most 30 s, since Maven Central's rate limit (429) and its passing refusals clear within seconds (#2063).
   Sourcing the script defines its helpers without running checks, which `TestInstanceScriptTest` uses.
   After it, the "Test container" step writes a file to `/tmp`, runs `incus restart` and checks the file is still there, waiting at most 60 s for `local-fs.target`.
 - **`test-airgap.sh`**: runs on the host.
