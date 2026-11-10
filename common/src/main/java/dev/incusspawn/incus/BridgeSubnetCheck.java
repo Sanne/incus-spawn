@@ -100,13 +100,18 @@ public final class BridgeSubnetCheck {
 
     /** Whether the bridge overlaps a host route, and the subnet {@link #detectAndFix} would move it to; changes nothing. */
     public static ConflictResult detect(IncusClient incus) {
+        return detect(incus, null);
+    }
+
+    /** {@link #detect(IncusClient)} against the given route lines, or the host's when {@code null}. */
+    public static ConflictResult detect(IncusClient incus, List<String> hostRoutes) {
         var bridgeCidr = resolveBridgeCidr(incus);
         if (bridgeCidr == null || BridgeAddress.parse(bridgeCidr).isEmpty()) {
             return new ConflictResult(false, null, null, null); // no IPv4 address: nothing to overlap
         }
         // An address without a prefix length is a /24, as BridgeAddress reads it, not a single host
         if (!bridgeCidr.contains("/")) bridgeCidr += "/24";
-        var routes = getHostRoutes();
+        var routes = hostRoutes != null ? hostRoutes : getHostRoutes();
         var conflict = findConflictingRoute(bridgeCidr, routes);
         if (conflict == null) {
             return new ConflictResult(false, null, bridgeCidr, null);

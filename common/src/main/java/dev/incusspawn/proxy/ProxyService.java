@@ -659,6 +659,23 @@ public final class ProxyService {
     }
 
     /**
+     * Whether {@link #upgradeIfNeeded} would rewrite the Linux service's files, read without
+     * writing them: the start script names another binary, or the unit is not this build's.
+     */
+    public static boolean serviceFilesStale() {
+        if (Platform.isMacOS()) return needsMacOsPlistUpdate();
+        if (!Files.exists(Environment.proxyServiceFile())) return false;
+        try {
+            var proxyBin = resolveProxyBinaryPath();
+            return proxyBin != null && startScriptIsStale(proxyStartScript(), proxyBin)
+                    || !serviceUnitContent().equals(Files.readString(Environment.proxyServiceFile()));
+        } catch (IOException e) {
+            // As the upgrade takes it: it warns, rewrites nothing and does not restart
+            return false;
+        }
+    }
+
+    /**
      * Bring both on-disk service files — the systemd unit and the start script it execs — into
      * line with what this build would write, rewriting whichever differs. Returns true if either
      * was rewritten, meaning the caller must restart the service.

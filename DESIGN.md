@@ -48,6 +48,10 @@ Other sandboxes for coding agents make it differently, and `docs/SANDBOXES.md`, 
   An inner `sg <primary group>` gives back the primary group the outer one took, so the files init writes stay in the user's group, with `incus-admin` kept as a supplementary one.
   Without `sg`, which Arch-family distros removed, Storage & Network still stops and asks for a new login.
   Talking to the socket through `sudo` was rejected: it needs a relay such as `socat`, which a fresh host may not have.
+  `isx init --plan` (#2073) says what a run would change and who must do each part (nobody, sudo, a secret typed by a person, or a person's approval) without changing anything.
+  Each step is described once, its header, work and planner together (`InitCommand.InitStep`), and the plan lists the run's own step lists, so it cannot name a step the run does not take.
+  A planner reads what the run's checks read and names the commands the run would run, from the same constants; what only sudo can read, such as firewall rules, is reported as unknown rather than guessed.
+  The plan serves both a cautious person and an agent driving the install, which must know which steps are its own (#2072).
   The Template Search Paths step uses `gh` to auto-detect the user's GitHub identity and offer to fork/clone `incus-spawn-templates` — every failure path (no gh, no auth, API error) degrades gracefully to the existing manual flow
 
 ## Where the design lives

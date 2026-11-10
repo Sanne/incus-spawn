@@ -666,6 +666,13 @@ public final class FakeIncusDaemon implements IncusTransport {
             customVolumes.add(pool + "/" + parse(body).path("name").asText(""));
             return sync(JqObject.EMPTY);
         }
+        if (path.equals("/1.0/storage-pools") && method.equals("GET")) {
+            if (poolListingFails) return error(500, "pool listing failed");
+            var list = new ArrayList<JqValue>();
+            (pools.isEmpty() ? Map.of("default", "btrfs") : pools).keySet()
+                    .forEach(name -> list.add(JqString.of("/1.0/storage-pools/" + name)));
+            return sync(JqArray.of(list));
+        }
         if (path.startsWith("/1.0/storage-pools?") && method.equals("GET")) {
             if (poolListingFails) return error(500, "pool listing failed");
             var list = new ArrayList<JqValue>();

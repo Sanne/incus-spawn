@@ -213,6 +213,7 @@ Templates approved by hand that it does not ask about are kept.
 Once registered with approved templates, a re-run asks one menu question instead (#1292): `t` runs the per-template questions, `n` prints how to remove it, Enter or end of input keeps everything.
 It names the templates installing `claude` that are not approved, so a new one is not missed.
 `isx mcp setup` (`McpCommand.Setup`, `InitCommand.setupMcpAlone`, #2077) runs this step alone; it needs `Prompts.terminal()` (stdin and stdout a terminal), takes no template option, and without one exits 1 having loaded and written nothing.
+It shows the header of the same `mcp` `InitStep` init runs (`InitCommand.mcpStep`), and `isx init --plan` names it as the command for the approvals (`MCP_SETUP_COMMAND`, #2073).
 `isx mcp config` (`McpCommand.Config`) prints the stdio entry (`mcpServers.isx`: the resolved `isx` path, `args: ["mcp"]`) to `BuildOutput.results()` and writes nothing; `McpConfigCommandTest` pins its bytes.
 Bare `isx mcp` stays the server; the write stays in `InitCommand`, so `McpNoWritePathTest` holds.
 Host calls (`claudeMcpRegistered`, `registerClaudeMcp`, `isxPath`, `templateBuilt`) are overridable seams; `McpInitFlowTest` drives it.
