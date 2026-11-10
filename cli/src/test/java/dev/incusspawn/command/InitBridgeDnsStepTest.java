@@ -47,6 +47,34 @@ class InitBridgeDnsStepTest {
         assertTrue(status.complete(), status.describe());
     }
 
+    /**
+     * {@code isx init --plan} agrees with what the step writes: with a port exposed, a block that
+     * lacks host.isx.internal is still a change to make, not done.
+     * <p>
+     * Linux only: on macOS the line's address is the Mac's end of the VM link, which a runner
+     * without the VM does not have, so neither the plan nor the step wants the line there.
+     * {@code BridgeDnsTest#aCliWritersExposedHostAddressIsTheGatewayOnLinuxAndTheVmLinkOnMacOs}
+     * covers the macOS address.
+     */
+    @Test
+    @org.junit.jupiter.api.condition.EnabledOnOs(org.junit.jupiter.api.condition.OS.LINUX)
+    void thePlanWantsTheExposedHostNameTheStepWrites() throws Exception {
+        var config = IsolatedHome.seed(GITHUB_TOKEN + "exposed-host-ports: [11434]\n");
+        var daemon = new FakeIncusDaemon().network("incusbr0", Map.of("ipv4.address", GATEWAY + "/24"));
+        var init = new InitCommand() {
+            @Override
+            boolean incusReachable() {
+                return true;
+            }
+        };
+        init.incus = daemon.client();
+        ProxyConfig.writeBridgeDns(init.incus, ProxyConfig.bridgeDnsDomains(config), GATEWAY, null);
+        assertNotEquals(InitPlan.State.DONE, init.planBridgeDns().state(), "the host.isx.internal line is missing");
+
+        init.setupBridgeDns();
+        assertEquals(InitPlan.State.DONE, init.planBridgeDns().state());
+    }
+
     @Test
     void theStepWritesTheToolDomainsOnABridgeWithNoOverridesYet() throws Exception {
         IsolatedHome.seed(GITHUB_TOKEN);

@@ -2118,7 +2118,9 @@ public class InitCommand extends BaseCommand {
             return InitPlan.Assessment.unknown("Incus does not answer this process.");
         }
         if (!incus.networkExists(dev.incusspawn.incus.BridgeAddress.BRIDGE)) return InitPlan.Assessment.of(write);
-        return ProxyConfig.isBridgeDnsComplete(incus, ProxyConfig.bridgeDnsDomains(SpawnConfig.load()))
+        // The config, not its domains alone: the block's host.isx.internal line is what
+        // setupBridgeDns writes too while exposed-host-ports: lists a port
+        return ProxyConfig.isBridgeDnsComplete(incus, SpawnConfig.load())
                 ? InitPlan.Assessment.done() : InitPlan.Assessment.of(write);
     }
 
