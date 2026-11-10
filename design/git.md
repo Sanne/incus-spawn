@@ -145,7 +145,12 @@ What changes is only the override list: no self-override is recorded, and the ov
 
 A prepared full clone starts with the one ref its template requests, with that ref's whole history (#1990).
 Sanne's direction on #1990: the snapshot is an accelerator for checking out that branch, and other branches are fetched lazily as needed.
-Extra refs could be included where that were simpler and cheaper, but only refs the guest's account can reach, and none is today.
+Extra refs could be included where that were simpler and cheaper, but only refs the guest's account can reach.
+The tags into that ref's history are the one such case (#2051, Sanne's answer on #2043): a build reading tags, such as `git describe`, setuptools-scm or jgitver, then sees what a network clone gives it.
+They are the tags the guest's own reading and the host's both show at one ID, added to the build's own copy after the guest's reading matched, never to the published snapshot.
+So a new release tag never invalidates the cache, and no cached tag object reaches a guest that did not read that tag.
+The host fetches annotated tags by name, only names its own reading shows, and packs only their tag objects at the guest's IDs; a tag outside the history brings no history.
+If adding them fails, the guest clones from the network rather than receive a copy whose build could differ.
 A network full clone, the fallback, starts with every branch and tag, as `git clone` does.
 Both keep a broad future-fetch refspec, so the guest's first `git fetch` brings the other branches its account can see.
 A prepared copy of a pinned branch names no `origin/HEAD`, since the pin need not be the remote's default branch.

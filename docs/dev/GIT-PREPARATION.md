@@ -76,12 +76,13 @@ Snapshots that exceed the retention budget, or builds with retention disabled, c
 
 A prepared full clone holds one ref: the requested branch, else the requested tag, else the branch the remote's HEAD names (#1990).
 Branches take precedence over same-named tags, as clone resolves them; annotated tags are peeled to commits and tag checkouts detach HEAD.
-That ref's whole history is copied, and no other branch or tag is.
+That ref's whole history is copied, and no other branch is.
+The build's copy also gets the tags into that history, as described below (#2051).
 Sanne's direction on #1990: the snapshot accelerates checking out the branch a template asks for, and other branches are fetched lazily as needed.
 The guest's copy keeps the normal broad future-fetch refspec, so its first `git fetch` brings every other branch its own account can see.
 A pinned branch is not necessarily the remote's default, so the guest's copy names no `origin/HEAD` for it.
 A remote whose HEAD names no branch, such as a detached or unborn HEAD, is not prepared without a pin: the guest clones it from the network.
-A network full clone, the fallback, still takes every branch and tag, as `git clone` does.
+A network full clone, the fallback, still takes every branch and tag, as `git clone` does; the prepared copy has the tags a build on its ref can reach.
 Shallow clones retain their existing transport, depth, narrow refspec and fixup behavior.
 They bypass this cache: a shallow host clone is followed by remote reconciliation and repacking the selected objects on every build.
 Depth limits historical objects, but current binary contents still need copying; the ready line identifies the shallow depth, and shallow/network clones also report guest and mount timings.
@@ -91,13 +92,25 @@ Host preparation accepts HTTPS, SSH (including SCP spelling) and Git network URL
 Paths, `file:` URLs and arbitrary remote helpers are rejected before preparation; Git also runs with an explicit protocol allowlist and `protocol.file.allow=never`, covering URL rewrites.
 SSH never waits on a prompt; "Creating a snapshot" says how.
 
-Before preparing a full snapshot, the guest runs `ls-remote --symref` with the template's own accounts, for the requested ref alone: `refs/heads/<branch>` and `refs/tags/<branch>`, or `HEAD`.
+Before preparing a full snapshot, the guest runs `ls-remote --symref` with the template's own accounts, for the requested ref, `refs/heads/<branch>` or `HEAD`, and `refs/tags/*`.
+A pattern sends the server no ref prefix, so the server advertises every ref either way, and the tags cost only local parsing.
 All such checks finish before any prime runs, so primes cannot interfere with another repository's authorization check.
 Denied access skips host preparation and uses the ordinary guest clone path, which must obtain its own access.
 The host's own `ls-remote` starts beside the guest's check rather than after it, since it transfers no objects (#1934).
 A denied guest discards that advertisement, and nothing is fetched, cloned or published until the guest's check succeeded.
 The guest's own reading must resolve the request to the snapshot's ref at the snapshot's ID, in the same object format, before any prepared bytes are mounted.
 Every object in the snapshot is reachable from that ref, so the guest receives nothing its own account could not fetch.
+
+Then `GitPreparation.withTags` adds tags to the build's own leased copy, never to the published snapshot (#2051).
+A tag is added only when the guest's reading and the host's both show it at one ID, and its peeled target is already in the snapshot.
+Since the snapshot holds exactly its ref's closure, holding the target means the ref reaches it, with no history walk.
+A lightweight tag, or an annotated one the snapshot already holds, becomes a ref alone.
+Annotated tags are fetched by name, `--stdin` refspecs and `--no-tags`, into a scratch repository whose alternate is the copy, so the snapshot's tip is a have and only tag objects travel.
+Only those fetched at the guest's ID are kept: their tag objects, and any inner tag object of a tag of a tag, are packed and indexed into the copy with `--strict` and no alternate, which proves each target is in the snapshot.
+When the guest's reading shows a tag the host's early reading did not show at that ID, such as a release pushed during preparation, the host reads its own tags once more.
+A tag that moved, or one no reading of the host's shows, is left out; the host never fetches an ID, nor a name its own reading does not show.
+Tags whose loose refs would collide once case is folded, the same name or a name where another needs a directory, are left out on every host, since a case-insensitive cache cannot hold them side by side.
+The copy's checksums cover the added pack, and a failure here makes the guest clone from the network.
 A guest whose account sees that ref at another ID, or not at all, uses its own network clone instead; a successful host credential check alone never authorizes a guest copy.
 Refs the guest's account cannot see are never in the snapshot unless the requested ref reaches them.
 A long preparation of a busy repository outlives the guest's first reading, so a mismatch is not final at once (#1980).

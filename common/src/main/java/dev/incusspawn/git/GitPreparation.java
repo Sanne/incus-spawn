@@ -31,11 +31,16 @@ public final class GitPreparation {
     private static final Pattern SCP_LIKE = Pattern.compile("(?:[^/@:]+@)?(?:\\[[0-9a-fA-F:]+\\]|[^/@:]+):[^:].*");
     private static final Pattern OBJECT_ID = Pattern.compile("[0-9a-f]{40}(?:[0-9a-f]{24})?");
     /**
-     * A branch name a reading may name as HEAD's target, which the host then fetches by name: no refspec or
-     * glob character, no control character or space, none of the sequences {@code check-ref-format} refuses.
+     * What may follow {@code refs/heads/} or {@code refs/tags/} in a name a reading gives, which the host then
+     * fetches by name: no refspec or glob character, no control character or space, none of the sequences
+     * {@code check-ref-format} refuses.
      */
-    private static final Pattern FETCHABLE_BRANCH = Pattern.compile(
-            "refs/heads/(?!\\.)(?!.*(?:\\.\\.|@\\{|//|/\\.|\\.lock(?:/|$)))[^\\x00-\\x20\\x7f:?*\\[\\\\^~]+(?<![./])");
+    private static final String FETCHABLE_NAME =
+            "(?!\\.)(?!.*(?:\\.\\.|@\\{|//|/\\.|\\.lock(?:/|$)))[^\\x00-\\x20\\x7f:?*\\[\\\\^~]+(?<![./])";
+    /** A branch a reading may name as HEAD's target. */
+    private static final Pattern FETCHABLE_BRANCH = Pattern.compile("refs/heads/" + FETCHABLE_NAME);
+    /** A tag a reading may name for {@link #withTags}. */
+    private static final Pattern FETCHABLE_TAG = Pattern.compile("refs/tags/" + FETCHABLE_NAME);
     private static final Pattern LOOSE_OBJECT_DIR = Pattern.compile("[0-9a-f]{2}");
     private static final Pattern PACK_FILE = Pattern.compile("pack-[0-9a-f]{40}(?:[0-9a-f]{24})?\\.(pack|idx)");
     private static final String POLICY = "isx-clean-branch-snapshot-v1";
@@ -71,10 +76,14 @@ public final class GitPreparation {
         private final Map<String, Long> timings;
         private final String notRetained;
         private final String branch;
+        /** The tags the host's own reading showed, by name, at their IDs: {@link #withTags} adds no other. */
+        private final Map<String, String> hostTags;
 
         private Prepared(PreparationCache.Lease lease, Path repository, String strategy,
-                         Map<String, String> checksums, Map<String, Long> timings, String notRetained, String branch) {
+                         Map<String, String> checksums, Map<String, Long> timings, String notRetained, String branch,
+                         Map<String, String> hostTags) {
             this.branch = branch;
+            this.hostTags = Map.copyOf(hostTags);
             this.lease = lease;
             this.repository = repository;
             this.strategy = strategy;
@@ -128,11 +137,11 @@ public final class GitPreparation {
         private final PreparationCache.Lease lease;
         private final String url;
         private final String branch;
-        private final String advertised;
+        private final Reading advertised;
         private final long millis;
         private boolean taken;
 
-        private RemoteRefs(PreparationCache.Lease lease, String url, String branch, String advertised, long millis) {
+        private RemoteRefs(PreparationCache.Lease lease, String url, String branch, Reading advertised, long millis) {
             this.lease = lease;
             this.url = url;
             this.branch = branch;
@@ -190,8 +199,10 @@ public final class GitPreparation {
         }
     }
 
-    private Prepared prepare(Request request, PreparationCache.Lease lease, String advertised, long remoteMillis,
+    private Prepared prepare(Request request, PreparationCache.Lease lease, Reading reading, long remoteMillis,
                              Phases phase) throws IOException {
+        var advertised = reading.selection();
+        var hostTags = reading.tags();
         var timings = new LinkedHashMap<String, Long>();
         timings.put("remote", remoteMillis);
         var key = key(request);
@@ -212,14 +223,16 @@ public final class GitPreparation {
                 // The early read may predate the access barrier, the limiter wait and this writer lock, and a
                 // concurrent build may have published exactly what the remote shows now: read again first.
                 start = System.nanoTime();
-                advertised = advertisement(lease.path, request.url(), request.branch(), phase);
+                reading = advertisement(lease.path, request.url(), request.branch(), phase);
+                advertised = reading.selection();
+                hostTags = reading.tags();
                 elapsed(timings, "remote", start);
                 hit = advertised != null && advertised.equals(selection(previousRepo));
             }
             if (hit) {
                 validatePin(previousRepo, request.branch());
                 return new Prepared(lease, previousRepo, "cached clean snapshot", objectChecksums(manifest), timings, null,
-                        request.branch());
+                        request.branch(), hostTags);
             }
 
             if (advertised == null) {
@@ -280,7 +293,7 @@ public final class GitPreparation {
             return publish(key, request, lease, staged, incremental ? "incremental clean snapshot"
                     : reference != null ? "reference-seeded clean snapshot"
                     : retried ? "new clean snapshot (reference retry)" : "new clean snapshot",
-                    timings, phase);
+                    timings, hostTags, phase);
         }
     }
 
@@ -319,11 +332,224 @@ public final class GitPreparation {
             if (refreshed == Refreshed.MOVED) return prior;
             if (refreshed == Refreshed.NO) return null;
             validatePin(result, request.branch());
-            var published = publish(key, request, lease, staged, strategy, timings, phase);
+            var published = publish(key, request, lease, staged, strategy, timings, prior.hostTags, phase);
             success = true;
             return published;
         } finally {
             if (!success) lease.close();
+        }
+    }
+
+    /**
+     * {@code prior}, a snapshot {@code guestAdvertisement} matches, with the tags into its ref's history that
+     * the guest's reading and the host's both show at one ID (#2051), so a build reading tags, such as
+     * {@code git describe}, sees what a network clone gives it. The guest receives nothing its own account
+     * could not fetch: every tag is one its reading shows at that ID, and the only objects added are those tags'
+     * own tag objects. The host fetches only names its own reading shows, never an ID, and keeps a fetched tag
+     * only at the guest's ID; a tag outside the snapshot's history is left out, and so is one that moved. The
+     * copy is the build's own, in {@code prior}'s lease: the published snapshot never holds a tag beyond its
+     * ref. Returns {@code prior} when no tag is added; otherwise the result takes over {@code prior}'s lease.
+     */
+    public Prepared withTags(Request request, Prepared prior, String guestAdvertisement, Phases phase) throws IOException {
+        if (!isRemoteUrl(request.url())) throw new IOException("Git preparation requires an HTTPS, SSH or Git remote");
+        var repo = prior.repository();
+        var own = refMap(repo);
+        var guest = new TreeMap<>(tagReadings(guestAdvertisement));
+        guest.keySet().removeIf(name -> !FETCHABLE_TAG.matcher(name).matches() || own.containsKey(name));
+        if (guest.isEmpty()) return prior;
+        // The timings are the whole preparation's, which this copy supersedes.
+        var timings = prior.timings;
+        long start = System.nanoTime();
+        var tagged = prior.lease.path.resolve("tagged.git");
+        var work = Files.createDirectory(prior.lease.path.resolve("tags"));
+        var checksums = new TreeMap<>(prior.checksums);
+        var refs = new TreeMap<String, String>();
+        var hostTags = prior.hostTags;
+        try {
+            // The snapshot holds exactly its ref's closure, so an object it holds is one that ref reaches. A tag
+            // outside it is left out first, so it neither costs a reading nor keeps another tag out.
+            var held = present(repo, guest.values().stream()
+                    .flatMap(tag -> java.util.stream.Stream.of(tag.id(), tag.peeled())).distinct().toList(), work);
+            guest.values().removeIf(tag -> !held.contains(tag.peeled()));
+            if (guest.isEmpty()) return prior;
+            if (guest.entrySet().stream().anyMatch(e -> !e.getValue().id().equals(prior.hostTags.get(e.getKey())))) {
+                // The guest read later than the host, say after a release pushed a commit and its tag: read again,
+                // so the names fetched are still only ones the host's own reading shows.
+                elapsed(timings, "tags", start);
+                start = System.nanoTime();
+                hostTags = advertisement(prior.lease.path, request.url(), request.branch(), phase).tags();
+                elapsed(timings, "remote", start);
+                start = System.nanoTime();
+            }
+            var shown = hostTags;
+            guest.entrySet().removeIf(e -> !e.getValue().id().equals(shown.get(e.getKey())));
+            // Loose refs of names that differ only in case, or of a name and another's directory so, would collide
+            // in a case-insensitive cache (macOS): leave every such name out, on every host alike.
+            var taken = new ArrayList<>(own.keySet());
+            taken.addAll(guest.keySet());
+            guest.keySet().removeAll(foldCollisions(taken));
+            if (guest.isEmpty()) return prior;
+            phase.accept("Adding Git tags");
+            var fetch = new TreeMap<String, String>();
+            guest.forEach((name, tag) -> (held.contains(tag.id()) ? refs : fetch).put(name, tag.id()));
+            // Hardlinks of the immutable packs; Git adds files and replaces refs, never rewriting one in place.
+            PreparationCache.copyTree(repo, tagged, true);
+            if (!fetch.isEmpty()) addTagObjects(request.url(), tagged, work, fetch, refs, phase);
+            if (refs.isEmpty()) {
+                delete(tagged);
+                return prior;
+            }
+            // The guest counts every file under objects/ against these.
+            try (var files = Files.walk(tagged.resolve("objects"))) {
+                for (var file : files.filter(f -> Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS)).toList()) {
+                    var path = tagged.relativize(file).toString();
+                    if (!checksums.containsKey(path)) checksums.put(path, hash(file));
+                }
+            }
+            var input = work.resolve("refs.in");
+            Files.write(input, refs.entrySet().stream().map(e -> "create " + e.getKey() + " " + e.getValue()).toList());
+            run(tagged, input, null, List.of("update-ref", "--stdin"));
+            git(tagged, "pack-refs", "--all");
+        } finally {
+            delete(work);
+            elapsed(timings, "tags", start);
+        }
+        var expected = new TreeMap<>(own);
+        expected.putAll(refs);
+        if (!expected.equals(refMap(tagged))) throw new IOException("Tagged Git snapshot has other refs");
+        return new Prepared(prior.lease, tagged, prior.strategy, checksums, timings, prior.notRetained, prior.branch,
+                hostTags);
+    }
+
+    /**
+     * The names among {@code names}, each listed once, whose loose ref shares a path with another's once case is
+     * folded: the same file, or one's file where the other needs a directory.
+     */
+    static java.util.Set<String> foldCollisions(java.util.Collection<String> names) {
+        var files = new java.util.HashMap<String, Integer>();
+        var dirs = new java.util.HashSet<String>();
+        for (var name : names) {
+            var folded = fold(name);
+            files.merge(folded, 1, Integer::sum);
+            for (int slash = folded.indexOf('/'); slash >= 0; slash = folded.indexOf('/', slash + 1)) {
+                dirs.add(folded.substring(0, slash));
+            }
+        }
+        var colliding = new java.util.HashSet<String>();
+        for (var name : names) {
+            var folded = fold(name);
+            boolean collides = files.get(folded) > 1 || dirs.contains(folded);
+            for (int slash = folded.indexOf('/'); !collides && slash >= 0; slash = folded.indexOf('/', slash + 1)) {
+                collides = files.containsKey(folded.substring(0, slash));
+            }
+            if (collides) colliding.add(name);
+        }
+        return colliding;
+    }
+
+    /** Case folded the way a case-insensitive file system compares names, closer than lower case alone (final sigma). */
+    private static String fold(String name) {
+        return name.toUpperCase(java.util.Locale.ROOT).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * Fetch {@code fetch}'s annotated tags by name into a scratch repository borrowing {@code tagged}'s objects,
+     * and pack into {@code tagged} only the tag objects of those fetched at the guest's ID, adding them to
+     * {@code refs}. A strict index without the alternate proves each one's target is already in the snapshot.
+     */
+    private void addTagObjects(String url, Path tagged, Path work, Map<String, String> fetch, Map<String, String> refs,
+                               Phases phase) throws IOException {
+        var scratch = work.resolve("fetch.git");
+        init(scratch, git(tagged, "rev-parse", "--show-object-format"));
+        Files.writeString(scratch.resolve("objects/info/alternates"),
+                tagged.resolve("objects").toAbsolutePath() + "\n");
+        var refspecs = work.resolve("refspecs");
+        Files.write(refspecs, fetch.keySet().stream()
+                .map(name -> "+" + name + ":refs/isx/" + name.substring("refs/".length())).toList());
+        // By name and with --no-tags, so no include-tag; the snapshot's tip, through the alternate, is a have.
+        run(scratch, refspecs, null, List.of("-c", "fetch.fsckObjects=true", "-c", "fetch.unpackLimit=1",
+                "fetch", "--progress", "--stdin", "--no-tags", "--no-write-fetch-head", "--no-auto-maintenance",
+                "--no-write-commit-graph", "--no-recurse-submodules", "--", url),
+                transfer, live(phase, "Fetching Git tags"));
+        var fetched = new TreeMap<String, String>();
+        for (var line : git(scratch, "for-each-ref", "--format=%(refname) %(objectname)", "refs/isx/tags/").lines().toList()) {
+            int space = line.indexOf(' ');
+            fetched.put("refs/" + line.substring("refs/isx/".length(), space), line.substring(space + 1));
+        }
+        var objects = new java.util.LinkedHashSet<String>();
+        fetch.forEach((name, id) -> {
+            if (id.equals(fetched.get(name))) {
+                objects.add(id);
+                refs.put(name, id);
+            }
+        });
+        if (objects.isEmpty()) return;
+        // A tag of a tag: the inner tag objects the snapshot lacks come too. Each is reached from a kept tag.
+        for (var frontier = List.copyOf(objects); !frontier.isEmpty(); ) {
+            var inner = new ArrayList<String>();
+            for (var target : innerTags(scratch, frontier, work)) if (!objects.contains(target)) inner.add(target);
+            var missing = new ArrayList<>(inner);
+            missing.removeAll(present(tagged, inner, work));
+            objects.addAll(missing);
+            frontier = missing;
+        }
+        var list = work.resolve("objects");
+        Files.write(list, objects);
+        var pack = work.resolve("tags.pack");
+        run(scratch, list, pack, List.of("pack-objects", "--stdout", "--no-use-bitmap-index"));
+        run(tagged, pack, null, List.of("index-pack", "--stdin", "--strict"));
+    }
+
+    /** Of {@code tags}, tag objects all, the targets that are tags themselves. */
+    private static List<String> innerTags(Path repo, List<String> tags, Path work) throws IOException {
+        var input = work.resolve("inner.in");
+        var output = work.resolve("inner.out");
+        Files.write(input, tags);
+        try {
+            run(repo, input, output, List.of("cat-file", "--batch"));
+            var bytes = Files.readAllBytes(output);
+            var targets = new ArrayList<String>();
+            int at = 0;
+            while (at < bytes.length) {
+                int eol = indexOf(bytes, (byte) '\n', at);
+                var header = new String(bytes, at, eol - at, StandardCharsets.US_ASCII).split(" ");
+                if (header.length != 3 || !header[1].equals("tag")) throw new IOException("Fetched Git tag is not a tag object");
+                int size = Integer.parseInt(header[2]);
+                var body = new String(bytes, eol + 1, size, StandardCharsets.ISO_8859_1);
+                var lines = body.split("\n", 3);
+                if (lines.length < 2 || !lines[0].startsWith("object ") || !lines[1].startsWith("type ")) {
+                    throw new IOException("Fetched Git tag is malformed");
+                }
+                if (lines[1].equals("type tag")) targets.add(lines[0].substring("object ".length()));
+                at = eol + 1 + size + 1;
+            }
+            return targets;
+        } finally {
+            Files.deleteIfExists(input);
+            Files.deleteIfExists(output);
+        }
+    }
+
+    private static int indexOf(byte[] bytes, byte value, int from) throws IOException {
+        for (int i = from; i < bytes.length; i++) if (bytes[i] == value) return i;
+        throw new IOException("Truncated Git object output");
+    }
+
+    /** Which of {@code ids} {@code repo} holds. */
+    private static java.util.Set<String> present(Path repo, List<String> ids, Path work) throws IOException {
+        var input = work.resolve("present.in");
+        var output = work.resolve("present.out");
+        Files.write(input, ids);
+        try {
+            run(repo, input, output, List.of("cat-file", "--batch-check=%(objectname)"));
+            var held = new java.util.HashSet<String>();
+            for (var line : Files.readAllLines(output, StandardCharsets.US_ASCII)) {
+                if (!line.endsWith(" missing")) held.add(line);
+            }
+            return held;
+        } finally {
+            Files.deleteIfExists(input);
+            Files.deleteIfExists(output);
         }
     }
 
@@ -345,7 +571,7 @@ public final class GitPreparation {
 
     /** Seal and publish {@code staged}'s repository; the result reads a pinned copy in {@code lease}. */
     private Prepared publish(String key, Request request, PreparationCache.Lease lease, Path staged, String strategy,
-                             Map<String, Long> timings, Phases phase) throws IOException {
+                             Map<String, Long> timings, Map<String, String> hostTags, Phases phase) throws IOException {
         var result = staged.resolve("repo.git");
         long start = System.nanoTime();
         // Recreate only the selected refs and pack/index pairs in a minimal bare repository.
@@ -365,7 +591,8 @@ public final class GitPreparation {
         var notRetained = cache.publishSnapshot(key, staged);
         delete(staged);
         elapsed(timings, "publish", start);
-        return new Prepared(lease, clean, strategy, objectChecksums(manifest), timings, notRetained, request.branch());
+        return new Prepared(lease, clean, strategy, objectChecksums(manifest), timings, notRetained, request.branch(),
+                hostTags);
     }
 
     /**
@@ -444,7 +671,7 @@ public final class GitPreparation {
             elapsed(timings, "export", start);
             var checksums = objectChecksums(manifest(result));
             success = true;
-            return new Prepared(lease, result, "host source", checksums, timings, null, branch);
+            return new Prepared(lease, result, "host source", checksums, timings, null, branch, Map.of());
         } finally {
             if (!success) lease.close();
         }
@@ -733,20 +960,49 @@ public final class GitPreparation {
         }
     }
 
+    /** A host reading: its {@link #selection}, or null, and the tags it shows, by name, at their IDs. */
+    private record Reading(String selection, Map<String, String> tags) {}
+
     /**
      * The remote's view of the requested ref: the branch, else the tag, named {@code branch}, or with none
-     * the branch the remote's HEAD names. Only those refs are read, as the guest reads them.
+     * the branch the remote's HEAD names; and its tags. Only those refs are read, as the guest reads them.
      */
-    private String advertisement(Path work, String url, String branch, Phases phase) throws IOException {
+    private Reading advertisement(Path work, String url, String branch, Phases phase) throws IOException {
         var command = new ArrayList<>(List.of("ls-remote", "--symref", "--", url));
         command.addAll(lsRemotePatterns(branch));
-        return parseAdvertisement(run(work, null, null, command, transfer, live(phase, "Reading remote refs")), branch);
+        var output = run(work, null, null, command, transfer, live(phase, "Reading remote refs"));
+        var tags = new TreeMap<String, String>();
+        tagReadings(output).forEach((name, tag) -> tags.put(name, tag.id()));
+        return new Reading(parseAdvertisement(output, branch), tags);
     }
 
-    /** What {@code ls-remote} is asked for a request of {@code branch}; the guest asks for the same. */
+    /**
+     * What {@code ls-remote} is asked for a request of {@code branch}; the guest asks for the same. Every tag
+     * is read too, for {@link #withTags}: a pattern sends the server no ref prefix, so the server advertises
+     * every ref whatever the patterns, and they only choose what Git prints.
+     */
     public static List<String> lsRemotePatterns(String branch) {
-        return branch == null || branch.isBlank() ? List.of("HEAD")
-                : List.of("refs/heads/" + branch, "refs/tags/" + branch);
+        return branch == null || branch.isBlank() ? List.of("HEAD", "refs/tags/*")
+                : List.of("refs/heads/" + branch, "refs/tags/*");
+    }
+
+    /** A tag in a reading: its own ID, and what it peels to, which is the same ID for a lightweight tag. */
+    private record TagRead(String id, String peeled) {}
+
+    /** The tags an {@code ls-remote} reading shows, by full name; one naming something other than an object ID fails it. */
+    private static Map<String, TagRead> tagReadings(String output) throws IOException {
+        var ids = new TreeMap<String, String>();
+        var peeled = new TreeMap<String, String>();
+        for (var line : output.lines().toList()) {
+            var parts = line.split("\t", 2);
+            if (parts.length != 2 || !parts[1].startsWith("refs/tags/") || parts[0].startsWith("ref: ")) continue;
+            if (!OBJECT_ID.matcher(parts[0]).matches()) throw new IOException("Invalid Git object ID");
+            if (parts[1].endsWith("^{}")) peeled.put(parts[1].substring(0, parts[1].length() - 3), parts[0]);
+            else ids.put(parts[1], parts[0]);
+        }
+        var tags = new TreeMap<String, TagRead>();
+        ids.forEach((name, id) -> tags.put(name, new TagRead(id, peeled.getOrDefault(name, id))));
+        return tags;
     }
 
     /**

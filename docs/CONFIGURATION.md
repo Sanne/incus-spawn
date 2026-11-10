@@ -145,6 +145,8 @@ Builds can read Git objects directly from linked host checkouts without changing
 A full clone's snapshot holds the branch or tag the template asks for, or else the remote's default branch, with all its history.
 The instance fetches other branches itself when it needs them; shallow clones retain their configured depth.
 
+Each build's copy also gets the tags in that history, so `git describe` gives the same answer as on a regular clone.
+
 For full clones, a bounded cache of clean snapshots avoids repeated downloads and packing, including when a linked checkout exists.
 Normal upstream updates add new objects to the verified cache without repacking its history.
 The cache has two limits, shown here with their defaults:

@@ -544,7 +544,7 @@ class RepoCloner {
 
     /**
      * The requested ref as the template's own accounts see it, from the guest; null when it is denied.
-     * It asks for the same refs as the host's reading (#1990), never every branch and tag.
+     * It asks for the same refs as the host's reading (#1990): the requested ref and the tags, never every branch.
      */
     String readTemplateRefs(Container container, ImageDef.RepoEntry repo) {
         var access = container.shAsUser("agentuser", "export GIT_TERMINAL_PROMPT=0; "
@@ -584,6 +584,7 @@ class RepoCloner {
             boolean accepted = false;
             try {
                 boolean matched = result.matchesAdvertisement(advertisement);
+                var matchedReading = advertisement;
                 // A refresh's publish reports only itself: keep what the first one lost.
                 var notRetained = result.notRetained();
                 // Each reading may be followed by one refresh towards it; the last one is final.
@@ -592,6 +593,7 @@ class RepoCloner {
                     var seen = guestRefs.get();
                     if (seen == null) return RepoReference.skipped("could not read template repository refs again");
                     matched = result.matchesAdvertisement(seen);
+                    matchedReading = seen;
                     if (matched || read == REF_DRIFT_REFRESHES) break;
                     var next = refreshSnapshot(request, result, seen, phases, idx);
                     if (next == null) break; // no later reading would settle it: the guest clones from the network
@@ -603,6 +605,9 @@ class RepoCloner {
                     matched = result.matchesAdvertisement(seen);
                 }
                 if (!matched) return RepoReference.skipped("template and host repository refs differ");
+                // The tags into the ref's history this reading shows, as a network clone has them (#2051). A
+                // failure clones from the network rather than mount a copy whose build could differ.
+                result = preparation.withTags(request, result, matchedReading, phases);
                 var ready = new RepoReference(ref.deviceName(), ref.containerPath(),
                         HostResourceSetup.translateForVm(result.repository().toString()), null, null, result);
                 if (notRetained != null) preparationNotRetained.put(idx, notRetained);

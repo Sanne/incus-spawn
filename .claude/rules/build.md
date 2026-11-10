@@ -170,7 +170,7 @@ Whatever leaves the tier in doubt (an unreadable capacity, a capacity on some CP
 The scan of the real sysfs is made once per process.
 `CpuInfoTest` pins each source with sysfs fixtures (an i7-12700H, a Ryzen AI 300, an X3D, a three-tier ARM SoC, an RK3588 device-tree layout).
 For full network clones, `GitPreparation` selects one ref in owned host staging: the requested branch, else tag, else the branch the remote's HEAD names, with all of its history (#1990).
-Its cache is keyed by URL and requested ref, and the host and the guest `ls-remote` only that ref (`GitPreparation.lsRemotePatterns`).
+Its cache is keyed by URL and requested ref, and the host and the guest `ls-remote` only that ref and the tags (`GitPreparation.lsRemotePatterns`).
 It fetches the ref by name into a fresh bare repository, never `clone`, which asks for every annotated tag pointing into its history even with `--no-tags`.
 It borrows objects directly from a matching checkout through an alternate, then `repack -a -d` and removes it, as `--dissociate` does, without copying the checkout's packs first.
 It never fetches into or maintains the user's repository.
@@ -178,6 +178,11 @@ Only HTTPS, SSH and Git network URLs qualify, with a protocol allowlist blocking
 SSH uses batch mode unless the user supplied an SSH command or executable.
 The guest checks repository access using the template's accounts, and its own reading must show the snapshot's ref at the snapshot's ID before mounting.
 Every object in a snapshot is reachable from its one ref, so the guest receives nothing its account could not fetch.
+Once the guest's reading matches, `GitPreparation.withTags` adds to the build's leased copy the tags into that ref's history which the guest's and the host's readings both show at one ID (#2051).
+It fetches annotated ones by name into a scratch repository and packs only those tag objects, at the guest's IDs; a tag that moved or lies outside the history is left out.
+Its host-reading check keeps a guest's reading from choosing a name the host fetches; when the guest shows a tag the host's early reading did not, the host reads its tags again.
+The published snapshot never holds a tag.
+If it fails, the guest clones from the network, so tag-reading builds never depend on the path.
 On a mismatch the guest reads again, and the snapshot is refreshed incrementally from its leased bytes (`GitPreparation.refresh`) up to `RepoCloner.REF_DRIFT_REFRESHES` times before the guest clones from the network (#1980).
 A refresh fetches the snapshot's own ref by name, never one only the guest's reading names, and keeps the result only at the guest's ID: a ref that moved again waits for the next reading, and a reading naming another ref or none ends the refreshes.
 It never fetches an ID a reading names, since a protocol v2 server serves any object by ID, even one no ref points at.
@@ -200,7 +205,7 @@ When that strict receive rejects an object (it makes fsck warnings fatal), the c
 A host-source export is indexed with `--strict` after its source alternate is removed, which proves it self-contained without a fsck.
 `PreparationCache` uses writer locks per URL and requested ref with a two-hour wait for slow preparation, coordinates leased readers, publishes complete generations atomically, and bounds retained snapshots even when a host checkout exists.
 Only the clean prepared bare repository is mounted for `clone --no-hardlinks`; guest SHA-256 checks precede priming, and a failed check falls back to the remote.
-A prepared full clone starts with its one ref and a broad future-fetch refspec, and names no `origin/HEAD` for a pinned branch; a network full clone starts with every branch and tag, as `git clone` does.
+A prepared full clone starts with its one ref, the tags into its history and a broad future-fetch refspec, and names no `origin/HEAD` for a pinned branch; a network full clone starts with every branch and tag, as `git clone` does.
 Shallow clones bypass the snapshot cache and report their depth plus guest/attach/detach timings.
 See [Git preparation](../../docs/dev/GIT-PREPARATION.md) for the selection, retention and failure contracts.
 Explicit `host-source` entries use `GitPreparation.prepareHost`: local branches/tags select an offline pack, with no remote authentication, refresh or fallback.

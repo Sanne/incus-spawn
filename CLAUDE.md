@@ -4,6 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Full Git clone acceleration is specified in [Git preparation](docs/dev/GIT-PREPARATION.md): remote-authoritative selection, bare reference/dissociation, immutable bounded clean snapshots and reader leases.
 A snapshot holds only the ref a template requests, its branch or tag or else the remote's default branch, with its history; the guest fetches other branches itself, lazily (#1990).
+The build's own copy of it also gets the tags into that history which the guest's and the host's readings both show at one ID, never the published snapshot (#2051).
 Borrow host objects directly, without a preliminary pack copy; a failed reference attempt retries once from the remote before publication.
 Refresh verified snapshots incrementally when their old history remains selected, sharing owned packs and validating new objects; removed history and pack compaction use a clean rebuild.
 Never run build-time fetch or maintenance in a user checkout, or mount its full object store for a full clone.
