@@ -166,10 +166,10 @@ if $NATIVE; then
             exit 1
         fi
         # The same Oracle GraalVM line as the Linux graalvm-version in .github/workflows/:
-        # 25i4 is Oracle's floating tag of GraalVM 25.4 (Innovation 4), as version: '25.4' is in
-        # setup-graalvm, so it follows each 25.4 patch. Not :latest, which is the 25.0 LTS line.
-        # -ol10 (Oracle Linux 10, what :latest was) because the bare 25i4 is amd64 only.
-        GRAALVM_BASE="container-registry.oracle.com/graalvm/native-image:25i4-ol10"
+        # 25i5 is Oracle's floating tag of GraalVM 25.5 (Innovation 5), as version: '25.5' is in
+        # setup-graalvm, so it follows each 25.5 patch. Not :latest, which is the 25.0 LTS line.
+        # -ol10 (Oracle Linux 10, what :latest was) is multi-arch and pins the OS.
+        GRAALVM_BASE="container-registry.oracle.com/graalvm/native-image:25i5-ol10"
         # A local cache of the base with WORKDIR /project (Quarkus mounts the project there),
         # named after the base tag and labelled with the base it was built from: rebuilt
         # whenever a pull brings a newer base, used as is when the registry is unreachable.

@@ -33,10 +33,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install Oracle GraalVM 25.4
+      - name: Install Oracle GraalVM 25.5
         uses: graalvm/setup-graalvm@v1
         with:
-          version: '25.4'
+          version: '25.5'
           java-version: '25'
           distribution: 'graalvm'
 
