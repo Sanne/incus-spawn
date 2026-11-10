@@ -187,14 +187,32 @@ Allow the MCP tools and deny the rest in Claude Code's settings:
 
 The agent that coordinates the others can itself run in an isx instance.
 It then acts with the instance's credentials, such as a bot's GitHub login, instead of yours, and reaches your host only through the MCP tools.
-Branch it with `--mcp-client`:
+
+### From a fresh install
+
+These steps take the [Quick Start](../README.md#quick-start)'s `tpl-agent` as the template the coordinator branches.
+They add a coordinator template on top of it, approve `tpl-agent`, and open the coordinator:
 
 ```shell
-isx branch coord --from tpl-dev --proxy-only --mcp-client
+isx templates new tpl-coordinator --from - <<'EOF'
+name: tpl-coordinator
+description: Claude Code that branches tpl-agent over MCP
+parent: tpl-agent
+coordinator:
+  control-over: [tpl-agent]
+EOF
+isx build tpl-coordinator
+isx mcp setup
+isx branch coord --from tpl-coordinator
 ```
 
-In the TUI's branch dialog (F4), tick MCP control instead.
-It is not offered while the network is Airgapped.
+`isx mcp setup` is your step, never an agent's: enable the server, then approve `tpl-agent` alone.
+Without Claude Code on the host it skips, so list it in `mcp.yaml` yourself instead: `templates: [tpl-agent]`.
+The branch opens Claude Code in `coord`, where it may branch `tpl-agent` and nothing else.
+
+For other workers, list their templates in both places: `control-over` above, and your approvals.
+
+### Making a coordinator
 
 A template meant for coordinators says which templates they control:
 
@@ -203,13 +221,17 @@ coordinator:
   control-over: [tpl-java, tpl-dev]
 ```
 
-Every branch of it is then a coordinator, and the dialog's box starts ticked.
+Every branch of it is then a coordinator, and the TUI's branch dialog (F4) starts with MCP control ticked.
 `isx branch --no-mcp-client` or unticking the box makes a plain instance.
 A project-local template's `coordinator:` is ignored, and an airgapped branch goes without it.
 
 The capability is on by default exactly when `control-over` lists a template.
 `isx-control-capability: false` beside it turns the default off, and isx warns of that, since the list suggests otherwise.
 `isx-control-capability: true` turns it on for a template that lists nothing.
+
+`isx branch --mcp-client`, or ticking MCP control, makes a coordinator of a branch of any other template.
+The box is not offered while the network is Airgapped.
+Such a coordinator controls nothing until its template lists templates under `control-over`.
 
 Once the instance has started, the branch checks the connection from inside it.
 It says whether the server was reached, with its version and tool count, or why not, and whether the instance's Claude Code or Pi has the server.
