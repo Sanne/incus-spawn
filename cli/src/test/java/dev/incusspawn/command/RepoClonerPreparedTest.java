@@ -93,8 +93,12 @@ class RepoClonerPreparedTest {
     }
 
     private BuildProgress.StepProgress run(String branch) {
+        return run(branch, server.url(remote));
+    }
+
+    private BuildProgress.StepProgress run(String branch, String url) {
         var repo = new ImageDef.RepoEntry();
-        repo.setUrl(server.url(remote));
+        repo.setUrl(url);
         repo.setBranch(branch);
         repo.setPath(tmp.resolve("guest").toString());
         repo.setPrime(List.of("git fsck --full --no-dangling"));
@@ -112,8 +116,14 @@ class RepoClonerPreparedTest {
                 return true;
             }
         };
-        new RepoCloner(incus, preparation).prepareOne(new Container(incus, "test"), repo, planned, states, 0,
-                new AtomicBoolean(), new java.util.concurrent.Semaphore(1), new java.util.concurrent.CountDownLatch(0), mounts);
+        var cloner = new RepoCloner(incus, preparation);
+        try {
+            cloner.prepareOne(new Container(incus, "test"), repo, planned, states, 0,
+                    new AtomicBoolean(), new java.util.concurrent.Semaphore(1), new java.util.concurrent.CountDownLatch(0), mounts);
+        } finally {
+            // As cloneRepos does: a read a denied guest cut may still be releasing its lease in the cache (#2102).
+            cloner.awaitRemoteReads();
+        }
         return states.get(0);
     }
 
@@ -132,6 +142,64 @@ class RepoClonerPreparedTest {
         assertTrue(mounts.isEmpty(), "no prepared data may enter an unauthorized guest");
         assertFalse(Files.exists(tmp.resolve("guest")));
         assertTrue(scripts.stream().noneMatch(script -> script.contains("git fsck")), "no prime on denied access");
+    }
+
+    @Test void aDeniedGuestReturnsOnlyOnceTheHostReadHasReleasedItsLease() throws Exception {
+        // The host's read outlives the guest's denial (#2102): a remote that never answers keeps it running,
+        // and holding the cache's catalogue keeps the cut read from releasing its lease until the test lets it.
+        try (var silent = new java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress())) {
+            var connected = new java.util.concurrent.CountDownLatch(1);
+            var held = new java.util.concurrent.ConcurrentLinkedQueue<java.net.Socket>();
+            Thread.ofVirtual().start(() -> {
+                try {
+                    while (true) { held.add(silent.accept()); connected.countDown(); }
+                } catch (java.io.IOException closed) { }
+            });
+            var url = "git://127.0.0.1:" + silent.getLocalPort() + "/remote";
+            guestConfig = tmp.resolve("guest.config");
+            git(tmp, "config", "--file", guestConfig.toString(), "url." + server.url(tmp.resolve("denied")) + ".insteadOf", url);
+            var work = dev.incusspawn.Environment.cacheDir().resolve("git/work");
+            var locked = new java.util.concurrent.CountDownLatch(1);
+            var returned = new java.util.concurrent.CountDownLatch(1);
+            var tester = Thread.currentThread();
+            Thread[] holder = new Thread[1];
+            beforeGuestRead = n -> {
+                try {
+                    // The host's read holds its lease once it has connected.
+                    assertTrue(connected.await(30, java.util.concurrent.TimeUnit.SECONDS), "the host never read the remote");
+                    holder[0] = Thread.ofPlatform().start(() -> {
+                        try (var catalogue = dev.incusspawn.util.HostLock.acquire(
+                                work.resolveSibling("catalogue.lock"), "test", s -> {})) {
+                            locked.countDown();
+                            // Released once the call waits for the cut read, or once the test has listed the leases:
+                            // a call that returns without waiting always finds the lease, however slow the guest.
+                            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
+                            while (returned.getCount() > 0 && System.nanoTime() < deadline
+                                    && java.util.Arrays.stream(tester.getStackTrace())
+                                            .noneMatch(frame -> frame.getMethodName().equals("awaitRemoteReads"))) {
+                                Thread.sleep(1);
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    });
+                    assertTrue(locked.await(30, java.util.concurrent.TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    throw new AssertionError(e);
+                }
+            };
+            try {
+                var result = run(null, url);
+                String[] leases;
+                try (var dirs = Files.list(work)) { leases = dirs.map(Path::toString).toArray(String[]::new); }
+                assertEquals(BuildProgress.StepState.FAILED, result.state());
+                assertArrayEquals(new String[0], leases, "the host's read must release its lease before the test's home is removed");
+            } finally {
+                returned.countDown();
+                if (holder[0] != null) holder[0].join();
+                for (var socket : held) socket.close();
+            }
+        }
     }
 
     @Test void aFailedPreparationKeepsGitsWordsApartForTheWarning() {
