@@ -140,7 +140,7 @@ final class AboutModal {
                 shortcutRow("C", "Clean pool storage", null, null),
                 shortcutRow("r", "Refresh", null, null),
                 shortcutRow(WarningsModal.KEY, "Warnings", null, null),
-                shortcutRow("n", "New template…", null, null),
+                shortcutRow("n", "New template… or session", null, null),
                 shortcutRow("/", "Search / filter", null, null),
                 shortcutRow("g/Home", "Jump to top", "G/End", "Jump to bottom"),
                 Line.styled("", Style.EMPTY),
