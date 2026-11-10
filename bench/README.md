@@ -30,7 +30,7 @@ The [dissociation regression note](../docs/dev/GIT-DISSOCIATE-REVIEW.md) explain
 ## Prerequisites
 
 - **Linux**, or **macOS on Apple Silicon** with the differences under "On macOS" below
-- **Oracle GraalVM** with `native-image` on `PATH` — release builds use Oracle GraalVM (not Community Edition), so benchmarks should too for comparable results. Use Oracle GraalVM 25.4, the line releases build with (`version: '25.4'` in `.github/workflows/release.yml`), not the 25.0 LTS: download it from https://www.graalvm.org/downloads/ or use sdkman (`sdk install java 25.4.4+1-graal`, or the latest `25.4.*-graal` it lists). On Linux you can instead pass `--builder-image=<tag>`, which builds inside the same container image `install.sh` uses and so reproduces the release toolchain exactly.
+- **Oracle GraalVM** with `native-image` on `PATH` — release builds use Oracle GraalVM (not Community Edition), so benchmarks should too for comparable results. Use Oracle GraalVM 25.5, the line releases build with (`version: '25.5'` in `.github/workflows/release.yml`), not the 25.0 LTS: download it from https://www.graalvm.org/downloads/ or use sdkman (the latest `25.5.*-graal` candidate it lists). On Linux you can instead pass `--builder-image=<tag>`, which builds inside the same container image `install.sh` uses and so reproduces the release toolchain exactly.
 - **No proxy already running** — stop the service first (`systemctl --user stop incus-spawn-proxy`), otherwise the freshly built proxy cannot bind the port. The script refuses to run in that state rather than measure the wrong process.
 - **Running Incus daemon** with the default `incusbr0` bridge
 - **Working isx setup** — run `isx init` first so `~/.config/incus-spawn/config.yaml` and the CA cert exist. The proxy needs an API key configured (it doesn't make real API calls during benchmarks, but validates the config)
@@ -258,15 +258,15 @@ instrumented binary does is timed or saved as a result: its numbers mean nothing
 The same code built by two different GraalVM releases, on one host:
 
 ```shell
-bench/run.sh --builder-image=bench-graalvm-builder:25i3-ol10 --label=25.3
-bench/run.sh --builder-image=incus-spawn-graalvm-builder:25i4-ol10 --label=25.4
+bench/run.sh --builder-image=bench-graalvm-builder:25i4-ol10 --label=25.4
+bench/run.sh --builder-image=incus-spawn-graalvm-builder:25i5-ol10 --label=25.5
 ```
 
 `install.sh --native` prepares the builder of the release's GraalVM; prepare another the same way, under a name of your own:
 
 ```shell
-printf 'FROM container-registry.oracle.com/graalvm/native-image:25i3-ol10\nWORKDIR /project\n' \
-    | podman build -t bench-graalvm-builder:25i3-ol10 -
+printf 'FROM container-registry.oracle.com/graalvm/native-image:25i4-ol10\nWORKDIR /project\n' \
+    | podman build -t bench-graalvm-builder:25i4-ol10 -
 ```
 
 Not as `incus-spawn-graalvm-builder:*`: when `install.sh` refreshes its builder it removes every other image of that name.

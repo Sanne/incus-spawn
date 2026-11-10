@@ -70,7 +70,7 @@ jobs:
       - name: Install Oracle GraalVM
         uses: graalvm/setup-graalvm@v1
         with:
-          version: '25.4'
+          version: '25.5'
           java-version: '25'
           distribution: 'graalvm'
 
@@ -147,17 +147,17 @@ jobs:
           - runner: ubuntu-26.04
             os: linux
             arch: amd64
-            graalvm-version: '25.4'
+            graalvm-version: '25.5'
             pgo: true
           - runner: ubuntu-24.04-arm
             os: linux
             arch: aarch64
-            graalvm-version: '25.4'
+            graalvm-version: '25.5'
             pgo: true
           - runner: macos-15
             os: macos
             arch: aarch64
-            graalvm-version: '25.4'
+            graalvm-version: '25.5'
             pgo: true
           # No Intel macOS build since Quarkus 4 (#1693): it needs GraalVM 25.0.4, and Oracle GraalVM
           # ships no macOS x64 build after 25.0.1. design/native-image.md "Intel Macs are not shipped".
