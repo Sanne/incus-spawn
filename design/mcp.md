@@ -520,6 +520,13 @@ The pieces, and why each is the way it is:
   What the guest returns (curl's errors, the server's version) passes through `OutputFormat.oneLine` before it is printed.
   It is a warning, never a failure: the branch is made either way, and the user sees a coordinator that cannot work while still there to fix it.
   One exec, only for `--mcp-client` branches, the dialog's included.
+- *A first coordinator is a ready definition, not a feature (#2079).*
+  From a fresh install the shortest path is four commands (docs/MCP.md "From a fresh install"): `isx templates new tpl-coordinator --from -` with a definition the page gives, a build, `isx mcp setup` and a branch.
+  The definition is a child of the Quick Start's `tpl-agent` that lists it under `control-over`, so the coordinator inherits Claude Code and its default action, and every start registers the server.
+  It is a page's block rather than a built-in template: built-in templates are being retired (#1195), and a fixed one could only name a worker isx guessed at.
+  It is not an option that fills in `control-over` either (#2076 dropped single-field options), and the two consents stay exactly as they were: the definition's list, and the person's approval in `mcp.yaml`.
+  `CoordinatorFromFreshInstallDocsTest` runs the page's own definition through `isx templates new --from` and checks the coordinator it makes controls `tpl-agent` once approved and nothing before.
+  The one hint isx adds is where a coordinator controls nothing because its template lists nothing (`isx branch --mcp-client` on a plain template, say): that warning names the page.
 
 The tool contract is the stdio one, unchanged: the same tools, approved templates, `mcp.yaml` limits and audit log, the session's host-side stamps (`mcp-cwd`, `mcp-client-pid`) simply absent.
 Out of scope: gating outward actions such as pushes at the proxy (the complement to this), and reaching Incus on another host.
