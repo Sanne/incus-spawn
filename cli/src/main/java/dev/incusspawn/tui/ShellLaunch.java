@@ -4,6 +4,8 @@ import dev.incusspawn.command.InstancePrep;
 import dev.incusspawn.command.McpClientGrant;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
+import dev.incusspawn.incus.ShellSession;
+import dev.incusspawn.lifecycle.ZmxSocketForward;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.RuntimeSetup;
@@ -115,7 +117,16 @@ final class ShellLaunch {
     }
 
     void shellInto(ActionContext target) {
-        shellInto(target, null, false);
+        shellInto(target, null, false, ShellSession.DEFAULT);
+    }
+
+    /** A login shell in {@code session} rather than the instance's default one (#2059). */
+    void shellInto(ActionContext target, ShellSession session) {
+        shellInto(target, null, false, session);
+    }
+
+    void shellInto(ActionContext target, String commandOverride, boolean commandOnly) {
+        shellInto(target, commandOverride, commandOnly, ShellSession.DEFAULT);
     }
 
     /**
@@ -123,7 +134,7 @@ final class ShellLaunch {
      * {@code commandOnly} outside the instance's tmux or zmx session, which would otherwise be
      * entered instead (a joined task's conversation, #1509).
      */
-    void shellInto(ActionContext target, String commandOverride, boolean commandOnly) {
+    private void shellInto(ActionContext target, String commandOverride, boolean commandOnly, ShellSession session) {
         var name = target.name();
         var machineType = target.machineType();
         // Read after repairBeforeUse, so a VM it just reassigned is seen to owe its file
@@ -146,8 +157,14 @@ final class ShellLaunch {
         var titleMonitor = startAuthTitleMonitor(name);
         try {
             var prep = IncusClient.ShellPrep.from(tui.incus, name);
-            if (commandOverride != null) prep = commandOnly ? prep.withCommandOnly(commandOverride) : prep.withActionCommand(commandOverride);
+            if (commandOverride != null) {
+                prep = commandOnly ? prep.withCommandOnly(commandOverride) : prep.withActionCommand(commandOverride);
+            } else {
+                prep = prep.withSession(session);
+            }
             tui.incus.interactiveShell(name, "agentuser", prep, shellMenu(name, prep));
+            // A session the shell made, as a new one the guest named, now has a socket to link
+            ZmxSocketForward.relinkAfterShell(name);
         } finally {
             titleMonitor.interrupt();
         }

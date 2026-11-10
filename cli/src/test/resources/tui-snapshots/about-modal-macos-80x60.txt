@@ -36,7 +36,7 @@
   ║   C       Clean pool storage                                             ║
   ║   r       Refresh                                                        ║
   ║   w       Warnings                                                       ║
-  ║   n       New template…                                                  ║
+  ║   n       New template… or session                                       ║
   ║   /       Search / filter                                                ║
   ║   g/Home  Jump to top               G/End        Jump to bottom          ║
   ║                                                                          ║

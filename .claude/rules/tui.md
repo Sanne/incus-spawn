@@ -111,6 +111,7 @@ The F1 dialog (versions and keyboard shortcuts) is `AboutModal` (`AboutModalTest
 A mode that reads digits itself (a text field, the build menu's numbered options) is `Mode(true)`; a new mode must choose.
 The key bar draws each F-key's digit bold, the context line does not repeat the rule (it was noise), and `AboutModal` lists both forms of every key (`AboutModalTest`).
 The F9 actions dialog is `ActionsMenu` (`ActionsMenuTest`): it owns the list, the selection and its rendering, and hands Enter back, so `Tui` checks the instance still exists and runs the selected action through `dispatchAction`.
+`n` on an instance row leaves `SHELL_NEW_SESSION` pending: `ShellLaunch` opens the login shell in `ShellSession.NEW`, a zmx or tmux session the guest names by the first free number from 2, so it is independent of every other terminal (#2059); on a template row `n` is still a new child template.
 Shift+F2 (in the table and in F3 details) joins a delegated task's conversation as `isx shell --task` does (`TaskJoin`, #1509).
 `Tui.joinTask` reads the tasks on the keypress, never while rendering, and only for a running instance with the `isx mcp` stamp; the context line hints `⇧F2 Join task` for such an instance alone.
 One task leaves `SHELL_WITH_COMMAND` pending with `pendingCommandOnly`, so the command runs outside the instance's tmux or zmx session; several open `TaskPicker`; anything else is a status line.
