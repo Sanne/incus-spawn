@@ -342,6 +342,9 @@ public class InitCommand extends BaseCommand {
     /** The steps whose question this run skipped, for want of a terminal and of a flag answering it (#2075). */
     final Set<String> skipped = new java.util.LinkedHashSet<>();
 
+    /** The steps whose offer was answered no, typed or by a flag such as {@code --no-service}: nothing is left there. */
+    final Set<String> declined = new java.util.LinkedHashSet<>();
+
     /** The exit of a run that finished with steps left for the person, when a summary was asked for (#2075). */
     static final int EXIT_STEPS_LEFT = 76;
 
@@ -380,22 +383,24 @@ public class InitCommand extends BaseCommand {
 
     /**
      * The closing summary of a run asked for in a machine format (#2075): each step as
-     * {@code isx init --plan} reports it now, in the same fields, with {@code skipped} at the end
-     * saying init skipped its question for want of a terminal. A run that finished with steps left
-     * for the person (a credential, the MCP approvals, a root step) exits {@link #EXIT_STEPS_LEFT}.
+     * {@code isx init --plan} reports it now, in the same fields, then {@code skipped} saying init
+     * skipped its question for want of a terminal, and {@code declined} saying the answer was no.
+     * A run that finished with steps left for the person (a credential, the MCP approvals, a root
+     * step) exits {@link #EXIT_STEPS_LEFT}.
      */
     CommandResult printSummary(OutputFormat outputFormat, CommandResult result) {
         var code = result.getResultValue();
         if (code != 0 && code != EXIT_WAITING_ON_PERSON) return result;
         var entries = planEntries();
-        outputFormat.print(BuildOutput.results(), entries.stream().map(e -> summaryRecord(e, skipped.contains(e.step()))).toList());
+        outputFormat.print(BuildOutput.results(), entries.stream().map(e -> summaryRecord(e, skipped.contains(e.step()), declined.contains(e.step()))).toList());
         return code == 0 && leftForThePerson(entries, appliedByScript(), noSudo) ? CommandResult.valueOf(EXIT_STEPS_LEFT) : result;
     }
 
-    /** A step's summary record: the plan's fields, then {@code skipped}. */
-    static Map<String, Object> summaryRecord(InitPlan.Entry entry, boolean skipped) {
+    /** A step's summary record: the plan's fields, then {@code skipped} and {@code declined}. */
+    static Map<String, Object> summaryRecord(InitPlan.Entry entry, boolean skipped, boolean declined) {
         var record = InitPlan.record(entry);
         record.put("skipped", skipped);
+        record.put("declined", declined);
         return record;
     }
 
@@ -1739,6 +1744,7 @@ public class InitCommand extends BaseCommand {
     private boolean wantsMacOsServices(Prompts prompts) {
         if (service) return true;
         if (noService) {
+            declined.add("macos-services");
             BuildOutput.step("Not installed, as --no-service asks. Start manually with: isx vm start && isx proxy start");
             return false;
         }
@@ -1750,6 +1756,7 @@ public class InitCommand extends BaseCommand {
         prompts.say("Optional: install VM and proxy as macOS services so they start automatically on login"
                 + " and survive reboots.");
         if (!askYesNo(prompts, "Install services?", true)) {
+            declined.add("macos-services");
             BuildOutput.step("Skipped. Start manually with: isx vm start && isx proxy start");
             return false;
         }
@@ -1782,6 +1789,7 @@ public class InitCommand extends BaseCommand {
     private boolean wantsProxyService(Prompts prompts) {
         if (service) return true;
         if (noService) {
+            declined.add("proxy-service");
             BuildOutput.step("Not installed, as --no-service asks. You can start the proxy manually with: isx proxy start");
             return false;
         }
@@ -1792,6 +1800,7 @@ public class InitCommand extends BaseCommand {
         }
         prompts.say("Optional: install the proxy as a systemd service so it starts automatically and survives reboots.");
         if (!askYesNo(prompts, "Install proxy service?", true)) {
+            declined.add("proxy-service");
             BuildOutput.step("Skipped. You can start the proxy manually with: isx proxy start");
             return false;
         }

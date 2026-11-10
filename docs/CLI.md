@@ -43,7 +43,9 @@ A question no flag answers is skipped when there is no terminal.
 
 With `--format=json` or `plain`, init ends with a summary on stdout and its progress on stderr.
 The summary has a record per step, in the fields `isx init --plan` prints, read after the run.
-A last field, `skipped`, says that init skipped the step's question for want of a terminal.
+A field `skipped` says that init skipped the step's question for want of a terminal.
+
+The last, `declined`, says the answer was no, given by you or by a flag such as `--no-service`.
 
 The run then exits 76 when it finished with a step only you can do, such as a credential, an approval or a step that needs root.
 
