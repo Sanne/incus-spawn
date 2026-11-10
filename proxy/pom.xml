@@ -54,10 +54,11 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <!-- Only so native-image resolves Netty's BrotliOptions (#314). No <version>: the
+             Quarkus BOM manages it together with its native-* jars (#2106). -->
         <dependency>
             <groupId>com.aayushatharva.brotli4j</groupId>
             <artifactId>brotli4j</artifactId>
-            <version>1.23.0</version>
             <optional>true</optional>
         </dependency>
 
