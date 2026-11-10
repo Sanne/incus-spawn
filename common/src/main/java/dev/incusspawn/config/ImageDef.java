@@ -615,22 +615,13 @@ public class ImageDef extends DefinitionOrigin {
      * Return the ordered list of ancestor images, starting from the immediate
      * parent and walking up to the root. Stops if a name is missing from
      * {@code defs}, or before a layer it has already seen: loading refuses a parent cycle, but a
-     * build-source snapshot merged in afterwards can still close one (#1443).
+     * build-source snapshot the TUI merges in afterwards can still close one (#1443).
      */
     public static List<ImageDef> ancestors(ImageDef start, Map<String, ImageDef> defs) {
         var result = new ArrayList<ImageDef>();
         var cycle = walkParents(start, defs, result);
         if (cycle != null) Warnings.warn(cycle + "; every chain through it stops before repeating a layer");
         return result;
-    }
-
-    /**
-     * The parent cycle the chain of {@code start} runs into, as "parent cycle a → b → a", or null
-     * when it ends at a root or a missing parent. Only a build-source snapshot merged in after
-     * load can close one (#1443); a build must refuse it, as it would have no root to start from.
-     */
-    public static String parentCycle(ImageDef start, Map<String, ImageDef> defs) {
-        return walkParents(start, defs, new ArrayList<>());
     }
 
     /** Add the ancestors of {@code start} to {@code result}; the cycle it stopped at, or null. */
