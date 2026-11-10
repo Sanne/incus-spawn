@@ -201,8 +201,11 @@ Once nothing is left, the steps run with their root parts reduced to a note (`Ho
 The redirect's lines read the gateway from the bridge as the script runs, so a fresh host needs one script.
 The script detaches its stdin first (`exec </dev/null`): `incus storage create` and `incus network create` read a YAML config from any stdin that is not a terminal, so run from an agent's shell the script would wait forever (found on a real Fedora VM); its files come from here-documents, which bring their own.
 The run's own pool create, `CowPoolBacking.runCapturingStderr`, detaches it the same way, for `isx init` and doctor alike.
-The btrfs rule names btrfs as `HostSetup.btrfsPath()` finds it, a fixed search (bin before sbin, never the shell's `PATH`) that the script's lines repeat as they run, after it installed btrfs-progs: the rule is right in one round, and its lines and key are the same before and after the package exists, from any shell.
+The btrfs rule names btrfs as `HostSetup.btrfsPath()` finds it, a fixed search (the root-owned system directories first, /usr/local last, never the shell's `PATH`) that the script's lines repeat as they run, after it installed btrfs-progs: the rule is right in one round, and its lines and key are the same before and after the package exists, from any shell.
 `planEntries()` passes the plan through `InitPlan.withRecord`, so `--plan` and the summary report what the script recorded as done, its check commands kept; once nothing is left for root, `privilegedStepsLeft` removes the script.
+A step that finds root work as it runs hands it over too, by throwing `InitCommand.WaitingOnPerson`, which `runInit` turns into `handOver`'s script and exit 75: the MITM step does when this run moved the bridge off a host route (the redirect moves from the old gateway), or when firewalld shows the redirect missing and the record lacks it (`HostSetup.redirectLeftUnderNoSudo`).
+Storage & Network has a `--no-sudo` branch: no pool stops the run naming `sudo incus admin init --minimal`, and no CoW pool (the script tolerates a failed create) is warned about with its create command, never created.
+`Privilege.elevates` reads every argument of a wrapper (`env`, `timeout`, `nice`, `nohup`, `stdbuf`, `setsid`, `ionice`, `chrt`) and of a `sh`, `bash`, `dash`, `zsh` or `ksh` script for an elevating command word.
 `InitNoSudoTest` pins the fresh host's script, that it is the plan's `sudo_script`, the record, and the guard.
 
 **The group init adds** (#1436).

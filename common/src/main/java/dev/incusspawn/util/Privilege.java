@@ -62,13 +62,19 @@ public final class Privilege {
      */
     public static boolean elevates(List<String> command) {
         if (command.isEmpty()) return false;
-        if (ELEVATING.contains(name(command.getFirst()))) return true;
-        if (List.of("sh", "bash").contains(name(command.getFirst()))) {
+        var program = name(command.getFirst());
+        if (ELEVATING.contains(program)) return true;
+        // A shell's script, or what a wrapper runs (env FOO=1 sudo ..., timeout -s KILL 5 sudo ...):
+        // any argument naming one as a command word, whatever options and values come before it
+        if (SHELLS.contains(program) || WRAPPERS.contains(program)) {
             return command.stream().skip(1).anyMatch(arg -> ELEVATING_WORD.matcher(arg).find());
         }
         return false;
     }
 
+    /** Commands that run the rest of their arguments as a command, after options and values of their own. */
+    private static final Set<String> WRAPPERS = Set.of("env", "timeout", "nice", "nohup", "stdbuf", "setsid", "ionice", "chrt");
+    private static final Set<String> SHELLS = Set.of("sh", "bash", "dash", "zsh", "ksh");
 
     private static String name(String program) {
         return program.substring(program.lastIndexOf('/') + 1);

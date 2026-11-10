@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.FirewallDetector.DetectionResult;
 import dev.incusspawn.util.Privilege;
 import dev.incusspawn.util.RecordingOutput;
 import org.junit.jupiter.api.AfterEach;
@@ -266,6 +267,103 @@ class InitNoSudoTest {
         assertEquals(HostSetup.NO_SUDO_FIRST, init.host().planDependencies().note());
     }
 
+    // ── What the run itself finds is root's ────────────────────────────────────
+
+    private static InitPlanTest.PlanInit setUp(Path root) throws Exception {
+        var init = new InitPlanTest.PlanInit();
+        init.root = root;
+        init.noSudo = true;
+        init.incus = new FakeIncusDaemon().network("incusbr0", Map.of("ipv4.address", GATEWAY + "/24"))
+                .pool("default", "dir").pool("cow", "btrfs")
+                .profile("default", Map.of("root", Map.of("type", "disk", "path", "/", "pool", "cow"),
+                        "eth0", Map.of("type", "nic", "network", "incusbr0")))
+                .client();
+        Files.createDirectories(Environment.configDir());
+        return init;
+    }
+
+    /**
+     * A bridge this run moves off a host route takes its redirect with it, which is root's: the run
+     * hands that over rather than finishing on a proxy no container reaches (#2118 review).
+     */
+    @Test
+    void aBridgeTheRunMovesHandsItsRedirectToThePerson(@TempDir Path root) throws Exception {
+        var init = setUp(root);
+        init.routes = List.of("10.1.0.0/20 dev vpn0");
+        Privilege.forbid();
+        RecordingOutput.during(() -> init.host().checkBridgeSubnet());
+        var waiting = assertThrows(InitCommand.WaitingOnPerson.class,
+                () -> RecordingOutput.during(() -> init.host().configureMitmProxy()));
+        var lines = waiting.changes.stream().flatMap(p -> p.change().script().stream()).toList();
+        assertTrue(lines.getFirst().contains("--remove-rule") && lines.getFirst().contains("-d " + GATEWAY), lines.toString());
+        assertTrue(lines.contains("gw=$(incus network get incusbr0 ipv4.address)"), lines.toString());
+    }
+
+    /** On UFW the move is not scripted: the run names it for the person instead. */
+    @Test
+    void aBridgeTheRunMovesOnUfwNamesTheMoveUnscripted(@TempDir Path root) throws Exception {
+        var init = setUp(root);
+        init.routes = List.of("10.1.0.0/20 dev vpn0");
+        init.firewall = new DetectionResult.UseUfw();
+        Privilege.forbid();
+        RecordingOutput.during(() -> init.host().checkBridgeSubnet());
+        var waiting = assertThrows(InitCommand.WaitingOnPerson.class,
+                () -> RecordingOutput.during(() -> init.host().configureMitmProxy()));
+        assertTrue(waiting.changes.stream().allMatch(p -> p.change().script().isEmpty()), waiting.changes.toString());
+    }
+
+    /** A script written but not run is handed over again, though the plan sees nothing left: its work is the person's still. */
+    @Test
+    void aScriptNotYetRunIsHandedOverAgain(@TempDir Path root) throws Exception {
+        var script = root.resolve("init-privileged.sh");
+        Files.writeString(script, "#!/bin/sh\ncat >> /var/lib/isx/init-applied <<'ISX_EOF'\n0123456789abcdef01234567\nISX_EOF\n");
+        assertFalse(InitCommand.scriptRan(script, Set.of()));
+        assertTrue(InitCommand.scriptRan(script, Set.of("0123456789abcdef01234567")));
+        assertTrue(InitCommand.scriptRan(root.resolve("absent.sh"), Set.of()));
+    }
+
+    /** firewalld shows the redirect missing for the gateway: scripted again, unless the script already ran it. */
+    @Test
+    void aRedirectFirewalldShowsMissingIsScriptedOnceThenWarned(@TempDir Path root) throws Exception {
+        var init = setUp(root);
+        init.answers.put("firewall-cmd --direct --get-all-rules", new InitCommand.Query(0, ""));
+        Privilege.forbid();
+        var waiting = assertThrows(InitCommand.WaitingOnPerson.class,
+                () -> RecordingOutput.during(() -> init.host().configureMitmProxy()));
+        var keys = waiting.changes.stream().map(p -> InitPlan.key(p.change())).toList();
+        Files.createDirectories(root.resolve("var/lib/isx"));
+        Files.write(root.resolve("var/lib/isx/init-applied"), keys);
+        var recorded = RecordingOutput.during(() -> init.host().configureMitmProxy());
+        assertTrue(recorded.lines().stream().anyMatch(l -> l.contains("still not in effect")), recorded.lines().toString());
+    }
+
+    /**
+     * The script tolerates a failed CoW pool create and records it; the run then has no root to
+     * create it with, so it says how, never reaching for sudo (#2118 review).
+     */
+    @Test
+    void aRecordedButAbsentCowPoolIsNamedNotCreated(@TempDir Path root) throws Exception {
+        var init = setUp(root);
+        init.incus = new FakeIncusDaemon().network("incusbr0", Map.of("ipv4.address", GATEWAY + "/24"))
+                .pool("default", "dir")
+                .profile("default", Map.of("root", Map.of("type", "disk", "path", "/", "pool", "default"),
+                        "eth0", Map.of("type", "nic", "network", "incusbr0")))
+                .client();
+        Privilege.forbid();
+        var recorded = RecordingOutput.during(() -> init.host().initializeIncus());
+        assertTrue(recorded.events().stream().anyMatch(e -> e.text() != null && e.text().contains("could not create one")),
+                recorded.lines().toString());
+    }
+
+    @Test
+    void anIncusWithNoPoolStopsTheRunNamingTheCommand(@TempDir Path root) throws Exception {
+        var init = setUp(root);
+        init.incus = new FakeIncusDaemon().failPoolListing().network("incusbr0", Map.of("ipv4.address", GATEWAY + "/24")).client();
+        Privilege.forbid();
+        var failure = assertThrows(IllegalStateException.class, () -> RecordingOutput.during(() -> init.host().initializeIncus()));
+        assertTrue(failure.getMessage().contains("sudo incus admin init --minimal"), failure.getMessage());
+    }
+
     // ── The guard ───────────────────────────────────────────────────────────────
 
     @Test
@@ -278,6 +376,13 @@ class InitNoSudoTest {
                 List.of("bash", "-c", "true && /usr/bin/sudo\tid"))) {
             assertThrows(Privilege.Refused.class, () -> Privilege.check(command), command.toString());
         }
+        for (var command : List.of(List.of("env", "sudo", "id"), List.of("env", "LC_ALL=C", "sudo", "id"),
+                List.of("timeout", "5", "sudo", "id"), List.of("nice", "-n", "5", "sudo", "id"),
+                List.of("dash", "-c", "sudo id"), List.of("timeout", "-s", "KILL", "5", "sudo", "id"),
+                List.of("env", "-u", "HOME", "sudo", "id"), List.of("env", "-S", "sudo id"))) {
+            assertThrows(Privilege.Refused.class, () -> Privilege.check(command), command.toString());
+        }
+        assertDoesNotThrow(() -> Privilege.check("env", "LC_ALL=C", "ls"));
         assertDoesNotThrow(() -> Privilege.check("firewall-cmd", "--list-all"));
         assertDoesNotThrow(() -> Privilege.check("sh", "-c", "echo sudoku"));
         Privilege.allow();

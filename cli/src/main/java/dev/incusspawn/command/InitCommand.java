@@ -351,7 +351,11 @@ public class InitCommand extends BaseCommand {
             dependencies().run().run();
         }
         var proxyServiceInstalled = new AtomicBoolean();
-        runLinuxSteps(finalSteps(proxyServiceStep(proxyServiceInstalled)));
+        try {
+            runLinuxSteps(finalSteps(proxyServiceStep(proxyServiceInstalled)));
+        } catch (WaitingOnPerson waiting) {
+            return handOver(waiting.changes);
+        }
 
         var next = new ArrayList<>(List.of(nextSteps(proxyServiceInstalled.get() ? Services.INSTALLED : Services.START_PROXY)));
         if (continued) next.addAll(GROUP_PENDING);
@@ -396,8 +400,17 @@ public class InitCommand extends BaseCommand {
             }
         }
         if (left.isEmpty()) {
-            // Nothing is left for root: a script still lying there would only be handed over again
             var script = Environment.privilegedInitScript();
+            // A script written but not run, as when the run itself found root work (a bridge it
+            // moved): what it holds is still the person's, though the plan cannot see it now
+            if (!scriptRan(script, applied)) {
+                BuildOutput.step("The root script from the last run has not been run yet: " + script);
+                BuildOutput.step("Read it, then run it as root:");
+                BuildOutput.stepNote("sudo sh " + script);
+                BuildOutput.step("Then run '" + NO_SUDO_COMMAND + "' again to finish.");
+                return CommandResult.valueOf(EXIT_WAITING_ON_PERSON);
+            }
+            // Nothing is left for root: a script still lying there would only be handed over again
             try {
                 if (Files.deleteIfExists(script)) {
                     BuildOutput.note("The root script's work is done, so it was removed: " + script);
@@ -409,6 +422,28 @@ public class InitCommand extends BaseCommand {
             }
             return null;
         }
+        return handOver(left);
+    }
+
+    /**
+     * Thrown by a step under {@code --no-sudo} that finds, as it runs, root work only the person
+     * can do: the bridge it moved needs its redirect moved too (#2118). The run hands it over as
+     * a script, exit {@link #EXIT_WAITING_ON_PERSON}, rather than finishing on a proxy containers cannot reach.
+     */
+    static final class WaitingOnPerson extends RuntimeException {
+        final transient List<InitPlan.Privileged> changes;
+
+        WaitingOnPerson(List<InitPlan.Privileged> changes) {
+            super("root work is left for the person");
+            this.changes = List.copyOf(changes);
+        }
+    }
+
+    /**
+     * Hands {@code left} to the person: as one script with the exit that waits on them, or, when
+     * one of them cannot be written as a script, as an error naming it.
+     */
+    CommandResult handOver(List<InitPlan.Privileged> left) throws IOException {
         var manual = left.stream().filter(p -> p.change().script().isEmpty()).map(p -> p.change().what()).toList();
         if (!manual.isEmpty()) {
             var details = new ArrayList<>(manual);
@@ -435,6 +470,19 @@ public class InitCommand extends BaseCommand {
         BuildOutput.stepNote("sudo sh " + script);
         BuildOutput.step("Then run '" + NO_SUDO_COMMAND + "' again to finish.");
         return CommandResult.valueOf(EXIT_WAITING_ON_PERSON);
+    }
+
+    /** A record key, as the script lists them. */
+    private static final Pattern RECORD_KEY = Pattern.compile("[0-9a-f]{24}");
+
+    /** Whether the script at {@code script} ran, or there is none: every key it would record is in {@code applied}. */
+    static boolean scriptRan(Path script, Set<String> applied) {
+        try {
+            return !Files.exists(script) || Files.readAllLines(script).stream().map(String::strip)
+                    .filter(l -> RECORD_KEY.matcher(l).matches()).allMatch(applied::contains);
+        } catch (IOException e) {
+            return true;
+        }
     }
 
     /** The keys the script recorded in {@link InitPlan#APPLIED_RECORD} as it ran; none before it ran. */
