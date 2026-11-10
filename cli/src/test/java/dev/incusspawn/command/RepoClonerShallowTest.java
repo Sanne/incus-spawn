@@ -262,6 +262,7 @@ class RepoClonerShallowTest {
     @Test
     void aFullRepoKeepsNoRefOfTheHostCheckoutsOwnWork() throws Exception {
         git(upstream, "tag", "v1", "HEAD~4");
+        var upstreamV1 = git(upstream, "rev-parse", "v1");
         var host = tmp.resolve("host-releases");
         git(tmp, "clone", "-q", "--", server.url(upstream), host.toString());
         git(host, "checkout", "-q", "-b", "wip");
@@ -274,7 +275,9 @@ class RepoClonerShallowTest {
         var guest = prepare(repo(null, null), host);
 
         // Only the requested branch is copied (#1990): no host ref, and the remote's other refs come with a fetch.
-        assertEquals("", git(guest, "tag", "-l"), "no tag of the host's reaches the guest");
+        // The remote's tag into main's history comes at the remote's ID (#2051), never the host's moved one.
+        assertEquals("refs/tags/v1 " + upstreamV1, git(guest, "for-each-ref", "--format=%(refname) %(objectname)", "refs/tags"),
+                "no tag of the host's reaches the guest");
         assertEquals("refs/heads/main\nrefs/remotes/origin/HEAD\nrefs/remotes/origin/main",
                 git(guest, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"));
         assertEquals("main", git(guest, "branch", "--show-current"));

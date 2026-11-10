@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -201,6 +202,195 @@ class GitPreparationTest {
                 try { return !allObjects(snapshot.resolve("repo.git")).contains(secret); }
                 catch (Exception e) { throw new AssertionError(e); }
             }), "nothing the forged reading named was published");
+        }
+    }
+
+    private static void tag(Path repo, String... args) throws Exception {
+        var all = new ArrayList<>(List.of("-c", "user.name=t", "-c", "user.email=t@t", "tag"));
+        all.addAll(List.of(args));
+        git(repo, all.toArray(String[]::new));
+    }
+
+    private static Map<String, String> tags(Path repo) throws Exception {
+        var tags = new TreeMap<String, String>();
+        for (var line : git(repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/tags/").lines().toList()) {
+            tags.put(line.substring(0, line.indexOf(' ')), line.substring(line.indexOf(' ') + 1));
+        }
+        return tags;
+    }
+
+    @Execution(CONCURRENT) @Test void onlyTagsBothReadingsShowAtTheGuestsIdEnterTheCopy() throws Exception {
+        tag(remote, "-a", "hidden", "HEAD~3", "-m", "the guest's account does not see this");
+        tag(remote, "-a", "forged", "HEAD~2", "-m", "the guest's reading names it at another ID");
+        tag(remote, "light", "HEAD~1");
+        // Like a deleted tag: still on the server, which protocol v2 serves by ID to anyone naming it.
+        tag(remote, "-a", "removed", "HEAD~2", "-m", "secret");
+        var secret = git(remote, "rev-parse", "removed");
+        git(remote, "tag", "-d", "removed");
+        start();
+        var request = new GitPreparation.Request(server.url(remote), null, host);
+        try (var prior = prepare(host, null)) {
+            // Pushed after the host's first reading: the host reads again, so its own reading shows it.
+            tag(remote, "-a", "later", "HEAD~1", "-m", "after the host's first reading");
+            var forged = guestReading(null).lines()
+                    .filter(line -> !line.contains("refs/tags/hidden"))
+                    .map(line -> line.endsWith("\trefs/tags/forged") ? secret + "\trefs/tags/forged" : line)
+                    .collect(java.util.stream.Collectors.toList());
+            // A name no reading of the host's shows: the host never fetches it, whatever ID it is read at.
+            forged.add(secret + "\trefs/tags/ghost");
+            var reading = String.join("\n", forged);
+            // A reading naming only such tags adds nothing and fetches nothing.
+            var none = new ArrayList<String>();
+            var onlyGuest = reading.lines().filter(line -> !line.contains("refs/tags/") || line.contains("forged")
+                    || line.contains("ghost")).collect(java.util.stream.Collectors.joining("\n"));
+            assertSame(prior, preparation.withTags(request, prior, onlyGuest, none::add));
+            assertFalse(none.contains("Fetching Git tags"), none.toString());
+            // The tagged copy shares the prior's lease, which the try closes.
+            var tagged = preparation.withTags(request, prior, reading, s -> {});
+            assertNotSame(prior, tagged);
+            assertEquals(Map.of("refs/tags/v1", git(remote, "rev-parse", "v1"), "refs/tags/light", git(remote, "rev-parse", "light"),
+                    "refs/tags/later", git(remote, "rev-parse", "later")), tags(tagged.repository()));
+            var objects = allObjects(tagged.repository());
+            assertFalse(objects.contains(secret), "the forged ID");
+            for (var name : List.of("hidden", "forged")) {
+                assertFalse(objects.contains(git(remote, "rev-parse", name)), name + "'s tag object");
+            }
+            assertTrue(tagged.checksums().keySet().containsAll(prior.checksums().keySet()));
+            assertEquals(prior.checksums().size() + 2, tagged.checksums().size(), "one pack and index of tag objects");
+            assertEquals("", git(tagged.repository(), "fsck", "--full", "--no-dangling", "--strict"));
+            assertEquals(Map.of(), tags(prior.repository()), "the snapshot the tags were added to is untouched");
+        }
+    }
+
+    /**
+     * Adds lightweight tags to {@code repo}'s packed refs, so names a case-insensitive file system cannot hold
+     * as loose refs side by side (macOS) are held there too, as a case-sensitive server holds them.
+     */
+    private static void packedTags(Path repo, Map<String, String> tags) throws Exception {
+        if (!git(repo, "rev-parse", "--show-ref-format").equals("files")) {
+            // reftable holds any names, on any file system.
+            for (var tag : tags.entrySet()) git(repo, "update-ref", "refs/tags/" + tag.getKey(), tag.getValue());
+            return;
+        }
+        git(repo, "pack-refs", "--all");
+        var packed = Path.of(git(repo, "rev-parse", "--path-format=absolute", "--git-path", "packed-refs"));
+        // Each entry is its ref line and the peeled line after it, if any, sorted by name as Git keeps them.
+        var entries = new TreeMap<String, String>();
+        String last = null;
+        for (var line : Files.readAllLines(packed)) {
+            if (line.startsWith("#")) continue;
+            if (line.startsWith("^")) entries.merge(last, "\n" + line, String::concat);
+            else entries.put(last = line.substring(line.indexOf(' ') + 1), line);
+        }
+        tags.forEach((name, id) -> entries.put("refs/tags/" + name, id + " refs/tags/" + name));
+        var text = new StringBuilder("# pack-refs with: peeled fully-peeled sorted \n");
+        entries.values().forEach(entry -> text.append(entry).append('\n'));
+        Files.writeString(packed, text);
+        assertEquals(tags.keySet().stream().map(name -> "refs/tags/" + name + " " + tags.get(name)).sorted().toList(),
+                git(repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/tags/").lines()
+                        .filter(line -> tags.keySet().stream().anyMatch(name -> line.startsWith("refs/tags/" + name + " ")))
+                        .sorted().toList(), "the remote holds every one of them");
+    }
+
+    @Execution(CONCURRENT) @Test void tagsWhoseLooseRefsCollideWhenCaseIsFoldedAreLeftOutOnEveryHost() throws Exception {
+        // A case-sensitive server may hold all of these, but a macOS cache could not write them side by side.
+        packedTags(remote, Map.of("Release", git(remote, "rev-parse", "HEAD~1"), "release", git(remote, "rev-parse", "HEAD~2"),
+                "Dir", git(remote, "rev-parse", "HEAD~1"), "dir/one", git(remote, "rev-parse", "HEAD~2"),
+                "kept", git(remote, "rev-parse", "HEAD~1")));
+        start();
+        var request = new GitPreparation.Request(server.url(remote), null, host);
+        try (var prior = prepare(host, null); var tagged = preparation.withTags(request, prior, guestReading(null), s -> {})) {
+            assertEquals(Map.of("refs/tags/v1", git(remote, "rev-parse", "v1"), "refs/tags/kept", git(remote, "rev-parse", "kept")),
+                    tags(tagged.repository()));
+        }
+    }
+
+    @Execution(CONCURRENT) @Test void aTagLeftOutOfTheHistoryKeepsNoOtherTagOut() throws Exception {
+        // Only "out" would be written, so nothing collides with it, as a network clone of main shows it.
+        packedTags(remote, Map.of("Out", git(remote, "rev-parse", "stable"), "out", git(remote, "rev-parse", "HEAD~1")));
+        start();
+        var request = new GitPreparation.Request(server.url(remote), null, host);
+        try (var prior = prepare(host, null); var tagged = preparation.withTags(request, prior, guestReading(null), s -> {})) {
+            assertEquals(Map.of("refs/tags/v1", git(remote, "rev-parse", "v1"), "refs/tags/out", git(remote, "rev-parse", "out")),
+                    tags(tagged.repository()));
+        }
+    }
+
+    @Execution(CONCURRENT) @Test void foldingCatchesTheSameFileAndAFileWhereADirectoryIsNeeded() {
+        var names = List.of("refs/heads/main", "refs/tags/A", "refs/tags/a", "refs/tags/Dir", "refs/tags/dir/x",
+                "refs/tags/MAIN", "refs/tags/v1", "refs/tags/v1.1");
+        // A branch and a tag of one name are other directories; a name that only starts like another is not its directory.
+        assertEquals(Set.of("refs/tags/A", "refs/tags/a", "refs/tags/Dir", "refs/tags/dir/x"),
+                GitPreparation.foldCollisions(names));
+        // Upper then lower case, as a file system folds: a final sigma is the same letter as a medial one.
+        assertEquals(Set.of("refs/tags/ΑΣ", "refs/tags/ασ"),
+                GitPreparation.foldCollisions(List.of("refs/tags/ΑΣ", "refs/tags/ασ", "refs/tags/x")));
+    }
+
+    @Execution(CONCURRENT) @Test void aTagOutsideTheRefsHistoryBringsNoObjects() throws Exception {
+        tag(remote, "-a", "stable-release", "stable", "-m", "outside main");
+        tag(remote, "stable-light", "stable");
+        start();
+        var request = new GitPreparation.Request(server.url(remote), null, host);
+        try (var prior = prepare(host, null); var tagged = preparation.withTags(request, prior, guestReading(null), s -> {})) {
+            assertEquals(Map.of("refs/tags/v1", git(remote, "rev-parse", "v1")), tags(tagged.repository()));
+            var roots = git(tagged.repository(), "for-each-ref", "--format=%(objectname)", "refs/heads/", "refs/tags/");
+            var command = new ArrayList<>(List.of("rev-list", "--objects", "--no-object-names"));
+            command.addAll(roots.lines().toList());
+            assertEquals(new HashSet<>(git(remote, command.toArray(String[]::new)).lines().toList()),
+                    allObjects(tagged.repository()), "the store is the ref's closure and its tags' own objects");
+        }
+    }
+
+    @Execution(CONCURRENT) @Test void aTagThatMovedBeforeTheFetchIsLeftOut() throws Exception {
+        tag(remote, "light", "HEAD~1");
+        start();
+        var request = new GitPreparation.Request(server.url(remote), null, host);
+        try (var prior = prepare(host, null)) {
+            var reading = guestReading(null);
+            var read = git(remote, "rev-parse", "v1");
+            tag(remote, "-f", "-a", "v1", "HEAD~3", "-m", "moved after both readings");
+            try (var tagged = preparation.withTags(request, prior, reading, s -> {})) {
+                assertEquals(Map.of("refs/tags/light", git(remote, "rev-parse", "light")), tags(tagged.repository()));
+                var objects = allObjects(tagged.repository());
+                assertFalse(objects.contains(read));
+                assertFalse(objects.contains(git(remote, "rev-parse", "v1")), "the moved tag's object stays behind");
+                assertEquals(prior.checksums(), tagged.checksums(), "no tag object was added");
+            }
+        }
+    }
+
+    @Execution(CONCURRENT) @Test void lightweightTagsAloneFetchNothing() throws Exception {
+        git(remote, "tag", "-d", "v1");
+        tag(remote, "light", "HEAD~1");
+        start();
+        var request = new GitPreparation.Request(server.url(remote), null, host);
+        try (var prior = prepare(host, null)) {
+            var phases = new ArrayList<String>();
+            try (var tagged = preparation.withTags(request, prior, guestReading(null), phases::add)) {
+                assertEquals(Map.of("refs/tags/light", git(remote, "rev-parse", "light")), tags(tagged.repository()));
+                assertEquals(prior.checksums(), tagged.checksums());
+                assertFalse(phases.contains("Fetching Git tags"), phases.toString());
+            }
+        }
+    }
+
+    @Execution(CONCURRENT) @Test void thePublishedSnapshotHoldsNoTags() throws Exception {
+        start();
+        var request = new GitPreparation.Request(server.url(remote), null, host);
+        try (var prior = prepare(host, null); var tagged = preparation.withTags(request, prior, guestReading(null), s -> {})) {
+            assertEquals(1, tags(tagged.repository()).size());
+            assertEquals(Map.of(), tags(prior.repository()), "the snapshot the tags were added to is untouched");
+        }
+        for (var snapshot : PreparationGit.children(cache.resolve("snapshots"))) {
+            assertEquals(Map.of(), tags(snapshot.resolve("repo.git")));
+        }
+        // A guest whose reading shows no tags then gets none from the cached snapshot.
+        try (var hit = prepare(host, null)) {
+            assertEquals("cached clean snapshot", hit.strategy());
+            var noTags = guestReading(null).lines().filter(line -> !line.contains("refs/tags/"))
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            assertSame(hit, preparation.withTags(request, hit, noTags, s -> {}));
         }
     }
 

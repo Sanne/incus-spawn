@@ -282,6 +282,37 @@ class RepoClonerPreparedTest {
         assertTrue(scripts.stream().noneMatch(s -> s.contains("pack-objects")), "guest copy must not repack");
     }
 
+    @Test void aMountedSnapshotDescribesAsTheNetworkCloneDoes() throws Exception {
+        // A prime reading tags (git describe, setuptools-scm, jgitver) must not depend on the clone's path (#2051).
+        var tag = List.of("-c", "user.name=t", "-c", "user.email=t@t", "tag");
+        gitArgs(remote, tag, "-a", "v1.0", "main~3", "-m", "annotated");
+        gitArgs(remote, tag, "v1.1", "main~1");
+        gitArgs(remote, tag, "-a", "nested", "v1.0", "-m", "a tag of a tag");
+        gitArgs(remote, tag, "-a", "stable-only", "stable", "-m", "outside main's history");
+        var result = run(null);
+        assertEquals(BuildProgress.StepState.DONE, result.state(), result.detail());
+        assertTrue(result.note().startsWith("via "), result.note());
+        assertEquals(1, mounts.size());
+        var guest = tmp.resolve("guest");
+        var network = tmp.resolve("network");
+        git(tmp, "clone", "-q", "--", server.url(remote), network.toString());
+        for (var describe : List.of(List.of("describe", "--tags"), List.of("describe"), List.of("describe", "--tags", "HEAD~2"))) {
+            assertEquals(gitArgs(network, describe), gitArgs(guest, describe), describe.toString());
+        }
+        assertEquals(git(network, "tag", "-l", "--merged", "HEAD"), git(guest, "tag", "-l"));
+        assertEquals(git(network, "for-each-ref", "refs/tags/v1.0", "refs/tags/v1.1", "refs/tags/nested"),
+                git(guest, "for-each-ref", "refs/tags/"));
+        assertFalse(allObjects(guest.resolve(".git")).contains(git(remote, "rev-parse", "stable")),
+                "a tag outside the requested history brings no history");
+        assertEquals("", git(guest, "fsck", "--full", "--no-dangling"));
+    }
+
+    private static String gitArgs(Path repo, List<String> args, String... more) throws Exception {
+        var all = new ArrayList<>(args);
+        all.addAll(List.of(more));
+        return git(repo, all.toArray(String[]::new));
+    }
+
     @Test void snapshotOwnedByAnotherUidIsTrustedForItsOwnCloneOnly() throws Exception {
         foreignSnapshot = true;
         guestConfig = tmp.resolve("guest.config");

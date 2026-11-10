@@ -125,6 +125,7 @@ class RepoClonerTest {
         when(preparation.prepare(any(), any())).thenReturn(stale);
         doThrow(new java.io.IOException("staging busy")).when(stale).close();
         when(preparation.refresh(any(), eq(stale), eq("moved"), any())).thenReturn(refreshed);
+        when(preparation.withTags(any(), eq(refreshed), eq("moved"), any())).thenReturn(refreshed);
         when(refreshed.matchesAdvertisement("moved")).thenReturn(true);
         when(refreshed.repository()).thenReturn(Path.of("/cache/snapshot"));
         var repo = new ImageDef.RepoEntry();
@@ -1133,6 +1134,7 @@ class RepoClonerTest {
         when(snapshot.matchesAdvertisement("advertised")).thenReturn(true);
         when(snapshot.repository()).thenReturn(Path.of("/owned/snapshot"));
         when(preparation.prepare(any(), eq(refs), any())).thenReturn(snapshot);
+        when(preparation.withTags(any(), eq(snapshot), any(), any())).thenReturn(snapshot);
         var repo = repo("https://example.invalid/repo", "~/repo", null);
         var states = new java.util.concurrent.atomic.AtomicReferenceArray<dev.incusspawn.command.BuildProgress.StepProgress>(1);
 

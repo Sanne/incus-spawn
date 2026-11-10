@@ -522,6 +522,18 @@ Measured 2026-11-08 on the Quarkus checkout with Git 2.56 on 32 cores, counting 
 So the snapshot of `main` holds 45% of the objects it used to, which every build copies into the guest and every rebuild packs and checks.
 The guest's and the host's `ls-remote` now ask for one ref instead of every branch and tag, which on nixpkgs is thousands of refs.
 
+## Git preparation: tags into the ref's history (issue #2051)
+
+Measured 2026-11-10 with Git 2.56 on 32 cores, from a container box to GitHub, timing `GitPreparation.withTags` on a fresh snapshot of each default branch.
+
+| Repository | Tags read | Tags added | `withTags` |
+| --- | --- | --- | --- |
+| `quarkusio/quarkus` | 533, all lightweight | 0 | 13 ms |
+| `git/git` | 1,012, annotated | 1,010 | 3.0 s, one fetch of the tag objects included |
+
+Quarkus tags its releases off `main`, so no tag lies in `main`'s history, and a network clone's `git describe` on `main` finds none either.
+The guest's and the host's `ls-remote` cost the same with `refs/tags/*` as without: 0.69 s against 0.61 s for Quarkus, within run-to-run noise, since a pattern sends no ref prefix and the server advertises every ref anyway.
+
 ## Measurement caveats worth remembering
 
 - **Native builds are not byte-reproducible here.** The same commit and toolchain produced
