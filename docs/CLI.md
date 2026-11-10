@@ -20,8 +20,32 @@ Running it again is safe, and is how you add, rename or remove an account.
 On a fresh Linux host it adds you to the `incus-admin` group, which other terminals get at your next login or with `newgrp incus-admin`.
 
 ```shell
-isx init [--no-sudo] [--plan [--format=table|plain|json]]
+isx init [--no-sudo] [--search-path=<dir>,...] [--code-dir=<dir>,...] [--fork-templates] [--service | --no-service] [--format=table|plain|json]
+isx init --plan [--format=table|plain|json]
 ```
+
+### Without a terminal
+
+`isx init` can run with no terminal, as an agent runs it.
+Each question that is not a secret has a flag that answers it, with or without a terminal:
+
+| Option | What it answers |
+|--------|-----------------|
+| `--search-path=<dir>,...` | Adds these directories to the template search paths |
+| `--code-dir=<dir>,...` | Adds these directories to the code directories |
+| `--fork-templates` | Forks the community templates with `gh` if you have no copy, then clones and adds it |
+| `--service`, `--no-service` | Whether to install the proxy as a service, and on macOS the VM too |
+
+There is no flag, variable or piped input for a secret.
+A missing credential stays your step, with the `isx account add` command that adds it.
+The template approvals for agents stay yours too, with `isx mcp setup`.
+A question no flag answers is skipped when there is no terminal.
+
+With `--format=json` or `plain`, init ends with a summary on stdout and its progress on stderr.
+The summary has a record per step, in the fields `isx init --plan` prints, read after the run.
+A last field, `skipped`, says that init skipped the step's question for want of a terminal.
+
+The run then exits 76 when it finished with a step only you can do, such as a credential, an approval or a step that needs root.
 
 `isx init --plan` says what `isx init` would change on this host, and changes nothing.
 It asks no question, writes no file, never runs sudo and asks Incus only to read.
@@ -1065,6 +1089,7 @@ A plain `ssh <name>` uses the instance's own Host block, which never starts a st
 | 3 | `isx proxy status` only: the proxy runs on an old bridge address |
 | 4 | `isx vm stop --require-clean`: the VM is stopped, but with signals rather than a guest shutdown. `isx proxy status`: the proxy holding its ports is another user's |
 | 75 | `isx init --no-sudo`: steps that need root are waiting in the script it names, for you to run |
+| 76 | `isx init --format=json` or `plain`: it finished, but left steps only you can do, which its summary names |
 | 78 | `isx proxy start` cannot run the proxy at all, such as when `isx-proxy` is not installed |
 
 Exit 1 covers a value the command rejects (`--format=yaml`, `--status=frozen`), Incus unreachable, and the like.

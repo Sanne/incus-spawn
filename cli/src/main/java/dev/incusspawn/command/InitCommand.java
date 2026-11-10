@@ -34,6 +34,7 @@ import dev.incusspawn.util.HostPath;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
+import org.aesh.command.option.OptionList;
 import dev.incusspawn.util.Privilege;
 
 import java.io.IOException;
@@ -64,6 +65,27 @@ import static dev.incusspawn.command.CredentialSetup.readInput;
 public class InitCommand extends BaseCommand {
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
+    // The answers to init's questions that are not secrets, for a run with no terminal (#2075).
+    // There is no option, variable or stdin path for a secret: a credential is the person's step.
+    @OptionList(name = "search-path",
+            description = "Add these directories to the template search paths, without asking (comma-separated)")
+    List<String> searchPathAnswers;
+
+    @OptionList(name = "code-dir",
+            description = "Add these directories to the code directories, without asking (comma-separated)")
+    List<String> codeDirAnswers;
+
+    @Option(name = "fork-templates", hasValue = false,
+            description = "Fork Sanne/incus-spawn-templates with gh if you have no copy, clone it and add it, without asking")
+    boolean forkTemplates;
+
+    @Option(name = "service", hasValue = false,
+            description = "Install the proxy (on macOS, the VM and the proxy) as a service, without asking")
+    boolean service;
+
+    @Option(name = "no-service", hasValue = false, description = "Do not install the services, without asking")
+    boolean noService;
+
     @Option(name = "no-sudo", hasValue = false,
             description = "Run nothing as root: write the steps that need root as a script for you to run, then carry on")
     boolean noSudo;
@@ -74,7 +96,7 @@ public class InitCommand extends BaseCommand {
 
     // Output for scripts (#1036): see OutputFormat for what plain and json promise.
     @Option(name = "format", completer = Completers.Format.class,
-            description = "With --plan, the output format: table (default), plain or json")
+            description = "The output format: table (default), plain or json; without --plan, plain and json end the run with a summary")
     String format;
 
     IncusClient incus;
@@ -317,10 +339,83 @@ public class InitCommand extends BaseCommand {
         return false;
     }
 
+    /** The steps whose question this run skipped, for want of a terminal and of a flag answering it (#2075). */
+    final Set<String> skipped = new java.util.LinkedHashSet<>();
+
+    /** The exit of a run that finished with steps left for the person, when a summary was asked for (#2075). */
+    static final int EXIT_STEPS_LEFT = 76;
+
     @Override
     protected CommandResult doExecute() throws Exception {
-        if (plan) return printPlan(OutputFormat.parse(format));
-        if (format != null) throw new IllegalArgumentException("--format goes with --plan");
+        var outputFormat = OutputFormat.parse(format);
+        if (plan) {
+            if (answersGiven()) throw new IllegalArgumentException("--plan only reads; the answers to init's questions go without it");
+            return printPlan(outputFormat);
+        }
+        checkAnswers();
+        if (outputFormat == OutputFormat.TABLE) return runInit();
+        // A script reads the summary on stdout, so everything on the way there goes to stderr
+        var result = withStdoutOnStderr(this::runInit);
+        return printSummary(outputFormat, result);
+    }
+
+    private boolean answersGiven() {
+        return searchPathAnswers != null || codeDirAnswers != null || forkTemplates || service || noService;
+    }
+
+    /** Refuses answers that contradict each other, or name a directory that is not one, before anything runs. */
+    void checkAnswers() {
+        if (service && noService) throw new IllegalArgumentException("--service and --no-service contradict each other");
+        for (var answers : java.util.Arrays.asList(searchPathAnswers, codeDirAnswers)) {
+            if (answers == null) continue;
+            for (var dir : answers) {
+                // An empty entry would read as the working directory
+                if (dir == null || dir.isBlank()) throw new IllegalArgumentException("an empty directory was given");
+                if (!Files.isDirectory(Path.of(HostResourceSetup.expandHostTilde(dir)))) {
+                    throw new IllegalArgumentException("'" + OutputFormat.oneLine(dir) + "' is not a directory");
+                }
+            }
+        }
+    }
+
+    /**
+     * The closing summary of a run asked for in a machine format (#2075): each step as
+     * {@code isx init --plan} reports it now, in the same fields, with {@code skipped} at the end
+     * saying init skipped its question for want of a terminal. A run that finished with steps left
+     * for the person (a credential, the MCP approvals, a root step) exits {@link #EXIT_STEPS_LEFT}.
+     */
+    CommandResult printSummary(OutputFormat outputFormat, CommandResult result) {
+        var code = result.getResultValue();
+        if (code != 0 && code != EXIT_WAITING_ON_PERSON) return result;
+        var entries = planEntries();
+        outputFormat.print(BuildOutput.results(), entries.stream().map(e -> summaryRecord(e, skipped.contains(e.step()))).toList());
+        return code == 0 && leftForThePerson(entries, appliedByScript(), noSudo) ? CommandResult.valueOf(EXIT_STEPS_LEFT) : result;
+    }
+
+    /** A step's summary record: the plan's fields, then {@code skipped}. */
+    static Map<String, Object> summaryRecord(InitPlan.Entry entry, boolean skipped) {
+        var record = InitPlan.record(entry);
+        record.put("skipped", skipped);
+        return record;
+    }
+
+    /**
+     * Whether a step is left that only the person can do: a secret, an approval, or a root change
+     * the {@code --no-sudo} script has not recorded as made ({@code applied}). A run with sudo made
+     * its root changes itself, so there only one the plan read as still missing is left: one only
+     * root can read is not checked, and was written by this run.
+     */
+    static boolean leftForThePerson(List<InitPlan.Entry> entries, Set<String> applied, boolean noSudo) {
+        var root = InitPlan.privileged(entries, applied).stream().filter(p -> noSudo || p.change().checked());
+        // A secret or an approval counts while its step is to do; one only offered, as a template
+        // the person chose not to approve, is theirs to decline
+        return root.findAny().isPresent() || entries.stream().anyMatch(e ->
+                e.assessment().state() == InitPlan.State.PENDING && e.assessment().changes().stream()
+                        .anyMatch(c -> c.who() == InitPlan.Who.SECRET || c.who() == InitPlan.Who.APPROVAL));
+    }
+
+    /** The run itself, in whatever format its summary goes. */
+    CommandResult runInit() throws Exception {
         // From here this process elevates nothing: every sudo is the script's (#2074)
         if (noSudo) Privilege.forbid();
         if (!requireIncusHost()) return CommandResult.valueOf(1);
@@ -1117,6 +1212,8 @@ public class InitCommand extends BaseCommand {
     private List<String> selectCredentials(Map<String, ToolSetup> allTools) {
         var prompts = prompts();
         if (prompts == null) {
+            // No answer to a credential comes from anywhere but a person at a terminal (#2075)
+            skipped.add("credentials");
             return List.of();
         }
         return credentials.selectCredentials(allTools, SpawnConfig.load(), prompts);
@@ -1140,19 +1237,47 @@ public class InitCommand extends BaseCommand {
     private void setupPathList(
             java.util.function.Function<SpawnConfig, java.util.List<String>> getter,
             java.util.function.BiConsumer<SpawnConfig, java.util.List<String>> setter,
-            String skipMessage) {
+            String skipMessage, String step, List<String> answers, String flag) {
         var config = SpawnConfig.load();
-        var prompts = consoleOrExplain();
+        if (answers != null) {
+            addPaths(getter, setter, config, answers);
+            return;
+        }
+        var prompts = prompts();
         if (prompts != null) {
             credentials.setupPathList(getter, setter, skipMessage, config, prompts);
         } else {
+            BuildOutput.note("Skipped: no terminal. Add directories with " + flag + ", or run 'isx init' at a terminal.");
+            skipped.add(step);
             credentials.printCurrentPaths(getter.apply(config));
+        }
+    }
+
+    /** Adds {@code answers} to a path list, as the question would have: each a directory, resolved, once. */
+    static void addPaths(java.util.function.Function<SpawnConfig, java.util.List<String>> getter,
+                         java.util.function.BiConsumer<SpawnConfig, java.util.List<String>> setter,
+                         SpawnConfig config, List<String> answers) {
+        var paths = new ArrayList<>(getter.apply(config));
+        for (var answer : answers) {
+            var resolved = Path.of(HostResourceSetup.expandHostTilde(answer)).toAbsolutePath().normalize().toString();
+            if (paths.contains(resolved)) {
+                BuildOutput.step("Already in the list: " + resolved);
+            } else {
+                paths.add(resolved);
+                BuildOutput.step("Added: " + resolved);
+            }
+        }
+        if (!paths.equals(getter.apply(config))) {
+            setter.accept(config, paths);
+            config.save();
+            BuildOutput.step("Paths saved.");
         }
     }
 
     private void setupMcp() {
         var prompts = Prompts.console();
         if (prompts == null) {
+            skipped.add("mcp");
             BuildOutput.step("Skipped: no console. Run '" + MCP_SETUP_COMMAND + "' at a terminal to set this up.");
             return;
         }
@@ -1391,20 +1516,50 @@ public class InitCommand extends BaseCommand {
     private static final String TEMPLATES_URL = "https://github.com/" + TEMPLATES_UPSTREAM;
 
     private void setupSearchPaths() {
-
-        if (!hasExistingTemplatesSearchPath(SpawnConfig.load().getSearchPaths())) {
+        if (forkTemplates) {
+            forkAndCloneTemplates();
+        } else if (searchPathAnswers == null && !hasExistingTemplatesSearchPath(SpawnConfig.load().getSearchPaths())) {
             offerTemplatesRepo();
         }
 
         setupPathList(
                 SpawnConfig::getSearchPaths,
                 SpawnConfig::setSearchPaths,
-                "No search paths configured. You can add them later in ~/.config/incus-spawn/config.yaml");
+                "No search paths configured. You can add them later in ~/.config/incus-spawn/config.yaml",
+                "search-paths", searchPathAnswers, "--search-path");
     }
 
     static boolean hasExistingTemplatesSearchPath(java.util.List<String> searchPaths) {
         return searchPaths.stream()
                 .anyMatch(p -> Path.of(p).getFileName().toString().equals(TEMPLATES_REPO));
+    }
+
+    /**
+     * {@code --fork-templates}: what the offer does on a yes, asking nothing. The clone goes to the
+     * default path, which the offer only confirms; it needs a logged-in {@code gh}, or it says why not.
+     */
+    private void forkAndCloneTemplates() {
+        if (hasExistingTemplatesSearchPath(SpawnConfig.load().getSearchPaths())) {
+            BuildOutput.step("A templates repository is already among the search paths.");
+            return;
+        }
+        var login = commandExists("gh") && commandExists("git") ? getGhLogin() : null;
+        if (login == null) {
+            BuildOutput.warn("--fork-templates needs gh and git, with gh logged in ('gh auth login').",
+                    "Nothing was forked or cloned.");
+            return;
+        }
+        var nwo = login + "/" + TEMPLATES_REPO;
+        if (!ghRepoExists(nwo)) {
+            BuildOutput.stepStart("Forking " + TEMPLATES_UPSTREAM);
+            if (runHostCapturingExit("gh", "repo", "fork", TEMPLATES_UPSTREAM, "--clone=false") != 0) {
+                BuildOutput.stepBreak();
+                BuildOutput.warn("Fork failed.", "You can fork it manually at: " + TEMPLATES_URL + "/fork");
+                return;
+            }
+            BuildOutput.stepDone(nwo);
+        }
+        cloneAndAddSearchPath(null, nwo, defaultClonePath(), true);
     }
 
     private void offerTemplatesRepo() {
@@ -1557,7 +1712,8 @@ public class InitCommand extends BaseCommand {
                 SpawnConfig::getHostPaths,
                 SpawnConfig::setHostPaths,
                 "No host paths configured. Add them later by re-running 'isx init'"
-                        + " or editing ~/.config/incus-spawn/config.yaml");
+                        + " or editing ~/.config/incus-spawn/config.yaml",
+                "code-directories", codeDirAnswers, "--code-dir");
     }
 
     /**
@@ -1581,7 +1737,13 @@ public class InitCommand extends BaseCommand {
     }
 
     private boolean wantsMacOsServices(Prompts prompts) {
+        if (service) return true;
+        if (noService) {
+            BuildOutput.step("Not installed, as --no-service asks. Start manually with: isx vm start && isx proxy start");
+            return false;
+        }
         if (prompts == null) {
+            skipped.add("macos-services");
             BuildOutput.step("Skipped: no console. Start manually with: isx vm start && isx proxy start");
             return false;
         }
@@ -1618,7 +1780,13 @@ public class InitCommand extends BaseCommand {
     }
 
     private boolean wantsProxyService(Prompts prompts) {
+        if (service) return true;
+        if (noService) {
+            BuildOutput.step("Not installed, as --no-service asks. You can start the proxy manually with: isx proxy start");
+            return false;
+        }
         if (prompts == null) {
+            skipped.add("proxy-service");
             BuildOutput.step("Skipped: no console. You can start the proxy manually with: isx proxy start");
             return false;
         }
@@ -1901,7 +2069,9 @@ public class InitCommand extends BaseCommand {
         }
         // Registered, with no template to approve: the step asks, and has nothing to change
         if (offers.isEmpty()) return InitPlan.Assessment.done().asking();
-        return new InitPlan.Assessment(InitPlan.State.OPTIONAL, true, offers, null);
+        // With no template approved yet, no agent can use isx until the person approves one: to do
+        var state = approved.isEmpty() && !candidates.isEmpty() ? InitPlan.State.PENDING : InitPlan.State.OPTIONAL;
+        return new InitPlan.Assessment(state, true, offers, null);
     }
 
     InitPlan.Assessment planBridgeDns() {
@@ -2002,7 +2172,7 @@ public class InitCommand extends BaseCommand {
         try {
             var pb = new ProcessBuilder(command);
             pb.inheritIO();
-            return pb.start().waitFor();
+            return StdoutOnStderr.run(pb);
         } catch (IOException | InterruptedException e) {
             BuildOutput.warn("Failed to run: " + String.join(" ", command) + ": " + failure(e));
             return 1;
