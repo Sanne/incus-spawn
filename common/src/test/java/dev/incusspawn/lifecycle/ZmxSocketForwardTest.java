@@ -218,7 +218,7 @@ class ZmxSocketForwardTest {
         return daemon.instanceDevices(NAME).get(DEVICE);
     }
 
-    /** The host dir resolves as zmx 0.6.0 and 0.8.1 resolve their socket dir, {@code $TMPDIR/zmx-<uid>} included. */
+    /** The host dir resolves as zmx 0.6.0, 0.8.1 and 1.0.1 resolve their socket dir, {@code $TMPDIR/zmx-<uid>} included. */
     @Test
     void hostZmxDirResolvesAsZmxDoes() {
         Supplier<String> uid = () -> "1000";

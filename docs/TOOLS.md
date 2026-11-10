@@ -553,6 +553,11 @@ Each other session of the instance appears as `isx-<instance>.<session>`.
 isx links the sessions it finds each time a shell opens and closes, and drops the links of sessions that ended.
 
 All zmx commands work natively, including interactive `zmx attach`.
+
+isx installs zmx 1.0 or later, and host zmx reaches its sessions only when it is 1.0 or later too.
+An instance built with 0.8 keeps it until replaced: host `zmx list` shows its sessions as unreachable, and attaching waits without an error.
+`isx shell` attaches inside it; a branch of the template rebuilt with `isx build --out-of-sync` gets 1.0.
+
 On macOS, where Incus runs inside a VM, host-side socket sharing is not available.
 zmx sessions still work inside instances: `isx shell` (or Enter in the TUI) auto-attaches, and sessions persist across disconnections.
 

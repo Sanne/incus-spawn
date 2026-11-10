@@ -109,6 +109,10 @@ The reasons:
   A `zmx/` that grants group or others any access is set back to `0700` at the same points and on every shell: the guest owns `<name>` through the shifted mount and can open it to anyone, so `zmx/` is what keeps other users out of its sessions and logs.
   When they are not, the instance gets no device, says why, and is stamped `user.incus-spawn.zmx-withheld`; the first start that finds the directory right adds the device back and clears the stamp.
   The host zmx dir holds only the absolute `isx-<name>` links, so host `zmx list` and `zmx attach` need no configuration.
+  isx itself only links sockets and never runs zmx on the host, but the user's host zmx speaks the guest daemon's protocol through those links.
+  zmx 0.8.1 and 1.0.1 do not interoperate in either direction: `zmx list` shows the other's session as `status=unreachable`, and `attach`, `run` and `kill` wait without an error.
+  zmx 1.0 froze its IPC protocol, so a host zmx of 1.0 or later reaches every instance built with 1.0 or later; one built with 0.8.1 is reached only by a host zmx of 0.8.
+  Inside an instance the daemon and client are always the same binary: a template rebuild changes neither an instance branched before it nor that instance's running sessions.
   Every other session socket in the instance's directory is linked as `isx-<name>.<session>` (#2059), each time `isx shell` or the TUI opens a shell and again when it returns, so a session the guest named itself shows up too.
   An instance name has no dot, so `isx-<name>.` is that instance's alone, and destroy never removes another instance's links.
   The guest chooses these names, so only an entry that is itself a socket (`lstat`, never a link it made) with a name `ShellSession.NAME` accepts is linked, at most `MAX_SESSION_LINKS` (64) of them, the first by name, and a link whose socket is gone is dropped.
