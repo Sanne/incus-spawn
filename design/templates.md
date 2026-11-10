@@ -27,6 +27,18 @@ A new name must also be short enough to rebuild under its temporary name (`Build
 Code that must tell templates from instances reads the `base` type every build stamps (`isx list`, `isx doctor`), never the name.
 The TUI's F4 once looked for `tpl-isx-presentation` when asked to edit `isx-presentation`, because the edit command added the prefix.
 
+**A definition can arrive whole, from something other than an editor** (#2076).
+`isx templates new <name> --from <file|->` checks it and stores it with no editor and no prompt, and `isx templates validate <file|-|name>` is the check alone.
+Feedback says people do not expect to write templates by hand, so a form, an agent or something not yet chosen will; each ends with a complete definition that isx must check, explain and store, and `--from` is that step's first caller.
+The editor, `--from` and `validate` share one check, `TemplateValidator.validate(yaml, location, known)`, which checks text as if it were the file at `location`, since where a definition lives decides whether it is project-local and so confined.
+Its findings are structured (`TemplateFinding`: severity, the field at fault, a message), so a form can mark the field and an agent correct its own mistake; the edit loop still reports only their messages, as before.
+The check refuses a repo the loader would skip the whole file for (`ImageDef.repoProblem`, one rule for both), so `--from` never stores a template that then does not exist; the edit loop, which used to call such a file valid beside the load's warning, now reports it once, as an error.
+The check also lists what the definition's own fields reach beyond its instance (`TemplateReach`: a `file://` base image, a child's too since a change of machine type builds it from scratch, host resources, `host-source` repos, `gui`, account pins, coordinator control; for a project-local definition `gui` and `coordinator` are told as what they do there, no branch default and ignored), which is what a person reviews once something else writes the templates.
+`--from` refuses a `name:` that disagrees with the name given rather than choosing one, writes nothing for a definition with an error, and creates its file exclusively; `--replace` swaps in a whole new file, and only the template's own (`TemplatesCommand.placeProblem`), never a built-in or the other layer's.
+The skeleton the editor starts from is written by the same `TemplatesCommand.store`.
+An earlier design added `--tool` and `--repo` flags that wrote the YAML; it was dropped, since a flag per field is a second way to write a template, and every later field would either be refused arbitrarily or make the flags a shadow of the YAML schema.
+Changing part of an existing template stays out: rewriting a hand-written file loses its comments and layout.
+
 **`/tmp` is on disk** (#1561): `tpl-minimal` masks `tmp.mount`; what that means for users is in `docs/FEDORA.md`.
 It is in the root template, not in one template (yrodiere/incus-spawn-templates#68 did it in `tpl-dev-base`), because the restarts that empty a tmpfs come from isx itself and hit every template.
 It is not in the base image either, which would put an isx choice in a Fedora image other tools could use.
