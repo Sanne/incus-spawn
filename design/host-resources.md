@@ -109,6 +109,10 @@ The reasons:
   A `zmx/` that grants group or others any access is set back to `0700` at the same points and on every shell: the guest owns `<name>` through the shifted mount and can open it to anyone, so `zmx/` is what keeps other users out of its sessions and logs.
   When they are not, the instance gets no device, says why, and is stamped `user.incus-spawn.zmx-withheld`; the first start that finds the directory right adds the device back and clears the stamp.
   The host zmx dir holds only the absolute `isx-<name>` links, so host `zmx list` and `zmx attach` need no configuration.
+  Every other session socket in the instance's directory is linked as `isx-<name>.<session>` (#2059), each time `isx shell` or the TUI opens a shell and again when it returns, so a session the guest named itself shows up too.
+  An instance name has no dot, so `isx-<name>.` is that instance's alone, and destroy never removes another instance's links.
+  The guest chooses these names, so only an entry that is itself a socket (`lstat`, never a link it made) with a name `ShellSession.NAME` accepts is linked, at most `MAX_SESSION_LINKS` (64) of them, the first by name, and a link whose socket is gone is dropped.
+  The check holds only when the link is made: the guest can later swap the socket for a link of its own, as it can the `isx` socket, so the targets carry the same trust the `isx-<name>` link always had.
   isx makes that dir `0700` when it is missing, and links only from one that is the user's alone; otherwise the shell warns and the device stays, since its directory is private.
   Destroy and rename remove the instance's directory with everything zmx wrote in it, its `logs/` included, and follow no symlink (#1772).
   They walk it only through a `zmx/` that is the user's alone; otherwise the directory stays and they warn.

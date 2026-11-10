@@ -255,6 +255,18 @@ Before #1027 a script or agent running `isx branch` hit the failed `/dev/tty` op
 Since the branch itself had succeeded, `isx branch` now reports it, says how to connect, and exits 0 without a shell; `isx shell` refuses before starting the instance, with exit status 1.
 Requiring stdout too means `isx shell <name> | tee log` is refused, where it used to work: it is the convention `confirmDestructive` already uses, and a shell whose output is not a terminal cannot be drawn correctly anyway.
 
+**A shell names the session it enters** (#2059).
+With zmx or tmux auto-attaching, every shell entered the session `isx`, so a second terminal mirrored the first.
+`ShellPrep` now carries a `ShellSession`: the default `isx`, a named one (`isx shell --session <name>`), a new one (the TUI's `n`), or none (`--no-attach`); `InteractiveShell.innerScript` turns it into the login's script.
+A new session is named in the guest, by the first free number from 2 that `zmx list --short` or `tmux has-session` does not hold, so naming it costs no round trip.
+The shell keeps the number it chose in the guest's runtime directory under a key made once per shell, so a reconnect, which runs the same script, re-enters that session rather than taking the next number and leaving it behind.
+Two `n` presses at the same moment can still pick the same number; that race was judged too rare to lock against.
+A session asked for is entered even when the host terminal is in tmux, where the default one is skipped, since the user asked for it.
+Its multiplexer is the one that auto-attaches, else zmx, else tmux; with neither, the plain login shell is independent already.
+A template's `shell-command` runs in the session asked for, in zmx as before, and outside any session with `--no-attach`.
+A name is held to `ShellSession.NAME` (1 to 32 of `[A-Za-z0-9_-]`, never a leading `-`, which zmx and tmux would read as an option) and checked before anything reaches Incus, so the script needs no quoting and the host link (`isx-<name>.<session>`, design/host-resources.md) stays unambiguous.
+Alternatives: only `--no-attach` loses persistence, the reason zmx is installed; a host-chosen name needs a second path where the host cannot see the sockets (macOS, tmux); Ctrl or Alt+F2 are unreliable across terminals, while `n` already means "new" on a template row.
+
 **Shell status bar** (feature-flagged as `shell-status-bar`): `ShellStatusBar` pins a two-line bar at the bottom of the terminal during `isx shell` sessions, showing instance name, template, IP and network mode.
 F12 opens a quick-action menu populated from tool actions with `shell_menu: true` and a `shortcut` -- only `url` actions, because the menu runs them while the session owns the terminal in raw mode, and a `command` action's process would share that tty with the shell (fighting it for keystrokes and writing past the bar).
 Actions run on a virtual thread, so a slow URL launcher never holds up keystrokes, and through `ToolAction.executeWithoutPrompting`, which returns an error where `execute` would ask the user something (VS Code's missing Remote-SSH extension) and by default refuses, so a new action is safe until it says it never prompts.

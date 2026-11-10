@@ -97,8 +97,15 @@ Open a shell in an existing instance.
 
 ```shell
 isx shell <instance>
+isx shell <instance> --session <name>
+isx shell <instance> --no-attach
 isx shell <instance> --task [<task-id>]
 ```
+
+When the instance auto-attaches to zmx or tmux, every `isx shell` enters its session `isx`, so two terminals show the same screen.
+`--session <name>` enters another session instead, and creates it when it is missing.
+A name is 1 to 32 letters, digits, `-` or `_`, and does not start with `-`.
+`--no-attach` opens a plain login shell outside any session.
 
 With `--task`, it opens the conversation of a task an agent [delegated over MCP](MCP.md) instead of a shell.
 The agent resumes it in the directory it worked in, and leaving it ends the session.
