@@ -20,7 +20,7 @@ Running it again is safe, and is how you add, rename or remove an account.
 On a fresh Linux host it adds you to the `incus-admin` group, which other terminals get at your next login or with `newgrp incus-admin`.
 
 ```shell
-isx init [--plan [--format=table|plain|json]]
+isx init [--no-sudo] [--plan [--format=table|plain|json]]
 ```
 
 `isx init --plan` says what `isx init` would change on this host, and changes nothing.
@@ -69,8 +69,26 @@ With `--format=json` each step is an object with these fields, in order:
 | `note` | Why a step is unknown, or what else to know, or `null` |
 | `purpose` | What the step is for |
 | `check_commands` | For what the plan did not check, the commands you run with sudo to check it |
+| `sudo_script` | The step's lines of the `--no-sudo` script, run as root |
 
 `plain` prints the same fields, one step per line, as the formats below describe.
+The last field, `sudo_script`, holds the step's lines of the script `isx init --no-sudo` writes.
+
+### Without sudo
+
+`isx init --no-sudo` runs nothing as root, for you or for an agent driving the install.
+It writes every step that needs root into one script, `~/.local/state/incus-spawn/init-privileged.sh`, with a comment saying why each is there.
+It then exits 75 and names the script.
+
+Read the script, run it as root with `sudo sh`, then run `isx init --no-sudo` again.
+The second run checks that each step took effect, then does the rest of the setup as you.
+A fresh host needs the script once.
+
+Some of what the script does only root can check afterwards, such as the btrfs sudoers rule.
+The script records what it ran in `/var/lib/isx/init-applied`, which the second run reads for those steps.
+
+A step isx cannot write as a script, such as a UFW firewall's rules, stops the run and names what to do yourself.
+On macOS `isx init` needs no administrator, so `--no-sudo` changes nothing there.
 
 ## `isx build`
 
@@ -861,7 +879,7 @@ The fields of each command, in order:
 
 | Command | Fields |
 |---------|--------|
-| `isx init --plan` | one record per step: `step`, `title`, `state`, `who`, `asks`, `changes`, `commands`, `sudo_commands`, `files`, `note`, `purpose`, `check_commands` ([`isx init`](#isx-init) says what they mean) |
+| `isx init --plan` | one record per step: `step`, `title`, `state`, `who`, `asks`, `changes`, `commands`, `sudo_commands`, `files`, `note`, `purpose`, `check_commands`, `sudo_script` ([`isx init`](#isx-init) says what they mean) |
 | `isx templates` | `name`, `parent`, `source`, `description`, `built`, `built_at`, `version_outdated`, `definition_changed`, `parent_rebuilt` |
 | `isx tools list` | `name`, `source`, `description` |
 | `isx tools show <tool>` | `name`, `description`, `source`, `feature`, `requires`, `packages`, `parameters`, `actions` (labels), `downloads` (URLs), `proxy_domains` |
@@ -1035,6 +1053,7 @@ A plain `ssh <name>` uses the instance's own Host block, which never starts a st
 | 2 | The command line could not be parsed, with the usage on stderr |
 | 3 | `isx proxy status` only: the proxy runs on an old bridge address |
 | 4 | `isx vm stop --require-clean`: the VM is stopped, but with signals rather than a guest shutdown. `isx proxy status`: the proxy holding its ports is another user's |
+| 75 | `isx init --no-sudo`: steps that need root are waiting in the script it names, for you to run |
 | 78 | `isx proxy start` cannot run the proxy at all, such as when `isx-proxy` is not installed |
 
 Exit 1 covers a value the command rejects (`--format=yaml`, `--status=frozen`), Incus unreachable, and the like.

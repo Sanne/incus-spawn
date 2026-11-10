@@ -474,6 +474,7 @@ public final class BtrfsUsage {
         cmd.add("-n");
         cmd.add("btrfs");
         java.util.Collections.addAll(cmd, args);
+        dev.incusspawn.util.Privilege.check(cmd);
         var pb = new ProcessBuilder(cmd);
         pb.redirectErrorStream(false);
         return runProcess(pb, PROBE_TIMEOUT_SECONDS);

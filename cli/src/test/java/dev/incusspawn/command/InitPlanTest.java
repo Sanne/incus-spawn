@@ -69,7 +69,7 @@ class InitPlanTest {
         Query query(String... command) {
             var line = String.join(" ", command);
             // The guard the real one has, which would turn the step unknown rather than fail here
-            assertFalse(command[0].equals("sudo") && !command[1].equals("-n"), line);
+            assertFalse(command[0].equals("sudo"), line);
             queried.add(line);
             return answers.getOrDefault(line, new Query(1, ""));
         }
@@ -643,7 +643,8 @@ class InitPlanTest {
                   "files" : [ "/home/u/.config/incus-spawn/config.yaml" ],
                   "note" : null,
                   "purpose" : "Configures the firewall.",
-                  "check_commands" : [ ]
+                  "check_commands" : [ ],
+                  "sudo_script" : [ "firewall-cmd --reload" ]
                 } ]
                 """, bytes.toString(StandardCharsets.UTF_8).replace("\r\n", "\n"));
         assertTrue(JqValues.parseStrict(bytes.toString(StandardCharsets.UTF_8)).isArray());

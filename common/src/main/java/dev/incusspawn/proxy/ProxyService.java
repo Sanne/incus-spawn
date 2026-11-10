@@ -345,10 +345,15 @@ public final class ProxyService {
                 & runQuiet("systemctl", "--user", "enable", "--now", SERVICE_NAME)) BuildOutput.stepDone();
         else BuildOutput.stepBreak();
 
-        BuildOutput.stepStart("Enabling lingering for user (sudo required)");
-        if (runQuiet("sudo", "loginctl", "enable-linger", System.getProperty("user.name"))) BuildOutput.stepDone();
-        else BuildOutput.stepFail("The proxy stops when you log out. Run: sudo loginctl enable-linger "
-                + System.getProperty("user.name"));
+        if (dev.incusspawn.util.Privilege.forbidden()) {
+            // isx init --no-sudo: the person's script enabled it (#2074)
+            BuildOutput.note("Lingering is the root script's step, so the proxy keeps running after you log out once it ran.");
+        } else {
+            BuildOutput.stepStart("Enabling lingering for user (sudo required)");
+            if (runQuiet("sudo", "loginctl", "enable-linger", System.getProperty("user.name"))) BuildOutput.stepDone();
+            else BuildOutput.stepFail("The proxy stops when you log out. Run: sudo loginctl enable-linger "
+                    + System.getProperty("user.name"));
+        }
 
         if (isActive()) {
             if (ProxyHealthCheck.awaitHealthy(configuredStartWaitSeconds())) {
@@ -1582,6 +1587,7 @@ public final class ProxyService {
     }
 
     static boolean runQuiet(String... command) {
+        dev.incusspawn.util.Privilege.check(command);
         return commandRunner.test(command);
     }
 

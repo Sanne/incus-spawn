@@ -85,6 +85,7 @@ final class CowPoolBacking {
 
     /** Run a host command with stdout shown, returning stderr so the caller can word the failure. */
     static Attempt runCapturingStderr(String... command) {
+        dev.incusspawn.util.Privilege.check(command);
         try {
             var pb = new ProcessBuilder(command);
             pb.redirectInput(ProcessBuilder.Redirect.INHERIT);

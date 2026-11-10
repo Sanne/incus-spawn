@@ -188,8 +188,8 @@ class HostSetup {
         } else if (init.query("systemctl", "is-active", "--quiet", "incus").exitCode() != 0) {
             changes.add(InitPlan.Change.sudo("Enable and start the incus service", "sudo systemctl enable --now incus"));
         }
-        // This process's groups, as the step reads them: a membership added since login is not yet one
-        if (!List.of(WHITESPACE.split(init.query("id", "-nG").output())).contains("incus-admin")) {
+        // The group database, as the step reads it: a membership added since login counts, as sg uses it
+        if (!List.of(WHITESPACE.split(init.query("id", "-nG", user).output())).contains("incus-admin")) {
             changes.add(InitPlan.Change.sudo("Add " + user + " to the incus-admin group",
                     "sudo usermod -aG incus-admin " + user));
         }
@@ -253,9 +253,10 @@ class HostSetup {
             }
         }
 
-        // Always ensure current user is in incus-admin group
+        // Always ensure current user is in incus-admin group, as the group database has it: a
+        // membership added since this login counts, and the continuation under sg takes it up
         try {
-            var pb = new ProcessBuilder("id", "-nG");
+            var pb = new ProcessBuilder("id", "-nG", System.getProperty("user.name"));
             pb.redirectErrorStream(true);
             var process = pb.start();
             var groups = new String(process.getInputStream().readAllBytes()).strip();
@@ -335,8 +336,26 @@ class HostSetup {
      * Rules only root can read here: not checked, with what the run may change there, which needs
      * sudo, and the reads a person runs to check them (Sanne on #2091: say what is skipped and why).
      */
-    private static InitPlan.Assessment unreadable(String why, String what, List<String> checks) {
-        return InitPlan.Assessment.notChecked(why, InitPlan.Change.sudo(what, null), checks);
+    private static InitPlan.Assessment unreadable(String why, String what, List<String> checks, List<String> lines) {
+        return InitPlan.Assessment.notChecked(why, InitPlan.Change.sudo(what, null).scripted(lines), checks);
+    }
+
+    /** As root, without sudo: a line of the script. */
+    private static String asRoot(String[] command) {
+        return String.join(" ", command).substring("sudo ".length());
+    }
+
+    /**
+     * Every rule the firewall step adds, for a firewalld whose rules the plan could not read:
+     * firewalld leaves a rule that is already there as it is, so adding all of them is safe.
+     */
+    private static final List<String> FIREWALLD_ALL_RULES = List.of(asRoot(FWD_TRUST_BRIDGE), asRoot(FWD_MASQUERADE),
+            asRoot(FWD_FORWARD_IN), asRoot(FWD_FORWARD_OUT), asRoot(FWD_RELOAD));
+
+    /** The redirect to {@code gateway} (a literal, or a shell variable the script set), as the step adds it. */
+    private static List<String> redirectLines(String gateway) {
+        return List.of(asRoot(fwdRedirect("--add-rule", gateway)), asRoot(fwdRedirect("--remove-rule", null)),
+                asRoot(FWD_RELOAD));
     }
 
     private static final String FIREWALLD_UNREADABLE = "Not checked: firewalld's policy on this host lets only an"
@@ -398,7 +417,8 @@ class HostSetup {
      * firewalld listed: null when it would not answer, and empty for one with none of them yet.
      */
     private InitPlan.Assessment firewalldRuleChanges(String trustedZone, String directRules) {
-        if (trustedZone == null || directRules == null) return unreadable(FIREWALLD_UNREADABLE, "Add the firewall rules that are missing, if any", FIREWALLD_CHECKS);
+        if (trustedZone == null || directRules == null) return unreadable(FIREWALLD_UNREADABLE, "Add the firewall rules that are missing, if any", FIREWALLD_CHECKS,
+                FIREWALLD_ALL_RULES);
         var changes = new ArrayList<InitPlan.Change>();
         if (!trustedZone.contains("incusbr0")) changes.add(sudoChange("Add incusbr0 to the trusted zone", FWD_TRUST_BRIDGE));
         if (!trustedZone.contains("masquerade: yes")) changes.add(sudoChange("Enable masquerading (NAT) in the trusted zone", FWD_MASQUERADE));
@@ -415,7 +435,7 @@ class HostSetup {
     /** What {@link #configureUfw} would change, when {@code before.rules} can be read without sudo. */
     private InitPlan.Assessment planUfw() {
         var beforeRules = readIfReadable(init.hostFile(UfwCheck.BEFORE_RULES.toString()));
-        if (beforeRules == null) return unreadable(UFW_UNREADABLE, "Add the firewall rules that are missing, if any", UFW_CHECKS);
+        if (beforeRules == null) return unreadable(UFW_UNREADABLE, "Add the firewall rules that are missing, if any", UFW_CHECKS, List.of());
         String subnet;
         try {
             subnet = CidrUtils.deriveSubnet(ProxyConfig.resolveGatewayIp(init.incus));
@@ -433,7 +453,14 @@ class HostSetup {
                 sudoChange("Reload UFW", UFW_RELOAD)));
     }
 
+    /** What a step's root part says under {@code --no-sudo}, where the script made it (#2074). */
+    static final String DONE_BY_SCRIPT = "Its root part is the script's, which you ran; isx runs nothing as root here.";
+
     void configureFirewall() {
+        if (init.noSudo()) {
+            BuildOutput.note(DONE_BY_SCRIPT);
+            return;
+        }
 
         var detection = FirewallDetector.detect();
         switch (detection) {
@@ -620,6 +647,15 @@ class HostSetup {
         configureNetworkManager(Path.of(NM_CONF_DIR));
     }
 
+    /**
+     * A change applying a file the step just wrote, which the step only warns about when it fails:
+     * it applies after a reboot. The script carries on past it, as the step does.
+     */
+    private static InitPlan.Change tolerated(InitPlan.Change change) {
+        return change.scripted(change.script().stream()
+                .map(line -> line + " || echo 'Could not apply this now; it applies after a reboot.' >&2").toList());
+    }
+
     static final String NM_CONF_DIR = "/etc/NetworkManager/conf.d";
     private static final String NM_CONF_FILE = "99-unmanaged-veth.conf";
     private static final String NM_CONF = "[keyfile]\nunmanaged-devices=interface-name:veth*\n";
@@ -629,8 +665,8 @@ class HostSetup {
         if (!Files.isDirectory(confDir) || Files.exists(confDir.resolve(NM_CONF_FILE))) return InitPlan.Assessment.done();
         var file = Path.of(NM_CONF_DIR, NM_CONF_FILE).toString();
         return InitPlan.Assessment.of(List.of(
-                new InitPlan.Change("Tell NetworkManager to leave veth devices alone", InitPlan.Who.SUDO, null, file),
-                InitPlan.Change.sudo("Reload NetworkManager", "sudo nmcli general reload")));
+                InitPlan.Change.rootFile("Tell NetworkManager to leave veth devices alone", file, "0644", NM_CONF),
+                tolerated(InitPlan.Change.sudo("Reload NetworkManager", "sudo nmcli general reload"))));
     }
 
     void configureNetworkManager(Path confDir) {
@@ -688,8 +724,8 @@ class HostSetup {
     InitPlan.Assessment planHostSysctls(Path sysctlPath) {
         if (SYSCTL_CONTENT.equals(readIfReadable(sysctlPath))) return InitPlan.Assessment.done();
         return InitPlan.Assessment.of(List.of(
-                new InitPlan.Change("Raise the inotify limits and allow perf in containers", InitPlan.Who.SUDO, null, SYSCTL_CONF),
-                InitPlan.Change.sudo("Apply the sysctls", "sudo sysctl -p " + SYSCTL_CONF)));
+                InitPlan.Change.rootFile("Raise the inotify limits and allow perf in containers", SYSCTL_CONF, "0644", SYSCTL_CONTENT),
+                tolerated(InitPlan.Change.sudo("Apply the sysctls", "sudo sysctl -p " + SYSCTL_CONF))));
     }
 
     void configureHostSysctls(Path sysctlPath) {
@@ -749,8 +785,8 @@ class HostSetup {
             return InitPlan.Assessment.done();
         }
         return InitPlan.Assessment.of(List.of(
-                new InitPlan.Change("Turn on kernel same-page merging (KSM) for VMs", InitPlan.Who.SUDO, null, KSM_TMPFILES),
-                InitPlan.Change.sudo("Apply it", "sudo systemd-tmpfiles --create " + KSM_TMPFILES)));
+                InitPlan.Change.rootFile("Turn on kernel same-page merging (KSM) for VMs", KSM_TMPFILES, "0644", KSM_CONTENT),
+                tolerated(InitPlan.Change.sudo("Apply it", "sudo systemd-tmpfiles --create " + KSM_TMPFILES))));
     }
 
     /**
@@ -803,12 +839,17 @@ class HostSetup {
             config.save();
         }
 
-        var redirected = useUfw
-                ? configureMitmProxyUfw(gatewayIp, UfwCheck.readBeforeRules())
-                : configureMitmProxyFirewalld(gatewayIp);
-
-        configureHostSysctls();
-        configureKsm();
+        // Under --no-sudo the script made the redirect, the sysctls and KSM (#2074)
+        var redirected = true;
+        if (init.noSudo()) {
+            BuildOutput.note(DONE_BY_SCRIPT);
+        } else {
+            redirected = useUfw
+                    ? configureMitmProxyUfw(gatewayIp, UfwCheck.readBeforeRules())
+                    : configureMitmProxyFirewalld(gatewayIp);
+            configureHostSysctls();
+            configureKsm();
+        }
 
         // Generate CA certificate if it doesn't exist
         if (CertificateAuthority.exists()) {
@@ -865,7 +906,8 @@ class HostSetup {
 
     /** What {@link #configureMitmProxyFirewalld} would change, from rules read without sudo; null when unreadable. */
     InitPlan.Assessment planRedirectFirewalld(String gatewayIp, String rulesOutput) {
-        if (rulesOutput == null) return unreadable(FIREWALLD_UNREADABLE, "Add the redirect to the proxy, if it is missing", FIREWALLD_REDIRECT_CHECKS);
+        if (rulesOutput == null) return unreadable(FIREWALLD_UNREADABLE, "Add the redirect to the proxy, if it is missing", FIREWALLD_REDIRECT_CHECKS,
+                bridgeRedirectLines());
         if (FirewalldCheck.isPreRoutingRulePresent(rulesOutput, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp)) {
             return InitPlan.Assessment.done();
         }
@@ -883,7 +925,7 @@ class HostSetup {
     /** What {@link #configureMitmProxyUfw} would change, when {@code before.rules} can be read without sudo. */
     private InitPlan.Assessment planRedirectUfw(String gatewayIp) {
         var beforeRules = readIfReadable(init.hostFile(UfwCheck.BEFORE_RULES.toString()));
-        if (beforeRules == null) return unreadable(UFW_UNREADABLE, "Add the redirect to the proxy, if it is missing", UFW_CHECKS);
+        if (beforeRules == null) return unreadable(UFW_UNREADABLE, "Add the redirect to the proxy, if it is missing", UFW_CHECKS, List.of());
         if (UfwCheck.hasPreRoutingRedirect(beforeRules, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp)) {
             return InitPlan.Assessment.done();
         }
@@ -899,6 +941,22 @@ class HostSetup {
             "tokens directly. This step sets up iptables port redirection",
             "and generates a custom CA certificate trusted by containers."};
 
+    /**
+     * The redirect for the script, which reads the gateway from the bridge as it runs: the bridge
+     * {@code incus admin init} made, or one made as {@link IncusClient#createBridgeIfMissing}
+     * makes it when that did not. The same lines whether or not the gateway is known yet, so the
+     * script's record of them still holds once it is.
+     */
+    private static List<String> bridgeRedirectLines() {
+        var lines = new ArrayList<>(List.of(
+                "incus network show " + BridgeAddress.BRIDGE + " >/dev/null 2>&1 || incus network create " + BridgeAddress.BRIDGE
+                        + " ipv4.address=" + VmManager.gatewayIp() + "/24 ipv4.nat=true ipv6.address=none",
+                "gw=$(incus network get " + BridgeAddress.BRIDGE + " ipv4.address)",
+                "gw=${gw%/*}"));
+        lines.addAll(redirectLines("\"$gw\""));
+        return lines;
+    }
+
     /** What {@link #configureMitmProxy} would change. */
     InitPlan.Assessment planMitmProxy() {
         var parts = new ArrayList<InitPlan.Assessment>();
@@ -910,13 +968,15 @@ class HostSetup {
             unreadable = BaseCommand.failure(e);
         }
         var firewall = init.runningFirewall();
-        if (gatewayIp == null) {
+        // Before Incus is installed the gateway read is only the recorded or default one: admin init chooses its own
+        if (gatewayIp == null || !init.hostHasCommand("incus")) {
             if (init.hostHasCommand("incus")) {
                 parts.add(InitPlan.Assessment.unknown("The bridge's gateway cannot be read: " + unreadable));
             } else {
                 parts.add(InitPlan.Assessment.of(List.of(
                         InitPlan.Change.write("Record the bridge's gateway", InitPlan.Who.NONE, configFile()),
-                        InitPlan.Change.sudo("Redirect the containers' HTTPS on the bridge's gateway to the proxy", null)))
+                        InitPlan.Change.sudo("Redirect the containers' HTTPS on the bridge's gateway to the proxy", null)
+                                .scripted(firewall instanceof DetectionResult.UseUfw ? List.of() : bridgeRedirectLines())))
                         .noting("The gateway is known once Incus is set up."));
             }
         } else {
@@ -993,22 +1053,28 @@ class HostSetup {
         var changes = new ArrayList<InitPlan.Change>();
         var asks = false;
         for (var path : SUBID_FILES) {
-            var content = readIfReadable(init.hostFile(path));
-            if (content == null) return InitPlan.Assessment.unknown("Could not read " + path + ".");
+            var original = readIfReadable(init.hostFile(path));
+            if (original == null) return InitPlan.Assessment.unknown("Could not read " + path + ".");
+            var content = original;
+            var whats = new ArrayList<String>();
             for (var entry : SUBID_ENTRIES) {
                 var result = computeSubidUpdate(content, entry[0], entry[1]);
                 switch (result.action()) {
                     case UNCHANGED -> {}
                     case UPDATED -> {
                         content = result.newContent();
-                        changes.add(new InitPlan.Change("Add " + entry[0] + " to " + path, InitPlan.Who.SUDO, null, path));
+                        whats.add("Add " + entry[0] + " to " + path);
                     }
                     case NEEDS_CONFIRMATION -> {
                         asks = true;
-                        changes.add(new InitPlan.Change("Replace " + result.conflictingEntry() + " with " + entry[0]
-                                + " in " + path + ", if you agree", InitPlan.Who.SUDO, null, path));
+                        content = replaceSubidLine(content, result.conflictingEntry(), entry[0]);
+                        whats.add("Replace " + result.conflictingEntry() + " with " + entry[0] + " in " + path + ", if you agree");
                     }
                 }
+            }
+            if (!whats.isEmpty()) {
+                changes.add(new InitPlan.Change(String.join("; ", whats), InitPlan.Who.SUDO, null, path)
+                        .scripted(subidWrite(path, content)));
             }
         }
         if (!changes.isEmpty()) {
@@ -1018,7 +1084,23 @@ class HostSetup {
         return asks ? plan.asking() : plan;
     }
 
+    /** The root lines writing {@code content} to {@code path} as {@link #writeSubidFile} does: its mode kept, swapped in whole. */
+    private static List<String> subidWrite(String path, String content) {
+        var delimiter = InitPlan.Change.delimiter(content);
+        var lines = new ArrayList<String>();
+        lines.add("cat > " + path + ".isx-tmp <<'" + delimiter + "'");
+        lines.addAll(content.lines().toList());
+        lines.add(delimiter);
+        lines.add("chmod --reference=" + path + " " + path + ".isx-tmp");
+        lines.add("mv " + path + ".isx-tmp " + path);
+        return lines;
+    }
+
     void configureSubuidSubgid() {
+        if (init.noSudo()) {
+            BuildOutput.note(DONE_BY_SCRIPT);
+            return;
+        }
         boolean changed = false;
         for (var path : SUBID_FILES) {
             for (var entry : SUBID_ENTRIES) changed |= ensureSubidEntry(path, entry[0], entry[1]);
@@ -1225,7 +1307,7 @@ class HostSetup {
         return InitPlan.Assessment.notChecked("Not checked: only root can read " + BTRFS_SUDOERS
                         + ", and the plan never runs sudo. It should hold '" + btrfsSudoersContent(pool).strip()
                         + "'. isx init writes it with sudo whenever it cannot read it.",
-                btrfsAccess(), List.of("sudo cat " + BTRFS_SUDOERS));
+                btrfsAccess(pool), List.of("sudo cat " + BTRFS_SUDOERS));
     }
 
     static final String[] STORAGE_HINT = {
@@ -1246,13 +1328,38 @@ class HostSetup {
 
     private InitPlan.Change createCowPool(boolean skipTrim) {
         var hostFs = init.filesystemOf(CowPoolBacking.POOLS_DIR);
-        return InitPlan.Change.sudo("Create the copy-on-write storage pool '" + CowPoolBacking.POOL_NAME + "'",
-                String.join(" ", CowPoolBacking.createCommand(hostFs, skipTrim)));
+        var command = CowPoolBacking.createCommand(hostFs, skipTrim);
+        var change = InitPlan.Change.sudo("Create the copy-on-write storage pool '" + CowPoolBacking.POOL_NAME + "'",
+                String.join(" ", command));
+        // A loop file goes in the disks directory, which the run makes first. The run carries on
+        // without a CoW pool when the create fails, warning, and so does the script
+        var create = asRoot(command) + " || echo 'Could not create the copy-on-write pool: run isx doctor for why.' >&2";
+        return change.scripted("btrfs".equals(hostFs) ? List.of(create)
+                : List.of("mkdir -p " + CowPoolBacking.DISKS_DIR, create));
     }
 
-    private static InitPlan.Change btrfsAccess() {
+    /** The pool a host gets once the run made one: the one admin init makes on btrfs, else the CoW pool beside it. */
+    private String poolToCome() {
+        return "btrfs".equals(init.filesystemOf(CowPoolBacking.POOLS_DIR)) ? ADMIN_INIT_POOL : CowPoolBacking.POOL_NAME;
+    }
+
+    /**
+     * The btrfs sudoers rule for {@code pool}, as {@link #configureBtrfsUsageAccess} installs it: checked by
+     * {@code visudo} before it is put in place, since a malformed rule can lock the user out of sudo.
+     */
+    static InitPlan.Change btrfsAccess(String pool) {
+        var content = btrfsSudoersContent(pool);
+        var delimiter = InitPlan.Change.delimiter(content);
+        var lines = new ArrayList<String>();
+        lines.add("tmp=$(mktemp)");
+        lines.add("cat > \"$tmp\" <<'" + delimiter + "'");
+        lines.addAll(content.lines().toList());
+        lines.add(delimiter);
+        lines.add("visudo -cf \"$tmp\"");
+        lines.add("install -m 0440 -o root -g root \"$tmp\" " + BTRFS_SUDOERS);
+        lines.add("rm -f \"$tmp\"");
         return new InitPlan.Change("Let isx read the pool's btrfs disk usage without a password",
-                InitPlan.Who.SUDO, null, BTRFS_SUDOERS);
+                InitPlan.Who.SUDO, null, BTRFS_SUDOERS).scripted(lines);
     }
 
     /** What {@link #initializeIncus} would change, read through the Incus API alone. */
@@ -1265,7 +1372,7 @@ class HostSetup {
                 changes.add(createCowPool(false));
                 changes.add(moveRootDisk(ADMIN_INIT_POOL, CowPoolBacking.POOL_NAME));
             }
-            changes.add(btrfsAccess());
+            changes.add(btrfsAccess(poolToCome()));
             return InitPlan.Assessment.of(changes)
                     .noting("Incus is not installed yet; the rest of its setup is read once it is.");
         }
@@ -1294,11 +1401,11 @@ class HostSetup {
                     var rootPool = hasPool ? IncusClient.rootDiskPoolFromDevices(devices) : ADMIN_INIT_POOL;
                     if (rootPool != null) changes.add(moveRootDisk(rootPool, CowPoolBacking.POOL_NAME));
                 }
-                changes.add(btrfsAccess());
+                changes.add(btrfsAccess(hasPool ? CowPoolBacking.POOL_NAME : poolToCome()));
             } else if (cow.poolName() != null && cow.isBtrfs()) {
                 var granted = btrfsUsageGranted(cow.poolName());
                 if (granted == null) btrfsUnchecked = btrfsRuleNotChecked(cow.poolName());
-                else if (!granted) changes.add(btrfsAccess());
+                else if (!granted) changes.add(btrfsAccess(cow.poolName()));
             }
             var pool = incus.findUsablePool();
             if (pool != null && hasPool) {
@@ -1343,7 +1450,8 @@ class HostSetup {
      * back to exclusive-usage display.
      */
     private void configureBtrfsUsageAccess() {
-        if (Platform.isMacOS()) return;
+        // Root's file, which the script wrote under --no-sudo (#2074)
+        if (Platform.isMacOS() || init.noSudo()) return;
         var probe = init.incus.probeCowPool();
         if (probe.poolName() == null || !probe.isBtrfs()) return;
         var pool = probe.poolName();

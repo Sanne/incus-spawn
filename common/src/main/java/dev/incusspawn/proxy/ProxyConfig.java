@@ -359,6 +359,7 @@ public final class ProxyConfig {
      */
     private static boolean clearFirewalldRedirectPersistent() {
         try {
+            dev.incusspawn.util.Privilege.check("sudo", "cat", FIREWALLD_DIRECT_XML.toString());
             BuildOutput.releaseTerminal(); // sudo may prompt on the tty
             var pb = new ProcessBuilder("sudo", "cat", FIREWALLD_DIRECT_XML.toString());
             pb.redirectError(ProcessBuilder.Redirect.DISCARD);

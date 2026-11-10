@@ -71,6 +71,8 @@ public final class FirewalldCheck {
     public static String readDirectRules(List<List<String>> attempts) {
         for (var command : attempts) {
             if (!HostPath.isOnPath(command.getFirst())) continue;
+            // A process that may not elevate asks as the user only (#2074)
+            if (dev.incusspawn.util.Privilege.forbidden() && dev.incusspawn.util.Privilege.elevates(command)) continue;
             try {
                 var pb = new ProcessBuilder(command);
                 pb.redirectError(ProcessBuilder.Redirect.DISCARD);

@@ -56,10 +56,51 @@ final class InitPlan {
     }
 
     /** One change: what it is, who makes it, and the command it runs or the file it writes, if any. */
-    record Change(String what, Who who, String command, String file) {
+    record Change(String what, Who who, String command, String file, List<String> script, boolean checked) {
         Change {
             Objects.requireNonNull(what);
             Objects.requireNonNull(who);
+            script = List.copyOf(script);
+        }
+
+        /**
+         * A change whose root lines for {@code isx init --no-sudo}'s script (#2074) are its command
+         * without {@code sudo}, when it is one; a sudo change with neither has none, and a person
+         * must make it by hand.
+         */
+        Change(String what, Who who, String command, String file) {
+            this(what, who, command, file, who == Who.SUDO && command != null && command.startsWith("sudo ")
+                    ? List.of(command.substring("sudo ".length())) : List.of(), true);
+        }
+
+        /** This change with {@code lines} for the script, shell run as root. */
+        Change scripted(List<String> lines) {
+            return new Change(what, who, command, file, lines, checked);
+        }
+
+        /** This change, for a state the plan could not read: only the script's record says it was made. */
+        Change unchecked() {
+            return new Change(what, who, command, file, script, false);
+        }
+
+        /**
+         * A file root writes, as {@code isx init} writes it: {@code content} with {@code mode},
+         * owned by root, then {@code after}, as the script's lines.
+         */
+        static Change rootFile(String what, String path, String mode, String content, String... after) {
+            var lines = new ArrayList<String>();
+            lines.add("install -m " + mode + " -o root -g root /dev/stdin " + path + " <<'" + delimiter(content) + "'");
+            lines.addAll(content.lines().toList());
+            lines.add(delimiter(content));
+            lines.addAll(List.of(after));
+            return new Change(what, Who.SUDO, null, path, lines, true);
+        }
+
+        /** The here-document delimiter for {@code content}: one none of its lines is. */
+        static String delimiter(String content) {
+            var delimiter = "ISX_EOF";
+            while (content.lines().anyMatch(delimiter::equals)) delimiter += "_";
+            return delimiter;
         }
 
         static Change run(String what, Who who, String command) {
@@ -95,7 +136,7 @@ final class InitPlan {
          * commands a person runs, with sudo, to check it themselves.
          */
         static Assessment notChecked(String why, Change change, List<String> checks) {
-            return new Assessment(State.UNKNOWN, false, List.of(change), why, checks);
+            return new Assessment(State.UNKNOWN, false, List.of(change.unchecked()), why, checks);
         }
 
         static Assessment done() {
@@ -177,6 +218,7 @@ final class InitPlan {
      * the step's changes, the commands they run and the files they write; {@code sudo_commands}
      * is the part of {@code commands} a person runs with sudo. {@code check_commands} are what a
      * person runs, with sudo, to check what the plan did not: it never runs sudo itself.
+     * {@code sudo_script} is the step's part of the script {@code isx init --no-sudo} writes.
      */
     static Map<String, Object> record(Entry entry) {
         var a = entry.assessment();
@@ -194,6 +236,8 @@ final class InitPlan {
         record.put("note", a.note());
         record.put("purpose", entry.purpose());
         record.put("check_commands", a.checks());
+        record.put("sudo_script", a.state() == State.DONE ? List.of()
+                : a.changes().stream().filter(c -> c.who() == Who.SUDO).flatMap(c -> c.script().stream()).toList());
         return record;
     }
 
@@ -261,5 +305,92 @@ final class InitPlan {
 
     private static void line(PrintStream out, String text) {
         out.println(OutputFormat.oneLine(text));
+    }
+
+    // --- The privileged script of isx init --no-sudo (#2074) ---
+
+    /** The record the script leaves, readable by the user: which changes it applied, by key. */
+    static final String APPLIED_RECORD = "/var/lib/isx/init-applied";
+
+    /** A change's key in {@link #APPLIED_RECORD}: what its lines do, so a different script is a different key. */
+    static String key(Change change) {
+        return key(change.script());
+    }
+
+    /** The key of a change whose script is {@code lines}. */
+    static String key(List<String> lines) {
+        try {
+            var digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(String.join("\n", lines).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest, 0, 12);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** A privileged change left on this host, in the step it belongs to. */
+    record Privileged(Entry entry, Change change) {}
+
+    /**
+     * The privileged changes {@code entries} leave, in their order: each sudo change of a step
+     * that is not done, but one the plan could not check that {@code applied} says the script made.
+     * An optional step's are kept too: the run makes them when the person agrees, as by default.
+     */
+    static List<Privileged> privileged(List<Entry> entries, java.util.Set<String> applied) {
+        var left = new ArrayList<Privileged>();
+        for (var entry : entries) {
+            if (entry.assessment().state() == State.DONE) continue;
+            for (var change : entry.assessment().changes()) {
+                if (change.who() != Who.SUDO) continue;
+                if (!change.checked() && made(change, applied)) continue;
+                left.add(new Privileged(entry, change));
+            }
+        }
+        return left;
+    }
+
+    /**
+     * Whether the script recorded {@code change} as made: as the one change, or line by line as
+     * the single-line changes a plan that could read the state scripted, such as the firewall
+     * rules a fresh host's plan lists one by one and a later plan that cannot read them lists
+     * as one.
+     */
+    static boolean made(Change change, java.util.Set<String> applied) {
+        if (change.script().isEmpty()) return false;
+        return applied.contains(key(change))
+                || change.script().stream().allMatch(line -> applied.contains(key(List.of(line))));
+    }
+
+    /**
+     * The script {@code isx init --no-sudo} hands the person: exactly the root commands of
+     * {@code changes}, in order, each step under a comment saying why, then the record of what
+     * it applied. Every change has lines; one without is refused before this.
+     */
+    static String script(List<Privileged> changes, String rerun) {
+        var out = new StringBuilder();
+        out.append("#!/bin/sh\n");
+        out.append("# The privileged steps of 'isx init' on this host, written by 'isx init --no-sudo'.\n");
+        out.append("# isx runs none of them itself: read this, then run it as root with: sudo sh <this file>\n");
+        out.append("# Afterwards run '").append(rerun).append("' again, as yourself, to finish the setup.\n");
+        out.append("set -eu\n");
+        out.append("[ \"$(id -u)\" = 0 ] || { echo \"Run this as root: sudo sh $0\" >&2; exit 1; }\n");
+        Entry step = null;
+        for (var p : changes) {
+            if (p.entry() != step) {
+                step = p.entry();
+                out.append("\n# ").append(OutputFormat.oneLine(step.title())).append(": ")
+                        .append(OutputFormat.oneLine(step.purpose())).append("\n");
+            }
+            out.append("# - ").append(OutputFormat.oneLine(p.change().what())).append("\n");
+            for (var line : p.change().script()) out.append(line).append("\n");
+        }
+        out.append("\n# Record what ran, so that '").append(rerun).append("' knows what only root can check.\n");
+        out.append("install -d -m 0755 ").append(APPLIED_RECORD, 0, APPLIED_RECORD.lastIndexOf('/')).append("\n");
+        out.append("cat >> ").append(APPLIED_RECORD).append(" <<'ISX_EOF'\n");
+        for (var p : changes) out.append(key(p.change())).append("\n");
+        out.append("ISX_EOF\n");
+        out.append("chmod 0644 ").append(APPLIED_RECORD).append("\n");
+        out.append("echo \"Done. Now run '").append(rerun).append("' as yourself.\"\n");
+        return out.toString();
     }
 }

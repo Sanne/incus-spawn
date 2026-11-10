@@ -193,6 +193,14 @@ It shares its commands and checks with the step's run, as constants or helpers b
 A step is `done`, `pending`, `optional` (it only offers) or `unknown` (unreadable without sudo), and names who must act: `none`, `sudo`, `secret` or `approval`.
 A new step gets a planner and a test of it; its JSON fields (`InitPlan.record`) are a contract.
 
+**`isx init --no-sudo`** (#2074) runs nothing as root: `Privilege.forbid()` makes every guarded runner refuse a command that elevates (`Privilege.check`, called by `InitCommand`'s runners, `CowPoolBacking.runCapturingStderr`, `ProxyService.runQuiet`, `UfwCheck.readBeforeRules` and the rest; `PrivilegeGateTest` holds every file naming `"sudo"` to it).
+`privilegedStepsLeft` plans, collects every sudo change of a step not done (`InitPlan.privileged`), writes their root lines (`InitPlan.Change.script`, the plan's `sudo_script`) as one script to `Environment.privilegedInitScript()`, and exits `EXIT_WAITING_ON_PERSON` (75).
+A change with no lines (no package manager, UFW's `before.rules`) is the person's and stops the run with exit 1.
+The script appends each change's key (`InitPlan.key`, a hash of its lines) to `/var/lib/isx/init-applied`; a not-checked change whose key is there, or whose lines all are as single-line keys (`InitPlan.made`), counts as made, and a checked one still pending after the script ran is warned about, not scripted again, unless its step has a change the record lacks: then the whole step is scripted, its restart or reload included.
+Once nothing is left, the steps run with their root parts reduced to a note (`HostSetup.DONE_BY_SCRIPT`): no `sudo -v`, no dependency install, Incus, subids, firewall, redirect, sysctl, KSM, btrfs rule or linger.
+The redirect's lines read the gateway from the bridge as the script runs, so a fresh host needs one script.
+`InitNoSudoTest` pins the fresh host's script, that it is the plan's `sudo_script`, the record, and the guard.
+
 **The group init adds** (#1436).
 A process gets its groups at login, so the `incus-admin` membership Incus Installation adds is not this run's.
 When the socket refuses this process and the user is in the group, `continueInGroup()` runs the same command line under `sg incus-admin` (an inner `sg <primary>` keeps the user's primary group), and this process exits with its code.
