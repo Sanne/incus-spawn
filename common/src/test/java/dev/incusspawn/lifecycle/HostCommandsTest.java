@@ -3,7 +3,10 @@ package dev.incusspawn.lifecycle;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 
@@ -35,6 +38,36 @@ class HostCommandsTest {
         assertEquals(-1, result.exit());
         assertTrue(result.output().startsWith("connecting to ws\ntimed out after 1 seconds"), "says what it said: " + result.output());
         assertTrue(Duration.ofNanos(System.nanoTime() - start).toSeconds() < 10);
+    }
+
+    /**
+     * What a command prints while it is being killed is not what it said: on macOS the shell reports
+     * its killed child ({@code Killed: 9}) before it is killed too (#2070).
+     * The kill here waits until the command has printed that, so the moment cannot be missed.
+     */
+    @Test
+    void whatTheKillMakesItPrintIsNotReported(@TempDir Path dir) {
+        var printed = dir.resolve("printed");
+        var commands = new SystemHostCommands() {
+            @Override
+            void kill(Process process) {
+                for (var giveUp = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+                        !Files.exists(printed) && System.nanoTime() < giveUp; ) {
+                    try {
+                        Thread.sleep(10);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+                super.kill(process);
+            }
+        };
+        var result = commands.run(Duration.ofSeconds(1), List.of("sh", "-c",
+                "echo connecting to ws; sleep 1.5; echo 'Killed: 9'; touch '" + printed + "'; sleep 30"));
+        assertTrue(Files.exists(printed), "the command printed its line before the kill");
+        assertEquals(-1, result.exit());
+        assertEquals("connecting to ws\ntimed out after 1 seconds", result.output());
     }
 
     /** It exits, but a child it started in the background still holds the output pipe open. */
