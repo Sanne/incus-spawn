@@ -126,6 +126,22 @@ class ExposedHostPortsProxyTest {
         assertEquals(List.of(), proxy.exposedHostPorts());
     }
 
+    /**
+     * Something else on the proxy's address holds a listed port: the proxy serves the others and
+     * says which on {@code /health}, to the host alone, for {@code isx doctor}.
+     */
+    @Test
+    void aPortHeldOnTheProxysAddressIsSkippedAndReportedToTheHost() throws Exception {
+        var listed = service("served");
+        var held = new ServerSocket(0, 50, InetAddress.ofLiteral(GATEWAY));
+        services.add(held);
+        startProxy("exposed-host-ports: [" + held.getLocalPort() + ", " + listed + "]\n");
+
+        assertEquals("served", readAtGateway(listed));
+        var info = ProxyHealthCheck.fetchProxyInfo(GATEWAY, proxy.healthPort(), 5_000);
+        assertEquals(List.of(held.getLocalPort()), info.unboundHostPorts());
+    }
+
     @Test
     void noKeyExposesNothing() throws Exception {
         var service = service("nothing");

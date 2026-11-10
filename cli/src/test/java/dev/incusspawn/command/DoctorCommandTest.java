@@ -1080,6 +1080,39 @@ class DoctorCommandTest {
         assertTrue(orphan.remediation().description().contains("kill 4242"));
     }
 
+    @Test
+    void exposedHostPortsAreReportedAndOneHeldBySomethingElseWarns() {
+        assertNull(DoctorCommand.exposedHostPortsFinding(List.of(), List.of(), null));
+        var info = new dev.incusspawn.proxy.ProxyHealthCheck.ProxyInfo("1", "a", "r", "f", false, true, "", 1, "1",
+                List.of());
+        var listed = DoctorCommand.exposedHostPortsFinding(List.of(11434), List.of(), info);
+        assertEquals(DoctorCommand.Status.NOTE, listed.status());
+        assertTrue(listed.detail().contains("11434 at host.isx.internal"), listed.detail());
+
+        var held = DoctorCommand.exposedHostPortsFinding(List.of(22, 11434), List.of(),
+                new dev.incusspawn.proxy.ProxyHealthCheck.ProxyInfo("1", "a", "r", "f", false, true, "", 1, "1",
+                        List.of(22, 8080)));
+        assertEquals(DoctorCommand.Status.WARN, held.status());
+        assertTrue(held.detail().startsWith("22 could not be bound"), "8080 is no longer listed: " + held.detail());
+
+        var down = DoctorCommand.exposedHostPortsFinding(List.of(11434), List.of(), null);
+        assertEquals(DoctorCommand.Status.NOTE, down.status());
+        assertTrue(down.detail().endsWith("relayed once the proxy runs"), "nothing relays while the proxy is down: " + down.detail());
+
+        var refused = DoctorCommand.exposedHostPortsFinding(List.of(),
+                List.of("Ignoring exposed host port 443 in config.yaml: isx serves it on the address the proxy listens on"), info);
+        assertEquals(DoctorCommand.Status.WARN, refused.status(), "a port the config lists but isx refuses is said");
+        assertTrue(refused.detail().contains("443"), refused.detail());
+
+        var heldAndRefused = DoctorCommand.exposedHostPortsFinding(List.of(22),
+                List.of("Ignoring exposed host port 443 in config.yaml: isx serves it on the address the proxy listens on"),
+                new dev.incusspawn.proxy.ProxyHealthCheck.ProxyInfo("1", "a", "r", "f", false, true, "", 1, "1",
+                        List.of(22)));
+        assertTrue(heldAndRefused.detail().startsWith("22 could not be bound"),
+                "a refused port does not hide a held one: " + heldAndRefused.detail());
+        assertTrue(heldAndRefused.detail().contains("443"), heldAndRefused.detail());
+    }
+
     // ---- Option implications ----
 
     @Test

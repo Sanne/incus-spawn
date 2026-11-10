@@ -244,6 +244,14 @@ class ProxyHealthCheckTest {
     }
 
     @Test
+    void parseProxyInfoReadsTheUnboundExposedHostPorts() {
+        assertEquals(List.of(22, 11434), ProxyHealthCheck.parseProxyInfo("""
+                {"status":"ok","unboundHostPorts":[22,11434,0,"x",70000]}
+                """).unboundHostPorts(), "a value no port can be is passed over");
+        assertEquals(List.of(), ProxyHealthCheck.parseProxyInfo("{\"status\":\"ok\"}").unboundHostPorts());
+    }
+
+    @Test
     void parseProxyInfoHandlesOldFormat() {
         var info = ProxyHealthCheck.parseProxyInfo("{\"status\":\"ok\"}");
         assertEquals("", info.version());
