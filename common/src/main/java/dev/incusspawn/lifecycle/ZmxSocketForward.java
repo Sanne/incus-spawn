@@ -6,6 +6,7 @@ import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.InstanceUpdate;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.incus.ShellSession;
 import dev.incusspawn.Environment;
 import dev.incusspawn.FileTrees;
 import dev.incusspawn.OwnDirectory;
@@ -23,6 +24,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
@@ -38,7 +40,8 @@ import java.util.function.UnaryOperator;
  * user's alone.  The host zmx dir, which can be a {@code /tmp/zmx-<uid>}
  * another user made first, holds only a link named {@code isx-<container>}
  * to the container's {@code isx} session socket, so it shows up in
- * {@code zmx list} (#1821).</p>
+ * {@code zmx list} (#1821), and one named {@code isx-<container>.<session>}
+ * to each other session the container has (#2059).</p>
  */
 public final class ZmxSocketForward {
 
@@ -47,6 +50,14 @@ public final class ZmxSocketForward {
     private static final String DEVICE_NAME = "zmx-sockets";
     private static final String CONTAINER_ZMX_DIR = "/home/agentuser/.zmx";
     private static final String SYMLINK_PREFIX = "isx-";
+    /** Between the instance and a session in a link's name: no instance name has a dot (#2059). */
+    private static final String SESSION_SEPARATOR = ".";
+    /** The session every shell enters by default, linked as {@code isx-<name>}. */
+    private static final String DEFAULT_SESSION = "isx";
+    /** The most sessions of one instance linked: the guest makes them, so it must not fill the host dir. */
+    static final int MAX_SESSION_LINKS = 64;
+    private static final int S_IFMT = 0170000;
+    private static final int S_IFSOCK = 0140000;
     private static final Set<PosixFilePermission> OWNER_ONLY = PosixFilePermissions.fromString("rwx------");
 
     /**
@@ -273,6 +284,15 @@ public final class ZmxSocketForward {
         if (zmxDir != null) ensureSymlink(name, HostDirs.of(zmxDir), out);
     }
 
+    /**
+     * {@link #ensureSymlink} again once a shell returns, so a session it made
+     * (a new one the guest named, #2059) shows up in host zmx.  Quiet: the
+     * shell's own call already said whatever is wrong.
+     */
+    public static void relinkAfterShell(String name) {
+        ensureSymlink(name, Output.diagnosticsTo(said -> { }));
+    }
+
     static void ensureSymlink(String name, HostDirs dirs, Output out) {
         var instanceDir = dirs.instanceDir(name);
         // One stat for an instance that shares no sessions
@@ -297,8 +317,9 @@ public final class ZmxSocketForward {
 
     /**
      * Link {@code isx-<name>} in the host zmx dir to the instance's session,
-     * by absolute path, making the dir {@code 0700} where missing.  Only in a
-     * dir that is the user's alone: anyone else could swap the link.
+     * by absolute path, making the dir {@code 0700} where missing, and every
+     * other session the instance has as {@code isx-<name>.<session>} (#2059).
+     * Only in a dir that is the user's alone: anyone else could swap the link.
      */
     private static void link(Path zmxDir, String name, Path instanceDir, int uid) throws IOException {
         var dir = ownDir(zmxDir, uid);
@@ -308,8 +329,12 @@ public final class ZmxSocketForward {
             dir = ownDir(zmxDir, uid);
             if (dir == null) return;
         }
-        var link = dir.resolve(SYMLINK_PREFIX + name);
-        var target = instanceDir.resolve("isx");
+        linkTo(dir.resolve(SYMLINK_PREFIX + name), instanceDir.resolve(DEFAULT_SESSION));
+        linkSessions(dir, name, instanceDir);
+    }
+
+    /** {@code link} pointing at {@code target}, unless something that is not a link is in its way. */
+    private static void linkTo(Path link, Path target) throws IOException {
         if (Files.isSymbolicLink(link)) {
             if (target.equals(Files.readSymbolicLink(link))) return;
             Files.delete(link);
@@ -317,6 +342,66 @@ public final class ZmxSocketForward {
             return;
         }
         Files.createSymbolicLink(link, target);
+    }
+
+    /**
+     * Link each session socket in the instance's directory but its default
+     * one, and drop the links of sessions that are gone.  The guest names
+     * these, so only a socket (never a link it made) with a name a shell
+     * could ask for ({@link ShellSession#NAME}, no dot) is linked, and at
+     * most {@link #MAX_SESSION_LINKS} of them.  An instance name has no dot,
+     * so {@code isx-<name>.} is this instance's alone: {@code web}'s links
+     * are never {@code web-2}'s.
+     */
+    private static void linkSessions(Path dir, String name, Path instanceDir) throws IOException {
+        var prefix = sessionLinkPrefix(name);
+        // Sorted, so the same sessions are linked every time when there are more than the bound
+        var live = new TreeSet<String>();
+        try (var entries = Files.newDirectoryStream(instanceDir)) {
+            for (var entry : entries) {
+                var session = entry.getFileName().toString();
+                if (DEFAULT_SESSION.equals(session) || !ShellSession.isValidName(session) || !isSocket(entry)) continue;
+                live.add(session);
+            }
+        }
+        while (live.size() > MAX_SESSION_LINKS) live.pollLast();
+        for (var session : live) {
+            try {
+                linkTo(dir.resolve(prefix + session), instanceDir.resolve(session));
+            } catch (IOException oneLink) {
+                // The others are still linked, and stale ones still dropped
+            }
+        }
+        try (var links = Files.newDirectoryStream(dir, entry -> entry.getFileName().toString().startsWith(prefix))) {
+            for (var link : links) {
+                var session = link.getFileName().toString().substring(prefix.length());
+                if (!live.contains(session) && Files.isSymbolicLink(link)) deleteQuietly(link);
+            }
+        }
+    }
+
+    private static String sessionLinkPrefix(String name) {
+        return SYMLINK_PREFIX + name + SESSION_SEPARATOR;
+    }
+
+    /** Whether {@code path} itself, not what a link there points to, is a Unix socket. */
+    private static boolean isSocket(Path path) {
+        try {
+            var mode = (Integer) Files.getAttribute(path, "unix:mode", LinkOption.NOFOLLOW_LINKS);
+            return (mode & S_IFMT) == S_IFSOCK;
+        } catch (IOException | UnsupportedOperationException | IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    /** Every {@code isx-<name>.<session>} link in {@code dir}: links only, never what they point to. */
+    private static void deleteSessionLinks(Path dir, String name) throws IOException {
+        var prefix = sessionLinkPrefix(name);
+        try (var links = Files.newDirectoryStream(dir, entry -> entry.getFileName().toString().startsWith(prefix))) {
+            for (var link : links) {
+                if (Files.isSymbolicLink(link)) deleteQuietly(link);
+            }
+        }
     }
 
     /**
@@ -356,9 +441,13 @@ public final class ZmxSocketForward {
         try {
             if (Files.isDirectory(zmxDir, LinkOption.NOFOLLOW_LINKS) && uid == OwnDirectory.uidOf(zmxDir)) {
                 deleteQuietly(zmxDir.resolve(link));
+                deleteSessionLinks(zmxDir, name);
             } else {
                 var dir = ownDir(zmxDir, uid);
-                if (dir != null) deleteQuietly(dir.resolve(link));
+                if (dir != null) {
+                    deleteQuietly(dir.resolve(link));
+                    deleteSessionLinks(dir, name);
+                }
             }
         } catch (IOException | RuntimeException notOurs) {
             // Not the user's to tidy: the link was never made there
