@@ -261,7 +261,8 @@ Key design:
   `HostPortRelay` listens on each port of `config.yaml`'s `exposed-host-ports:` (`ExposedHostPorts`) on the proxy's own address and pipes each connection to the same port on `127.0.0.1`, else `::1`: no TLS, no headers, no identity, no credential, sharing no code with interception or `HostRouteRelay`.
   Blocking sockets on virtual threads, so a half-close passes on and a slow reader stops its writer; no idle timeout.
   It binds in `start()` before `onReady` and in `reload()` once started (removed ports close with their connections), closes in `stop()`; a port it cannot bind is warned about, skipped, retried on each reload, and named to host callers on `/health` (`unboundHostPorts`) for `isx doctor`.
-  There is no caller filter on purpose: on macOS every container reaches the proxy from the VM's address, so a raw relay cannot tell callers apart (design/proxy.md "Exposed host ports").
+  There is no caller identity on purpose: on macOS every container reaches the proxy from the VM's address, so a raw relay cannot tell callers apart (design/proxy.md "Exposed host ports").
+  There is a source check: `RelayCallers` closes a connection whose source is not in the bridge's subnet (Linux) or the VM's address (macOS) before loopback is touched, since a LAN peer routing to the gateway would otherwise be a loopback caller; never drop it.
   isx's own ports (443, 18443, 18080, 53) are refused at load; they are the ACL's allowed gateway ports, so `--proxy-only` never reaches an exposed port.
   `host.isx.internal` is in the bridge DNS block only while a port is listed, at the address the proxy listens on (the Mac's VM-link address on macOS), never an intercepted domain; `BridgeDns.render`/`status` take it apart from the domains, and every writer passes its address or null (`ProxyMain.Addresses.hostAddress`, `ProxyConfig.bridgeDnsHostAddress`), so none drops it by omission.
   `HostRoutes` refuses it and every name under it.

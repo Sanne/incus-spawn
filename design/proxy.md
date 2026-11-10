@@ -996,6 +996,12 @@ On macOS every container reaches the proxy from the VM's one address, so a raw T
 So the feature is for every instance with network, project-local and untrusted-lineage ones included, and the docs state the risk: many development services trust loopback callers completely, and Ollama's API has no authentication.
 Only the host's `config.yaml` can list a port; no template, tool or project-local definition can.
 
+**Instances only, never a peer beside the host.**
+The relay listens on the bridge's gateway, or the Mac's end of the VM link, and a host with no input firewall routes a LAN peer's packet for that address to it (Linux's weak host model); review of #2117 reproduced it with a network-namespace peer routing the bridge subnet through the host.
+Every other gateway listener already refuses such a caller (the MITM listener by its unknown address, the health endpoint by its host-only routes), so `RelayCallers` closes a connection before anything is connected to loopback unless its source is in the bridge's subnet (Linux: the subnet of the interface holding the bind address) or is the VM's address (macOS: `VmNetwork.discoverVmIp()`).
+An address that cannot be placed admits nobody, and the rule is looked up again once it is 5 s old (`REDISCOVER_MILLIS`), at the next connection, since the bridge's subnet or the VM's lease can change under a running proxy and an address the old rule held must stop being admitted.
+This is a filter on where a caller is, not who: within the bridge, or behind the VM's NAT, every instance is still admitted alike.
+
 **Closed by default.**
 No key, an empty list, or a value that is not a plain list of integers exposes nothing (`ExposedHostPorts`); within a list each port is checked alone, a duplicate is kept once, and isx's own ports (443, 18443, 18080, 53) are refused.
 Those are exactly the gateway ports the proxy-only ACL admits (`ProxyOnlyAcl.egressRules`), so a `--proxy-only` instance never reaches an exposed port and the ACL is not widened; an airgapped one has no network.

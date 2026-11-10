@@ -32,8 +32,10 @@ class HostPortRelayTest {
     private static final String LOOPBACK = "127.0.0.1";
 
     private final Map<Integer, Integer> targetOf = new HashMap<>();
+    /** Which callers the relay admits; a test may refuse them all. */
+    private volatile java.util.function.Predicate<InetAddress> admitted = InetAddress::isLoopbackAddress;
     private final HostPortRelay relay = new HostPortRelay(LOOPBACK, List.of(LOOPBACK),
-            port -> targetOf.getOrDefault(port, port));
+            port -> targetOf.getOrDefault(port, port), new RelayCallers(() -> source -> admitted.test(source), () -> 0));
     private final List<ServerSocket> services = new java.util.ArrayList<>();
 
     @AfterEach
@@ -199,6 +201,39 @@ class HostPortRelayTest {
             var round = i;
             assertThrows(IOException.class, () -> connect(port), () -> "round " + round + ": port " + port + " still accepts");
         }
+    }
+
+    /**
+     * A caller from no instance's address, such as a LAN peer routing to the bridge address, is
+     * closed before anything is connected to loopback: the service never sees it.
+     */
+    @Test
+    void aCallerTheRelayDoesNotAdmitIsClosedBeforeLoopbackIsReached() throws Exception {
+        var server = service();
+        var reached = new java.util.concurrent.atomic.AtomicInteger();
+        Thread.ofVirtual().start(() -> {
+            while (true) {
+                try (var socket = server.accept()) {
+                    reached.incrementAndGet();
+                    socket.getOutputStream().write("served".getBytes(StandardCharsets.UTF_8));
+                } catch (IOException closed) {
+                    return;
+                }
+            }
+        });
+        var port = exposed(server.getLocalPort());
+        relay.listen(List.of(port));
+        admitted = source -> false;
+        try (var stranger = connect(port)) {
+            assertEquals(-1, readOrReset(stranger), "refused");
+        }
+        assertEquals(0, reached.get(), "nothing was connected to loopback for it");
+
+        admitted = InetAddress::isLoopbackAddress;
+        try (var guest = connect(port)) {
+            assertEquals("served", new String(guest.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+        }
+        assertEquals(1, reached.get());
     }
 
     @Test

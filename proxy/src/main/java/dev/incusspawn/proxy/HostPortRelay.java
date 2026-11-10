@@ -49,6 +49,8 @@ final class HostPortRelay {
     private final String bindAddress;
     private final List<String> targets;
     private final IntUnaryOperator targetPort;
+    /** Who may connect: instances alone, never a peer beside the host ({@link RelayCallers}). */
+    private final RelayCallers callers;
 
     /** Listening, by listed port. */
     private final Map<Integer, Listener> listeners = new LinkedHashMap<>();
@@ -58,17 +60,18 @@ final class HostPortRelay {
 
     /** Relay on {@code bindAddress} to the same port on {@code 127.0.0.1}, else {@code ::1}. */
     HostPortRelay(String bindAddress) {
-        this(bindAddress, List.of("127.0.0.1", "::1"), port -> port);
+        this(bindAddress, List.of("127.0.0.1", "::1"), port -> port, RelayCallers.forThisHost(bindAddress));
     }
 
     /**
      * Tests only: connect to {@code targetPort} of the port a guest called, so the relay and the
      * service it reaches can both be on one loopback address.
      */
-    HostPortRelay(String bindAddress, List<String> targets, IntUnaryOperator targetPort) {
+    HostPortRelay(String bindAddress, List<String> targets, IntUnaryOperator targetPort, RelayCallers callers) {
         this.bindAddress = bindAddress;
         this.targets = List.copyOf(targets);
         this.targetPort = targetPort;
+        this.callers = callers;
     }
 
     /**
@@ -80,13 +83,15 @@ final class HostPortRelay {
     synchronized void listen(Collection<Integer> ports) {
         if (stopped) return;
         var wanted = new TreeSet<>(ports);
+        var removed = new ArrayList<Listener>();
         for (var it = listeners.entrySet().iterator(); it.hasNext(); ) {
             var entry = it.next();
             if (wanted.contains(entry.getKey())) continue;
-            entry.getValue().close();
+            removed.add(entry.getValue());
             it.remove();
             ProxyLog.info("No longer exposing host port " + entry.getKey());
         }
+        closeAll(removed);
         unbound.keySet().retainAll(wanted);
         for (var port : wanted) {
             if (listeners.containsKey(port)) continue;
@@ -117,9 +122,16 @@ final class HostPortRelay {
     /** Close every listener and connection; nothing listens again after it. */
     synchronized void stop() {
         stopped = true;
-        listeners.values().forEach(Listener::close);
+        closeAll(new ArrayList<>(listeners.values()));
         listeners.clear();
         unbound.clear();
+    }
+
+    /** Close {@code closing} together: every server first, then one shared wait for all their threads. */
+    private static void closeAll(List<Listener> closing) {
+        closing.forEach(Listener::beginClose);
+        var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(ACCEPT_JOIN_SECONDS);
+        closing.forEach(listener -> listener.awaitClosed(deadline));
     }
 
     private Listener bind(int port) throws IOException {
@@ -141,7 +153,7 @@ final class HostPortRelay {
         private final ServerSocket server;
         private final Set<Socket> open = ConcurrentHashMap.newKeySet();
         private volatile boolean closed;
-        /** The thread blocked in {@link ServerSocket#accept()}, which {@link #close()} waits out. */
+        /** The thread blocked in {@link ServerSocket#accept()}, which {@link #awaitClosed} waits out. */
         private volatile Thread acceptor;
 
         Listener(int port, ServerSocket server) {
@@ -177,6 +189,15 @@ final class HostPortRelay {
         }
 
         private void relay(Socket guest) {
+            // Before loopback is touched: a peer on a network beside the host that routes to the
+            // proxy's address must not become a loopback caller (the weak host model)
+            if (!callers.admits(guest.getInetAddress())) {
+                ProxyLog.trace("Exposed host port " + port + ": refused " + guest.getInetAddress().getHostAddress()
+                        + ", which is no instance's address");
+                open.remove(guest);
+                closeQuietly(guest);
+                return;
+            }
             var host = connect(targetPort.applyAsInt(port));
             if (host == null) {
                 open.remove(guest);
@@ -249,18 +270,29 @@ final class HostPortRelay {
             closeQuietly(b);
         }
 
-        void close() {
+        /**
+         * Stop accepting: close the server socket and wake the accepting thread. The interrupt
+         * also wakes one sleeping out a failed accept. {@link #awaitClosed} finishes the close.
+         */
+        void beginClose() {
             closed = true;
             closeQuietly(server);
-            // A socket closed while a virtual thread is blocked in accept() is released only once
-            // that thread wakes: until then the kernel still completes connections to the port.
-            // So wait for it, and an unlisted port refuses connections by the time this returns.
-            // The interrupt wakes one sleeping out a failed accept, which would hold the join a second.
+            var thread = acceptor;
+            if (thread != null) thread.interrupt();
+        }
+
+        /**
+         * Wait for the accepting thread to exit, by {@code deadline} ({@link System#nanoTime()}),
+         * then close the connections. A socket closed while a virtual thread is blocked in
+         * accept() is released only once that thread wakes: until then the kernel still completes
+         * connections to the port. So an unlisted port refuses connections once this returns.
+         */
+        void awaitClosed(long deadline) {
             var thread = acceptor;
             if (thread != null) {
-                thread.interrupt();
                 try {
-                    if (!thread.join(java.time.Duration.ofSeconds(ACCEPT_JOIN_SECONDS))) {
+                    var left = Math.max(0, deadline - System.nanoTime());
+                    if (!thread.join(java.time.Duration.ofNanos(left))) {
                         ProxyLog.warn("Exposed host port " + port + " did not stop accepting in time");
                     }
                 } catch (InterruptedException e) {
