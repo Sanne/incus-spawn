@@ -1,13 +1,13 @@
 name: starship
-description: Starship cross-shell prompt 1.25.1 with incus-spawn indicator
+description: Starship cross-shell prompt 1.27.0 with incus-spawn indicator
 
 downloads:
-  - url: https://github.com/starship/starship/releases/download/v1.25.1/starship-x86_64-unknown-linux-gnu.tar.gz
-    sha256: 4488c11ca632327d1f1f16fb2f102c0646094c35479cd5435991385da43c61ac
+  - url: https://github.com/starship/starship/releases/download/v1.27.0/starship-x86_64-unknown-linux-gnu.tar.gz
+    sha256: 3b94758850901717eb36aa1b53f8492c1322506ec6d41273bc6151e79ed8e4a1
     extract: /tmp/starship
     arch: x86_64
-  - url: https://github.com/starship/starship/releases/download/v1.25.1/starship-aarch64-unknown-linux-musl.tar.gz
-    sha256: 01517aab398959ea9ea73bdb4f032ea4dbb51dff5c8e5eb05b4a1b9b7ab872b8
+  - url: https://github.com/starship/starship/releases/download/v1.27.0/starship-aarch64-unknown-linux-musl.tar.gz
+    sha256: 341f5cbf24699fa0b27ec88965ad25f862ea09e15d35a543fd6ffdff1d2aa00d
     extract: /tmp/starship
     arch: aarch64
 
