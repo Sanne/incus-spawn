@@ -892,17 +892,51 @@ public class InitCommand extends BaseCommand {
     }
 
     private void setupMcp() {
+        startMcpStep();
+        var prompts = Prompts.console();
+        if (prompts == null) {
+            BuildOutput.step("Skipped: no console. Run '" + MCP_SETUP_COMMAND + "' at a terminal to set this up.");
+            return;
+        }
+        setupMcp(prompts, ImageDef.loadTrusted());
+    }
+
+    private void startMcpStep() {
         startStep("Agent Access over MCP",
                 "Lets Claude Code on this machine use isx itself: create",
                 "instances from templates you approve here, run commands",
                 "in them, and hand tasks to the Claude Code inside them.",
                 "Agents can never approve templates themselves.");
-        var prompts = Prompts.console();
+    }
+
+    /** The command that runs the step above alone, for a person at a terminal (#2077). */
+    static final String MCP_SETUP_COMMAND = "isx mcp setup";
+
+    /**
+     * {@code isx mcp setup}: init's "Agent Access over MCP" step and nothing else. It asks which
+     * templates agents may use, so it runs only when stdin and stdout are a terminal: an agent
+     * driving the install hands this step to the person rather than answering it (#2072).
+     */
+    int setupMcpAlone() {
+        var prompts = Prompts.terminal();
+        if (prompts != null) this.incus = RuntimeServices.incus();
+        return setupMcpAlone(prompts, ImageDef::loadTrusted);
+    }
+
+    /** {@link #setupMcpAlone()} with its terminal given: null when there is none, which refuses. */
+    int setupMcpAlone(Prompts prompts, java.util.function.Supplier<java.util.Map<String, ImageDef>> defs) {
         if (prompts == null) {
-            BuildOutput.step("Skipped: no console. Re-run 'isx init' interactively to set this up.");
-            return;
+            BuildOutput.error("'" + MCP_SETUP_COMMAND + "' asks which templates agents may use, so a person must run it at a terminal.",
+                    "Nothing was changed.");
+            return 1;
         }
-        setupMcp(prompts, ImageDef.loadTrusted());
+        currentStep = 0;
+        totalSteps = 1;
+        startMcpStep();
+        setupMcp(prompts, defs.get());
+        // init runs this step before it finishes; alone, the server it registered still waits for init.
+        if (!hasBeenInitialized()) BuildOutput.note("isx mcp serves agents once 'isx init' has run.");
+        return 0;
     }
 
     /**
@@ -914,14 +948,14 @@ public class InitCommand extends BaseCommand {
     void setupMcp(Prompts prompts, java.util.Map<String, ImageDef> defs) {
         if (!hostHasCommand("claude")) {
             BuildOutput.step("Claude Code is not installed on this host; skipping."
-                    + " Install it and re-run 'isx init' to enable this.");
+                    + " Install it and run '" + MCP_SETUP_COMMAND + "' to enable this.");
             return;
         }
         McpConfig mcp;
         try {
             mcp = McpConfig.load();
         } catch (McpConfig.Invalid e) {
-            BuildOutput.warn(e.getMessage() + ".", "Fix it, then re-run 'isx init'.");
+            BuildOutput.warn(e.getMessage() + ".", "Fix it, then run '" + MCP_SETUP_COMMAND + "'.");
             return;
         }
         var legacy = McpConfig.legacySectionNotice(SpawnConfig.load());
@@ -979,7 +1013,7 @@ public class InitCommand extends BaseCommand {
 
         if (candidates.isEmpty()) {
             BuildOutput.step("No template installs Claude Code, Codex or Pi yet, so there is none to approve."
-                    + " Add one, then re-run 'isx init' or edit " + McpConfig.file() + ".");
+                    + " Add one, then run '" + MCP_SETUP_COMMAND + "' or edit " + McpConfig.file() + ".");
             return;
         }
         var chosen = new java.util.ArrayList<String>();

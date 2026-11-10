@@ -342,8 +342,55 @@ class McpInitFlowTest {
         var host = new Host();
         var out = reported(() -> run(host, ScriptedPrompts.lines()));
         assertTrue(out.contains("mcp.yaml"), out);
-        assertTrue(out.contains("Fix it, then re-run 'isx init'."), out);
+        assertTrue(out.contains("Fix it, then run 'isx mcp setup'."), out);
         assertMcpUnchanged(seeded);
+        assertEquals(List.of(), host.registrations);
+    }
+
+    /** #2077: 'isx mcp setup' asks what init's step asks and writes the same mcp.yaml. */
+    @Test
+    void theStepAloneAsksWhatInitAsksAndWritesTheSameFile() throws Exception {
+        var host = new Host();
+        var prompts = ScriptedPrompts.lines("y", "n", "y");
+        var exit = new int[1];
+        var recorded = RecordingOutput.during(() -> exit[0] = host.setupMcpAlone(prompts, () -> {
+            try {
+                return templates();
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }));
+        prompts.assertFullyConsumed();
+        assertEquals(0, exit[0]);
+        assertEquals(List.of("Enable the isx MCP server? (y/N): ",
+                "tpl-agent (not built yet: isx build tpl-agent)? (y/N): ",
+                "tpl-agent-java (not built yet: isx build tpl-agent-java)? (y/N): "),
+                prompts.questions().stream().map(BuildOutput::stripAnsi).toList());
+        assertTrue(recorded.lines().stream().anyMatch(l -> l.contains("Agent Access over MCP") && l.contains("[1/1]")),
+                () -> String.join("\n", recorded.lines()));
+        assertEquals(List.of("/home/u/.local/bin/isx"), host.registrations);
+        assertEquals(List.of("tpl-agent-java"), approved());
+        // This home was never initialized, so the server just registered would refuse: say so.
+        assertEquals(List.of("isx mcp serves agents once 'isx init' has run."),
+                recorded.events(RecordingOutput.Kind.NOTE).stream().map(RecordingOutput.Event::msg).toList());
+    }
+
+    /** #2077: without a terminal it changes nothing, loads no definition, and says a person must run it. */
+    @Test
+    void theStepAloneRefusesWithoutATerminal() throws Exception {
+        var seeded = "templates: [tpl-agent]\n";
+        seedMcp(seeded);
+        var host = new Host();
+        var exit = new int[1];
+        var recorded = RecordingOutput.during(() -> exit[0] = host.setupMcpAlone(null, () -> {
+            throw new AssertionError("no definition is loaded for a refusal");
+        }));
+        assertEquals(1, exit[0]);
+        var errors = recorded.events(RecordingOutput.Kind.ERROR).stream().map(RecordingOutput.Event::msg).toList();
+        assertEquals(1, errors.size(), errors::toString);
+        assertTrue(errors.getFirst().contains("a person must run it at a terminal"), errors::toString);
+        assertMcpUnchanged(seeded);
+        assertNothingSaved();
         assertEquals(List.of(), host.registrations);
     }
 }

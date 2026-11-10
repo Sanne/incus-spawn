@@ -66,6 +66,8 @@ class ExitCodeTest {
                 {"unknown format 'yaml'", "doctor", "--format=yaml"},
                 {"unknown format 'yaml'", "update-base", "--list", "--format=yaml"},
                 {"unknown format 'yaml'", "branch", "dev-2", "--format=yaml"},
+                // Not the server reading stdin: the approvals step, refused without a terminal (#2077).
+                {"a person must run it at a terminal", "mcp", "setup"},
                 {"--bundle writes an archive", "doctor", "--bundle", "--format=json"},
                 {"--format applies to --list only", "update-base", "--format=json"}};
         for (var c : cases) {
