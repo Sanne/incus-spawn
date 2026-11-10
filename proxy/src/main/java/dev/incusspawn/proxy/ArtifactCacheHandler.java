@@ -228,7 +228,10 @@ class ArtifactCacheHandler {
             // A head that never comes is an error the client can retry, not a silent drop
             upReq.idleTimeout(upstream.timeoutLeftMillis(started));
             upstream.copyRequestHeaders(clientReq, upReq, domain);
-            upReq.putHeader("Connection", "close");
+            // Never Connection: close, here or on a redirect or resume: Vert.x drops what a paused
+            // response still holds when its connection closes, so a server closing at the end of the
+            // body would cut the tail off a download paused on backpressure (#2082)
+
             // Don't let upstream gzip the response — we cache raw bytes
             // and serve them directly via sendFile on cache hits.
             upReq.headers().remove("Accept-Encoding");
@@ -316,7 +319,6 @@ class ArtifactCacheHandler {
         upstream.requestWithAsyncDns(redirectOptions).onSuccess(redReq -> {
             redReq.idleTimeout(upstream.timeoutLeftMillis(started));
             redReq.putHeader("Host", redirectHost);
-            redReq.putHeader("Connection", "close");
 
             redReq.send().onSuccess(redResp -> {
                 var statusCode = redResp.statusCode();
@@ -653,7 +655,6 @@ class ArtifactCacheHandler {
                 req.putHeader("Range", "bytes=" + resumeAt + "-");
                 // Only the same bytes may continue: a changed file comes back whole (200)
                 req.putHeader("If-Range", validator);
-                req.putHeader("Connection", "close");
                 return req.send();
             }).onSuccess(resp -> {
                 if (failed) {
