@@ -222,7 +222,7 @@ An `openai` account may be `type: chatgpt` (#1332, experimental, proxy side only
 See `.claude/rules/proxy.md`, design/proxy.md and design/accounts.md.
 
 **Exposed host ports** (#2117): `exposed-host-ports:` in `config.yaml` lists loopback ports of the host that every instance with network reaches at `host.isx.internal:<port>`, relayed raw by the proxy (`HostPortRelay`) on the address it already listens on.
-Off by default and host-config only; there is no caller identity, since on macOS the relay cannot tell containers apart, and isx's own ports are refused, so the proxy-only ACL never admits one.
+Off by default and host-config only; there is no caller identity, since on macOS the relay cannot tell containers apart, but a source outside the bridge's subnet (macOS: not the VM's address) is refused (`RelayCallers`), and isx's own ports are refused, so the proxy-only ACL never admits one.
 The name is in bridge DNS only while a port is listed and is never intercepted (design/proxy.md "Exposed host ports").
 
 **Host trust** (#1437): isx's own HTTPS, CLI and proxy upstream alike, trusts the host's system CA bundle through `SystemTrust`.

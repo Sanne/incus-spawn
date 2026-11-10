@@ -202,6 +202,7 @@ Nothing is installed in the instance, and the service keeps listening on loopbac
 | What | How it behaves |
 |---|---|
 | Who can connect | Every instance with network, including one built from a cloned repository's own template |
+| Other machines on your network | Refused, even when your firewall lets them reach the bridge address |
 | `--proxy-only` and `--airgap` | Reach no exposed port |
 | What passes | Raw TCP: no TLS, no headers added, no credentials, no path filter |
 | What the service sees | A caller on loopback |
