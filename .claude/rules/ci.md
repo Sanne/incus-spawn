@@ -10,6 +10,8 @@ paths:
   - "scripts/macos-role-build.sh"
   - "scripts/check-platform-role.sh"
   - "appliance/test-macos-role.sh"
+  # Verifies its downloads against the SHA256SUMS release.yml publishes (#2080).
+  - "get-isx.sh"
   # Cross-cutting trigger: VmManager holds the CLI half of the release-asset
   # name contract below, so editing it must load this file too.
   - "common/src/main/java/dev/incusspawn/vm/VmManager.java"
@@ -133,7 +135,7 @@ The release job's "Check macOS binaries' minimum macOS" step (`scripts/check-mac
 The Homebrew formulas declare it as `depends_on macos: :sequoia`, which `release.yml`'s tap step writes from `MACOS_MIN` on every release; README and `docs/dev/HOMEBREW.md` state it.
 GitHub retires old images (`macos-14` with its `-large`/`-xlarge` variants, #1000), and a job on a removed label waits for a runner that never comes.
 Because `release.yml` runs only on `v*` tags, nothing but the next release would notice, so `WorkflowRunnerLabelsTest` fails on `macos-14` or older and on `ubuntu-latest` or `macos-latest` in any workflow.
-It also fails when `MACOS_MIN` is not Homebrew's name for the deployment target, when a release runner is older than the target, and when the release job no longer runs the check over `artifacts/native-macos-*/*`.
+It also fails when `MACOS_MIN` is not Homebrew's name for the deployment target, when a release runner is older than the target, and when the release job no longer runs the check over `artifacts/native-macos-*/*-macos-*` (every macOS binary, not the build's `SHA256SUMS` beside them).
 When GitHub announces the next retirement, raise its bound and move the labels together; a newer runner does not move the minimum.
 
 **vfkit cannot run on GitHub-hosted macOS runners, and this is structural.**
@@ -207,6 +209,11 @@ The kernel-source cache (`/tmp/kernel-cache/`) is keyed `kernel-source-<version>
 That script downloads only from kernel.org and checks `KERNEL_SHA256` on every run, a cache hit included (#1128).
 The save step runs only after a verified build, but `actions/cache` never overwrites a key.
 With a version-only key, an entry saved before the check existed (possibly the GitHub `.tar.gz`) or under a since-corrected pin would be restored, and fail or be re-downloaded, on every build at that version.
+
+**A release publishes `SHA256SUMS` for every asset, and `get-isx.sh` installs nothing that does not match it** (#2080).
+Each `build` job records its binaries' sums in its artifact ("Record checksums"); the release step lists its assets once, and `.github/scripts/release-sha256sums.sh` writes the sums from that list, refusing an artifact that no longer matches its build's sum.
+A `workflow_dispatch` runs the dispatch-only `checksums` job instead, which uploads the file as an artifact and publishes nothing.
+`GetIsxScriptTest` runs `get-isx.sh` against a stand-in `curl` and fails when it fetches an asset the release step does not list; `check-macos-minos.py` is given `*-macos-*`, so the sums beside the binaries are not mistaken for one.
 
 **Release asset names are a contract with the CLI.**
 `release.yml` publishes the appliance kernel as `vmlinuz-<arch>.gz` (gzipped there, not by `build-kernel.sh`, which still emits a plain `vmlinuz` for local QEMU/vfkit runs) and `VmManager.downloadKernel` gunzips it on the way into `~/.isx`.

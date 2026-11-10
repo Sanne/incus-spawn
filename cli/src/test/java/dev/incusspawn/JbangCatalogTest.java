@@ -46,14 +46,16 @@ class JbangCatalogTest {
     }
 
     /**
-     * The arguments of the workflow's {@code gh release create}, not the whole file: building the
+     * The assets of the workflow's {@code gh release create} step, not the whole file: building the
      * jar and uploading it are separate steps, and a jar that is only built is exactly the state
      * this test exists to catch.
      */
     private static String releaseAssetArguments() throws IOException {
         var workflow = Files.readString(RELEASE_WORKFLOW);
-        var start = workflow.indexOf("gh release create");
-        assertTrue(start >= 0, "release.yml must create the GitHub release");
+        // The step lists the assets once, for the SHA256SUMS and the upload alike (#2080)
+        var start = workflow.indexOf("- name: Create GitHub Release");
+        assertTrue(start >= 0 && workflow.indexOf("gh release create", start) > start,
+                "release.yml must create the GitHub release");
         // The command is one backslash-continued shell line; it ends at the step's env block.
         // Asserting the terminator is found matters: falling back to the rest of the file would
         // sweep in the COPR/APT/Homebrew steps, which name assets this command never uploads.

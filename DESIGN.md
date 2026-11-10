@@ -66,6 +66,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Proxy garbage collector per platform
   - The minimum macOS is set by the build
   - Intel Macs are not shipped
+  - The install script verifies its downloads
   - Build-time initialization must not capture host paths
   - Regular expressions are compiled once
   - jjq rather than Jackson

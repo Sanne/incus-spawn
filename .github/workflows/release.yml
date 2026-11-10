@@ -274,6 +274,14 @@ jobs:
 
           echo "Smoke tests passed for ${{ matrix.os }}-${{ matrix.arch }}"
 
+      # The sums the release publishes for these files are the ones recorded here, by the job that
+      # built them; the release job checks its copies still match before it publishes them (#2080).
+      - name: Record checksums
+        run: |
+          sums() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+          (cd dist && sums -- incus-spawn-* isx-proxy-* > SHA256SUMS && cat SHA256SUMS)
+          if [ -d dist-jars ]; then (cd dist-jars && sums -- *.jar > SHA256SUMS && cat SHA256SUMS); fi
+
       # The runner is discarded after the job, so the smoke may change its System keychain (#1467)
       - name: Keychain trust smoke (macOS)
         if: matrix.os == 'macos'
@@ -299,6 +307,37 @@ jobs:
         with:
           name: native-macos-${{ matrix.arch }}
           path: dist/
+
+  # A dispatch never runs the release job, so this writes the SHA256SUMS of the binaries it built with
+  # the release job's script, each checked against the sums its build job recorded (#2080).
+  checksums:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [build]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        run: git clone --depth 1 --branch $GITHUB_REF_NAME https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+
+      - name: Write SHA256SUMS
+        run: |
+          .github/scripts/release-sha256sums.sh SHA256SUMS \
+            artifacts/uber-jar/*.jar artifacts/native-*/incus-spawn-* artifacts/native-*/isx-proxy-*
+          cat SHA256SUMS
+
+      - name: Upload SHA256SUMS
+        uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: SHA256SUMS
+          path: SHA256SUMS
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -349,11 +388,13 @@ jobs:
       # Every macOS binary gh release create uploads below, so nothing ships that needs another
       # macOS than pom.xml's macos.deployment.target (#1086).
       - name: Check macOS binaries' minimum macOS
-        run: scripts/check-macos-minos.py artifacts/native-macos-*/*
+        run: scripts/check-macos-minos.py artifacts/native-macos-*/*-macos-*
 
+      # One list feeds both the SHA256SUMS and the upload, so every asset is in the sums get-isx.sh
+      # checks its downloads against (#2080).
       - name: Create GitHub Release
         run: |
-          gh release create $GITHUB_REF_NAME \
+          set -- \
             artifacts/uber-jar/incus-spawn-runner.jar \
             artifacts/uber-jar/isx-proxy-runner.jar \
             artifacts/native-linux-amd64/incus-spawn-linux-amd64 \
@@ -367,7 +408,10 @@ jobs:
             artifacts/disk-x86_64.img.gz \
             artifacts/disk-aarch64.img.gz \
             artifacts/completions.tar.gz \
-            common/src/main/resources/git-remote-isx \
+            common/src/main/resources/git-remote-isx
+          .github/scripts/release-sha256sums.sh SHA256SUMS "$@"
+          cat SHA256SUMS
+          gh release create $GITHUB_REF_NAME "$@" SHA256SUMS \
             ${{ needs.channel.outputs.is_dev == 'true' && '--prerelease' || '' }} --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

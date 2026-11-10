@@ -33,18 +33,57 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
-echo "Installing incus-spawn $VERSION to $INSTALL_DIR/isx..."
+if ! command -v sha256sum >/dev/null 2>&1; then
+  echo "Error: sha256sum is required to verify the download (it is part of coreutils)"
+  exit 1
+fi
+
+# Everything is downloaded and checked here first, so a tampered or interrupted download never
+# reaches INSTALL_DIR. The release's SHA256SUMS is required: a release without one installs nothing.
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"; rm -f "$INSTALL_DIR"/.isx-install.*' EXIT
+trap 'exit 1' HUP INT TERM
+
+BASE_URL="https://github.com/$REPO/releases/download/$VERSION"
+status=0
+curl -fsSL "$BASE_URL/SHA256SUMS" -o "$TMP_DIR/SHA256SUMS" || status=$?
+if [ "$status" -eq 22 ]; then
+  echo "Error: release $VERSION publishes no SHA256SUMS, so its downloads cannot be verified; nothing was installed."
+  exit 1
+elif [ "$status" -ne 0 ]; then
+  echo "Error: could not download the SHA256SUMS of release $VERSION (curl exit $status); nothing was installed."
+  exit 1
+fi
+
+echo "Downloading incus-spawn $VERSION..."
+for name in "$ASSET" "$PROXY_ASSET" git-remote-isx; do
+  if ! curl -fsSL "$BASE_URL/$name" -o "$TMP_DIR/$name"; then
+    echo "Error: could not download $name; nothing was installed."
+    exit 1
+  fi
+  expected=$(awk -v n="$name" '$2 == n || $2 == "*" n { print $1 }' "$TMP_DIR/SHA256SUMS")
+  if [ -z "$expected" ] || [ "$(printf '%s\n' "$expected" | wc -l)" -ne 1 ]; then
+    echo "Error: the release's SHA256SUMS does not list $name exactly once; nothing was installed."
+    exit 1
+  fi
+  actual=$(sha256sum "$TMP_DIR/$name" | cut -d' ' -f1)
+  if [ "$actual" != "$expected" ]; then
+    echo "Error: $name does not match the release's SHA256SUMS (expected $expected, got $actual); nothing was installed."
+    exit 1
+  fi
+done
+echo "Verified the downloads against the release's SHA256SUMS."
+
+# Each file is copied beside its destination and renamed over it, so an existing isx is replaced
+# whole or not at all.
 mkdir -p "$INSTALL_DIR"
-curl -fsSL "https://github.com/$REPO/releases/download/$VERSION/$ASSET" -o "$INSTALL_DIR/isx"
-chmod +x "$INSTALL_DIR/isx"
-
-echo "Installing isx-proxy $VERSION to $INSTALL_DIR/isx-proxy..."
-curl -fsSL "https://github.com/$REPO/releases/download/$VERSION/$PROXY_ASSET" -o "$INSTALL_DIR/isx-proxy"
-chmod +x "$INSTALL_DIR/isx-proxy"
-
-# Install git remote helper shim for isx:// URLs
-curl -fsSL "https://github.com/$REPO/releases/download/$VERSION/git-remote-isx" -o "$INSTALL_DIR/git-remote-isx"
-chmod +x "$INSTALL_DIR/git-remote-isx"
+for pair in "$ASSET:isx" "$PROXY_ASSET:isx-proxy" "git-remote-isx:git-remote-isx"; do
+  cp "$TMP_DIR/${pair%%:*}" "$INSTALL_DIR/.isx-install.${pair#*:}"
+  chmod +x "$INSTALL_DIR/.isx-install.${pair#*:}"
+done
+for target in isx isx-proxy git-remote-isx; do
+  mv -f "$INSTALL_DIR/.isx-install.$target" "$INSTALL_DIR/$target"
+done
 
 echo "Installed incus-spawn $VERSION to $INSTALL_DIR/isx"
 case ":$PATH:" in

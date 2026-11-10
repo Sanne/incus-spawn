@@ -166,6 +166,7 @@ On macOS that exit code is not enough (launchd has no `RestartPreventExitStatus`
 The unit and macOS plist exec `isx-proxy` directly; for units written by older builds, which exec `isx proxy start`, `ProxyService.isSupervisedInvocation()` matches systemd's `INVOCATION_ID` against the proxy unit's own so the command never manages the service it is itself running under.
 Both exist because a unit exec'ing `isx proxy start` restarts itself forever (issue #701).
 JBang installs each alias separately, so `jbang-catalog.json` publishes `isx` **and** `isx-proxy`; `JbangCatalogTest` fails if an alias names an asset `gh release create` does not upload.
+`release.yml` publishes a `SHA256SUMS` over the one list of assets it uploads, each binary's sum the one its build job recorded (`.github/scripts/release-sha256sums.sh`), and `get-isx.sh` installs nothing unless every download matches it (#2080, `GetIsxScriptTest`, design/native-image.md "The install script verifies its downloads").
 
 **Credential accounts are per config namespace, not per tool.**
 A namespace (`claude`, `github`, ... -- whatever a tool declares as `config-namespace`) holds `accounts:` and `default:`.

@@ -82,6 +82,11 @@ class ReleasePgoWorkflowTest {
                 assertEquals(1, job.path("permissions").asMap().size(),
                         name + " runs on a dispatch, so it may hold no permission beyond contents: read");
                 assertFalse(job.has("if"), name + " is what a dispatch verifies; it must run for one");
+            } else if (job.pathText("if", "").equals("github.event_name == 'workflow_dispatch'")) {
+                // Shows on a dispatch what the release job would publish (the SHA256SUMS, #2080)
+                assertEquals("read", job.path("permissions").pathText("contents", ""), name + " must read only");
+                assertEquals(1, job.path("permissions").asMap().size(),
+                        name + " runs on a dispatch, so it may hold no permission beyond contents: read");
             } else {
                 // Everything else publishes or feeds what does: a pushed tag only.
                 assertTrue(job.pathText("if", "").contains("github.event_name == 'push'"),

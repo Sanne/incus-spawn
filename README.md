@@ -396,7 +396,7 @@ isx proxy restart
 | `curl -fsSL https://isx.run \| sh` | the same command again |
 | JBang | both `jbang app install` commands again |
 
-The `curl` script installs the `isx` and `isx-proxy` native binaries to `~/.local/bin` (set `INSTALL_DIR` to change it), with no JVM needed.
+The `curl` script installs the `isx` and `isx-proxy` native binaries to `~/.local/bin` (set `INSTALL_DIR` to change it), with no JVM needed, and only once every download matches the release's `SHA256SUMS`.
 JBang installs need both commands, and `jbang` must stay on your PATH.
 
 A source build (`./install.sh` in a checkout) leaves a Homebrew install alone, since other accounts may use it: whichever `isx` comes first on your PATH is the one you and your proxy service run.
