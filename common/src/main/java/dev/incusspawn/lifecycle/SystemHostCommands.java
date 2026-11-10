@@ -39,14 +39,14 @@ class SystemHostCommands implements HostCommands {
             });
             var deadline = System.nanoTime() + timeout.toNanos();
             if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
-                kill(process);
-                reader.join(1000);
-                // What it said before it hung says why, often
+                // What it said before it hung says why, often; taken before the kill, so nothing the
+                // kill makes it print, such as the shell's report of its killed child, stands in for it
                 String said;
                 synchronized (output) {
                     var lines = output.toString().strip().lines().toList();
                     said = lines.isEmpty() ? "" : lines.getLast();
                 }
+                kill(process);
                 return new Result(-1, said + (said.isEmpty() ? "" : "\n") + "timed out after " + timeout.toSeconds() + " seconds");
             }
             // A daemon it left behind may hold the pipe open: the output is read within the same time

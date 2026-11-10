@@ -176,4 +176,5 @@ herdr is asked only when `ssh <name>` reaches the instance through isx's SSH con
 `destroyed` runs from `InstanceLifecycle.removeHostIntegration` on every delete, a TUI rename's old name included.
 `registered(name)` reads the same host state, never a command or Incus, and the TUI's instance details (F3) list the tools that answer yes (`HostIntegration.registeredWith`), read once when they open.
 Host programs go through `HostCommands` (`HostPath.isOnPath`, and a run bounded in time, its output read included, so a daemon it leaves holding the pipe cannot hold isx), which tests replace.
+A run past its time reports the last line the command printed before the kill, never what the kill made it print, such as macOS sh's `Killed: 9` (#2070).
 
