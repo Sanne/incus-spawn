@@ -653,6 +653,22 @@ public class ImageDef extends DefinitionOrigin {
         return "parent cycle " + String.join(" → ", rotated);
     }
 
+    /** {@code imageUrl} as isx downloads it: {@code {arch}} is the host's, {@code {tag}} is {@code tag} when set. */
+    public static String resolveImageUrl(String imageUrl, String tag) {
+        var resolved = imageUrl.replace("{arch}", hostArch());
+        return tag != null ? resolved.replace("{tag}", tag) : resolved;
+    }
+
+    /** The host's architecture as base image names spell it: {@code x86_64}, {@code aarch64}. */
+    public static String hostArch() {
+        var arch = System.getProperty("os.arch");
+        return switch (arch) {
+            case "amd64" -> "x86_64";
+            case "arm64" -> "aarch64";
+            default -> arch;
+        };
+    }
+
     /**
      * Return the full inheritance chain root-first, ending with {@code start} itself.
      * This is the order layers are applied during a build, so it is also the order

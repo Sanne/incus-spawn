@@ -425,12 +425,12 @@ final class TemplateDetailView {
         if (root.isPinned()) spans.add(Span.styled("  (pinned)", labelStyle()));
         lines.add(Line.from(spans));
         if (root.getImageUrl() != null) {
-            lines.add(row("", "from " + BuildCommand.resolveImageUrl(root.getImageUrl(), root.getImageTag()),
+            lines.add(row("", "from " + ImageDef.resolveImageUrl(root.getImageUrl(), root.getImageTag()),
                     dimStyle()));
         }
         if (root.getVmImageUrl() != null) {
             lines.add(row("", "VM image from "
-                    + BuildCommand.resolveImageUrl(root.getVmImageUrl(), root.getImageTag()), dimStyle()));
+                    + ImageDef.resolveImageUrl(root.getVmImageUrl(), root.getImageTag()), dimStyle()));
         }
     }
 
@@ -508,11 +508,11 @@ final class TemplateDetailView {
 
             if (def.isRoot() && def.getImageUrl() != null) {
                 treeRow(lines, contentIndent, "Image: ",
-                        BuildCommand.resolveImageUrl(def.getImageUrl(), def.getImageTag()), dimStyle);
+                        ImageDef.resolveImageUrl(def.getImageUrl(), def.getImageTag()), dimStyle);
             }
             if (def.isRoot() && def.getVmImageUrl() != null) {
                 treeRow(lines, contentIndent, "VM image: ",
-                        BuildCommand.resolveImageUrl(def.getVmImageUrl(), def.getImageTag()), dimStyle);
+                        ImageDef.resolveImageUrl(def.getVmImageUrl(), def.getImageTag()), dimStyle);
             }
 
             // Settings this layer declares itself; a child inheriting them shows nothing

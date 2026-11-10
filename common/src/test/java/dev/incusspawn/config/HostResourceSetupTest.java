@@ -2,7 +2,9 @@ package dev.incusspawn.config;
 
 import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -304,5 +306,34 @@ class HostResourceSetupTest {
         def.setParent(parent);
         def.setHostResources(hostResources);
         return def;
+    }
+
+    @Test
+    void projectLocalFileBaseImageMustStayInsideProject(@TempDir Path tmp) throws Exception {
+        var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
+        var inside = Files.writeString(project.resolve("fedora.tar.xz"), "image");
+        var outside = Files.writeString(tmp.resolve("backup.tar.xz"), "private");
+
+        var def = new ImageDef();
+        def.setName("tpl-project");
+        def.setSource(project.resolve(".incus-spawn/images/project.yaml").toString());
+        def.setProjectRoot(project);
+        var defs = Map.of("tpl-project", def);
+
+        def.setImageUrl(inside.toUri().toString());
+        HostResourceSetup.requireConfinedBaseImages(def, defs);
+
+        def.setImageUrl(outside.toUri().toString());
+        assertThrows(HostResourceSetup.HostPathOutsideProjectException.class,
+                () -> HostResourceSetup.requireConfinedBaseImages(def, defs));
+
+        def.setImageUrl(inside.toUri().toString());
+        def.setVmImageUrl("file://" + project + "/../backup.tar.xz");
+        assertThrows(HostResourceSetup.HostPathOutsideProjectException.class,
+                () -> HostResourceSetup.requireConfinedBaseImages(def, defs));
+
+        // The same URL is fine from a trusted layer: that is the local image-testing workflow.
+        def.setProjectRoot(null);
+        HostResourceSetup.requireConfinedBaseImages(def, defs);
     }
 }

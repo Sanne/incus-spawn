@@ -795,7 +795,7 @@ public class BuildCommand extends BaseCommand {
         // applied, but by then the build container exists and the failure would leave it behind.
         try {
             HostResourceSetup.collectEffective(imageDef, defs);
-            requireConfinedBaseImages(imageDef, defs);
+            HostResourceSetup.requireConfinedBaseImages(imageDef, defs);
         } catch (HostResourceSetup.HostPathOutsideProjectException
                  | HostResourceSetup.ForbiddenMountTargetException e) {
             // Built with the template's text quoted safely; each line is made safe again as it
@@ -1808,7 +1808,7 @@ public class BuildCommand extends BaseCommand {
             if (latest.tag().equals(builtin.tag())) return builtin; // already newest
 
             var checksums = releases.fetchChecksums(latest, rootDef.getImageUrl(), rootDef.getVmImageUrl());
-            var arch = normalizeHostArch();
+            var arch = ImageDef.hostArch();
             if (checksums == null || !checksums.container().containsKey(arch)) {
                 BuildOutput.note("Could not fetch checksums for " + latest.tag() + fallback);
                 return builtin;
@@ -1876,35 +1876,6 @@ public class BuildCommand extends BaseCommand {
         return order != null ? order > 0 : a.compareTo(b) > 0;
     }
 
-    /**
-     * A {@code file://} base image is a host path like any other: a project-local template may
-     * only name one inside its project (#765).
-     */
-    static void requireConfinedBaseImages(ImageDef imageDef, Map<String, ImageDef> defs) {
-        for (var def : ImageDef.chain(imageDef, defs)) {
-            if (def.getProjectRoot() == null) continue;
-            for (var url : java.util.Arrays.asList(def.getImageUrl(), def.getVmImageUrl())) {
-                if (url == null || !url.regionMatches(true, 0, "file:", 0, 5)) continue;
-                var resolved = resolveImageUrl(url, def.getImageTag());
-                String escape;
-                try {
-                    escape = HostResourceSetup.projectEscape(Path.of(java.net.URI.create(resolved)),
-                            def.getProjectRoot());
-                } catch (IllegalArgumentException e) {
-                    escape = "is not an absolute file:// URL";
-                }
-                if (escape != null) {
-                    throw HostResourceSetup.outsideProject(def, "base image '" + resolved + "'", escape);
-                }
-            }
-        }
-    }
-
-    public static String resolveImageUrl(String imageUrl, String tag) {
-        var resolved = imageUrl.replace("{arch}", normalizeHostArch());
-        return tag != null ? resolved.replace("{tag}", tag) : resolved;
-    }
-
     private void ensureBaseImage(ImageDef imageDef, BaseImage base) {
         checkPinnedWarning(imageDef);
         downloadAndAliasImage(imageDef.getImage(), imageDef.getImageUrl(),
@@ -1939,7 +1910,7 @@ public class BuildCommand extends BaseCommand {
         var ownerProject = projectOf(owner);
         // Fail closed: a failed lookup must not read as "no alias" or "imported by a trusted definition".
 
-        var arch = normalizeHostArch();
+        var arch = ImageDef.hostArch();
         String expectedSha256 = null;
         if (sha256Map != null) {
             expectedSha256 = sha256Map.get(arch);
@@ -1975,7 +1946,7 @@ public class BuildCommand extends BaseCommand {
             // imported under (a release can carry an unchanged asset), so it is reused as it is.
             var sameFile = expectedSha256 != null
                     ? expectedSha256.equalsIgnoreCase(existingFingerprint)
-                    : resolveImageUrl(imageUrl, tag).equals(incus.getImageProperty(existingFingerprint, IMAGE_SOURCE_PROPERTY));
+                    : ImageDef.resolveImageUrl(imageUrl, tag).equals(incus.getImageProperty(existingFingerprint, IMAGE_SOURCE_PROPERTY));
             var sameRelease = expectedSha256 != null || (tag != null && tag.equals(installedTag));
             if (sameRelease && sameFile && ownerProject.equals(importedBy)) {
                 BuildOutput.note("Base image '" + localAlias + "' is up to date (" + tag + ")");
@@ -2006,7 +1977,7 @@ public class BuildCommand extends BaseCommand {
                 return;
             }
         }
-        var resolvedUrl = resolveImageUrl(imageUrl, tag);
+        var resolvedUrl = ImageDef.resolveImageUrl(imageUrl, tag);
 
         var cached = downloadBaseImage(localAlias, resolvedUrl, expectedSha256);
         var fingerprint = importBaseImage(localAlias, cached);
@@ -2232,15 +2203,6 @@ public class BuildCommand extends BaseCommand {
                 "systemctl restart systemd-networkd 2>/dev/null; " +
                 "true")
                 .assertSuccess("Failed to prepare container for package install");
-    }
-
-    private static String normalizeHostArch() {
-        var arch = System.getProperty("os.arch");
-        return switch (arch) {
-            case "amd64" -> "x86_64";
-            case "arm64" -> "aarch64";
-            default -> arch;
-        };
     }
 
     private List<ResolvedTool> resolveTools(ImageDef imageDef) {

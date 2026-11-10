@@ -202,8 +202,33 @@ public final class HostResourceSetup {
      * {@link #collectEffective} applies to host-resources, for other host paths a project-local
      * template names (a {@code file://} base image).
      */
-    public static String projectEscape(Path path, Path projectRoot) {
+    private static String projectEscape(Path path, Path projectRoot) {
         return findEscape(path, realPath(projectRoot), null);
+    }
+
+    /**
+     * A {@code file://} base image is a host path like any other: a project-local template may
+     * only name one inside its project (#765). {@code isx build} runs this on every layer before
+     * it creates anything, and the template check on the definition being written (#2095).
+     */
+    public static void requireConfinedBaseImages(ImageDef imageDef, Map<String, ImageDef> defs) {
+        for (var def : ImageDef.chain(imageDef, defs)) {
+            requireConfinedBaseImage(def, def.getImageUrl());
+            requireConfinedBaseImage(def, def.getVmImageUrl());
+        }
+    }
+
+    /** {@link #requireConfinedBaseImages} for one of {@code def}'s own image URLs. */
+    public static void requireConfinedBaseImage(ImageDef def, String url) {
+        if (def.getProjectRoot() == null || url == null || !url.regionMatches(true, 0, "file:", 0, 5)) return;
+        var resolved = ImageDef.resolveImageUrl(url, def.getImageTag());
+        String escape;
+        try {
+            escape = projectEscape(Path.of(java.net.URI.create(resolved)), def.getProjectRoot());
+        } catch (IllegalArgumentException e) {
+            escape = "is not an absolute file:// URL";
+        }
+        if (escape != null) throw outsideProject(def, "base image '" + resolved + "'", escape);
     }
 
     public static HostPathOutsideProjectException outsideProject(ImageDef def, String what, String escape) {
