@@ -211,7 +211,8 @@ final class MainScreen {
         frame.renderWidget(block, area);
         var inner = block.inner(area);
 
-        boolean showLegend = tui.anyTemplateOutdated || tui.anyDefinitionChanged || tui.anyParentRebuilt;
+        boolean showLegend = tui.anyTemplateOutdated || tui.anyDefinitionChanged || tui.anyParentRebuilt
+                || tui.anyMissingDefinition;
         dev.tamboui.layout.Rect tableArea;
         if (showLegend && inner.height() > 2) {
             var parts = splitVertical(inner, inner.height() - 1, 1);
@@ -298,7 +299,8 @@ final class MainScreen {
     }
 
     private void renderLegend(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
-        var text = "! = outdated  \u25b3 = changed  \u2191 = parent rebuilt ";
+        var text = "! = outdated  \u25b3 = changed  \u2191 = parent rebuilt "
+                + (tui.anyMissingDefinition ? " \u25cc = no definition " : "");
         var padding = Math.max(0, area.width() - text.length());
         var style = Style.EMPTY.fg(tui.theme.textDim());
         frame.renderWidget(Paragraph.from(Line.from(
@@ -511,6 +513,11 @@ final class MainScreen {
                                     + TemplateDetailView.shortSourceLabel(builtFrom, def.getSource())
                                     + ")" : ""),
                             warnStyle));
+                    hasWarning = true;
+                }
+                var missing = tui.missingDefinitions.get(template.name());
+                if (missing != null) {
+                    spans.add(Span.styled("  \u25cc no definition: " + missing.reason(), warnStyle));
                     hasWarning = true;
                 }
                 if (tui.templatesParentRebuilt.contains(template.name())) {

@@ -50,15 +50,39 @@ final class BuildMenu {
     BuildMenu(ModalRenderer modal, TuiTheme theme, TemplateInfo template,
               Map<String, dev.incusspawn.config.ImageDef> imageDefs, java.util.List<TemplateInfo> templateEntries,
               Set<String> templatesOutOfSync, java.util.List<String> marked) {
+        this(modal, theme, template, imageDefs, templateEntries, templatesOutOfSync, marked, Map.of());
+    }
+
+    /**
+     * As above, where {@code missing} are the built templates with no loaded definition: whose
+     * definitions in {@code imageDefs} come from their build stamps, and which {@code isx build}
+     * refuses (#2057), so no option that builds one can be chosen.
+     */
+    BuildMenu(ModalRenderer modal, TuiTheme theme, TemplateInfo template,
+              Map<String, dev.incusspawn.config.ImageDef> imageDefs, java.util.List<TemplateInfo> templateEntries,
+              Set<String> templatesOutOfSync, java.util.List<String> marked,
+              Map<String, dev.incusspawn.command.MissingDefinition> missing) {
         this.modal = modal;
         this.theme = theme;
         var options = new java.util.ArrayList<BuildMenuOption>();
-        addMarkedOptions(options, marked, imageDefs);
-        var def = imageDefs.get(template.name());
+        // isx build follows no parent or child that has no definition, so neither do the chains shown
+        if (!missing.isEmpty()) {
+            var loaded = new java.util.HashMap<>(imageDefs);
+            loaded.keySet().removeAll(missing.keySet());
+            imageDefs = loaded;
+        }
+        addMarkedOptions(options, marked, imageDefs, missing);
+        var noDefinition = missing.get(template.name());
+        var def = noDefinition != null ? null : imageDefs.get(template.name());
         boolean isBuilt = !"not built".equals(template.buildStatus());
 
         // Option 1: Build/Rebuild single template
-        if (isBuilt) {
+        if (noDefinition != null) {
+            options.add(new BuildMenuOption(
+                    "Rebuild " + template.name(),
+                    "No definition here: " + noDefinition.reason() + ".\n" + noDefinition.advice(),
+                    "no definition", new String[]{template.name()}, false));
+        } else if (isBuilt) {
             options.add(new BuildMenuOption(
                     "Rebuild " + template.name(),
                     "Deletes and rebuilds this template",
@@ -136,9 +160,16 @@ final class BuildMenu {
      * descendants.
      */
     private static void addMarkedOptions(java.util.List<BuildMenuOption> options, java.util.List<String> marked,
-                                         Map<String, dev.incusspawn.config.ImageDef> imageDefs) {
+                                         Map<String, dev.incusspawn.config.ImageDef> imageDefs,
+                                         Map<String, dev.incusspawn.command.MissingDefinition> missing) {
         if (marked.isEmpty()) return;
         var count = "Rebuild " + marked.size() + " selected";
+        var undefined = marked.stream().filter(missing::containsKey).toList();
+        if (!undefined.isEmpty()) {
+            options.add(new BuildMenuOption(count, "No definition here for " + String.join(", ", undefined)
+                    + ";\nisx build refuses it", "no definition", marked.toArray(String[]::new), false));
+            return;
+        }
         var defs = marked.stream().map(imageDefs::get).toList();
         var names = marked.toArray(String[]::new);
         if (!defs.contains(null)) {

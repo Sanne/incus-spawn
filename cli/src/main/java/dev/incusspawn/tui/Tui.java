@@ -135,6 +135,9 @@ public class Tui {
                 @Override public String builtFrom(String template) { return Tui.this.loader.builtFrom(template); }
                 @Override public BuildSource buildSource(String template) { return Tui.this.loader.buildSource(template); }
                 @Override public String currentVersion() { return Tui.this.currentVersion(); }
+                @Override public dev.incusspawn.command.MissingDefinition missingDefinition(String template) {
+                    return missingDefinitions.get(template);
+                }
             }, java.time.LocalDateTime::now);
 
     private final InstanceDetailView instanceDetail = new InstanceDetailView(modal, theme, java.time.LocalDateTime::now);
@@ -307,6 +310,10 @@ public class Tui {
     java.util.Set<String> templatesParentRebuilt = java.util.Set.of();
     private java.util.Set<String> templatesOutOfSync = java.util.Set.of();
     java.util.Set<String> storedSourceTemplates = java.util.Set.of();
+    /** Why each built template with no loaded definition has none (#2057): its row says so, and nothing rebuilds it. */
+    java.util.Map<String, dev.incusspawn.command.MissingDefinition> missingDefinitions = java.util.Map.of();
+    /** Whether a row shows the ◌ of a template with no definition, which the legend then explains. */
+    boolean anyMissingDefinition;
     /**
      * Templates marked with Space for one build from F5 (#1131), by name in the order marked: in
      * memory only, they outlive refreshes and the TUI's return from a build or a shell, lose a
@@ -1497,7 +1504,7 @@ public class Tui {
 
     private void openBuildMenu(TemplateInfo template) {
         buildMenu = new BuildMenu(modal, theme, template, imageDefs, templateEntries, templatesOutOfSync,
-                List.copyOf(markedTemplates));
+                List.copyOf(markedTemplates), missingDefinitions);
         mode = Mode.BUILD_MENU;
     }
 
@@ -1656,7 +1663,7 @@ public class Tui {
         // The header band is always present — it anchors the app identity (brand chip) and
         // carries the storage gauge on the right when pool usage is available.
         int headerHeight = 1;
-        boolean showLegend = anyTemplateOutdated || anyDefinitionChanged || anyParentRebuilt;
+        boolean showLegend = anyTemplateOutdated || anyDefinitionChanged || anyParentRebuilt || anyMissingDefinition;
         int legendHeight = showLegend ? 1 : 0;
         int templateIdeal = templateEntries.size() + 3 + legendHeight;
         int instanceIdeal = entries.size() + 3;
@@ -2871,6 +2878,7 @@ public class Tui {
         anyTemplateOutdated = false;
         anyDefinitionChanged = false;
         anyParentRebuilt = false;
+        anyMissingDefinition = false;
         var defChanged = new java.util.HashSet<String>();
         var parentRebuilt = new java.util.HashSet<String>();
         var outOfSync = new java.util.LinkedHashSet<String>();
@@ -2905,7 +2913,12 @@ public class Tui {
                     anyParentRebuilt = true;
                     parentRebuilt.add(t.name());
                 }
-                if (stale.outOfSync()) outOfSync.add(t.name());
+                // Nothing rebuilds a template with no definition, so --out-of-sync does not count it
+                if (stale.outOfSync() && !missingDefinitions.containsKey(t.name())) outOfSync.add(t.name());
+                if (missingDefinitions.containsKey(t.name())) {
+                    symbols.append('◌');
+                    anyMissingDefinition = true;
+                }
                 if (!symbols.isEmpty()) {
                     statusDisplay += " " + symbols;
                     statusStyle = Style.EMPTY.fg(theme.statusWarning());
