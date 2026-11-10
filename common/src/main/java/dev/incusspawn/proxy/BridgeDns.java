@@ -1,5 +1,7 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.config.ExposedHostPorts;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -24,6 +26,12 @@ import java.util.stream.Collectors;
  * whole domain, so one left behind would make that domain unresolvable. Configurations from
  * before the block are recognised by their {@code address=/<domain>/::} lines (every released
  * version wrote one per domain), and both of that domain's {@code address=} lines are migrated.
+ * <p>
+ * The block also holds {@link ExposedHostPorts#HOST_NAME} while {@code exposed-host-ports:} lists a
+ * port (#2117), with the same pair of lines. It is not an intercepted domain (no certificate, no
+ * port 443) and its address is where the proxy listens, which on macOS is the Mac's end of the VM
+ * link rather than the VM's bridge gateway. So it is passed apart from the domains, and
+ * {@link #overrideAddresses} leaves it out.
  */
 public final class BridgeDns {
 
@@ -37,12 +45,24 @@ public final class BridgeDns {
 
     /** {@code existing} with isx's block holding exactly {@code domains}, and nothing else changed. */
     static String render(String existing, Set<String> domains, String gatewayIp) {
+        return render(existing, domains, gatewayIp, null);
+    }
+
+    /**
+     * {@link #render(String, Set, String)}, with {@link ExposedHostPorts#HOST_NAME} sent to
+     * {@code hostAddress} as well, or left out when it is null.
+     */
+    static String render(String existing, Set<String> domains, String gatewayIp, String hostAddress) {
         var lines = new ArrayList<>(unmanaged(existing));
         lines.add(BEGIN);
-        domains.stream().sorted().forEach(d -> {
+        domains.stream().filter(d -> !d.equals(ExposedHostPorts.HOST_NAME)).sorted().forEach(d -> {
             lines.add(addressLine(d, gatewayIp));
             lines.add("local=/" + d + "/");
         });
+        if (hostAddress != null) {
+            lines.add(addressLine(ExposedHostPorts.HOST_NAME, hostAddress));
+            lines.add("local=/" + ExposedHostPorts.HOST_NAME + "/");
+        }
         lines.add(END);
         return String.join("\n", lines);
     }
@@ -57,6 +77,29 @@ public final class BridgeDns {
      * {@code gatewayIp}, the bridge's current address.
      */
     public static Status status(String config, Set<String> domains, String gatewayIp) {
+        return status(config, domains, gatewayIp, null);
+    }
+
+    /**
+     * {@link #status(String, Set, String)}, with {@link ExposedHostPorts#HOST_NAME} expected at
+     * {@code hostAddress} as well when it is not null: missing or pointing elsewhere, it is
+     * reported as a domain is. A line for it while no port is exposed is not reported, since it
+     * sends instances only where nothing relays.
+     */
+    public static Status status(String config, Set<String> domains, String gatewayIp, String hostAddress) {
+        var domainStatus = domainStatus(config, domains, gatewayIp);
+        if (hostAddress == null) return domainStatus;
+        var managed = managedLines(config);
+        var host = ExposedHostPorts.HOST_NAME;
+        var missing = new ArrayList<>(domainStatus.missing());
+        var stale = new ArrayList<>(domainStatus.stale());
+        var hostLine = managed.stream().filter(l -> host.equals(addressDomain(l))).findFirst();
+        if (hostLine.isEmpty() || !managed.contains("local=/" + host + "/")) missing.add(host);
+        else if (!hostLine.get().equals(addressLine(host, hostAddress))) stale.add(host);
+        return new Status(List.copyOf(missing), List.copyOf(stale), gatewayIp, domainStatus.legacy());
+    }
+
+    private static Status domainStatus(String config, Set<String> domains, String gatewayIp) {
         var managed = managedLines(config);
         var addressed = managed.stream()
                 .map(BridgeDns::addressDomain)
@@ -84,7 +127,7 @@ public final class BridgeDns {
     /** The addresses isx's block sends its domains to: the gateway of the proxy that wrote it. */
     public static Set<String> overrideAddresses(String config) {
         return managedLines(config).stream()
-                .filter(l -> addressDomain(l) != null)
+                .filter(l -> addressDomain(l) != null && !ExposedHostPorts.HOST_NAME.equals(addressDomain(l)))
                 .map(BridgeDns::addressTarget)
                 .collect(Collectors.toSet());
     }
@@ -116,9 +159,13 @@ public final class BridgeDns {
         public String describe() {
             var parts = new ArrayList<String>();
             if (!missing.isEmpty()) parts.add("missing: " + String.join(", ", missing));
-            if (!stale.isEmpty()) {
+            var staleDomains = stale.stream().filter(d -> !d.equals(ExposedHostPorts.HOST_NAME)).toList();
+            if (!staleDomains.isEmpty()) {
                 parts.add("pointing at another address than the gateway " + gatewayIp + ": "
-                        + String.join(", ", stale));
+                        + String.join(", ", staleDomains));
+            }
+            if (stale.contains(ExposedHostPorts.HOST_NAME)) {
+                parts.add(ExposedHostPorts.HOST_NAME + " pointing at another address than the proxy's");
             }
             if (!legacy.isEmpty()) {
                 parts.add("AAAA answered with :: (the pre-#814 layout) for: " + String.join(", ", legacy));

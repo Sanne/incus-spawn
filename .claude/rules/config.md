@@ -31,6 +31,9 @@ Only `isx destroy --owner` reads it, and only config.yaml declares it: never a t
 **Host routes** (`host-routes:`, `HostRoutes`): a raw section like `artifact-cache:`, so any shape loads and is written back as it was; a name under `.internal` mapped to `target:` (`host:port` on loopback) and a required, non-empty `templates:` list (no route admits every instance; decided on #936).
 `HostRoutes.routes` checks each entry against the intercepted domains and drops a wrong one with a warning naming it; an unknown key drops the entry, so a misspelt `templates:` drops it too, never widens it.
 Keep the entry keyed by name with its filter as a field: #935's per-instance grants go beside `templates:`.
+**Exposed host ports** (`exposed-host-ports:`, `ExposedHostPorts`, #2117): a raw key, read only from `config.yaml`, never a template or tool.
+Anything but a plain list of integers drops the whole key; within one, a port outside 1 to 65535 or one isx serves (443, 18443, 18080, 53) is dropped with a warning, and a duplicate kept once.
+Every instance with network reaches them, project-local ones included, since the relay cannot identify callers; see `proxy.md`.
 
 **Secrets**: `SecretRegistry` is the single source of truth for *where secrets live* in `config.yaml`.
 It holds no list -- it collects every tool's `ToolDef.ConfigEntry` that declares `secret: true` with a `config-path`, resolved through `ProxyDef.fullConfigPath()`.

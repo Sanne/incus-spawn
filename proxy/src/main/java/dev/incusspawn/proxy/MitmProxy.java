@@ -156,6 +156,10 @@ public class MitmProxy {
     private volatile McpBridge mcpBridge;
     /** The names of {@code host-routes:}, forwarded to controllers on this host (#936). */
     private final HostRouteRelay hostRouteRelay;
+    /** {@code exposed-host-ports:}, relayed raw to this host's loopback (#2117). */
+    private final HostPortRelay hostPortRelay;
+    /** The ports {@code exposed-host-ports:} lists as of the last config read; none by default. */
+    private volatile List<Integer> exposedHostPorts = List.of();
     /** What serves one instance's MCP session; tests replace the {@code isx} it runs. */
     private java.util.function.Function<String, List<String>> mcpCommand = McpBridge::isxMcp;
 
@@ -357,6 +361,7 @@ public class MitmProxy {
         this.upstream = new Upstream(vertx, this::lookupHost);
         this.artifactCache = new ArtifactCacheHandler(vertx, upstream);
         this.hostRouteRelay = new HostRouteRelay(vertx, () -> instanceRegistry, upstream);
+        this.hostPortRelay = new HostPortRelay(bindAddress);
         this.chatGpt = new ChatGptRoute(this, vertx, new ChatGptSessionStore());
     }
 
@@ -579,7 +584,33 @@ public class MitmProxy {
                         name -> HostRouteSecret.loadOrCreate(name, ProxyLog::warn)), nested,
                 ToolProxyResolver.handlerDomains(tree));
         artifactCache.artifactCacheTiers = ArtifactCacheTiers.from(config);
+        exposedHostPorts = withoutOwnPorts(config.exposedHostPorts().ports(ProxyLog::warn));
         return previous;
+    }
+
+    /**
+     * {@code ports} less the ones this proxy was started on, which {@code ExposedHostPorts}
+     * refuses only at their defaults: a relay on a non-default health port would hand guests a
+     * loopback caller on the host-only health endpoint (macOS, where it listens on loopback).
+     */
+    private List<Integer> withoutOwnPorts(List<Integer> ports) {
+        var kept = new java.util.ArrayList<Integer>();
+        for (var port : ports) {
+            if (port == requestedMitmPort || port == requestedHealthPort) {
+                ProxyLog.warn("Ignoring exposed host port " + port + " in config.yaml: this proxy serves it");
+            } else {
+                kept.add(port);
+            }
+        }
+        return List.copyOf(kept);
+    }
+
+    /**
+     * The ports {@code exposed-host-ports:} lists, as of the last config read: what bridge DNS
+     * gives {@link dev.incusspawn.config.ExposedHostPorts#HOST_NAME} for, while there is one.
+     */
+    public List<Integer> exposedHostPorts() {
+        return exposedHostPorts;
     }
 
     /** The default account's credentials, as of the last config read. */
@@ -865,6 +896,8 @@ public class MitmProxy {
                 mitmServer.updateSSLOptions(sslOptions)
                         .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
             }
+            // Only once start() has bound its own ports: before that, start() binds these too.
+            if (mitmServer != null) hostPortRelay.listen(exposedHostPorts);
             // Before start() is ready too: the writer is also what notices the bridge moved (#966).
             if (bridgeDnsWriter != null) {
                 try {
@@ -988,6 +1021,10 @@ public class MitmProxy {
             throw e;
         }
 
+        // Before onReady, which points bridge DNS at them. A port that cannot be bound is said
+        // and skipped: it never stops the proxy.
+        if (!stopping) hostPortRelay.listen(exposedHostPorts);
+
         boolean ready;
         synchronized (lifecycleLock) {
             ready = !stopping;
@@ -1008,6 +1045,12 @@ public class MitmProxy {
         ProxyLog.stdout("MITM proxy listening on " + bindAddress + ":" + mitmPort());
         ProxyLog.stdout("Health endpoint on " + healthBindAddress + ":" + healthPort() + "/health");
         ProxyLog.stdout("Intercepted domains: " + configState.routing().allInterceptedDomains());
+        if (!exposedHostPorts.isEmpty()) {
+            var bound = hostPortRelay.bound().stream().sorted().map(String::valueOf)
+                    .collect(java.util.stream.Collectors.joining(", "));
+            ProxyLog.field("Exposed host ports", (bound.isEmpty() ? "none could be bound" : bound)
+                    + " (at " + dev.incusspawn.config.ExposedHostPorts.HOST_NAME + ")");
+        }
         artifactCache.start();
         var credentials = configState.credentials();
         if (credentials.useVertex()) {
@@ -1190,6 +1233,7 @@ public class MitmProxy {
             clientsClosing.forEach((what, closing) -> awaitClose(what, closing, deadline));
             if (mcpBridge != null) mcpBridge.stop();
             hostRouteRelay.stop();
+            hostPortRelay.stop();
             awaitClose("Health listener", healthHttpServer, healthDeadline(deadline));
         } finally {
             // Guarantee stopLatch is always counted down, even if an unexpected exception occurs
@@ -2830,10 +2874,20 @@ public class MitmProxy {
                 // Lets the CLI signal this process (SIGUSR1: re-read the instance list)
                 // without fuser scanning every process on the host to find it.
                 + (isHostCaller(req) ? ",\"pid\":" + ProcessHandle.current().pid() : "")
+                // Host-only too: which exposed ports something else holds is the host's business
+                + (isHostCaller(req) ? unboundHostPortsJson() : "")
                 + "}";
         req.response()
                 .putHeader("Content-Type", "application/json")
                 .end(body);
+    }
+
+    /** {@code ,"unboundHostPorts":[...]}: the listed exposed ports the relay could not bind, or nothing. */
+    private String unboundHostPortsJson() {
+        var unbound = hostPortRelay.unbound();
+        if (unbound.isEmpty()) return "";
+        return unbound.keySet().stream().sorted().map(String::valueOf)
+                .collect(java.util.stream.Collectors.joining(",", ",\"unboundHostPorts\":[", "]"));
     }
 
     /** What the health server answers a request with. */

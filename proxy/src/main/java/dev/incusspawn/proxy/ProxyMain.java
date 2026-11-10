@@ -211,7 +211,7 @@ public class ProxyMain implements QuarkusApplication {
         if (Platform.isMacOS()) {
             dnsCallback = () -> {
                 try {
-                    addresses.configureBridgeDns(incus, proxy.allInterceptedDomains());
+                    addresses.configureBridgeDns(incus, proxy.allInterceptedDomains(), proxy.exposedHostPorts());
                     ProxyLog.info("DNS overrides configured");
                 } catch (Exception e) {
                     ProxyLog.info("Using install-time DNS configuration (VM API not reachable from launchd)");
@@ -220,7 +220,7 @@ public class ProxyMain implements QuarkusApplication {
             };
         } else {
             dnsCallback = () -> ProxyConfig.configureBridgeDnsWithRetry(
-                    () -> addresses.configureBridgeDns(incus, proxy.allInterceptedDomains()), () -> proxy.setDnsConfigured(true));
+                    () -> addresses.configureBridgeDns(incus, proxy.allInterceptedDomains(), proxy.exposedHostPorts()), () -> proxy.setDnsConfigured(true));
         }
         try {
             proxy.start(dnsCallback);
@@ -241,7 +241,7 @@ public class ProxyMain implements QuarkusApplication {
             IncusClient incus, MitmProxy proxy, AtomicInteger exitCode) {
         return domains -> {
             try {
-                addresses.writeBridgeDns(incus, domains);
+                addresses.writeBridgeDns(incus, domains, proxy.exposedHostPorts());
             } catch (GatewayMoved moved) {
                 exitForRestart(moved, proxy, exitCode);
             }
@@ -285,18 +285,27 @@ public class ProxyMain implements QuarkusApplication {
         }
 
         /** Write the bridge DNS block at startup, and say where it points. */
-        void configureBridgeDns(IncusClient incus, java.util.Set<String> domains) {
-            ProxyConfig.configureBridgeDns(incus, domains, bridgeDnsTarget(incus));
+        void configureBridgeDns(IncusClient incus, java.util.Set<String> domains, java.util.List<Integer> exposedPorts) {
+            ProxyConfig.configureBridgeDns(incus, domains, bridgeDnsTarget(incus), hostAddress(exposedPorts));
+        }
+
+        /**
+         * Where bridge DNS sends {@link dev.incusspawn.config.ExposedHostPorts#HOST_NAME}: the
+         * address the proxy listens on, and so relays exposed ports on, on Linux and macOS alike;
+         * null, which leaves it out, while no port is exposed (#2117).
+         */
+        String hostAddress(java.util.List<Integer> exposedPorts) {
+            return exposedPorts.isEmpty() ? null : gateway;
         }
 
         /**
          * Rewrite the bridge DNS block on reload; throws {@link GatewayMoved} instead of pointing
          * every intercepted domain back at an address the bridge has given up.
          */
-        void writeBridgeDns(IncusClient incus, java.util.Set<String> domains) {
+        void writeBridgeDns(IncusClient incus, java.util.Set<String> domains, java.util.List<Integer> exposedPorts) {
             var moved = movedTo(incus);
             if (moved.isPresent()) throw moved.get();
-            ProxyConfig.writeBridgeDns(incus, domains, bridgeDnsTarget(incus));
+            ProxyConfig.writeBridgeDns(incus, domains, bridgeDnsTarget(incus), hostAddress(exposedPorts));
         }
 
         /**

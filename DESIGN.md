@@ -126,6 +126,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Credential Isolation
   - The proxy holds no configuration of its own
   - Host routes
+  - Exposed host ports
   - Vertex AI: container in Vertex mode vs standard mode
 - [Credential accounts and proofs](design/accounts.md)
   - Credential accounts

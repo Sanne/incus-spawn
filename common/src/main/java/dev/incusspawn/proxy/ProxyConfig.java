@@ -1,7 +1,9 @@
 package dev.incusspawn.proxy;
 
 import io.hyperfoil.tools.jjq.value.JqValue;
+import dev.incusspawn.Platform;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.vm.VmNetwork;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.FirewalldCheck;
@@ -193,35 +195,65 @@ public final class ProxyConfig {
         return interceptedDomains(ToolProxyResolver.resolvedDomains(config));
     }
 
-    /** Write the overrides for every domain {@code config} intercepts, pointing at the bridge's gateway. */
-    public static void configureBridgeDns(IncusClient incus, SpawnConfig config) {
-        configureBridgeDns(incus, bridgeDnsDomains(config), resolveGatewayIp(incus));
+    /**
+     * Where a CLI writer of the block sends {@link dev.incusspawn.config.ExposedHostPorts#HOST_NAME}:
+     * null while {@code exposed-host-ports:} exposes nothing, else where the proxy listens and so
+     * relays them. On Linux that is the bridge's gateway, the block's own address; on macOS it is
+     * the Mac's end of the VM link, found the way the proxy finds the address it listens on
+     * ({@link VmNetwork#discoverHostBridgeIp()}), and null when no VM link is up (#2117).
+     */
+    public static String bridgeDnsHostAddress(SpawnConfig config, String gatewayIp) {
+        return bridgeDnsHostAddress(config, gatewayIp, Platform.isMacOS(), VmNetwork::discoverHostBridgeIp);
     }
 
-    /** Write the overrides for {@code allDomains}, pointing at {@code gatewayIp}. */
-    public static void configureBridgeDns(IncusClient incus, Set<String> allDomains, String gatewayIp) {
-        writeBridgeDns(incus, allDomains, gatewayIp);
+    /** {@link #bridgeDnsHostAddress(SpawnConfig, String)} on {@code macOS} or not, asking {@code vmLink} only there. */
+    static String bridgeDnsHostAddress(SpawnConfig config, String gatewayIp, boolean macOS,
+                                       java.util.function.Supplier<String> vmLink) {
+        if (config.exposedHostPorts().ports(warning -> {}).isEmpty()) return null;
+        return macOS ? vmLink.get() : gatewayIp;
+    }
+
+    /** Write the overrides for every domain {@code config} intercepts, pointing at the bridge's gateway. */
+    public static void configureBridgeDns(IncusClient incus, SpawnConfig config) {
+        var gatewayIp = resolveGatewayIp(incus);
+        configureBridgeDns(incus, bridgeDnsDomains(config), gatewayIp, bridgeDnsHostAddress(config, gatewayIp));
+    }
+
+    /**
+     * Write the overrides for {@code allDomains}, pointing at {@code gatewayIp}, and
+     * {@link dev.incusspawn.config.ExposedHostPorts#HOST_NAME} at {@code hostAddress} unless it is null.
+     */
+    public static void configureBridgeDns(IncusClient incus, Set<String> allDomains, String gatewayIp,
+                                          String hostAddress) {
+        writeBridgeDns(incus, allDomains, gatewayIp, hostAddress);
         // A note: the proxy logs "DNS overrides configured" for its lifecycle log itself
         BuildOutput.note("DNS overrides: " + allDomains.size() + " domains -> " + gatewayIp + " (via bridge dnsmasq)");
     }
 
-    /** Rewrite isx's block of bridge DNS overrides; see {@link BridgeDns} for the layout. */
-    public static void writeBridgeDns(IncusClient incus, Set<String> allDomains) {
-        writeBridgeDns(incus, allDomains, resolveGatewayIp(incus));
+    /**
+     * Rewrite isx's block of bridge DNS overrides for {@code config}, as a CLI writer does; see
+     * {@link BridgeDns} for the layout.
+     */
+    public static void writeBridgeDns(IncusClient incus, SpawnConfig config) {
+        var gatewayIp = resolveGatewayIp(incus);
+        writeBridgeDns(incus, bridgeDnsDomains(config), gatewayIp, bridgeDnsHostAddress(config, gatewayIp));
     }
 
     /**
-     * {@link #writeBridgeDns(IncusClient, Set)}, pointing the overrides at {@code gatewayIp}: the
-     * proxy passes the address it listens on, which {@code --gateway-ip} may have decided (#892).
+     * Rewrite isx's block, pointing the overrides at {@code gatewayIp}: the proxy passes the
+     * address it listens on, which {@code --gateway-ip} may have decided (#892). The block sends
+     * {@link dev.incusspawn.config.ExposedHostPorts#HOST_NAME} to {@code hostAddress}, and leaves
+     * it out when that is null: every writer says which, so none drops it by omission.
      */
-    public static void writeBridgeDns(IncusClient incus, Set<String> allDomains, String gatewayIp) {
+    public static void writeBridgeDns(IncusClient incus, Set<String> allDomains, String gatewayIp,
+                                      String hostAddress) {
         // The full set always holds the built-in domains: an empty one is a caller's mistake,
         // and writing it would remove every override (clearBridgeDns is how to do that)
         if (allDomains.isEmpty()) {
             throw new IllegalArgumentException("No domains to override; use bridgeDnsDomains(config)");
         }
         var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
-        var dnsmasqConfig = BridgeDns.render(existing, allDomains, gatewayIp);
+        var dnsmasqConfig = BridgeDns.render(existing, allDomains, gatewayIp, hostAddress);
         if (dnsmasqConfig.equals(existing)) {
             return;
         }
@@ -470,13 +502,30 @@ public final class ProxyConfig {
         return bridgeDnsStatus(incus, allDomains).complete();
     }
 
+    /** {@link #isBridgeDnsComplete(IncusClient, Set)} for everything {@code config} puts in the block. */
+    public static boolean isBridgeDnsComplete(IncusClient incus, SpawnConfig config) {
+        return bridgeDnsStatus(incus, config).complete();
+    }
+
     /**
-     * {@link BridgeDns#status} of the bridge's overrides against its current gateway, both from
-     * one read of the bridge. Throws when Incus cannot be read.
+     * {@link BridgeDns#status} of the bridge's overrides for {@code config} against its current
+     * gateway, both from one read of the bridge: its intercepted domains, and
+     * {@link dev.incusspawn.config.ExposedHostPorts#HOST_NAME} while it exposes a port. Throws
+     * when Incus cannot be read.
      */
+    public static BridgeDns.Status bridgeDnsStatus(IncusClient incus, SpawnConfig config) {
+        return bridgeDnsStatus(incus, bridgeDnsDomains(config), config);
+    }
+
+    /** {@link #bridgeDnsStatus(IncusClient, SpawnConfig)} of {@code domains} alone, the exposed host's name unchecked. */
     public static BridgeDns.Status bridgeDnsStatus(IncusClient incus, Set<String> domains) {
+        return bridgeDnsStatus(incus, domains, null);
+    }
+
+    private static BridgeDns.Status bridgeDnsStatus(IncusClient incus, Set<String> domains, SpawnConfig config) {
         var bridge = incus.networkConfig(BridgeAddress.BRIDGE);
-        return BridgeDns.status(bridge.getOrDefault("raw.dnsmasq", ""), domains,
-                gatewayIp(BridgeAddress.of(bridge)));
+        var gatewayIp = gatewayIp(BridgeAddress.of(bridge));
+        return BridgeDns.status(bridge.getOrDefault("raw.dnsmasq", ""), domains, gatewayIp,
+                config == null ? null : bridgeDnsHostAddress(config, gatewayIp));
     }
 }

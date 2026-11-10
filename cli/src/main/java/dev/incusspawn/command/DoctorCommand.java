@@ -1721,18 +1721,20 @@ public class DoctorCommand extends BaseCommand {
     }
 
     private Finding checkBridgeDns(IncusClient incus) {
+        SpawnConfig config;
         Set<String> allDomains;
         BridgeDns.Status status;
         ProxyHealthCheck.ProxyStatus proxy;
         try {
-            allDomains = ProxyConfig.bridgeDnsDomains(SpawnConfig.load());
-            status = ProxyConfig.bridgeDnsStatus(incus, allDomains);
+            config = SpawnConfig.load();
+            allDomains = ProxyConfig.bridgeDnsDomains(config);
+            status = ProxyConfig.bridgeDnsStatus(incus, config);
             proxy = ProxyHealthCheck.check(incus);
         } catch (Exception e) {
             return Finding.warn("Bridge DNS overrides", "(could not check: " + e.getMessage() + ")", null);
         }
         return bridgeDnsFinding(proxy, status, allDomains,
-                () -> ProxyConfig.writeBridgeDns(incus(), allDomains));
+                () -> ProxyConfig.writeBridgeDns(incus(), config));
     }
 
     /**

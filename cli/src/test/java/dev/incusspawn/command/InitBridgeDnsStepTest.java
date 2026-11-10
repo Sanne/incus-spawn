@@ -39,7 +39,7 @@ class InitBridgeDnsStepTest {
         var init = new InitCommand();
         init.incus = daemon.client();
         // What the proxy's reload wrote just before
-        ProxyConfig.writeBridgeDns(init.incus, all, GATEWAY);
+        ProxyConfig.writeBridgeDns(init.incus, all, GATEWAY, null);
 
         init.setupBridgeDns();
 

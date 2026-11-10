@@ -57,7 +57,7 @@ class BridgeAddressChangeTest {
 
         bridge.set(NEW + "/24");
         try {
-            addresses.writeBridgeDns(incus, Set.of("github.com"));
+            addresses.writeBridgeDns(incus, Set.of("github.com"), java.util.List.of());
         } catch (RuntimeException refused) {
             // Refusing is the point; what must not happen is the write below.
         }
@@ -125,7 +125,7 @@ class BridgeAddressChangeTest {
         var addresses = ProxyMain.resolveAddresses(OLD, incus);
 
         assertTrue(addresses.movedTo(incus).isEmpty());
-        addresses.writeBridgeDns(incus, Set.of("github.com"));
+        addresses.writeBridgeDns(incus, Set.of("github.com"), java.util.List.of());
         assertTrue(writes.getLast().contains("address=/github.com/" + OLD), writes.getLast());
 
         bridge.set(NEW + "/24");

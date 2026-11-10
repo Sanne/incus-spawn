@@ -17,6 +17,7 @@ import java.util.function.Supplier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -112,10 +113,31 @@ class GatewayOverrideTest {
         var addresses = ProxyMain.resolveAddresses(OVERRIDE, incus);
         if (Platform.isMacOS()) return;
 
-        addresses.configureBridgeDns(incus, Set.of("github.com"));
+        addresses.configureBridgeDns(incus, Set.of("github.com"), java.util.List.of());
 
         assertEquals(1, writes.size());
         assertTrue(writes.getFirst().contains("address=/github.com/" + OVERRIDE), writes.getFirst());
+    }
+
+    /**
+     * The exposed host ports' name points where the proxy listens and relays them (#2117): on
+     * Linux the bridge gateway, the block's own address; on macOS the Mac's end of the VM link,
+     * which the block's domains do not point at. Never while nothing is exposed.
+     */
+    @Test
+    void theExposedHostNamePointsWhereTheProxyListens() {
+        var linux = new ProxyMain.Addresses("10.1.2.1", "10.1.2.1", "10.1.2.1");
+        assertEquals("10.1.2.1", linux.hostAddress(java.util.List.of(11434)));
+        var macOS = new ProxyMain.Addresses("192.168.64.1", "192.168.64.1", null);
+        assertEquals("192.168.64.1", macOS.hostAddress(java.util.List.of(11434)));
+        assertNull(macOS.hostAddress(java.util.List.of()));
+
+        var writes = new ArrayList<String>();
+        var incus = bridgeWithNoAddress(writes);
+        var addresses = ProxyMain.resolveAddresses(OVERRIDE, incus);
+        if (Platform.isMacOS()) return;
+        addresses.configureBridgeDns(incus, Set.of("github.com"), java.util.List.of(11434));
+        assertTrue(writes.getFirst().contains("address=/host.isx.internal/" + OVERRIDE), writes.getFirst());
     }
 
     @Test
@@ -248,7 +270,7 @@ class GatewayOverrideTest {
         if (Platform.isMacOS()) return;
         var proxy = new MitmProxy(null, addresses.gateway(), 0, 0, addresses.healthBind(),
                 ConfigFingerprint.load());
-        proxy.setBridgeDnsWriter(domains -> addresses.writeBridgeDns(incus, domains));
+        proxy.setBridgeDnsWriter(domains -> addresses.writeBridgeDns(incus, domains, java.util.List.of()));
 
         proxy.reload();
 
