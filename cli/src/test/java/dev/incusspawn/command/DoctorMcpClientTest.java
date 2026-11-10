@@ -34,11 +34,11 @@ class DoctorMcpClientTest {
         var findings = DoctorCommand.mcpClientFindings(defs, null);
         assertEquals(List.of(
                 "Coordinator template tpl-x|tpl-b is in coordinator.control-over of tpl-x (/home/u/.config/incus-spawn/images/tpl-x.yaml)"
-                        + " but not approved for agents. Add it to templates in ~/.config/incus-spawn/mcp.yaml, or remove it"
+                        + " but not approved for agents. Approve it (isx mcp setup, or templates in ~/.config/incus-spawn/mcp.yaml), or remove it"
                         + " from coordinator.control-over there.",
                 "Coordinator template tpl-y|tpl-y declares no coordinator.control-over, so its coordinators control nothing."
                         + " List the templates they may control under coordinator.control-over in tpl-y"
-                        + " (/home/u/.config/incus-spawn/images/tpl-y.yaml)."),
+                        + " (/home/u/.config/incus-spawn/images/tpl-y.yaml). A ready coordinator template: https://isx.run/docs/mcp#from-a-fresh-install"),
                 findings.stream().map(f -> f.label() + "|" + f.detail()).toList());
         assertEquals(List.of(), DoctorCommand.mcpClientFindings(Map.of("tpl-plain", ImageDef.parseYaml("name: tpl-plain\n")), null));
     }

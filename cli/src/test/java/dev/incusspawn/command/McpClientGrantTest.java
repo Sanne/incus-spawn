@@ -29,14 +29,15 @@ class McpClientGrantTest {
         var recorded = RecordingOutput.during(() -> McpClientGrant.reportScope(scope(List.of("tpl-a", "tpl-b"), List.of("tpl-a"))));
         assertEquals(List.of("MCP control: tpl-a; tpl-b not approved in mcp.yaml"),
                 recorded.events(RecordingOutput.Kind.STEP).stream().map(RecordingOutput.Event::msg).toList());
-        assertEquals(List.of("tpl-b is in coordinator.control-over of tpl-x but not approved for agents. Add it to templates in"
-                + " ~/.config/incus-spawn/mcp.yaml, or remove it from coordinator.control-over there."), recorded.warnings());
+        assertEquals(List.of("tpl-b is in coordinator.control-over of tpl-x but not approved for agents. Approve it (isx mcp"
+                + " setup, or templates in ~/.config/incus-spawn/mcp.yaml), or remove it from coordinator.control-over there."), recorded.warnings());
     }
 
     @Test
     void anEmptyScopeIsWarnedOfWithWhereToListTemplates() {
         var recorded = RecordingOutput.during(() -> McpClientGrant.reportScope(scope(null, List.of("tpl-a"))));
         assertEquals(List.of("tpl-x declares no coordinator.control-over, so its coordinators control nothing."
-                + " List the templates they may control under coordinator.control-over in tpl-x."), recorded.warnings());
+                + " List the templates they may control under coordinator.control-over in tpl-x."
+                + " A ready coordinator template: https://isx.run/docs/mcp#from-a-fresh-install"), recorded.warnings());
     }
 }

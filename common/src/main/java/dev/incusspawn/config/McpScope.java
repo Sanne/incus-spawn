@@ -109,6 +109,12 @@ public final class McpScope {
     public static final String HOW_TO_APPROVE = "Only the user can approve templates, on the host: by running " + SETUP_COMMAND
             + " at a terminal, or by listing them under templates in " + MCP_YAML + ".";
 
+    /** Where a person finds a ready coordinator template and the steps to a first coordinator (#2079). */
+    public static final String FIRST_COORDINATOR_DOCS = "https://isx.run/docs/mcp#from-a-fresh-install";
+
+    /** How a person approves templates, as the warnings a person reads name it. */
+    private static final String APPROVE = "Approve it (" + SETUP_COMMAND + ", or templates in " + MCP_YAML + ")";
+
     /** Why {@code template} is out of this scope, with what to change; null when it is in. */
     public String explain(String template) {
         if (allows(template)) return null;
@@ -124,18 +130,18 @@ public final class McpScope {
             return named + " is out of this coordinator's reach: its template " + coordinator + " declares no "
                     + "coordinator.control-over, so it controls nothing. Ask the user to list " + template
                     + " under coordinator.control-over in " + declaredIn
-                    + (inApproved ? "." : ", and under templates in " + MCP_YAML + ".");
+                    + (inApproved ? "." : ", and to approve it. " + HOW_TO_APPROVE);
         }
         var inDeclared = declared.contains(template);
         if (inDeclared) return notApproved(template);
         return named + " is not in coordinator.control-over of " + declaredIn + ", which says what this coordinator"
-                + " may control. Ask the user to add it there" + (inApproved ? "." : ", and to templates in " + MCP_YAML + ".");
+                + " may control. Ask the user to add it there" + (inApproved ? "." : ", and to approve it. " + HOW_TO_APPROVE);
     }
 
     private String notApproved(String template) {
         return "template '" + template + "' is in coordinator.control-over of " + declaredIn
-                + " but not approved for agents. Ask the user to add " + template + " to templates in " + MCP_YAML
-                + ", or remove it from coordinator.control-over there.";
+                + " but not approved for agents. Ask the user to approve it, or remove it from coordinator.control-over"
+                + " there. " + HOW_TO_APPROVE;
     }
 
     /**
@@ -153,13 +159,14 @@ public final class McpScope {
         }
         if (declared == null) {
             warnings.add(coordinator + " declares no coordinator.control-over, so its coordinators control nothing."
-                    + " List the templates they may control under coordinator.control-over in " + declaredIn + ".");
+                    + " List the templates they may control under coordinator.control-over in " + declaredIn + "."
+                    + " A ready coordinator template: " + FIRST_COORDINATOR_DOCS);
             return warnings;
         }
         for (var template : declared) {
             if (!approved.contains(template)) {
-                warnings.add(template + " is in coordinator.control-over of " + declaredIn + " but not approved for agents."
-                        + " Add it to templates in " + MCP_YAML + ", or remove it from coordinator.control-over there.");
+                warnings.add(template + " is in coordinator.control-over of " + declaredIn + " but not approved for agents. "
+                        + APPROVE + ", or remove it from coordinator.control-over there.");
             }
         }
         if (templates().isEmpty() && warnings.isEmpty()) {
