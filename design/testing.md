@@ -72,6 +72,14 @@ host-distro's check that an HTTPS reply comes back through the host's firewall a
 Any status from any of them passes, since a reply from any host proves the firewall passes it, and the log names which one answered when github.com did not.
 `NetRetryScriptTest` drives both against stand-in commands, and checks the workflows and scripts call them.
 
+**An exec Incus could not attach is tried again.**
+On an Arch host, incusd answered an exec into a container that had just started, 150 ms after another exec had run, with `Failed to retrieve PID of executing child process` and exit 255, and host-distro's proxy-only phase failed with no change to blame (#2084).
+That message means its forkexec helper could not attach to the guest (liblxc's attach failed), so the command never ran, and running it again is safe whatever it does.
+So `test-proxy-only.sh` and `test-host-distro.sh` exec only through `.github/scripts/guest-exec.sh`'s `guest_exec`, which tries such an exec again after 1, 2 and 4 seconds and prints the instance's `forkexec.log` before each new try.
+Any other result is returned at once, since the no-egress checks rely on a command's own failure.
+It did not reproduce on a Fedora host, idle or loaded, in 27 branches of 30 execs each, so the cause in liblxc is not known.
+`GuestExecScriptTest` drives the helper against a stand-in `incus` and checks both scripts exec through it.
+
 **The test JVM keeps `AESCrypt.makeSessionKey` out of the JIT.**
 CI tests on GraalVM 25, whose JIT now and then gives one AES-256 cipher a wrong key schedule while it deoptimizes the compiled and OSR versions of `com.sun.crypto.provider.AESCrypt.makeSessionKey` during warm-up.
 TLS 1.3 prefers `TLS_AES_256_GCM_SHA384`, so that connection fails with `bad_record_mac` (or `Tag mismatch`, followed by a "record" of zeros, which is the JDK wiping the plaintext it refused).

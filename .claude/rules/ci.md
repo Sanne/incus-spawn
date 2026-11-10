@@ -115,6 +115,11 @@ host-distro's HTTPS check passes on a reply from github.com or one of two hosts 
 `NetRetryScriptTest` holds the helpers and their callers, so a new template build in `test-integration.yml` must go through the retry.
 `test-host-distro.sh` needs `net-retry.sh` pushed beside it.
 
+**An exec Incus could not attach is tried again, never a command's own failure** (#2084, design/testing.md "Testing").
+Moments after a start, incusd has answered an exec with `Failed to retrieve PID of executing child process` (exit 255): its forkexec helper could not attach to the guest, so nothing ran there.
+`test-proxy-only.sh` and `test-host-distro.sh` exec only through `.github/scripts/guest-exec.sh`'s `guest_exec`, which tries such an exec again after 1, 2 and 4 seconds and returns any other result at once.
+`GuestExecScriptTest` holds the helper and its callers, and host-distro pushes `guest-exec.sh` beside them.
+
 **No CI job boots the appliance under vfkit.**
 Both arches boot under QEMU; this is worth stating precisely, because the runner list makes it look like more:
 

@@ -30,6 +30,9 @@ INSTANCE=host-distro
 NEEDS_LOGIN=75
 # shellcheck source=SCRIPTDIR/net-retry.sh
 source "$HERE/net-retry.sh"
+# Every exec goes through guest_exec: Incus can fail to attach to a guest that just started (#2084)
+# shellcheck source=SCRIPTDIR/guest-exec.sh
+source "$HERE/guest-exec.sh"
 
 TESTS=0
 FAIL=0
@@ -203,7 +206,7 @@ proxy() {
 # --- instance --------------------------------------------------------------------------------
 
 wait_for_ipv4() {
-    incus exec "$1" -- bash -c '
+    guest_exec "$1" -- bash -c '
         for i in $(seq 1 60); do
             ip -4 -o addr show scope global | grep -q inet && exit 0
             sleep 0.5
@@ -213,7 +216,7 @@ wait_for_ipv4() {
 
 reaches_internet() {
     for _ in 1 2 3; do
-        incus exec "$1" -- curl -s -m 10 -o /dev/null http://1.1.1.1/ && return 0
+        guest_exec "$1" -- curl -s -m 10 -o /dev/null http://1.1.1.1/ && return 0
         sleep 5
     done
     return 1
@@ -221,7 +224,7 @@ reaches_internet() {
 
 # No GitHub credential here, so github.com is not intercepted: the clone goes through NAT
 clones_from_github() {
-    incus exec "$1" -- bash -c 'rm -rf /tmp/clone &&
+    guest_exec "$1" -- bash -c 'rm -rf /tmp/clone &&
         git clone --depth 1 -q https://github.com/octocat/Hello-World.git /tmp/clone &&
         git -C /tmp/clone log --oneline -1 | grep -q . && rm -rf /tmp/clone'
 }
@@ -235,7 +238,7 @@ instance() {
     incus file push "$HERE/test-instance.sh" "$INSTANCE/tmp/"
     # Sections 1 to 6b less GitHub's interception: Maven through the proxy, sudo, systemd, /tmp on
     # disk, DNS, login shell, agent context. The later ones need the native job's fixtures.
-    check "the instance checks pass" incus exec "$INSTANCE" -- bash /tmp/test-instance.sh --core
+    check "the instance checks pass" guest_exec "$INSTANCE" -- bash /tmp/test-instance.sh --core
     finish
 }
 

@@ -1158,7 +1158,7 @@ jobs:
       - name: Prepare the host
         run: |
           scripts/distro-vm.sh push "$VM" .github/scripts/test-host-distro.sh .github/scripts/net-retry.sh .github/scripts/test-instance.sh \
-            .github/scripts/test-proxy-only.sh .github/scripts/dump-incus-logs.sh bench/isxbench.py isx-test
+            .github/scripts/test-proxy-only.sh .github/scripts/guest-exec.sh .github/scripts/dump-incus-logs.sh bench/isxbench.py isx-test
           scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh prepare "$SHAPE" </dev/null
           scripts/distro-vm.sh reboot "$VM"
           scripts/distro-vm.sh ssh "$VM" bash isx-test/test-host-distro.sh firewall "$SHAPE" </dev/null
