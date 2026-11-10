@@ -33,13 +33,33 @@ final class StdoutOnStderr {
      * output into the results a script reads on stdout (#2075).
      */
     static int run(ProcessBuilder pb) throws java.io.IOException, InterruptedException {
-        if (!active) return pb.start().waitFor();
-        pb.redirectOutput(ProcessBuilder.Redirect.PIPE);
+        var copied = pipesStdout(pb);
         var process = pb.start();
-        try (var in = process.getInputStream()) {
-            in.transferTo(System.err);
-        }
-        System.err.flush();
+        if (copied) copyStdout(process).join();
         return process.waitFor();
+    }
+
+    /**
+     * Whether a child started from {@code pb} must have its stdout copied: while {@link #during}
+     * runs, its stdout becomes a pipe, which {@link #copyStdout} drains to this process's stdout,
+     * pointed at stderr. A child that writes its own stdout would otherwise reach the results.
+     */
+    static boolean pipesStdout(ProcessBuilder pb) {
+        if (!active) return false;
+        pb.redirectOutput(ProcessBuilder.Redirect.PIPE);
+        return true;
+    }
+
+    /** Drains {@code process}'s stdout to {@code System.out}, which {@link #during} points at stderr, in a thread of its own. */
+    static Thread copyStdout(Process process) {
+        var sink = System.out;
+        return Thread.startVirtualThread(() -> {
+            try (var in = process.getInputStream()) {
+                in.transferTo(sink);
+            } catch (java.io.IOException e) {
+                // The child's output is progress for a person; losing its end loses nothing a script reads
+            }
+            sink.flush();
+        });
     }
 }

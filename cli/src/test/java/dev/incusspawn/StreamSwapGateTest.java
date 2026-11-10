@@ -36,6 +36,7 @@ class StreamSwapGateTest {
             Map.entry("cli/src/test/java/dev/incusspawn/TuiLaunchHandOverTest.java", "the pre-TUI hold watches the raw streams by design"),
             Map.entry("cli/src/test/java/dev/incusspawn/tui/PreTuiOutputTest.java", "the pre-TUI hold watches the raw streams by design"),
             Map.entry("cli/src/test/java/dev/incusspawn/command/QueryCommandFormatTest.java", "script output on stdout is the contract it tests (OutputFormat)"),
+            Map.entry("cli/src/test/java/dev/incusspawn/command/StdoutOnStderrTest.java", "where a child's stdout goes while a summary owns stdout is what it tests"),
             Map.entry("common/src/test/java/dev/incusspawn/util/BuildOutputTest.java", "the terminal output's own rendering"),
             Map.entry("common/src/test/java/dev/incusspawn/util/OutputBindingTest.java", "that a binding writes no raw stream is what it tests"),
             Map.entry("common/src/test/java/dev/incusspawn/incus/IncusClientSmokeTest.java", "a guest's own output, passed through to the terminal"),

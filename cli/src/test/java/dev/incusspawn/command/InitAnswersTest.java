@@ -63,6 +63,23 @@ class InitAnswersTest {
         IsolatedHome.assertNothingSaved();
     }
 
+    /**
+     * Init's questions, credentials and approvals included, come only through {@code prompts()},
+     * which is {@code Prompts.terminal()}: a console whose stdin is piped never answers them
+     * (#2120 review). JDK 25 itself gives no console off a terminal, so a JVM under
+     * -Djdk.console=jdk.internal.le cannot be staged here; this pins that no step asks around the gate.
+     */
+    @Test
+    void initAsksOnlyThroughTheTerminalGate() throws Exception {
+        for (var file : List.of("InitCommand.java", "HostSetup.java", "CredentialSetup.java")) {
+            var source = java.nio.file.Files.readString(Path.of("src/main/java/dev/incusspawn/command", file));
+            assertFalse(source.contains("Prompts.console()") || source.contains("System.console()"),
+                    file + " asks through a console, not the terminal gate");
+        }
+        var gate = java.nio.file.Files.readString(Path.of("src/main/java/dev/incusspawn/command/InitCommand.java"));
+        assertTrue(gate.matches("(?s).*Prompts prompts\\(\\) \\{[^}]*return Prompts\\.terminal\\(\\);.*"), "prompts() is Prompts.terminal()");
+    }
+
     @Test
     void aFlagAnswersTheDirectoriesWithoutATerminal(@TempDir Path dir) throws Exception {
         var init = new NoTerminal();
@@ -77,6 +94,18 @@ class InitAnswersTest {
         var config = SpawnConfig.load();
         assertEquals(List.of(dir.toString()), config.getSearchPaths());
         assertEquals(List.of(dir.toString()), config.getHostPaths());
+        assertEquals(Set.of(), init.skipped);
+    }
+
+    /** --fork-templates answers Template Search Paths: with its templates among the paths, the step is not skipped. */
+    @Test
+    void forkTemplatesAnswersTheSearchPaths(@TempDir Path dir) throws Exception {
+        var templates = java.nio.file.Files.createDirectories(dir.resolve("incus-spawn-templates"));
+        IsolatedHome.seed("searchPaths:\n  - " + templates + "\n");
+        var init = new NoTerminal();
+        init.forkTemplates = true;
+        var steps = init.finalSteps(init.proxyServiceStep(new java.util.concurrent.atomic.AtomicBoolean()));
+        RecordingOutput.during(() -> steps.get(0).run().run());
         assertEquals(Set.of(), init.skipped);
     }
 

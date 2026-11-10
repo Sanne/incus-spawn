@@ -237,7 +237,7 @@ See `.claude/rules/proxy.md`.
 
 **`isx init` prompts read from `Prompts`, never a `Console`.**
 `java.io.Console` is final, so code taking one cannot be driven by a test, and CI's `isx init </dev/null` skips every credential prompt (#772).
-Each credential step has a thin entry that gets `Prompts.console()` and a package-private `(SpawnConfig, Prompts)` overload holding the logic; network and host calls (token verification, `gh`, the browser, env vars) are overridable methods on `CredentialSetup`.
+Each credential step has a thin entry that gets `InitCommand.prompts()` (`Prompts.terminal()`: never a console whose stdin is piped, #2075) and a package-private `(SpawnConfig, Prompts)` overload holding the logic; network and host calls (token verification, `gh`, the browser, env vars) are overridable methods on `CredentialSetup`.
 Flow tests drive them with `ScriptedPrompts` under `@ExtendWith(IsolatedHome.class)` and assert on the `config.yaml` written to disk.
 Secrets go through `askSecret()` and are shown only via `maskSecret()`, which never reveals more than a third of one.
 The question is shown by the same `Prompts` (`ask`, `say`; `BaseCommand.askYesNo` for yes or no), at the step indent, so `ScriptedPrompts.conversation()` sees what a flow asks; what it reports between questions goes through `BuildOutput` (#1703).
