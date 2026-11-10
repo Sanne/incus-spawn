@@ -13,7 +13,8 @@ import java.util.Map;
  * Captures the full build context of a template: all image definitions
  * in the parent chain, all YAML tool definitions used, and the original
  * source locations. Stored as JSON in Incus container metadata so that
- * out-of-scope templates can be displayed and rebuilt.
+ * a template whose definition is not loaded can still be displayed and
+ * branched; it is never rebuilt from them (see design/templates.md).
  */
 @JqMapped
 public class BuildSource {

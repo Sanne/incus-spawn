@@ -107,6 +107,7 @@ Every query command has it, plus `isx branch` (the new name alone).
 `isx templates` adds build state and staleness from `TemplateStaleness`, the same judgement as the TUI's `! △ ↑` marks and `isx build --out-of-sync` (`Staleness.outOfSync()` says which count), so a change to what counts as stale goes there, never into one caller.
 `isx templates new --from` and `isx templates validate` share the edit loop's check, `TemplateValidator.validate(yaml, location, known)`, whose `TemplateFinding`s carry the field at fault and whose `TemplateReach` lists what the definition reaches beyond its instance (#2076); a new template check goes there, so all three report it, and a new way a definition reaches the host goes in `TemplateReach`.
 `--out-of-sync` calls `assess` on the same one listing; a named build's parents go through `BuildCommand.isImageOutdated`, which calls its `versionOutdated`, `definitionChanged` and `parentRebuilt`.
+`isx build` of a built template with no loaded definition refuses, never rebuilding from its `build-source` stamp; `MissingDefinition` says why (renamed, out of scope or gone), and the TUI's `◌` and `isx doctor` read the same (design/templates.md "A template with no definition here is never rebuilt").
 `QueryCommandFormatTest` pins each JSON shape and `ExitCodeTest` the shared rejection.
 Work that prints progress runs under `BaseCommand.withStdoutOnStderr` (its swap is the gate class `StdoutOnStderr`), the machine formats never prompt, and the exit code is the table's.
 See design/terminal.md "Output for scripts".

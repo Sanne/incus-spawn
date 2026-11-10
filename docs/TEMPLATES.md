@@ -209,16 +209,22 @@ isx build --all
 `--with-parents` and `--with-descendants` take one or more template names and rebuild each template once, parents first.
 Both show the batch and ask before rebuilding; `--yes` skips the question.
 
-The TUI marks a template that is out of sync:
+The TUI marks a template that is out of sync, or that has no definition:
 
 | Mark | Meaning |
 |------|---------|
 | `!` | Built with a different isx version. |
 | `△` | The image or tool definition has changed since the last build. |
 | `↑` | Its parent was rebuilt after it, so it was copied from the parent's earlier build. |
+| `◌` | No definition of its name is loaded, such as after its `name:` was changed. |
 
 A VM over a container parent is built from the definitions, never copied, so it is never `↑`.
-`isx build --out-of-sync` rebuilds all three, and everything that inherits from what it rebuilds.
+`isx build --out-of-sync` rebuilds the first three, and everything that inherits from what it rebuilds.
+
+A template marked `◌` can still be branched, but `isx build` refuses to rebuild it.
+The error names the file it was built from and says why that file is not loaded.
+After a rename, it names the template to build instead.
+`isx doctor` lists every such template.
 
 If a build fails, isx promotes the failed build to an inspectable instance named `<template>-failed-build`, so you can shell in and debug.
 The previous build of the template, if any, stays in place.

@@ -433,7 +433,7 @@ user.incus-spawn.build-version=0.1.11        # isx version that built the templa
 user.incus-spawn.build-sha=c434ef9           # git commit SHA of isx at build time
 user.incus-spawn.definition-sha=a1b2c3d4     # fingerprint of image def + tool defs
 user.incus-spawn.ca-fingerprint=AB:CD:EF:... # CA certificate fingerprint
-user.incus-spawn.build-source={...}          # (JSON, full image + tool defs for out-of-scope visibility)
+user.incus-spawn.build-source={...}          # (JSON, full image + tool defs: shows a template whose definition is not loaded, never rebuilds it)
 user.incus-spawn.network-mode=PROXY_ONLY     # (proxy-only branches only)
 user.incus-spawn.proxy-gateway=10.166.11.1   # (proxy-only branches only)
 user.incus-spawn.airgap-masked=eth0,ib0      # (airgapped branches only, the devices airgap masked; "," for none)
@@ -448,7 +448,7 @@ Because the value is inherited, the guard covers the whole chain, not just the t
 So an outdated template, or a child built before its parent added a tool, keeps the stamp matching what it has installed until it is rebuilt.
 Ancestors are compared by their own definitions, not their tools' YAML: a child built before a parent's tool gained an action can take a `default-action` naming that action, the same ref the YAML-first path already resolves for it.
 A project-local definition, parent overrides included, never reaches a template built from elsewhere (see design/host-resources.md "Project-local templates are confined to their project").
-The build-source snapshots a build borrows for a template whose YAML is gone are not used, since they can be older than the template they describe.
+A template whose YAML is gone has only its build-source snapshot, which is shown and branched but never rebuilt, so the stamp sync does not use it either: it can be older than the template it describes.
 Hooking each skip branch instead (a parent `buildChain` leaves alone, the untouched templates of `--out-of-sync`) was tried first: it missed `--missing`, the type-change path and templates outside the chain built, and cost a round trip per template.
 Folding `default-action` into the fingerprint was rejected: a whole rebuild to change one metadata key.
 A layer's `default-action: -` (#2058) is none, nearer than any parent's: the walk stops there, and the build and the sync unset the stamp, so the layer-gone fallback also opens a shell.
@@ -477,7 +477,7 @@ Only `build` acts on it; branch, start and the proxy do not:
 - `↑` — a parent template was rebuilt more recently than this template
 
 **Build source storage**: `build-source` stores the full image definition hierarchy and tool definitions as JSON.
-This allows templates built from definitions that are no longer in scope (e.g. project-local definitions from a different working directory) to still be displayed and rebuilt in the TUI.
+This lets a template built from a definition that is no longer in scope (e.g. a project-local definition from a different working directory) still be shown and branched, but never rebuilt (design/templates.md "A template with no definition here is never rebuilt").
 
 ## Lifecycle locking
 

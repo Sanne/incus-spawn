@@ -204,8 +204,9 @@ Trusted layers (user, search paths, built-in) are unaffected, and so are a proje
 - **No GUI by default.**
   A branch's GUI passthrough mounts the host's Wayland and audio sockets and hands over its GPU, so a project-local `gui: true` -- the definition's own, or any the source was built from (`BuildSource.usedProjectLocal()`) -- does not turn it on by default.
   `BranchFlow.defaultsFor()` leaves it off with a note, and `--gui` still turns it on (#869).
-- **Survives rebuilds from metadata.**
-  `BuildSource` records `projectRoots` alongside `sources`, so a template rebuilt out of scope from `build-source` stays confined.
+- **Survives being shown and branched from metadata.**
+  `BuildSource` records `projectRoots` alongside `sources`, so a template whose definition is out of scope stays confined when it is shown or branched from its `build-source` stamp.
+  It is never rebuilt from that stamp (design/templates.md "A template with no definition here is never rebuilt").
   For metadata written before the field existed, the root is inferred from a `…/.incus-spawn/images/*.yaml` source.
 
 ### Project-local templates never touch host checkouts

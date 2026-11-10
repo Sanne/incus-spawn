@@ -188,7 +188,7 @@ The collector also records files that failed to parse (`parseFailures()`), and i
 Loading skips them with a warning, but `isx build` refuses while any exist.
 An unparsable file's `name:` is unknown.
 So it may have been the target, a parent, or an override.
-Building anyway would silently use whatever it was meant to replace — a lower layer's definition, or the stale build-source snapshot of an existing template.
+Building anyway would silently use whatever it was meant to replace, such as a lower layer's definition.
 Read-only commands keep warning and carry on.
 A definition whose `name:` or `parent:` is not a name Incus accepts for an instance (`InstanceNames`, Incus's own rule: letters, digits and `-`, not starting or ending with `-`, not only digits, at most 63 characters) is refused at load, with one warning that shows the name through `oneLine` (#1274).
 Such a template could never be built.
@@ -506,6 +506,29 @@ Git preparing a repository runs in a session of its own (`GitProcess`, #1425), o
 So do the `tar`, `unzip` and `chmod` that tool setup runs on the host (`YamlToolSetup`).
 Out of that group, the Ctrl+C that does end isx no longer stops them, so `OwnSession.start` has a shutdown hook stop them and their helpers, SIGTERM then SIGKILL, as `GitProcess` does after a stall, in one bounded pass (a process even SIGKILL cannot end, on a hung mount, must not hold the exit), and stops at once one that a still-running build thread starts meanwhile; a SIGKILL of isx leaves them to finish alone.
 Turning off the terminal's own SIGINT (`stty -isig`) and reading Ctrl+C from stdin was rejected: the bytes are just as ambiguous, and a crash would leave the terminal without Ctrl+C.
+
+## A template with no definition here is never rebuilt
+
+A built template keeps living after its definition leaves scope: renaming its `name:`, deleting its file, or leaving the project that holds it (#2057).
+It stays listed in the TUI, and branchable, from the definitions its `build-source` stamp holds.
+`isx build` refuses to rebuild it, though (Sanne: "if the definition doesn't exist, how can we rebuild it?").
+The stamp is the definition as it was, chain and repos included, so a rebuild from it brought back what no file says any more, silently and stamped again.
+There is no override flag: a template worth rebuilding is one whose definition is restored, or built under its new name.
+
+`MissingDefinition` says why there is none, from the file the stamp records and the definitions loaded.
+If a loaded definition comes from that same file, the template was renamed, and the new name is given.
+If the file exists but is not loaded, it is out of scope, such as another project's `.incus-spawn/`, and the build is run from there.
+Otherwise it is gone, and so is a built-in this isx no longer ships.
+The check is one `stat` and no Incus request.
+A stamp that holds no definition of the instance's own name is a branch's, so the instance is not a template.
+
+The refusal names the file and the reason, with any unknown name given beside it, and builds nothing.
+The TUI marks the row `◌`, says the reason on the context line and under the details' `Source:`, disables the build menu's rebuild of it, and leaves it out of the out-of-sync count.
+`isx doctor` reports each one, as a warning when renamed or gone and as a note when out of scope.
+The TUI remembers which definitions it took from stamps since the last full reload, since a light refresh merges into the same map and must not list them as loaded.
+Warning and building anyway was the first design, and rejected: the build is the one path that writes a stamp's definition back into an image.
+Matching a rename by content (same `parent:`, similar fields) was rejected too, as it guesses wrong between siblings; the same file is exact.
+`isx templates list` stays a list of definitions, so it does not list these.
 
 ## Agent Context File
 
