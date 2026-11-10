@@ -630,8 +630,9 @@ class UnixSocketTransport implements IncusTransport {
         private final java.util.concurrent.atomic.AtomicBoolean closed =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
         private final boolean permit;
-        // Byte-stream reads (exec, shells) never answer a control frame: Incus doesn't ping exec
-        // sockets, and a PONG sent from the reader thread would queue behind a stdin write holding
+        // Byte-stream reads (exec, shells) never answer a control frame: Incus pings every exec
+        // socket each 10 s but sets no read deadline, so it never waits for the PONG (#2129), and
+        // a PONG sent from the reader thread would queue behind a stdin write holding
         // writeLock -- a stall risk on the one channel that must never stall. They still count
         // what arrives, so a shell can tell its keepalive's PONGs from a silent link (#1996).
         private final ControlFrames countingControl = new ControlFrames() {
