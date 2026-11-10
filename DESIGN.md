@@ -56,6 +56,9 @@ Other sandboxes for coding agents make it differently, and `docs/SANDBOXES.md`, 
   The script is the plan's `sudo_script`, so what the person reads is what the plan reported, and it records what it ran in `/var/lib/isx/init-applied` for the checks only root could make.
   One script serves a fresh host: the redirect reads the bridge's gateway as the script runs, rather than waiting for a second round trip after Incus exists.
   A step that finds root work as it runs, such as the redirect of a bridge the run moved off a VPN's subnet, hands it over as a new script (`InitCommand.WaitingOnPerson`) rather than finishing on a proxy no container reaches; the bridge's old gateway is kept on disk until the script's record shows the redirect moved after it, so a rerun or a newer script cannot lose the move.
+  Without a terminal (#2075), flags answer init's questions that are not secrets, and a summary in the plan's fields says what is left and for whom, exiting 76 when it is the person's.
+  A secret has no flag, variable or stdin path, so an agent driving the install is never handed one, and the distinct exit is only for a run that asked for the summary, so `isx init </dev/null` keeps exiting 0.
+  An `ANTHROPIC_API_KEY` in the environment is still offered only in the interactive Claude step; a run without a terminal reads no credential from anywhere.
   The Template Search Paths step uses `gh` to auto-detect the user's GitHub identity and offer to fork/clone `incus-spawn-templates` — every failure path (no gh, no auth, API error) degrades gracefully to the existing manual flow
 
 ## Where the design lives

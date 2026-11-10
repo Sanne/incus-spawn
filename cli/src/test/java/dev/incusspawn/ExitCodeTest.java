@@ -72,8 +72,11 @@ class ExitCodeTest {
                 {"--explain prints a diagnosis for people", "doctor", "--explain", "--format=json"},
                 {"--format applies to --list only", "update-base", "--format=json"},
                 {"unknown format 'yaml'", "init", "--plan", "--format=yaml"},
-                {"--format goes with --plan", "init", "--format=json"},
-                {"--format goes with --plan", "init", "--no-sudo", "--format=json"}};
+                {"unknown format 'yaml'", "init", "--format=yaml"},
+                {"--service and --no-service contradict", "init", "--service", "--no-service"},
+                {"is not a directory", "init", "--search-path=/nonexistent/isx-test", "--format=json"},
+                {"--plan only reads", "init", "--plan", "--code-dir=/tmp"},
+                {"an empty directory was given", "init", "--search-path=/tmp,,/tmp", "--format=json"}};
         for (var c : cases) {
             var args = Arrays.copyOfRange(c, 1, c.length);
             var run = isx(args);

@@ -210,6 +210,12 @@ Storage & Network has a `--no-sudo` branch: no pool stops the run naming `sudo i
 `Privilege.elevates` reads every argument of a wrapper (`env`, `timeout`, `nice`, `nohup`, `stdbuf`, `setsid`, `ionice`, `chrt`) and of a `sh`, `bash`, `dash`, `zsh` or `ksh` script for an elevating command word.
 `InitNoSudoTest` pins the fresh host's script, that it is the plan's `sudo_script`, the record, and the guard.
 
+**`isx init` without a terminal** (#2075): `--search-path`, `--code-dir`, `--fork-templates` and `--service`/`--no-service` answer the questions that are not secrets, terminal or not; `checkAnswers` refuses a missing directory or a contradiction before anything runs.
+No option, variable or stdin path takes a secret (`InitAnswersTest.noOptionOfInitTakesASecret` names every option): Credential Setup without a terminal chooses nothing, and the credential is the person's `isx account add`.
+A question no flag answers is skipped without a terminal and its step id recorded in `skipped`.
+With `--format=plain|json` the run goes through `withStdoutOnStderr` and ends with `printSummary`: the plan's records read after the run, plus `skipped`, and exit `EXIT_STEPS_LEFT` (76) when a secret, an approval or an unrecorded root change is left (`leftForThePerson`).
+Without `--format`, the exit codes are as before, so `isx init </dev/null` in CI still exits 0.
+
 **The group init adds** (#1436).
 A process gets its groups at login, so the `incus-admin` membership Incus Installation adds is not this run's.
 When the socket refuses this process and the user is in the group, `continueInGroup()` runs the same command line under `sg incus-admin` (an inner `sg <primary>` keeps the user's primary group), and this process exits with its code.
