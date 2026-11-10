@@ -4,6 +4,8 @@ import dev.incusspawn.BuildInfo;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.Warnings;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.TemplateFinding;
+import dev.incusspawn.config.TemplateReach;
 import dev.incusspawn.config.TemplateValidator;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
@@ -20,6 +22,8 @@ import java.io.InputStream;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -37,7 +41,8 @@ import java.util.stream.Collectors;
         groupCommands = {
                 TemplatesCommand.ListSub.class,
                 TemplatesCommand.Edit.class,
-                TemplatesCommand.New.class
+                TemplatesCommand.New.class,
+                TemplatesCommand.Validate.class
         }
 )
 public class TemplatesCommand extends BaseCommand {
@@ -246,9 +251,37 @@ public class TemplatesCommand extends BaseCommand {
                 hasValue = false)
         boolean project;
 
+        @Option(name = "from",
+                description = "Take the whole definition from this file ('-' for stdin): check it and store it, with no editor")
+        String from;
+
+        @Option(name = "replace", hasValue = false,
+                description = "With --from, replace the template's file when it already has one")
+        boolean replace;
+
+        // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+        @Option(name = "format", completer = Completers.Format.class,
+                description = "With --from, output format: table (default), plain or json, with the check's findings")
+        String format;
+
+        /** Where {@code --from -} reads, which a test replaces. */
+        Supplier<InputStream> stdin = () -> System.in;
+
         @Override
         protected CommandResult doExecute() throws Exception {
             var templateName = name;
+            if (from == null && (replace || format != null)) {
+                BuildOutput.error((replace ? "--replace" : "--format") + " needs --from.");
+                return CommandResult.valueOf(1);
+            }
+            if (from != null) {
+                if (templateName == null) {
+                    BuildOutput.error("--from needs a template name.",
+                            "For example: isx templates new tpl-agent --from tpl-agent.yaml");
+                    return CommandResult.valueOf(1);
+                }
+                return fromDefinition(templateName);
+            }
             var invalid = templateName == null ? null : newTemplateNameProblem(templateName);
             if (invalid != null) {
                 BuildOutput.error(invalid);
@@ -292,6 +325,254 @@ public class TemplatesCommand extends BaseCommand {
             }
             return CommandResult.SUCCESS;
         }
+
+        /**
+         * {@code --from}: the whole definition, checked by the editor's check, stored only when it
+         * has no error, never with a prompt or an editor (#2076).
+         */
+        private CommandResult fromDefinition(String templateName) throws IOException {
+            var outputFormat = OutputFormat.parse(format);
+            String yaml;
+            try {
+                yaml = readDefinition(from, stdin);
+            } catch (IOException e) {
+                BuildOutput.error("Could not read " + ("-".equals(from) ? "stdin" : "'" + cell(from) + "'")
+                        + ": " + cell(e.getMessage()));
+                return CommandResult.valueOf(1);
+            }
+            var dir = project ? ImageDef.projectImagesDir() : ImageDef.userImagesDir();
+            var target = dir.resolve(ImageDef.filenameForName(templateName));
+            var defs = ImageDef.loadAll();
+            var check = new ArrayList<TemplateFinding>();
+            var refused = placeProblem(templateName, target, defs, replace);
+            if (refused != null) check.add(TemplateFinding.error("name", refused));
+            var result = TemplateValidator.validate(yaml, target, defs);
+            check.addAll(result.findings());
+            var named = result.name();
+            if (named != null && !named.equals(templateName)) {
+                check.add(TemplateFinding.error("name", "The definition is named '" + named
+                        + "', not '" + templateName + "': the two must agree"));
+            }
+            var valid = check.stream().noneMatch(TemplateFinding::isError);
+            var written = false;
+            if (valid) {
+                try {
+                    store(target, yaml, replace);
+                    written = true;
+                } catch (IOException e) {
+                    check.add(TemplateFinding.error(null, "Could not write " + target + ": " + e.getMessage()));
+                    valid = false;
+                }
+            }
+            if (outputFormat != OutputFormat.TABLE) {
+                printCheck(outputFormat, result.name(), target, valid, written, check, result.reach());
+            } else {
+                reportCheck(check, result.reach(), BuildOutput.bound());
+                if (written) {
+                    BuildOutput.step("Created " + target);
+                    BuildOutput.note("Build it with 'isx build " + templateName + "'");
+                }
+            }
+            return written ? CommandResult.SUCCESS : CommandResult.valueOf(1);
+        }
+    }
+
+    // ── validate ────────────────────────────────────────────────────────────────
+
+    @CommandDefinition(name = "validate", description = "Check a template definition without storing or building it",
+            generateHelp = true)
+    public static class Validate extends BaseCommand {
+
+        @Argument(required = true, completer = Completers.Template.class,
+                description = "A definition file ('-' for stdin), or a template's name")
+        String target;
+
+        // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+        @Option(name = "format", completer = Completers.Format.class, description = "Output format: table (default), plain or json")
+        String format;
+
+        /** Where {@code -} reads, which a test replaces. */
+        Supplier<InputStream> stdin = () -> System.in;
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            var outputFormat = OutputFormat.parse(format);
+            var defs = ImageDef.loadAll();
+            Path location;
+            String yaml;
+            try {
+                // Any file but a directory: process substitution's /dev/fd/63 is a pipe
+                var path = "-".equals(target) ? null : Path.of(target);
+                if (path == null || Files.exists(path) && !Files.isDirectory(path)) {
+                    yaml = readDefinition(target, stdin);
+                    location = path == null ? ImageDef.userImagesDir().resolve("stdin.yaml") : path;
+                } else if (defs.containsKey(target)) {
+                    var def = defs.get(target);
+                    if (def.isBuiltIn()) {
+                        var filename = ImageDef.builtinFilenameFor(target);
+                        try (var is = ImageDef.class.getClassLoader().getResourceAsStream("images/" + filename)) {
+                            yaml = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                        }
+                        location = Path.of(filename);
+                    } else {
+                        location = Path.of(def.getSource());
+                        yaml = readDefinition(def.getSource(), stdin);
+                    }
+                } else {
+                    BuildOutput.error("No template or file named '" + cell(target) + "'.",
+                            "Run 'isx templates list' to see the templates.");
+                    return CommandResult.valueOf(1);
+                }
+            } catch (IOException | java.nio.file.InvalidPathException e) {
+                BuildOutput.error("Could not read '" + cell(target) + "': " + cell(e.getMessage()));
+                return CommandResult.valueOf(1);
+            }
+            var result = TemplateValidator.validate(yaml, location, defs);
+            var valid = !result.hasErrors();
+            if (outputFormat != OutputFormat.TABLE) {
+                printCheck(outputFormat, result.name(), location, valid, false, result.findings(), result.reach());
+            } else {
+                reportCheck(result.findings(), result.reach(), BuildOutput.bound());
+            }
+            return valid ? CommandResult.SUCCESS : CommandResult.valueOf(1);
+        }
+    }
+
+    // ── the shared check and write (#2076) ──────────────────────────────────────
+
+    /** The most a definition read by {@code --from} or {@code validate} may hold. */
+    static final int MAX_DEFINITION_BYTES = 1 << 20;
+
+    /** A definition's text, from a file or ({@code -}) stdin, refused when it is larger than any template. */
+    static String readDefinition(String from, Supplier<InputStream> stdin) throws IOException {
+        try (var in = "-".equals(from) ? stdin.get() : Files.newInputStream(Path.of(from))) {
+            var bytes = in.readNBytes(MAX_DEFINITION_BYTES + 1);
+            if (bytes.length > MAX_DEFINITION_BYTES) {
+                throw new IOException("larger than " + (MAX_DEFINITION_BYTES >> 10) + " KiB, which no template is");
+            }
+            try {
+                // Strict, as the loader is: a lenient decode would store U+FFFD in place of what was given
+                return java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                        .decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+            } catch (java.nio.charset.CharacterCodingException e) {
+                throw new IOException(TemplateValidator.NOT_UTF8, e);
+            }
+        }
+    }
+
+    /**
+     * Why {@code name} cannot be stored at {@code target}, or null when it can: the name must be
+     * one a new template may have, and a template or file already there is replaced only with
+     * {@code replace}, and only when it is that file. A template defined elsewhere (a built-in,
+     * the other layer) is never shadowed by accident.
+     */
+    static String placeProblem(String name, Path target, Map<String, ImageDef> defs, boolean replace) {
+        var existing = defs.get(name);
+        var here = existing != null && existing.getSource() != null && !existing.isBuiltIn()
+                && Path.of(existing.getSource()).toAbsolutePath().normalize().equals(target.toAbsolutePath().normalize());
+        if (existing != null && !here) {
+            return "Template '" + name + "' already exists (source: " + existing.getSource() + ")"
+                    + (replace ? "; --replace replaces only " + target : "");
+        }
+        if ((here || Files.exists(target)) && !replace) {
+            return "File already exists: " + target + "; add --replace to replace it";
+        }
+        var absolute = target.toAbsolutePath().normalize();
+        var other = defs.values().stream()
+                .filter(d -> d.getSource() != null && !d.isBuiltIn() && !name.equals(d.getName())
+                        && Path.of(d.getSource()).toAbsolutePath().normalize().equals(absolute))
+                .findFirst();
+        if (other.isPresent()) {
+            return "File " + target + " defines template '" + other.get().getName()
+                    + "', which --replace would remove";
+        }
+        if (here) return null;
+        return newTemplateNameProblem(name);
+    }
+
+    /**
+     * Writes {@code yaml} as {@code target}, the one way a new definition is stored: created
+     * exclusively, so nothing is overwritten, or with {@code replace} swapped in whole through a
+     * file the loader never reads, so no reader sees half a definition.
+     */
+    static void store(Path target, String yaml, boolean replace) throws IOException {
+        Files.createDirectories(target.getParent());
+        if (!replace) {
+            Files.writeString(target, yaml, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            return;
+        }
+        var partial = target.resolveSibling("." + target.getFileName() + ".new-" + ProcessHandle.current().pid());
+        try {
+            // Exclusively: a link planted at this name (a project's directory is a clone's) is never followed
+            Files.writeString(partial, yaml, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            Files.move(partial, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(partial);
+        }
+    }
+
+    /**
+     * The check for a person: each finding as the editor reports it, then what the definition
+     * reaches beyond its instance, which the person reviews.
+     */
+    static boolean reportCheck(List<TemplateFinding> findings, List<TemplateReach> reach, Output out) {
+        var valid = reportFindings(findings, out);
+        if (!reach.isEmpty()) {
+            out.warn("It reaches beyond its instance; review before building:",
+                    reach.stream().map(r -> cell(r.field() + ": " + r.detail())).toArray(String[]::new));
+        }
+        return valid;
+    }
+
+    /** Errors, then warnings, or that it is valid; whether it has no error. */
+    private static boolean reportFindings(List<TemplateFinding> findings, Output out) {
+        var errors = findings.stream().filter(TemplateFinding::isError).toList();
+        var warnings = findings.stream().filter(f -> !f.isError()).toList();
+        errors.forEach(e -> out.error(e.message().lines().map(OutputFormat::oneLine)
+                .collect(Collectors.joining(System.lineSeparator()))));
+        warnings.forEach(w -> out.warn(cell(w.message())));
+        if (errors.isEmpty() && warnings.isEmpty()) {
+            out.ok("Template is valid");
+        }
+        return errors.isEmpty();
+    }
+
+    /**
+     * The check for a script. {@code json}: one object, its fields in order (add to the end, never
+     * rename): {@code name}, {@code path}, {@code valid}, {@code written}, {@code findings} (each
+     * {@code severity}, {@code field}, {@code message}) and {@code reach} (each {@code kind},
+     * {@code field}, {@code detail}). {@code plain}: one line per finding, {@code <severity> <field>
+     * <message>}, then one per reach, {@code reach <field> <detail>}, tab-separated.
+     */
+    static void printCheck(OutputFormat format, String name, Path path, boolean valid, boolean written,
+                           List<TemplateFinding> findings, List<TemplateReach> reach) {
+        if (format == OutputFormat.PLAIN) {
+            var lines = new ArrayList<Map<String, Object>>();
+            for (var f : findings) {
+                var line = new LinkedHashMap<String, Object>();
+                line.put("kind", f.severity().label());
+                line.put("field", f.field());
+                line.put("text", f.message());
+                lines.add(line);
+            }
+            for (var r : reach) {
+                var line = new LinkedHashMap<String, Object>();
+                line.put("kind", "reach");
+                line.put("field", r.field());
+                line.put("text", r.detail());
+                lines.add(line);
+            }
+            format.print(BuildOutput.results(), lines);
+            return;
+        }
+        var record = new LinkedHashMap<String, Object>();
+        record.put("name", name);
+        record.put("path", path.toString());
+        record.put("valid", valid);
+        record.put("written", written);
+        record.put("findings", findings.stream().map(TemplateFinding::record).toList());
+        record.put("reach", reach.stream().map(TemplateReach::record).toList());
+        format.printOne(BuildOutput.results(), record);
     }
 
     // ── shared helpers ──────────────────────────────────────────────────────────
@@ -304,12 +585,15 @@ public class TemplatesCommand extends BaseCommand {
         if (Files.exists(targetPath)) {
             throw new IOException("File already exists: " + targetPath);
         }
-        Files.createDirectories(dir);
         var skeleton = SKELETON.replace("tpl-CHANGEME", name);
         if (parent != null && !parent.isEmpty()) {
             skeleton = skeleton.replace("# parent: tpl-minimal", "parent: " + parent);
         }
-        Files.writeString(targetPath, skeleton);
+        try {
+            store(targetPath, skeleton, false);
+        } catch (java.nio.file.FileAlreadyExistsException e) {
+            throw new IOException("File already exists: " + targetPath);
+        }
         return targetPath;
     }
 
@@ -369,17 +653,14 @@ public class TemplatesCommand extends BaseCommand {
         var result = TemplateValidator.validate(file, defs);
         var ownPrefix = OutputFormat.oneLine(file.getFileName().toString()) + ": ";
         for (var warning : loadWarnings) {
-            var reported = warning.startsWith(ownPrefix)
-                    && result.warnings().contains(warning.substring(ownPrefix.length()));
+            var own = warning.startsWith(ownPrefix) ? warning.substring(ownPrefix.length()) : null;
+            // A refusal the loader warned about is the check's error too (a repo it skips the file for)
+            var reported = own != null && (result.warnings().contains(own)
+                    || own.endsWith(dev.incusspawn.config.LayeredDefinitions.REFUSED)
+                    && result.errors().contains(own.substring(0, own.length() - dev.incusspawn.config.LayeredDefinitions.REFUSED.length())));
             if (!reported) Warnings.warn(warning);
         }
-        result.errors().forEach(e -> out.error(e.lines().map(OutputFormat::oneLine)
-                .collect(Collectors.joining(System.lineSeparator()))));
-        result.warnings().forEach(w -> out.warn(cell(w)));
-        if (!result.hasErrors() && !result.hasWarnings()) {
-            out.ok("Template is valid");
-        }
-        return !result.hasErrors();
+        return reportFindings(result.findings(), out);
     }
 
     /** Edits {@code file} until it is valid or the user stops; whether it ended valid. */

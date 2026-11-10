@@ -1191,18 +1191,9 @@ public class ImageDef extends DefinitionOrigin {
             return false;
         }
         for (var repo : def.getRepos()) {
-            var problem = repo.sourceProblem();
-            if (repo.isHostSource() && def.getProjectRoot() != null) {
-                problem = "project-local templates cannot prepare host repositories; declare host-source in a trusted template";
-            }
+            var problem = repoProblem(repo, def.getProjectRoot() != null);
             if (problem != null) {
                 warnings.accept(file + ": " + problem + LayeredDefinitions.REFUSED);
-                return false;
-            }
-            if (repo.getDepth() != null && repo.getDepth() < 1) {
-                warnings.accept(file + ": repo " + OutputFormat.oneLine(String.valueOf(repo.getUrl()))
-                        + ": 'depth' " + repo.getDepth() + " is not a positive number of commits"
-                        + LayeredDefinitions.REFUSED);
                 return false;
             }
         }
@@ -1211,6 +1202,23 @@ public class ImageDef extends DefinitionOrigin {
             def.setDefaultAction(null);
         }
         return true;
+    }
+
+    /**
+     * Why {@code repo} keeps its definition from loading, or null: the refusal the loader applies
+     * and {@code TemplateValidator} reports, so the check never passes what the loader skips.
+     */
+    public static String repoProblem(RepoEntry repo, boolean projectLocal) {
+        if (repo.isHostSource() && projectLocal) {
+            return "project-local templates cannot prepare host repositories; declare host-source in a trusted template";
+        }
+        var problem = repo.sourceProblem();
+        if (problem != null) return problem;
+        if (repo.getDepth() != null && repo.getDepth() < 1) {
+            return "repo " + OutputFormat.oneLine(String.valueOf(repo.getUrl()))
+                    + ": 'depth' " + repo.getDepth() + " is not a positive number of commits";
+        }
+        return null;
     }
 
     /**
