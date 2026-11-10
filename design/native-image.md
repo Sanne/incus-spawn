@@ -307,7 +307,7 @@ Two details decide how it is set:
 `release.yml` checks it on the very files it uploads: `scripts/check-macos-minos.py` reads each macOS artifact's `LC_BUILD_VERSION` and fails the release unless every `minos` equals the pom's value (or the file is not a thin Mach-O with one).
 It is plain Python so it runs on the Linux job that publishes, after the macOS builds, and it reads the expected value from the pom rather than repeating it.
 The Homebrew formula declares the same minimum (`depends_on macos: :sequoia`, from `MACOS_MIN` in the tap step).
-`WorkflowRunnerLabelsTest` fails if `MACOS_MIN` is not the target's Homebrew name, if a release runner is older than the target, or if `release.yml` no longer runs the check over `artifacts/native-macos-*/*`.
+`WorkflowRunnerLabelsTest` fails if `MACOS_MIN` is not the target's Homebrew name, if a release runner is older than the target, or if `release.yml` no longer runs the check over `artifacts/native-macos-*/*-macos-*` (every macOS binary, not the build's `SHA256SUMS` beside them).
 That the glob matches what `gh release create` uploads rests on the artifact layout (each macOS artifact is one build's `dist/`), not on the test.
 A runner newer than the target is fine: it builds for the older version.
 
@@ -338,6 +338,31 @@ What an Intel Mac user meets instead of a broken download:
   The x86_64 appliance is still published, since its build and tests also serve Linux CI, so such a user gets no broken download either.
 
 `IntelMacNotShippedTest` fails if a release build targets an Intel Mac, if `release.yml` names an Intel macOS asset, or if the tap step stops refusing such a formula.
+
+## The install script verifies its downloads
+
+`get-isx.sh`, which `curl -fsSL https://isx.run | sh` runs, checks every file it downloads against the release's `SHA256SUMS` before anything reaches `INSTALL_DIR` (#2080).
+It downloads the sums and the three files (`isx`, `isx-proxy`, `git-remote-isx`) into a temporary directory, and each file must be listed there exactly once and match.
+A missing sums file, an unlisted asset, a mismatch or a failed transfer installs nothing and says so.
+Only then is each file copied beside its destination and renamed over it, so an interrupted install never leaves a truncated `isx` on the PATH, and a refused one leaves the previous install as it was.
+
+`release.yml` writes that `SHA256SUMS` over every asset it uploads, from the one list `gh release create` is given, so an asset cannot be uploaded without a sum.
+A binary's sum is the one the build job that compiled it recorded (`SHA256SUMS` in each uploaded artifact, by the "Record checksums" step).
+`.github/scripts/release-sha256sums.sh` takes that sum, and refuses an artifact that no longer matches it, is not listed in it, or shares its name with another asset.
+Assets the release job makes itself (completions, the compressed kernel) or takes from a job that records none (the appliance disk, `git-remote-isx` from the checkout) are summed there.
+A `workflow_dispatch` publishes nothing, so its `checksums` job writes the same file for the binaries it built and uploads it as an artifact.
+`GetIsxScriptTest` runs the script against a stand-in `curl` serving a fake release whose sums the release script wrote, and fails when the script fetches an asset the release's list does not hold.
+
+What this covers, honestly: the sums and the binaries come from the same release, both from GitHub.
+So it catches corruption and truncation, and a release asset replaced without its sums, but not a compromised release or account, where an attacker would publish matching sums.
+Covering that needs something an attacker with write access to the release cannot produce:
+
+- GitHub artifact attestations (`actions/attest-build-provenance`) bind each asset's digest to the workflow run that built it, signed through Sigstore.
+  Checking one needs `gh attestation verify` or cosign on the installing host, which a `curl | sh` path cannot assume, so the script could only check one where `gh` is present.
+- A signature whose public key the script pins (minisign or `ssh-keygen -Y verify` over `SHA256SUMS`) is checkable with tools most hosts have, but the key must be held outside GitHub Actions to be worth more than the sums, which makes every release a step done by hand.
+
+Both are a follow-up, not this change: they need a decision on who holds a key, or on which hosts may skip the check, which the sums do not.
+The script itself is fetched from `main` over TLS, so whoever can change `main` can change what it checks; the attestation would at least tie the binaries to this repository's workflow.
 
 ## Build-time initialization must not capture host paths
 

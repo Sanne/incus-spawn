@@ -87,7 +87,7 @@ class WorkflowRunnerLabelsTest {
         assertEquals(expected, declared.group(1), "the binaries target macOS " + target
                 + ", so the formula must declare depends_on macos: :" + expected);
 
-        assertTrue(Files.readString(release).contains("scripts/check-macos-minos.py artifacts/native-macos-*/*"),
+        assertTrue(Files.readString(release).contains("scripts/check-macos-minos.py artifacts/native-macos-*/*-macos-*"),
                 "release.yml must check the minimum macOS of every macOS binary it uploads");
     }
 }
