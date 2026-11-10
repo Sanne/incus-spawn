@@ -61,6 +61,9 @@ public final class BtrfsUsage {
 
     private static final long PROBE_TIMEOUT_SECONDS = 8;
 
+    /** How {@code btrfs qgroup show} paths the qgroup of a subvolume btrfs has not freed yet. */
+    private static final String UNDER_DELETION = "<under deletion>";
+
     /**
      * A repair trigger is cheap but not free (a whole-filesystem extent walk), and a rescan already
      * in flight keeps the flag set until it finishes — so don't re-trigger on every refresh: wait
@@ -359,6 +362,65 @@ public final class BtrfsUsage {
             if (referenced != null) byName.put(ref.name(), referenced);
         });
         return byName;
+    }
+
+    /**
+     * Deleted subvolumes that btrfs has not freed yet (#2061). A subvolume delete returns at once,
+     * and the {@code btrfs-cleaner} thread drops its tree in the background. Under full qgroup
+     * accounting it traces every extent the subvolume shared with its template, and a new snapshot
+     * waits for that work: measured, {@code incus copy} of a 2.7 GiB instance went from 0.15 s to
+     * 5 s for each of the 20 deleted copies, one after the other (design/storage.md).
+     *
+     * @param subvolumes how many are still waiting
+     * @param referencedBytes the referenced bytes of those, as their qgroups last counted them
+     */
+    public record PendingCleanup(int subvolumes, long referencedBytes) {
+        public static final PendingCleanup NONE = new PendingCleanup(0, 0);
+    }
+
+    /**
+     * The pool's {@link PendingCleanup}, or empty when it cannot be read (no sudoers rule, an
+     * unreachable agent). Reads the same {@code qgroup show} as {@link #probe}, under the same
+     * sudoers rule and agent verb, so it needs no new privilege. Never throws.
+     */
+    public static java.util.Optional<PendingCleanup> pendingCleanup(String poolName) {
+        if (poolName == null || !isSafePoolName(poolName)) return java.util.Optional.empty();
+        try {
+            String qgroup;
+            if (Platform.isMacOS()) {
+                var sections = agentSections(poolName, false);
+                qgroup = sections == null ? null : sections[0];
+            } else {
+                qgroup = runBtrfs("qgroup", "show", "-re", "--raw", POOL_MOUNT_PREFIX + poolName);
+            }
+            return qgroup == null ? java.util.Optional.empty() : java.util.Optional.of(parsePendingCleanup(qgroup));
+        } catch (RuntimeException e) {
+            return java.util.Optional.empty();
+        }
+    }
+
+    /**
+     * Count the level-0 qgroups {@code btrfs qgroup show} paths as {@code <under deletion>}: their
+     * subvolume is deleted and its tree not yet freed. Once the cleaner has freed it, the qgroup
+     * stays until a later commit with its referenced bytes unchanged, and btrfs-progs paths it as
+     * {@code <stale>}, so neither a missing subvolume nor a non-zero count tells the two apart; the
+     * label does. A btrfs-progs too old to print it reports no backlog.
+     */
+    static PendingCleanup parsePendingCleanup(String qgroupShowOutput) {
+        int count = 0;
+        long bytes = 0;
+        for (var line : qgroupShowOutput.split("\n")) {
+            var trimmed = line.trim();
+            if (!trimmed.startsWith("0/") || !trimmed.endsWith(UNDER_DELETION)) continue;
+            var fields = WHITESPACE.split(trimmed);
+            try {
+                bytes += Long.parseLong(fields[1]);
+                count++;
+            } catch (NumberFormatException | ArrayIndexOutOfBoundsException ignored) {
+                // unexpected format: skip
+            }
+        }
+        return count == 0 ? PendingCleanup.NONE : new PendingCleanup(count, bytes);
     }
 
     /**

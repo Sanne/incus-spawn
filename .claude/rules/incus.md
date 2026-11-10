@@ -211,6 +211,10 @@ On a subvolume pool Incus's lazy `btrfs quota enable` covers the whole host file
 This only upgrades (non-CoW -> CoW), never downgrades.
 `IncusClient.updateProfileRootDiskPool()` handles the PATCH, finding the root disk device by type rather than assuming a conventional name.
 
+**A cleaner backlog slows every branch under full qgroups** (#2061): `btrfs-cleaner` accounts each extent a deleted subvolume shared, and a new snapshot waits for it, for minutes after a bulk delete.
+isx's root `size` is what makes Incus enable full qgroups, and simple quotas would zero the referenced bytes `BtrfsUsage` reads, so isx keeps full mode.
+`isx doctor` names the backlog as a note (`BtrfsUsage.pendingCleanup`: the qgroups `qgroup show` paths as `<under deletion>`, never `<stale>` ones, which keep their bytes after the cleaner is done), from the read the sudoers rule and the agent's `btrfs-usage` verb already allow; see design/storage.md.
+
 **Orphaned subvolumes and dangling records** (#717): `InstanceSubvolumes` compares a btrfs pool's top-level instance subvolumes (names-only parse of `btrfs subvolume list` via `BtrfsUsage.subvolumeList`, anchored at the pool so a guest's nested Incus pool is ignored) with Incus's volumes (all projects, `<project>_<name>` on disk) and instances.
 `IncusClient.scanSubvolumes()` returns the comparison for the CoW pool; `IncusClient.delete` refuses a record whose subvolume is missing (`DanglingRecordException`, before any DELETE), `IncusClient.rename` fails when the record moved but the subvolume did not, and `storageOnDisk(name)` answers the same question for one instance.
 `BtrfsUsage.parse` places subvolumes with the same anchored parser, so rfer sizes and the orphan scan agree on names.

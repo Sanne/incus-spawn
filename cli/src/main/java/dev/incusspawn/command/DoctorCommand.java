@@ -872,7 +872,38 @@ public class DoctorCommand extends BaseCommand {
                                 }
                             })));
         }
-        return List.of(Finding.ok("Disk accounting", "consistent " + detail));
+        var findings = new ArrayList<Finding>();
+        findings.add(Finding.ok("Disk accounting", "consistent " + detail));
+        if (slowsCleanup(status)) {
+            BtrfsUsage.pendingCleanup(pool).flatMap(p -> pendingCleanupFinding(pool, p, Platform.isMacOS()))
+                    .ifPresent(findings::add);
+        }
+        return findings;
+    }
+
+    /**
+     * Whether a cleaner backlog delays new snapshots on this pool (#2061): only full qgroup
+     * accounting traces every freed extent. Simple quotas and quotas off measured no slowdown, and
+     * an inconsistent pool's counters are frozen, so a backlog read from them could be a stale one.
+     * A kernel that reports no {@code mode} predates simple quotas, so its accounting is full.
+     */
+    static boolean slowsCleanup(BtrfsUsage.QgroupStatus status) {
+        return status.available() && status.enabled() && !status.inconsistent() && !"squota".equals(status.mode());
+    }
+
+    /**
+     * A note while btrfs is still freeing deleted instances (#2061). It is a NOTE, not a WARN: it
+     * clears on its own and nothing is broken, but until then every branch's snapshot waits behind
+     * it, which is otherwise a slowdown with no visible cause.
+     */
+    static Optional<Finding> pendingCleanupFinding(String pool, BtrfsUsage.PendingCleanup pending, boolean macOS) {
+        if (pending.subvolumes() == 0) return Optional.empty();
+        var wait = macOS ? "" : "; 'sudo btrfs subvolume sync " + BtrfsUsage.POOL_MOUNT_PREFIX + pool
+                + "' waits until it is done";
+        return Optional.of(Finding.note("Deleted instances still being freed",
+                "(btrfs is freeing " + pending.subvolumes() + " deleted subvolume(s), "
+                        + VmManager.humanSize(pending.referencedBytes()) + " referenced, on pool '" + pool
+                        + "'; until it finishes, a new branch can take seconds instead of a fraction of one" + wait + ")"));
     }
 
     /**
