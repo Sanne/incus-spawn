@@ -81,6 +81,10 @@ isx templates new my-app       # creates ~/.config/incus-spawn/images/my-app.yam
 isx templates new my-app --project  # creates .incus-spawn/images/my-app.yaml
 isx templates new              # creates new-template.yaml, to be named in the editor
 
+# Store a definition written elsewhere, with no editor: checked first, and nothing written if it is wrong
+isx templates new tpl-agent --from tpl-agent.yaml
+isx templates validate tpl-agent.yaml   # the same check alone; --format=json names each field at fault
+
 # Edit an existing template
 isx templates edit tpl-java    # opens in $EDITOR, validates on save
 ```

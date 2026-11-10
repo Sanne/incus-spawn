@@ -105,6 +105,7 @@ Its request count is pinned.
 Its fields are `name`, `status`, `ipv4`, `parent`, `runtime`, `created`, `mcp_state`, `mcp_purpose` (#1053: `McpStanding`, `null` for an instance no `isx mcp` session made), `base_image` (#1657: `BaseImageAge.tag`, the `image.incus-spawn.tag` Incus copied from the image); `docs/CLI.md`'s "Scripting isx" lists them.
 Every query command has it, plus `isx branch` (the new name alone).
 `isx templates` adds build state and staleness from `TemplateStaleness`, the same judgement as the TUI's `! △ ↑` marks and `isx build --out-of-sync` (`Staleness.outOfSync()` says which count), so a change to what counts as stale goes there, never into one caller.
+`isx templates new --from` and `isx templates validate` share the edit loop's check, `TemplateValidator.validate(yaml, location, known)`, whose `TemplateFinding`s carry the field at fault and whose `TemplateReach` lists what the definition reaches beyond its instance (#2076); a new template check goes there, so all three report it, and a new way a definition reaches the host goes in `TemplateReach`.
 `--out-of-sync` calls `assess` on the same one listing; a named build's parents go through `BuildCommand.isImageOutdated`, which calls its `versionOutdated`, `definitionChanged` and `parentRebuilt`.
 `QueryCommandFormatTest` pins each JSON shape and `ExitCodeTest` the shared rejection.
 Work that prints progress runs under `BaseCommand.withStdoutOnStderr` (its swap is the gate class `StdoutOnStderr`), the machine formats never prompt, and the exit code is the table's.

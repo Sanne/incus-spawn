@@ -50,4 +50,33 @@ class TemplatesEditReportTest {
                 passedOn.toString());
         assertFalse(passedOn.stream().anyMatch(w -> w.startsWith("claude.yaml: ")), passedOn.toString());
     }
+
+    @Test
+    void aRepoTheLoaderRefusesIsTheChecksErrorAndSaidOnce() throws Exception {
+        // #2076: the shared check refuses what the loader skips the file for, so the editor no
+        // longer calls such a file valid; the load's warning about it is the same finding
+        var images = Files.createDirectories(Environment.configDir().resolve("images"));
+        var file = images.resolve("shallow.yaml");
+        Files.writeString(file, """
+                name: tpl-shallow
+                image: images:fedora/44
+                repos:
+                  - url: https://example.com/a.git
+                    depth: 0
+                """);
+        var loadWarnings = new ArrayList<String>();
+        var defs = ImageDef.loadAll(loadWarnings::add);
+        var passedOn = new ArrayList<String>();
+        var report = new RecordingOutput();
+
+        boolean valid;
+        try (var ignored = BuildOutput.bind(Output.diagnosticsTo(passedOn::add))) {
+            valid = TemplatesCommand.validateAndReport(file, defs, loadWarnings, report);
+        }
+
+        assertFalse(valid);
+        assertEquals(List.of("repo https://example.com/a.git: 'depth' 0 is not a positive number of commits"),
+                report.events(RecordingOutput.Kind.ERROR).stream().map(RecordingOutput.Event::msg).toList());
+        assertFalse(passedOn.stream().anyMatch(w -> w.startsWith("shallow.yaml: ")), passedOn.toString());
+    }
 }

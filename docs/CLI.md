@@ -277,11 +277,37 @@ Without a name, it writes `new-template.yaml` for you to name in the editor.
 
 ```shell
 isx templates new [<name>]
+isx templates new <name> --from <file>
 ```
+
+With `--from`, it takes the whole definition from a file, or from stdin for `-`, and opens no editor.
+It checks the definition as the editor does, then stores it only when nothing is wrong.
+The definition's `name:` must be the name you give.
+It never prompts, so a script or an agent can run it.
 
 | Option | What it does |
 |--------|--------------|
 | `--project` | Create it in the project-local directory (`.incus-spawn/images/`) |
+| `--from <file>` | Take the whole definition from this file, or `-` for stdin, check it and store it |
+| `--replace` | With `--from`, replace the template's own file when it has one; a built-in or a template in the other directory is never replaced |
+| `--format=<format>` | With `--from`, `table` (the default), `plain` or `json`; see [Template check fields](#template-check-fields) |
+
+An invalid definition writes nothing and exits 1.
+The check also lists what the template reaches beyond its instance, so you can review a template an agent wrote before you build it.
+
+### `isx templates validate`
+
+Check a template definition without storing or building it.
+It takes a file, `-` for stdin, or the name of a template you have.
+It runs the same check as `isx templates new --from` and exits 1 when the definition has an error.
+
+```shell
+isx templates validate <file-or-name>
+```
+
+| Option | What it does |
+|--------|--------------|
+| `--format=<format>` | `table` (the default), `plain` or `json`; see [Template check fields](#template-check-fields) |
 
 ### `isx templates edit`
 
@@ -684,7 +710,7 @@ The zsh, fish and PowerShell scripts mark each namespace's default account; bash
 
 Query commands print `plain` and `json` output that a script can rely on, and exit codes that say what happened.
 
-Query commands take `--format=table|plain|json`: `isx list`, `isx templates [list]`, `isx tools list`, `isx tools show`, `isx account list`, `isx account show`, `isx proxy status`, `isx proxy activity`, `isx doctor`, `isx vm status` (macOS), `isx update-base --list` and `isx branch`.
+Query commands take `--format=table|plain|json`: `isx list`, `isx templates [list]`, `isx templates validate`, `isx tools list`, `isx tools show`, `isx account list`, `isx account show`, `isx proxy status`, `isx proxy activity`, `isx doctor`, `isx vm status` (macOS), `isx update-base --list` and `isx branch`.
 
 ### Formats
 
@@ -786,6 +812,7 @@ The fields of each command, in order:
 | `isx vm status` | `running`, `pid`, `rest_api`, `log`, `appliance`, `appliance_pending`, `vsock_connections`, `incus_reachable`, `incus_error`, `vsock_connections_high` |
 | `isx update-base --list` | newest first: `tag`, `date`, `latest`, `current`, `pinned`, `listed` |
 | `isx branch <name>` | `name` |
+| `isx templates validate`, `isx templates new --from` | `name`, `path`, `valid`, `written`, `findings`, `reach` |
 
 The sections below say what the fields that need it mean.
 
@@ -803,6 +830,26 @@ The staleness flags are `null` for a template that is not built.
 Everything from `built` on is `null` when Incus could not be asked, with the reason on stderr.
 
 `isx build --out-of-sync` builds the templates that are not built, rebuilds those with `version_outdated`, `definition_changed` or `parent_rebuilt`, and rebuilds the descendants of every template it builds.
+
+#### Template check fields
+
+`isx templates validate` and `isx templates new --from` print one object in `json`.
+
+| Field | Meaning |
+|-------|---------|
+| `name` | The name the definition gives, or `null` when it gives none |
+| `path` | The file checked, or the file `--from` writes |
+| `valid` | Whether the definition has no error |
+| `written` | Whether `--from` stored it; always `false` for `validate` |
+| `findings` | Each with `severity` (`error` or `warning`), `field` and `message` |
+| `reach` | What it reaches beyond its instance, each with `kind`, `field` and `detail` |
+
+A finding's `field` is the key at fault, such as `parent`, `repos[1].depth` or `coordinator.control-over`.
+It is `null` when the file does not parse at all.
+A `reach` entry's `kind` is `host-image` (a `file://` base image), `host-resource`, `host-source`, `gui`, `account` or `coordinator`.
+Only the definition's own fields count, not its parent's.
+
+`plain` prints one line per finding, `<severity> <field> <message>`, then one per reach, `reach <field> <detail>`, tab-separated.
 
 #### `isx account list` fields
 
