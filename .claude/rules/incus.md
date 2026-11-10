@@ -110,8 +110,9 @@ vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so 
   Without lxc/incus@2cb2549, incusd's local listener (`StarttlsListener`) peeks 8 bytes inside `Accept()` with no deadline, so one connection that has sent fewer than 8 bytes stalls *every new* API connection until it speaks or closes.
   On Linux the close arrives at once; through vfkit it may not, and then the forwarder holds that silent connection until `socat -T` reaps it -- the whole API wedged for up to 180s, cleared early only by `forwarder-restart`.
   Appliances built since #1313 have the fix: each connection is classified in its own goroutine under a 3s read deadline, so a silent one stalls nothing and incusd closes it after 3s.
-  No Incus release Alpine ships has it yet, so `appliance/build.sh` rebuilds Alpine's incusd (7.0.0 on Alpine 3.24, #2045) with `appliance/incus/*.patch` and records what it built in `/etc/isx-incus`; the smoke test prints that file.
-  Drop the patch once Alpine ships a release with the commit; until then `build.sh` pins `INCUS_VERSION`, and a new Alpine Incus fails the build rather than mixing versions.
+  Alpine 3.24 ships incusd 7.0.0, which predates it, so `appliance/build.sh` replaces it with incusd built from the 7.0.2 LTS release's signed tarball (`INCUS_VERSION`, #2104), which has it, plus `appliance/incus/*.patch`, and records what it built in `/etc/isx-incus`; the smoke test prints that file.
+  The patches are upstream `stable-7.0` security fixes 7.0.2 lacks (GHSA-v736-5xp3-jghf, GHSA-5pgx-q9xx-j3qv); drop each once an `INCUS_VERSION` contains it.
+  Alpine's packages stay pinned to `ALPINE_INCUS_VERSION`, so a new Alpine Incus fails the build rather than drifting.
   The rule stays, because an appliance built before #1313 is still affected.
   So no bare connect-and-close probes: `IncusApi.diagnoseVsock` sends a real `GET /1.0` (`IncusApiLossyTunnelTest` asserts the request arrives).
   Upstream: LXD fixed the same code (canonical/lxd#18705), incus after 7.5.1 (lxc/incus#4082).

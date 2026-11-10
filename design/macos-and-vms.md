@@ -121,7 +121,8 @@ That single fault surfaced in two directions and shaped several design choices:
   The server-side fix belongs upstream.
   LXD fixed the identical code (canonical/lxd#18705, peek moved off the accept loop with a read deadline).
   Incus followed after 7.5.1 (lxc/incus@2cb2549, for lxc/incus#4082): each connection is classified in its own goroutine, with a 3s deadline on the first read.
-  No release had it when #1313 needed it, so the appliance build carries it as a backport onto Alpine's Incus, 7.0.0 on Alpine 3.24 (`appliance/incus/`, see `appliance/DESIGN.md`).
+  No release had it when #1313 needed it, so the appliance build carried it as a backport onto Alpine's Incus, 7.0.0 on Alpine 3.24.
+  The 7.0.2 LTS release has it, and the appliance's incusd is now built from that release (#2104, `appliance/incus/`, see `appliance/DESIGN.md`).
   On an appliance built since then, a silent or partial connection stalls nothing, and incusd closes it after 3s, well before the forwarder's backstop.
   An older appliance is still affected, so the rule above stays.
   incusd also closes idle keep-alive connections after 30s (`IdleTimeout`), a close vfkit may not deliver either.
