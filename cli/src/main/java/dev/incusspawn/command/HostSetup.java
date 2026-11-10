@@ -5,6 +5,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.CidrUtils;
+import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.FirewallDetector.DetectionResult;
@@ -18,7 +19,6 @@ import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.vm.VmManager;
 import dev.incusspawn.Platform;
-import dev.incusspawn.util.HostPath;
 import io.hyperfoil.tools.jjq.value.JqValue;
 
 import java.io.IOException;
@@ -140,8 +140,12 @@ class HostSetup {
     /** What {@link #installDependencies} would install. */
     InitPlan.Assessment planDependencies() {
         var plan = planMissingDependencies();
-        return plan.note() != null ? plan : plan.noting(SUDO_FIRST);
+        var note = init.noSudo() ? NO_SUDO_FIRST : SUDO_FIRST;
+        return plan.note() != null ? plan : plan.noting(note);
     }
+
+    /** {@link #SUDO_FIRST} under {@code --no-sudo}, which runs no sudo, not even {@code sudo -v}. */
+    static final String NO_SUDO_FIRST = "Under --no-sudo isx runs no sudo, not even sudo -v: the root script does what needs root.";
 
     /**
      * What every Linux run needs before its first step, done or not: {@code isx init} checks sudo
@@ -158,7 +162,7 @@ class HostSetup {
             // Init skips them, and the steps that need them fail: a person installs them
             return InitPlan.Assessment.of(List.of(InitPlan.Change.sudo(
                     "Install " + String.join(", ", missing) + " yourself", null)))
-                    .noting(NO_PACKAGE_MANAGER + " " + SUDO_FIRST);
+                    .noting(NO_PACKAGE_MANAGER + " " + (init.noSudo() ? NO_SUDO_FIRST : SUDO_FIRST));
         }
         return InitPlan.Assessment.of(List.of(InitPlan.Change.sudo(
                 "Install " + String.join(", ", missing), String.join(" ", cmd))));
@@ -1272,8 +1276,31 @@ class HostSetup {
 
     /** The commands the btrfs sudoers rule permits on {@code pool}'s mount, one entry each. */
     static List<String> btrfsUsageCommands(String pool) {
-        var btrfsPath = HostPath.find("btrfs");
-        if (btrfsPath == null) btrfsPath = "/usr/sbin/btrfs";     // fall back to the usual location
+        return btrfsUsageCommands(pool, btrfsPath());
+    }
+
+    /**
+     * Where the rule says btrfs is: the first in {@link #BTRFS_SEARCH}, else {@link #BTRFS_FALLBACK}.
+     * The same search the root script runs, whatever the PATH of the shell isx runs in, so the rule
+     * the run, the plan and the script write is one text. sudo matches a command by the file it
+     * names, so any path to the binary serves (Fedora's /usr/sbin is /usr/bin).
+     */
+    static String btrfsPath() {
+        for (var dir : BTRFS_SEARCH.split(":")) {
+            var candidate = Path.of(dir, "btrfs");
+            if (Files.isRegularFile(candidate) && Files.isExecutable(candidate)) return candidate.toString();
+        }
+        return BTRFS_FALLBACK;
+    }
+
+    /** Where the root script looks for btrfs, in a user's PATH's order: bin before sbin. */
+    private static final String BTRFS_SEARCH = "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin";
+
+    /** Where btrfs is taken to be when no {@code btrfs} is on the PATH. */
+    private static final String BTRFS_FALLBACK = "/usr/sbin/btrfs";
+
+    /** {@link #btrfsUsageCommands(String)} with btrfs at {@code btrfsPath}. */
+    static List<String> btrfsUsageCommands(String pool, String btrfsPath) {
         var mount = "/var/lib/incus/storage-pools/" + pool;
         // Permit both flavours of the qgroup read: the plain form (cheap, for periodic sampling) and
         // the --sync form (forces a commit, for the accuracy-critical read right after a build). sudo
@@ -1288,8 +1315,11 @@ class HostSetup {
     }
 
     static String btrfsSudoersContent(String pool) {
-        return System.getProperty("user.name") + " ALL=(root) NOPASSWD: "
-                + String.join(", ", btrfsUsageCommands(pool)) + "\n";
+        return btrfsSudoersContent(btrfsUsageCommands(pool));
+    }
+
+    private static String btrfsSudoersContent(List<String> commands) {
+        return System.getProperty("user.name") + " ALL=(root) NOPASSWD: " + String.join(", ", commands) + "\n";
     }
 
     /**
@@ -1348,11 +1378,23 @@ class HostSetup {
      * {@code visudo} before it is put in place, since a malformed rule can lock the user out of sudo.
      */
     static InitPlan.Change btrfsAccess(String pool) {
-        var content = btrfsSudoersContent(pool);
+        // The rule names btrfs as btrfsPath() finds it, by the same search: run as the script runs,
+        // after it installed btrfs-progs, never before, so a host without the package needs one
+        // script, and the lines, the script's record of them, stay the same once it is there
+        var content = btrfsSudoersContent(btrfsUsageCommands(pool, "${btrfs}"));
         var delimiter = InitPlan.Change.delimiter(content);
         var lines = new ArrayList<String>();
+        lines.add("btrfs=" + BTRFS_FALLBACK);
+        // A fixed search, as a user's PATH orders it (bin before sbin), never the PATH of this
+        // shell: another shell's PATH would change the lines, and with them the script's record
+        lines.add("path=" + Container.shellQuote(BTRFS_SEARCH));
+        // Split on ':' without globbing; only absolute entries, since sudoers takes no relative command
+        lines.add("old_ifs=$IFS; IFS=:; set -f");
+        lines.add("for dir in $path; do case $dir in /*) if [ -f \"$dir/btrfs\" ] && [ -x \"$dir/btrfs\" ]; then btrfs=$dir/btrfs; break; fi;; esac; done");
+        lines.add("set +f; IFS=$old_ifs");
         lines.add("tmp=$(mktemp)");
-        lines.add("cat > \"$tmp\" <<'" + delimiter + "'");
+        // Unquoted: the one expansion is ${btrfs}; the user and the pool's mount hold no shell syntax
+        lines.add("cat > \"$tmp\" <<" + delimiter);
         lines.addAll(content.lines().toList());
         lines.add(delimiter);
         lines.add("visudo -cf \"$tmp\"");

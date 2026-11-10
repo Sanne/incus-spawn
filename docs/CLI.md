@@ -86,6 +86,8 @@ A fresh host needs the script once.
 
 Some of what the script does only root can check afterwards, such as the btrfs sudoers rule.
 The script records what it ran in `/var/lib/isx/init-applied`, which the second run reads for those steps.
+`isx init --plan` reads it too, so it reports that work as done.
+Once nothing needs root any more, the second run removes the script.
 
 A step isx cannot write as a script, such as a UFW firewall's rules, stops the run and names what to do yourself.
 On macOS `isx init` needs no administrator, so `--no-sudo` changes nothing there.
