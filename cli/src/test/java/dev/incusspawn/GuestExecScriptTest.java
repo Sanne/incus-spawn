@@ -67,6 +67,8 @@ class GuestExecScriptTest {
         var proxyOnly = Files.readString(SCRIPTS.resolve("test-proxy-only.sh"));
         assertTrue(proxyOnly.contains("source \"$HERE/guest-exec.sh\""), "test-proxy-only.sh must source guest-exec.sh");
         assertFalse(RAW_EXEC.matcher(proxyOnly).find(), "an exec in test-proxy-only.sh bypasses guest_exec");
+        // Negated, an exec Incus could not run at all (exit 255) would pass as blocked egress
+        assertFalse(proxyOnly.contains("! guest_exec"), "a no-egress check must go through curl_fails_in_guest");
 
         // host-distro's instance phase execs into a branch moments after it started, too
         var hostDistro = Files.readString(SCRIPTS.resolve("test-host-distro.sh"));

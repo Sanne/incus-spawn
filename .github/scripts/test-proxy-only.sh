@@ -64,6 +64,19 @@ reaches_internet() {
     return 1
 }
 
+# curl ran in the guest and could not connect: a no-egress check passes on that alone, never on
+# Incus failing to run it (exec exits 1 when Incus cannot reach the instance, 255 when it could not run
+# the command there) or on a guest without curl (127).
+curl_fails_in_guest() {
+    local rc=0
+    guest_exec "$@" || rc=$?
+    case $rc in
+        # Could not resolve, could not connect, timed out, TLS failed, bad interface, connection reset
+        6|7|28|35|45|56) return 0 ;;
+        *) echo "    curl in $1 exited $rc, which is not a connection refused or dropped" >&2; return 1 ;;
+    esac
+}
+
 # Root in the guest takes another address on the bridge and tries from it. The ACL is on the
 # host side of the NIC, whatever address a packet carries, and spoofing protection drops it too.
 no_egress_from_another_address() {
@@ -71,7 +84,7 @@ no_egress_from_another_address() {
     spare=$(guest_exec "$1" -- ip -4 -o addr show eth0 | awk '{print $4}' | sed -E 's#\.[0-9]+/#.250/#')
     # Within check, a failing command does not stop the function: without the address there is no test
     [ -n "$spare" ] && guest_exec "$1" -- ip addr add "$spare" dev eth0 || return 1
-    ! guest_exec "$1" -- curl -s -m 5 -o /dev/null --interface "${spare%/*}" http://1.1.1.1/
+    curl_fails_in_guest "$1" -- curl -s -m 5 -o /dev/null --interface "${spare%/*}" http://1.1.1.1/
 }
 
 # Any HTTP answer is the proxy's: an intercepted domain resolves to the gateway, and a 401 for
@@ -82,9 +95,9 @@ reaches_proxy() {
     [ -n "$code" ] && [ "$code" != 000 ]
 }
 resolves() { guest_exec "$1" -- getent hosts example.com >/dev/null; }
-no_direct_ipv4() { ! guest_exec "$1" -- curl -s -m 5 -o /dev/null http://1.1.1.1/; }
-no_direct_https() { ! guest_exec "$1" -- curl -s -m 5 -o /dev/null https://example.com/; }
-no_direct_ipv6() { ! guest_exec "$1" -- curl -6 -s -m 5 -o /dev/null 'http://[2606:4700:4700::1111]/'; }
+no_direct_ipv4() { curl_fails_in_guest "$1" -- curl -s -m 5 -o /dev/null http://1.1.1.1/; }
+no_direct_https() { curl_fails_in_guest "$1" -- curl -s -m 5 -o /dev/null https://example.com/; }
+no_direct_ipv6() { curl_fails_in_guest "$1" -- curl -6 -s -m 5 -o /dev/null 'http://[2606:4700:4700::1111]/'; }
 
 wait_for_ipv4() {
     guest_exec "$1" -- bash -c '
