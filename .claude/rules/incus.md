@@ -81,7 +81,7 @@ vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so 
 - **Long-lived event subscription.**
   `IncusApi.openEvents(types)` (public via `IncusClient.openLifecycleEvents()`, returning `IncusEventStream`) is the one WebSocket meant to stay open indefinitely (the TUI's `InstanceEventWatcher`).
   Incus pings its event listeners about every 10s and drops those that never answer, so `readMessage()` answers PINGs with PONGs (`ControlFrames`) and reassembles fragmented frames (one JSON document per message).
-  **`readPayload()` -- the exec/shell path -- deliberately never writes**: it counts PINGs and PONGs as received but never answers them, because a PONG sent from the reader thread would queue behind a stdin write holding `writeLock`, and Incus doesn't ping exec sockets anyway.
+  **`readPayload()` -- the exec/shell path -- deliberately never writes**: it counts PINGs and PONGs as received but never answers them, because a PONG sent from the reader thread would queue behind a stdin write holding `writeLock`, and Incus, which pings every exec socket each 10 s, sets no read deadline and so never waits for the answer.
   Keep the two paths separate.
   The event stream also pings every 15s (keeps `socat -T` from reaping it) and its keepalive closes the stream after 50s with nothing received (`millisSinceLastReceived()`, fed by both reads) -- in a `finally`, so the stream ends whenever the keepalive does -- so a half-open vsock stream reads as end-of-stream instead of blocking forever.
   Reconnect policy (bounded; gives up for the session) lives in the TUI's `InstanceEventWatcher`.
