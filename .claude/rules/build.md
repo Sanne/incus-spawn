@@ -170,6 +170,7 @@ The scan of the real sysfs is made once per process.
 `CpuInfoTest` pins each source with sysfs fixtures (an i7-12700H, a Ryzen AI 300, an X3D, a three-tier ARM SoC, an RK3588 device-tree layout).
 For full network clones, `GitPreparation` selects one ref in owned host staging: the requested branch, else tag, else the branch the remote's HEAD names, with all of its history (#1990).
 Its cache is keyed by URL and requested ref, and the host and the guest `ls-remote` only that ref and the tags (`GitPreparation.lsRemotePatterns`).
+A new ref with no host checkout borrows objects from a sealed snapshot of another ref of the same URL (`PreparationCache.sibling`, #2050), and the repack keeps only the new ref's closure.
 It fetches the ref by name into a fresh bare repository, never `clone`, which asks for every annotated tag pointing into its history even with `--no-tags`.
 It borrows objects directly from a matching checkout through an alternate, then `repack -a -d` and removes it, as `--dissociate` does, without copying the checkout's packs first.
 It never fetches into or maintains the user's repository.

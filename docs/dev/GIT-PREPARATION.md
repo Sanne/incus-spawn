@@ -54,6 +54,7 @@ Full clones have no depth limit and use snapshots only for eligible network URLs
 | Situation | What we do / ready-line label | Why |
 | --- | --- | --- |
 | Full clone, no usable cached snapshot, eligible host checkout available | Create a snapshot by borrowing directly from the checkout with `--reference … --dissociate`: `via reference-seeded clean snapshot` | Reuse local objects while excluding private history and removing the dependency on the checkout. |
+| Full clone, no usable cached snapshot or eligible host checkout, a verified snapshot of another ref of the same URL cached | Create a snapshot borrowing that snapshot's objects: `via sibling-seeded clean snapshot` | Fetch only what the new ref adds; the repack copies only the new ref's closure, so the other ref's history stays out. |
 | Full clone, neither a usable cached snapshot nor an eligible reference | Create a snapshot from the remote: `via new clean snapshot` | Establish a validated, independent copy for this build and later reuse. |
 | Full clone, cached bytes verify and the selected ref and object format are unchanged | Reuse it: `via cached clean snapshot` | Avoid another full-history clone, repack and fsck; still check current remote access, selection and cached bytes. |
 | Full clone, upstream changes preserve the previously selected history | Fetch into a new generation, retaining verified old packs: `via incremental clean snapshot` | Ordinary new commits and merges need only the additional objects and their validation, plus checks of retained bytes and reachability. |
@@ -268,6 +269,8 @@ Indexing also gets faster, 28 s instead of 50 s on camel: with the source attach
 
 The cache lives under `~/.cache/incus-spawn/git/`, private to the host user.
 It retains one immutable snapshot per exact URL and requested ref, whether or not a host checkout exists.
+A new ref's first preparation borrows objects from the most recently used verified snapshot of another ref of the same URL, when no host checkout serves.
+Each snapshot is still standalone and counts in full against `snapshot-max-mib`.
 That extra clean payload is the deliberate space tradeoff for eliminating per-pack certificates and owned bitmap caches.
 
 ```yaml
