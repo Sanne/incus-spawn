@@ -98,6 +98,10 @@ public class DoctorCommand extends BaseCommand {
             description = "Collect findings and logs into a redacted support archive (tar.gz); implies --deep")
     boolean bundle;
 
+    @Option(name = "explain", hasValue = false,
+            description = "Send the findings and the redacted support material to the AI Help account for a first-pass diagnosis (uses AI tokens); implies --deep")
+    boolean explain;
+
     @Option(name = "deep", hasValue = false,
             description = "Run per-instance checks (DNS, TLS, resolv.conf)")
     boolean deep;
@@ -136,6 +140,7 @@ public class DoctorCommand extends BaseCommand {
         var outputFormat = OutputFormat.parse(format);
         if (outputFormat != OutputFormat.TABLE) {
             if (bundle) throw new IllegalArgumentException("--bundle writes an archive; it cannot be combined with --format");
+            if (explain) throw new IllegalArgumentException("--explain prints a diagnosis for people; it cannot be combined with --format");
             // Only the findings: no remediation is offered or applied, and the exit code is the same.
             var findings = withStdoutOnStderr(() -> Platform.isLinux() ? runLinuxChecks() : runMacChecks());
             outputFormat.print(BuildOutput.results(), findingRecords(findings));
@@ -149,8 +154,8 @@ public class DoctorCommand extends BaseCommand {
         BuildOutput.results().println();
         BuildOutput.results().print(formatFindings(findings).indent(BuildOutput.STEP_INDENT.length()));
 
-        if (bundle) {
-            return generateBundle(findings) ? exitFor(findings) : CommandResult.valueOf(1);
+        if (bundle || explain) {
+            return reportBundle(findings) ? exitFor(findings) : CommandResult.valueOf(1);
         }
 
         var actionable = findings.stream()
@@ -181,10 +186,11 @@ public class DoctorCommand extends BaseCommand {
     /**
      * A bundle is the artifact we ask a user to attach to an issue, and the in-container DNS
      * and TLS probes are its most conclusive evidence — a bundle without them is one we would
-     * have to ask them to generate again. So {@code --bundle} runs them too.
+     * have to ask them to generate again. So {@code --bundle} runs them too, and so does
+     * {@code --explain}, which sends the same material to the model.
      */
     boolean deepChecks() {
-        return deep || bundle;
+        return deep || bundle || explain;
     }
 
     /** The Incus every check reads; a test answers it from a {@code FakeIncusDaemon}. */
@@ -2350,11 +2356,30 @@ public class DoctorCommand extends BaseCommand {
 
     // ---- Bundle generation ----
 
+    /**
+     * Collects the support material once, then writes it as an archive ({@code --bundle}) and
+     * sends it for a diagnosis ({@code --explain}), as asked; false once a failure is reported.
+     */
+    private boolean reportBundle(List<Finding> findings) throws Exception {
+        SpawnConfig config;
+        SupportBundle material;
+        try {
+            config = SpawnConfig.load();
+            material = SupportBundle.collect(config, formatFindings(findings), findingsToJson(findings));
+        } catch (Exception e) {
+            BuildOutput.error("could not collect the support material: " + failure(e));
+            return false;
+        }
+        boolean ok = !bundle || generateBundle(material);
+        if (explain) ok &= DoctorExplain.run(material, config, Prompts::terminal);
+        return ok;
+    }
+
     /** Writes the support archive and says what to do with it; false once its failure is reported. */
-    private boolean generateBundle(List<Finding> findings) {
+    private boolean generateBundle(SupportBundle material) {
         SupportBundle.Result result;
         try {
-            result = SupportBundle.generate(formatFindings(findings), findingsToJson(findings));
+            result = material.writeArchive();
         } catch (Exception e) {
             BuildOutput.error("could not generate the support archive: " + failure(e));
             return false;

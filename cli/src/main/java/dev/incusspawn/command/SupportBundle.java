@@ -20,6 +20,7 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,9 +28,10 @@ import java.util.Map;
 /**
  * Assembles the {@code isx doctor --bundle} support archive.
  *
- * <p>Every file goes in through {@link #add}, which redacts before writing and tallies what
+ * <p>Every file goes in through {@link #add}, which redacts before keeping it and tallies what
  * it removed. That single funnel is the design: a collector added later cannot leak a
- * credential by forgetting to scrub, because there is no other way into the archive.
+ * credential by forgetting to scrub, because there is no other way into the archive, nor into
+ * what {@code isx doctor --explain} sends to the AI Help account.
  *
  * <p>The config is redacted structurally by {@link SecretRedactor#redactConfig} -- the
  * secret locations come from the tool declarations, so a new credential-bearing tool is
@@ -45,69 +47,85 @@ final class SupportBundle {
 
     record Result(Path archive, List<String> redactedPaths, int scrubCount, int fileCount) {}
 
-    private final Path dir;
     private final Map<String, String> secretValues;
     private final Map<String, Integer> scrubHits = new LinkedHashMap<>();
-    private int fileCount;
+    private final Map<String, String> files = new LinkedHashMap<>();
+    private List<String> redactedPaths = List.of();
 
-    SupportBundle(Path dir, Map<String, String> secretValues) {
-        this.dir = dir;
+    SupportBundle(Map<String, String> secretValues) {
         this.secretValues = secretValues;
     }
 
     /**
-     * Collect diagnostics into a tar.gz and return what was written and what was withheld.
+     * Collect diagnostics, every file scrubbed by {@link #add}, and hold them in memory: the
+     * archive and {@code isx doctor --explain} both read {@link #files}, so the model is sent
+     * exactly what an issue attachment would carry.
      *
+     * @param config the loaded config, redacted structurally into the bundle
      * @param findingsText the rendered doctor findings
      * @param findingsJson the same findings, machine-readable
      */
-    static Result generate(String findingsText, String findingsJson) throws Exception {
+    static SupportBundle collect(SpawnConfig config, String findingsText, String findingsJson) {
+        // The CLI already holds a loaded tool set; going through it avoids a second
+        // scan of every tool directory just to learn where secrets live.
+        var redaction = SecretRedactor.redactConfig(config,
+                SecretRegistry.locations(RuntimeServices.toolDefLoader().allToolSetups()));
+        var bundle = new SupportBundle(redaction.secretValues());
+        bundle.redactedPaths = redaction.redactedPaths();
+
+        bundle.add("findings.txt", findingsText);
+        bundle.add("findings.json", findingsJson);
+        bundle.add("versions.txt", collectVersions());
+        bundle.add("proxy.log", logTail(Environment.proxyLogFile()));
+        bundle.add("client.log", logTail(Environment.clientLogFile()));
+        if (Platform.isMacOS()) {
+            bundle.add("vm.log", logTail(Environment.vmLogFile()));
+            bundle.add("vfkit.log", logTail(Environment.vfkitLogFile()));
+            bundle.add("proxy-service.log", logTail(Environment.proxyServiceLogFile()));
+        }
+        bundle.add("proxy-status.txt", collectProxyStatus());
+        bundle.add("instances.json", collectInstances());
+        bundle.add("service-status.txt", collectServiceStatus());
+        // The config is already redacted structurally; it still goes through the funnel
+        // so its own markers are counted consistently with everything else.
+        bundle.add("config-sanitized.yaml", redaction.yaml());
+        bundle.add("mcp.yaml", collectMcpPolicy());
+
+        bundle.add("REDACTIONS.txt", bundle.redactionManifest(redaction.redactedPaths()));
+        bundle.add(README, readme());
+        return bundle;
+    }
+
+    /** The name of the archive's guide for a person, which {@code --explain} leaves out. */
+    static final String README = "README.txt";
+
+    /** Write the files into a tar.gz and return what was written and what was withheld. */
+    Result writeArchive() throws Exception {
         var timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
         var dir = Files.createTempDirectory("isx-doctor-");
         try {
-            // The CLI already holds a loaded tool set; going through it avoids a second
-            // scan of every tool directory just to learn where secrets live.
-            var redaction = SecretRedactor.redactConfig(SpawnConfig.load(),
-                    SecretRegistry.locations(RuntimeServices.toolDefLoader().allToolSetups()));
-            var bundle = new SupportBundle(dir, redaction.secretValues());
-
-            bundle.add("findings.txt", findingsText);
-            bundle.add("findings.json", findingsJson);
-            bundle.add("versions.txt", collectVersions());
-            bundle.add("proxy.log", logTail(Environment.proxyLogFile()));
-            bundle.add("client.log", logTail(Environment.clientLogFile()));
-            if (Platform.isMacOS()) {
-                bundle.add("vm.log", logTail(Environment.vmLogFile()));
-                bundle.add("vfkit.log", logTail(Environment.vfkitLogFile()));
-                bundle.add("proxy-service.log", logTail(Environment.proxyServiceLogFile()));
+            for (var file : files.entrySet()) {
+                Files.writeString(dir.resolve(file.getKey()), file.getValue());
             }
-            bundle.add("proxy-status.txt", collectProxyStatus());
-            bundle.add("instances.json", collectInstances());
-            bundle.add("service-status.txt", collectServiceStatus());
-            // The config is already redacted structurally; it still goes through the funnel
-            // so its own markers are counted consistently with everything else.
-            bundle.add("config-sanitized.yaml", redaction.yaml());
-            bundle.add("mcp.yaml", collectMcpPolicy());
-
-            bundle.add("REDACTIONS.txt", bundle.redactionManifest(redaction.redactedPaths()));
-            bundle.add("README.txt", readme());
-
             var archive = Environment.vmStateDir().resolve("isx-doctor-" + timestamp + ".tar.gz");
             Files.createDirectories(archive.getParent());
             archiveDirectory(dir, archive);
-            return new Result(archive, redaction.redactedPaths(),
-                    bundle.scrubCount(), bundle.fileCount);
+            return new Result(archive, redactedPaths, scrubCount(), files.size());
         } finally {
             FileTrees.deleteQuietly(dir);
         }
     }
 
-    /** The only way into the archive: scrub, tally, write. */
-    void add(String name, String content) throws IOException {
+    /** The only way into the bundle: scrub, tally, keep. */
+    void add(String name, String content) {
         var scrubbed = SecretRedactor.scrubText(content, secretValues);
         scrubbed.hits().forEach((label, count) -> scrubHits.merge(label, count, Integer::sum));
-        Files.writeString(dir.resolve(name), scrubbed.text());
-        fileCount++;
+        files.put(name, scrubbed.text());
+    }
+
+    /** Every file as {@link #add} scrubbed it, by name, in the order they were added. */
+    Map<String, String> files() {
+        return Collections.unmodifiableMap(files);
     }
 
     Map<String, Integer> scrubHits() {

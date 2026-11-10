@@ -69,6 +69,7 @@ class ExitCodeTest {
                 // Not the server reading stdin: the approvals step, refused without a terminal (#2077).
                 {"a person must run it at a terminal", "mcp", "setup"},
                 {"--bundle writes an archive", "doctor", "--bundle", "--format=json"},
+                {"--explain prints a diagnosis for people", "doctor", "--explain", "--format=json"},
                 {"--format applies to --list only", "update-base", "--format=json"},
                 {"unknown format 'yaml'", "init", "--plan", "--format=yaml"},
                 {"--format goes with --plan", "init", "--format=json"},

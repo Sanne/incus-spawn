@@ -557,7 +557,8 @@ isx doctor [options]
 |--------|--------------|
 | `--deep` | Run per-instance checks (DNS, TLS, resolv.conf) |
 | `--bundle` | Collect findings and logs into a support archive (.tar.gz); implies `--deep` |
-| `--format=<format>` | `table` (the default), `plain` or `json`; not with `--bundle` |
+| `--explain` | Ask your AI Help account for a first diagnosis of the same material (uses AI tokens); implies `--deep` |
+| `--format=<format>` | `table` (the default), `plain` or `json`; not with `--bundle` or `--explain` |
 
 Each finding carries a mark:
 
@@ -574,6 +575,12 @@ That is a note, not an issue to address, unless the older release lacks a known 
 
 `--bundle` creates an archive to attach to a GitHub issue.
 isx redacts credentials before it writes anything, and `REDACTIONS.txt` in the archive lists what it removed.
+
+`--explain` sends the findings and the archive's redacted files to the account `isx ask` uses, which is billed for it.
+The answer lists the likely causes, the command to run next and the repository a fix belongs in.
+isx prints the size before sending, and asks first when it is over 100 KB.
+
+The answer is a suggestion, so check it before acting on it.
 
 ## `isx clean`
 

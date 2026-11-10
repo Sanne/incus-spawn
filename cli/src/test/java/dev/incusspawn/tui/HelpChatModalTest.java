@@ -483,12 +483,12 @@ class HelpChatModalTest {
     @Test
     void usageNoteSaysWhetherTheCacheWasUsed() {
         assertEquals("51.2k tokens in (51.2k from cache) · 312 out",
-                HelpChatModal.usageNote(new Usage(15, 51_200, 0, 312)));
+                new Usage(15, 51_200, 0, 312).summary());
         assertEquals("51.2k tokens in (51.2k cached for follow-ups within 5 min) · 312 out",
-                HelpChatModal.usageNote(new Usage(15, 0, 51_200, 312)));
+                new Usage(15, 0, 51_200, 312).summary());
         assertEquals("54.3k tokens in (51.2k from cache, 3.1k cached for follow-ups within 5 min) · 312 out",
-                HelpChatModal.usageNote(new Usage(15, 51_200, 3_100, 312)));
-        assertEquals("900 tokens in · 40 out", HelpChatModal.usageNote(new Usage(900, 0, 0, 40)));
-        assertEquals(null, HelpChatModal.usageNote(Usage.NONE));
+                new Usage(15, 51_200, 3_100, 312).summary());
+        assertEquals("900 tokens in · 40 out", new Usage(900, 0, 0, 40).summary());
+        assertEquals(null, Usage.NONE.summary());
     }
 }
