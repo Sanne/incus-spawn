@@ -33,6 +33,7 @@ import dev.incusspawn.Platform;
 import dev.incusspawn.util.HostPath;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
+import org.aesh.command.option.Option;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -60,6 +61,15 @@ import static dev.incusspawn.command.CredentialSetup.readInput;
 )
 public class InitCommand extends BaseCommand {
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+
+    @Option(name = "plan", hasValue = false,
+            description = "Say what init would change on this host and who must do each step, changing nothing")
+    boolean plan;
+
+    // Output for scripts (#1036): see OutputFormat for what plain and json promise.
+    @Option(name = "format", completer = Completers.Format.class,
+            description = "With --plan, the output format: table (default), plain or json")
+    String format;
 
     IncusClient incus;
 
@@ -156,6 +166,12 @@ public class InitCommand extends BaseCommand {
         }
         // A frame of init's own: laid out here, drawn as given
         BuildOutput.frame(out.toArray(String[]::new));
+    }
+
+    /** Shows {@code step}'s header, then runs it. */
+    void begin(InitStep step) throws Exception {
+        startStep(step.title(), step.hint());
+        step.run().run();
     }
 
     private static void printCompletionBox(String... lines) {
@@ -297,6 +313,8 @@ public class InitCommand extends BaseCommand {
 
     @Override
     protected CommandResult doExecute() throws Exception {
+        if (plan) return printPlan(OutputFormat.parse(format));
+        if (format != null) throw new IllegalArgumentException("--format goes with --plan");
         if (!requireIncusHost()) return CommandResult.valueOf(1);
         this.incus = RuntimeServices.incus();
         if (Platform.isMacOS()) {
@@ -316,19 +334,10 @@ public class InitCommand extends BaseCommand {
                 return CommandResult.valueOf(1);
             }
 
-            host().installDependencies();
+            dependencies().run().run();
         }
         var proxyServiceInstalled = new AtomicBoolean();
-        runLinuxSteps(finalSteps(() -> {
-                    startStep("Proxy Service",
-                            "The MITM proxy intercepts HTTPS traffic from containers",
-                            "and injects real credentials (API keys, tokens) so that",
-                            "containers only ever hold placeholder values. Installing",
-                            "it as a systemd service means it starts automatically on",
-                            "boot — otherwise you'll need to run 'isx proxy start'",
-                            "before launching containers.");
-                    proxyServiceInstalled.set(completeWithProxyService(Prompts.console()));
-                }));
+        runLinuxSteps(finalSteps(proxyServiceStep(proxyServiceInstalled)));
 
         var next = new ArrayList<>(List.of(nextSteps(proxyServiceInstalled.get() ? Services.INSTALLED : Services.START_PROXY)));
         if (continued) next.addAll(GROUP_PENDING);
@@ -340,15 +349,29 @@ public class InitCommand extends BaseCommand {
      * The Linux steps, then {@code finish}. A continuation under {@code sg} starts after Incus
      * Installation, which the process that started it ran.
      */
-    void runLinuxSteps(List<Step> finish) throws Exception {
-        runSteps(List.of(
-                        this::installIncus,
-                        host()::configureSubuidSubgid,
-                        host()::initializeIncus,
-                        host()::configureFirewall,
-                        host()::configureMitmProxy,
-                        this::setupSshKeyPair),
-                finish, continuedInGroup() ? 1 : 0);
+    void runLinuxSteps(List<InitStep> finish) throws Exception {
+        runSteps(linuxSetup(), finish, continuedInGroup() ? 1 : 0);
+    }
+
+    /** The Linux steps before Credential Setup, in order. */
+    List<InitStep> linuxSetup() {
+        var host = host();
+        return List.of(
+                new InitStep("incus", "Incus Installation", HostSetup.INCUS_HINT, this::installIncus, host::planIncusInstallation),
+                new InitStep("subids", "User Namespace Mappings", HostSetup.SUBID_HINT, host::configureSubuidSubgid, host::planSubids),
+                new InitStep("storage-network", "Storage & Network", HostSetup.STORAGE_HINT, host::initializeIncus, host::planStorageAndNetwork),
+                new InitStep("firewall", "Firewall Configuration", HostSetup.FIREWALL_HINT, host::configureFirewall, host::planFirewall),
+                new InitStep("mitm-proxy", "MITM Authentication Proxy", HostSetup.MITM_HINT, host::configureMitmProxy, host::planMitmProxy),
+                sshKeyPair());
+    }
+
+    /** What Linux init installs before its numbered steps, with no header of its own. */
+    InitStep dependencies() {
+        var host = host();
+        return new InitStep("dependencies", "Dependencies", new String[]{
+                "The commands init and isx need on the host: openssl,",
+                "ssh-keygen and btrfs, installed with the package manager."},
+                host::installDependencies, host::planDependencies);
     }
 
     /**
@@ -466,16 +489,7 @@ public class InitCommand extends BaseCommand {
         printSetupBanner(" (macOS)", "~2 minutes");
         var servicesInstalled = new AtomicBoolean();
 
-        runSteps(List.of(this::setupMacOsCa, this::setupSshKeyPair),
-                finalSteps(() -> {
-                    startStep("macOS Services",
-                            "Installs the Incus VM and MITM proxy as macOS launch",
-                            "agents so they start automatically on login and survive",
-                            "reboots. Without this you'll need to manually run",
-                            "'isx vm start' and 'isx proxy start' before launching",
-                            "containers.");
-                    servicesInstalled.set(completeWithMacOsServices(Prompts.console()));
-                }));
+        runSteps(macOsSetup(), finalSteps(macOsServicesStep(servicesInstalled)));
 
         printCompletionBox(nextSteps(servicesInstalled.get() ? Services.INSTALLED : Services.START_VM_AND_PROXY));
         return CommandResult.SUCCESS;
@@ -516,11 +530,27 @@ public class InitCommand extends BaseCommand {
         return lines.toArray(String[]::new);
     }
 
-    /** One numbered step of init: it shows exactly one header, through {@link #startStep}. */
+    /** The work of one step of init. */
     @FunctionalInterface
     interface Step {
         void run() throws Exception;
     }
+
+    /** How a step of init reads, without changing anything, what it would change on this host (#2073). */
+    @FunctionalInterface
+    interface Planner {
+        InitPlan.Assessment assess() throws Exception;
+    }
+
+    /**
+     * One step of init, described once: its header, its work, and what {@code isx init --plan}
+     * says it would change. The run shows the header itself ({@link #begin}), so a step shows
+     * exactly one, and the plan lists the same steps from the same lists, so the two cannot drift.
+     * A credential's own step has no planner: Credential Setup plans the credentials together.
+     *
+     * @param id    the step's name in {@code --plan}'s formats, a contract
+     */
+    record InitStep(String id, String title, String[] hint, Step run, Planner plan) {}
 
     /**
      * Runs init's numbered steps: {@code setup}, Credential Setup, a step for each credential
@@ -529,38 +559,88 @@ public class InitCommand extends BaseCommand {
      * Until the choice is made it counts no credentials, which is what Enter picks, and reads
      * {@code [n/N+]}, so a total that grows at the choice was never shown as final (#1441).
      */
-    void runSteps(List<Step> setup, List<Step> finish) throws Exception {
+    void runSteps(List<InitStep> setup, List<InitStep> finish) throws Exception {
         runSteps(setup, finish, 0);
     }
 
     /** As {@link #runSteps(List, List)}, with the first {@code done} steps of {@code setup} run by the process that started this one. */
-    void runSteps(List<Step> setup, List<Step> finish, int done) throws Exception {
+    void runSteps(List<InitStep> setup, List<InitStep> finish, int done) throws Exception {
         currentStep = done;
         totalSteps = setup.size() + 1 + finish.size();
         totalKnown = false;
-        for (var step : setup.subList(done, setup.size())) step.run();
+        for (var step : setup.subList(done, setup.size())) begin(step);
         var credentialSteps = credentialSteps();
         totalSteps += credentialSteps.size();
         totalKnown = true;
-        for (var step : credentialSteps) step.run();
+        for (var step : credentialSteps) begin(step);
         credentials.closeHttpClient();
-        installGitRemoteShim();
-        for (var step : finish) step.run();
+        gitRemoteHelper().run().run();
+        for (var step : finish) begin(step);
     }
 
+    /** The steps chosen at Credential Setup, which {@link #credentialSteps} runs. */
+    private List<InitStep> chosenCredentials = List.of();
+
     /** Credential Setup, which returns a step for each credential chosen. */
-    List<Step> credentialSteps() {
-        var tools = new ToolDefLoader().allToolSetups();
-        return selectCredentials(tools).stream().map(name -> credentialStep(name, tools.get(name))).toList();
+    List<InitStep> credentialSteps() throws Exception {
+        begin(credentialSetup());
+        return chosenCredentials;
+    }
+
+    /** Credential Setup itself: the choice of credentials, whose steps follow it. */
+    InitStep credentialSetup() {
+        return new InitStep("credentials", "Credential Setup", new String[]{
+                "Choose which API credentials to configure. Each credential",
+                "stays on your host — containers only hold placeholders, and",
+                "the MITM proxy injects real values transparently."},
+                () -> {
+                    var tools = new ToolDefLoader().allToolSetups();
+                    chosenCredentials = selectCredentials(tools).stream().map(name -> credentialStep(name, tools.get(name))).toList();
+                },
+                this::planCredentials);
     }
 
     /** The step that configures {@code toolName}'s credential. */
-    private Step credentialStep(String toolName, ToolSetup tool) {
+    private InitStep credentialStep(String toolName, ToolSetup tool) {
         return switch (toolName) {
-            case "claude" -> this::setupClaudeAuth;
-            case "gh" -> this::setupGitHubAuth;
-            default -> () -> setupGenericToolCredentials(toolName, tool);
+            case "claude" -> new InitStep(toolName, "Claude Code Authentication", new String[]{
+                    "Configures how containers authenticate with the Claude API.",
+                    "You can use an Anthropic API key, a Claude Pro/Max OAuth",
+                    "token, or Google Cloud Vertex AI. The credential stays on",
+                    "your host and is injected at runtime via the MITM proxy —",
+                    "containers never see the real key."}, this::setupClaudeAuth, null);
+            case "gh" -> new InitStep(toolName, "GitHub Authentication", new String[]{
+                    "Sets up a GitHub PAT so containers can open PRs, push",
+                    "code, and manage issues. These containers run autonomous",
+                    "agents, so give them their own identity rather than",
+                    "your personal one — create a dedicated agent account (e.g.",
+                    "yourname-ai-bot) and mint a fine-grained PAT for it, scoped to",
+                    "just the repos and permissions the agent needs. That keeps the",
+                    "agent's actions attributable to it and its blast radius small."}, this::setupGitHubAuth, null);
+            default -> {
+                var desc = CredentialSetup.describeTool(toolName, tool);
+                yield new InitStep(toolName, desc, new String[]{
+                        "Configures credentials for " + desc + ".",
+                        "Real credentials stay on your host — containers only hold",
+                        "placeholders, and the MITM proxy injects real values."},
+                        () -> setupGenericToolCredentials(toolName, tool), null);
+            }
         };
+    }
+
+    /**
+     * What Credential Setup leaves for a person: each credential a known template needs that is
+     * not configured, as the closing box names them. Only a person types one, at a terminal.
+     */
+    InitPlan.Assessment planCredentials() {
+        var config = SpawnConfig.load();
+        var defs = ImageDef.loadAll(warning -> {});
+        var current = defs.values().stream().filter(d -> !d.isDeprecated()).map(ImageDef::getName).toList();
+        var missing = CredentialCheck.missingByCredential(config, current, defs, new ToolDefLoader(config.getSearchPaths()));
+        var changes = missing.entrySet().stream().map(e -> InitPlan.Change.run(
+                e.getKey().credential() + ", which " + OutputFormat.andList(e.getValue()) + " need",
+                InitPlan.Who.SECRET, e.getKey().command())).toList();
+        return InitPlan.Assessment.of(changes).asking();
     }
 
     /**
@@ -577,7 +657,7 @@ public class InitCommand extends BaseCommand {
             return 1;
         }
         currentStep = 0;
-        List<Step> steps;
+        List<InitStep> steps;
         if (name == null) {
             totalSteps = 1;
             totalKnown = false;
@@ -595,7 +675,7 @@ public class InitCommand extends BaseCommand {
         }
         totalSteps = currentStep + steps.size();
         try {
-            for (var step : steps) step.run();
+            for (var step : steps) begin(step);
         } finally {
             credentials.closeHttpClient();
         }
@@ -621,13 +701,92 @@ public class InitCommand extends BaseCommand {
     }
 
     /** The steps both platforms end with, the last being {@code service}. */
-    private List<Step> finalSteps(Step service) {
+    List<InitStep> finalSteps(InitStep service) {
         return List.of(
-                this::setupSearchPaths,
-                this::setupHostPaths,
-                this::setupMcp,
-                this::setupBridgeDns,
+                new InitStep("search-paths", "Template Search Paths", new String[]{
+                        "Local directories where isx looks for custom image and",
+                        "tool definitions. Definitions found here can extend or",
+                        "override the built-in templates. Each directory should",
+                        "contain images/ and/or tools/ subdirectories with YAML",
+                        "files."}, this::setupSearchPaths, this::planSearchPaths),
+                new InitStep("code-directories", "Code Directories", new String[]{
+                        "Directories on your host containing git repositories (e.g.",
+                        "~/code). Enables fast reference clones inside containers",
+                        "and automatic git remote management — repos cloned from",
+                        "these paths get a remote named after the instance, to push",
+                        "and pull directly between container and host without",
+                        "round-tripping through GitHub. Your host files are never",
+                        "directly exposed to containers."}, this::setupHostPaths, this::planHostPaths),
+                mcpStep(),
+                new InitStep("dns", "DNS Configuration", DNS_HINT, this::setupBridgeDns, this::planBridgeDns),
                 service);
+    }
+
+    /** Agent Access over MCP, which {@code isx mcp setup} also runs alone (#2077). */
+    InitStep mcpStep() {
+        return new InitStep("mcp", "Agent Access over MCP", new String[]{
+                "Lets an agent on this machine (Claude Code or another MCP",
+                "client) use isx itself: create instances from templates",
+                "you approve here, run commands in them, and hand tasks",
+                "to the Claude Code, Codex or Pi inside them.",
+                "Agents can never approve templates themselves."}, this::setupMcp, this::planMcp);
+    }
+
+    /** Linux's last step, which records in {@code installed} whether the service is installed once it ends. */
+    InitStep proxyServiceStep(AtomicBoolean installed) {
+        return new InitStep("proxy-service", "Proxy Service", new String[]{
+                "The MITM proxy intercepts HTTPS traffic from containers",
+                "and injects real credentials (API keys, tokens) so that",
+                "containers only ever hold placeholder values. Installing",
+                "it as a systemd service means it starts automatically on",
+                "boot — otherwise you'll need to run 'isx proxy start'",
+                "before launching containers."},
+                () -> installed.set(completeWithProxyService(Prompts.console())), this::planProxyService);
+    }
+
+    /** macOS's last step, as {@link #proxyServiceStep} is Linux's. */
+    InitStep macOsServicesStep(AtomicBoolean installed) {
+        return new InitStep("macos-services", "macOS Services", new String[]{
+                "Installs the Incus VM and MITM proxy as macOS launch",
+                "agents so they start automatically on login and survive",
+                "reboots. Without this you'll need to manually run",
+                "'isx vm start' and 'isx proxy start' before launching",
+                "containers."},
+                () -> installed.set(completeWithMacOsServices(Prompts.console())), this::planMacOsServices);
+    }
+
+    /** The macOS steps before Credential Setup, in order. */
+    List<InitStep> macOsSetup() {
+        return List.of(
+                new InitStep("ca", "MITM CA Certificate", new String[]{
+                        "Generates a custom Certificate Authority for the MITM",
+                        "proxy. Containers trust this CA so the proxy can intercept",
+                        "HTTPS and inject credentials transparently."}, this::setupMacOsCa, this::planMacOsCa),
+                sshKeyPair());
+    }
+
+    InitStep sshKeyPair() {
+        return new InitStep("ssh-key", "SSH Key Pair", new String[]{
+                "Generates a dedicated SSH key pair used only by isx",
+                "to connect to containers. This is separate from your personal",
+                "SSH keys and won't interfere with them. Your ~/.ssh/config is",
+                "updated automatically."}, this::setupSshKeyPair, this::planSshKeyPair);
+    }
+
+    /** Writes the git remote helper beside a JVM isx, between the credentials and the last steps; no header. */
+    InitStep gitRemoteHelper() {
+        return new InitStep("git-remote-helper", "Git Remote Helper", new String[]{
+                "Puts the git-remote-isx helper beside a JVM install of isx,",
+                "so git can reach instances as remotes."},
+                this::installGitRemoteShim, this::planGitRemoteShim);
+    }
+
+    /** On macOS, the VM init needs before anything else, which {@link #requireIncusHost} starts; no header. */
+    InitStep incusVm() {
+        return new InitStep("vm", "Incus VM", new String[]{
+                "Incus runs in a small Linux VM on macOS: init downloads its",
+                "appliance when it is missing and starts it."},
+                () -> {}, this::planIncusVm);
     }
 
     /**
@@ -636,7 +795,6 @@ public class InitCommand extends BaseCommand {
      * domains too, and nothing would write them back until it restarts (#1354).
      */
     void setupBridgeDns() {
-        startStep("DNS Configuration", DNS_HINT);
         var domains = ProxyConfig.bridgeDnsDomains(SpawnConfig.load());
         var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         for (int attempt = 1; ; attempt++) {
@@ -663,10 +821,6 @@ public class InitCommand extends BaseCommand {
     }
 
     private void setupMacOsCa() {
-        startStep("MITM CA Certificate",
-                "Generates a custom Certificate Authority for the MITM",
-                "proxy. Containers trust this CA so the proxy can intercept",
-                "HTTPS and inject credentials transparently.");
         incus.createBridgeIfMissing("incusbr0", VmManager.gatewayIp());
         var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         var config = SpawnConfig.load();
@@ -809,11 +963,6 @@ public class InitCommand extends BaseCommand {
     }
 
     void setupSshKeyPair() {
-        startStep("SSH Key Pair",
-                "Generates a dedicated SSH key pair used only by isx",
-                "to connect to containers. This is separate from your personal",
-                "SSH keys and won't interfere with them. Your ~/.ssh/config is",
-                "updated automatically.");
         try {
             if (SshKeyManager.exists()) {
                 BuildOutput.step("SSH key pair already exists.");
@@ -834,10 +983,6 @@ public class InitCommand extends BaseCommand {
     }
 
     private List<String> selectCredentials(Map<String, ToolSetup> allTools) {
-        startStep("Credential Setup",
-                "Choose which API credentials to configure. Each credential",
-                "stays on your host — containers only hold placeholders, and",
-                "the MITM proxy injects real values transparently.");
         var prompts = prompts();
         if (prompts == null) {
             return List.of();
@@ -846,35 +991,16 @@ public class InitCommand extends BaseCommand {
     }
 
     private void setupClaudeAuth() {
-        startStep("Claude Code Authentication",
-                "Configures how containers authenticate with the Claude API.",
-                "You can use an Anthropic API key, a Claude Pro/Max OAuth",
-                "token, or Google Cloud Vertex AI. The credential stays on",
-                "your host and is injected at runtime via the MITM proxy —",
-                "containers never see the real key.");
         var prompts = consoleOrExplain();
         if (prompts != null) credentials.setupClaudeAuth(SpawnConfig.load(), prompts);
     }
 
     private void setupGitHubAuth() {
-        startStep("GitHub Authentication",
-                "Sets up a GitHub PAT so containers can open PRs, push",
-                "code, and manage issues. These containers run autonomous",
-                "agents, so give them their own identity rather than",
-                "your personal one — create a dedicated agent account (e.g.",
-                "yourname-ai-bot) and mint a fine-grained PAT for it, scoped to",
-                "just the repos and permissions the agent needs. That keeps the",
-                "agent's actions attributable to it and its blast radius small.");
         var prompts = consoleOrExplain();
         if (prompts != null) credentials.setupGitHubAuth(SpawnConfig.load(), prompts);
     }
 
     private void setupGenericToolCredentials(String toolName, ToolSetup tool) {
-        var desc = CredentialSetup.describeTool(toolName, tool);
-        startStep(desc,
-                "Configures credentials for " + desc + ".",
-                "Real credentials stay on your host — containers only hold",
-                "placeholders, and the MITM proxy injects real values.");
         var prompts = consoleOrExplain();
         if (prompts != null) credentials.setupGenericToolCredentials(toolName, tool, SpawnConfig.load(), prompts);
     }
@@ -893,22 +1019,18 @@ public class InitCommand extends BaseCommand {
     }
 
     private void setupMcp() {
-        startMcpStep();
         var prompts = Prompts.console();
         if (prompts == null) {
             BuildOutput.step("Skipped: no console. Run '" + MCP_SETUP_COMMAND + "' at a terminal to set this up.");
             return;
         }
-        setupMcp(prompts, ImageDef.loadTrusted());
+        setupMcp(prompts, trustedDefinitions());
     }
 
+    /** The step's header, from its {@link InitStep}: {@code isx mcp setup} shows it as init does. */
     private void startMcpStep() {
-        startStep("Agent Access over MCP",
-                "Lets an agent on this machine (Claude Code or another MCP",
-                "client) use isx itself: create instances from templates",
-                "you approve here, run commands in them, and hand tasks",
-                "to the Claude Code, Codex or Pi inside them.",
-                "Agents can never approve templates themselves.");
+        var step = mcpStep();
+        startStep(step.title(), step.hint());
     }
 
     /** The command that runs the step above alone, for a person at a terminal (#2077). */
@@ -925,7 +1047,7 @@ public class InitCommand extends BaseCommand {
     int setupMcpAlone() {
         var prompts = Prompts.terminal();
         if (prompts != null) this.incus = RuntimeServices.incus();
-        return setupMcpAlone(prompts, ImageDef::loadTrusted);
+        return setupMcpAlone(prompts, this::trustedDefinitions);
     }
 
     /** {@link #setupMcpAlone()} with its terminal given: null when there is none, which refuses. */
@@ -967,12 +1089,7 @@ public class InitCommand extends BaseCommand {
         if (retired != null) BuildOutput.warn(retired + ".", "Saving the approvals here removes them too.");
         var registered = claude && claudeMcpRegistered();
         var approved = mcp.templates();
-        var candidates = defs.values().stream()
-                .filter(def -> ImageDef.chain(def, defs).stream()
-                        .anyMatch(d -> d.getTools().stream().anyMatch(t -> List.of("claude", "codex", "pi").contains(t.getName()))))
-                .map(ImageDef::getName)
-                .sorted()
-                .toList();
+        var candidates = mcpCandidates(defs);
         var enabled = registered || !approved.isEmpty();
         if (enabled) {
             BuildOutput.step("Currently " + (!claude ? "" : registered ? "registered with Claude Code; " : "not registered; ")
@@ -1011,12 +1128,12 @@ public class InitCommand extends BaseCommand {
             var isx = isxPath();
             if (isx == null) {
                 BuildOutput.step("Could not find the installed isx binary; register it yourself:");
-                BuildOutput.stepNote("claude mcp add --scope user " + McpClientRegistration.SERVER_NAME + " -- <path to isx> mcp");
+                BuildOutput.stepNote(String.join(" ", claudeMcpAddCommand("<path to isx>")));
             } else if (registerClaudeMcp(isx)) {
                 BuildOutput.ok("Registered with Claude Code as '" + McpClientRegistration.SERVER_NAME + "' (all projects)");
             } else {
                 BuildOutput.step("Registering failed; register it yourself:");
-                BuildOutput.stepNote("claude mcp add --scope user " + McpClientRegistration.SERVER_NAME + " -- " + isx + " mcp");
+                BuildOutput.stepNote(String.join(" ", claudeMcpAddCommand(isx)));
             }
         }
         BuildOutput.stepNote("For another MCP client, add the entry '" + MCP_CONFIG_COMMAND + "' prints to its settings.");
@@ -1064,14 +1181,51 @@ public class InitCommand extends BaseCommand {
         return ProxyService.resolveIsxPath();
     }
 
-    /** Whether Claude Code already knows an MCP server by this name. */
+    /**
+     * Whether Claude Code's user configuration registers isx's MCP server, read from its file:
+     * {@code ~/.claude.json}, or {@code .claude.json} in {@code CLAUDE_CONFIG_DIR} when that is set,
+     * whose top-level {@code mcpServers} holds the servers of the user scope, and
+     * {@code projects.<directory>.mcpServers} those of the local scope. A project's {@code .mcp.json}
+     * is not read: the run's own registration is the user scope. Unlike
+     * {@link #claudeMcpRegistered}, it starts nothing. A missing file registers nothing.
+     *
+     * @throws IllegalArgumentException when the file is not JSON
+     */
+    boolean claudeMcpRegisteredInConfig() throws IOException {
+        var dir = claudeConfigDirEnv();
+        var file = (dir == null || dir.isBlank() ? Environment.home() : Path.of(dir)).resolve(".claude.json");
+        if (!Files.exists(file)) return false;
+        var config = dev.incusspawn.config.Jjq.parseForeign(Files.readAllBytes(file), file.toString());
+        if (!config.isObject()) return false;
+        // The user scope, then the local one, which Claude Code keys by the directory it runs in
+        if (namesIsx(config.path("mcpServers"))) return true;
+        var projects = config.path("projects");
+        var cwd = Path.of("").toAbsolutePath().toString();
+        return projects.isObject() && projects.asMap().containsKey(cwd) && namesIsx(projects.path(cwd).path("mcpServers"));
+    }
+
+    private static boolean namesIsx(io.hyperfoil.tools.jjq.value.JqValue servers) {
+        return servers != null && servers.isObject() && servers.asMap().containsKey(McpClientRegistration.SERVER_NAME);
+    }
+
+    /** {@code CLAUDE_CONFIG_DIR}, where Claude Code keeps its configuration when set. */
+    String claudeConfigDirEnv() {
+        return System.getenv("CLAUDE_CONFIG_DIR");
+    }
+
+    /** Whether Claude Code already knows an MCP server by this name; runs {@code claude mcp get}, which starts it. */
     boolean claudeMcpRegistered() {
         return runSilently("claude", "mcp", "get", McpClientRegistration.SERVER_NAME) == 0;
     }
 
     /** Register {@code isx mcp} with Claude Code for every project; true on success. */
     boolean registerClaudeMcp(String isxPath) {
-        return runSilently("claude", "mcp", "add", "--scope", "user", McpClientRegistration.SERVER_NAME, "--", isxPath, "mcp") == 0;
+        return runSilently(claudeMcpAddCommand(isxPath).toArray(String[]::new)) == 0;
+    }
+
+    /** The command that registers {@code isx mcp} with Claude Code for every project, which the run, its advice and the plan all name. */
+    static List<String> claudeMcpAddCommand(String isxPath) {
+        return List.of("claude", "mcp", "add", "--scope", "user", McpClientRegistration.SERVER_NAME, "--", isxPath, "mcp");
     }
 
     /** Run a host command for its exit code alone, showing nothing and reading no input. */
@@ -1104,12 +1258,6 @@ public class InitCommand extends BaseCommand {
     private static final String TEMPLATES_URL = "https://github.com/" + TEMPLATES_UPSTREAM;
 
     private void setupSearchPaths() {
-        startStep("Template Search Paths",
-                "Local directories where isx looks for custom image and",
-                "tool definitions. Definitions found here can extend or",
-                "override the built-in templates. Each directory should",
-                "contain images/ and/or tools/ subdirectories with YAML",
-                "files.");
 
         if (!hasExistingTemplatesSearchPath(SpawnConfig.load().getSearchPaths())) {
             offerTemplatesRepo();
@@ -1271,14 +1419,6 @@ public class InitCommand extends BaseCommand {
     }
 
     private void setupHostPaths() {
-        startStep("Code Directories",
-                "Directories on your host containing git repositories (e.g.",
-                "~/code). Enables fast reference clones inside containers",
-                "and automatic git remote management — repos cloned from",
-                "these paths get a remote named after the instance, to push",
-                "and pull directly between container and host without",
-                "round-tripping through GitHub. Your host files are never",
-                "directly exposed to containers.");
         setupPathList(
                 SpawnConfig::getHostPaths,
                 SpawnConfig::setHostPaths,
@@ -1357,9 +1497,27 @@ public class InitCommand extends BaseCommand {
     }
 
     void installGitRemoteShim() {
-        if (System.getProperty("org.graalvm.version") != null) return;
+        var dir = gitRemoteShimDir();
+        if (dir != null) installGitRemoteShim(dir);
+    }
+
+    /** Where a JVM isx gets its git remote helper: beside the isx on the PATH; null for a native one. */
+    private static java.nio.file.Path gitRemoteShimDir() {
+        if (System.getProperty("org.graalvm.version") != null) return null;
         var isxPath = HostPath.find("isx");
-        if (isxPath != null) installGitRemoteShim(java.nio.file.Path.of(isxPath).getParent());
+        return isxPath == null ? null : java.nio.file.Path.of(isxPath).getParent();
+    }
+
+    /** What {@link #installGitRemoteShim(java.nio.file.Path)} would write. */
+    InitPlan.Assessment planGitRemoteShim() {
+        var dir = gitRemoteShimDir();
+        if (dir == null) return InitPlan.Assessment.done();
+        var shimPath = dir.resolve("git-remote-isx");
+        if (Files.exists(shimPath, java.nio.file.LinkOption.NOFOLLOW_LINKS) || !Files.isWritable(dir)) {
+            return InitPlan.Assessment.done();
+        }
+        return InitPlan.Assessment.of(List.of(InitPlan.Change.write("Install the git remote helper",
+                InitPlan.Who.NONE, shimPath.toString())));
     }
 
     /**
@@ -1381,6 +1539,323 @@ public class InitCommand extends BaseCommand {
         } catch (Exception e) {
             BuildOutput.warn("Could not install git-remote-isx shim: " + failure(e));
         }
+    }
+
+    // --- isx init --plan (#2073) ---
+
+    /**
+     * {@code isx init --plan}: every step init would take on this host, from the same step lists
+     * the run takes, each read without changing anything. No sudo, no prompt, no Incus write, and
+     * on macOS no VM start: a VM that is not running leaves what Incus holds unknown.
+     */
+    CommandResult printPlan(OutputFormat outputFormat) {
+        if (!Platform.isLinux() && !Platform.isMacOS()) {
+            BuildOutput.error("isx requires Linux or macOS.", "Detected OS: " + System.getProperty("os.name"));
+            return CommandResult.valueOf(1);
+        }
+        if (incus == null && (Platform.isLinux() || VmManager.isRunning() && IncusClient.isReachable())) {
+            incus = RuntimeServices.incus();
+        }
+        var entries = planEntries();
+        if (outputFormat == OutputFormat.TABLE) {
+            InitPlan.printTable(BuildOutput.results(), entries);
+        } else {
+            outputFormat.print(BuildOutput.results(), entries.stream().map(InitPlan::record).toList());
+        }
+        return CommandResult.SUCCESS;
+    }
+
+    /**
+     * The steps in the order the run takes them, unnumbered ones included: Linux installs its
+     * dependencies and macOS starts its VM first, and the git remote helper comes between the
+     * credentials and the last steps.
+     */
+    List<InitStep> planSteps() {
+        return planSteps(Platform.isMacOS());
+    }
+
+    List<InitStep> planSteps(boolean macOS) {
+        var steps = new ArrayList<InitStep>();
+        if (macOS) {
+            steps.add(incusVm());
+            steps.addAll(macOsSetup());
+        } else {
+            steps.add(dependencies());
+            steps.addAll(linuxSetup());
+        }
+        steps.add(credentialSetup());
+        steps.add(gitRemoteHelper());
+        steps.addAll(finalSteps(macOS ? macOsServicesStep(new AtomicBoolean())
+                : proxyServiceStep(new AtomicBoolean())));
+        return steps;
+    }
+
+    /** {@link #planSteps}, each with its standing on this host; a read that failed leaves its step unknown. */
+    List<InitPlan.Entry> planEntries() {
+        return planEntries(planSteps());
+    }
+
+    /** How the note of a step whose reading failed starts. */
+    static final String PLAN_FAILED = "Could not read this step: ";
+
+    static List<InitPlan.Entry> planEntries(List<InitStep> steps) {
+        return steps.stream().map(step -> {
+            InitPlan.Assessment assessment;
+            try {
+                assessment = step.plan().assess();
+            } catch (Exception e) {
+                assessment = InitPlan.Assessment.unknown(PLAN_FAILED + failure(e));
+            }
+            return new InitPlan.Entry(step.id(), step.title(), String.join(" ", step.hint()), assessment);
+        }).toList();
+    }
+
+    /** What a read-only host command answered: its exit code and output, stderr included. */
+    record Query(int exitCode, String output) {}
+
+    /**
+     * Runs a host command the plan reads from, with no input, so it can never ask anything. Never
+     * through sudo, but for {@code sudo -n -l}, which lists privileges and cannot ask for a password.
+     */
+    Query query(String... command) {
+        if (command[0].equals("sudo")
+                && !(command.length > 2 && command[1].equals("-n") && command[2].equals("-l"))) {
+            throw new IllegalArgumentException("the plan never runs sudo: " + String.join(" ", command));
+        }
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(true);
+            pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")));
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes()).strip();
+            return new Query(process.waitFor(), output);
+        } catch (IOException e) {
+            return new Query(-1, "");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new Query(-1, "");
+        }
+    }
+
+    /**
+     * Whether polkit grants this user {@code action} as it stands, asked without interaction so
+     * that no agent shows a password dialog; false where {@code pkcheck} is missing.
+     */
+    boolean polkitAllows(String action) {
+        if (!hostHasCommand("pkcheck")) return false;
+        return query("pkcheck", "--action-id", action, "--process", String.valueOf(ProcessHandle.current().pid()))
+                .exitCode() == 0;
+    }
+
+    /** The filesystem holding {@code path}, as {@link CowPoolBacking#filesystemOf} reads it; tests choose it. */
+    String filesystemOf(Path path) {
+        return CowPoolBacking.filesystemOf(path);
+    }
+
+    /** The host's routes, which the plan checks the bridge against as doctor does; tests give their own. */
+    List<String> hostRoutes() {
+        return BridgeSubnetCheck.getHostRoutes();
+    }
+
+    /** A file of the host's, for the plan to read; tests point it elsewhere. */
+    Path hostFile(String path) {
+        return Path.of(path);
+    }
+
+    /** Whether Incus answers: on macOS, only when the VM is up and the plan holds a client. */
+    private boolean incusReadable() {
+        return incus != null && incusReachable();
+    }
+
+    /** Whether the Incus socket accepts this process, asked afresh as {@link #incusConnectivity} is. */
+    boolean incusReachable() {
+        return IncusClient.isReachable();
+    }
+
+    InitPlan.Assessment planSshKeyPair() {
+        var changes = new ArrayList<InitPlan.Change>();
+        if (!SshKeyManager.exists()) {
+            changes.add(InitPlan.Change.write("Generate isx's own SSH key pair", InitPlan.Who.NONE,
+                    Environment.sshKeyFile().toString()));
+        }
+        if (!SshKeyManager.hasSshConfigInclude()) {
+            changes.add(InitPlan.Change.write("Include isx's SSH configuration in yours", InitPlan.Who.NONE,
+                    Environment.home().resolve(".ssh/config").toString()));
+        }
+        return InitPlan.Assessment.of(changes);
+    }
+
+    /**
+     * What a step that asks for directories would offer: adding some when there are none, and
+     * {@code offers} besides. Nothing needs it, so a step with something to offer is optional.
+     */
+    private static InitPlan.Assessment planPathList(List<String> paths, List<InitPlan.Change> offers, String what) {
+        var changes = new ArrayList<>(offers);
+        if (paths.isEmpty()) changes.add(InitPlan.Change.write("Add the " + what + " you name", InitPlan.Who.NONE, HostSetup.configFile()));
+        var state = changes.isEmpty() ? InitPlan.State.DONE : InitPlan.State.OPTIONAL;
+        return new InitPlan.Assessment(state, true, changes, null);
+    }
+
+    /** What {@link #setupSearchPaths} would offer. */
+    InitPlan.Assessment planSearchPaths() {
+        var paths = SpawnConfig.load().getSearchPaths();
+        var offers = new ArrayList<InitPlan.Change>();
+        // As offerTemplatesRepo decides, but for the gh login it asks GitHub for
+        if (!hasExistingTemplatesSearchPath(paths) && hostHasCommand("gh") && hostHasCommand("git")) {
+            offers.add(InitPlan.Change.write("Offer to fork and clone " + TEMPLATES_UPSTREAM + " with gh",
+                    InitPlan.Who.NONE, defaultClonePath()));
+        }
+        return planPathList(paths, offers, "template directories");
+    }
+
+    /** What {@link #setupHostPaths} would offer. */
+    InitPlan.Assessment planHostPaths() {
+        return planPathList(SpawnConfig.load().getHostPaths(), List.of(), "code directories");
+    }
+
+    /** The trusted definitions, which the MCP step asks about; tests give their own. */
+    Map<String, ImageDef> trustedDefinitions() {
+        return ImageDef.loadTrusted();
+    }
+
+    /** Templates that install Claude Code, Codex or Pi: the only ones a task can be delegated to. */
+    private static List<String> mcpCandidates(Map<String, ImageDef> defs) {
+        return defs.values().stream()
+                .filter(def -> ImageDef.chain(def, defs).stream()
+                        .anyMatch(d -> d.getTools().stream().anyMatch(t -> List.of("claude", "codex", "pi").contains(t.getName()))))
+                .map(ImageDef::getName)
+                .sorted()
+                .toList();
+    }
+
+    /** What {@link #setupMcp(Prompts, Map)} would offer: registering isx with Claude Code, and the approvals that are the person's. */
+    InitPlan.Assessment planMcp() {
+        // Without Claude Code the step still asks for the approvals, which another MCP client uses (#2078)
+        var claude = hostHasCommand("claude");
+        McpConfig mcp;
+        try {
+            mcp = McpConfig.load();
+        } catch (McpConfig.Invalid e) {
+            return InitPlan.Assessment.unknown(e.getMessage() + ".");
+        }
+        // Never 'claude mcp get', which starts the server it names: isx mcp would then sweep orphans
+        boolean registered;
+        try {
+            registered = claude && claudeMcpRegisteredInConfig();
+        } catch (IOException | IllegalArgumentException e) {
+            return InitPlan.Assessment.unknown("Could not read Claude Code's configuration: " + failure(e));
+        }
+        var approved = mcp.templates();
+        var candidates = mcpCandidates(trustedDefinitions());
+        // Fully set up, the run still names the templates not approved and offers to change them
+        var toApprove = (registered || !claude) && !approved.isEmpty()
+                ? candidates.stream().filter(n -> !approved.contains(n)).toList() : candidates;
+        var offers = new ArrayList<InitPlan.Change>();
+        if (claude && !registered) {
+            var isx = isxPath();
+            offers.add(InitPlan.Change.run("Register isx mcp with Claude Code for every project", InitPlan.Who.NONE,
+                    String.join(" ", claudeMcpAddCommand(isx == null ? "<path to isx>" : isx))));
+        }
+        if (!toApprove.isEmpty()) {
+            // The person's step, which they can run alone, at a terminal (#2077)
+            offers.add(new InitPlan.Change("Approve which of " + OutputFormat.andList(toApprove)
+                    + " agents may create instances from", InitPlan.Who.APPROVAL, MCP_SETUP_COMMAND,
+                    McpConfig.file().toString()));
+        }
+        // Registered, with no template to approve: the step asks, and has nothing to change
+        if (offers.isEmpty()) return InitPlan.Assessment.done().asking();
+        return new InitPlan.Assessment(InitPlan.State.OPTIONAL, true, offers, null);
+    }
+
+    InitPlan.Assessment planBridgeDns() {
+        var write = List.of(InitPlan.Change.run("Point the intercepted domains at the proxy in incusbr0's DNS",
+                InitPlan.Who.NONE, null));
+        if (!incusReadable()) {
+            if (Platform.isLinux() && !hostHasCommand("incus") || Platform.isMacOS() && incus == null) {
+                return InitPlan.Assessment.of(write).noting("Read once Incus is set up.");
+            }
+            return InitPlan.Assessment.unknown("Incus does not answer this process.");
+        }
+        if (!incus.networkExists(dev.incusspawn.incus.BridgeAddress.BRIDGE)) return InitPlan.Assessment.of(write);
+        return ProxyConfig.isBridgeDnsComplete(incus, ProxyConfig.bridgeDnsDomains(SpawnConfig.load()))
+                ? InitPlan.Assessment.done() : InitPlan.Assessment.of(write);
+    }
+
+    /** Init's mark of completion, which its last step writes before it starts the service (#938). */
+    private static List<InitPlan.Change> initMarker() {
+        if (Environment.hasBeenInitialized()) return List.of();
+        return List.of(InitPlan.Change.write("Mark init complete for this version of isx", InitPlan.Who.NONE,
+                Environment.initCompleteMarker().toString()));
+    }
+
+    /** What {@link #completeWithProxyService} would change. */
+    InitPlan.Assessment planProxyService() {
+        var marker = InitPlan.Assessment.of(initMarker());
+        if (proxyServiceActive()) {
+            var changes = new ArrayList<InitPlan.Change>();
+            var stale = ProxyService.serviceFilesStale();
+            if (stale || !Environment.hasBeenInitialized()) {
+                changes.add(InitPlan.Change.run("Restart the proxy service" + (stale
+                        ? ", with its files brought up to date" : ""), InitPlan.Who.NONE,
+                        "systemctl --user restart " + Environment.PROXY_SERVICE_NAME));
+            }
+            return InitPlan.combine(List.of(marker, InitPlan.Assessment.of(changes)));
+        }
+        var user = System.getProperty("user.name");
+        var offers = new ArrayList<InitPlan.Change>(List.of(
+                InitPlan.Change.write("Install the proxy as a systemd user service", InitPlan.Who.NONE,
+                        Environment.proxyServiceFile().toString()),
+                InitPlan.Change.run("Start it", InitPlan.Who.NONE,
+                        "systemctl --user enable --now " + Environment.PROXY_SERVICE_NAME)));
+        if (!Files.exists(hostFile("/var/lib/systemd/linger/" + user))) {
+            offers.add(InitPlan.Change.sudo("Keep it running after you log out", "sudo loginctl enable-linger " + user));
+        }
+        return InitPlan.combine(List.of(marker, new InitPlan.Assessment(InitPlan.State.OPTIONAL, true, offers, null)));
+    }
+
+    /** What {@link #completeWithMacOsServices} would change. */
+    InitPlan.Assessment planMacOsServices() {
+        var marker = InitPlan.Assessment.of(initMarker());
+        if (macOsServicesInstalled()) return marker;
+        return InitPlan.combine(List.of(marker, new InitPlan.Assessment(InitPlan.State.OPTIONAL, true, List.of(
+                InitPlan.Change.write("Install the VM and the proxy as launch agents", InitPlan.Who.NONE,
+                        Environment.home().resolve("Library/LaunchAgents").toString())), null)));
+    }
+
+    /** What {@link #requireIncusHost} does on macOS before init: download the appliance if missing, start the VM. */
+    InitPlan.Assessment planIncusVm() {
+        if (incus != null) return InitPlan.Assessment.done();
+        var changes = new ArrayList<InitPlan.Change>();
+        if (!Files.exists(Environment.applianceKernel())
+                || !Files.exists(Environment.applianceDiskImage()) && !Files.exists(Environment.vmDiskImage())) {
+            changes.add(InitPlan.Change.write("Download the VM appliance", InitPlan.Who.NONE,
+                    Environment.applianceDir().toString()));
+        }
+        changes.add(InitPlan.Change.run("Start the VM", InitPlan.Who.NONE, "isx vm start"));
+        return InitPlan.Assessment.of(changes);
+    }
+
+    /** What {@link #setupMacOsCa} would change. */
+    InitPlan.Assessment planMacOsCa() {
+        var changes = new ArrayList<InitPlan.Change>();
+        String note = null;
+        if (incus == null) {
+            changes.add(InitPlan.Change.write("Record the bridge's gateway", InitPlan.Who.NONE, HostSetup.configFile()));
+            note = "The VM is not running, so what Incus holds is read once it is.";
+        } else {
+            if (!incus.networkExists(dev.incusspawn.incus.BridgeAddress.BRIDGE)) {
+                changes.add(InitPlan.Change.run("Create the incusbr0 bridge", InitPlan.Who.NONE, null));
+            }
+            var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
+            if (!gatewayIp.equals(SpawnConfig.load().getIncusBridgeGateway())) {
+                changes.add(InitPlan.Change.write("Record the bridge's gateway " + gatewayIp, InitPlan.Who.NONE, HostSetup.configFile()));
+            }
+        }
+        if (!CertificateAuthority.exists()) {
+            changes.add(InitPlan.Change.write("Generate the MITM CA certificate", InitPlan.Who.NONE,
+                    Environment.configDir().resolve("ca.crt").toString()));
+        }
+        return InitPlan.Assessment.of(changes).noting(note);
     }
 
     static int runHost(String... command) {

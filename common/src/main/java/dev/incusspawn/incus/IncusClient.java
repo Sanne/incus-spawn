@@ -1112,21 +1112,9 @@ public class IncusClient {
      * exercise the repair path against a scratch profile instead of breaking the real default one.
      */
     public List<String> ensureProfileDevices(String profile, String pool, String networkName) {
-        var resp = http().get("/1.0/profiles/" + profile);
-        if (!resp.isSuccess()) {
-            throw new IncusException("Failed to read profile '" + profile + "' "
-                    + "(HTTP " + resp.statusCode() + ")");
-        }
-        var existing = resp.body().path("metadata").path("devices");
         // PATCH merges the devices map key-by-key, so sending only the additions leaves any
         // devices the user configured themselves untouched.
-        var devices = new LinkedHashMap<String, Object>();
-        if (!hasDeviceOfType(existing, "disk", "/")) {
-            devices.put("root", Map.of("type", "disk", "path", "/", "pool", pool));
-        }
-        if (!hasDeviceOfType(existing, "nic", null)) {
-            devices.put("eth0", Map.of("type", "nic", "name", "eth0", "network", networkName));
-        }
+        var devices = missingProfileDevices(profile, pool, networkName);
         if (devices.isEmpty()) return List.of();
 
         var added = List.copyOf(devices.keySet());
@@ -1137,6 +1125,27 @@ public class IncusClient {
                     + patchResp.body().path("error").asText("unknown error"));
         }
         return added;
+    }
+
+    /**
+     * The devices {@link #ensureProfileDevices} would add to {@code profile}, by name; one read,
+     * and nothing written.
+     */
+    public Map<String, Object> missingProfileDevices(String profile, String pool, String networkName) {
+        var resp = http().get("/1.0/profiles/" + profile);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to read profile '" + profile + "' "
+                    + "(HTTP " + resp.statusCode() + ")");
+        }
+        var existing = resp.body().path("metadata").path("devices");
+        var devices = new LinkedHashMap<String, Object>();
+        if (!hasDeviceOfType(existing, "disk", "/")) {
+            devices.put("root", Map.of("type", "disk", "path", "/", "pool", pool));
+        }
+        if (!hasDeviceOfType(existing, "nic", null)) {
+            devices.put("eth0", Map.of("type", "nic", "name", "eth0", "network", networkName));
+        }
+        return devices;
     }
 
     /** The devices map of a profile, as configured (not expanded). */

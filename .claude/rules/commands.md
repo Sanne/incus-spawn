@@ -175,7 +175,7 @@ Init keeps its own frame -- the boxed, numbered step headers and the `┃` hint 
 Which kind each line is (live step, note, step, step detail, success) and that its label is bare are the rules of `.claude/rules/terminal-output.md`, "Five kinds, and bare labels".
 *The step counter is derived, never written down*: `runSteps(setup, finish)` counts its lists, Credential Setup and the credentials chosen there, so `[n/N]` adds up on every path (credentials or none, Linux or macOS) and the last step reads `[N/N]`.
 Until Credential Setup's choice the total reads `[n/N+]`, so a total that grows at the choice was never shown as final.
-Each `Step` shows exactly one header, so a new step goes into a list, never a bare `startStep` call between them.
+Each step is an `InitStep` (id, title, hint, work, planner) in one of the lists `runSteps` takes, and `begin` shows its header, so a step shows exactly one and never calls `startStep` itself.
 *Report outcomes, not attempts*: a success line ("Configured X") prints only once every command of that step succeeded.
 When a file is in place but applying it failed, say it applies after a reboot, as the sysctl, NetworkManager and KSM steps do.
 A step that runs several commands runs each through `ran()`, which names the one that failed, and combines the results (`ok &= ran(...)`, never short-circuiting, so the remaining rules are still applied) before choosing between its success line and a warning (#1102: the firewall and PREROUTING steps).
@@ -183,6 +183,13 @@ A step that runs several commands runs each through `ran()`, which names the one
 *Each host change is a live step* (`BuildOutput.liveStep`, #1791): a ✓ once its commands succeeded, and a ✗ when one failed, below the output and warning that command's failure printed.
 `runHost` (inherited output) and a `sudo` through `runHostQuiet` release the terminal first, since a password prompt on the tty bypasses the stream guard.
 `InitStepOutputTest` pins all three; `InitFirewallOutputTest` pins the firewall steps.
+
+**`isx init --plan`** (#2073) lists the same `InitStep`s (`planSteps`, in the run's order, with the unnumbered dependencies or VM, and the git remote helper), each assessed by its planner.
+A planner only reads: no sudo (`query` refuses it, but for `sudo -n -l`, which lists the btrfs rule's privileges without a password), no prompt, Incus GETs alone, and on macOS no VM start.
+It never runs a command that starts something: the MCP step reads Claude Code's `~/.claude.json` (`claudeMcpRegisteredInConfig`), since `claude mcp get` starts `isx mcp`, whose orphan sweep stops and destroys instances.
+It shares its commands and checks with the step's run, as constants or helpers both call, so the two cannot drift; `InitPlanTest` runs both on the same fake host and compares the commands.
+A step is `done`, `pending`, `optional` (it only offers) or `unknown` (unreadable without sudo), and names who must act: `none`, `sudo`, `secret` or `approval`.
+A new step gets a planner and a test of it; its JSON fields (`InitPlan.record`) are a contract.
 
 **The group init adds** (#1436).
 A process gets its groups at login, so the `incus-admin` membership Incus Installation adds is not this run's.

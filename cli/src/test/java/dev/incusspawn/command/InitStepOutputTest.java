@@ -40,9 +40,9 @@ class InitStepOutputTest {
         String failing = "";
 
         @Override
-        List<Step> credentialSteps() {
+        List<InitStep> credentialSteps() {
             startStep("Credential Setup");
-            return Collections.nCopies(chosen, () -> startStep("A credential"));
+            return Collections.nCopies(chosen, step(() -> {}));
         }
 
         @Override
@@ -56,8 +56,13 @@ class InitStepOutputTest {
         }
     }
 
-    private static List<InitCommand.Step> steps(InitCommand init, int count) {
-        return Collections.nCopies(count, () -> init.startStep("A step"));
+    /** A step that does {@code run} under the header "A step", and plans nothing. */
+    static InitCommand.InitStep step(InitCommand.Step run) {
+        return new InitCommand.InitStep("a-step", "A step", new String[0], run, InitPlan.Assessment::done);
+    }
+
+    private static List<InitCommand.InitStep> steps(InitCommand init, int count) {
+        return Collections.nCopies(count, step(() -> {}));
     }
 
     private static List<int[]> counters(int setup, int chosen, int finish) throws Exception {

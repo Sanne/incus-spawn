@@ -20,8 +20,51 @@ Running it again is safe, and is how you add, rename or remove an account.
 On a fresh Linux host it adds you to the `incus-admin` group, which other terminals get at your next login or with `newgrp incus-admin`.
 
 ```shell
-isx init
+isx init [--plan [--format=table|plain|json]]
 ```
+
+`isx init --plan` says what `isx init` would change on this host, and changes nothing.
+It asks no question, writes no file and asks Incus only to read.
+Its only sudo is `sudo -n -l`, which lists your privileges and never asks for a password.
+On macOS it does not start the VM, so what Incus holds stays unknown while the VM is stopped.
+
+On Linux, `isx init` itself starts with `sudo -v`, so running it needs sudo even when every step is done.
+
+The plan lists every step init would take, in its order, with what it is for and its state:
+
+| State | Meaning |
+|-------|---------|
+| `done` | Nothing left to change |
+| `pending` | Init changes something here |
+| `optional` | Init only offers a change, which you may decline |
+| `unknown` | Init would change what the plan cannot read without sudo, such as firewall rules |
+
+Each step also says who must do what is left of it:
+
+| Who | Meaning |
+|-----|---------|
+| `none` | No privilege, secret or approval: an agent may do it for you |
+| `sudo` | A command run with sudo |
+| `secret` | A credential you type at a terminal, with `isx account add` |
+| `approval` | Your choice of the templates agents may create instances from |
+
+With `--format=json` each step is an object with these fields, in order:
+
+| Field | Meaning |
+|-------|---------|
+| `step` | The step's name, such as `firewall` or `proxy-service` |
+| `title` | The step's header in `isx init` |
+| `state` | `done`, `pending`, `optional` or `unknown` |
+| `who` | `none`, `sudo`, `secret` or `approval`: the most any of its changes needs |
+| `asks` | Whether init asks you a question at this step |
+| `changes` | What the step would change, one entry each |
+| `commands` | The commands those changes run |
+| `sudo_commands` | The part of `commands` that runs with sudo |
+| `files` | The files those changes write |
+| `note` | Why a step is unknown, or what else to know, or `null` |
+| `purpose` | What the step is for |
+
+`plain` prints the same fields, one step per line, as the formats below describe.
 
 ## `isx build`
 
@@ -721,7 +764,7 @@ The zsh, fish and PowerShell scripts mark each namespace's default account; bash
 
 Query commands print `plain` and `json` output that a script can rely on, and exit codes that say what happened.
 
-Query commands take `--format=table|plain|json`: `isx list`, `isx templates [list]`, `isx templates validate`, `isx tools list`, `isx tools show`, `isx account list`, `isx account show`, `isx proxy status`, `isx proxy activity`, `isx doctor`, `isx vm status` (macOS), `isx update-base --list` and `isx branch`.
+Query commands take `--format=table|plain|json`: `isx init --plan`, `isx list`, `isx templates [list]`, `isx templates validate`, `isx tools list`, `isx tools show`, `isx account list`, `isx account show`, `isx proxy status`, `isx proxy activity`, `isx doctor`, `isx vm status` (macOS), `isx update-base --list` and `isx branch`.
 
 ### Formats
 
@@ -812,6 +855,7 @@ The fields of each command, in order:
 
 | Command | Fields |
 |---------|--------|
+| `isx init --plan` | one record per step: `step`, `title`, `state`, `who`, `asks`, `changes`, `commands`, `sudo_commands`, `files`, `note`, `purpose` ([`isx init`](#isx-init) says what they mean) |
 | `isx templates` | `name`, `parent`, `source`, `description`, `built`, `built_at`, `version_outdated`, `definition_changed`, `parent_rebuilt` |
 | `isx tools list` | `name`, `source`, `description` |
 | `isx tools show <tool>` | `name`, `description`, `source`, `feature`, `requires`, `packages`, `parameters`, `actions` (labels), `downloads` (URLs), `proxy_domains` |

@@ -54,7 +54,7 @@ class InitGroupContinuationTest {
         }
 
         @Override
-        List<Step> credentialSteps() {
+        List<InitStep> credentialSteps() {
             startStep("Credential Setup");
             return List.of();
         }
@@ -66,15 +66,13 @@ class InitGroupContinuationTest {
         @Override
         void setupSshKeyPair() {
             hostSteps.add("setupSshKeyPair");
-            startStep("SSH Key Pair");
         }
 
-        /** The host steps that ran, in order; each shows its header and touches nothing. */
+        /** The host steps that ran, in order; each touches nothing, and the run shows its header. */
         final List<String> hostSteps = new ArrayList<>();
         private final HostSetup fakeHost = new HostSetup(this) {
             private void step(String name) {
                 hostSteps.add(name);
-                startStep(name);
             }
             @Override void checkIncusInstalled() { step("checkIncusInstalled"); }
             @Override void configureSubuidSubgid() { step("configureSubuidSubgid"); }
@@ -94,7 +92,7 @@ class InitGroupContinuationTest {
 
     /** The steps init runs on Linux, through the same seams, with five finishing steps. */
     private static String runLinuxSteps(GroupInit init) {
-        var finish = Collections.<InitCommand.Step>nCopies(5, () -> init.startStep("A step"));
+        var finish = Collections.nCopies(5, InitStepOutputTest.step(() -> {}));
         return String.join("\n", RecordingOutput.during(() -> init.runLinuxSteps(finish)).frameLines());
     }
 
@@ -124,7 +122,7 @@ class InitGroupContinuationTest {
                 "configureMitmProxy", "setupSshKeyPair"), init.hostSteps);
         assertTrue(init.ran.isEmpty());
         assertFalse(frames.contains("[1/12]"));
-        assertTrue(frames.contains("2  configureSubuidSubgid"));
+        assertTrue(frames.contains("2  User Namespace Mappings"));
         assertTrue(frames.contains("[12/12]"));
     }
 
@@ -187,16 +185,13 @@ class InitGroupContinuationTest {
     void theContinuationNumbersOnFromTheParentsStep() throws Exception {
         var init = new GroupInit();
         var ran = new ArrayList<Integer>();
-        var setup = new ArrayList<InitCommand.Step>();
+        var setup = new ArrayList<InitCommand.InitStep>();
         for (int i = 1; i <= 6; i++) {
             var index = i;
-            setup.add(() -> {
-                ran.add(index);
-                init.startStep("A step");
-            });
+            setup.add(InitStepOutputTest.step(() -> ran.add(index)));
         }
         var frames = String.join("\n", RecordingOutput.during(() ->
-                init.runSteps(setup, Collections.nCopies(5, () -> init.startStep("A step")), 1)).frameLines());
+                init.runSteps(setup, Collections.nCopies(5, InitStepOutputTest.step(() -> {})), 1)).frameLines());
         assertEquals(List.of(2, 3, 4, 5, 6), ran);
         assertFalse(frames.contains("[1/12]"));
         assertTrue(frames.contains("[2/12+]"));
