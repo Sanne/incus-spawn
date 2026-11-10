@@ -395,7 +395,20 @@ public class InitCommand extends BaseCommand {
                 left.add(p);
             }
         }
-        if (left.isEmpty()) return null;
+        if (left.isEmpty()) {
+            // Nothing is left for root: a script still lying there would only be handed over again
+            var script = Environment.privilegedInitScript();
+            try {
+                if (Files.deleteIfExists(script)) {
+                    BuildOutput.note("The root script's work is done, so it was removed: " + script);
+                }
+            } catch (IOException e) {
+                // Tidying up only: init carries on, as it would with the script gone
+                BuildOutput.warn("Could not remove the root script, whose work is done: " + script,
+                        "Remove it yourself: " + e.getMessage());
+            }
+            return null;
+        }
         var manual = left.stream().filter(p -> p.change().script().isEmpty()).map(p -> p.change().what()).toList();
         if (!manual.isEmpty()) {
             var details = new ArrayList<>(manual);
@@ -1683,9 +1696,14 @@ public class InitCommand extends BaseCommand {
         return steps;
     }
 
-    /** {@link #planSteps}, each with its standing on this host; a read that failed leaves its step unknown. */
+    /**
+     * {@link #planSteps}, each with its standing on this host (a read that failed leaves its step
+     * unknown), what only root can check counted
+     * as done when the {@code --no-sudo} script recorded making it: the plan and the summary read
+     * the record as {@code --no-sudo} does, so they never report its work as left (#2081).
+     */
     List<InitPlan.Entry> planEntries() {
-        return planEntries(planSteps());
+        return InitPlan.withRecord(planEntries(planSteps()), appliedByScript());
     }
 
     /** How the note of a step whose reading failed starts. */

@@ -187,6 +187,85 @@ class InitNoSudoTest {
         assertEquals(2, recorded.events().stream().filter(e -> HostSetup.DONE_BY_SCRIPT.equals(e.text())).count());
     }
 
+    /**
+     * The script finds btrfs as the run does, on the user's PATH, and only as it runs: before
+     * it, btrfs-progs may not be installed yet, and a rule naming the fallback would be scripted
+     * again on the next run (found on a stock Fedora VM, #2081).
+     */
+    @Test
+    void theBtrfsRuleNamesBtrfsWhereTheRunWillFindIt(@TempDir Path dir) throws Exception {
+        var out = dir.resolve("rule");
+        var lines = HostSetup.btrfsAccess("cow").script().stream()
+                .filter(l -> !l.startsWith("visudo ") && !l.startsWith("rm -f "))
+                .map(l -> l.startsWith("install -m 0440") ? "cat \"$tmp\" > " + out : l).toList();
+        var process = new ProcessBuilder("sh", "-euc", String.join("\n", lines)).redirectErrorStream(true).start();
+        var said = new String(process.getInputStream().readAllBytes());
+        assertEquals(0, process.waitFor(), said);
+        assertEquals(HostSetup.btrfsSudoersContent("cow"), Files.readString(out));
+        assertFalse(String.join("\n", HostSetup.btrfsAccess("cow").script()).contains(HostSetup.btrfsSudoersContent("cow").strip()),
+                "the path is read as the script runs, not written into it");
+    }
+
+    /**
+     * Once the script recorded what only root can check, the plan and the summary report it done,
+     * as --no-sudo reads it, not as root work left (#2081); the check commands stay for a person.
+     */
+    @Test
+    void thePlanReadsTheScriptsRecord() {
+        var change = HostSetup.btrfsAccess("cow");
+        var unchecked = new InitPlan.Entry("storage-network", "Storage & Network", "",
+                InitPlan.Assessment.notChecked("Not checked", change, List.of("sudo cat /etc/sudoers.d/incus-spawn-btrfs")));
+        assertEquals(InitPlan.State.UNKNOWN, InitPlan.withRecord(List.of(unchecked), Set.of()).getFirst().assessment().state());
+        var recorded = InitPlan.withRecord(List.of(unchecked), Set.of(InitPlan.key(change))).getFirst().assessment();
+        assertEquals(InitPlan.State.DONE, recorded.state());
+        assertEquals(InitPlan.Who.NONE, recorded.who());
+        assertTrue(recorded.note().contains(InitPlan.APPLIED_RECORD), recorded.note());
+        assertEquals(List.of("sudo cat /etc/sudoers.d/incus-spawn-btrfs"), recorded.checks());
+    }
+
+    /** With nothing left for root, the script is removed rather than left to be handed over again. */
+    @Test
+    void theScriptIsRemovedOnceNothingIsLeft(@TempDir Path root) throws Exception {
+        var init = new InitPlanTest.PlanInit();
+        init.root = root;
+        init.noSudo = true;
+        Files.createDirectories(root.resolve("etc"));
+        for (var f : List.of("etc/subuid", "etc/subgid")) Files.writeString(root.resolve(f), "root:1000:1\nroot:1000000:1000000000\n");
+        Files.createDirectories(root.resolve("etc/sysctl.d"));
+        Files.writeString(root.resolve("etc/sysctl.d/99-incus-spawn.conf"), HostSetup.SYSCTL_CONTENT);
+        Files.createDirectories(root.resolve("etc/sudoers.d"));
+        Files.writeString(root.resolve("etc/sudoers.d/incus-spawn-btrfs"), HostSetup.btrfsSudoersContent("cow"));
+        init.answers.put("id -nG " + System.getProperty("user.name"), new InitCommand.Query(0, "u incus-admin"));
+        init.answers.put("systemctl is-active --quiet incus", new InitCommand.Query(0, ""));
+        init.answers.put("firewall-cmd --zone=trusted --list-all", new InitCommand.Query(0, "interfaces: incusbr0\n  masquerade: yes"));
+        init.answers.put("firewall-cmd --direct --get-all-rules", new InitCommand.Query(0, """
+                ipv4 filter FORWARD 0 -i incusbr0 -j ACCEPT
+                ipv4 filter FORWARD 0 -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+                ipv4 nat PREROUTING 0 -i incusbr0 -d 10.1.2.1 -p tcp --dport 443 -j REDIRECT --to-port 18443
+                """));
+        init.proxyActive = true;
+        init.incus = new FakeIncusDaemon().network("incusbr0", Map.of("ipv4.address", GATEWAY + "/24"))
+                .pool("cow", "btrfs")
+                .profile("default", Map.of("root", Map.of("type", "disk", "path", "/", "pool", "cow"),
+                        "eth0", Map.of("type", "nic", "network", "incusbr0")))
+                .client();
+        Files.createDirectories(Environment.configDir());
+        Environment.markInitComplete();
+        Files.createDirectories(Environment.privilegedInitScript().getParent());
+        Files.writeString(Environment.privilegedInitScript(), "#!/bin/sh\n");
+        RecordingOutput.during(() -> assertNull(init.privilegedStepsLeft()));
+        assertFalse(Files.exists(Environment.privilegedInitScript()));
+    }
+
+    @Test
+    void underNoSudoTheDependenciesStepDoesNotPromiseSudoV(@TempDir Path root) {
+        var init = new InitPlanTest.PlanInit();
+        init.root = root;
+        assertEquals(HostSetup.SUDO_FIRST, init.host().planDependencies().note());
+        init.noSudo = true;
+        assertEquals(HostSetup.NO_SUDO_FIRST, init.host().planDependencies().note());
+    }
+
     // ── The guard ───────────────────────────────────────────────────────────────
 
     @Test

@@ -358,6 +358,33 @@ final class InitPlan {
     }
 
     /**
+     * {@code entries}, with each change the plan could not check but the {@code --no-sudo} script
+     * recorded making ({@code applied}) taken as made: a step with nothing else left is done, its
+     * note saying why and its check commands kept, so a person can still look for themselves.
+     */
+    static List<Entry> withRecord(List<Entry> entries, java.util.Set<String> applied) {
+        if (applied.isEmpty()) return entries;
+        var out = new ArrayList<Entry>();
+        for (var entry : entries) {
+            var a = entry.assessment();
+            var left = a.changes().stream().filter(c -> c.checked() || !made(c, applied)).toList();
+            if (left.size() == a.changes().size()) {
+                out.add(entry);
+                continue;
+            }
+            // Done once nothing is left; else as it stood, less what the script made
+            var assessment = left.isEmpty()
+                    ? new Assessment(State.DONE, a.asks(), left, "Made by the root script, by its record in "
+                            + APPLIED_RECORD + "; only root can read it, so the plan did not check it.", a.checks())
+                    // With nothing it could not check left, the step is no longer unknown: what is left only offers
+                    : new Assessment(a.state() == State.UNKNOWN && left.stream().allMatch(Change::checked)
+                            ? State.OPTIONAL : a.state(), a.asks(), left, a.note(), a.checks());
+            out.add(new Entry(entry.step(), entry.title(), entry.purpose(), assessment));
+        }
+        return out;
+    }
+
+    /**
      * Whether the script recorded {@code change} as made: as the one change, or line by line as
      * the single-line changes a plan that could read the state scripted, such as the firewall
      * rules a fresh host's plan lists one by one and a later plan that cannot read them lists
