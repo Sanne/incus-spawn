@@ -156,6 +156,7 @@ final class ListingLoader {
         // problems again, and Warnings reports a message once until the user presses 'r'.
         tui.imageLayers = dev.incusspawn.config.ImageDef.loadLayers(Warnings::warn);
         tui.imageDefs = tui.imageLayers.defs();
+        mergedFromStamps.clear();
         // Tool conflicts don't flow through image loadAll; surface them here too so
         // the TUI warns about duplicate tool names instead of only failing at build.
         for (var conflict : tui.toolDefLoader.conflicts()) {
@@ -246,6 +247,12 @@ final class ListingLoader {
         return stamped == null ? null : stamped.file();
     }
 
+    /**
+     * The definitions this load of the TUI took from build stamps, which are no definitions: a
+     * live refresh merges into the same map, and must not list them as loaded.
+     */
+    private final java.util.Set<String> mergedFromStamps = new java.util.HashSet<>();
+
     /** The definitions and tools a built template's build stamped, or null. */
     BuildSource buildSource(String template) {
         var stamped = templatesBuiltFrom.get(template);
@@ -261,6 +268,8 @@ final class ListingLoader {
         var builtFrom = new java.util.HashMap<String, StampedFile>();
         for (var def : tui.imageDefs.values()) {
             var name = def.getName();
+            // A stamp's definition an earlier merge added is no definition: its template is listed below
+            if (mergedFromStamps.contains(name)) continue;
             // Find matching Incus instance
             InstanceInfo match = null;
             for (var inst : allInstances) {
@@ -295,7 +304,9 @@ final class ListingLoader {
             if (buildSource == null) continue;
 
             for (var entry : buildSource.getDefinitions().entrySet()) {
-                tui.imageDefs.putIfAbsent(entry.getKey(), entry.getValue());
+                if (tui.imageDefs.putIfAbsent(entry.getKey(), entry.getValue()) == null) {
+                    mergedFromStamps.add(entry.getKey());
+                }
             }
             tui.toolDefLoader.addFallbacks(buildSource.getTools());
 
