@@ -87,6 +87,7 @@ final class GitProcess {
         var reader = Thread.ofPlatform().daemon().name("git-output").start(() -> tail.read(stream));
         Status stopped = null;
         String reason = null;
+        String said = null;
         try {
             long lastActivity = start, lastCpuSample = start, lastChars = 0;
             // The tree's CPU time and I/O at the previous sample; null when the platform cannot tell.
@@ -127,6 +128,10 @@ final class GitProcess {
             stopped = Status.INTERRUPTED;
             reason = "interrupted";
         } finally {
+            // What Git said when it was stopped, taken before the kill: what the kill makes its tree
+            // print is not that (on macOS, sh reports its killed job, #2114). A line it left unended,
+            // such as a prompt it stalled on, is still part of it.
+            if (stopped != null) said = tail.textSoFar();
             // Waits below must not be cut short by the interrupt being handled; it is restored after.
             boolean interrupted = Thread.interrupted() || stopped == Status.INTERRUPTED;
             if (process.isAlive()) interrupted |= OwnSession.stop(List.of(process));
@@ -135,7 +140,7 @@ final class GitProcess {
             if (reader.isAlive()) closeQuietly(stream);
             if (interrupted) Thread.currentThread().interrupt();
         }
-        if (stopped != null) return new Result(stopped, tail.text(), reason, ssh);
+        if (stopped != null) return new Result(stopped, said, reason, ssh);
         return new Result(process.exitValue() == 0 ? Status.OK : Status.FAILED, tail.text(), null, ssh);
     }
 
@@ -294,7 +299,10 @@ final class GitProcess {
             try (var in = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
                 var buffer = new char[4096];
                 for (int n; (n = in.read(buffer)) != -1;) {
-                    for (int i = 0; i < n; i++) accept(buffer[i]);
+                    // Under the lock, so textSoFar() sees a whole state, the unended line included.
+                    synchronized (this) {
+                        for (int i = 0; i < n; i++) accept(buffer[i]);
+                    }
                     chars += n;
                 }
             } catch (IOException closed) {
@@ -353,6 +361,16 @@ final class GitProcess {
         synchronized String text() {
             var out = new ArrayList<>(lines);
             if (latest != null && (out.isEmpty() || !out.getLast().equals(latest))) out.add(latest);
+            return String.join("\n", out);
+        }
+
+        /** {@link #text()} as it would read if Git's output ended here: a line it has not ended counts. */
+        synchronized String textSoFar() {
+            var partial = carriageReturn ? "" : clean(current);
+            if (partial.isEmpty()) return text();
+            var out = new ArrayList<>(lines);
+            out.add(partial);
+            if (out.size() > TAIL_LINES) out.removeFirst();
             return String.join("\n", out);
         }
     }

@@ -50,6 +50,27 @@ class GitProcessTest {
         assertNoneAlive(helper.get());
     }
 
+    /**
+     * What Git's tree prints while it is being killed is not what it said: on macOS sh reports its
+     * killed job ({@code Terminated: 15}) between the kill of its child and its own (#2114).
+     * The kill always makes it print: sh ends only through its trap, even if its child dies first.
+     */
+    @Test
+    void whatTheKillMakesItPrintIsNotReported() throws Exception {
+        var result = sh("trap 'echo Terminated: 15 >&2; exit 143' TERM; echo started >&2; sleep 600 & while :; do wait; done",
+                STALL_1S, new CopyOnWriteArrayList<>());
+        assertEquals(GitProcess.Status.STALLED, result.status());
+        assertEquals("started", result.diagnostics());
+    }
+
+    /** A prompt Git's helper stalled on has no newline yet, and is still what it said. */
+    @Test
+    void anUnendedLineItStalledOnIsReported() throws Exception {
+        var result = sh("echo started >&2; printf 'Password: ' >&2; sleep 600 & wait", STALL_1S, new CopyOnWriteArrayList<>());
+        assertEquals(GitProcess.Status.STALLED, result.status());
+        assertEquals("started\nPassword:", result.diagnostics());
+    }
+
     @Test
     void quietButBusyLocalWorkIsNotAStall() throws Exception {
         // Like resolving deltas: no output for three times the stall budget, but using the CPU throughout.

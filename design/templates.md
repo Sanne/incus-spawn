@@ -348,6 +348,8 @@ It is non-interactive: `GIT_TERMINAL_PROMPT=0` and stdin `/dev/null`.
 It also leads a session of its own (`OwnSession`, see design/macos-and-vms.md "The macOS VM outlives whatever started it"), so a build's first Ctrl+C, which may be a copy, reaches isx alone (#1425); only `update-all`'s Git, which no second Ctrl+C guards, stays there, where the first one stops it.
 It reads Git's `--progress` output on its own thread into a bounded tail: the last 20 lines of up to 200 characters, with terminal escapes, control characters and URL credentials removed, since a remote's text reaches the terminal.
 A `\r` alone ends a progress update; `\r\n`, as ssh ends its messages, ends a whole line that the tail keeps.
+A stopped Git reports the tail as it was when the stop was decided, never what the kill made its tree print, such as macOS sh's `Terminated: 15` for its killed job (#2114).
+A line it left unended, such as a prompt it stalled on, is part of that tail.
 SSH never prompts, in a build (decided on #1403) or in `update-all` (#1410).
 isx inserts `-o BatchMode=yes` right after the `ssh` of the command Git would run, in Git's order (`GIT_SSH_COMMAND`, else `core.sshCommand`, else `GIT_SSH`), where a later `-o BatchMode=no` or a trailing comment cannot undo it, or uses plain `ssh -o BatchMode=yes`.
 `update-all` fetches in the user's checkout, so that repository's own `core.sshCommand` applies; a build runs Git in isx's own repository, so only the user's global one does.
