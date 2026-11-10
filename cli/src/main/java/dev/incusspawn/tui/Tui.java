@@ -37,6 +37,7 @@ import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyLog;
 import dev.incusspawn.lifecycle.ZmxSocketForward;
+import dev.incusspawn.incus.ShellSession;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tool.ActionResolver;
@@ -275,7 +276,7 @@ public class Tui {
 
     private boolean deferredBuildForBranch;
 
-    enum PendingAction { NONE, SHELL, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, NEW_TEMPLATE, EXECUTE_ACTION }
+    enum PendingAction { NONE, SHELL, SHELL_NEW_SESSION, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, NEW_TEMPLATE, EXECUTE_ACTION }
     private PendingAction pendingAction = PendingAction.NONE;
     private ActionContext pendingActionTarget;
     private String pendingShellCommand;
@@ -522,6 +523,10 @@ public class Tui {
                     case SHELL -> {
                         returnToInstance = pendingActionTarget.name();
                         shellLaunch.shellInto(pendingActionTarget);
+                    }
+                    case SHELL_NEW_SESSION -> {
+                        returnToInstance = pendingActionTarget.name();
+                        shellLaunch.shellInto(pendingActionTarget, ShellSession.NEW);
                     }
                     case SHELL_WITH_COMMAND -> {
                         returnToInstance = pendingActionTarget.name();
@@ -999,10 +1004,11 @@ public class Tui {
             if (joinTask(selected)) tui.quit();
             return true;
         }
-        if (key.isKey(KeyCode.F2)) {
+        // F2: a shell; n: a shell in a new session, independent of the others (#2059)
+        if (key.isKey(KeyCode.F2) || key.isChar('n')) {
             var target = new ActionContext(selected.name(), selected.machineType());
             if (showProxyErrorIfNeeded(target)) return true;
-            pendingAction = PendingAction.SHELL;
+            pendingAction = key.isChar('n') ? PendingAction.SHELL_NEW_SESSION : PendingAction.SHELL;
             pendingActionTarget = target;
             tui.quit();
             return true;
@@ -1174,7 +1180,7 @@ public class Tui {
 
     /** Keys that act on the selected instance (as opposed to navigating or viewing it). */
     private boolean isInstanceActionKey(KeyEvent key, InstanceInfo selected) {
-        return isDestroyKey(key) || key.isKey(KeyCode.F2)
+        return isDestroyKey(key) || key.isKey(KeyCode.F2) || key.isChar('n')
                 || key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F4) || key.isKey(KeyCode.F6)
                 || key.isKey(KeyCode.F9) || key.isChar('a') || (key.isKey(KeyCode.F7) && isRunning(selected));
     }

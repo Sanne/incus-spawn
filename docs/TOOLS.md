@@ -532,6 +532,11 @@ tools:
       auto_attach: "false"
 ```
 
+Every terminal attached to `isx` shows the same screen.
+For a second, independent terminal, run `isx shell <instance> --session <name>`, or press `n` on the instance in the TUI.
+`n` opens a new session, named by the first free number from 2.
+`--no-attach` opens a plain shell outside zmx.
+
 On Linux, isx shares the instance's zmx socket directory with the host through a disk device.
 That directory is yours alone, under `~/.local/state/incus-spawn/zmx`.
 Instance sessions appear in your native zmx socket directory with an `isx-` prefix, with no configuration needed:
@@ -541,7 +546,11 @@ zmx list                              # shows isx-my-branch alongside local sess
 zmx attach isx-my-branch              # attach to the container's session from the host
 zmx history isx-my-branch             # view scrollback from the container
 zmx run isx-my-branch git status      # run a command in the container's session
+zmx attach isx-my-branch.work         # attach to its session named work
 ```
+
+Each other session of the instance appears as `isx-<instance>.<session>`.
+isx links the sessions it finds each time a shell opens and closes, and drops the links of sessions that ended.
 
 All zmx commands work natively, including interactive `zmx attach`.
 On macOS, where Incus runs inside a VM, host-side socket sharing is not available.

@@ -390,6 +390,15 @@ class TuiCharacterisationTest {
         assertFalse(runner.isRunning());
     }
 
+    /** {@code n} on an instance is a shell in a new session, independent of any other terminal (#2059). */
+    @Test
+    void nOnAnInstanceLeavesAShellInANewSessionPending() {
+        var tui = tui();
+        press(tui, TAB, KeyEvent.ofChar('n'));
+        assertEquals(Tui.PendingAction.SHELL_NEW_SESSION, tui.pendingAction());
+        assertFalse(runner.isRunning());
+    }
+
     /** A running instance an isx mcp session made, whose guest lists {@code tasks} ({@code TaskScripts.joinable}). */
     private Tui mcpTui(String tasks) {
         var config = branch("tpl-minimal", 30);
