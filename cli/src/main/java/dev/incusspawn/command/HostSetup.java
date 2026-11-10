@@ -834,6 +834,44 @@ class HostSetup {
         }
     }
 
+    /**
+     * Under {@code --no-sudo}, the redirect changes left for the person once the steps ran: moving
+     * it when this run moved the bridge, or adding it when firewalld shows it missing for
+     * {@code gatewayIp}. None when it is in place, or when it cannot be read and the bridge did not
+     * move: the script made it, by its record.
+     */
+    List<InitPlan.Privileged> redirectLeftUnderNoSudo(String gatewayIp) {
+        var step = new InitPlan.Entry("mitm-proxy", "MITM Authentication Proxy", String.join(" ", MITM_HINT),
+                InitPlan.Assessment.done());
+        var firewall = init.runningFirewall();
+        if (movedFromGateway != null) {
+            var move = InitPlan.Change.sudo("Move the redirect to the proxy from the old gateway "
+                    + movedFromGateway + " to the bridge's new one, which this run moved off a host route", null);
+            // UFW's rules are not scripted: handOver names the move for the person to make
+            if (firewall instanceof DetectionResult.UseUfw) return List.of(new InitPlan.Privileged(step, move));
+            var lines = new ArrayList<String>();
+            lines.add(asRoot(fwdRedirect("--remove-rule", movedFromGateway)));
+            lines.addAll(bridgeRedirectLines());
+            return List.of(new InitPlan.Privileged(step, move.scripted(lines)));
+        }
+        if (firewall instanceof DetectionResult.UseFirewalld fwd && !fwd.needsStart()) {
+            var rules = firewalldRead(FWD_LIST_DIRECT);
+            if (rules != null) {
+                var plan = planRedirectFirewalld(gatewayIp, rules);
+                var applied = init.appliedByScript();
+                // Run once already and still not in effect: the same lines would not change it. A
+                // change the record lacks takes the rest with it, as its reload makes it take effect
+                if (!plan.changes().isEmpty() && plan.changes().stream().allMatch(c -> InitPlan.made(c, applied))) {
+                    BuildOutput.warn("The script ran, but the redirect to the proxy is still not in effect.",
+                            "isx init carries on; check it with: sudo firewall-cmd --direct --get-all-rules");
+                    return List.of();
+                }
+                return plan.changes().stream().map(c -> new InitPlan.Privileged(step, c)).toList();
+            }
+        }
+        return List.of();
+    }
+
     void configureMitmProxy() {
 
         var gatewayIp = ProxyConfig.resolveGatewayIp(init.incus);
@@ -846,6 +884,9 @@ class HostSetup {
         // Under --no-sudo the script made the redirect, the sysctls and KSM (#2074)
         var redirected = true;
         if (init.noSudo()) {
+            // Unless the redirect is not where the gateway now is: then it is the person's again
+            var redirect = redirectLeftUnderNoSudo(gatewayIp);
+            if (!redirect.isEmpty()) throw new InitCommand.WaitingOnPerson(redirect);
             BuildOutput.note(DONE_BY_SCRIPT);
         } else {
             redirected = useUfw
@@ -1247,6 +1288,10 @@ class HostSetup {
         // admin init on every fresh daemon, leaving no default profile / no incusbr0 bridge.
         if (init.incus.hasStoragePool()) {
             BuildOutput.step("Incus already initialized.");
+        } else if (init.noSudo()) {
+            // The root script ran it, by its record, yet Incus has no pool: nothing below can work without one
+            throw new IllegalStateException("Incus has no storage pool, though the root script was to make one."
+                    + " Run '" + ADMIN_INIT + "' yourself, then '" + InitCommand.NO_SUDO_COMMAND + "' again.");
         } else {
             var exitCode = runHost("sudo", "incus", "admin", "init", "--minimal");
             if (exitCode == 0) {
@@ -1293,8 +1338,12 @@ class HostSetup {
         return BTRFS_FALLBACK;
     }
 
-    /** Where the root script looks for btrfs, in a user's PATH's order: bin before sbin. */
-    private static final String BTRFS_SEARCH = "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin";
+    /**
+     * Where the root script looks for btrfs: the root-owned system directories first, bin before
+     * sbin, and /usr/local last, so that a /usr/local handed to the user cannot decide the command
+     * the NOPASSWD rule lets run as root.
+     */
+    private static final String BTRFS_SEARCH = "/usr/bin:/usr/sbin:/bin:/sbin:/usr/local/bin:/usr/local/sbin";
 
     /** Where btrfs is taken to be when no {@code btrfs} is on the PATH. */
     private static final String BTRFS_FALLBACK = "/usr/sbin/btrfs";
@@ -1385,7 +1434,7 @@ class HostSetup {
         var delimiter = InitPlan.Change.delimiter(content);
         var lines = new ArrayList<String>();
         lines.add("btrfs=" + BTRFS_FALLBACK);
-        // A fixed search, as a user's PATH orders it (bin before sbin), never the PATH of this
+        // A fixed search, the root-owned system directories first and /usr/local last, never the PATH of this
         // shell: another shell's PATH would change the lines, and with them the script's record
         lines.add("path=" + Container.shellQuote(BTRFS_SEARCH));
         // Split on ':' without globbing; only absolute entries, since sudoers takes no relative command
@@ -1600,6 +1649,15 @@ class HostSetup {
         if (!cowProbe.listed()) return;
         var anyCow = cowProbe.poolName() != null;
 
+        if (!anyCow && init.noSudo()) {
+            // The script tolerates a failed create, as the run does; creating it again is root's
+            // The command the script ran, as the plan wrote it
+            var command = createCowPool(init.incus.hasApiExtension(STORAGE_CREATE_OPTIONS_EXTENSION)).command();
+            BuildOutput.warn("No copy-on-write storage pool: the root script could not create one.",
+                    "Clones and branches are full copies until there is one. Create it yourself:", command,
+                    "Run 'isx doctor' for why it failed.");
+            return;
+        }
         if (!anyCow) {
             BuildOutput.step("No copy-on-write storage pool detected.");
             var hostFs = CowPoolBacking.filesystemOf(CowPoolBacking.POOLS_DIR);
@@ -1648,15 +1706,22 @@ class HostSetup {
         }
     }
 
-    private void checkBridgeSubnet() {
+    /**
+     * The gateway the bridge had before this run moved it off a host route, or null when it did not:
+     * under {@code --no-sudo} the redirect is root's to move, so the MITM step hands it to the person.
+     */
+    private String movedFromGateway;
+
+    void checkBridgeSubnet() {
         BuildOutput.stepStart("Checking bridge subnet for VPN conflicts");
         try {
-            var result = BridgeSubnetCheck.detectAndFix(init.incus);
+            var result = BridgeSubnetCheck.detectAndFix(init.incus, init.hostRoutes());
             BuildOutput.stepDone();
             if (result.conflictDetected()) {
                 BuildOutput.step("Detected subnet conflict: bridge " + result.oldSubnet()
                         + " overlaps with route: " + result.conflictingRoute());
                 if (result.newSubnet() != null) {
+                    movedFromGateway = result.oldSubnet().substring(0, result.oldSubnet().indexOf('/'));
                     BuildOutput.step("Reconfigured bridge to " + result.newSubnet()
                             + " to avoid conflict.");
                     var migrated = InstanceNetwork.migrateAllInstancesToNewSubnet(init.incus);

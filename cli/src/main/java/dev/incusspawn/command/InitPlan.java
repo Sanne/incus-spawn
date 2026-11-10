@@ -375,7 +375,8 @@ final class InitPlan {
             // Done once nothing is left; else as it stood, less what the script made
             var assessment = left.isEmpty()
                     ? new Assessment(State.DONE, a.asks(), left, "Made by the root script, by its record in "
-                            + APPLIED_RECORD + "; only root can read it, so the plan did not check it.", a.checks())
+                            + APPLIED_RECORD + "; only root can read it, so the plan did not check it, and it does not"
+                            + " check the record against the host again: the check commands, if any, do.", a.checks())
                     // With nothing it could not check left, the step is no longer unknown: what is left only offers
                     : new Assessment(a.state() == State.UNKNOWN && left.stream().allMatch(Change::checked)
                             ? State.OPTIONAL : a.state(), a.asks(), left, a.note(), a.checks());

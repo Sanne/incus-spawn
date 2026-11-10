@@ -82,12 +82,14 @@ It then exits 75 and names the script.
 
 Read the script, run it as root with `sudo sh`, then run `isx init --no-sudo` again.
 The second run checks that each step took effect, then does the rest of the setup as you.
-A fresh host needs the script once.
+A fresh host needs the script once, unless the second run moves the bridge off a VPN's subnet.
 
 Some of what the script does only root can check afterwards, such as the btrfs sudoers rule.
 The script records what it ran in `/var/lib/isx/init-applied`, which the second run reads for those steps.
 `isx init --plan` reads it too, so it reports that work as done.
+
 Once nothing needs root any more, the second run removes the script.
+When the second run itself finds root work, such as a redirect to move after it moved the bridge off a VPN's subnet, it writes a new script and exits 75 again.
 
 A step isx cannot write as a script, such as a UFW firewall's rules, stops the run and names what to do yourself.
 On macOS `isx init` needs no administrator, so `--no-sudo` changes nothing there.

@@ -120,7 +120,12 @@ public final class BridgeSubnetCheck {
     }
 
     public static ConflictResult detectAndFix(IncusClient incus) {
-        var result = detect(incus);
+        return detectAndFix(incus, null);
+    }
+
+    /** {@link #detectAndFix(IncusClient)} against the given route lines, or the host's when {@code null}. */
+    public static ConflictResult detectAndFix(IncusClient incus, List<String> hostRoutes) {
+        var result = detect(incus, hostRoutes);
         if (result.newSubnet() != null) {
             incus.networkConfigSet(BridgeAddress.BRIDGE, "ipv4.address", result.newSubnet());
         }

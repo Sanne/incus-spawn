@@ -55,6 +55,7 @@ Other sandboxes for coding agents make it differently, and `docs/SANDBOXES.md`, 
   `isx init --no-sudo` (#2074) turns the plan's sudo changes into one root script for the person and runs nothing as root itself; a process-wide guard (`Privilege`) refuses any command that elevates.
   The script is the plan's `sudo_script`, so what the person reads is what the plan reported, and it records what it ran in `/var/lib/isx/init-applied` for the checks only root could make.
   One script serves a fresh host: the redirect reads the bridge's gateway as the script runs, rather than waiting for a second round trip after Incus exists.
+  A step that finds root work as it runs, such as the redirect of a bridge the run moved off a VPN's subnet, hands it over as a new script (`InitCommand.WaitingOnPerson`) rather than finishing on a proxy no container reaches; a script written but not yet run is handed over again until its record shows it ran.
   The Template Search Paths step uses `gh` to auto-detect the user's GitHub identity and offer to fork/clone `incus-spawn-templates` — every failure path (no gh, no auth, API error) degrades gracefully to the existing manual flow
 
 ## Where the design lives
