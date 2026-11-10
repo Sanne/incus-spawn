@@ -7,7 +7,7 @@
 # Incus runs that script through `incus exec` against a real sshd, so only this proves the probe
 # carries the keys.
 #
-# Checks, with herdr's own option set:
+# Checks, with herdr's own option set (its ConnectTimeout only where the start alias is timed):
 #   - a fresh branch is reachable by its name (HostKeyAlias), and by its address for a client that
 #     drops the alias and dials Hostname;
 #   - a key regenerated in the guest is refused until the next start pins it again;
@@ -45,11 +45,16 @@ check() {
     fi
 }
 
-# What herdr 0.9.5 passes on every connection, compiled in
+# What herdr 0.9.5 passes on every connection, compiled in, but for its ConnectTimeout=10, which
+# only the start alias's check keeps (#2119). The others are about host keys, and a branch's first
+# connection runs sshd-session for the first time: its copy-on-write files start with a cold page
+# cache, so on a disk the previous step left busy the banner can take longer than 10 s.
+HERDR_CONNECT_TIMEOUT=10
 strict_ssh() {
     local config="$1"; shift
-    timeout 30 ssh -F "$config" -o BatchMode=yes -o NumberOfPasswordPrompts=0 \
-        -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 "${TARGET:-$NAME}" true
+    timeout 90 ssh -F "$config" -o BatchMode=yes -o NumberOfPasswordPrompts=0 \
+        -o StrictHostKeyChecking=yes -o ConnectTimeout="${SSH_CONNECT_TIMEOUT:-60}" -o ConnectionAttempts=1 \
+        "${TARGET:-$NAME}" true
 }
 
 strict_by_name() { strict_ssh "$CONFIG"; }
@@ -71,7 +76,7 @@ strict_by_start_alias() {
         /^Host / { inblock = ($2 == n); if (inblock) { print "Host " n ".start.isx"; next } }
         inblock && /^ *Hostname / { next }
         inblock { sub(" ssh-proxy " n "$", " ssh-proxy --start " n); print }' "$CONFIG" > "$START_ALIAS"
-    grep -q "ssh-proxy --start $NAME\$" "$START_ALIAS" && TARGET="$NAME.start.isx" strict_ssh "$START_ALIAS" && running
+    grep -q "ssh-proxy --start $NAME\$" "$START_ALIAS" && TARGET="$NAME.start.isx" SSH_CONNECT_TIMEOUT=$HERDR_CONNECT_TIMEOUT strict_ssh "$START_ALIAS" && running
 }
 
 static_ip() { incus config get "$NAME" user.incus-spawn.static-ip; }
