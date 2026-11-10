@@ -78,6 +78,10 @@ If a reference clone, dissociation or full fsck fails, its partial output is dis
 Source removal, corruption or concurrent pruning therefore cannot publish an incomplete snapshot.
 A warm reuse requires a fresh authoritative advertisement showing the snapshot's one ref at the same ID in the same object format, plus a verified SHA-256 seal covering all cached repository files.
 Each branch or tag pin has a snapshot of its own, keyed by URL and pin, and is checked on every request.
+A pin's first preparation without a host checkout borrows from a sealed snapshot of another pin of the same URL, found by a URL-only family hash in the snapshot's directory name (#2050).
+That snapshot's one ref is the fetch's negotiation tip, so the remote sends only what the new pin adds.
+The non-thin repack after the fetch copies only the new pin's closure, so the other pin's history never widens what the guest receives.
+Snapshots share no packs: each counts in full against `git-cache.snapshot-max-mib`, and evicting one never damages another.
 No graph walk, user-checkout access or repack runs on a hit.
 Network-source preparation allows only HTTPS, SSH and Git network URLs and enforces the transport allowlist in Git, including after URL rewrites.
 Paths, file transports and arbitrary helpers cannot turn a template URL into a host filesystem read.

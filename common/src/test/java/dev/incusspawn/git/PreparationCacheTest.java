@@ -17,13 +17,13 @@ class PreparationCacheTest {
     @Test void snapshotsHaveOneGlobalBudgetAndOversizedEntriesAreNotRetained() throws Exception {
         var cache = new PreparationCache(root, new GitCacheConfig(20, Duration.ofDays(1)));
         try (var lease = cache.lease()) {
-            cache.publishSnapshot("first", staged(lease.path, "first", 12));
+            cache.publishSnapshot("first", "family", staged(lease.path, "first", 12));
             var old = PreparationGit.children(root.resolve("snapshots")).getFirst();
             Files.setLastModifiedTime(old, FileTime.fromMillis(System.currentTimeMillis() - 1000));
-            cache.publishSnapshot("second", staged(lease.path, "second", 12));
+            cache.publishSnapshot("second", "family", staged(lease.path, "second", 12));
             assertFalse(Files.exists(old));
             assertEquals(12, PreparationCache.size(root.resolve("snapshots")));
-            cache.publishSnapshot("too-large", staged(lease.path, "large", 21));
+            cache.publishSnapshot("too-large", "family", staged(lease.path, "large", 21));
             assertEquals(12, PreparationCache.size(root.resolve("snapshots")));
             assertEquals(1, PreparationGit.children(root.resolve("snapshots")).size());
         }
@@ -34,9 +34,9 @@ class PreparationCacheTest {
         var cache = new PreparationCache(root, new GitCacheConfig(1L << 20, Duration.ofDays(1)));
         try (var lease = cache.lease()) {
             assertEquals("Git snapshot (1.4 MiB) exceeds git-cache.snapshot-max-mib (1 MiB); it was used for this build but not kept",
-                    cache.publishSnapshot("repo", staged(lease.path, "over", (1 << 20) + (400 << 10))));
+                    cache.publishSnapshot("repo", "family", staged(lease.path, "over", (1 << 20) + (400 << 10))));
             assertEquals("Git snapshot (1.1 MiB) exceeds git-cache.snapshot-max-mib (1 MiB); it was used for this build but not kept",
-                    cache.publishSnapshot("repo", staged(lease.path, "one-byte-over", (1 << 20) + 1)));
+                    cache.publishSnapshot("repo", "family", staged(lease.path, "one-byte-over", (1 << 20) + 1)));
         }
     }
 
@@ -44,15 +44,15 @@ class PreparationCacheTest {
         // Two snapshots that each fit but not together evicted each other on every build, silently.
         var cache = new PreparationCache(root, new GitCacheConfig(1L << 20, Duration.ofDays(1)));
         try (var lease = cache.lease()) {
-            assertNull(cache.publishSnapshot("first", staged(lease.path, "first", 600 << 10)));
+            assertNull(cache.publishSnapshot("first", "family", staged(lease.path, "first", 600 << 10)));
             var first = PreparationGit.children(root.resolve("snapshots")).getFirst();
             Files.setLastModifiedTime(first, FileTime.fromMillis(System.currentTimeMillis() - 1000));
             assertEquals("Git snapshot kept, but it evicted 1 other recently used snapshot (0.6 MiB) to fit"
                     + " git-cache.snapshot-max-mib (1 MiB); raise it, or repositories built in turn are cloned and"
                     + " verified in full every time",
-                    cache.publishSnapshot("second", staged(lease.path, "second", 600 << 10)));
+                    cache.publishSnapshot("second", "family", staged(lease.path, "second", 600 << 10)));
             assertFalse(Files.exists(first));
-            assertNull(cache.publishSnapshot("second", staged(lease.path, "replacement", 600 << 10)),
+            assertNull(cache.publishSnapshot("second", "family", staged(lease.path, "replacement", 600 << 10)),
                     "replacing a repository's own snapshot evicts nothing else");
         }
     }
@@ -60,10 +60,10 @@ class PreparationCacheTest {
     @Test void evictingAnExpiredSnapshotIsNotReported() throws Exception {
         var cache = new PreparationCache(root, new GitCacheConfig(1L << 20, Duration.ofDays(1)));
         try (var lease = cache.lease()) {
-            cache.publishSnapshot("old", staged(lease.path, "old", 600 << 10));
+            cache.publishSnapshot("old", "family", staged(lease.path, "old", 600 << 10));
             var old = PreparationGit.children(root.resolve("snapshots")).getFirst();
             Files.setLastModifiedTime(old, FileTime.fromMillis(0));
-            assertNull(cache.publishSnapshot("new", staged(lease.path, "new", 600 << 10)));
+            assertNull(cache.publishSnapshot("new", "family", staged(lease.path, "new", 600 << 10)));
             assertFalse(Files.exists(old));
         }
     }
@@ -71,11 +71,11 @@ class PreparationCacheTest {
     @Test void anOversizedReplacementRetiresTheOldSnapshotWithoutInvalidatingReaders() throws Exception {
         var cache = new PreparationCache(root, new GitCacheConfig(20, Duration.ofDays(1)));
         try (var lease = cache.lease()) {
-            cache.publishSnapshot("repo", staged(lease.path, "old", 12));
+            cache.publishSnapshot("repo", "family", staged(lease.path, "old", 12));
             var pin = lease.path.resolve("pin");
             assertTrue(cache.snapshot("repo", pin));
             var oversized = staged(lease.path, "new", 21);
-            cache.publishSnapshot("repo", oversized);
+            cache.publishSnapshot("repo", "family", oversized);
             assertFalse(cache.snapshot("repo", lease.path.resolve("stale")));
             assertTrue(PreparationGit.children(root.resolve("snapshots")).isEmpty());
             assertEquals(12, Files.size(pin.resolve("data")), "a live reader still owns the old bytes");
@@ -86,7 +86,7 @@ class PreparationCacheTest {
     @Test void expiryAndAnAliasedCachePathCannotReapALiveLease() throws Exception {
         var cache = new PreparationCache(root, GitCacheConfig.DEFAULT);
         try (var lease = cache.lease()) {
-            cache.publishSnapshot("old", staged(lease.path, "old", 4));
+            cache.publishSnapshot("old", "family", staged(lease.path, "old", 4));
             var expired = PreparationGit.children(root.resolve("snapshots")).getFirst();
             Files.setLastModifiedTime(expired, FileTime.fromMillis(0));
             var alias = root.resolveSibling(root.getFileName() + "-alias");

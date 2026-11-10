@@ -118,12 +118,33 @@ final class PreparationCache {
     }
 
     /**
+     * Pin the most recently used snapshot of another pin of the same URL, {@code family}, and return its key, or
+     * null when there is none. It only supplies objects to a new pin's fetch, which copies its own ref's closure.
+     */
+    String sibling(String family, String key, Path destination) throws IOException {
+        try (var ignored = catalogue()) {
+            Path newest = null;
+            for (var path : children(root.resolve("snapshots"))) {
+                // Snapshots published before #2050 name no family, and none is ever borrowed.
+                var name = path.getFileName().toString();
+                int at = name.indexOf("-" + family + "-");
+                if (at <= 0 || name.substring(0, at).equals(key)) continue;
+                if (newest == null || modified(path) > modified(newest)) newest = path;
+            }
+            if (newest == null) return null;
+            copyTree(newest, destination, true);
+            var name = newest.getFileName().toString();
+            return name.substring(0, name.indexOf("-" + family + "-"));
+        }
+    }
+
+    /**
      * Null when the snapshot was kept for later builds without evicting another recently used one.
      * Otherwise the result says whether this snapshot or others were not kept, why, and which setting
      * to change: every later build of those repositories clones and verifies them in full again. A
      * snapshot that is not kept stays usable in {@code staged}.
      */
-    String publishSnapshot(String key, Path staged) throws IOException {
+    String publishSnapshot(String key, String family, Path staged) throws IOException {
         String notRetained = null;
         long bytes;
         if (policy.snapshotBytes() == 0 || policy.maxAge().isZero()) {
@@ -138,7 +159,8 @@ final class PreparationCache {
             var parent = Files.createDirectories(root.resolve("snapshots"));
             Path target = null;
             if (retain) {
-                target = parent.resolve(key + "-" + UUID.randomUUID());
+                // The family names the URL alone, so another pin's first preparation can borrow from it.
+                target = parent.resolve(key + "-" + family + "-" + UUID.randomUUID());
                 // Only complete directories appear in the catalogue. Staging shares the cache filesystem.
                 Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE);
                 touch(target);

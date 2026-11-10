@@ -243,7 +243,8 @@ public final class GitPreparation {
             phase.accept("Selecting Git reference");
             Reference reference = manifest == null ? null : new Reference(previousRepo, null);
             var tips = lease.path.resolve("reference-tips");
-            boolean retried = false;
+            var sibling = lease.path.resolve("sibling");
+            boolean retried = false, seededBySibling = false;
             if (reference == null) {
                 delete(previous);
                 if (request.checkout() != null) {
@@ -253,6 +254,10 @@ public final class GitPreparation {
                         if (Thread.currentThread().isInterrupted()) throw unavailable;
                         phase.accept("Host reference unavailable; cloning remote");
                     }
+                }
+                if (reference == null) {
+                    reference = siblingReference(key, family(request), sibling, tips);
+                    seededBySibling = reference != null;
                 }
             }
             elapsed(timings, "reference", start);
@@ -282,6 +287,7 @@ public final class GitPreparation {
                     // Discard every byte of the failed attempt and retry once with only the real remote.
                     delete(result);
                     reference = null;
+                    seededBySibling = false;
                     retried = true;
                     phase.accept("Retrying Git snapshot without reference");
                     cloneSnapshot(request.url(), advertised, lease.path, result, null, phase, timings);
@@ -289,8 +295,10 @@ public final class GitPreparation {
             }
             validatePin(result, request.branch());
             delete(previous);
+            delete(sibling);
             Files.deleteIfExists(tips);
             return publish(key, request, lease, staged, incremental ? "incremental clean snapshot"
+                    : seededBySibling ? "sibling-seeded clean snapshot"
                     : reference != null ? "reference-seeded clean snapshot"
                     : retried ? "new clean snapshot (reference retry)" : "new clean snapshot",
                     timings, hostTags, phase);
@@ -564,6 +572,11 @@ public final class GitPreparation {
         return hash(POLICY + "\n" + request.url() + "\n" + pin(request.branch()));
     }
 
+    /** What every pin of one URL shares: a new pin borrows objects from another's snapshot (#2050). */
+    private static String family(Request request) {
+        return hash(POLICY + "\n" + request.url());
+    }
+
     /** A requested branch or tag, with none and a blank one both the empty string: the remote's default branch. */
     private static String pin(String branch) {
         return branch == null || branch.isBlank() ? "" : branch;
@@ -588,7 +601,7 @@ public final class GitPreparation {
         phase.accept("Publishing Git snapshot");
         // The lease pins immutable owned files before publication can move/evict the staging tree.
         PreparationCache.copyTree(result, clean, true);
-        var notRetained = cache.publishSnapshot(key, staged);
+        var notRetained = cache.publishSnapshot(key, family(request), staged);
         delete(staged);
         elapsed(timings, "publish", start);
         return new Prepared(lease, clean, strategy, objectChecksums(manifest), timings, notRetained, request.branch(),
@@ -687,6 +700,32 @@ public final class GitPreparation {
     }
 
     private record Reference(Path repository, Path tips) {}
+
+    /**
+     * The sealed snapshot of another pin of the same URL, pinned into {@code destination}, or null. Its one ref
+     * is the fetch's negotiation tip, so the remote sends only what the new ref adds, and the non-thin repack
+     * after the fetch copies only the new ref's closure: the sibling's own history never widens the result.
+     */
+    private Reference siblingReference(String key, String family, Path destination, Path tips) throws IOException {
+        Map<String, String> manifest = null;
+        try {
+            var siblingKey = cache.sibling(family, key, destination);
+            if (siblingKey == null) return null;
+            manifest = readSnapshot(destination, siblingKey);
+        } catch (IOException invalid) {
+            // A sibling is only an optimization: a pin that fails or damaged cache bytes, which their own pin
+            // rebuilds, leave this preparation to clone the remote, never borrowing from them.
+            if (Thread.currentThread().isInterrupted()) throw invalid;
+        }
+        if (manifest != null) {
+            // Its one tip, as for a host checkout: a global alternateRefsCommand or prefix policy cannot hide it.
+            var repo = destination.resolve("repo.git");
+            Files.writeString(tips, git(repo, "for-each-ref", "--format=%(objectname)") + "\n");
+            return new Reference(repo, tips);
+        }
+        delete(destination);
+        return null;
+    }
 
     /** Read objects in place; only the matching remote's tracking tips become negotiation hints. */
     private static Reference hostReference(Path checkout, String url, Path tips) throws IOException {

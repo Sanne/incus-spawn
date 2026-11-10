@@ -1133,12 +1133,40 @@ class GitPreparationTest {
         }
     }
 
+    @Execution(CONCURRENT) @Test void aNewPinBorrowsAnotherPinsSnapshotWithoutWideningItsOwn() throws Exception {
+        commitBinary(remote, "only on main");
+        start();
+        try (var main = prepare(null, null)) { assertEquals("new clean snapshot", main.strategy()); }
+        // Only a fetch that sends the whole of stable's history reads this blob, which main's snapshot also holds.
+        var shared = git(remote, "rev-parse", "HEAD~2:isx.deb");
+        corruptLooseBlob(remote, shared);
+        try (var stable = prepare(null, "stable")) {
+            assertEquals("sibling-seeded clean snapshot", stable.strategy());
+            sameObjects(remote, stable.repository());
+            assertEquals(git(remote, "rev-parse", "stable"), git(stable.repository(), "rev-parse", "refs/heads/stable"));
+            assertFalse(Files.exists(stable.repository().resolve("objects/info/alternates")));
+        }
+        try (var stable = prepare(null, "stable")) { assertEquals("cached clean snapshot", stable.strategy()); }
+        assertEquals(2, PreparationGit.children(cache.resolve("snapshots")).size(), "each pin keeps its own snapshot");
+    }
+
+    @Execution(CONCURRENT) @Test void aDamagedSnapshotOfAnotherPinIsNeverBorrowed() throws Exception {
+        start();
+        try (var main = prepare(null, null)) { }
+        var snapshot = PreparationGit.children(cache.resolve("snapshots")).getFirst();
+        Files.writeString(snapshot.resolve("repo.git/description"), "changed after the seal");
+        try (var stable = prepare(null, "stable")) {
+            assertEquals("new clean snapshot", stable.strategy());
+            sameObjects(remote, stable.repository());
+        }
+    }
+
     @Execution(CONCURRENT) @Test void eachPinHasItsOwnSnapshotOfOnlyItsRef() throws Exception {
         start();
         try (var result = prepare(host, null)) { }
         for (var pin : List.of("stable", "v1", "main")) {
             try (var result = prepare(null, pin)) {
-                assertEquals("new clean snapshot", result.strategy());
+                assertEquals("sibling-seeded clean snapshot", result.strategy());
                 sameObjects(remote, result.repository());
             }
             try (var result = prepare(null, pin)) { assertEquals("cached clean snapshot", result.strategy()); }
