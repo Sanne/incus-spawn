@@ -5,6 +5,8 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.NoTerminalForShellException;
+import dev.incusspawn.incus.ShellSession;
+import dev.incusspawn.lifecycle.ZmxSocketForward;
 import dev.incusspawn.mcp.TaskJoin;
 import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.tool.ShellMenu;
@@ -32,6 +34,14 @@ public class ShellCommand extends BaseCommand {
             description = "Join a delegated task's agent conversation instead of opening a shell")
     boolean task;
 
+    @Option(name = "session",
+            description = "Enter this zmx or tmux session, created if missing, instead of the instance's default one")
+    String session;
+
+    @Option(name = "no-attach", hasValue = false,
+            description = "Open a plain login shell outside any zmx or tmux session")
+    boolean noAttach;
+
     @Argument(index = "1", paramLabel = "task-id", required = false,
             description = "With --task: which task (from task_status.join_command, or the list --task prints)")
     String taskId;
@@ -42,6 +52,8 @@ public class ShellCommand extends BaseCommand {
             BuildOutput.error("a task id needs --task.", "isx shell " + name + " --task " + taskId);
             return CommandResult.valueOf(1);
         }
+        var shellSession = shellSession(session, noAttach, task, BuildOutput.bound());
+        if (shellSession == null) return CommandResult.valueOf(1);
         // Refuse before starting the instance: without a terminal there is no shell to open.
         if (!IncusClient.hasTerminal()) throw new NoTerminalForShellException(name);
         var incus = RuntimeServices.incus();
@@ -61,10 +73,13 @@ public class ShellCommand extends BaseCommand {
         var prep = IncusClient.ShellPrep.fromConfig(incus, config);
         if (command != null) {
             prep = prep.withCommandOnly(command);
-        } else if (config.containsKey(Metadata.MCP_OWNER)) {
-            // Only an isx mcp instance can hold a delegated task: one guest read, for it alone.
-            var hint = hint(incus);
-            if (hint != null) BuildOutput.step(hint);
+        } else {
+            prep = prep.withSession(shellSession);
+            if (config.containsKey(Metadata.MCP_OWNER)) {
+                // Only an isx mcp instance can hold a delegated task: one guest read, for it alone.
+                var hint = hint(incus);
+                if (hint != null) BuildOutput.step(hint);
+            }
         }
 
         BuildOutput.step("Connecting to " + name);
@@ -75,9 +90,34 @@ public class ShellCommand extends BaseCommand {
                     .shellMenu(name, prep.templateName(), prep.workdir());
         }
         incus.interactiveShell(name, "agentuser", prep, menu);
+        // A session the shell made, as a new one the guest named, now has a socket to link
+        ZmxSocketForward.relinkAfterShell(name);
         // The guest said why on the terminal already; its exit status does not reach the host.
         if (joined != null && TaskJoin.refusedInGuest(incus, name, joined.id(), nonce)) return CommandResult.valueOf(1);
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * The session {@code --session} and {@code --no-attach} ask for (#2059), or null after saying
+     * why they cannot be had: checked before anything reaches Incus.
+     */
+    static ShellSession shellSession(String session, boolean noAttach, boolean task, Output out) {
+        if (session != null && noAttach) {
+            out.error("--session and --no-attach ask for opposite shells; give one of them.");
+            return null;
+        }
+        if (task && (session != null || noAttach)) {
+            out.error("--task joins the task's conversation, outside any session; it takes no --session or --no-attach.");
+            return null;
+        }
+        if (noAttach) return ShellSession.NONE;
+        if (session == null) return ShellSession.DEFAULT;
+        if (!ShellSession.isValidName(session)) {
+            out.error("'" + session + "' is not a session name.",
+                    "A session name is 1 to 32 letters, digits, '-' or '_', and does not start with '-'.");
+            return null;
+        }
+        return ShellSession.named(session);
     }
 
     /** The task {@code --task} names, or null after saying why there is none to join. */
