@@ -973,7 +973,7 @@ public class InitCommand extends BaseCommand {
                 "it as a systemd service means it starts automatically on",
                 "boot — otherwise you'll need to run 'isx proxy start'",
                 "before launching containers."},
-                () -> installed.set(completeWithProxyService(Prompts.console())), this::planProxyService);
+                () -> installed.set(completeWithProxyService(prompts())), this::planProxyService);
     }
 
     /** macOS's last step, as {@link #proxyServiceStep} is Linux's. */
@@ -984,7 +984,7 @@ public class InitCommand extends BaseCommand {
                 "reboots. Without this you'll need to manually run",
                 "'isx vm start' and 'isx proxy start' before launching",
                 "containers."},
-                () -> installed.set(completeWithMacOsServices(Prompts.console())), this::planMacOsServices);
+                () -> installed.set(completeWithMacOsServices(prompts())), this::planMacOsServices);
     }
 
     /** The macOS steps before Credential Setup, in order. */
@@ -1079,7 +1079,9 @@ public class InitCommand extends BaseCommand {
 
     /** Where init's questions read their answers, its credential and host steps' alike: the terminal, or null without one. */
     Prompts prompts() {
-        return Prompts.console();
+        // A terminal, never a console whose stdin is piped: that would answer a credential or an
+        // approval from whatever an agent pipes in (#2075; a JVM under -Djdk.console=jdk.internal.le)
+        return Prompts.terminal();
     }
 
     boolean hostHasCommand(String command) {
@@ -1280,7 +1282,7 @@ public class InitCommand extends BaseCommand {
     }
 
     private void setupMcp() {
-        var prompts = Prompts.console();
+        var prompts = prompts();
         if (prompts == null) {
             skipped.add("mcp");
             BuildOutput.step("Skipped: no console. Run '" + MCP_SETUP_COMMAND + "' at a terminal to set this up.");
@@ -1527,11 +1529,14 @@ public class InitCommand extends BaseCommand {
             offerTemplatesRepo();
         }
 
+        // --fork-templates answered the step once the templates it cloned are among the paths
+        var answers = searchPathAnswers == null && forkTemplates
+                && hasExistingTemplatesSearchPath(SpawnConfig.load().getSearchPaths()) ? List.<String>of() : searchPathAnswers;
         setupPathList(
                 SpawnConfig::getSearchPaths,
                 SpawnConfig::setSearchPaths,
                 "No search paths configured. You can add them later in ~/.config/incus-spawn/config.yaml",
-                "search-paths", searchPathAnswers, "--search-path");
+                "search-paths", answers, "--search-path");
     }
 
     static boolean hasExistingTemplatesSearchPath(java.util.List<String> searchPaths) {
@@ -1569,7 +1574,7 @@ public class InitCommand extends BaseCommand {
 
     private void offerTemplatesRepo() {
         var login = commandExists("gh") && commandExists("git") ? getGhLogin() : null;
-        var prompts = login == null ? null : Prompts.console();
+        var prompts = login == null ? null : prompts();
         if (prompts == null) {
             pointAt("For community templates, see (clone and add the local path):");
             return;

@@ -95,11 +95,20 @@ final class CowPoolBacking {
             var pb = new ProcessBuilder(command);
             pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")));
             pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
+            // Under a summary for a script, its stdout ('Storage pool cow created') goes to stderr (#2120)
+            var copied = StdoutOnStderr.pipesStdout(pb);
             var process = pb.start();
+            var copy = copied ? StdoutOnStderr.copyStdout(process) : null;
             var stderr = new String(process.getErrorStream().readAllBytes());
-            return new Attempt(process.waitFor(), stderr);
-        } catch (IOException | InterruptedException e) {
+            var exit = process.waitFor();
+            if (copy != null) copy.join();
+            return new Attempt(exit, stderr);
+        } catch (IOException e) {
             return new Attempt(1, "Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
+        } catch (InterruptedException e) {
+            // Whoever interrupted us decides what follows
+            Thread.currentThread().interrupt();
+            return new Attempt(1, "Interrupted while running: " + String.join(" ", command));
         }
     }
     /**

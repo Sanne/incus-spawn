@@ -48,6 +48,7 @@ A field `skipped` says that init skipped the step's question for want of a termi
 The last, `declined`, says the answer was no, given by you or by a flag such as `--no-service`.
 
 The run then exits 76 when it finished with a step only you can do, such as a credential, an approval or a step that needs root.
+A run that waits on the root script, exit 75, prints the summary too; a run that fails exits 1 and prints none.
 
 `isx init --plan` says what `isx init` would change on this host, and changes nothing.
 It asks no question, writes no file, never runs sudo and asks Incus only to read.
