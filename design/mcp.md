@@ -309,7 +309,11 @@ One that cannot be read, does not parse, or holds a key or value isx does not kn
 Unknown keys are refused rather than ignored because ignoring them drops a restriction in silence: a mistyped `max-instance: 2`, or the old section pasted with its `mcp:` line, would otherwise leave the defaults in force.
 Retired keys (`McpConfig.RETIRED`) are the one exception: they restricted nothing that still exists, so they load and are named instead.
 Values that were only checked on use (the summary model) are checked at load for the same reason, so a bad one stops every call rather than only the one that reads it.
-`isx init` is the only writer: it writes the file only when an approval changes, owner-only into a temporary file renamed over it (over a symlink's target, so a dotfiles link stays a link) (a session reading meanwhile sees one policy or the other, never a truncated file), and leaves an invalid one alone.
+`isx init`'s step is the only writer, run by `isx mcp setup` too: it writes the file only when an approval changes, owner-only into a temporary file renamed over it (over a symlink's target, so a dotfiles link stays a link) (a session reading meanwhile sees one policy or the other, never a truncated file), and leaves an invalid one alone.
+`isx mcp setup` runs that step alone (#2077), so an agent-driven install (#2072) can end by handing the person this one step instead of all of `isx init`.
+It needs stdin and stdout to be a terminal (`Prompts.terminal()`), stricter than init's console, so an agent cannot pipe its own answers in, and it takes no option naming a template.
+An agent with a shell can still do what its user can; the command only means the install path never asks an agent to approve anything.
+It is a subcommand of `isx mcp` because it sets up exactly what that server serves; bare `isx mcp`, which agents run, is unchanged.
 `host-routes:` stays in `config.yaml`: it is proxy routing that a controller without MCP may use, and its template list answers who may reach a service, not which templates an agent may create instances from, so neither list is derived from the other.
 The split organizes the configuration; it is not a new security boundary, since both files belong to the same host user.
 

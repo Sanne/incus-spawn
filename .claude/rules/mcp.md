@@ -204,11 +204,13 @@ The coordination playbook is the `coordinate` MCP prompt (`McpPrompt`, `prompts/
 `isx branch --mcp-client` then checks the endpoint from the guest, and that `~/.claude.json` or `~/.pi/agent/mcp.json` holds the entry (`ANY_CONFIG_HAS_ENTRY`; `McpClientCheck`, one exec, warns and never fails the branch; guest output through `OutputFormat.oneLine`).
 Every start path's bit is pinned both ways, `1` for a coordinator and `0` otherwise (`McpClientRegistrationStartTest`, `InstanceListingMcpCallerTest` for the TUI listing).
 
-**Set up by `isx init`.**
+**Set up by `isx init` or `isx mcp setup`.**
 The "Agent Access over MCP" step (`InitCommand.setupMcp`, default off, skipped without a host `claude` or a console) registers the server with `claude mcp add --scope user isx -- <isx> mcp` and asks, per template whose chain installs `claude`, `codex` or `pi`, whether to approve it.
 Templates approved by hand that it does not ask about are kept.
 Once registered with approved templates, a re-run asks one menu question instead (#1292): `t` runs the per-template questions, `n` prints how to remove it, Enter or end of input keeps everything.
 It names the templates installing `claude` that are not approved, so a new one is not missed.
+`isx mcp setup` (`McpCommand.Setup`, `InitCommand.setupMcpAlone`, #2077) runs this step alone; it needs `Prompts.terminal()` (stdin and stdout a terminal), takes no template option, and without one exits 1 having loaded and written nothing.
+Bare `isx mcp` stays the server; the write stays in `InitCommand`, so `McpNoWritePathTest` holds.
 Host calls (`claudeMcpRegistered`, `registerClaudeMcp`, `isxPath`, `templateBuilt`) are overridable seams; `McpInitFlowTest` drives it.
 It needs no `INIT_VERSION` bump: nothing on the host changes unless the user opts in.
 

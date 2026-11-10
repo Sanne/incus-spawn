@@ -1,6 +1,7 @@
 package dev.incusspawn.mcp;
 
 import dev.incusspawn.config.Jjq;
+import dev.incusspawn.config.McpScope;
 import dev.incusspawn.command.GuestProvisioning;
 import io.hyperfoil.tools.jjq.value.JqArray;
 import io.hyperfoil.tools.jjq.value.JqBoolean;
@@ -416,7 +417,7 @@ final class McpTools {
                 return ToolResult.text("This coordinator may use no template. " + note + " Only the user can change that.",
                         result.build());
             }
-            return ToolResult.text("No templates are approved for agents. " + TemplatePolicy.HOW_TO_APPROVE, result.build());
+            return ToolResult.text("No templates are approved for agents. " + McpScope.HOW_TO_APPROVE, result.build());
         }
         return ToolResult.json(result.build());
     }

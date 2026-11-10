@@ -102,6 +102,13 @@ public final class McpScope {
         return templates().contains(template);
     }
 
+    /** The command that approves templates, for a person at a terminal (#2077). */
+    public static final String SETUP_COMMAND = "isx mcp setup";
+
+    /** What an agent is told about approvals: a person's step, never one it can take (#2077). */
+    public static final String HOW_TO_APPROVE = "Only the user can approve templates, on the host: by running " + SETUP_COMMAND
+            + " at a terminal, or by listing them under templates in " + MCP_YAML + ".";
+
     /** Why {@code template} is out of this scope, with what to change; null when it is in. */
     public String explain(String template) {
         if (allows(template)) return null;
@@ -109,8 +116,7 @@ public final class McpScope {
         var named = "template '" + template + "'";
         if (coordinator == null) {
             return named + " is not approved for agents" + (approved.isEmpty() ? " (none are)." : "; approved: "
-                    + String.join(", ", approved) + ".") + " Only the user can approve templates, by listing them "
-                    + "under templates in " + MCP_YAML + ".";
+                    + String.join(", ", approved) + ".") + " " + HOW_TO_APPROVE;
         }
         if (denied != null) return "this coordinator controls no template: " + denied + ".";
         var inApproved = approved.contains(template);

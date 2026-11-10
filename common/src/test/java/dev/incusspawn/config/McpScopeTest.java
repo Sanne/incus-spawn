@@ -102,7 +102,8 @@ class McpScopeTest {
         assertEquals(APPROVED, scope.templates());
         assertEquals(List.of(), scope.mismatches());
         assertEquals("template 'tpl-c' is not approved for agents; approved: tpl-a, tpl-b. Only the user can approve"
-                + " templates, by listing them under templates in ~/.config/incus-spawn/mcp.yaml.", scope.explain("tpl-c"));
+                + " templates, on the host: by running isx mcp setup at a terminal, or by listing them under templates in"
+                + " ~/.config/incus-spawn/mcp.yaml.", scope.explain("tpl-c"));
     }
 
     @Test
