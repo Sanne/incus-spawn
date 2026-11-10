@@ -13,6 +13,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.net.StandardProtocolFamily;
+import java.net.UnixDomainSocketAddress;
+import java.nio.channels.ServerSocketChannel;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -497,5 +500,95 @@ class ZmxSocketForwardTest {
 
         assertFalse(daemon.instanceDevices(NAME).containsKey(DEVICE));
         assertTrue(out.warnings().getFirst().contains("which others can write to"), out.warnings().toString());
+    }
+
+    /** A real Unix socket at {@code path}, as zmx leaves one per session. */
+    private static void socket(Path path) throws IOException {
+        try (var channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
+            channel.bind(UnixDomainSocketAddress.of(path));
+        }
+    }
+
+    private Path sessionLink(String instance, String session) {
+        return zmxDir.resolve("isx-" + instance + "." + session);
+    }
+
+    /**
+     * Every session of an instance shows in host zmx, not only its default one (#2059): each socket
+     * gets {@code isx-<name>.<session>}, and only a socket with a name a shell could ask for.
+     */
+    @Test
+    void everySessionSocketIsLinkedBesideTheDefaultOne(@TempDir Path outside) throws IOException {
+        ZmxSocketForward.configure(incus, NAME, dirs, RecordingOutput.FAIL_ON_WARN);
+        socket(containerDir().resolve("isx"));
+        socket(containerDir().resolve("work"));
+        socket(containerDir().resolve("2"));
+        socket(containerDir().resolve("a.b"));
+        Files.writeString(containerDir().resolve("notes"), "not a socket");
+        socket(outside.resolve("elsewhere"));
+        Files.createSymbolicLink(containerDir().resolve("escape"), outside.resolve("elsewhere"));
+        Files.createDirectories(containerDir().resolve("logs"));
+
+        ZmxSocketForward.ensureSymlink(NAME, dirs, RecordingOutput.FAIL_ON_WARN);
+
+        assertEquals(sessionTarget(), Files.readSymbolicLink(symlink()));
+        assertEquals(containerDir().resolve("work"), Files.readSymbolicLink(sessionLink(NAME, "work")));
+        assertEquals(containerDir().resolve("2"), Files.readSymbolicLink(sessionLink(NAME, "2")));
+        for (var none : List.of("isx", "a.b", "notes", "escape", "logs")) {
+            assertFalse(Files.exists(sessionLink(NAME, none), LinkOption.NOFOLLOW_LINKS), none + " was linked");
+        }
+    }
+
+    /** A session that ended loses its link at the next shell; the default one keeps its own. */
+    @Test
+    void theLinkOfASessionThatEndedIsDropped() throws IOException {
+        ZmxSocketForward.configure(incus, NAME, dirs, RecordingOutput.FAIL_ON_WARN);
+        socket(containerDir().resolve("work"));
+        ZmxSocketForward.ensureSymlink(NAME, dirs, RecordingOutput.FAIL_ON_WARN);
+        assertTrue(Files.isSymbolicLink(sessionLink(NAME, "work")));
+
+        Files.delete(containerDir().resolve("work"));
+        ZmxSocketForward.ensureSymlink(NAME, dirs, RecordingOutput.FAIL_ON_WARN);
+
+        assertFalse(Files.exists(sessionLink(NAME, "work"), LinkOption.NOFOLLOW_LINKS));
+        assertTrue(Files.isSymbolicLink(symlink()));
+    }
+
+    /** The guest makes the sessions, so it cannot fill the host zmx dir with links. */
+    @Test
+    void sessionLinksAreBounded() throws IOException {
+        ZmxSocketForward.configure(incus, NAME, dirs, RecordingOutput.FAIL_ON_WARN);
+        for (int i = 0; i < ZmxSocketForward.MAX_SESSION_LINKS + 5; i++) socket(containerDir().resolve("s" + i));
+
+        ZmxSocketForward.ensureSymlink(NAME, dirs, RecordingOutput.FAIL_ON_WARN);
+
+        try (var links = Files.list(zmxDir)) {
+            assertEquals(ZmxSocketForward.MAX_SESSION_LINKS,
+                    links.filter(link -> link.getFileName().toString().startsWith("isx-" + NAME + ".")).count());
+        }
+    }
+
+    /**
+     * Destroy removes every session link of the instance, and none of another whose name starts
+     * the same: {@code demo-2} is not a session of {@code demo}.
+     */
+    @Test
+    void cleanupRemovesEverySessionLinkAndNoOtherInstances() throws IOException {
+        Files.createDirectories(containerDir());
+        Files.createSymbolicLink(symlink(), sessionTarget());
+        Files.createSymbolicLink(sessionLink(NAME, "work"), containerDir().resolve("work"));
+        Files.createSymbolicLink(sessionLink(NAME, "2"), containerDir().resolve("2"));
+        var other = Files.createSymbolicLink(zmxDir.resolve("isx-" + NAME + "-2"), dirs.instanceDir(NAME + "-2").resolve("isx"));
+        var othersSession = Files.createSymbolicLink(sessionLink(NAME + "-2", "work"), dirs.instanceDir(NAME + "-2").resolve("work"));
+
+        var out = new RecordingOutput();
+        ZmxSocketForward.cleanup(NAME, dirs, out);
+
+        assertEquals(List.of(), out.warnings());
+        assertFalse(Files.exists(symlink(), LinkOption.NOFOLLOW_LINKS));
+        assertFalse(Files.exists(sessionLink(NAME, "work"), LinkOption.NOFOLLOW_LINKS));
+        assertFalse(Files.exists(sessionLink(NAME, "2"), LinkOption.NOFOLLOW_LINKS));
+        assertTrue(Files.isSymbolicLink(other));
+        assertTrue(Files.isSymbolicLink(othersSession));
     }
 }
