@@ -639,6 +639,11 @@ class ArtifactCacheHandler {
         }
 
         private void resume() {
+            resume(true);
+        }
+
+        /** One attempt at the Range request; {@code resend} lets it make one more on a new request. */
+        private void resume(boolean resend) {
             if (failed) return;
             var from = first.request();
             var options = new RequestOptions()
@@ -649,32 +654,44 @@ class ArtifactCacheHandler {
                     .setConnectTimeout(resumeTimeoutMillis(Upstream.UPSTREAM_CONNECT_TIMEOUT_MILLIS));
             var headers = io.vertx.core.MultiMap.caseInsensitiveMultiMap().setAll(from.headers());
             var resumeAt = received;
-            upstream.requestWithAsyncDns(options).compose(req -> {
+            upstream.requestWithAsyncDns(options).onSuccess(req -> {
                 req.idleTimeout(resumeTimeoutMillis(idleMillis()));
                 req.headers().setAll(headers);
                 req.putHeader("Range", "bytes=" + resumeAt + "-");
                 // Only the same bytes may continue: a changed file comes back whole (200)
                 req.putHeader("If-Range", validator);
-                return req.send();
-            }).onSuccess(resp -> {
-                if (failed) {
-                    resp.request().reset();
-                } else if (resp.statusCode() == 206 && resumesAt(resp, resumeAt)) {
-                    attach(resp);
-                    resumeWhenWritable();
-                } else {
-                    resp.request().reset();
-                    if (resp.statusCode() >= 500 || resp.statusCode() == 429) {
-                        // An overloaded upstream, as a stall often is: tried again like a failed connect
-                        broken(new IOException("upstream answered " + resp.statusCode()), true);
+                req.send().onSuccess(resp -> resumed(resp, resumeAt)).onFailure(err -> {
+                    if (resend && !failed && Upstream.closedUnanswered(err)) {
+                        // A pooled connection upstream closed as the resume went out on it: not a
+                        // failed resume, so neither counted nor backed off (#2094, as #1923)
+                        ProxyLog.trace("Upstream closed resuming " + ref + ", sending again: " + err.getMessage());
+                        resume(false);
                         return;
                     }
-                    ProxyLog.warn("Could not resume " + ref + ": upstream answered " + resp.statusCode()
-                            + (resp.statusCode() == 206 ? " with another validator or range" : "")
-                            + " to a Range request");
-                    fail("Upstream stream error");
-                }
+                    broken(err, true);
+                });
             }).onFailure(err -> broken(err, true));
+        }
+
+        /** What the Range request was answered: the rest of this file, or why not. */
+        private void resumed(HttpClientResponse resp, long resumeAt) {
+            if (failed) {
+                resp.request().reset();
+            } else if (resp.statusCode() == 206 && resumesAt(resp, resumeAt)) {
+                attach(resp);
+                resumeWhenWritable();
+            } else {
+                resp.request().reset();
+                if (resp.statusCode() >= 500 || resp.statusCode() == 429) {
+                    // An overloaded upstream, as a stall often is: tried again like a failed connect
+                    broken(new IOException("upstream answered " + resp.statusCode()), true);
+                    return;
+                }
+                ProxyLog.warn("Could not resume " + ref + ": upstream answered " + resp.statusCode()
+                        + (resp.statusCode() == 206 ? " with another validator or range" : "")
+                        + " to a Range request");
+                fail("Upstream stream error");
+            }
         }
 
         /** Detached first: its reset reports back to its handlers, which must not take it as a new break. */
