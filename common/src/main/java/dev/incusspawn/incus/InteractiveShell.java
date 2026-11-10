@@ -74,27 +74,8 @@ final class InteractiveShell {
             var homeDir = "/home/" + user;
             var targetCwd = prep.workdir() != null ? prep.workdir() : homeDir;
 
-            String innerScript;
-            if (prep.shellCommand() != null && prep.autoAttachZmx()) {
-                var zmxCmd = zmxCommand(prep.shellCommand());
-                innerScript =
-                        "if command -v zmx >/dev/null 2>&1; then "
-                        + "exec zmx attach isx " + zmxCmd
-                        + "; fi; " + prep.shellCommand() + " || exec bash --login";
-            } else if (prep.shellCommand() != null) {
-                innerScript = prep.shellCommand() + " || exec bash --login";
-            } else if (prep.autoAttachTmux() && !inTmux) {
-                innerScript =
-                        "if command -v tmux >/dev/null 2>&1; then "
-                        + "infocmp \"$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; "
-                        + "exec tmux new-session -A -s isx; fi; exec bash --login";
-            } else if (prep.autoAttachZmx() && !inTmux) {
-                innerScript =
-                        "if command -v zmx >/dev/null 2>&1; then "
-                        + "exec zmx attach isx bash --login; fi; exec bash --login";
-            } else {
-                innerScript = "exec bash --login";
-            }
+            // Built once: each reconnect runs the same script, so a new session's key stays the same
+            var innerScript = innerScript(prep, inTmux, newSessionKey());
 
             // Wrap in su -l so the session goes through PAM, which calls
             // initgroups() (activating supplementary groups like incus-admin)
@@ -130,6 +111,95 @@ final class InteractiveShell {
             }
             BuildOutput.windowTitle("");
         }
+    }
+
+    /**
+     * What the login runs: an action's command, the default {@code isx} session of the
+     * multiplexer that auto-attaches, or the session {@link ShellPrep#session()} names (#2059).
+     * A session asked for by name or as new is entered even when the host terminal is in tmux,
+     * where the default one is skipped: the user asked for it. Its multiplexer is the one that
+     * auto-attaches, else zmx, else tmux, whichever the guest has; with neither the shell is a
+     * plain login shell, which is independent already.
+     */
+    static String innerScript(ShellPrep prep, boolean inTmux, String key) {
+        var session = prep.session();
+        if (prep.shellCommand() != null) {
+            // A template's shell command runs in the session asked for, or in none with --no-attach
+            var inZmx = switch (session.kind()) {
+                case DEFAULT -> prep.autoAttachZmx();
+                case NAMED, NEW -> true;
+                case NONE -> false;
+            };
+            if (!inZmx) return prep.shellCommand() + " || exec bash --login";
+            return "if command -v zmx >/dev/null 2>&1; then "
+                    + zmxAttach(session, zmxCommand(prep.shellCommand()), key)
+                    + "; fi; " + prep.shellCommand() + " || exec bash --login";
+        }
+        switch (session.kind()) {
+            case NONE -> {
+                return "exec bash --login";
+            }
+            case NAMED, NEW -> {
+                var zmx = "if command -v zmx >/dev/null 2>&1; then " + zmxAttach(session, "bash --login", key) + "; fi; ";
+                var tmux = "if command -v tmux >/dev/null 2>&1; then " + tmuxSession(session, key) + "; fi; ";
+                return (prep.autoAttachTmux() ? tmux + zmx : zmx + tmux) + "exec bash --login";
+            }
+            case DEFAULT -> { }
+        }
+        if (prep.autoAttachTmux() && !inTmux) {
+            return "if command -v tmux >/dev/null 2>&1; then "
+                    + TMUX_TERM + "exec tmux new-session -A -s isx; fi; exec bash --login";
+        }
+        if (prep.autoAttachZmx() && !inTmux) {
+            return "if command -v zmx >/dev/null 2>&1; then "
+                    + "exec zmx attach isx bash --login; fi; exec bash --login";
+        }
+        return "exec bash --login";
+    }
+
+    /** tmux refuses a {@code TERM} the guest has no terminfo for. */
+    private static final String TMUX_TERM = "infocmp \"$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; ";
+
+    /**
+     * What names one shell's new session across its reconnects: hex digits only. Not a secret, and
+     * no {@code Random} is held in a field, which the native image would bake in.
+     */
+    static String newSessionKey() {
+        return Long.toHexString(java.util.concurrent.ThreadLocalRandom.current().nextLong() | Long.MIN_VALUE);
+    }
+
+    /**
+     * {@code $n}: the session number this shell chose, read back on a reconnect so it re-enters the
+     * session it was in rather than a fresh one; else the first from 2 that {@code taken} (a test
+     * on {@code $n}) does not hold, kept under {@code key} in the guest's runtime directory.
+     */
+    private static String firstFree(String taken, String key) {
+        return "f=\"${XDG_RUNTIME_DIR:-/tmp}/isx-session-" + key + "\"; n=; "
+                + "[ -r \"$f\" ] && read -r n < \"$f\"; "
+                + "if [ -z \"$n\" ]; then n=2; while " + taken + "; do n=$((n+1)); done; "
+                + "echo \"$n\" > \"$f\"; fi; ";
+    }
+
+    /**
+     * {@code command} in {@code session} of zmx: the default {@code isx}, a named or a new one. A
+     * name is {@link ShellSession#NAME}, so needs no quoting.
+     */
+    private static String zmxAttach(ShellSession session, String command, String key) {
+        return switch (session.kind()) {
+            case NAMED -> "exec zmx attach " + session.name() + " " + command;
+            case NEW -> firstFree("zmx list --short 2>/dev/null | grep -qxF \"$n\"", key)
+                    + "exec zmx attach \"$n\" " + command;
+            case DEFAULT, NONE -> "exec zmx attach isx " + command;
+        };
+    }
+
+    /** {@code session}, a named or new one, entered in tmux; {@code =} matches a session name exactly. */
+    private static String tmuxSession(ShellSession session, String key) {
+        if (session.kind() == ShellSession.Kind.NAMED) {
+            return TMUX_TERM + "exec tmux new-session -A -s " + session.name();
+        }
+        return firstFree("tmux has-session -t \"=$n\" 2>/dev/null", key)
+                + TMUX_TERM + "exec tmux new-session -A -s \"$n\"";
     }
 
     /** One connection to the guest's PTY: true when it was lost after the session ran, false when the session ended. */

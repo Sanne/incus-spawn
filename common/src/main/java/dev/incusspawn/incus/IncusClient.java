@@ -574,11 +574,27 @@ public class IncusClient {
     public record ShellPrep(String workdir, String shellCommand,
                             boolean autoAttachTmux, boolean autoAttachZmx,
                             String subnetDiagnostic, boolean terminfoHandled,
-                            String templateName) {
+                            String templateName, ShellSession session) {
+
+        public ShellPrep {
+            if (session == null) session = ShellSession.DEFAULT;
+        }
+
+        public ShellPrep(String workdir, String shellCommand, boolean autoAttachTmux, boolean autoAttachZmx,
+                         String subnetDiagnostic, boolean terminfoHandled, String templateName) {
+            this(workdir, shellCommand, autoAttachTmux, autoAttachZmx, subnetDiagnostic, terminfoHandled,
+                    templateName, ShellSession.DEFAULT);
+        }
 
         public ShellPrep withActionCommand(String command) {
             return new ShellPrep(workdir, command, false, autoAttachZmx,
                     subnetDiagnostic, terminfoHandled, templateName);
+        }
+
+        /** The login shell in {@code session} instead of the instance's default one (#2059). */
+        public ShellPrep withSession(ShellSession session) {
+            return new ShellPrep(workdir, shellCommand, autoAttachTmux, autoAttachZmx,
+                    subnetDiagnostic, terminfoHandled, templateName, session);
         }
 
         /**
