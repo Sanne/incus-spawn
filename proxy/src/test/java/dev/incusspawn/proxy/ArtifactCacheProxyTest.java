@@ -161,6 +161,12 @@ class ArtifactCacheProxyTest {
     static volatile boolean cutBeforeBody;
     /** When set, a cut GET is not left stalled: the rest follows after this pause. */
     static volatile long cutPauseMs;
+    /**
+     * Range requests left to drop by closing their connection unanswered, as a server does whose
+     * keep-alive timeout fired just as the request reached it; counted in {@link #rangesDropped}.
+     */
+    static final AtomicInteger rangesToDrop = new AtomicInteger();
+    static final AtomicInteger rangesDropped = new AtomicInteger();
     /** Range requests left to answer 503, like an overloaded CDN. */
     static final AtomicInteger rangesToRefuse = new AtomicInteger();
     /** Error answers (4xx, 5xx) left to stall halfway through their body. */
@@ -240,6 +246,11 @@ class ArtifactCacheProxyTest {
             }
         }
         if (req.method() == HttpMethod.GET && hold(getsToIgnore, req)) {
+            return;
+        }
+        if (req.getHeader("Range") != null && rangesToDrop.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+            rangesDropped.incrementAndGet();
+            req.connection().close();
             return;
         }
         var delay = req.method() == HttpMethod.GET ? nextGetDelayMs : 0;
@@ -401,6 +412,8 @@ class ArtifactCacheProxyTest {
         cutBeforeBody = false;
         cutPauseMs = 0;
         rangesToRefuse.set(0);
+        rangesToDrop.set(0);
+        rangesDropped.set(0);
         proxy.artifactCache.downloadIdleSeconds = 20;
         proxy.upstream.clientSilenceBudgetSeconds = 110;
         proxy.artifactCache.maxBackgroundConfirmations = 16;
@@ -1319,6 +1332,32 @@ class ArtifactCacheProxyTest {
         assertEquals(content, get(CENTRAL, JAR).text(), "the client sees one unbroken download");
         assertEquals(2, rangesAsked.size(), rangesAsked.toString());
         awaitFile(cached(CENTRAL, JAR), content);
+    }
+
+    @Test
+    void resumeWhoseConnectionClosesUnderItIsSentAgainWithoutCountingAsAFailedResume() throws Exception {
+        // Its connection returns to the pool (#2087), and a server with a shorter keep-alive than
+        // the pool's may close it just as the resume goes out on it (#2094). Sent again at once,
+        // that costs no resume: of three dropped in a row, only the one dropped again on its resend
+        // counts, so it still finishes, where counted as failed resumes they would use up all three.
+        var content = publishCutJar(false);
+        rangesToDrop.set(3);
+
+        assertEquals(content, get(CENTRAL, JAR).text(), "the client sees one unbroken download");
+        assertEquals(3, rangesDropped.get());
+        assertEquals(1, rangesAsked.size(), rangesAsked.toString());
+        awaitFile(cached(CENTRAL, JAR), content);
+    }
+
+    @Test
+    void resumeIsSentAgainOnlyOnce() throws Exception {
+        // An upstream that closes every connection under a Range: each of the three resumes is
+        // sent twice, never more, and then the download gives up
+        publishCutJar(false);
+        rangesToDrop.set(Integer.MAX_VALUE);
+
+        assertDownloadFails();
+        assertEquals(6, rangesDropped.get());
     }
 
     @Test
