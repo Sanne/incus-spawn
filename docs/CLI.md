@@ -24,11 +24,16 @@ isx init [--plan [--format=table|plain|json]]
 ```
 
 `isx init --plan` says what `isx init` would change on this host, and changes nothing.
-It asks no question, writes no file and asks Incus only to read.
-Its only sudo is `sudo -n -l`, which lists your privileges and never asks for a password.
+It asks no question, writes no file, never runs sudo and asks Incus only to read.
 On macOS it does not start the VM, so what Incus holds stays unknown while the VM is stopped.
 
 On Linux, `isx init` itself starts with `sudo -v`, so running it needs sudo even when every step is done.
+
+Some of what init checks only root can read, such as the btrfs sudoers rule.
+Firewall rules are read without sudo where the host's polkit policy allows it or polkit is not installed, and never in a way that asks for a password.
+
+The plan reports anything it could not read as `unknown`, saying what it skipped and why.
+Its `check_commands` are the sudo commands you run to check it yourself.
 
 The plan lists every step init would take, in its order, with what it is for and its state:
 
@@ -37,7 +42,7 @@ The plan lists every step init would take, in its order, with what it is for and
 | `done` | Nothing left to change |
 | `pending` | Init changes something here |
 | `optional` | Init only offers a change, which you may decline |
-| `unknown` | Init would change what the plan cannot read without sudo, such as firewall rules |
+| `unknown` | Not checked: only root can read it here, or the plan could not read it, such as when Incus does not answer |
 
 Each step also says who must do what is left of it:
 
@@ -63,6 +68,7 @@ With `--format=json` each step is an object with these fields, in order:
 | `files` | The files those changes write |
 | `note` | Why a step is unknown, or what else to know, or `null` |
 | `purpose` | What the step is for |
+| `check_commands` | For what the plan did not check, the commands you run with sudo to check it |
 
 `plain` prints the same fields, one step per line, as the formats below describe.
 
@@ -855,7 +861,7 @@ The fields of each command, in order:
 
 | Command | Fields |
 |---------|--------|
-| `isx init --plan` | one record per step: `step`, `title`, `state`, `who`, `asks`, `changes`, `commands`, `sudo_commands`, `files`, `note`, `purpose` ([`isx init`](#isx-init) says what they mean) |
+| `isx init --plan` | one record per step: `step`, `title`, `state`, `who`, `asks`, `changes`, `commands`, `sudo_commands`, `files`, `note`, `purpose`, `check_commands` ([`isx init`](#isx-init) says what they mean) |
 | `isx templates` | `name`, `parent`, `source`, `description`, `built`, `built_at`, `version_outdated`, `definition_changed`, `parent_rebuilt` |
 | `isx tools list` | `name`, `source`, `description` |
 | `isx tools show <tool>` | `name`, `description`, `source`, `feature`, `requires`, `packages`, `parameters`, `actions` (labels), `downloads` (URLs), `proxy_domains` |

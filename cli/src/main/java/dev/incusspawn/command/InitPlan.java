@@ -79,9 +79,23 @@ final class InitPlan {
      * A step's standing on this host: its state, whether the run asks a person a question there,
      * what it would change and a note on why, such as what could not be read.
      */
-    record Assessment(State state, boolean asks, List<Change> changes, String note) {
+    record Assessment(State state, boolean asks, List<Change> changes, String note, List<String> checks) {
         Assessment {
             changes = List.copyOf(changes);
+            checks = List.copyOf(checks);
+        }
+
+        Assessment(State state, boolean asks, List<Change> changes, String note) {
+            this(state, asks, changes, note, List.of());
+        }
+
+        /**
+         * What the plan did not check because only root can read it (Sanne, #2091): unknown, with
+         * {@code why} saying what was skipped and why, the change the run may make there, and the
+         * commands a person runs, with sudo, to check it themselves.
+         */
+        static Assessment notChecked(String why, Change change, List<String> checks) {
+            return new Assessment(State.UNKNOWN, false, List.of(change), why, checks);
         }
 
         static Assessment done() {
@@ -102,11 +116,11 @@ final class InitPlan {
         }
 
         Assessment asking() {
-            return new Assessment(state, true, changes, note);
+            return new Assessment(state, true, changes, note, checks);
         }
 
         Assessment noting(String note) {
-            return new Assessment(state, asks, changes, note);
+            return new Assessment(state, asks, changes, note, checks);
         }
 
         /** Who must make what is left: the most any change needs, nobody when nothing is left. */
@@ -120,34 +134,40 @@ final class InitPlan {
     record Entry(String step, String title, String purpose, Assessment assessment) {}
 
     /**
-     * Combines the standings of a step's parts: unknown when any part is, else pending when any
-     * part changes something, else optional when one only offers, else done. Every part's changes
-     * and notes are kept, so an unknown part does not hide what the others already know.
+     * Combines the standings of a step's parts: pending when any part certainly changes something,
+     * else unknown when any part was not checked, else optional when one only offers, else done.
+     * Every part's changes, notes and checks are kept, so neither hides what the other knows.
      */
     static Assessment combine(List<Assessment> parts) {
         var changes = new ArrayList<Change>();
+        var checks = new LinkedHashSet<String>();
         var notes = new LinkedHashSet<String>();
         var asks = false;
         var state = State.DONE;
         for (var part : parts) {
             changes.addAll(part.changes());
+            checks.addAll(part.checks());
             if (part.note() != null) notes.add(part.note());
             asks |= part.asks();
             state = worse(state, part.state());
         }
-        return new Assessment(state, asks, changes, notes.isEmpty() ? null : String.join(" ", notes));
+        return new Assessment(state, asks, changes, notes.isEmpty() ? null : String.join(" ", notes), List.copyOf(checks));
     }
 
     private static State worse(State a, State b) {
         return rank(a) >= rank(b) ? a : b;
     }
 
+    /**
+     * Pending outranks unknown: a step with work it will certainly do reads as to do, and what it
+     * could not check stays in its note and checks, so neither hides the other.
+     */
     private static int rank(State state) {
         return switch (state) {
             case DONE -> 0;
             case OPTIONAL -> 1;
-            case PENDING -> 2;
-            case UNKNOWN -> 3;
+            case UNKNOWN -> 2;
+            case PENDING -> 3;
         };
     }
 
@@ -155,7 +175,8 @@ final class InitPlan {
      * The fields of {@code isx init --plan --format=plain|json}, in order: add to the end, never
      * rename, remove or reorder. {@code changes}, {@code commands} and {@code files} list each of
      * the step's changes, the commands they run and the files they write; {@code sudo_commands}
-     * is the part of {@code commands} a person runs with sudo.
+     * is the part of {@code commands} a person runs with sudo. {@code check_commands} are what a
+     * person runs, with sudo, to check what the plan did not: it never runs sudo itself.
      */
     static Map<String, Object> record(Entry entry) {
         var a = entry.assessment();
@@ -172,6 +193,7 @@ final class InitPlan {
         record.put("files", a.changes().stream().map(Change::file).filter(Objects::nonNull).distinct().toList());
         record.put("note", a.note());
         record.put("purpose", entry.purpose());
+        record.put("check_commands", a.checks());
         return record;
     }
 
@@ -190,7 +212,9 @@ final class InitPlan {
             case DONE -> "done";
             case PENDING -> "to do, " + whoLabel(a.who());
             case OPTIONAL -> "optional, " + whoLabel(a.who());
-            case UNKNOWN -> a.changes().isEmpty() ? "unknown" : "unknown, " + whoLabel(a.who());
+            case UNKNOWN -> a.checks().isEmpty()
+                    ? (a.changes().isEmpty() ? "unknown" : "unknown, " + whoLabel(a.who()))
+                    : "not checked: it needs root";
         };
     }
 
@@ -218,6 +242,8 @@ final class InitPlan {
                 if (change.file() != null) line(out, "      writes " + change.file());
             }
             if (a.note() != null) line(out, "    " + a.note());
+            if (!a.checks().isEmpty()) line(out, "    To check it yourself:");
+            for (var check : a.checks()) line(out, "      $ " + check);
         }
         var left = entries.stream().filter(e -> e.assessment().state() == State.PENDING).count();
         var unknown = entries.stream().filter(e -> e.assessment().state() == State.UNKNOWN).count();

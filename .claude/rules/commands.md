@@ -185,7 +185,9 @@ A step that runs several commands runs each through `ran()`, which names the one
 `InitStepOutputTest` pins all three; `InitFirewallOutputTest` pins the firewall steps.
 
 **`isx init --plan`** (#2073) lists the same `InitStep`s (`planSteps`, in the run's order, with the unnumbered dependencies or VM, and the git remote helper), each assessed by its planner.
-A planner only reads: no sudo (`query` refuses it, but for `sudo -n -l`, which lists the btrfs rule's privileges without a password), no prompt, Incus GETs alone, and on macOS no VM start.
+A planner only reads: no sudo in any form (`query` refuses it; Sanne on #2091), no prompt, Incus GETs alone, and on macOS no VM start.
+What only root can read is `InitPlan.Assessment.notChecked`: a note saying what was skipped and why, the change the run may make, and the sudo commands a person runs to check it (`check_commands`).
+firewalld is read without sudo only where `pkcheck` grants its read actions without interaction (or polkit is absent), so no agent shows a password dialog; the btrfs sudoers rule is read only when its file is readable.
 It never runs a command that starts something: the MCP step reads Claude Code's `~/.claude.json` (`claudeMcpRegisteredInConfig`), since `claude mcp get` starts `isx mcp`, whose orphan sweep stops and destroys instances.
 It shares its commands and checks with the step's run, as constants or helpers both call, so the two cannot drift; `InitPlanTest` runs both on the same fake host and compares the commands.
 A step is `done`, `pending`, `optional` (it only offers) or `unknown` (unreadable without sudo), and names who must act: `none`, `sudo`, `secret` or `approval`.

@@ -1615,11 +1615,10 @@ public class InitCommand extends BaseCommand {
 
     /**
      * Runs a host command the plan reads from, with no input, so it can never ask anything. Never
-     * through sudo, but for {@code sudo -n -l}, which lists privileges and cannot ask for a password.
+     * through sudo, in any form (Sanne on #2091): what only root can read is reported as not checked.
      */
     Query query(String... command) {
-        if (command[0].equals("sudo")
-                && !(command.length > 2 && command[1].equals("-n") && command[2].equals("-l"))) {
+        if (command[0].equals("sudo")) {
             throw new IllegalArgumentException("the plan never runs sudo: " + String.join(" ", command));
         }
         try {
@@ -1639,10 +1638,9 @@ public class InitCommand extends BaseCommand {
 
     /**
      * Whether polkit grants this user {@code action} as it stands, asked without interaction so
-     * that no agent shows a password dialog; false where {@code pkcheck} is missing.
+     * that no agent shows a password dialog. Asked only where {@code pkcheck} is installed.
      */
     boolean polkitAllows(String action) {
-        if (!hostHasCommand("pkcheck")) return false;
         return query("pkcheck", "--action-id", action, "--process", String.valueOf(ProcessHandle.current().pid()))
                 .exitCode() == 0;
     }

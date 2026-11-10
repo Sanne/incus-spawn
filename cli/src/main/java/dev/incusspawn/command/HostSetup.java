@@ -309,7 +309,13 @@ class HostSetup {
      * run asks it through sudo, which the plan never uses.
      */
     private String firewalldRead(String[] command) {
-        if (!FIREWALLD_READS.stream().allMatch(init::polkitAllows)) return null;
+        // Where polkit is installed it is asked first, without interaction; without it no agent can ask.
+        // Installed without pkcheck it cannot be asked, so the rules are not read.
+        if (init.hostHasCommand("pkcheck")) {
+            if (!FIREWALLD_READS.stream().allMatch(init::polkitAllows)) return null;
+        } else if (Files.isDirectory(init.hostFile(POLKIT_ACTIONS))) {
+            return null;
+        }
         var result = init.query(command);
         return result.exitCode() == 0 ? result.output() : null;
     }
@@ -319,21 +325,30 @@ class HostSetup {
      * grants them to every user; its server policy wants an administrator, which a polkit agent
      * would ask for in a dialog, so the plan asks polkit first, without interaction.
      */
+    /** Where polkit keeps its actions: there whenever polkit is installed. */
+    private static final String POLKIT_ACTIONS = "/usr/share/polkit-1/actions";
+
     private static final List<String> FIREWALLD_READS = List.of(
             "org.fedoraproject.FirewallD1.config.info", "org.fedoraproject.FirewallD1.direct.info");
 
     /**
-     * A step whose rules only sudo can read: unknown, with the change it may make, which needs
-     * sudo, so a person knows who must look.
+     * Rules only root can read here: not checked, with what the run may change there, which needs
+     * sudo, and the reads a person runs to check them (Sanne on #2091: say what is skipped and why).
      */
-    private static InitPlan.Assessment unreadable(String why, String what) {
-        return new InitPlan.Assessment(InitPlan.State.UNKNOWN, false, List.of(InitPlan.Change.sudo(what, null)), why);
+    private static InitPlan.Assessment unreadable(String why, String what, List<String> checks) {
+        return InitPlan.Assessment.notChecked(why, InitPlan.Change.sudo(what, null), checks);
     }
 
-    private static final String FIREWALLD_UNREADABLE =
-            "firewalld does not let this user read its rules without sudo, so the plan cannot tell which are missing.";
-    private static final String UFW_UNREADABLE =
-            "/etc/ufw/before.rules can be read only with sudo, so the plan cannot tell which rules are missing.";
+    private static final String FIREWALLD_UNREADABLE = "Not checked: firewalld's policy on this host lets only an"
+            + " administrator read its rules, and the plan never runs sudo or raises a password dialog."
+            + " isx init reads them with sudo and adds those missing.";
+    private static final String UFW_UNREADABLE = "Not checked: only root can read /etc/ufw/before.rules, and the plan"
+            + " never runs sudo. isx init reads it with sudo and adds the rules missing.";
+    /** The reads the run makes with sudo, for a person to make the same check. */
+    private static final List<String> FIREWALLD_CHECKS = List.of(
+            String.join(" ", sudo(FWD_LIST_TRUSTED)), String.join(" ", sudo(FWD_LIST_DIRECT)));
+    private static final List<String> FIREWALLD_REDIRECT_CHECKS = List.of(String.join(" ", sudo(FWD_LIST_DIRECT)));
+    private static final List<String> UFW_CHECKS = List.of("sudo cat " + UfwCheck.BEFORE_RULES);
 
     /**
      * What {@link #configureFirewall} would change, as {@link FirewallDetector} chooses the
@@ -354,8 +369,11 @@ class HostSetup {
                 parts.add(firewalldRuleChanges("", "")
                         .noting("firewalld is not running, so its rules cannot be read; init adds those missing once it is."));
             }
-            case DetectionResult.UseFirewalld fwd ->
-                    parts.add(firewalldRuleChanges(firewalldRead(FWD_LIST_TRUSTED), firewalldRead(FWD_LIST_DIRECT)));
+            case DetectionResult.UseFirewalld fwd -> {
+                // One listing it will not show is enough to leave the rules unchecked: the other is not asked
+                var trusted = firewalldRead(FWD_LIST_TRUSTED);
+                parts.add(firewalldRuleChanges(trusted, trusted == null ? null : firewalldRead(FWD_LIST_DIRECT)));
+            }
             case DetectionResult.UseUfw u -> parts.add(planUfw());
             case DetectionResult.NeitherInstalled n -> {
                 var install = installCommand(init::hostHasCommand, "firewalld");
@@ -380,7 +398,7 @@ class HostSetup {
      * firewalld listed: null when it would not answer, and empty for one with none of them yet.
      */
     private InitPlan.Assessment firewalldRuleChanges(String trustedZone, String directRules) {
-        if (trustedZone == null || directRules == null) return unreadable(FIREWALLD_UNREADABLE, "Add the firewall rules that are missing, if any");
+        if (trustedZone == null || directRules == null) return unreadable(FIREWALLD_UNREADABLE, "Add the firewall rules that are missing, if any", FIREWALLD_CHECKS);
         var changes = new ArrayList<InitPlan.Change>();
         if (!trustedZone.contains("incusbr0")) changes.add(sudoChange("Add incusbr0 to the trusted zone", FWD_TRUST_BRIDGE));
         if (!trustedZone.contains("masquerade: yes")) changes.add(sudoChange("Enable masquerading (NAT) in the trusted zone", FWD_MASQUERADE));
@@ -397,7 +415,7 @@ class HostSetup {
     /** What {@link #configureUfw} would change, when {@code before.rules} can be read without sudo. */
     private InitPlan.Assessment planUfw() {
         var beforeRules = readIfReadable(init.hostFile(UfwCheck.BEFORE_RULES.toString()));
-        if (beforeRules == null) return unreadable(UFW_UNREADABLE, "Add the firewall rules that are missing, if any");
+        if (beforeRules == null) return unreadable(UFW_UNREADABLE, "Add the firewall rules that are missing, if any", UFW_CHECKS);
         String subnet;
         try {
             subnet = CidrUtils.deriveSubnet(ProxyConfig.resolveGatewayIp(init.incus));
@@ -847,7 +865,7 @@ class HostSetup {
 
     /** What {@link #configureMitmProxyFirewalld} would change, from rules read without sudo; null when unreadable. */
     InitPlan.Assessment planRedirectFirewalld(String gatewayIp, String rulesOutput) {
-        if (rulesOutput == null) return unreadable(FIREWALLD_UNREADABLE, "Add the redirect to the proxy, if it is missing");
+        if (rulesOutput == null) return unreadable(FIREWALLD_UNREADABLE, "Add the redirect to the proxy, if it is missing", FIREWALLD_REDIRECT_CHECKS);
         if (FirewalldCheck.isPreRoutingRulePresent(rulesOutput, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp)) {
             return InitPlan.Assessment.done();
         }
@@ -865,7 +883,7 @@ class HostSetup {
     /** What {@link #configureMitmProxyUfw} would change, when {@code before.rules} can be read without sudo. */
     private InitPlan.Assessment planRedirectUfw(String gatewayIp) {
         var beforeRules = readIfReadable(init.hostFile(UfwCheck.BEFORE_RULES.toString()));
-        if (beforeRules == null) return unreadable(UFW_UNREADABLE, "Add the redirect to the proxy, if it is missing");
+        if (beforeRules == null) return unreadable(UFW_UNREADABLE, "Add the redirect to the proxy, if it is missing", UFW_CHECKS);
         if (UfwCheck.hasPreRoutingRedirect(beforeRules, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp)) {
             return InitPlan.Assessment.done();
         }
@@ -1193,19 +1211,21 @@ class HostSetup {
     }
 
     /**
-     * Whether the btrfs rule is in place for {@code pool}, read as a user may. The file itself is
-     * {@code 0440 root}, so unless it can be read, the rule is looked for among what
-     * {@code sudo -n -l} lists: that needs no password for a user with a {@code NOPASSWD} rule,
-     * never asks for one and runs nothing as root. The rule's own line is looked for, not whether
-     * its commands are permitted, which a broader rule such as {@code NOPASSWD: ALL} also grants.
-     * The run rewrites a rule it cannot read, to the same text.
+     * Whether the btrfs rule is in place for {@code pool}, or null when it was not checked: the file
+     * is {@code 0440 root}, and the plan never runs sudo to read it (Sanne on #2091), so it says so
+     * instead ({@link #btrfsRuleNotChecked}). The run rewrites a rule it cannot read, to the same text.
      */
-    boolean btrfsUsageGranted(String pool) {
+    Boolean btrfsUsageGranted(String pool) {
         var content = readIfReadable(init.hostFile(BTRFS_SUDOERS));
-        if (content != null) return content.equals(btrfsSudoersContent(pool));
-        var listing = init.query("sudo", "-n", "-l");
-        var rule = "(root) NOPASSWD: " + String.join(", ", btrfsUsageCommands(pool));
-        return listing.exitCode() == 0 && listing.output().lines().anyMatch(line -> line.strip().equals(rule));
+        return content == null ? null : content.equals(btrfsSudoersContent(pool));
+    }
+
+    /** The rule the plan could not read: what was skipped and why, what it should hold, and how to check it. */
+    static InitPlan.Assessment btrfsRuleNotChecked(String pool) {
+        return InitPlan.Assessment.notChecked("Not checked: only root can read " + BTRFS_SUDOERS
+                        + ", and the plan never runs sudo. It should hold '" + btrfsSudoersContent(pool).strip()
+                        + "'. isx init writes it with sudo whenever it cannot read it.",
+                btrfsAccess(), List.of("sudo cat " + BTRFS_SUDOERS));
     }
 
     static final String[] STORAGE_HINT = {
@@ -1254,6 +1274,7 @@ class HostSetup {
         }
         try {
             var incus = init.incus;
+            InitPlan.Assessment btrfsUnchecked = null;
             var changes = new ArrayList<InitPlan.Change>();
             var hasPool = incus.hasStoragePool();
             if (!hasPool) {
@@ -1274,8 +1295,10 @@ class HostSetup {
                     if (rootPool != null) changes.add(moveRootDisk(rootPool, CowPoolBacking.POOL_NAME));
                 }
                 changes.add(btrfsAccess());
-            } else if (cow.poolName() != null && cow.isBtrfs() && !btrfsUsageGranted(cow.poolName())) {
-                changes.add(btrfsAccess());
+            } else if (cow.poolName() != null && cow.isBtrfs()) {
+                var granted = btrfsUsageGranted(cow.poolName());
+                if (granted == null) btrfsUnchecked = btrfsRuleNotChecked(cow.poolName());
+                else if (!granted) changes.add(btrfsAccess());
             }
             var pool = incus.findUsablePool();
             if (pool != null && hasPool) {
@@ -1299,7 +1322,8 @@ class HostSetup {
                             + conflict.conflictingRoute() + " yourself: no free subnet was found", InitPlan.Who.NONE, null));
                 }
             }
-            return InitPlan.Assessment.of(changes);
+            var plan = InitPlan.Assessment.of(changes);
+            return btrfsUnchecked == null ? plan : InitPlan.combine(List.of(plan, btrfsUnchecked));
         } catch (RuntimeException e) {
             return InitPlan.Assessment.unknown("Could not read Incus: " + BaseCommand.failure(e));
         }

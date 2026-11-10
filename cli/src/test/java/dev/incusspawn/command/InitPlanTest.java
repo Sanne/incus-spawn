@@ -161,6 +161,7 @@ class InitPlanTest {
 
         assertEquals(List.of(), daemon.requests().stream().filter(r -> !r.startsWith("GET ")).toList());
         assertEquals(List.of(), init.ran, "the plan ran a command of the run");
+        assertTrue(init.queried.stream().noneMatch(c -> c.startsWith("sudo")), "the plan ran sudo: " + init.queried);
         assertEquals(before, listing(home), "the plan wrote to the home directory");
     }
 
@@ -225,21 +226,49 @@ class InitPlanTest {
         assertEquals(InitPlan.State.DONE, init.host().planFirewall().state());
     }
 
+    /** What firewalld will not show this user is not checked: the note says so and why, and how to check it. */
     @Test
-    void aFirewalldThatWillNotAnswerWithoutSudoIsUnknown(@TempDir Path root) {
+    void aFirewalldThatWillNotAnswerWithoutSudoIsNotChecked(@TempDir Path root) {
         var plan = init(root).host().planFirewall();
         assertEquals(InitPlan.State.UNKNOWN, plan.state());
-        assertTrue(plan.note().contains("without sudo"), plan.note());
+        assertTrue(plan.note().startsWith("Not checked: firewalld's policy"), plan.note());
+        assertEquals(List.of("sudo firewall-cmd --zone=trusted --list-all", "sudo firewall-cmd --direct --get-all-rules"),
+                plan.checks());
+        assertEquals(InitPlan.Who.SUDO, plan.who());
+    }
+
+    /** polkit installed without pkcheck cannot be asked first, so the rules are not read: no dialog either. */
+    @Test
+    void polkitThatCannotBeAskedIsNotRisked(@TempDir Path root) throws Exception {
+        var init = init(root);
+        Files.createDirectories(root.resolve("usr/share/polkit-1/actions"));
+        init.answers.put("firewall-cmd --zone=trusted --list-all", new InitCommand.Query(0, TRUSTED));
+        init.answers.put("firewall-cmd --direct --get-all-rules", new InitCommand.Query(0, DIRECT));
+        assertEquals(InitPlan.State.UNKNOWN, init.host().planFirewall().state());
+        assertTrue(init.queried.stream().noneMatch(c -> c.startsWith("firewall-cmd")), init.queried.toString());
+    }
+
+    /** Without polkit, nothing can raise a dialog: the plan tries the read rather than skipping it. */
+    @Test
+    void withoutPolkitTheRulesAreReadAnyway(@TempDir Path root) {
+        var init = init(root);
+        init.polkit = false;
+        init.answers.put("firewall-cmd --zone=trusted --list-all", new InitCommand.Query(0, TRUSTED));
+        init.answers.put("firewall-cmd --direct --get-all-rules", new InitCommand.Query(0, DIRECT));
+        assertEquals(InitPlan.State.DONE, init.host().planFirewall().state());
     }
 
     /** Where reading the rules would take an administrator, polkit is asked first, and firewalld never: no dialog. */
     @Test
     void aFirewalldWhosePolicyWantsAnAdministratorIsNotAsked(@TempDir Path root) {
         var init = init(root);
+        init.commands = Set.of("dnf", "incus", "openssl", "ssh-keygen", "btrfs", "firewall-cmd", "pkcheck");
         init.polkit = false;
         init.answers.put("firewall-cmd --zone=trusted --list-all", new InitCommand.Query(0, TRUSTED));
         init.answers.put("firewall-cmd --direct --get-all-rules", new InitCommand.Query(0, DIRECT));
-        assertEquals(InitPlan.State.UNKNOWN, init.host().planFirewall().state());
+        var plan = init.host().planFirewall();
+        assertEquals(InitPlan.State.UNKNOWN, plan.state());
+        assertFalse(plan.checks().isEmpty());
         assertTrue(init.queried.stream().noneMatch(c -> c.startsWith("firewall-cmd")), init.queried.toString());
     }
 
@@ -409,19 +438,44 @@ class InitPlanTest {
         assertEquals(InitPlan.State.DONE, plan.state(), plan.toString());
     }
 
-    /** The rule's own line is looked for: a broader rule permits its commands too, but the run would still write it. */
+    /**
+     * The btrfs rule is root's to read, and the plan never runs sudo (Sanne on #2091): an unreadable
+     * rule is not checked, with what it should hold and the command that checks it.
+     */
     @Test
-    void anUnreadableSudoersRuleIsLookedForInWhatSudoListsWithoutAPassword(@TempDir Path root) {
+    void anUnreadableSudoersRuleIsNotCheckedAndSudoIsNeverRun(@TempDir Path root) {
         var init = init(root);
-        var broad = "User u may run the following commands on h:\n    (ALL) NOPASSWD: ALL\n";
-        init.answers.put("sudo -n -l", new InitCommand.Query(0, broad));
-        assertFalse(init.host().btrfsUsageGranted("cow"));
-        init.answers.put("sudo -n -l", new InitCommand.Query(0, broad
-                + "    (root) NOPASSWD: " + String.join(", ", HostSetup.btrfsUsageCommands("cow")) + "\n"));
-        assertTrue(init.host().btrfsUsageGranted("cow"));
-        // A sudo that wants a password lists nothing
-        init.answers.put("sudo -n -l", new InitCommand.Query(1, "sudo: a password is required"));
-        assertFalse(init.host().btrfsUsageGranted("cow"));
+        init.incus = new FakeIncusDaemon().network("incusbr0", Map.of("ipv4.address", GATEWAY + "/24"))
+                .pool("cow", "btrfs")
+                .profile("default", Map.of("root", Map.of("type", "disk", "path", "/", "pool", "cow"),
+                        "eth0", Map.of("type", "nic", "network", "incusbr0")))
+                .client();
+        assertNull(init.host().btrfsUsageGranted("cow"));
+        var plan = init.host().planStorageAndNetwork();
+        assertEquals(InitPlan.State.UNKNOWN, plan.state());
+        assertTrue(plan.note().startsWith("Not checked: only root can read /etc/sudoers.d/incus-spawn-btrfs"), plan.note());
+        assertTrue(plan.note().contains(HostSetup.btrfsSudoersContent("cow").strip()), plan.note());
+        assertEquals(List.of("sudo cat /etc/sudoers.d/incus-spawn-btrfs"), plan.checks());
+        assertTrue(init.queried.stream().noneMatch(c -> c.startsWith("sudo")), init.queried.toString());
+    }
+
+    @Test
+    void theTableSaysWhatWasNotCheckedAndHowToCheckIt() {
+        var bytes = new ByteArrayOutputStream();
+        InitPlan.printTable(new PrintStream(bytes, true, StandardCharsets.UTF_8), List.of(new InitPlan.Entry("firewall",
+                "Firewall Configuration", "", InitPlan.Assessment.notChecked("Not checked: only root can read it.",
+                        InitPlan.Change.sudo("Add the rules missing", null), List.of("sudo firewall-cmd --direct --get-all-rules")))));
+        var table = bytes.toString(StandardCharsets.UTF_8);
+        assertTrue(table.contains("Firewall Configuration  not checked: it needs root"), table);
+        assertTrue(table.contains("To check it yourself:\n      $ sudo firewall-cmd --direct --get-all-rules"), table);
+    }
+
+    @Test
+    void thePlanRefusesToRunSudoInAnyForm() {
+        var init = new InitCommand();
+        for (var command : List.of(new String[]{"sudo", "-n", "-l"}, new String[]{"sudo", "true"})) {
+            assertThrows(IllegalArgumentException.class, () -> init.query(command), String.join(" ", command));
+        }
     }
 
     // ── Who must do it ──────────────────────────────────────────────────────────
@@ -436,14 +490,18 @@ class InitPlanTest {
         assertEquals(InitPlan.Who.NONE, InitPlan.Assessment.done().who());
     }
 
+    /** Work a step will certainly do is not hidden by a part it could not check, nor that part by the work. */
     @Test
-    void anUnknownPartLeavesTheStepUnknownButKeepsWhatIsKnown() {
+    void aPendingPartIsNotHiddenByOneNotChecked() {
         var combined = InitPlan.combine(List.of(
                 InitPlan.Assessment.of(List.of(InitPlan.Change.sudo("b", "sudo b"))),
-                InitPlan.Assessment.unknown("cannot read")));
-        assertEquals(InitPlan.State.UNKNOWN, combined.state());
-        assertEquals(1, combined.changes().size());
+                InitPlan.Assessment.notChecked("cannot read", InitPlan.Change.sudo("c", null), List.of("sudo cat c"))));
+        assertEquals(InitPlan.State.PENDING, combined.state());
+        assertEquals(2, combined.changes().size());
         assertEquals("cannot read", combined.note());
+        assertEquals(List.of("sudo cat c"), combined.checks());
+        var unknown = InitPlan.combine(List.of(InitPlan.Assessment.done(), InitPlan.Assessment.unknown("cannot read")));
+        assertEquals(InitPlan.State.UNKNOWN, unknown.state());
     }
 
     /** Registration is read from Claude Code's own file: asking Claude Code would start isx mcp. */
@@ -584,7 +642,8 @@ class InitPlanTest {
                   "sudo_commands" : [ "sudo firewall-cmd --reload" ],
                   "files" : [ "/home/u/.config/incus-spawn/config.yaml" ],
                   "note" : null,
-                  "purpose" : "Configures the firewall."
+                  "purpose" : "Configures the firewall.",
+                  "check_commands" : [ ]
                 } ]
                 """, bytes.toString(StandardCharsets.UTF_8).replace("\r\n", "\n"));
         assertTrue(JqValues.parseStrict(bytes.toString(StandardCharsets.UTF_8)).isArray());
