@@ -16,7 +16,8 @@ class GitCacheConfigTest {
 
     @Test void theDefaultBudgetKeepsALargeRepositorySnapshot() {
         // apache/camel packs to about 1.5 GiB (#1548): a smaller budget made every build clone it in full.
-        assertEquals(4096L << 20, GitCacheConfig.DEFAULT.snapshotBytes());
+        // 4 GiB still left repositories built in turn evicting each other (#2097).
+        assertEquals(16384L << 20, GitCacheConfig.DEFAULT.snapshotBytes());
     }
 
     @Test void retentionCanBeDisabled() {

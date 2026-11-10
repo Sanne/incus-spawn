@@ -5,7 +5,7 @@ import java.util.Map;
 
 /** Budget for immutable remote-derived Git snapshots. Zero disables retention. */
 public record GitCacheConfig(long snapshotBytes, Duration maxAge) {
-    public static final GitCacheConfig DEFAULT = new GitCacheConfig(4096L << 20, Duration.ofDays(7));
+    public static final GitCacheConfig DEFAULT = new GitCacheConfig(16384L << 20, Duration.ofDays(7));
 
     static GitCacheConfig of(Object raw) {
         if (!(raw instanceof Map<?, ?> map)) return DEFAULT;

@@ -153,7 +153,7 @@ The cache has two limits, shown here with their defaults:
 
 ```yaml
 git-cache:
-  snapshot-max-mib: 4096
+  snapshot-max-mib: 16384
   max-age-days: 7
 ```
 
