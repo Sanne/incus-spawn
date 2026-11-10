@@ -110,7 +110,8 @@ class TemplatePolicyTest {
         assertEquals(ToolError.Code.NOT_APPROVED, notInItsList.code);
         assertTrue(notInItsList.getMessage().contains("not in coordinator.control-over of tpl-x"), notInItsList.getMessage());
         var notInMcpYaml = assertThrows(ToolError.class, () -> x.requireLineage("tpl-unbuilt"));
-        assertTrue(notInMcpYaml.getMessage().contains("add tpl-unbuilt to templates in ~/.config/incus-spawn/mcp.yaml"),
+        assertTrue(notInMcpYaml.getMessage().contains("Ask the user to approve it")
+                        && notInMcpYaml.getMessage().contains(dev.incusspawn.config.McpScope.SETUP_COMMAND),
                 notInMcpYaml.getMessage());
 
         var y = coordinator("tpl-y", null);

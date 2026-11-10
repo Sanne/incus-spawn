@@ -50,10 +50,10 @@ class McpScopeTest {
         assertTrue(notListedHere.contains("not in coordinator.control-over of tpl-x (/home/u/.config/incus-spawn/images/tpl-x.yaml)"),
                 notListedHere);
         var notApproved = scope.explain("tpl-c");
-        assertTrue(notApproved.contains("add tpl-c to templates in ~/.config/incus-spawn/mcp.yaml"), notApproved);
+        assertTrue(notApproved.contains("Ask the user to approve it") && notApproved.endsWith(McpScope.HOW_TO_APPROVE), notApproved);
 
         assertEquals(List.of("tpl-c is in coordinator.control-over of tpl-x (/home/u/.config/incus-spawn/images/tpl-x.yaml) but not"
-                + " approved for agents. Add it to templates in ~/.config/incus-spawn/mcp.yaml, or remove it from"
+                + " approved for agents. Approve it (isx mcp setup, or templates in ~/.config/incus-spawn/mcp.yaml), or remove it from"
                 + " coordinator.control-over there."), scope.mismatches());
         assertEquals("tpl-a; tpl-c not approved in mcp.yaml", scope.summary());
     }

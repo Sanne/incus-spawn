@@ -262,7 +262,7 @@ The capability is on by default exactly when `control-over` lists a template.
 
 `isx branch --mcp-client`, or ticking MCP control, makes a coordinator of a branch of any other template.
 The box is not offered while the network is Airgapped.
-Such a coordinator controls nothing until its template lists templates under `control-over`.
+Such a coordinator controls nothing until its template lists templates under `control-over`, and isx warns of that with a link to the steps above.
 
 Once the instance has started, the branch checks the connection from inside it.
 It says whether the server was reached, with its version and tool count, or why not, and whether the instance's Claude Code or Pi has the server.
