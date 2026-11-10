@@ -263,6 +263,8 @@ Test scripts live in `.github/scripts/`; a script pushed into a guest cannot use
   A fake that drops removed devices from `expanded_devices` passes either way.
 - **`test-ssh-host-keys.sh`**: runs on the host.
   Branches `tpl-test-ssh` (`tpl-minimal` with the `sshd` tool) and connects with herdr's own ssh options, `StrictHostKeyChecking=yes` among them (#1863).
+  Only the start alias's check keeps herdr's 10 s `ConnectTimeout`, which is what it claims to meet; the key checks wait up to 60 s (#2119).
+  A branch's files are copies with a cold page cache, so its first connection reads `sshd-session` from disk, and a disk the previous step left busy stretched that past 10 s.
   It checks the keys are pinned under the name and the stamped address, and that strict ssh connects by name and, with `HostKeyAlias` dropped from a copy of the block, by address.
   Then it regenerates the guest's keys, checks strict ssh is refused, and checks `isx stop` and `isx start` pin the new ones.
   After `isx destroy` no `known_hosts` line or Host block names the instance.
