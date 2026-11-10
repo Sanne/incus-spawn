@@ -21,6 +21,10 @@
 
 set -euo pipefail
 
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Every exec goes through guest_exec: Incus can fail to attach to a guest that just started (#2084)
+source "$HERE/guest-exec.sh"
+
 STARTED=test-proxy-only
 UNSTARTED=test-proxy-only-nostart
 VM=test-proxy-only-vm
@@ -54,7 +58,7 @@ not_restricted() { [ -z "$(nic "$1")" ]; }
 # bridge's neighbour entry for the old one. A positive check may retry; the no-egress checks never do.
 reaches_internet() {
     for _ in 1 2 3; do
-        incus exec "$1" -- curl -s -m 10 -o /dev/null http://1.1.1.1/ && return 0
+        guest_exec "$1" -- curl -s -m 10 -o /dev/null http://1.1.1.1/ && return 0
         sleep 5
     done
     return 1
@@ -64,26 +68,26 @@ reaches_internet() {
 # host side of the NIC, whatever address a packet carries, and spoofing protection drops it too.
 no_egress_from_another_address() {
     local spare
-    spare=$(incus exec "$1" -- ip -4 -o addr show eth0 | awk '{print $4}' | sed -E 's#\.[0-9]+/#.250/#')
+    spare=$(guest_exec "$1" -- ip -4 -o addr show eth0 | awk '{print $4}' | sed -E 's#\.[0-9]+/#.250/#')
     # Within check, a failing command does not stop the function: without the address there is no test
-    [ -n "$spare" ] && incus exec "$1" -- ip addr add "$spare" dev eth0 || return 1
-    ! incus exec "$1" -- curl -s -m 5 -o /dev/null --interface "${spare%/*}" http://1.1.1.1/
+    [ -n "$spare" ] && guest_exec "$1" -- ip addr add "$spare" dev eth0 || return 1
+    ! guest_exec "$1" -- curl -s -m 5 -o /dev/null --interface "${spare%/*}" http://1.1.1.1/
 }
 
 # Any HTTP answer is the proxy's: an intercepted domain resolves to the gateway, and a 401 for
 # the missing credential still proves the connection got through.
 reaches_proxy() {
     local code
-    code=$(incus exec "$1" -- curl -s -m 15 -o /dev/null -w '%{http_code}' "$PROBE_URL" || true)
+    code=$(guest_exec "$1" -- curl -s -m 15 -o /dev/null -w '%{http_code}' "$PROBE_URL" || true)
     [ -n "$code" ] && [ "$code" != 000 ]
 }
-resolves() { incus exec "$1" -- getent hosts example.com >/dev/null; }
-no_direct_ipv4() { ! incus exec "$1" -- curl -s -m 5 -o /dev/null http://1.1.1.1/; }
-no_direct_https() { ! incus exec "$1" -- curl -s -m 5 -o /dev/null https://example.com/; }
-no_direct_ipv6() { ! incus exec "$1" -- curl -6 -s -m 5 -o /dev/null 'http://[2606:4700:4700::1111]/'; }
+resolves() { guest_exec "$1" -- getent hosts example.com >/dev/null; }
+no_direct_ipv4() { ! guest_exec "$1" -- curl -s -m 5 -o /dev/null http://1.1.1.1/; }
+no_direct_https() { ! guest_exec "$1" -- curl -s -m 5 -o /dev/null https://example.com/; }
+no_direct_ipv6() { ! guest_exec "$1" -- curl -6 -s -m 5 -o /dev/null 'http://[2606:4700:4700::1111]/'; }
 
 wait_for_ipv4() {
-    incus exec "$1" -- bash -c '
+    guest_exec "$1" -- bash -c '
         systemctl start systemd-networkd 2>/dev/null
         for i in $(seq 1 30); do
             ip -4 -o addr show scope global | grep -q inet && exit 0
@@ -94,7 +98,7 @@ wait_for_ipv4() {
 
 wait_for_agent() {
     for _ in $(seq 1 90); do
-        incus exec "$1" -- true 2>/dev/null && return 0
+        guest_exec "$1" -- true 2>/dev/null && return 0
         sleep 1
     done
     return 1
@@ -117,7 +121,7 @@ incus info | grep -E '^ *firewall:' || true
 echo "=== A proxy-only branch of an image without iptables ==="
 isx branch "$STARTED" --from tpl-minimal --proxy-only
 check "its NIC carries the host ACL" restricted_on_host "$STARTED"
-incus exec "$STARTED" -- sh -c '! command -v iptables' && echo "  (no iptables in the guest)"
+guest_exec "$STARTED" -- sh -c '! command -v iptables' && echo "  (no iptables in the guest)"
 wait_for_ipv4 "$STARTED"
 restricted "$STARTED" "after isx branch"
 
