@@ -110,11 +110,60 @@ class McpInitFlowTest {
         assertNothingSaved();
     }
 
+    /**
+     * #2078: without Claude Code the step still approves templates, for whichever MCP client the
+     * person uses, registers nothing, and names the generic entry {@code isx mcp config} prints.
+     */
     @Test
-    void withoutClaudeCodeOnTheHostNothingIsAsked() throws Exception {
+    void withoutClaudeCodeOnTheHostTemplatesAreStillApproved() throws Exception {
         var host = new Host();
         host.hasClaude = false;
-        run(host, ScriptedPrompts.lines());
+        var prompts = ScriptedPrompts.lines("y", "n", "y");
+        var out = reported(() -> run(host, prompts));
+        assertEquals(List.of("Enable the isx MCP server? (y/N): ",
+                "tpl-agent (not built yet: isx build tpl-agent)? (y/N): ",
+                "tpl-agent-java (not built yet: isx build tpl-agent-java)? (y/N): "),
+                prompts.questions().stream().map(BuildOutput::stripAnsi).toList());
+        assertEquals(List.of("tpl-agent-java"), approved());
+        assertEquals(List.of(), host.registrations);
+        assertTrue(out.contains("isx mcp config"), out);
+        assertFalse(out.contains("Claude Code permissions"), out);
+    }
+
+    /** #2078: without Claude Code, approved templates are the whole setup, so a re-run asks one question. */
+    @Test
+    void withoutClaudeCodeAReRunKeepsTheApprovalsWithOneEnter() throws Exception {
+        var seeded = "templates: [tpl-agent]\n";
+        seedMcp(seeded);
+        var host = new Host();
+        host.hasClaude = false;
+        var prompts = ScriptedPrompts.lines("");
+        var out = reported(() -> run(host, prompts));
+        assertEquals(List.of("Choice (Enter to keep as-is): "),
+                prompts.questions().stream().map(BuildOutput::stripAnsi).toList());
+        assertTrue(out.contains("Currently approved templates: tpl-agent."), out);
+        assertMcpUnchanged(seeded);
+        assertEquals(List.of(), host.registrations);
+    }
+
+    /** #2078: without Claude Code, the menu's {@code n} still says how to turn it off. */
+    @Test
+    void withoutClaudeCodeTheMenuSaysHowToTurnItOff() throws Exception {
+        var seeded = "templates: [tpl-agent]\n";
+        seedMcp(seeded);
+        var host = new Host();
+        host.hasClaude = false;
+        var out = reported(() -> run(host, ScriptedPrompts.lines("n")));
+        assertTrue(out.contains("To turn it off, choose 't' and approve no templates"), out);
+        assertMcpUnchanged(seeded);
+        assertEquals(List.of(), host.registrations);
+    }
+
+    @Test
+    void withoutClaudeCodeEndOfInputLeavesItOff() throws Exception {
+        var host = new Host();
+        host.hasClaude = false;
+        host.setupMcp(ScriptedPrompts.lines(), templates());
         assertNothingSavedAnywhere();
         assertEquals(List.of(), host.registrations);
     }

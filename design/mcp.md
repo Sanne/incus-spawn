@@ -314,6 +314,10 @@ Values that were only checked on use (the summary model) are checked at load for
 It needs stdin and stdout to be a terminal (`Prompts.terminal()`), stricter than init's console, so an agent cannot pipe its own answers in, and it takes no option naming a template.
 An agent with a shell can still do what its user can; the command only means the install path never asks an agent to approve anything.
 It is a subcommand of `isx mcp` because it sets up exactly what that server serves; bare `isx mcp`, which agents run, is unchanged.
+The approvals do not depend on Claude Code (#2078): a person approves templates whichever client they use, and only Claude Code is registered by isx, through its own CLI.
+Any other client is set up from `isx mcp config`, which prints the stdio entry as the `mcpServers` JSON most clients take, with the resolved `isx` path.
+It prints rather than writes because another program's settings file is its own: isx does not know its format's other keys, and an entry it wrote would be one it must also find and undo.
+Codex and Gemini CLI have their own `mcp add` commands, which the docs name; isx does not run them, so registering stays a step the person does or confirms.
 `host-routes:` stays in `config.yaml`: it is proxy routing that a controller without MCP may use, and its template list answers who may reach a service, not which templates an agent may create instances from, so neither list is derived from the other.
 The split organizes the configuration; it is not a new security boundary, since both files belong to the same host user.
 
