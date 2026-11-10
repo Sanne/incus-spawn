@@ -34,6 +34,7 @@ import dev.incusspawn.util.HostPath;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
+import dev.incusspawn.util.Privilege;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -41,6 +42,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -61,6 +63,10 @@ import static dev.incusspawn.command.CredentialSetup.readInput;
 )
 public class InitCommand extends BaseCommand {
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+
+    @Option(name = "no-sudo", hasValue = false,
+            description = "Run nothing as root: write the steps that need root as a script for you to run, then carry on")
+    boolean noSudo;
 
     @Option(name = "plan", hasValue = false,
             description = "Say what init would change on this host and who must do each step, changing nothing")
@@ -315,6 +321,8 @@ public class InitCommand extends BaseCommand {
     protected CommandResult doExecute() throws Exception {
         if (plan) return printPlan(OutputFormat.parse(format));
         if (format != null) throw new IllegalArgumentException("--format goes with --plan");
+        // From here this process elevates nothing: every sudo is the script's (#2074)
+        if (noSudo) Privilege.forbid();
         if (!requireIncusHost()) return CommandResult.valueOf(1);
         this.incus = RuntimeServices.incus();
         if (Platform.isMacOS()) {
@@ -324,7 +332,13 @@ public class InitCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
         var continued = continuedInGroup();
-        if (!continued) {
+        if (noSudo) {
+            var waiting = privilegedStepsLeft();
+            if (waiting != null) return waiting;
+        }
+        if (!continued && noSudo) {
+            printSetupBanner("", "runs nothing as root: the script did that");
+        } else if (!continued) {
             printSetupBanner("", "~3 minutes · some steps require sudo");
 
             BuildOutput.step("Several steps need " + styled(BOLD, "sudo") + " to install packages, configure"
@@ -343,6 +357,81 @@ public class InitCommand extends BaseCommand {
         if (continued) next.addAll(GROUP_PENDING);
         printCompletionBox(next.toArray(String[]::new));
         return CommandResult.SUCCESS;
+    }
+
+    /** Whether this run is {@code --no-sudo}: the privileged steps are the person's script (#2074). */
+    boolean noSudo() {
+        return noSudo;
+    }
+
+    /** The exit of {@code --no-sudo} while the person's script has not run: try again once it has (EX_TEMPFAIL). */
+    static final int EXIT_WAITING_ON_PERSON = 75;
+
+    /** The command a person runs again once the script ran. */
+    static final String NO_SUDO_COMMAND = "isx init --no-sudo";
+
+    /**
+     * Under {@code --no-sudo}, the privileged steps the plan finds left (#2074): none, and init
+     * carries on (null), or a script holding them for the person, and the exit that says so.
+     * A change the script recorded as made but that is still not in effect is reported, not
+     * scripted again: running the same lines again would not change it.
+     */
+    CommandResult privilegedStepsLeft() throws IOException {
+        // Always the Linux steps, never the host platform's: init calls this on Linux alone (macOS
+        // init needs no administrator), so a test on any host plans what a Linux run would
+        var entries = planEntries(planSteps(false));
+        var applied = appliedByScript();
+        var privileged = InitPlan.privileged(entries, applied);
+        // A step with a change the record lacks is scripted whole: its restart or reload, made by
+        // an earlier script, applies this change too
+        var unrecorded = privileged.stream().filter(p -> !InitPlan.made(p.change(), applied))
+                .map(InitPlan.Privileged::entry).collect(Collectors.toSet());
+        var left = new ArrayList<InitPlan.Privileged>();
+        for (var p : privileged) {
+            if (InitPlan.made(p.change(), applied) && !unrecorded.contains(p.entry())) {
+                BuildOutput.warn("The script ran, but this is still not in effect: " + p.change().what() + ".",
+                        "isx init carries on; check it, and make it by hand if it is still missing.");
+            } else {
+                left.add(p);
+            }
+        }
+        if (left.isEmpty()) return null;
+        var manual = left.stream().filter(p -> p.change().script().isEmpty()).map(p -> p.change().what()).toList();
+        if (!manual.isEmpty()) {
+            var details = new ArrayList<>(manual);
+            details.add("Do " + (manual.size() == 1 ? "it" : "them") + " yourself, then run '" + NO_SUDO_COMMAND + "' again.");
+            BuildOutput.error("isx init --no-sudo cannot write " + (manual.size() == 1 ? "this step" : "these steps")
+                    + " as a script:", details.toArray(String[]::new));
+            return CommandResult.valueOf(1);
+        }
+        var script = Environment.privilegedInitScript();
+        Files.createDirectories(script.getParent());
+        Files.writeString(script, InitPlan.script(left, NO_SUDO_COMMAND));
+        try (var group = BuildOutput.group("isx init --no-sudo runs nothing as root. These steps need root", null)) {
+            InitPlan.Entry step = null;
+            for (var p : left) {
+                if (p.entry() != step) {
+                    step = p.entry();
+                    BuildOutput.step(step.title());
+                }
+                BuildOutput.stepNote(OutputFormat.oneLine(p.change().what()));
+            }
+        }
+        BuildOutput.step("They are written as a script, with a comment for each step: " + script);
+        BuildOutput.step("Read it, then run it as root:");
+        BuildOutput.stepNote("sudo sh " + script);
+        BuildOutput.step("Then run '" + NO_SUDO_COMMAND + "' again to finish.");
+        return CommandResult.valueOf(EXIT_WAITING_ON_PERSON);
+    }
+
+    /** The keys the script recorded in {@link InitPlan#APPLIED_RECORD} as it ran; none before it ran. */
+    Set<String> appliedByScript() {
+        try {
+            return Set.copyOf(Files.readAllLines(hostFile(InitPlan.APPLIED_RECORD)).stream()
+                    .map(String::strip).filter(l -> !l.isEmpty()).toList());
+        } catch (IOException e) {
+            return Set.of();
+        }
     }
 
     /**
@@ -401,7 +490,9 @@ public class InitCommand extends BaseCommand {
      * that step still asks.
      */
     private void installIncus() {
-        host().checkIncusInstalled();
+        // Under --no-sudo the script installed it, which the plan confirmed before the steps ran
+        if (noSudo()) BuildOutput.note(HostSetup.DONE_BY_SCRIPT);
+        else host().checkIncusInstalled();
         continueInGroup();
     }
 
@@ -1230,6 +1321,7 @@ public class InitCommand extends BaseCommand {
 
     /** Run a host command for its exit code alone, showing nothing and reading no input. */
     private static int runSilently(String... command) {
+        dev.incusspawn.util.Privilege.check(command);
         try {
             return new ProcessBuilder(command)
                     .redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")))
@@ -1407,6 +1499,7 @@ public class InitCommand extends BaseCommand {
     }
 
     static int runHostCapturingExit(String... command) {
+        dev.incusspawn.util.Privilege.check(command);
         try {
             var pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
@@ -1857,6 +1950,7 @@ public class InitCommand extends BaseCommand {
     }
 
     static int runHost(String... command) {
+        dev.incusspawn.util.Privilege.check(command);
         // The command writes to the terminal itself, and sudo may ask for a password there
         BuildOutput.releaseTerminal();
         try {
@@ -1870,6 +1964,7 @@ public class InitCommand extends BaseCommand {
     }
 
     String captureOutput(String... command) {
+        dev.incusspawn.util.Privilege.check(command);
         try {
             var pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
@@ -1899,6 +1994,7 @@ public class InitCommand extends BaseCommand {
      * reports the outcome.
      */
     int runHostQuiet(String... command) {
+        dev.incusspawn.util.Privilege.check(command);
         // sudo may ask for a password on the tty, which a live step line would be drawn over
         if (command.length > 0 && command[0].equals("sudo")) BuildOutput.releaseTerminal();
         try {

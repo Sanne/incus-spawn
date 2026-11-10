@@ -38,7 +38,11 @@ class NoIncusCliHintTest {
                     "\"incus profile device add default root disk path=/ pool=\"",
                     "\"incus profile device add default eth0 nic network=incusbr0\"",
                     "\"Resize with: sudo incus storage set cow size=200GiB\"",
-                    "\"incus network set incusbr0 ipv4.address 172.20.0.1/24\""),
+                    "\"incus network set incusbr0 ipv4.address 172.20.0.1/24\"",
+                    // isx init --no-sudo's root script (#2074), which runs on the Linux host as root, beside the incus CLI
+                    "\"incus network show \"",
+                    "\" >/dev/null 2>&1 || incus network create \"",
+                    "\"gw=$(incus network get \""),
             // the Linux arm of unknownRemoteMsg
             "IncusClient.java", Set.of(
                     "\"Add it with: incus remote add \""),

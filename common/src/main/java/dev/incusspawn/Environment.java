@@ -167,6 +167,11 @@ public final class Environment {
         return home().resolve(".local/state/incus-spawn/proxy-drift-restart.properties");
     }
 
+    /** Where {@code isx init --no-sudo} writes the steps that need root, for the person to run (#2074). */
+    public static Path privilegedInitScript() {
+        return home().resolve(".local/state/incus-spawn/init-privileged.sh");
+    }
+
     /**
      * Client-side diagnostic log. Written to a file only (never stdout/stderr) so it is safe
      * to emit from inside the TUI, which owns the terminal.

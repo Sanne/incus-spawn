@@ -267,6 +267,7 @@ public final class UfwCheck {
 
     public static String readBeforeRules() {
         try {
+            dev.incusspawn.util.Privilege.check("sudo", "cat", BEFORE_RULES.toString());
             BuildOutput.releaseTerminal(); // sudo may prompt on the tty
             var pb = new ProcessBuilder("sudo", "cat", BEFORE_RULES.toString());
             pb.redirectErrorStream(true);

@@ -71,7 +71,8 @@ class ExitCodeTest {
                 {"--bundle writes an archive", "doctor", "--bundle", "--format=json"},
                 {"--format applies to --list only", "update-base", "--format=json"},
                 {"unknown format 'yaml'", "init", "--plan", "--format=yaml"},
-                {"--format goes with --plan", "init", "--format=json"}};
+                {"--format goes with --plan", "init", "--format=json"},
+                {"--format goes with --plan", "init", "--no-sudo", "--format=json"}};
         for (var c : cases) {
             var args = Arrays.copyOfRange(c, 1, c.length);
             var run = isx(args);

@@ -52,6 +52,9 @@ Other sandboxes for coding agents make it differently, and `docs/SANDBOXES.md`, 
   Each step is described once, its header, work and planner together (`InitCommand.InitStep`), and the plan lists the run's own step lists, so it cannot name a step the run does not take.
   A planner reads what the run's checks read and names the commands the run would run, from the same constants; what only root can read, such as firewall rules where polkit refuses or the btrfs sudoers rule, is reported as not checked rather than guessed, with why and the sudo commands that check it, and the plan never runs sudo (Sanne on #2091).
   The plan serves both a cautious person and an agent driving the install, which must know which steps are its own (#2072).
+  `isx init --no-sudo` (#2074) turns the plan's sudo changes into one root script for the person and runs nothing as root itself; a process-wide guard (`Privilege`) refuses any command that elevates.
+  The script is the plan's `sudo_script`, so what the person reads is what the plan reported, and it records what it ran in `/var/lib/isx/init-applied` for the checks only root could make.
+  One script serves a fresh host: the redirect reads the bridge's gateway as the script runs, rather than waiting for a second round trip after Incus exists.
   The Template Search Paths step uses `gh` to auto-detect the user's GitHub identity and offer to fork/clone `incus-spawn-templates` — every failure path (no gh, no auth, API error) degrades gracefully to the existing manual flow
 
 ## Where the design lives
