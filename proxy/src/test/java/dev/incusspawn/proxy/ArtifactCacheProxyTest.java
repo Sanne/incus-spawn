@@ -141,6 +141,8 @@ class ArtifactCacheProxyTest {
     static volatile int rangeExtraBytes;
     static final List<String> rangesAsked = new java.util.concurrent.CopyOnWriteArrayList<>();
     static final List<String> ifRangesAsked = new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** Each GET's path with the Connection header it came with, if any. */
+    static final List<String> getConnections = new java.util.concurrent.CopyOnWriteArrayList<>();
     /** The ETag GETs answer with, if any; with {@link #changeOnCut} a cut changes it (or Last-Modified) and the bytes, as a republish would. */
     static volatile String etag;
     static volatile String lastModified;
@@ -217,6 +219,7 @@ class ArtifactCacheProxyTest {
         var host = req.authority().host();
         var key = host + " " + req.path();
         hits.computeIfAbsent(req.method() + " " + key, k -> new AtomicInteger()).incrementAndGet();
+        if (req.method() == HttpMethod.GET) getConnections.add(req.path() + " " + req.getHeader("Connection"));
         var gate = gates.get(req.method() + " " + key);
         if (gate != null && !gate.isDone()) {
             var context = vertx.getOrCreateContext();
@@ -383,6 +386,7 @@ class ArtifactCacheProxyTest {
         honourRange = true;
         rangesAsked.clear();
         ifRangesAsked.clear();
+        getConnections.clear();
         etag = null;
         lastModified = null;
         date = null;
@@ -1342,6 +1346,27 @@ class ArtifactCacheProxyTest {
         assertEquals(1, hitsOn(CENTRAL, JAR), "the redirect is not followed again");
         assertEquals(2, hitsOn(CENTRAL, cdnPath));
         awaitFile(cached(CENTRAL, JAR), content);
+    }
+
+    @Test
+    void downloadNeverAsksUpstreamToCloseItsConnection() throws Exception {
+        // Vert.x drops what a paused response still holds when its connection closes, so an
+        // upstream closing at the end of the body would cut its tail off a download paused on
+        // backpressure (#2082). Kept open, the connection gives that tail when the download resumes.
+        var content = randomText(128 * 1024);
+        var bytes = content.getBytes(StandardCharsets.UTF_8);
+        var cdnPath = "/cdn/lib-1.0.jar";
+        routes.put(CENTRAL + " " + JAR, new Reply(302, null, "https://" + CENTRAL + cdnPath));
+        routes.put(CENTRAL + " " + cdnPath, new Reply(200, bytes, null, hex("SHA-1", bytes)));
+        etag = ETAG;
+        getsToCut.set(1);
+        cutByClosing = true;
+
+        assertEquals(content, get(CENTRAL, JAR).text());
+        assertEquals(1, rangesAsked.size(), "resumed once");
+        awaitFile(cached(CENTRAL, JAR), content);
+        // The first fetch, the redirect's and the resume
+        assertEquals(List.of(JAR + " null", cdnPath + " null", cdnPath + " null"), getConnections);
     }
 
     @Test

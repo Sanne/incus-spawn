@@ -597,6 +597,9 @@ Only an unreachable upstream serves an older one.
   A client that leaves mid-download, or while its head was still awaited, does not stop it.
   It goes on into the cache, as it always has, so a client that gave up and retries gets a hit.
   With nobody waiting the budget no longer applies.
+  A cache download, its redirect and its resumes never ask upstream for `Connection: close` (#2082).
+  Vert.x drops what a paused response still holds when its connection closes, so a server closing after the body would cut the tail off a download paused on backpressure.
+  Kept open, the connection delivers that tail when the download resumes.
   Plain relays (`relayRequest`, including an npm tarball whose shasum could not be fetched) are held to the same budget without a resume (`RelayWatchdog`, #929): 110s since the client's last byte either way, not counting the time its request body is streaming or the client holds the response back.
   So an upload is never cut while the client sends, and nothing is ended that the 120s timeout would have let live: while upstream holds the body back the client is paused too, and its connection idle.
   An early answer can stream while the upload still does, so the watchdog keeps the two waits apart: the end of one never ends the other.
