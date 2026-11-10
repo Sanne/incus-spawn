@@ -327,7 +327,7 @@ final class HelpChatModal {
     private List<Line> footerLines(int contentWidth) {
         var lines = new ArrayList<Line>();
         var answer = responseLines;
-        var usageNote = usageNote(usage);
+        var usageNote = usage.summary();
         boolean answered = error == null && answer != null && answer.stream().anyMatch(l -> !l.isBlank());
         if (!answered && usageNote == null) return lines;
         var style = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
@@ -346,27 +346,6 @@ final class HelpChatModal {
                     Span.styled(text.substring(url), style.hyperlink(text.substring(url))))));
         }
         return ModalRenderer.wrapText(text, Math.max(1, width)).stream().map(l -> Line.styled(" " + l, style)).toList();
-    }
-
-    /**
-     * What the answer cost in tokens, and whether the prompt cache was used -- the only visible
-     * sign that caching works, since a broken cache fails silently as a higher bill. Null when
-     * the provider reported nothing.
-     */
-    static String usageNote(Usage usage) {
-        if (usage.totalInputTokens() == 0) return null;
-        var cache = new ArrayList<String>();
-        if (usage.cacheReadTokens() > 0) cache.add(tokens(usage.cacheReadTokens()) + " from cache");
-        if (usage.cacheWriteTokens() > 0) {
-            cache.add(tokens(usage.cacheWriteTokens()) + " cached for follow-ups within 5 min");
-        }
-        return tokens(usage.totalInputTokens()) + " tokens in"
-                + (cache.isEmpty() ? "" : " (" + String.join(", ", cache) + ")")
-                + " · " + tokens(usage.outputTokens()) + " out";
-    }
-
-    private static String tokens(long count) {
-        return count < 1000 ? Long.toString(count) : String.format(java.util.Locale.ROOT, "%.1fk", count / 1000.0);
     }
 
     private void renderLoading(Frame frame, Rect inner) {

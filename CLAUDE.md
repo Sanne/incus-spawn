@@ -278,6 +278,7 @@ So a new credential becomes known to every secret-aware consumer by being declar
 A declared leaf also holds anywhere under its namespace, which is what covers `claude.accounts.<name>.apiKey`.
 `SecretRedactor` owns the other half -- what a credential *looks like*: the whole-word key-name backstop for undeclared keys (`SpawnConfig.getExtras()`, a typed namespace's and its accounts'), the token-shape patterns, and the `<isx:redacted:<path>>` marker.
 `isx doctor --bundle` (`SupportBundle`) is the first consumer: the config is redacted structurally, every other file is scrubbed, and `SupportBundle.add()` is the only way into the archive so a new collector cannot leak by forgetting.
+`isx doctor --explain` (`DoctorExplain`, #1677) sends the same scrubbed files to the AI Help account, after the cached documentation blocks, so nothing reaches the model that could not reach an issue.
 See design/doctor.md "Support bundles: redaction by construction" and `.claude/rules/config.md`.
 
 **Project-local definitions are untrusted.**

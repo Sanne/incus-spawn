@@ -82,6 +82,26 @@ public class AiHelpClient {
         public long totalInputTokens() {
             return inputTokens + cacheReadTokens + cacheWriteTokens;
         }
+
+        /**
+         * What the answer cost in tokens, and whether the prompt cache was used -- the only visible
+         * sign that caching works, since a broken cache fails silently as a higher bill. Null when
+         * the provider reported nothing.
+         */
+        public String summary() {
+            if (totalInputTokens() == 0) return null;
+            var cache = new ArrayList<String>();
+            if (cacheReadTokens > 0) cache.add(tokens(cacheReadTokens) + " from cache");
+            if (cacheWriteTokens > 0) cache.add(tokens(cacheWriteTokens) + " cached for follow-ups within 5 min");
+            return tokens(totalInputTokens()) + " tokens in"
+                    + (cache.isEmpty() ? "" : " (" + String.join(", ", cache) + ")")
+                    + " · " + tokens(outputTokens) + " out";
+        }
+
+        private static String tokens(long count) {
+            return count < 1000 ? Long.toString(count)
+                    : String.format(java.util.Locale.ROOT, "%.1fk", count / 1000.0);
+        }
     }
 
     public static final String ANTHROPIC_MODEL = "claude-sonnet-5-5";

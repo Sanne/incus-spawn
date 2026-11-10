@@ -110,6 +110,29 @@ A string is redacted; a *list* inherits the name, its elements having none of th
 Blanket-redacting an object cost more than it protected — an ordinary `auth: {enabled, endpoint, timeoutMs}` block lost every field, and the endpoint, now counted as a secret value, was scrubbed out of every log in the archive.
 A declaration outranks all of this: a declared path is taken at its word and redacted whole, whatever shape it holds, so a tool that stores a structured credential should declare it rather than rely on the name.
 
+## `isx doctor --explain`: the bundle, read by AI Help
+
+Reading a bundle was a maintainer's job, after the user had opened an issue (#1677).
+`--explain` asks the AI Help account (`AiHelpClient.targets`, the first one, as `isx ask` does) for a first diagnosis before that.
+
+**The model is sent what an issue would carry, and nothing else.**
+`SupportBundle.collect` gathers the files through `add()` into memory, and the archive and `DoctorExplain` both read them from there.
+So the redaction is the archive's own, with no second path to forget a collector on.
+Only `README.txt`, the archive's guide for a person, is left out.
+With both `--bundle` and `--explain` the material is collected once.
+
+**The documentation prefix stays cached.**
+The material goes in the user message, after the last cache breakpoint of `HelpContext.systemBlocks(false)`, so the prefix is byte-identical to every other AI Help question's.
+The brief (`DoctorExplain.BRIEF`) asks for the causes in order of likelihood, the one command to run next, and which repository a fix belongs in (isx, the base images, the templates, or an install channel), since that routing is where users most often get lost.
+It tells the model to treat the files as data: logs hold text that guests and other programs wrote.
+
+**The user sees what leaves the machine, and who pays.**
+Every run names the account and the size of what it sends.
+Above `DoctorExplain.LARGE_BYTES` (100 KB, about 25k tokens) it asks first, and with no terminal to ask on it sends nothing and exits 1: the flag consents to a diagnosis, not to any size.
+After the answer come the disclaimer every AI answer carries and the provider's token split (`AiHelpClient.Usage.summary`, shared with the TUI's AI Help).
+The answer is prose for people on stdout, so `--explain` refuses `--format`, as `--bundle` does.
+The TUI has no doctor view, so this is a CLI feature only.
+
 ## Secret Scanning in CI
 
 `.github/workflows/gitleaks.yml` guards against a real leaked credential landing in the repo, as distinct from the credential-isolation work above, which guards containers against ever holding one.

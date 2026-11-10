@@ -3,10 +3,8 @@ package dev.incusspawn.command;
 import dev.incusspawn.config.McpConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -16,9 +14,6 @@ class SupportBundleTest {
 
     private static final String TOKEN = "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789";
     private static final Map<String, String> SECRETS = Map.of(TOKEN, "github.token");
-
-    @TempDir
-    Path dir;
 
     @Test
     @ExtendWith(IsolatedHome.class)
@@ -52,10 +47,10 @@ class SupportBundleTest {
 
     @Test
     void everyFileIsScrubbedOnTheWayIn() throws Exception {
-        var bundle = new SupportBundle(dir, SECRETS);
+        var bundle = new SupportBundle(SECRETS);
         bundle.add("proxy.log", "injecting " + TOKEN + " for github.com\n");
 
-        var written = Files.readString(dir.resolve("proxy.log"));
+        var written = bundle.files().get("proxy.log");
         assertFalse(written.contains(TOKEN), "the funnel exists so this cannot happen");
         assertTrue(written.contains("<isx:redacted:github.token>"));
         assertTrue(written.contains("for github.com"), "context around the secret survives");
@@ -63,7 +58,7 @@ class SupportBundleTest {
 
     @Test
     void scrubbingIsTalliedAcrossFiles() throws Exception {
-        var bundle = new SupportBundle(dir, SECRETS);
+        var bundle = new SupportBundle(SECRETS);
         bundle.add("proxy.log", TOKEN + "\n" + TOKEN + "\n");
         bundle.add("client.log", "auth with " + TOKEN + "\n");
 
@@ -72,17 +67,17 @@ class SupportBundleTest {
 
     @Test
     void cleanContentIsWrittenThrough() throws Exception {
-        var bundle = new SupportBundle(dir, SECRETS);
+        var bundle = new SupportBundle(SECRETS);
         var content = "Status: RUNNING\nCA fingerprint: ab:cd\n";
         bundle.add("proxy-status.txt", content);
 
-        assertEquals(content, Files.readString(dir.resolve("proxy-status.txt")));
+        assertEquals(content, bundle.files().get("proxy-status.txt"));
         assertTrue(bundle.scrubHits().isEmpty());
     }
 
     @Test
     void manifestListsRedactedKeysAndScrubCounts() throws Exception {
-        var bundle = new SupportBundle(dir, SECRETS);
+        var bundle = new SupportBundle(SECRETS);
         bundle.add("proxy.log", "leaked " + TOKEN + "\n");
 
         var manifest = bundle.redactionManifest(List.of("claude.oauthToken", "github.token"));
@@ -93,7 +88,7 @@ class SupportBundleTest {
 
     @Test
     void manifestSaysWhenNothingWasConfigured() {
-        var manifest = new SupportBundle(dir, Map.of()).redactionManifest(List.of());
+        var manifest = new SupportBundle(Map.of()).redactionManifest(List.of());
         assertTrue(manifest.contains("(none were configured)"), manifest);
         assertTrue(manifest.contains("(none)"), manifest);
         // The distinction the marker exists for — a reader of the bundle has to be told.

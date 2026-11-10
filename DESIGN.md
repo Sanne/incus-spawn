@@ -152,6 +152,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - Doctor: a finding that is neither healthy nor broken
   - Doctor and build remediations act through isx, never name an `incus` command
   - Support bundles: redaction by construction
+  - `isx doctor --explain`: the bundle, read by AI Help
   - Secret Scanning in CI
 - [The upstream watch](design/upstream.md)
   - The model: a manifest, an engine, two workflows and a merge gate
