@@ -117,6 +117,7 @@ public class TemplateValidator {
                 .forEach(w -> findings.add(TemplateFinding.warning("coordinator.control-over", w)));
         validateRepos(def, projectLocal, findings);
         validateHostResources(file, def, projectImagesDir, findings);
+        validateBaseImages(file, def, projectImagesDir, findings);
         validateDuplicateTools(def, findings);
 
         return new ValidationResult(findings, TemplateReach.of(def, projectLocal), def.getName());
@@ -163,7 +164,6 @@ public class TemplateValidator {
      */
     private static void validateHostResources(Path file, ImageDef def, Path projectImagesDir,
                                               List<TemplateFinding> findings) {
-        var imagesDir = projectImagesDir.toAbsolutePath().normalize();
         var projectLocal = projectLocal(file, projectImagesDir);
         var resources = def.getHostResources();
         for (int i = 0; i < resources.size(); i++) {
@@ -180,10 +180,7 @@ public class TemplateValidator {
             var single = new ImageDef();
             single.setName(def.getName());
             single.setHostResources(List.of(hr));
-            if (projectLocal) {
-                single.setSource(file.toAbsolutePath().normalize().toString());
-                single.setProjectRoot(imagesDir.getParent().getParent());
-            }
+            if (projectLocal) locateInProject(single, file, projectImagesDir);
             try {
                 HostResourceSetup.collectEffective(single, Map.of());
             } catch (HostResourceSetup.ForbiddenMountTargetException
@@ -194,6 +191,36 @@ public class TemplateValidator {
                 // Path.of's refusal quotes the raw path.
                 findings.add(TemplateFinding.error(field, OutputFormat.oneLine(e.getMessage())));
             }
+        }
+    }
+
+    /**
+     * A project-local template's {@code file://} base images, through the confinement
+     * {@code isx build} applies before it creates anything (#2095), each on its own field.
+     */
+    private static void validateBaseImages(Path file, ImageDef def, Path projectImagesDir,
+                                           List<TemplateFinding> findings) {
+        if (!projectLocal(file, projectImagesDir)) return;
+        var located = new ImageDef();
+        located.setName(def.getName());
+        located.setImageTag(def.getImageTag());
+        locateInProject(located, file, projectImagesDir);
+        validateBaseImage(located, "image_url", def.getImageUrl(), findings);
+        validateBaseImage(located, "vm_image_url", def.getVmImageUrl(), findings);
+    }
+
+    /** Stamps {@code def} as the loader stamps a project-local definition read from {@code file}. */
+    private static void locateInProject(ImageDef def, Path file, Path projectImagesDir) {
+        def.setSource(file.toAbsolutePath().normalize().toString());
+        def.setProjectRoot(projectImagesDir.toAbsolutePath().normalize().getParent().getParent());
+    }
+
+    private static void validateBaseImage(ImageDef located, String field, String url, List<TemplateFinding> findings) {
+        try {
+            HostResourceSetup.requireConfinedBaseImage(located, url);
+        } catch (HostResourceSetup.HostPathOutsideProjectException e) {
+            // isx's multi-line advice, the values it quotes already made safe.
+            findings.add(TemplateFinding.error(field, e.getMessage()));
         }
     }
 

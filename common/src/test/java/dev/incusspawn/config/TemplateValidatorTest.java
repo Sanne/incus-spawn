@@ -313,6 +313,38 @@ class TemplateValidatorTest {
     }
 
     @Test
+    void projectLocalFileBaseImageOutsideTheProjectIsAnError(@TempDir Path dir) throws Exception {
+        // What isx build refuses (#2095): validate and templates new --from must not pass it.
+        var project = Files.createDirectories(dir.resolve("project")).toRealPath();
+        var images = Files.createDirectories(project.resolve(".incus-spawn/images"));
+        var outside = Files.writeString(dir.resolve("backup.tar.xz"), "private").toUri();
+        var file = images.resolve("tpl-p.yaml");
+        var yaml = """
+                name: tpl-p
+                image: local/p
+                image_tag: t1
+                image_url: %s
+                vm_image_url: %s
+                """;
+        var result = TemplateValidator.validate(yaml.formatted("file:///etc/p.tar.xz",
+                "file://" + project + "/../backup.tar.xz"), file, knownTemplates(), images);
+        assertEquals(List.of("image_url", "vm_image_url"),
+                result.findings().stream().filter(TemplateFinding::isError).map(TemplateFinding::field).toList(),
+                result.errors().toString());
+        assertTrue(result.errors().get(0).contains("base image 'file:///etc/p.tar.xz'"), result.errors().get(0));
+
+        // {arch} and {tag} are filled in as the build fills them, and a path inside the project is fine.
+        var ok = TemplateValidator.validate(yaml.formatted(project.toUri() + "p-{tag}-{arch}.tar.xz",
+                "https://example.com/p-vm.tar.xz"), file, knownTemplates(), images);
+        assertEquals(List.of(), ok.errors());
+
+        // The same URL is fine from a trusted layer: that is the local image-testing workflow.
+        var trusted = TemplateValidator.validate(yaml.formatted(outside, outside),
+                dir.resolve("tpl-p.yaml"), knownTemplates(), images);
+        assertEquals(List.of(), trusted.errors());
+    }
+
+    @Test
     void invalidHostResourceMode(@TempDir Path dir) throws Exception {
         var file = dir.resolve("test.yaml");
         Files.writeString(file, """

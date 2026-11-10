@@ -1981,35 +1981,6 @@ class BuildCommandTest {
                 BuildCommand.diagnoseCrashCause(dmesg));
     }
 
-    @Test
-    void projectLocalFileBaseImageMustStayInsideProject(@TempDir Path tmp) throws Exception {
-        var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
-        var inside = Files.writeString(project.resolve("fedora.tar.xz"), "image");
-        var outside = Files.writeString(tmp.resolve("backup.tar.xz"), "private");
-
-        var def = new ImageDef();
-        def.setName("tpl-project");
-        def.setSource(project.resolve(".incus-spawn/images/project.yaml").toString());
-        def.setProjectRoot(project);
-        var defs = Map.of("tpl-project", def);
-
-        def.setImageUrl(inside.toUri().toString());
-        BuildCommand.requireConfinedBaseImages(def, defs);
-
-        def.setImageUrl(outside.toUri().toString());
-        assertThrows(dev.incusspawn.config.HostResourceSetup.HostPathOutsideProjectException.class,
-                () -> BuildCommand.requireConfinedBaseImages(def, defs));
-
-        def.setImageUrl(inside.toUri().toString());
-        def.setVmImageUrl("file://" + project + "/../backup.tar.xz");
-        assertThrows(dev.incusspawn.config.HostResourceSetup.HostPathOutsideProjectException.class,
-                () -> BuildCommand.requireConfinedBaseImages(def, defs));
-
-        // The same URL is fine from a trusted layer: that is the local image-testing workflow.
-        def.setProjectRoot(null);
-        BuildCommand.requireConfinedBaseImages(def, defs);
-    }
-
     // --- #765: project-local templates must not reach host state through images or repos ---
 
     private static ImageDef projectLocal(String name, Path root) {
@@ -2156,7 +2127,7 @@ class BuildCommandTest {
         when(incus.imageExistsOrThrow(expected)).thenReturn(true);
         when(incus.imagePropertyOrThrow(expected, BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn("/work/repo");
         var cmd = importing(incus, Files.writeString(tmp.resolve("d.tar.xz"), "d"), "fp",
-                BuildCommand.resolveImageUrl(DIRECT_URL, "fedora-44-20261020"));
+                ImageDef.resolveImageUrl(DIRECT_URL, "fedora-44-20261020"));
 
         cmd.downloadAndAliasImage("fedora-44-base-vm-direct", DIRECT_URL,
                 Map.of("x86_64", expected, "aarch64", expected), "fedora-44-20261020", trusted("tpl-minimal"));
@@ -2199,7 +2170,7 @@ class BuildCommandTest {
     void anImportOfAnotherFileOfTheSameReleaseIsReplaced(@TempDir Path tmp) throws Exception {
         var expected = "d".repeat(64);
         var incus = importedVmImage("fedora-44-20261020", "c".repeat(64)); // the stock image, same tag
-        var source = BuildCommand.resolveImageUrl(DIRECT_URL, "fedora-44-20261020");
+        var source = ImageDef.resolveImageUrl(DIRECT_URL, "fedora-44-20261020");
         var cmd = importing(incus, Files.writeString(tmp.resolve("direct.tar.xz"), "direct"), expected, source);
 
         cmd.downloadAndAliasImage(VM_ALIAS, DIRECT_URL,

@@ -16,7 +16,7 @@ Resolution order for both images and tools (later overrides earlier): built-in -
 
 **Project-local is untrusted**: it is whatever a cloned repo ships.
 Project-local templates' host-resources are confined to the project directory (`ImageDef.projectRoot` stamped at load, never from YAML; enforced in `HostResourceSetup.collectEffective()`, re-checked via `verifyConfined()` at build, branch, and start; recorded in `BuildSource.projectRoots`).
-A `file://` base image URL in a project-local template gets the same check (`BuildCommand.requireConfinedBaseImages`).
+A `file://` base image URL in a project-local template gets the same check (`HostResourceSetup.requireConfinedBaseImages`), at build and in the template check `validate` and `templates new --from` share (`TemplateValidator`, #2095).
 Project-local templates get no host repo references and are skipped by `HostRepoRefresh.collectAllRepos()`.
 Their `image_url` may only replace an image their own project imported (`incus-spawn.project` image stamp; trusted builds refuse or re-import project-stamped images, `BuildCommand.requireImageTrustedFor`).
 Project-local tools cannot declare `proxy:` (`ToolProxyResolver.rejectProjectLocalProxy()`).

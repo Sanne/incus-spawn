@@ -200,7 +200,8 @@ Trusted layers (user, search paths, built-in) are unaffected, and so are a proje
   `BuildCommand.buildSingleImage` calls `collectEffective` before creating anything, so a rejected template leaves no half-built container.
   The `isx templates new/edit --project` validator reports the same error while the file is still open.
 - **Covers `file://` base images too.**
-  `image_url`/`vm_image_url` accept `file://` (the incus-spawn-images local-testing workflow), so the build preflight applies the same `HostResourceSetup.projectEscape()` check to a project-local template's resolved base image URL.
+  `image_url`/`vm_image_url` accept `file://` (the incus-spawn-images local-testing workflow), so the build preflight applies the same check to a project-local template's resolved base image URL (`HostResourceSetup.requireConfinedBaseImages`).
+  The template check reports it on `image_url` or `vm_image_url`, so `isx templates validate` and `isx templates new --from` never pass what the build refuses (#2095).
 - **No GUI by default.**
   A branch's GUI passthrough mounts the host's Wayland and audio sockets and hands over its GPU, so a project-local `gui: true` -- the definition's own, or any the source was built from (`BuildSource.usedProjectLocal()`) -- does not turn it on by default.
   `BranchFlow.defaultsFor()` leaves it off with a note, and `--gui` still turns it on (#869).
