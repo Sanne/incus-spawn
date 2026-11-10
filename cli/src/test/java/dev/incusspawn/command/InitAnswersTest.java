@@ -101,6 +101,8 @@ class InitAnswersTest {
         RecordingOutput.during(() -> assertFalse(no.completeWithProxyService(null)));
         assertEquals(List.of(), no.installed);
         assertEquals(Set.of(), no.skipped);
+        // Declined, not skipped: the summary says the person's answer was no, so nothing is left there
+        assertEquals(Set.of("proxy-service"), no.declined);
         var unanswered = new NoTerminal();
         RecordingOutput.during(() -> unanswered.completeWithProxyService(null));
         assertEquals(Set.of("proxy-service"), unanswered.skipped);
@@ -120,9 +122,10 @@ class InitAnswersTest {
                 InitPlan.Change.sudo("Add the rule", null).scripted(List.of("firewall-cmd --reload")), List.of()));
         assertFalse(InitCommand.leftForThePerson(List.of(unread), Set.of(), false));
         assertTrue(InitCommand.leftForThePerson(List.of(unread), Set.of(), true));
-        var record = InitCommand.summaryRecord(credential, true);
+        var record = InitCommand.summaryRecord(credential, true, false);
         assertEquals(List.copyOf(InitPlan.record(credential).keySet()),
-                List.copyOf(record.keySet()).subList(0, record.size() - 1), "the plan's fields, in order, first");
+                List.copyOf(record.keySet()).subList(0, record.size() - 2), "the plan's fields, in order, first");
+        assertEquals(List.of("skipped", "declined"), List.copyOf(record.keySet()).subList(record.size() - 2, record.size()));
         assertEquals(true, record.get("skipped"));
         assertEquals(List.of("isx account add github"), record.get("commands"));
     }
