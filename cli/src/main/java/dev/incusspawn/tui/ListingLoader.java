@@ -2,6 +2,7 @@ package dev.incusspawn.tui;
 
 import dev.incusspawn.command.InstanceListing;
 import dev.incusspawn.command.BuildCommand;
+import dev.incusspawn.command.MissingDefinition;
 import dev.incusspawn.Platform;
 import dev.incusspawn.Warnings;
 import dev.incusspawn.config.BuildSource;
@@ -293,8 +294,12 @@ final class ListingLoader {
                 tui.templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", "", "", "", "", -1, -1, ""));
             }
         }
-        // Add out-of-scope templates (built but not in current definition scope)
+        // Add templates with no loaded definition (#2057): built, still branchable, never rebuilt.
+        // What is loaded leaves out the stamps' definitions an earlier merge of this load added.
+        var loaded = new java.util.HashMap<String, dev.incusspawn.config.ImageDef>(tui.imageDefs);
+        loaded.keySet().removeAll(mergedFromStamps);
         var storedNames = new java.util.HashSet<String>();
+        var missing = new java.util.HashMap<String, MissingDefinition>();
         for (var inst : allInstances) {
             if (templateNames.contains(inst.name())) continue;
             if (inst.name().endsWith(BuildCommand.REBUILDING_SUFFIX)) continue;
@@ -309,6 +314,8 @@ final class ListingLoader {
                 }
             }
             tui.toolDefLoader.addFallbacks(buildSource.getTools());
+            var why = MissingDefinition.ofStamp(inst.name(), buildSource, loaded);
+            if (why != null) missing.put(inst.name(), why);
 
             tui.templateEntries.add(new TemplateInfo(inst.name(), buildSource.descriptionFor(inst.name()),
                     inst.created().isEmpty() ? "built" : inst.created(), inst.runtime(),
@@ -318,6 +325,7 @@ final class ListingLoader {
             storedNames.add(inst.name());
         }
         tui.storedSourceTemplates = storedNames;
+        tui.missingDefinitions = missing;
         templatesBuiltFrom = builtFrom;
 
         // Instance panel: exclude template instances (they're shown in the template panel)

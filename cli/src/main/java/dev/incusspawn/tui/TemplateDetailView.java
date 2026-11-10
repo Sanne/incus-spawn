@@ -72,6 +72,9 @@ final class TemplateDetailView {
         BuildSource buildSource(String template);
 
         String currentVersion();
+
+        /** Why a built template has no loaded definition, or null when it has one (#2057). */
+        default dev.incusspawn.command.MissingDefinition missingDefinition(String template) { return null; }
     }
 
     private static final int LABEL_WIDTH = 16;
@@ -212,7 +215,14 @@ final class TemplateDetailView {
         addBuildStatus(lines, template);
 
         // Origin
-        lines.add(row("Source:", sourceLabel(current.getSource()), dimStyle));
+        var missing = source.missingDefinition(template.name());
+        if (missing != null) {
+            // The definition shown is the one stamped on the build, which no file says any more
+            lines.add(row("Source:", "no definition here: " + missing.reason(), warnStyle()));
+            lines.add(row("", missing.advice(), dimStyle));
+        } else {
+            lines.add(row("Source:", sourceLabel(current.getSource()), dimStyle));
+        }
         var builtFrom = template.isBuilt() ? otherBuildFile(source.builtFrom(template.name()), current) : null;
         if (builtFrom != null) {
             // Only a lead when the definition differs too; a moved, unchanged file needs no rebuild
