@@ -215,4 +215,37 @@ class BtrfsUsageTest {
         assertFalse(BtrfsUsage.status(null).available());
         assertFalse(BtrfsUsage.repairIfInconsistent(null).untrusted());
     }
+
+    // Captured on Incus 6.23 / kernel 7.3 / btrfs-progs 7.1 (#2061). 517 to 521 are copies of a
+    // 2.7 GiB instance just deleted with `incus delete`, not yet freed by btrfs-cleaner. 682 was
+    // freed already (`btrfs subvolume sync` had returned): its qgroup outlives it until a later
+    // commit, with its referenced bytes unchanged.
+    private static final String QGROUP_UNDER_DELETION = """
+            Qgroupid    Referenced    Exclusive  Max referenced  Max exclusive   Path\s
+            --------    ----------    ---------  --------------  -------------   ----\s
+            0/5              16384        16384            none           none   <toplevel>
+            0/257        122187776       282624            none           none   containers/tpl-minimal
+            0/258            16384        16384            none           none   custom/default_dnf-cache
+            0/259       2916741120        16384            none           none   containers/workbench
+            0/517       2916741120        53248    100000000000           none   <under deletion>
+            0/518       2916741120        53248    100000000000           none   <under deletion>
+            0/521       2916741120        16384    100000000000           none   <under deletion>
+            0/682       2917625856        16384    100000000000           none   <stale>
+            """;
+
+    @Test
+    void countsOnlyTheQgroupsOfSubvolumesStillBeingFreed() {
+        assertEquals(new BtrfsUsage.PendingCleanup(3, 3 * 2916741120L),
+                BtrfsUsage.parsePendingCleanup(QGROUP_UNDER_DELETION));
+    }
+
+    @Test
+    void aQgroupLeftAfterTheCleanerFinishedIsNoBacklog() {
+        var freed = QGROUP_UNDER_DELETION.lines().filter(l -> !l.endsWith("<under deletion>"))
+                .reduce("", (a, l) -> a + l + "\n");
+        assertEquals(BtrfsUsage.PendingCleanup.NONE, BtrfsUsage.parsePendingCleanup(freed));
+        // A btrfs-progs that prints no path column cannot say, so it reports nothing
+        assertEquals(BtrfsUsage.PendingCleanup.NONE, BtrfsUsage.parsePendingCleanup(QGROUP));
+        assertEquals(BtrfsUsage.PendingCleanup.NONE, BtrfsUsage.parsePendingCleanup(""));
+    }
 }

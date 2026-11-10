@@ -774,3 +774,42 @@ Measured on 2026-11-06 on `main` @ `7c01a242` with base image `fedora-45-v1` (sy
   DHCP gave the reserved address about 1.5 s before `incus-agent` was up, so their first exec already sees it.
 - **A cold start won its race by little.**
   A native `isx shell` of a stopped container handed over at uptime 0.27–0.29 s, against the route at 0.22–0.29 s, so its probe now applies the address too.
+
+## Branching after a bulk delete: the btrfs cleaner (issue #2061)
+
+A branch made soon after many instances were deleted can take seconds where it took a fraction of one.
+isx makes the same Incus requests either way, and the extra time is all in Incus's copy, the btrfs snapshot.
+Measured on 2026-11-10 in a KVM guest (8 vCPUs, 15 GB, kernel 7.3.1, btrfs-progs 7.1, Incus 6.23), on the `cow` pool in a loop file.
+The source was a running instance of `tpl-minimal` filled to 2.7 GiB (200,000 small files and one 1.5 GiB file).
+Each series made 20 copies of it, deleted them with `incus delete -f`, then timed `incus copy` of the same source every 2 s.
+
+| Pool | `incus copy` while the cleaner works | Cleaner time for 20 |
+|---|---|---|
+| qgroups off | 0.11–0.14 s, flat | under 6 s |
+| Simple quotas (`btrfs quota enable --simple`) | 0.11–0.13 s, flat | about 10 s |
+| Full qgroups, `commit=30` | 0.15 s, then **4.5–6.4 s** for each copy from t+11 s to t+147 s | about 140 s |
+| Full qgroups, `commit=300`, first run | 0.15–0.33 s for 153 s; the cleaner had not started | not reached |
+| Full qgroups, `commit=300`, second run, one copy every 10 s | 0.67–6.0 s from t+10 s to t+96 s | about 105 s |
+| Full qgroups, `commit=30`, a 116 MiB source | 0.13–0.22 s, flat | about 2 s |
+
+- **The cause is full qgroup accounting in `btrfs-cleaner`.**
+  A delete returns at once, and the cleaner frees the subvolume's tree later.
+  With full qgroups it accounts every extent the subvolume shared with its source, holding the transaction a new snapshot must commit.
+  During the window `btrfs-cleaner` used 100% of one CPU and `commit_stats` showed commits of up to 11.8 s.
+  With qgroups off or simple quotas the same series had no window at all.
+- **It scales with the deleted data and with how many copies share it.**
+  20 copies freed in about 7 s each; a backlog of 70 took 663 s to drain, about 9.5 s each, and an `incus copy` started meanwhile waited behind it for minutes.
+  A copy of a small source costs little to free, which is why the window is easy to miss on `tpl-minimal`.
+- **isx's root `size` is what turns full qgroups on.**
+  The pool had no quotas until the first `isx branch`, whose 100GB root `size` makes Incus run `btrfs quota enable`, in full mode.
+  A plain `incus copy` of an instance with the `size` re-enabled them after `btrfs quota disable`.
+- **`commit=300` does not remove the window, and its start is unpredictable.**
+  In one run the cleaner had not started 153 s after the deletes, with a copy every 2 s; in the next it started within 10 s.
+  Every isx loop pool has these scratch options, so the window comes sooner or later all the same.
+- **Simple quotas would avoid it but cost the referenced column.**
+  Under simple quotas a subvolume's referenced bytes count only what it wrote since quotas were enabled.
+  Every template read 0 and the source only its 236 KiB of later writes, so `BtrfsUsage` would report no template's weight.
+- **What isx does:** `isx doctor` reports a backlog as a note when the pool uses full qgroups, from the `qgroup show` read `BtrfsUsage` already makes.
+  It counts the qgroups btrfs-progs paths as `<under deletion>`.
+  A freed subvolume's qgroup stays until a later commit, up to 300 s with `commit=300`, with its referenced bytes unchanged and pathed `<stale>`, so a missing subvolume alone would report a backlog already gone.
+  `sudo btrfs subvolume sync <pool>` waits for the backlog.

@@ -166,6 +166,21 @@ The reload that first sees the flag clear re-validates the stamps with one live 
 A rescan walks the whole pool, which took over 20 s on a nested host, and every rebuild's swap deletes a subvolume and can flag the pool again, so a batch of builds would wait once per template.
 The stamp serves only the TUI's disk panel, so a build whose accounting is under repair leaves its template unstamped, says nothing, and the TUI's backfill measures and saves it once the flag clears.
 `isx doctor` reports the state and offers the rescan for when the automatic one couldn't run.
+
+**Full qgroups make the next branches wait for deleted instances (#2061).**
+A subvolume delete returns at once, and `btrfs-cleaner` frees the tree in the background.
+Under full qgroup accounting it accounts every extent the subvolume shared with its source, and a new snapshot waits for the transaction that work holds.
+After 20 copies of a 2.7 GiB instance were deleted, each `incus copy` took about 5 s instead of 0.15 s, for over two minutes (docs/dev/PERFORMANCE-NOTES.md "Branching after a bulk delete").
+The cost grows with the data deleted and the number of copies sharing it, and isx makes the same requests throughout.
+With qgroups off, or in simple mode, the same series showed no slowdown.
+isx turns full qgroups on itself: the root `size` every branch gets makes Incus run `btrfs quota enable` (see "Quotas on the host filesystem" above).
+isx keeps full mode, since simple quotas count only what a subvolume wrote after they were enabled, so the referenced column `BtrfsUsage` reads would be 0 for every template.
+Nor does a destroy wait for the cleaner: that would move minutes into the destroy for a slowdown that only some later branches feel.
+`isx doctor` names the backlog instead, as a note (`DoctorCommand.pendingCleanupFinding`), when the pool uses consistent full accounting.
+It is read from the `qgroup show` that `BtrfsUsage` already reads (`BtrfsUsage.pendingCleanup`), counting the qgroups btrfs-progs paths as `<under deletion>`.
+A missing subvolume is not enough: once the cleaner has freed one, its qgroup stays until a later commit with its referenced bytes unchanged, pathed `<stale>`.
+An inconsistent pool is skipped, since its frozen counters could show a backlog long gone.
+
 The `C` key reclaims space via `isx clean pool` (failed builds, unused images, build caches).
 Downloaded base images, the container one and the `-vm` disk image, are a category of their own and opt-in, like the DNF cache.
 They are not unused, only re-downloadable, and on a slow connection a VM base image is the most expensive thing to lose.
