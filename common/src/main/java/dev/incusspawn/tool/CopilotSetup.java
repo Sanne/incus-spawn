@@ -1,8 +1,12 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.config.EnvEntry;
+import dev.incusspawn.config.Jjq;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.util.BuildOutput;
+import io.hyperfoil.tools.jjq.value.JqObject;
+import io.hyperfoil.tools.jjq.value.JqString;
+import io.hyperfoil.tools.jjq.value.JqValues;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -108,14 +112,13 @@ public class CopilotSetup implements ToolSetup {
     public void install(Container c, Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Installing GitHub Copilot CLI");
         installCopilotCli(c);
-        configureCopilotSettings(c);
-        configureModelSettings(c, resolvedParams, false);
+        writeSettings(c, resolvedParams);
         BuildOutput.stepDone();
     }
 
     @Override
     public void reconfigure(Container c, Map<String, String> resolvedParams) {
-        configureModelSettings(c, resolvedParams, true);
+        writeSettings(c, resolvedParams);
     }
 
     private void installCopilotCli(Container c) {
@@ -128,53 +131,57 @@ public class CopilotSetup implements ToolSetup {
         NpmGlobalInstall.install(c, NPM_CLI);
     }
 
-    private static final String COPILOT_CONFIG_PATH = "/home/agentuser/.copilot/config.json";
-
-    private void configureCopilotSettings(Container c) {
-        // COPILOT_ALLOW_ALL (envEntries) covers non-interactive `-p` runs; defaultPermissionMode
-        // is the interactive-session equivalent -- it's ignored outside interactive runs, so both
-        // are needed for full "--yolo" parity regardless of how the CLI is invoked.
-        c.writeFile(COPILOT_CONFIG_PATH, """
-                {
-                  "defaultPermissionMode": "allow-all"
-                }
-                """);
-        c.chown("/home/agentuser/.copilot", "agentuser:agentuser");
-    }
-
     private static final String COPILOT_SETTINGS_PATH = "/home/agentuser/.copilot/settings.json";
 
     /**
-     * On reconfigure, a child that sets none of the parameters drops what its parent pinned, so
-     * the file is removed; at install there is nothing to remove.
+     * The whole file is rewritten every time, so a child that sets none of the parameters drops
+     * what its parent pinned while keeping the permission mode.
      */
-    private void configureModelSettings(Container c, Map<String, String> resolvedParams,
-                                        boolean reconfigure) {
-        var settings = settingsJson(resolvedParams);
-        if (settings == null) {
-            if (reconfigure) {
-                c.sh("rm -f " + COPILOT_SETTINGS_PATH).assertSuccess("Failed to remove " + COPILOT_SETTINGS_PATH);
-            }
-            return;
-        }
-        c.writeFile(COPILOT_SETTINGS_PATH, settings);
+    private void writeSettings(Container c, Map<String, String> resolvedParams) {
+        c.writeFile(COPILOT_SETTINGS_PATH, settingsJson(resolvedParams));
         c.chown("/home/agentuser/.copilot", "agentuser:agentuser");
     }
 
     /**
-     * Copilot's user settings, or null when the template asked for none of them. Each key appears
-     * only when set: Copilot picks the model, effort and context tier from a catalog that moves,
-     * so a value baked in here would silently override whatever it currently promotes. The
-     * parameter patterns keep the values free of characters that need JSON escaping.
+     * A parent built by an older isx wrote the permission mode to config.json, where Copilot does
+     * not honour it, and settings.json only when a parameter was set (#2066). The parent's
+     * parameters are not known here, so its settings.json is kept and only the key is added.
+     */
+    @Override
+    public void refreshInherited(Container c) {
+        var settings = c.sh("if [ -f " + COPILOT_SETTINGS_PATH + " ]; then cat " + COPILOT_SETTINGS_PATH + "; fi")
+                .assertSuccess("Failed to read " + COPILOT_SETTINGS_PATH).stdout();
+        c.writeFile(COPILOT_SETTINGS_PATH, withAllowAll(settings));
+        c.chown("/home/agentuser/.copilot", "agentuser:agentuser");
+    }
+
+    /** The parent's settings with the permission mode set, every other key kept as it was. */
+    static String withAllowAll(String json) {
+        var root = json.isBlank() ? JqObject.EMPTY : Jjq.parseForeign(json, COPILOT_SETTINGS_PATH);
+        if (!(root instanceof JqObject settings)) {
+            throw new IllegalStateException(COPILOT_SETTINGS_PATH + " must hold a JSON object");
+        }
+        return JqValues.toPrettyJsonString(
+                settings.with("defaultPermissionMode", JqString.of("allow-all"))) + "\n";
+    }
+
+    /**
+     * Copilot's user settings. COPILOT_ALLOW_ALL (envEntries) covers non-interactive `-p` runs;
+     * defaultPermissionMode is the interactive-session equivalent, so both are needed for full
+     * "--yolo" parity. It belongs here: config.json is state the CLI manages itself, and the key
+     * there leaves a session in manual approval (Copilot CLI 1.0.108, #2066).
+     * <p>
+     * Each other key appears only when set: Copilot picks the model, effort and context tier
+     * from a catalog that moves, so a value baked in here would silently override whatever it
+     * currently promotes. The parameter patterns keep the values free of characters that need
+     * JSON escaping.
      */
     static String settingsJson(Map<String, String> resolvedParams) {
         var entries = new java.util.ArrayList<String>();
+        entries.add("  \"defaultPermissionMode\": \"allow-all\"");
         addSetting(entries, resolvedParams, "model", "model");
         addSetting(entries, resolvedParams, "effort", "effortLevel");
         addSetting(entries, resolvedParams, "context", "contextTier");
-        if (entries.isEmpty()) {
-            return null;
-        }
         return "{\n" + String.join(",\n", entries) + "\n}\n";
     }
 

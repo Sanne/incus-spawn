@@ -309,6 +309,7 @@ tools:
 ```
 
 They are written to Copilot's `~/.copilot/settings.json` as `model`, `effortLevel` and `contextTier`, and a child template can set any of them again without reinstalling Copilot.
+The same file always holds `defaultPermissionMode: allow-all`, so interactive sessions start in Allow All.
 
 ## Agent Skills
 
