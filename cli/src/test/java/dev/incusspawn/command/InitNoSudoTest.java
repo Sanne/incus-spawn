@@ -70,6 +70,10 @@ class InitNoSudoTest {
             at = next;
         }
         assertTrue(script.startsWith("#!/bin/sh\n"), script);
+        // incus storage create and network create read a YAML config from a stdin that is not a
+        // terminal: without this, the script run from an agent's shell waits forever on a real host
+        var detached = script.indexOf("\n" + InitPlan.DETACH_STDIN + "\n");
+        assertTrue(detached > 0 && detached < script.indexOf("dnf install"), "stdin detached before any command:\n" + script);
         assertFalse(script.lines().anyMatch(l -> l.startsWith("sudo ")), "the script runs as root, so names no sudo:\n" + script);
         assertTrue(recorded.lines().stream().anyMatch(l -> l.contains("sudo sh " + Environment.privilegedInitScript())),
                 recorded.lines().toString());
@@ -92,7 +96,9 @@ class InitNoSudoTest {
         var end = script.indexOf("\n# Record what ran");
         var titles = init.planSteps(false).stream().map(step -> "# " + step.title() + ": ").toList();
         var body = script.substring(script.indexOf('\n', start) + 1, end).lines()
-                .filter(l -> !l.isEmpty() && !l.startsWith("# - ") && titles.stream().noneMatch(l::startsWith)).toList();
+                .filter(l -> !l.isEmpty() && !l.startsWith("# - ") && titles.stream().noneMatch(l::startsWith))
+                // The script's own line, before every step's: no command reads the person's input
+                .filter(l -> !l.equals(InitPlan.DETACH_STDIN)).toList();
         assertEquals(planned, body);
     }
 

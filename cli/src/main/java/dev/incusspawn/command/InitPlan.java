@@ -312,6 +312,14 @@ final class InitPlan {
     /** The record the script leaves, readable by the user: which changes it applied, by key. */
     static final String APPLIED_RECORD = "/var/lib/isx/init-applied";
 
+    /**
+     * The script's first command: no command reads the person's input. incus storage create and
+     * network create read a YAML config from a stdin that is not a terminal, so run from an agent's
+     * shell they would wait forever. The files the script writes come from here-documents, which
+     * bring their own stdin.
+     */
+    static final String DETACH_STDIN = "exec </dev/null";
+
     /** A change's key in {@link #APPLIED_RECORD}: what its lines do, so a different script is a different key. */
     static String key(Change change) {
         return key(change.script());
@@ -374,6 +382,7 @@ final class InitPlan {
         out.append("# Afterwards run '").append(rerun).append("' again, as yourself, to finish the setup.\n");
         out.append("set -eu\n");
         out.append("[ \"$(id -u)\" = 0 ] || { echo \"Run this as root: sudo sh $0\" >&2; exit 1; }\n");
+        out.append(DETACH_STDIN).append("\n");
         Entry step = null;
         for (var p : changes) {
             if (p.entry() != step) {

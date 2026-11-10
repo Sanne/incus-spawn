@@ -199,6 +199,7 @@ A change with no lines (no package manager, UFW's `before.rules`) is the person'
 The script appends each change's key (`InitPlan.key`, a hash of its lines) to `/var/lib/isx/init-applied`; a not-checked change whose key is there, or whose lines all are as single-line keys (`InitPlan.made`), counts as made, and a checked one still pending after the script ran is warned about, not scripted again, unless its step has a change the record lacks: then the whole step is scripted, its restart or reload included.
 Once nothing is left, the steps run with their root parts reduced to a note (`HostSetup.DONE_BY_SCRIPT`): no `sudo -v`, no dependency install, Incus, subids, firewall, redirect, sysctl, KSM, btrfs rule or linger.
 The redirect's lines read the gateway from the bridge as the script runs, so a fresh host needs one script.
+The script detaches its stdin first (`exec </dev/null`): `incus storage create` and `incus network create` read a YAML config from any stdin that is not a terminal, so run from an agent's shell the script would wait forever (found on a real Fedora VM); its files come from here-documents, which bring their own.
 `InitNoSudoTest` pins the fresh host's script, that it is the plan's `sudo_script`, the record, and the guard.
 
 **The group init adds** (#1436).
