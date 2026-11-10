@@ -952,7 +952,7 @@ class ImageDefTest {
 
     @Test
     void aCycleClosedAfterLoadStopsTheChainWalk() {
-        // A build-source snapshot merged in after load (isx build, the TUI) can bring back tpl-a,
+        // A build-source snapshot the TUI merges in after load can bring back tpl-a,
         // whose definition file is gone, while the loaded tpl-b now names it as parent (#1443)
         var a = new ImageDef();
         a.setName("tpl-a");

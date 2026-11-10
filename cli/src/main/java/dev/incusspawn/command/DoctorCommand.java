@@ -2010,6 +2010,25 @@ public class DoctorCommand extends BaseCommand {
         return findings;
     }
 
+    /**
+     * One finding per built template in {@code listing} with no definition in {@code defs}
+     * (#2057), which isx build refuses: a WARN when its file was renamed or is gone, a NOTE when
+     * it is only loaded elsewhere, such as another project's.
+     */
+    static List<Finding> missingDefinitionFindings(JqValue listing, Map<String, ImageDef> defs) {
+        var findings = new ArrayList<Finding>();
+        for (var i : InstanceListing.collectEntries(listing)) {
+            if (!Metadata.TYPE_BASE.equals(i.type()) || i.name().endsWith(BuildCommand.REBUILDING_SUFFIX)) continue;
+            var why = MissingDefinition.of(i.name(), i.buildSourceJson(), defs);
+            if (why == null) continue;
+            var label = "Template " + OutputFormat.oneLine(i.name()) + " has no definition here";
+            var detail = why.reason() + ". " + why.advice();
+            findings.add(why.kind() == MissingDefinition.Kind.OUT_OF_SCOPE
+                    ? Finding.note(label, detail) : Finding.warn(label, detail, null));
+        }
+        return findings;
+    }
+
     /** Whether {@code def}'s own {@code coordinator:} says anything, so it decides its chain's scope alone. */
     private static boolean declaresScope(ImageDef def, Map<String, ImageDef> defs) {
         return ImageDef.coordinatorLayer(def, defs) == def;
@@ -2051,6 +2070,7 @@ public class DoctorCommand extends BaseCommand {
                 listing = null; // the coordinator templates are still checked
             }
             findings.addAll(mcpClientFindings(ImageDef.loadTrusted(), listing));
+            if (listing != null) findings.addAll(missingDefinitionFindings(listing, allDefs));
 
             int builtCount = 0;
             for (var name : allDefs.keySet()) {

@@ -60,7 +60,7 @@ class BuildCommandTest {
 
     @Test
     void collectAllStopsAtACycleClosedAfterLoad() {
-        // A snapshot merged in by isx build can close a cycle the load-time check never saw (#1443)
+        // A snapshot the TUI merges in can close a cycle the load-time check never saw (#1443)
         var a = new ImageDef();
         a.setName("tpl-a");
         a.setParent("tpl-b");
