@@ -660,8 +660,9 @@ class RepoCloner {
         return new GitPreparation(config.gitCache(), config.gitTransfer());
     }
 
-    /** Waits for every read's thread to end; each worker has already consumed or discarded its read. */
-    private void awaitRemoteReads() {
+    /** Waits for every read's thread to end; each worker has already consumed or discarded its read.
+     *  A test calling {@link #prepareOne} directly calls it too, before its cache is removed (#2102). */
+    void awaitRemoteReads() {
         for (RemoteRead read; (read = startedReads.poll()) != null; ) read.awaitEnd();
     }
 
