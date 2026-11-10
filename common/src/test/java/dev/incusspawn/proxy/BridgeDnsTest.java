@@ -35,6 +35,76 @@ class BridgeDnsTest {
                 BridgeDns.render("", Set.of("github.com", "api.anthropic.com"), "10.0.0.1"));
     }
 
+    /**
+     * {@code exposed-host-ports:} names the proxy's listen address host.isx.internal (#2117): in
+     * isx's block, beside the domains, at an address of its own, which on macOS is not the
+     * gateway; and only while a port is exposed.
+     */
+    @Test
+    void theExposedHostNameGoesInTheBlockAtItsOwnAddressOnlyWhenGiven() {
+        var withHost = BridgeDns.render("", Set.of("github.com"), "10.0.0.1", "192.168.64.1");
+        assertEquals(BEGIN + """
+
+                address=/github.com/10.0.0.1
+                local=/github.com/
+                address=/host.isx.internal/192.168.64.1
+                local=/host.isx.internal/
+                """ + END, withHost);
+        assertEquals(GITHUB_BLOCK, BridgeDns.render(withHost, Set.of("github.com"), "10.0.0.1", null),
+                "a rewrite with no port exposed removes it, with nothing else changed");
+        assertEquals(Set.of("10.0.0.1"), BridgeDns.overrideAddresses(withHost),
+                "it is not an address the intercepted domains point at, which the stale-gateway check reads");
+        assertTrue(BridgeDns.status(withHost, Set.of("github.com"), "10.0.0.1", "192.168.64.1").complete());
+        assertTrue(BridgeDns.status(withHost, Set.of("github.com"), "10.0.0.1").complete(),
+                "a line left while nothing is exposed sends instances only where nothing relays");
+    }
+
+    @Test
+    void aMissingOrMisaddressedExposedHostNameIsIncomplete() {
+        var missing = BridgeDns.status(GITHUB_BLOCK, Set.of("github.com"), "10.0.0.1", "10.0.0.1");
+        assertEquals(List.of("host.isx.internal"), missing.missing());
+        assertEquals("missing: host.isx.internal", missing.describe());
+
+        var elsewhere = BridgeDns.render("", Set.of("github.com"), "10.0.0.1", "192.168.64.1");
+        var stale = BridgeDns.status(elsewhere, Set.of("github.com"), "10.0.0.1", "192.168.64.7");
+        assertEquals(List.of("host.isx.internal"), stale.stale());
+        assertEquals("host.isx.internal pointing at another address than the proxy's", stale.describe());
+    }
+
+    /** On macOS a CLI writer points the name at the Mac's end of the VM link, not the VM's gateway. */
+    @Test
+    void aCliWritersExposedHostAddressIsTheGatewayOnLinuxAndTheVmLinkOnMacOs() throws Exception {
+        var exposing = dev.incusspawn.config.Jjq.spawnConfig("exposed-host-ports: [11434]");
+        var none = dev.incusspawn.config.Jjq.spawnConfig("{}");
+        assertEquals("10.0.0.1", ProxyConfig.bridgeDnsHostAddress(exposing, "10.0.0.1", false, () -> fail("not on Linux")));
+        assertEquals("192.168.64.1", ProxyConfig.bridgeDnsHostAddress(exposing, "10.0.0.1", true, () -> "192.168.64.1"));
+        assertNull(ProxyConfig.bridgeDnsHostAddress(exposing, "10.0.0.1", true, () -> null), "no VM link up: no line");
+        assertNull(ProxyConfig.bridgeDnsHostAddress(none, "10.0.0.1", true, () -> fail("nothing exposed: never asked")));
+    }
+
+    @Test
+    @org.junit.jupiter.api.condition.EnabledOnOs(org.junit.jupiter.api.condition.OS.LINUX)
+    void aCliWriterAddsTheExposedHostNameOnlyWhileAPortIsExposed() throws Exception {
+        var incus = mock(IncusClient.class);
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.0.0.1/24");
+        when(incus.networkConfigGet("incusbr0", "raw.dnsmasq")).thenReturn("");
+        var exposing = dev.incusspawn.config.Jjq.spawnConfig("exposed-host-ports: [11434]");
+        assertFalse(ProxyConfig.bridgeDnsDomains(exposing).contains("host.isx.internal"),
+                "it is never an intercepted domain, which gets a certificate and port 443");
+        ProxyConfig.writeBridgeDns(incus, exposing);
+        var written = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(incus).networkConfigSet(eq("incusbr0"), eq("raw.dnsmasq"), written.capture());
+        assertTrue(written.getValue().contains("address=/host.isx.internal/10.0.0.1\nlocal=/host.isx.internal/"),
+                written.getValue());
+
+        reset(incus);
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.0.0.1/24");
+        when(incus.networkConfigGet("incusbr0", "raw.dnsmasq")).thenReturn(written.getValue());
+        ProxyConfig.writeBridgeDns(incus, dev.incusspawn.config.Jjq.spawnConfig("exposed-host-ports: [53]"));
+        verify(incus).networkConfigSet(eq("incusbr0"), eq("raw.dnsmasq"), written.capture());
+        assertFalse(written.getValue().contains("host.isx.internal"), written.getValue());
+    }
+
     @Test
     void overrideAddressesAreTheOnesInIsxsBlockOnly() {
         var config = "address=/corp.example/10.9.9.9\naddress=/github.com/::\n" + GITHUB_BLOCK;
@@ -150,7 +220,7 @@ class BridgeDnsTest {
         var incus = mock(IncusClient.class);
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.0.0.1/24");
         when(incus.networkConfigGet("incusbr0", "raw.dnsmasq")).thenReturn(GITHUB_BLOCK);
-        ProxyConfig.writeBridgeDns(incus, Set.of("github.com"));
+        ProxyConfig.writeBridgeDns(incus, Set.of("github.com"), ProxyConfig.resolveGatewayIp(incus), null);
         verify(incus, never()).networkConfigSet(any(), any(), any());
     }
 
@@ -172,7 +242,7 @@ class BridgeDnsTest {
         var incus = mock(IncusClient.class);
         when(incus.networkConfigGet("incusbr0", "raw.dnsmasq")).thenReturn(GITHUB_BLOCK);
         // Only clearBridgeDns removes the block; an empty set is a caller that forgot the domains (#1354)
-        assertThrows(IllegalArgumentException.class, () -> ProxyConfig.writeBridgeDns(incus, Set.of(), "10.0.0.1"));
+        assertThrows(IllegalArgumentException.class, () -> ProxyConfig.writeBridgeDns(incus, Set.of(), "10.0.0.1", null));
         verify(incus, never()).networkConfigSet(any(), any(), any());
     }
 
@@ -186,7 +256,7 @@ class BridgeDnsTest {
         when(incus.networkConfigGet("incusbr0", "raw.dnsmasq")).thenReturn(GITHUB_BLOCK);
 
         var out = RecordingOutput.during(
-                () -> ProxyConfig.configureBridgeDns(incus, Set.of("github.com"), "10.0.0.1"));
+                () -> ProxyConfig.configureBridgeDns(incus, Set.of("github.com"), "10.0.0.1", null));
 
         assertEquals(List.of("DNS overrides: 1 domains -> 10.0.0.1 (via bridge dnsmasq)"), out.lines());
     }

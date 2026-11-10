@@ -795,11 +795,13 @@ public class InitCommand extends BaseCommand {
      * domains too, and nothing would write them back until it restarts (#1354).
      */
     void setupBridgeDns() {
-        var domains = ProxyConfig.bridgeDnsDomains(SpawnConfig.load());
+        var config = SpawnConfig.load();
+        var domains = ProxyConfig.bridgeDnsDomains(config);
         var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
+        var hostAddress = ProxyConfig.bridgeDnsHostAddress(config, gatewayIp);
         for (int attempt = 1; ; attempt++) {
             try {
-                ProxyConfig.configureBridgeDns(incus, domains, gatewayIp);
+                ProxyConfig.configureBridgeDns(incus, domains, gatewayIp, hostAddress);
                 return;
             } catch (IncusException e) {
                 if (attempt == BRIDGE_DNS_ATTEMPTS) throw e;

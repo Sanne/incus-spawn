@@ -257,6 +257,14 @@ Key design:
   A refused caller's retry is `InstanceRegistry.refreshAfterNow`: one listing started after the call answers every waiter, so a burst of wrong secrets costs one listing.
   The routes live in `ConfigState` (replaced whole on reload) and their names in the routing's intercepted domains, from `ToolProxyResolver.hostRoutes`, which `resolvedDomains` includes for the CLI's DNS writers.
   See design/proxy.md "Host routes".
+- **Exposed host ports are relayed raw (#2117).**
+  `HostPortRelay` listens on each port of `config.yaml`'s `exposed-host-ports:` (`ExposedHostPorts`) on the proxy's own address and pipes each connection to the same port on `127.0.0.1`, else `::1`: no TLS, no headers, no identity, no credential, sharing no code with interception or `HostRouteRelay`.
+  Blocking sockets on virtual threads, so a half-close passes on and a slow reader stops its writer; no idle timeout.
+  It binds in `start()` before `onReady` and in `reload()` once started (removed ports close with their connections), closes in `stop()`; a port it cannot bind is warned about, skipped, retried on each reload, and named to host callers on `/health` (`unboundHostPorts`) for `isx doctor`.
+  There is no caller filter on purpose: on macOS every container reaches the proxy from the VM's address, so a raw relay cannot tell callers apart (design/proxy.md "Exposed host ports").
+  isx's own ports (443, 18443, 18080, 53) are refused at load; they are the ACL's allowed gateway ports, so `--proxy-only` never reaches an exposed port.
+  `host.isx.internal` is in the bridge DNS block only while a port is listed, at the address the proxy listens on (the Mac's VM-link address on macOS), never an intercepted domain; `BridgeDns.render`/`status` take it apart from the domains, and every writer passes its address or null (`ProxyMain.Addresses.hostAddress`, `ProxyConfig.bridgeDnsHostAddress`), so none drops it by omission.
+  `HostRoutes` refuses it and every name under it.
 - **`security.ipv4_filtering` is load-bearing**, not incidental hardening: without it a container can re-address itself as a neighbour and spend that neighbour's credentials, so the whole model would be decorative.
   Set by `InstanceLifecycle.configureBranch` (a refused setting is retried without it and warned about, never fails the branch), re-armed on every stopped start by `InstanceLifecycle.prepareForStart` (package-private, reached only through `startForUse` and VM agent recovery; both shells get there through `InstancePrep.repairBeforeUse` and `readyForUse` -- `IpFilteringRearmTest`, `InstancePrepTest`), which also restores it on instances the fallback below turned off.
   **Setting it succeeds even where it cannot be enforced**.

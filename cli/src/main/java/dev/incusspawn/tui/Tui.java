@@ -2996,9 +2996,9 @@ public class Tui {
     private void tryFixStaleDns() {
         if (dnsVerified) return;
         dnsVerified = true;
-        var allDomains = ProxyConfig.bridgeDnsDomains(SpawnConfig.load());
+        var config = SpawnConfig.load();
         try {
-            if (ProxyConfig.isBridgeDnsComplete(incus, allDomains)) return;
+            if (ProxyConfig.isBridgeDnsComplete(incus, config)) return;
         } catch (Exception e) {
             // Unreadable is not incomplete: a write would fail the same way.
             return;
@@ -3006,7 +3006,7 @@ public class Tui {
         setStatusMessage("Updating bridge DNS overrides...");
         var thread = new Thread(() -> {
             try {
-                ProxyConfig.writeBridgeDns(incus, allDomains);
+                ProxyConfig.writeBridgeDns(incus, config);
                 setStatusMessage("Bridge DNS overrides updated");
             } catch (Exception e) {
                 setStatusMessage("DNS update failed: " + e.getMessage());

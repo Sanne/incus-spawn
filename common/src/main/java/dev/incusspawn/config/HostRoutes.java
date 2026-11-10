@@ -111,6 +111,11 @@ public final class HostRoutes {
             warn.accept(ignoring(key) + ": a route name is a hostname under " + SUFFIX);
             return null;
         }
+        if (ExposedHostPorts.isReserved(name)) {
+            warn.accept(ignoring(key) + ": " + ExposedHostPorts.HOST_NAME
+                    + " is reserved for exposed-host-ports");
+            return null;
+        }
         for (var domain : interceptedDomains) {
             if (name.equals(domain) || isUnder(name, domain) || isUnder(domain, name)) {
                 warn.accept(ignoring(key) + ": it overlaps " + domain + ", which the proxy already intercepts");

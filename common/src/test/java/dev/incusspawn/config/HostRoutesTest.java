@@ -102,6 +102,20 @@ class HostRoutesTest {
         assertTrue(warnings.get(3).contains("mcp.isx.internal"), "a name above isx mcp's is refused too: " + warnings.get(3));
     }
 
+    /** The exposed host ports' name answers raw TCP on every instance, so no route may take it (#2117). */
+    @Test
+    void theExposedHostNameAndNamesUnderItAreReserved() throws Exception {
+        var routes = routes("""
+                host-routes:
+                  host.isx.internal: {target: 127.0.0.1:1, templates: [tpl-a]}
+                  api.host.isx.internal: {target: 127.0.0.1:1, templates: [tpl-a]}
+                  ok.isx.internal: {target: 127.0.0.1:1, templates: [tpl-a]}
+                """);
+        assertEquals(Set.of("ok.isx.internal"), routes.keySet());
+        assertEquals(2, warnings.size(), warnings.toString());
+        assertTrue(warnings.stream().allMatch(w -> w.contains("reserved for exposed-host-ports")), warnings.toString());
+    }
+
     @Test
     void aRouteUnderAnotherIsDropped() throws Exception {
         var routes = routes("""

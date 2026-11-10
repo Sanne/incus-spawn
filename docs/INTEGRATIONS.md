@@ -186,6 +186,42 @@ The [CLI reference](CLI.md#isx-branch-fields) lists its fields.
 `isx list` shows which tool owns each instance, and the tool can only destroy its own, once `drivers:` lets it.
 A tool that only knows SSH machines can reach any instance whose template installs `sshd`, as `ssh <name>`.
 
+## A service on the host
+
+A service listening only on your host's loopback, such as Ollama, can be made reachable from every instance.
+List its port in `~/.config/incus-spawn/config.yaml`:
+
+```yaml
+exposed-host-ports: [11434]
+```
+
+Instances then reach it at `host.isx.internal:11434`, for example with `OLLAMA_HOST=host.isx.internal:11434` in the template's `env:`.
+The proxy listens on that port where instances reach it and passes each connection, byte for byte, to the same port on `127.0.0.1`, or else `[::1]`.
+Nothing is installed in the instance, and the service keeps listening on loopback alone.
+
+| What | How it behaves |
+|---|---|
+| Who can connect | Every instance with network, including one built from a cloned repository's own template |
+| `--proxy-only` and `--airgap` | Reach no exposed port |
+| What passes | Raw TCP: no TLS, no headers added, no credentials, no path filter |
+| What the service sees | A caller on loopback |
+| Unlisted loopback ports | Stay unreachable |
+| A port isx uses (443, 18443, 18080, 53) | Refused, with a warning in the proxy's log |
+
+### What exposing a port gives away
+
+Expose a port only when you would let any instance use that service as you do.
+Many development services trust a loopback caller completely, and isx filters nothing on the way.
+There is no list of templates and no caller identity, so every instance with network gets the same access.
+
+Ollama is the example to weigh.
+Its API has no authentication, and it can pull, create, push and delete models.
+Exposing 11434 gives every instance all of that, and the use of any cloud account Ollama is signed in to.
+
+A service that already listens on every address, or on the bridge address, was reachable from instances before, as your firewall allows.
+Listing its port changes nothing for it.
+The proxy cannot bind that port on its own address then, and `isx doctor` warns that instances reach whatever holds it.
+
 ## A controller on the host
 
 A program of your own on the host, such as a coordinator that agents report to, can be reached from instances by a name you choose.

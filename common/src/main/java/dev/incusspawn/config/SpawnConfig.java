@@ -80,6 +80,11 @@ public class SpawnConfig extends UndeclaredKeys {
     @JqName("host-routes")
     @JqInclude(JqInclude.Include.NON_NULL)
     private Object hostRoutes;
+    // Loopback ports of this host every instance reaches through the proxy (ExposedHostPorts).
+    // Raw like host-routes, so a mistyped key loads and is written back as it was.
+    @JqName("exposed-host-ports")
+    @JqInclude(JqInclude.Include.NON_NULL)
+    private Object exposedHostPorts;
     // What an external tool that drives isx may do to its instances (Drivers, #1720). Raw like
     // host-routes, so a mistyped section loads and is written back as it was.
     @JqName("drivers")
@@ -684,6 +689,9 @@ public class SpawnConfig extends UndeclaredKeys {
     /** The {@code host-routes:} section; it has no routes when there is none. */
     public HostRoutes hostRoutes() { return HostRoutes.of(hostRoutes); }
 
+    /** The {@code exposed-host-ports:} key; it exposes nothing when there is none. */
+    public ExposedHostPorts exposedHostPorts() { return ExposedHostPorts.of(exposedHostPorts); }
+
     /** The {@code drivers:} section; it grants nothing when there is none. */
     public Drivers drivers() { return Drivers.of(drivers); }
 
@@ -838,6 +846,7 @@ public class SpawnConfig extends UndeclaredKeys {
         this.gitTransfer = other.gitTransfer;
         this.readyTimeouts = other.readyTimeouts;
         this.hostRoutes = other.hostRoutes;
+        this.exposedHostPorts = other.exposedHostPorts;
         this.drivers = other.drivers;
         this.hostCa = other.hostCa;
         getExtras().clear();

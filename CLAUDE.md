@@ -221,6 +221,10 @@ An isx running inside an instance shares that instance's grant for a namespace o
 An `openai` account may be `type: chatgpt` (#1332, experimental, proxy side only so far): the ChatGPT session stays on the host, guests hold proof-bearing look-alikes, and `ChatGptRoute` serves an explicit allowlist of Codex operations.
 See `.claude/rules/proxy.md`, design/proxy.md and design/accounts.md.
 
+**Exposed host ports** (#2117): `exposed-host-ports:` in `config.yaml` lists loopback ports of the host that every instance with network reaches at `host.isx.internal:<port>`, relayed raw by the proxy (`HostPortRelay`) on the address it already listens on.
+Off by default and host-config only; there is no caller identity, since on macOS the relay cannot tell containers apart, and isx's own ports are refused, so the proxy-only ACL never admits one.
+The name is in bridge DNS only while a port is listed and is never intercepted (design/proxy.md "Exposed host ports").
+
 **Host trust** (#1437): isx's own HTTPS, CLI and proxy upstream alike, trusts the host's system CA bundle through `SystemTrust`.
 On macOS it adds what an administrator trusts for SSL in the Keychain's admin domain and drops what one denied, from every source, refusing a chain that holds it (`MacKeychainTrust`, #1467; `DeniedChainTrustManager`, #1552); the user's own domain counts for its denies alone.
 See design/proxy.md "Host trust on macOS: the admin domain only".

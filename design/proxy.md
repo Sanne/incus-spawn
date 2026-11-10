@@ -976,6 +976,48 @@ Rejected:
 - A route with no `templates:` admitting every instance that is not project-local: a typo or an omission would open the controller to every box.
 - The address alone: #934's secret exists so that a host-side service sees both, and this is that service.
 
+## Exposed host ports
+
+`exposed-host-ports:` in `config.yaml` lists TCP ports of the host's loopback that every instance with network reaches at `host.isx.internal:<port>` (#2117).
+The motivating case is Ollama on the host: before, it took binding the service to the bridge and opening the firewall (Linux only), a `host-routes:` entry (whose clients must send `X-Isx-Instance-Secret`, which a plain Ollama client cannot), or an Incus `proxy` device per instance.
+On macOS none of them is simple, since the service is on the Mac's loopback and instances sit behind the VM.
+
+`HostPortRelay` opens one listener per listed port on the address the proxy already listens on and pipes each connection to the same port on `127.0.0.1`, else `::1`.
+It shares no code path with interception, host routes or credentials: raw TCP, no TLS, no header changes, nothing injected, and the service sees a loopback caller.
+It uses blocking sockets on virtual threads, two per connection, because a socket shut down for writing is what passes one side's end of stream on while the other direction still flows; Vert.x's `NetSocket` closes on the first end.
+A blocking write is the backpressure, and there is no idle timeout, since a model may think a long time between two tokens; keepalive drops a peer that is gone.
+Nothing listening on loopback closes the guest's connection with a trace line, not a warning.
+A reload binds added ports and closes removed ones, connections included, and leaves unchanged ports and their connections alone.
+Closing a listener waits for its accepting virtual thread to exit: a socket closed under a blocked accept is released only when that thread wakes, and until then the kernel still completes connections to an unlisted port (seen on CI, `HostPortRelayTest#anUnlistedPortRefusesConnectionsAsSoonAsListenReturns`).
+A port that cannot be bound is warned about and skipped, never stopping the proxy or the other ports, and is tried again on every reload; `/health` names it to host callers (`unboundHostPorts`), and `isx doctor` warns.
+
+**No caller identity, on purpose.**
+On macOS every container reaches the proxy from the VM's one address, so a raw TCP relay cannot tell callers apart, and a template filter enforced only on Linux would make the platforms differ.
+So the feature is for every instance with network, project-local and untrusted-lineage ones included, and the docs state the risk: many development services trust loopback callers completely, and Ollama's API has no authentication.
+Only the host's `config.yaml` can list a port; no template, tool or project-local definition can.
+
+**Closed by default.**
+No key, an empty list, or a value that is not a plain list of integers exposes nothing (`ExposedHostPorts`); within a list each port is checked alone, a duplicate is kept once, and isx's own ports (443, 18443, 18080, 53) are refused.
+Those are exactly the gateway ports the proxy-only ACL admits (`ProxyOnlyAcl.egressRules`), so a `--proxy-only` instance never reaches an exposed port and the ACL is not widened; an airgapped one has no network.
+Unlisted loopback ports stay unreachable; a service already listening on every address or on the bridge was reachable before, firewall permitting, and still is.
+
+**Name resolution.**
+`host.isx.internal` joins isx's bridge DNS block (`address=` + `local=`, as a domain) only while a port is listed, and is not an intercepted domain: no leaf certificate, and 443 on it is not served.
+`BridgeDns` takes it apart from the domain set, at an address of its own, and `overrideAddresses` leaves it out of the stale-gateway check.
+Every writer names that address or null, so none drops the line by omission: the proxy passes the address it listens on (`ProxyMain.Addresses.hostAddress`), and a CLI writer `ProxyConfig.bridgeDnsHostAddress`.
+`HostRoutes` refuses a route named `host.isx.internal` or under it.
+
+**macOS: DNS to the Mac's end of the VM link (option a).**
+The name resolves to `VmNetwork.discoverHostBridgeIp()`, where the proxy already listens, and containers reach it through the VM's NAT; the appliance needs no change.
+A CLI writer on macOS finds that address the way the proxy does, and only while a port is listed; it is derived, never a key in `config.yaml`, so it does not reintroduce the rejected `proxy-gateway-ip` (design/network.md).
+Rejected: a DNAT in the appliance (option b), which needs the appliance to learn the list at run time, an appliance release, and care in the proxy-only ACL, whose bridge-family chains see the gateway port before the DNAT.
+Not yet verified on a real Mac: that containers reach that address on an arbitrary port, and that macOS lets the proxy bind a port a service holds on every address (it then takes precedence for the VM-facing address).
+
+Rejected, on both platforms: firewall rules.
+On Linux a DNAT to `127.0.0.1` needs `route_localnet` on the bridge, which removes a kernel protection for loopback; on macOS it needs an appliance rule and a `pf` redirect, which isx does not touch.
+Both need root for every change to the list, leave state outside isx to restore at boot, and silently override what already listens on a port, where a bind fails loudly.
+The proxy needs no root, already watches `config.yaml`, and holds no state of its own.
+
 ## Vertex AI: container in Vertex mode vs standard mode
 We initially ran containers in standard (non-Vertex) mode with proxy-side API translation — the container sent `/v1/messages` and the proxy rewrote to Vertex `rawPredict`.
 This had a critical flaw: Claude Code's model list is provider-dependent.
