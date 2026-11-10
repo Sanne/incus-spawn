@@ -1011,7 +1011,9 @@ Every writer names that address or null, so none drops the line by omission: the
 The name resolves to `VmNetwork.discoverHostBridgeIp()`, where the proxy already listens, and containers reach it through the VM's NAT; the appliance needs no change.
 A CLI writer on macOS finds that address the way the proxy does, and only while a port is listed; it is derived, never a key in `config.yaml`, so it does not reintroduce the rejected `proxy-gateway-ip` (design/network.md).
 Rejected: a DNAT in the appliance (option b), which needs the appliance to learn the list at run time, an appliance release, and care in the proxy-only ACL, whose bridge-family chains see the gateway port before the DNAT.
-Not yet verified on a real Mac: that containers reach that address on an arbitrary port, and that macOS lets the proxy bind a port a service holds on every address (it then takes precedence for the VM-facing address).
+Verified on a real Mac: containers resolve the name to that address and reach a listed port on it through the VM's NAT, while an unlisted loopback port refuses.
+macOS lets the proxy bind a port a service holds on every address, and the proxy's more specific listener takes the VM-facing address: a guest's connection goes through the relay to the service on loopback, so there is no bind failure for `isx doctor` to warn about.
+Such a service is reachable at that address with or without the key, as on Linux; one bound to loopback only is not.
 
 Rejected, on both platforms: firewall rules.
 On Linux a DNAT to `127.0.0.1` needs `route_localnet` on the bridge, which removes a kernel protection for loopback; on macOS it needs an appliance rule and a `pf` redirect, which isx does not touch.
