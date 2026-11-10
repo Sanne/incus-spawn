@@ -35,12 +35,22 @@ public final class ProxyHealthCheck {
      * What {@code /health} reports. {@code pid} is -1 when absent: older proxies don't send it,
      * and a proxy only sends it to callers on the host. {@code displayVersion} falls back to
      * {@code version} for older proxies; drift comparisons always use {@code version}.
+     * {@code unboundHostPorts} are the {@code exposed-host-ports:} something else holds on the
+     * proxy's address, sent to host callers only, as {@code pid} is (#2117).
      */
     public record ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
                             boolean configDrifted, boolean dnsConfigured, String authError,
-                            long pid, String displayVersion) {
+                            long pid, String displayVersion, List<Integer> unboundHostPorts) {
         public ProxyInfo {
             if (displayVersion == null || displayVersion.isBlank()) displayVersion = version;
+            unboundHostPorts = unboundHostPorts == null ? List.of() : List.copyOf(unboundHostPorts);
+        }
+
+        public ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
+                         boolean configDrifted, boolean dnsConfigured, String authError, long pid,
+                         String displayVersion) {
+            this(version, gitSha, runtime, caFingerprint, configDrifted, dnsConfigured, authError, pid,
+                    displayVersion, List.of());
         }
 
         public ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
@@ -337,10 +347,21 @@ public final class ProxyHealthCheck {
                     dnsConfigured,
                     textOrEmpty(node, "authError"),
                     Jjq.longOr(node.getField("pid"), -1),
-                    textOrEmpty(node, "displayVersion"));
+                    textOrEmpty(node, "displayVersion"),
+                    unboundHostPorts(node));
         } catch (Exception e) {
             return new ProxyInfo("", "", "", "", false, true, "");
         }
+    }
+
+    /** {@code unboundHostPorts}, its numbers only; none from a proxy that sends none. */
+    private static List<Integer> unboundHostPorts(io.hyperfoil.tools.jjq.value.JqValue node) {
+        var ports = new ArrayList<Integer>();
+        for (var port : node.getField("unboundHostPorts").asList()) {
+            var number = Jjq.longOr(port, -1);
+            if (number > 0 && number <= 65535) ports.add((int) number);
+        }
+        return ports;
     }
 
     public static List<String> checkDrift(ProxyInfo proxyInfo) {

@@ -1481,7 +1481,46 @@ public class DoctorCommand extends BaseCommand {
         var authFinding = checkProxyAuth(info);
         if (authFinding != null) findings.add(authFinding);
         if (info != null) findings.addAll(checkProxyPlacement(address));
+        var dropped = new ArrayList<String>();
+        var exposed = exposedHostPortsFinding(SpawnConfig.load().exposedHostPorts().ports(dropped::add), dropped, info);
+        if (exposed != null) findings.add(exposed);
         return findings;
+    }
+
+    /**
+     * What {@code exposed-host-ports:} hands every instance (#2117), as information, or null while
+     * it lists none. A port the proxy could not bind warns: instances reach whatever holds it on
+     * the proxy's address, never this host's loopback, and the proxy cannot tell which it is.
+     * A port the config lists but isx refuses ({@code dropped}: a quoted, reserved or repeated
+     * one) warns with why, since this is where a user looks when one does not answer.
+     */
+    static Finding exposedHostPortsFinding(List<Integer> ports, List<String> dropped, ProxyHealthCheck.ProxyInfo info) {
+        if (ports.isEmpty() && dropped.isEmpty()) return null;
+        // Said beside the rest, never instead of it: a held port still warns while another is refused
+        var refused = dropped.isEmpty() ? "" : "; " + String.join("; ", dropped);
+        var unbound = info == null ? List.<Integer>of()
+                : info.unboundHostPorts().stream().filter(ports::contains).sorted().toList();
+        if (!unbound.isEmpty()) {
+            var held = unbound.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", "));
+            return Finding.warn("Exposed host ports",
+                    held + " could not be bound on the proxy's address: instances reach whatever holds it, not loopback"
+                            + refused,
+                    new Remediation("See why in the proxy's log; if a service holds it on every address, bind it to"
+                            + " loopback only or stop it, then run 'isx proxy restart'",
+                            false, null));
+        }
+        if (!dropped.isEmpty()) {
+            return Finding.warn("Exposed host ports", refused.substring(2),
+                    new Remediation("List each port once, as a number, and none isx serves (443, 18443, 18080, 53)",
+                            false, null));
+        }
+        var listed = ports.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", "));
+        if (info == null) {
+            return Finding.note("Exposed host ports", listed + " at " + dev.incusspawn.config.ExposedHostPorts.HOST_NAME
+                    + ", relayed once the proxy runs");
+        }
+        return Finding.note("Exposed host ports", listed + " at " + dev.incusspawn.config.ExposedHostPorts.HOST_NAME
+                + ", reachable from every instance with network");
     }
 
     /**
