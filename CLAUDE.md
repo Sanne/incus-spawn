@@ -288,6 +288,7 @@ See design/host-resources.md "Project-local templates are confined to their proj
 **`isx mcp` gives a local agent a narrow slice of isx.**
 It serves MCP over stdio (hand-rolled JSON-RPC in `cli/.../mcp/`: the Quarkus MCP extension cost every isx command ~1.7 ms at startup).
 An agent may branch only templates listed in `~/.config/incus-spawn/mcp.yaml` (read per call, refused whole when invalid, never written by the package -- `McpNoWritePathTest`; an `mcp:` section in `config.yaml` is not read, #1331), never project-local ones, always with template defaults via `BranchFlow` -- or fork a stopped instance it holds (`create_instance(from_instance)`, #1013), which is `isx branch --from <instance>` with that instance's lineage re-checked.
+Approving is a person's step: `isx init`, or `isx mcp setup` alone, which needs a terminal and names no template (#2077).
 An `idempotency_key` on `create_instance`, `delegate` and `exec(background)` (#1011) makes repeating a call safe.
 It is stamped on the instance by the copy request (`mcp-idempotency-key`) and written to the task's directory, so it lives as long as what it made, with no host ledger.
 Instances belong to the host user and are held by one session (`<pid>-<start>`), stamped by the copy request itself and checked on every tool call.

@@ -23,9 +23,6 @@ import java.util.function.Supplier;
  */
 final class TemplatePolicy {
 
-    static final String HOW_TO_APPROVE = "Only the user can approve templates, by listing them "
-            + "under templates in ~/.config/incus-spawn/mcp.yaml.";
-
     private final InstanceBackend backend;
     private final Supplier<McpConfig> config;
     private final Function<McpConfig, McpScope> scope;

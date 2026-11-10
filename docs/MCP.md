@@ -15,7 +15,10 @@ It registers `isx mcp` with Claude Code for all projects and asks, for each temp
 The step needs Claude Code installed on the host and a terminal to ask from.
 Without either, `isx init` skips it and says so.
 
-Once it is set up, a re-run of `isx init` asks one question instead: `t` to change the approved templates, `n` to see how to turn it off, Enter to keep everything.
+To run this step alone, without the rest of `isx init`, use `isx mcp setup`.
+It asks the same questions and needs a terminal too: an agent that installed isx for you hands this step to you.
+
+Once it is set up, a re-run of either asks one question instead: `t` to change the approved templates, `n` to see how to turn it off, Enter to keep everything.
 
 To register it with Claude Code by hand instead:
 

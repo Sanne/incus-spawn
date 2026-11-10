@@ -645,6 +645,18 @@ See [Delegating from an agent on your host](MCP.md#delegating-from-an-agent-on-y
 `isx mcp --caller-instance <name>` serves an instance branched with `--mcp-client` instead.
 The proxy runs it for each connection that instance makes to `https://mcp.isx.internal/mcp`, as [a coordinator in an instance](MCP.md#a-coordinator-in-an-instance).
 
+### `isx mcp setup`
+
+Run the "Agent Access over MCP" step of `isx init` alone: register `isx mcp` with Claude Code and approve the templates agents may use.
+It asks the same questions and writes the same `mcp.yaml`.
+
+```shell
+isx mcp setup
+```
+
+It needs a terminal, and takes no option naming a template.
+Without a terminal it changes nothing and exits 1, since approving templates is a step for you, not for an agent.
+
 ## `isx completion`
 
 Print a shell completion script.

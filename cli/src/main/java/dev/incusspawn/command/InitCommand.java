@@ -6,6 +6,7 @@ import dev.incusspawn.config.CredentialCheck;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.McpConfig;
+import dev.incusspawn.config.McpScope;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.Container;
@@ -910,7 +911,7 @@ public class InitCommand extends BaseCommand {
     }
 
     /** The command that runs the step above alone, for a person at a terminal (#2077). */
-    static final String MCP_SETUP_COMMAND = "isx mcp setup";
+    static final String MCP_SETUP_COMMAND = McpScope.SETUP_COMMAND;
 
     /**
      * {@code isx mcp setup}: init's "Agent Access over MCP" step and nothing else. It asks which
