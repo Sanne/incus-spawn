@@ -194,6 +194,22 @@ incus config device get <name> zmx-sockets source   # must name ~/.local/state/i
 rm -r "$zmxdir/containers"      # once no instance's device names it
 ```
 
+## Host zmx older than 1.0
+
+The built-in `zmx` tool moved from 0.8.1 to 1.0.1 (issue 2108), and 1.0 does not speak 0.8's IPC protocol in either direction.
+A host zmx of 0.8 cannot reach the sessions of an instance built with 1.0, and a host zmx of 1.0 cannot reach those of an instance built with 0.8.
+`zmx list` on the host shows such a session as `status=unreachable`, and `zmx attach`, `run` and `kill` wait without an error.
+`isx shell` is unaffected: inside an instance the daemon and client are always the same binary.
+
+Upgrade the host's zmx to 1.0 or later.
+An instance branched before the bump keeps 0.8 until it is replaced, so rebuild its template and branch a new instance to reach its sessions from the host again.
+
+```shell
+zmx version | head -1                  # the host's zmx; 1.0 or later
+zmx list | grep 'status=unreachable'   # instance sessions the host zmx cannot reach
+isx build --out-of-sync                # rebuild templates whose zmx definition changed
+```
+
 ## A user tool whose name is not an identifier
 
 Since issue 1778, isx refuses a tool whose `name:` is not letters, digits, `.`, `-` and `_`, starting with a letter or digit.
