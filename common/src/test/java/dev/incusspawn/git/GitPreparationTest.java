@@ -342,6 +342,31 @@ class GitPreparationTest {
         }
     }
 
+    @Execution(CONCURRENT) @Test void aForgedPeeledIdForATagOutsideTheHistoryIsCaughtByTheStrictIndex() throws Exception {
+        tag(remote, "-a", "stable-release", "stable", "-m", "outside main");
+        var outside = git(remote, "rev-parse", "stable");
+        start();
+        var request = new GitPreparation.Request(server.url(remote), null, host);
+        try (var prior = prepare(host, null)) {
+            // The tag's own ID is honest, so both readings agree on it; its peeled line names a commit the snapshot
+            // holds, so it passes the history filter and is fetched. Only the strict index sees its target is missing.
+            var held = git(remote, "rev-parse", "main");
+            var forged = guestReading(null).lines()
+                    .map(line -> line.endsWith("\trefs/tags/stable-release^{}") ? held + "\trefs/tags/stable-release^{}" : line)
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            assertTrue(forged.contains(held + "\trefs/tags/stable-release^{}"), forged);
+            var failed = assertThrows(GitCommandException.class, () -> preparation.withTags(request, prior, forged, s -> {}));
+            assertTrue(failed.details().stream().anyMatch(line -> line.contains("index-pack") || line.contains("fatal")),
+                    failed.details().toString());
+            assertEquals(Map.of(), tags(prior.repository()), "the snapshot gained no tag");
+            assertFalse(allObjects(prior.repository()).contains(outside));
+            for (var snapshot : PreparationGit.children(cache.resolve("snapshots"))) {
+                assertEquals(Map.of(), tags(snapshot.resolve("repo.git")));
+                assertFalse(allObjects(snapshot.resolve("repo.git")).contains(outside), "nothing outside the history was published");
+            }
+        }
+    }
+
     @Execution(CONCURRENT) @Test void aTagThatMovedBeforeTheFetchIsLeftOut() throws Exception {
         tag(remote, "light", "HEAD~1");
         start();
