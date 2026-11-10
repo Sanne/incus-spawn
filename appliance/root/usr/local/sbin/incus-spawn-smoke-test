@@ -153,11 +153,11 @@ fi
 # incusd's local listener peeks 8 bytes of every new connection to detect a STARTTLS upgrade.
 # Before lxc/incus@2cb2549 it did so inside Accept() with no deadline, so one client that sent
 # fewer than 8 bytes stalled every new API connection behind it (#791 B.1: about 179s through
-# vfkit, until the forwarder's socat -T reaped it). The fix, backported by build.sh (#1313),
-# classifies each connection in its own goroutine under a 3s read deadline. So: other clients
-# are served while a silent or partial one is held open, well before that deadline, and incusd
-# then closes the held one itself. Every held connection gives up on its own after 8s, so a
-# failure here leaves nothing behind.
+# vfkit, until the forwarder's socat -T reaped it). The fix, in the Incus release build.sh
+# builds incusd from (INCUS_VERSION, #1313, #2104), classifies each connection in its own
+# goroutine under a 3s read deadline. So: other clients are served while a silent or partial
+# one is held open, well before that deadline, and incusd then closes the held one itself.
+# Every held connection gives up on its own after 8s, so a failure here leaves nothing behind.
 [ -r /etc/isx-incus ] && sed 's/^/  INFO: /' /etc/isx-incus
 SOCK=/var/lib/incus/unix.socket
 now_ms() { awk '{ printf "%d\n", $1 * 1000 }' /proc/uptime; }

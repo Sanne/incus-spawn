@@ -9,7 +9,7 @@ set -euo pipefail
 # Strategy:
 #   1. Download Alpine Linux minirootfs
 #   2. Copy overlay files, install packages via chroot
-#   3. Replace incusd with one built from the same release plus incus/*.patch
+#   3. Replace incusd with one built from INCUS_VERSION plus incus/*.patch
 #   4. Run config.sh to configure the appliance
 #   5. Pack rootfs into a compressed tarball
 #   6. Build custom minimal kernel from kernel.org source
@@ -122,12 +122,17 @@ case "$ISX_ARCH" in
     *) echo "ERROR: no Alpine $ALPINE_VERSION minirootfs checksum pinned for $ISX_ARCH" >&2; exit 1 ;;
 esac
 
-# The Incus release Alpine's incus-feature is built from, and the sha512 its APKBUILD pins for
-# the source tarball. incusd is rebuilt from it with incus/*.patch applied (#1313), so the
-# package must be this release too: apk's ~ takes any revision of it and nothing else, and a
-# new Alpine release fails the build here instead of mixing versions.
-INCUS_VERSION="7.0.0"
-INCUS_SHA512="a0b24732b6d5f35dde0081d50ab0ce710f41a10396d2ce940912b3dee1c44b0c6d9215a1a54d4517606f806a611f70e288401659a6992d73441f926c7fed6f5e"
+# The Incus release Alpine's incus-feature is built from. Its packages supply the client, the
+# daemon's dependencies and its service; apk's ~ takes any revision of this release and nothing
+# else, so a new Alpine Incus fails the build here instead of drifting.
+ALPINE_INCUS_VERSION="7.0.0"
+# The LTS release incusd is built from, with incus/*.patch applied (#1313, #2104): Alpine 3.24
+# has no newer 7.0 than ALPINE_INCUS_VERSION, which lacks the release's security fixes. The
+# sha512 is of the release's tarball, incus-<version>.tar.xz on linuxcontainers.org, whose .asc
+# is signed by Stéphane Graber's key (602F 5676 63E5 93BC BD14 F338 C638 974D 6479 2D67, as
+# github.com/stgraber.gpg publishes it). Take a new one from there, never from a build log.
+INCUS_VERSION="7.0.2"
+INCUS_SHA512="8f342d56d90de4afb6b07c3936ec92685283bf82cd29f3209a44a5d8005c8d0e5f8ac2d5dde5b98aef27e0eefef7536c56a9351f7b0621e84653efdf36a1d347"
 
 # Unpack the minirootfs into $1 (downloaded once, for both chroots, and unpacked only once it
 # matches ALPINE_SHA256), then make it a chroot: /dev, /proc and /sys bound, and DNS.
@@ -174,8 +179,8 @@ chroot "$ROOTFS_DIR" /bin/sh -c "
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 set -eu
 apk add --no-cache \
-    incus-feature~$INCUS_VERSION \
-    incus-feature-client~$INCUS_VERSION \
+    incus-feature~$ALPINE_INCUS_VERSION \
+    incus-feature-client~$ALPINE_INCUS_VERSION \
     lxcfs \
     dbus \
     btrfs-progs \
@@ -191,9 +196,10 @@ apk add --no-cache \
 "
 echo "    Size after packages: $(du -sh "$ROOTFS_DIR" | cut -f1)"
 
-# No Incus release Alpine ships yet has lxc/incus@2cb2549, without which one local client that
-# sends fewer than 8 bytes stalls every API request behind it (#1313). Build incusd with it in a
-# separate chroot, so the toolchain stays out of the image, and record what was built.
+# Alpine's incusd is 7.0.0, without the fixes 7.0.2 carries and incus/*.patch adds (#2104), or
+# lxc/incus@2cb2549, without which one local client that sends fewer than 8 bytes stalls every
+# API request behind it (#1313). Replace it with one built from INCUS_VERSION in a separate
+# chroot, so the toolchain stays out of the image, and record what was built.
 echo "==> Building incusd $INCUS_VERSION with $(find "$SCRIPT_DIR/incus" -name '*.patch' | wc -l) backport(s)..."
 fetch_rootfs "$INCUS_BUILD_DIR"
 mount_chroot "$INCUS_BUILD_DIR"
