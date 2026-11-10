@@ -200,6 +200,7 @@ The script appends each change's key (`InitPlan.key`, a hash of its lines) to `/
 Once nothing is left, the steps run with their root parts reduced to a note (`HostSetup.DONE_BY_SCRIPT`): no `sudo -v`, no dependency install, Incus, subids, firewall, redirect, sysctl, KSM, btrfs rule or linger.
 The redirect's lines read the gateway from the bridge as the script runs, so a fresh host needs one script.
 The script detaches its stdin first (`exec </dev/null`): `incus storage create` and `incus network create` read a YAML config from any stdin that is not a terminal, so run from an agent's shell the script would wait forever (found on a real Fedora VM); its files come from here-documents, which bring their own.
+The run's own pool create, `CowPoolBacking.runCapturingStderr`, detaches it the same way, for `isx init` and doctor alike.
 `InitNoSudoTest` pins the fresh host's script, that it is the plan's `sudo_script`, the record, and the guard.
 
 **The group init adds** (#1436).

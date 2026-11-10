@@ -83,12 +83,17 @@ final class CowPoolBacking {
         return hostFs != null && !"btrfs".equals(hostFs);
     }
 
-    /** Run a host command with stdout shown, returning stderr so the caller can word the failure. */
+    /**
+     * Run a host command with stdout shown, returning stderr so the caller can word the failure.
+     * Its stdin is detached: {@code incus storage create} reads a YAML config from a stdin that is
+     * not a terminal, so run from an agent's shell it would wait forever. sudo asks for a password
+     * on the terminal itself, not on stdin.
+     */
     static Attempt runCapturingStderr(String... command) {
         dev.incusspawn.util.Privilege.check(command);
         try {
             var pb = new ProcessBuilder(command);
-            pb.redirectInput(ProcessBuilder.Redirect.INHERIT);
+            pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")));
             pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
             var process = pb.start();
             var stderr = new String(process.getErrorStream().readAllBytes());
