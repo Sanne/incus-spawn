@@ -647,7 +647,7 @@ The proxy runs it for each connection that instance makes to `https://mcp.isx.in
 
 ### `isx mcp setup`
 
-Run the "Agent Access over MCP" step of `isx init` alone: register `isx mcp` with Claude Code and approve the templates agents may use.
+Run the "Agent Access over MCP" step of `isx init` alone: approve the templates agents may use, and register `isx mcp` with Claude Code when it is installed.
 It asks the same questions and writes the same `mcp.yaml`.
 
 ```shell
@@ -656,6 +656,17 @@ isx mcp setup
 
 It needs a terminal, and takes no option naming a template.
 Without a terminal it changes nothing and exits 1, since approving templates is a step for you, not for an agent.
+
+### `isx mcp config`
+
+Print the entry that starts `isx mcp`, as the `mcpServers` JSON most MCP clients take in their settings.
+
+```shell
+isx mcp config
+```
+
+It names the installed `isx` by its full path and changes nothing.
+Paste it into the settings of an agent other than Claude Code, such as Cursor or Gemini CLI.
 
 ## `isx completion`
 

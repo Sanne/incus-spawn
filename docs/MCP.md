@@ -10,10 +10,11 @@ A program that drives `isx mcp` from code has [a page of its own](MCP-PROTOCOL.m
 
 `isx init` offers to set this up.
 It is off by default, since it lets an agent on your host create and run instances.
-It registers `isx mcp` with Claude Code for all projects and asks, for each template that installs Claude Code, Codex or Pi, whether agents may use it.
+It asks, for each template that installs Claude Code, Codex or Pi, whether agents may use it.
+When Claude Code is installed on the host, it also registers `isx mcp` there for all projects.
 
-The step needs Claude Code installed on the host and a terminal to ask from.
-Without either, `isx init` skips it and says so.
+The step needs a terminal to ask from.
+Without one, `isx init` skips it and says so.
 
 To run this step alone, without the rest of `isx init`, use `isx mcp setup`.
 It asks the same questions and needs a terminal too: an agent that installed isx for you hands this step to you.
@@ -25,6 +26,36 @@ To register it with Claude Code by hand instead:
 ```shell
 claude mcp add --scope user isx -- ~/.local/bin/isx mcp
 ```
+
+### Other agents
+
+Any agent that speaks MCP over stdio can use `isx mcp`.
+`isx mcp config` prints the entry to add to its settings:
+
+```json
+{
+  "mcpServers" : {
+    "isx" : {
+      "command" : "/home/you/.local/bin/isx",
+      "args" : [ "mcp" ]
+    }
+  }
+}
+```
+
+Cursor reads it from `~/.cursor/mcp.json`, and Gemini CLI from `~/.gemini/settings.json`.
+Most desktop apps and editors take the same `mcpServers` object in their MCP settings.
+If the file already holds servers, add `isx` beside them.
+The command prints and writes nothing, so registering stays your step.
+
+Codex and Gemini CLI also register it with their own commands:
+
+```shell
+codex mcp add isx -- ~/.local/bin/isx mcp
+gemini mcp add --scope user isx ~/.local/bin/isx mcp
+```
+
+Approve templates with `isx mcp setup` whichever agent you use.
 
 ## Approving templates: `mcp.yaml`
 

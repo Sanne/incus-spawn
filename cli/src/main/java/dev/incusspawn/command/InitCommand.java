@@ -904,14 +904,18 @@ public class InitCommand extends BaseCommand {
 
     private void startMcpStep() {
         startStep("Agent Access over MCP",
-                "Lets Claude Code on this machine use isx itself: create",
-                "instances from templates you approve here, run commands",
-                "in them, and hand tasks to the Claude Code inside them.",
+                "Lets an agent on this machine (Claude Code or another MCP",
+                "client) use isx itself: create instances from templates",
+                "you approve here, run commands in them, and hand tasks",
+                "to the Claude Code, Codex or Pi inside them.",
                 "Agents can never approve templates themselves.");
     }
 
     /** The command that runs the step above alone, for a person at a terminal (#2077). */
     static final String MCP_SETUP_COMMAND = McpScope.SETUP_COMMAND;
+
+    /** The command that prints the client entry for {@code isx mcp}, for any MCP client (#2078). */
+    static final String MCP_CONFIG_COMMAND = "isx mcp config";
 
     /**
      * {@code isx mcp setup}: init's "Agent Access over MCP" step and nothing else. It asks which
@@ -941,17 +945,15 @@ public class InitCommand extends BaseCommand {
     }
 
     /**
-     * Offer to register {@code isx mcp} with Claude Code, then ask about each template that
+     * Offer to register {@code isx mcp} with Claude Code when it is installed, then ask about each template that
      * installs Claude Code, Codex or Pi (the only ones a task can be delegated to) whether agents may
      * use it. Templates already approved by hand that install none of them are left as they are.
      * The approvals live in {@code mcp.yaml}; one that cannot be read is reported and left alone.
+     * Without Claude Code the approvals are the whole step: any other client is registered by the
+     * person, with the entry {@code isx mcp config} prints (#2078).
      */
     void setupMcp(Prompts prompts, java.util.Map<String, ImageDef> defs) {
-        if (!hostHasCommand("claude")) {
-            BuildOutput.step("Claude Code is not installed on this host; skipping."
-                    + " Install it and run '" + MCP_SETUP_COMMAND + "' to enable this.");
-            return;
-        }
+        var claude = hostHasCommand("claude");
         McpConfig mcp;
         try {
             mcp = McpConfig.load();
@@ -963,7 +965,7 @@ public class InitCommand extends BaseCommand {
         if (legacy != null) BuildOutput.step(Character.toUpperCase(legacy.charAt(0)) + legacy.substring(1) + ".");
         var retired = mcp.retiredKeysNotice();
         if (retired != null) BuildOutput.warn(retired + ".", "Saving the approvals here removes them too.");
-        var registered = claudeMcpRegistered();
+        var registered = claude && claudeMcpRegistered();
         var approved = mcp.templates();
         var candidates = defs.values().stream()
                 .filter(def -> ImageDef.chain(def, defs).stream()
@@ -973,12 +975,12 @@ public class InitCommand extends BaseCommand {
                 .toList();
         var enabled = registered || !approved.isEmpty();
         if (enabled) {
-            BuildOutput.step("Currently " + (registered ? "registered with Claude Code" : "not registered")
-                    + "; approved templates: " + (approved.isEmpty() ? "none" : String.join(", ", approved)) + ".");
+            BuildOutput.step("Currently " + (!claude ? "" : registered ? "registered with Claude Code; " : "not registered; ")
+                    + "approved templates: " + (approved.isEmpty() ? "none" : String.join(", ", approved)) + ".");
         }
         // Fully set up: a re-run of init for something else costs one Enter, as credentials do (#1292).
         boolean proceed;
-        if (registered && !approved.isEmpty()) {
+        if ((registered || !claude) && !approved.isEmpty()) {
             var unasked = candidates.stream().filter(n -> !approved.contains(n)).toList();
             if (!unasked.isEmpty()) {
                 BuildOutput.step("Not approved: " + String.join(", ", unasked) + ".");
@@ -995,11 +997,17 @@ public class InitCommand extends BaseCommand {
         if (!proceed) {
             if (registered) {
                 BuildOutput.step("Left as it is. To remove it: claude mcp remove --scope user " + McpClientRegistration.SERVER_NAME);
+            } else if (!claude && !approved.isEmpty()) {
+                // Without Claude Code the approvals are the setup, so turning it off is approving none.
+                BuildOutput.step("Left as it is. To turn it off, choose 't' and approve no templates,"
+                        + " and remove '" + McpClientRegistration.SERVER_NAME + "' from your MCP client's settings.");
             }
             return;
         }
 
-        if (!registered) {
+        if (!claude) {
+            BuildOutput.note("Claude Code is not installed on this host, so nothing was registered.");
+        } else if (!registered) {
             var isx = isxPath();
             if (isx == null) {
                 BuildOutput.step("Could not find the installed isx binary; register it yourself:");
@@ -1011,6 +1019,7 @@ public class InitCommand extends BaseCommand {
                 BuildOutput.stepNote("claude mcp add --scope user " + McpClientRegistration.SERVER_NAME + " -- " + isx + " mcp");
             }
         }
+        BuildOutput.stepNote("For another MCP client, add the entry '" + MCP_CONFIG_COMMAND + "' prints to its settings.");
 
         if (candidates.isEmpty()) {
             BuildOutput.step("No template installs Claude Code, Codex or Pi yet, so there is none to approve."
@@ -1037,7 +1046,7 @@ public class InitCommand extends BaseCommand {
             mcp.save();
             BuildOutput.ok("Approved templates saved: " + (updated.isEmpty() ? "none" : String.join(", ", updated)));
         }
-        BuildOutput.stepNote("Keep agents to the MCP tools with Claude Code permissions: see https://isx.run/docs/mcp (docs/MCP.md).");
+        if (claude) BuildOutput.stepNote("Keep agents to the MCP tools with Claude Code permissions: see https://isx.run/docs/mcp (docs/MCP.md).");
     }
 
     /** Enter (or end of input) to keep the MCP setup, {@code t} to change templates, {@code n} for how to turn it off. */
