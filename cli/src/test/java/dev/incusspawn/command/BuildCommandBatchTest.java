@@ -413,24 +413,71 @@ class BuildCommandBatchTest {
         assertEquals(List.of("tpl-g", "tpl-q", "tpl-a"), built);
     }
 
+    /** {@code name} built, current, from {@code def} as recorded in {@code file}. */
+    private void builtFromStamp(String name, ImageDef def, String file) {
+        var snapshot = new BuildSource(Map.of(name, def), Map.of(), Map.of(), Map.of(name, file));
+        daemon.container(name, Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.BUILD_VERSION, NOW,
+                Metadata.BUILD_SOURCE, snapshot.toJson()));
+    }
+
+    /**
+     * A template whose {@code name:} was changed in its file is never rebuilt from the definition
+     * stamped on it (#2057): the build refuses, names the file and the template it now defines.
+     */
     @Test
-    void aTargetWhoseSnapshotClosesAParentCycleIsRefusedBeforeAnythingElse() {
-        // tpl-a was built from tpl-b; then its file was deleted and tpl-b pointed at it (#1443)
+    void aRenamedTemplateIsRefusedAndTheNewNameIsGiven() {
+        var old = new ImageDef();
+        old.setName("tpl-old");
+        old.setParent("tpl-base");
+        builtFromStamp("tpl-old", old, "/defs/images/presentation.yaml");
+        extra(List.of("tpl-new", "tpl-base"));
+        extraDefs.get("tpl-new").setSource("/defs/images/presentation.yaml");
+
+        assertEquals(1, build("tpl-old"));
+
+        assertEquals(List.of(), built);
+        assertTrue(stderr.contains("Cannot build tpl-old: no definition of that name is loaded"), stderr);
+        assertTrue(stderr.contains("/defs/images/presentation.yaml now defines tpl-new"), stderr);
+        assertTrue(stderr.contains("Build tpl-new instead"), stderr);
+    }
+
+    /** With its parents, a renamed template gets the same refusal, never a bare unknown name. */
+    @Test
+    void aRenamedTemplateIsRefusedWithItsParentsToo() {
+        var old = new ImageDef();
+        old.setName("tpl-old");
+        old.setParent("tpl-base");
+        builtFromStamp("tpl-old", old, "/defs/images/presentation.yaml");
+        extra(List.of("tpl-new", "tpl-base"));
+        extraDefs.get("tpl-new").setSource("/defs/images/presentation.yaml");
+
+        assertEquals(1, build("tpl-old", "--with-parents"));
+
+        assertEquals(List.of(), built);
+        assertTrue(stderr.contains("Build tpl-new instead"), stderr);
+        assertFalse(stderr.contains("Unknown image"), stderr);
+    }
+
+    /**
+     * A template whose file is gone is refused, never rebuilt from its stamp, and so are the
+     * other names given with it. The stamp's chain cannot reach the build either, which is how a
+     * deleted file once closed a parent cycle (#1443).
+     */
+    @Test
+    void aTemplateWhoseFileIsGoneIsRefusedWithTheNamesGivenWithIt() {
         var a = new ImageDef();
         a.setName("tpl-a");
         a.setParent("tpl-b");
-        var snapshot = new BuildSource(Map.of("tpl-a", a), Map.of(), Map.of(), Map.of());
-        daemon.container("tpl-a", Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.BUILD_VERSION, NOW,
-                Metadata.BUILD_SOURCE, snapshot.toJson()));
+        builtFromStamp("tpl-a", a, "/nonexistent/images/a.yaml");
         extra(List.of("tpl-b", "tpl-a"));
-        // An account the truncated chain could not resolve, which used to be reported instead
-        extraDefs.get("tpl-b").setAccounts(Map.of("github", "nobody-configured"));
 
-        assertEquals(1, build("tpl-a"));
+        assertEquals(1, build("tpl-isx", "tpl-a", "tpl-nope"));
 
         assertEquals(List.of(), built);
-        assertTrue(stderr.contains("cannot build 'tpl-a': its chain runs into a parent cycle tpl-a → tpl-b → tpl-a"), stderr);
-        assertFalse(stderr.contains("Cannot build:"), stderr);
+        assertTrue(stderr.contains("Cannot build tpl-a: no definition of that name is loaded"), stderr);
+        assertTrue(stderr.contains("/nonexistent/images/a.yaml no longer exists"), stderr);
+        assertTrue(stderr.contains("Unknown image: tpl-nope"), stderr);
+        assertFalse(stderr.contains("parent cycle"), stderr);
     }
 
     /**

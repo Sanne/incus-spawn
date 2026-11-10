@@ -168,19 +168,6 @@ public class BuildCommand extends BaseCommand {
                 + " characters, so a template name may have at most " + MAX_TEMPLATE_NAME_LENGTH + ".");
         return true;
     }
-    /**
-     * Whether the chain of {@code imageDef} runs into a parent cycle, which it has then reported.
-     * Loading refuses one, but a build-source snapshot merged in for a target whose file is gone
-     * can close one (#1443), and a build from it would start from a layer that has a parent.
-     */
-    static boolean reportParentCycle(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var cycle = ImageDef.parentCycle(imageDef, defs);
-        if (cycle == null) return false;
-        BuildOutput.error("cannot build '" + shown(imageDef.getName()) + "': its chain runs into a "
-                + shown(cycle) + ". Fix the 'parent:' in one of their definition files; one that has none was"
-                + " brought back from its earlier build, so restore its file or destroy that template.");
-        return true;
-    }
     private static final String INBOX_FAILURE_PATH = "/home/agentuser/inbox/BUILD_FAILURE.txt";
 
     private int buildIndex;
@@ -283,9 +270,8 @@ public class BuildCommand extends BaseCommand {
         }
         // A definition that failed to parse, or whose name or parent no instance can have, was
         // skipped with a warning above. Its name is unknown or unusable, so building anyway
-        // could silently use something else in its place: a lower layer's definition of the
-        // same name, or the stale build-source snapshot of an existing template. Refuse, even
-        // for targets that look unrelated.
+        // could silently use something else in its place, such as a lower layer's definition of
+        // the same name. Refuse, even for targets that look unrelated.
         var unparsable = new ArrayList<>(loaded.parseFailures());
         unparsable.addAll(toolDefLoader.parseFailures());
         var parseError = unparsableDefinitionsError(unparsable);
@@ -295,7 +281,7 @@ public class BuildCommand extends BaseCommand {
         }
         var defs = loaded.defs();
 
-        // Only definitions read from disk: dispatch may add stale build-source snapshots to defs
+        // Only definitions read from disk, whatever a build does to the map it is handed
         var loadedDefs = Map.copyOf(defs);
         // At a terminal one Ctrl+C may be a copy (Ctrl+Shift+C), so a running build waits for a second
         try (var ignored = BuildInterrupt.atTerminal() ? BuildInterrupt.install(() -> activeBuild != null) : null) {
@@ -317,6 +303,7 @@ public class BuildCommand extends BaseCommand {
                 BuildOutput.error(flag + " needs a template to start from.", "Usage: isx build <template-name>... " + flag);
                 return CommandResult.valueOf(1);
             }
+            if (refuseMissingDefinitions(names, defs)) return CommandResult.valueOf(1);
             var targets = definitionsOf(names, defs);
             if (targets == null) return CommandResult.valueOf(1);
             if (withParents) buildWithParents(targets, defs);
@@ -342,25 +329,9 @@ public class BuildCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
-        for (var name : names) {
-            if (defs.containsKey(name) || !incus.exists(name)) continue;
-            var buildSource = BuildSource.fromJson(
-                    incus.configGet(name, Metadata.BUILD_SOURCE));
-            if (buildSource != null) {
-                for (var entry : buildSource.getDefinitions().entrySet()) {
-                    defs.putIfAbsent(entry.getKey(), entry.getValue());
-                }
-                toolDefLoader.addFallbacks(buildSource.getTools());
-            }
-        }
+        if (refuseMissingDefinitions(names, defs)) return CommandResult.valueOf(1);
         var targets = definitionsOf(names, defs);
         if (targets == null) return CommandResult.valueOf(1);
-        // A snapshot just merged can close a parent cycle loading refused (#1443): before any check
-        // or question walks the cut-short chain, and before anything is built from it. Like an
-        // unknown name, one such target builds nothing, not the others named with it.
-        for (var target : targets) {
-            if (reportParentCycle(target, defs)) return CommandResult.valueOf(1);
-        }
         // buildChain may rebuild any ancestor that turns out to be missing or outdated
         var chains = new ArrayList<String>();
         var seen = new HashSet<String>();
@@ -383,6 +354,30 @@ public class BuildCommand extends BaseCommand {
             }
         }
         return List.copyOf(ordered);
+    }
+
+    /**
+     * Whether any of {@code names} is a built template with no loaded definition, which it has then
+     * refused with why, naming any unknown name among the others too. Such a template is never
+     * rebuilt from its build-source stamp (#2057): that is the definition as it was, which no file
+     * says any more.
+     */
+    private boolean refuseMissingDefinitions(List<String> names, Map<String, ImageDef> defs) {
+        var missing = new ArrayList<MissingDefinition>();
+        for (var name : names) {
+            if (defs.containsKey(name) || !incus.exists(name)) continue;
+            var why = MissingDefinition.of(name, incus.configGet(name, Metadata.BUILD_SOURCE), defs);
+            if (why != null) missing.add(why);
+        }
+        if (missing.isEmpty()) return false;
+        for (var why : missing) {
+            BuildOutput.error("Cannot build " + shown(why.template()) + ": no definition of that name is loaded",
+                    "It was built from a definition that is not here: " + why.reason() + ".", why.advice());
+        }
+        // Any unknown name among the others is named too; a list with either builds nothing
+        var built = missing.stream().map(MissingDefinition::template).collect(Collectors.toSet());
+        definitionsOf(names.stream().filter(n -> !built.contains(n)).toList(), defs);
+        return true;
     }
 
     /**
