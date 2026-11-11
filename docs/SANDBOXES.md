@@ -23,16 +23,18 @@ This page says what each kind is, where isx sits, and for each of the other tool
 | A VM you manage | workstation | everything | a VM | its own kernel |
 | isx | workstation | everything, as root | a branch of a template: a system container or a VM | a kernel namespace, or its own kernel with `--vm` |
 
-isx is in the third category.
-An instance is a branch of a template, in the way a git worktree is a branch of a repository: a second working copy that shares everything unchanged and costs only what it changes.
+isx is the third kind, a sandboxed workstation.
+
+An instance is a branch of a template, in the way a git worktree is a branch of a repository.
+It is a second working copy that shares the files it has not changed and uses disk space only for the files it changes.
 Here the working copy is the whole system, toolchain, dependencies and services included.
 
-That is what makes it cheap to create one per task and throw it away afterwards.
-A template declares the tools and the repositories, and is built once: the projects are cloned and primed, dependencies fetched and builds warmed.
+This sharing is what makes it cheap to create one instance per task and throw it away afterwards.
+A template declares the tools and the repositories, and is built once: the projects are cloned, their dependencies fetched and their build caches filled.
 Every branch of it starts ready to work, and every branch is the same.
 
-Day to day a workstation is one command away.
-`isx branch` creates one instantly, `isx shell` or the TUI gets you in, your editor attaches over SSH, an `isx://` git remote fetches the agent's work, and `isx destroy` ends it.
+In daily use, one command creates a workstation.
+`isx branch` creates one instantly, `isx shell` or the TUI opens a shell in it, your editor attaches over SSH, an `isx://` git remote fetches the agent's work, and `isx destroy` deletes it.
 
 ## Why full system containers?
 
@@ -44,16 +46,16 @@ An isx instance is a workstation: a full [Incus](https://linuxcontainers.org/inc
 It has its own init system, real networking (`ping`, `strace`, nested Podman or Docker), and GUI and audio passthrough on Linux.
 
 The template pre-installs your baseline tools and repositories, but what the agent gets is a real Linux system.
-It can `dnf install`, `pip install`, build from source or run Docker Compose, just as on a workstation.
+The agent can `dnf install`, `pip install`, build from source or run Docker Compose, just as on a workstation.
 
 This matters for agents in particular: what you hand an agent is an investigation, and nobody knows at the start what tools it will need.
-An agent on an isx branch installs a tracer, starts a service or writes a tool of its own as it goes.
+An agent on an isx branch installs a tracer, starts a service or writes a tool of its own when the investigation needs it.
 
-It works exactly as it would on a developer workstation, because that is what it has.
+The agent works exactly as it would on a developer workstation, because the instance is one.
 If it wrecks the instance, you destroy the branch and the next one is instant.
 
 For the strongest isolation, a KVM virtual machine (`--vm`) adds a separate kernel and hardware-level separation.
-The sections below show how this choice plays out against the other sandboxes for agents.
+The sections below compare this choice with the other sandboxes for agents.
 
 ## A sandboxed process
 
@@ -82,31 +84,31 @@ Codex's built-in sandbox works this way too.
   The runtime denies writes except to listed paths, denies network except to listed domains via a proxy, and allows reads everywhere except listed paths.
   It always denies writes to `.git/hooks`, `.mcp.json` and the other files a session could use to run code in a later session.
 - **Scope.**
-  `/sandbox` applies this to Bash commands only.
-  Running `claude` itself under the runtime applies it to the file tools, hooks and MCP servers as well.
+  `/sandbox` applies these rules to Bash commands only.
+  Running `claude` itself under the runtime applies them to the file tools, hooks and MCP servers as well.
 
 **Where isx differs.**
-A sandboxed process has its world fixed before it starts: the paths and hosts in the profile, the tools already on your host.
+What a sandboxed process can reach is fixed before it starts: the paths and hosts in the profile, the tools already on your host.
 Landlock rules can be tightened after launch, never loosened.
 
 So an agent that needs one more path, a package or a running service has to be stopped, given a wider profile and started again.
 The package still has to be installed on your host.
 
-In an isx branch the world is the agent's to change.
-It installs tools, writes its own, starts services and runs containers as the task turns out to need them, and your host is untouched.
+In an isx branch the agent can change its whole system.
+It installs tools, writes its own, starts services and runs containers when the task needs them, and none of this changes your host.
 
 isx asks for more setup once, `isx init` and a template build.
-After that a branch is one command away and instant, primed with the project and its dependencies, with a shell, an editor and a git remote already attached.
+After that one command creates a branch instantly, with the project and its dependencies already in it, and with a shell, an editor and a git remote already attached.
 
-The two also answer "what if a tool is compromised" differently.
+nono and isx also answer "what if a tool is compromised" differently.
 
 - **nono** is fine-grained: each command runs in its own sandbox and a credential works only for the endpoints its profile lists.
   This needs the profile to anticipate each command and endpoint.
-- **isx** is coarser and simpler: assume the whole instance is compromised, give it only credentials whose misuse you can live with, and make the instance disposable.
+- **isx** is coarser and simpler: assume the whole instance is compromised, give it only credentials whose misuse you can accept, and make the instance disposable.
   A read-only GitHub account on a review template is such a credential.
 
 Use a sandboxed process when the agent edits your working tree with the tools you already have.
-Use isx when the agent has to work out what it needs as it goes.
+Use isx when the agent has to find out what it needs while it works.
 
 ## A sandboxed workload
 
@@ -115,16 +117,16 @@ It may be allowed to add a package, but it cannot reshape the environment the wa
 
 ### NVIDIA OpenShell
 
-[OpenShell](https://github.com/NVIDIA/OpenShell) is a governed workload with the same credential model as isx and a finer egress policy.
+[OpenShell](https://github.com/NVIDIA/OpenShell) is a governed workload with the same credential model as isx and a finer policy for outgoing connections.
 
 - **Where it agrees with isx.**
-  On credentials: the sandbox never holds a real key, a trusted process outside it terminates TLS, injects the credential on approved requests, and identifies the caller in a way the sandbox cannot forge.
+  On credentials: the sandbox never holds a real key, a trusted process outside it decrypts the requests, adds the credential to approved requests, and identifies the caller in a way the sandbox cannot forge.
   The two differ in what is sandboxed.
 - **Design choice.**
   OpenShell confines a workload: an application container with no network device, one non-root user, no Linux capabilities, and a Landlock filesystem policy fixed at startup that leaves `/usr` and `/etc` read-only.
   Seccomp hands every TCP connect and DNS lookup to a supervisor that checks it against a policy naming hosts, HTTP methods and the calling program.
 - **What follows.**
-  That is a finer-grained egress policy than isx's network modes.
+  This policy for outgoing connections is finer-grained than isx's network modes.
 
 **Where isx differs.**
 isx hands the agent a workstation, because the tools an investigation needs are unknown at the start.
@@ -145,28 +147,29 @@ None of these is possible in OpenShell:
 
 In isx the agent has root on a system with systemd, nested containers, debuggers and a real NIC.
 If it wrecks the instance, you destroy the branch and the next one is instant.
-Pick OpenShell to run an agent as a governed workload in a fleet; pick isx to let one work the way a good engineer does.
+Pick OpenShell to run an agent as a governed workload in a fleet; pick isx to let an agent work the way a good engineer does.
 
 ### Dev containers
 
 A [dev container](https://code.claude.com/docs/en/devcontainer) is a Docker container managed by an editor, with the project directory bind-mounted read-write and the agent installed in the image.
 
 - **Design choice.**
-  Claude Code's reference configuration adds an iptables firewall inside the container that denies egress except to listed domains, so the agent can run without permission prompts.
-  It is a good way to give a team one identical environment.
+  Claude Code's reference configuration adds an iptables firewall inside the container that denies outgoing connections except to listed domains, so the agent can run without permission prompts.
+  A dev container is a good way to give a team one identical environment.
 - **What follows.**
   Whether the agent can add packages, or undo that firewall, depends on the image.
-  The common base images give the user full sudo, which also lets it flush the rules; the reference limits sudo to re-running the firewall script and so allows neither.
+  The common base images give the user full sudo, which also lets the agent delete the firewall rules.
+  The reference configuration limits sudo to re-running the firewall script, so the agent can neither add packages nor delete the rules.
 - **The trade-off.**
-  The filter lives inside the boundary, so the agent's freedom and the firewall's integrity trade off against each other.
+  The firewall runs inside the container it confines, so an agent with enough freedom to install packages can also remove the firewall.
 
 **Where isx differs.**
 A dev container is an application container: no init system, so no services; capabilities dropped, so nested containers and tracing need privileged flags; and the workspace the agent writes is your host's directory.
 
-The container is also yours to keep, rebuilt from the Dockerfile rather than discarded after the task.
+You also keep the container and rebuild it from the Dockerfile, rather than discarding it after the task.
 Claude Code's own docs note that the credentials live inside it, in `~/.claude`, where an unattended session can read them.
 
-Pick a dev container to give a team one environment with the editor attached; pick isx when the agent should reshape its environment freely and its edits should not land on your working tree.
+Pick a dev container to give a team one environment with the editor attached; pick isx when the agent should reshape its environment freely and its edits should not change your working tree.
 
 ## A sandboxed workstation
 
@@ -187,12 +190,12 @@ The tools differ in how a system is created, what it costs while it runs, and ho
   A Docker sandbox runs on Docker's own VMM with its own kernel, disk image and Docker store, and holds the memory it is given whether or not the agent is using it.
   A saved template is an image the next sandbox is built from.
 - **Where isx differs.**
-  An isx template is built once on a copy-on-write pool, and a branch of it is instant and costs the disk of what it changes.
+  An isx template is built once on a copy-on-write pool, and a branch of it is instant and uses disk space only for what it changes.
   So trying five approaches in five branches and keeping one is the normal way to work.
 - **A wrecked branch.**
   An agent that wrecks its environment costs a `destroy` and a new branch rather than a rebuild.
 - **Many at once.**
-  A chain of templates (base, tools, project) shares everything below it, and a container branch uses only what its processes use, so a laptop holds many of them at once.
+  In a chain of templates (base, tools, project) each template shares the disk of the templates it builds on, and a container branch uses only the memory its processes use, so a laptop holds many branches at once.
 - **Licence and platforms.**
   Docker's runtime is proprietary and free to use, on macOS, Windows and Linux; isx is open source on Incus, on Linux and macOS.
 
@@ -203,7 +206,7 @@ The workspace is the other divergence.
   Clone mode (`--clone`) is the opt-in that keeps work inside the sandbox until fetched.
 - **isx** is more cautious here: it never mounts a host directory read-write, since files the agent writes can end up executed on the host by a build, a commit or an IDE.
   The [FAQ](FAQ.md#why-cant-i-mount-a-host-directory-read-write-to-follow-agent-work-in-my-ide) explains why.
-  Work comes out through `isx://` git remotes instead, so clone mode is the only mode isx has.
+  You fetch the agent's work through `isx://` git remotes instead, so clone mode is the only mode isx has.
 
 Pick Docker Sandboxes for one governed VM per developer, especially on Windows; pick isx when you want many cheap environments from one template, as containers or VMs as the work demands.
 
@@ -213,14 +216,14 @@ A VM from Lima, Multipass, Tart or Vagrant, or a cloud instance, gives an agent 
 Claude Code's docs recommend one for untrusted code.
 
 - **Design choice.**
-  The VM provides nothing beyond the system itself.
+  The VM does not provide anything beyond the system itself.
 - **What follows.**
   Credentials have to be copied into it and stay there, and tools are installed by hand or by a provisioning script.
   SSH and editor access are yours to set up.
   The VM holds its full memory allocation while it runs.
 - **Where isx differs.**
-  `isx branch --vm` is such a VM with the rest of isx around it: templates that declare the tools, a branch per task and the credential proxy.
-  It also offers a container instead of a VM, the pragmatic choice when a separate kernel is not worth its overhead.
-- **Wired in.**
-  Each branch comes wired into your tools: an `isx://` git remote to fetch its work, and SSH keys and VS Code Remote or JetBrains Gateway access from the first start.
-  `isx mcp` lets an agent on the host delegate to branches of its own.
+  `isx branch --vm` creates such a VM and adds the rest of isx: templates that declare the tools, a branch per task and the credential proxy.
+  isx also offers a container instead of a VM, the pragmatic choice when a separate kernel is not worth its overhead.
+- **Connected to your tools.**
+  Each branch is already connected to your tools: an `isx://` git remote to fetch its work, and SSH keys and VS Code Remote or JetBrains Gateway access from the first start.
+  `isx mcp` lets an agent on the host delegate work to branches of its own.
