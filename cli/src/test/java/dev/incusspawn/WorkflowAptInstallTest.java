@@ -83,7 +83,15 @@ class WorkflowAptInstallTest {
      * {@code slow} is still listed (or there is no list), never finishes the phase named by {@code stallOn}.
      */
     private Run run(String stallOn, String mirrorList, String... packages) throws Exception {
-        for (var tool : List.of("bash", "timeout", "awk", "cat")) assumeTrue(onPath(tool), tool + " is not installed");
+        return runWithFallback("", stallOn, mirrorList, packages);
+    }
+
+    /**
+     * As {@link #run(String, String, String...)}, with the given fallback mirror and a stand-in
+     * resolver that knows every host but those named {@code unresolvable...}.
+     */
+    private Run runWithFallback(String fallback, String stallOn, String mirrorList, String... packages) throws Exception {
+        for (var tool : List.of("bash", "timeout", "awk", "cat", "mktemp", "tail")) assumeTrue(onPath(tool), tool + " is not installed");
         var bin = Files.createDirectories(dir.resolve("bin"));
         var apt = bin.resolve("apt-get");
         Files.writeString(apt, """
@@ -93,6 +101,13 @@ class WorkflowAptInstallTest {
                 exit 0
                 """);
         Files.setPosixFilePermissions(apt, PosixFilePermissions.fromString("rwxr-xr-x"));
+        var getent = bin.resolve("getent");
+        Files.writeString(getent, """
+                #!/bin/bash
+                case "$2" in unresolvable*) exit 2 ;; esac
+                echo "192.0.2.1 STREAM $2"
+                """);
+        Files.setPosixFilePermissions(getent, PosixFilePermissions.fromString("rwxr-xr-x"));
         var mirrors = dir.resolve("apt-mirrors.txt");
         if (mirrorList != null) Files.writeString(mirrors, mirrorList);
         var cmd = new ArrayList<>(List.of("bash", SCRIPT.toString()));
@@ -100,7 +115,8 @@ class WorkflowAptInstallTest {
         var pb = new ProcessBuilder(cmd).redirectErrorStream(true).redirectOutput(dir.resolve("out").toFile());
         pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
         pb.environment().putAll(Map.of("STATE", dir.toString(), "STALL_ON", stallOn,
-                "APT_MIRRORS", mirrors.toString(), "APT_PHASE_TIMEOUT", "1", "APT_ATTEMPTS", "3"));
+                "APT_MIRRORS", mirrors.toString(), "APT_PHASE_TIMEOUT", "1", "APT_ATTEMPTS", "3",
+                "APT_FALLBACK_MIRROR", fallback));
         var p = pb.start();
         assertTrue(p.waitFor(30, TimeUnit.SECONDS), "the script must not wait for a stalled apt");
         var log = dir.resolve("apt.log");
@@ -168,5 +184,66 @@ class WorkflowAptInstallTest {
         assertEquals(1, run.exit(), run.out());
         assertEquals(3, run.apt().size(), run.apt().toString());
         assertTrue(run.apt().stream().noneMatch(c -> c.contains("--no-download")), run.apt().toString());
+    }
+
+    private static final String FALLBACK = "https://mirrors.edge.kernel.org/ubuntu/";
+
+    @Test
+    void mirrorsWhoseHostDoesNotResolveAreDroppedForTheFallback() throws Exception {
+        // #2146: the runner's resolver failed every ubuntu.com name for hours, and each index then
+        // waited out the resolver on every mirror until all three attempts ran out
+        var run = runWithFallback(FALLBACK, "none", """
+                http://unresolvable.azure.archive.ubuntu.com/ubuntu/\tpriority:1
+                https://unresolvable.archive.ubuntu.com/ubuntu/\tpriority:2
+                https://unresolvable.security.ubuntu.com/ubuntu/\tpriority:3
+                """, "zsh");
+        assertEquals(0, run.exit(), run.out());
+        assertEquals(List.of(FALLBACK + "\tpriority:4"), run.mirrors());
+        assertEquals(1, run.apt().stream().filter(c -> c.endsWith(" update")).count(), run.apt().toString());
+        assertTrue(run.out().contains("dropping mirrors whose host does not resolve"), run.out());
+        assertInstalledOnceFromDownloads(run, "zsh");
+    }
+
+    @Test
+    void theFallbackIsListedLastAndResolvingMirrorsStay() throws Exception {
+        var run = runWithFallback(FALLBACK, "none", RUNNER_MIRRORS.replace("https://security", "https://unresolvable.security").strip(), "zsh");
+        assertEquals(0, run.exit(), run.out());
+        assertEquals(List.of("http://slow.archive.ubuntu.com/ubuntu/\tpriority:1", "https://archive.ubuntu.com/ubuntu/\tpriority:2",
+                FALLBACK + "\tpriority:4"), run.mirrors());
+    }
+
+    @Test
+    void theFallbackIsNotListedTwice() throws Exception {
+        var run = runWithFallback(FALLBACK, "none", RUNNER_MIRRORS + FALLBACK + "\tpriority:9\n", "zsh");
+        assertEquals(0, run.exit(), run.out());
+        assertEquals(List.of("http://slow.archive.ubuntu.com/ubuntu/\tpriority:1", "https://archive.ubuntu.com/ubuntu/\tpriority:2",
+                "https://security.ubuntu.com/ubuntu/\tpriority:3", FALLBACK + "\tpriority:9"), run.mirrors());
+    }
+
+    @Test
+    void theFallbackStaysLastInAListWithoutPriorities() throws Exception {
+        // apt tries an entry without priority:N after every tagged one, so a tagged fallback would go first
+        var run = runWithFallback(FALLBACK, "none", "https://archive.ubuntu.com/ubuntu/\n", "zsh");
+        assertEquals(0, run.exit(), run.out());
+        assertEquals(List.of("https://archive.ubuntu.com/ubuntu/", FALLBACK), run.mirrors());
+    }
+
+    @Test
+    void aPortsListGetsNoFallback() throws Exception {
+        // the fallback carries amd64's archive only, and an arm64 runner reads ubuntu-ports
+        var list = "http://azure.ports.ubuntu.com/ubuntu-ports/\tpriority:1\nhttp://ports.ubuntu.com/ubuntu-ports/\tpriority:2\n";
+        var run = runWithFallback(FALLBACK, "none", list, "zsh");
+        assertEquals(0, run.exit(), run.out());
+        assertEquals(List.of("http://azure.ports.ubuntu.com/ubuntu-ports/\tpriority:1", "http://ports.ubuntu.com/ubuntu-ports/\tpriority:2"),
+                run.mirrors());
+    }
+
+    @Test
+    void whenNoHostResolvesEveryMirrorStays() throws Exception {
+        var list = "http://unresolvable.a/ubuntu/\tpriority:1\nhttp://unresolvable.b/ubuntu/\tpriority:2\n";
+        var run = run("none", list, "zsh");
+        assertEquals(0, run.exit(), run.out());
+        assertEquals(List.of("http://unresolvable.a/ubuntu/\tpriority:1", "http://unresolvable.b/ubuntu/\tpriority:2"), run.mirrors());
+        assertTrue(run.out().contains("no mirror's host resolves"), run.out());
     }
 }

@@ -60,7 +60,11 @@ So workflows install through `.github/scripts/apt-install.sh`, which bounds the 
 A phase that stalls or fails drops the mirror apt tries first (the lowest `priority:`) from `/etc/apt/apt-mirrors.txt`, while another remains, and runs again, three attempts in all.
 Killing either phase leaves the system as it was; dpkg runs once, after everything is downloaded, with `--no-download`.
 A bound with no fallback would only turn a lost job into a failed one, since the same mirror stays slow for the next attempt.
-`WorkflowAptInstallTest` fails on a workflow that runs apt directly, and drives the script against a stand-in `apt-get` that stalls on a named mirror.
+Another afternoon the runners' resolver failed every `ubuntu.com` name for hours, so each index waited out the resolver on every mirror and all three attempts ran out (#2146).
+So the script first lists `https://mirrors.edge.kernel.org/ubuntu/` last, and drops every mirror whose host does not resolve, unless none does.
+A ports list, an arm64 runner's, gets no fallback, since that mirror carries amd64's archive only.
+The archive's signatures are checked whichever mirror serves it.
+`WorkflowAptInstallTest` fails on a workflow that runs apt directly, and drives the script against a stand-in `apt-get` that stalls on a named mirror and a stand-in resolver.
 
 **A github.com outage is ridden out, never skipped.**
 For most of an hour GitHub answered release downloads with 503s and 504s and let connections time out, failing the gitleaks install, isx's base-image download and host-distro's HTTPS check on `main` and on unrelated PRs (#2042).
