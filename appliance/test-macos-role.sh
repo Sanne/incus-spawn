@@ -28,9 +28,15 @@ set -uo pipefail
 # known instance's proof, an --mcp-client branch reaches mcp.isx.internal, and what is not an
 # instance (a wrong proof, the host's own traffic) gets no credential.
 #
-# Needs root (tap device, NAT, DHCP, port 443, the stand-in files), qemu-system-<arch>, socat,
-# dnsmasq, iptables, ifconfig, openssl, python3, curl, the incus client, java 25, /dev/kvm and
-# /dev/vhost-vsock usable by RUN_AS, and internet access. It refuses to run where /usr/bin/security
+# It also checks the exposed-host-ports relay (#2117, #2135) in macOS's role, where RelayCallers
+# admits only the VM's address as VmNetwork.discoverVmIp() reads it from the leases: an instance
+# reaches a listed loopback port at host.isx.internal, the host itself and a peer routed through
+# the host (a network namespace) are refused, and neither an unlisted port nor a --proxy-only
+# instance reaches anything.
+#
+# Needs root (tap device, NAT, DHCP, port 443, the stand-in files, a network namespace),
+# qemu-system-<arch>, socat, dnsmasq, iptables, ifconfig, openssl, python3, curl, the incus
+# client, java 25, /dev/kvm and /dev/vhost-vsock usable by RUN_AS, and internet access. It refuses to run where /usr/bin/security
 # or /var/db/dhcpd_leases already exist, or /etc/hosts names api.github.com. It runs isx as RUN_AS (default: SUDO_USER) under a home
 # of its own, so it never reads or writes that user's isx configuration.
 #
@@ -64,6 +70,13 @@ GATEWAY=10.166.11.1
 MITM_PORT=18443
 LEASES=/var/db/dhcpd_leases
 SECURITY=/usr/bin/security
+# exposed-host-ports: the listed port and an unlisted one, both served on the host's loopback.
+EXPOSED_PORT=18555
+UNLISTED_PORT=18556
+# A peer beside the host, in a network namespace that routes the VM network through the host.
+PEER_NS=isxmr-peer
+PEER_LINK=isxmrp0
+PEER_PREFIX=192.168.179
 
 die() { echo "ERROR: $*" >&2; exit 2; }
 [ "$(id -u)" -eq 0 ] || die "needs root (run with sudo)"
@@ -73,13 +86,14 @@ die() { echo "ERROR: $*" >&2; exit 2; }
 for f in "$BUILD_DIR/vmlinuz" "$BUILD_DIR/disk.img" "$CLI_JAR" "$PROXY_JAR"; do
     [ -f "$f" ] || die "$f not found"
 done
-for tool in socat dnsmasq iptables ifconfig openssl python3 incus java runuser curl sysctl; do
+for tool in ip socat dnsmasq iptables ifconfig openssl python3 incus java runuser curl sysctl; do
     command -v "$tool" >/dev/null || die "$tool not found"
 done
 # The stand-ins are files macOS has; this host must not have them already.
 [ ! -e "$SECURITY" ] || die "$SECURITY exists; this host is not one to stand in for macOS on"
 [ ! -e "$LEASES" ] || die "$LEASES exists; this host is not one to stand in for macOS on"
 ip link show "$TAP" >/dev/null 2>&1 && die "$TAP exists, from another run: ip link del $TAP"
+ip netns list | grep -qw "$PEER_NS" && die "network namespace $PEER_NS exists, from another run: ip netns del $PEER_NS"
 # The proxy must reach the stand-in for GitHub's API, which /etc/hosts names for this run.
 grep -q '[[:space:]]api\.github\.com\([[:space:]]\|$\)' /etc/hosts \
     && die "/etc/hosts already names api.github.com; remove that line (a killed run leaves '# isx-test-macos-role')"
@@ -135,6 +149,8 @@ cleanup() {
     for p in "${PIDS[@]}"; do wait "$p" 2>/dev/null; done
     nat_rules -D 2>/dev/null
     ip link del "$TAP" 2>/dev/null
+    ip link del "$PEER_LINK" 2>/dev/null
+    ip netns del "$PEER_NS" 2>/dev/null
     [ -n "$FORWARDING" ] && sysctl -qw net.ipv4.ip_forward="$FORWARDING"
     rm -f "$SECURITY" "$LEASES"
     [ -n "$MADE_VAR_DB" ] && rmdir /var/db 2>/dev/null
@@ -214,6 +230,22 @@ python3 "$ROOT/.github/scripts/echo-server.py" "$WORK/echo/leaf.crt" "$WORK/echo
 PIDS+=($!)
 echo "127.0.0.1 api.github.com # isx-test-macos-role" >> /etc/hosts
 ADDED_HOSTS=1
+# A service on the host's loopback alone, at the listed port and an unlisted one, answering with its port.
+python3 - "$EXPOSED_PORT" "$UNLISTED_PORT" > "$WORK/loopback-services.log" 2>&1 <<'EOF' &
+import http.server, sys, threading
+class Answer(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = ("loopback service on %d\n" % self.server.server_port).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+servers = [http.server.ThreadingHTTPServer(("127.0.0.1", int(port)), Answer) for port in sys.argv[1:]]
+for server in servers[1:]:
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+servers[0].serve_forever()
+EOF
+PIDS+=($!)
 
 # The admin domain trusts the upstream's CA for SSL; the user domain has no settings.
 fingerprint=$(openssl x509 -in "$WORK/echo/ca.pem" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')
@@ -300,7 +332,7 @@ isx init > "$WORK/init.log" 2>&1
 require '[ -f "$CONFIG/ca.crt" ] && grep -q "macOS" "$WORK/init.log"' "isx init ran its macOS setup"
 # The accounts: the default, the template's and a pin. The echo server answers /user as the
 # account a ghp-acct-<name> token names.
-python3 - "$CONFIG/config.yaml" <<'EOF' || die "config.yaml has no 'github: {}' line to replace"
+python3 - "$CONFIG/config.yaml" "$EXPOSED_PORT" <<'EOF' || die "config.yaml has no 'github: {}' line to replace"
 import sys
 path = sys.argv[1]
 text = open(path).read()
@@ -312,7 +344,7 @@ open(path, "w").write(text.replace("github: {}\n", """github:
     tplacct: {token: ghp-acct-tplacct}
     agent: {token: ghp-acct-agent}
   default: ci
-"""))
+""") + "exposed-host-ports: [%s]\n" % sys.argv[2])
 EOF
 mkdir -p "$CONFIG/images" "$CONFIG/tools"
 cp "$ROOT/.github/test-fixtures/tools/test-claude-stub.yaml" "$CONFIG/tools/"
@@ -406,5 +438,52 @@ host=$(curl -s --max-time 30 --cacert "$CONFIG/ca.crt" --resolve "api.github.com
     -H "Authorization: Bearer $proof" "https://api.github.com:$MITM_PORT/headers" | authorization)
 check '[ "$host" = "Bearer $proof" ]' \
     "the host's own request, from the listener's address, is never identified by a proof it copied" "'$host'"
+
+echo
+echo "-- exposed-host-ports: instances reach a listed loopback port, nothing else does --"
+check 'grep -q "Exposing host port $EXPOSED_PORT on $HOST_IP" "$STATE/proxy.log"' \
+    "isx-proxy relays the listed port on the VM network's host address"
+# Bridge DNS inside the VM, written by the proxy at its start, names the Mac's end of the VM link.
+resolved() { incus_ exec "$1" -- getent ahostsv4 host.isx.internal | awk 'NR == 1 {print $1}'; }
+check '[ "$(resolved mr-tpl)" = "$HOST_IP" ]' "host.isx.internal resolves to the host's address on the VM network" \
+    "'$(resolved mr-tpl)'"
+# What a connection got: the service's answer, or nothing when it was refused or closed.
+reach() { incus_ exec "$1" -- curl -s --max-time 10 "http://host.isx.internal:$2/"; }
+answer() { echo "loopback service on $1"; }
+# Both services hold their port, so an empty answer below is the relay's doing, not a missing service.
+check '[ "$(curl -s --max-time 10 "http://127.0.0.1:$EXPOSED_PORT/")" = "$(answer "$EXPOSED_PORT")" ] \
+    && [ "$(curl -s --max-time 10 "http://127.0.0.1:$UNLISTED_PORT/")" = "$(answer "$UNLISTED_PORT")" ]' \
+    "the loopback services answer on the listed and the unlisted port" "see loopback-services.log"
+check '[ "$(reach mr-tpl "$EXPOSED_PORT")" = "$(answer "$EXPOSED_PORT")" ]' \
+    "an instance reaches the listed port's loopback service, through the VM's NAT"
+check '[ -z "$(reach mr-tpl "$UNLISTED_PORT")" ]' "an unlisted port stays unreachable, though a loopback service holds it"
+# The relay accepts, then closes a caller that is not the VM's address before loopback is touched.
+refused() { grep -q "Exposed host port $EXPOSED_PORT: refused $1," "$WORK/proxy-stdout.log"; }
+from_host=$(curl -s --max-time 10 "http://$HOST_IP:$EXPOSED_PORT/")
+check '[ -z "$from_host" ] && refused "$HOST_IP"' \
+    "the host's own connection to the relay, from the listener's address, is closed as refused" "'$from_host'"
+# A peer beside the host, as a LAN peer that routes the VM network through it (the weak host model).
+peer_up() {
+    ip netns add "$PEER_NS" \
+        && ip link add "$PEER_LINK" type veth peer name eth0 netns "$PEER_NS" \
+        && ip addr add "$PEER_PREFIX.1/24" dev "$PEER_LINK" \
+        && ip link set "$PEER_LINK" up \
+        && ip -n "$PEER_NS" addr add "$PEER_PREFIX.2/24" dev eth0 \
+        && ip -n "$PEER_NS" link set eth0 up \
+        && ip -n "$PEER_NS" route add default via "$PEER_PREFIX.1"
+}
+check 'peer_up' "set up a peer in network namespace $PEER_NS, routed through the host"
+from_peer=$(ip netns exec "$PEER_NS" curl -s --max-time 10 "http://$HOST_IP:$EXPOSED_PORT/")
+check '[ -z "$from_peer" ] && refused "$PEER_PREFIX.2"' \
+    "a peer routed through the host reaches the relay and is closed as refused" "'$from_peer'"
+# Not a require, which would skip these after any earlier failure; without mr-po they cannot pass.
+if isx branch mr-po --from tpl-macos-role --proxy-only > "$WORK/branch-po.log" 2>&1; then
+    pass "branched mr-po with --proxy-only"
+    check '[ "$(resolved mr-po)" = "$HOST_IP" ]' "mr-po resolves host.isx.internal through the DNS its ACL admits"
+    check '[ -z "$(reach mr-po "$EXPOSED_PORT")" ] && [ -z "$(reach mr-po "$UNLISTED_PORT")" ]' \
+        "a --proxy-only instance reaches neither the listed port nor an unlisted one"
+else
+    fail "branched mr-po with --proxy-only (see branch-po.log)"
+fi
 
 summary
