@@ -183,13 +183,13 @@ An orphan past `orphan-grace-hours` may remain only because its delegated agent 
 When that agent has shown no activity for `dormant-after-hours`, `isx mcp` stops the orphan, and destroys it `dormant-grace-hours` after that stop.
 `adopt_instance` starts a stopped orphan again.
 
-### Names and the `MCP` column
+### Names and the `OWNER` column
 
 Instances are named `mcp-<template>-<hint>-<suffix>`.
 The hint is the `name_hint` an agent gave `create_instance` or `delegate`, such as `870-impl`; a `delegate` call without a hint gets `task`.
 Do not give your own instances `mcp-*` names.
 
-`isx list` adds an `MCP` column when there are any, showing each instance's state and purpose (`held: #870 implement`, `orphaned`, `kept: spike`).
+`isx list` adds an `OWNER` column when there are any, showing each instance's state and purpose (`mcp held: #870 implement`, `mcp orphaned`, `mcp kept: spike`).
 The TUI shows the same in an instance's details (F3), with who holds it.
 
 ### Joining a delegate's conversation
@@ -244,7 +244,7 @@ isx branch coord --from tpl-coordinator
 ```
 
 You run `isx mcp setup` yourself, never an agent: enable the server, then approve only `tpl-agent`.
-Without Claude Code on the host it skips, so list it in `mcp.yaml` yourself instead: `templates: [tpl-agent]`.
+Without Claude Code on the host, `isx mcp setup` does not register the server and still asks which templates to approve.
 The branch opens Claude Code in `coord`, where Claude Code may branch `tpl-agent` and no other template.
 
 To let the coordinator branch other templates, list them in both places: `control-over` above, and `templates` in `mcp.yaml`.

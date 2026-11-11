@@ -240,7 +240,7 @@ Start an instance and make it ready for use, without opening a shell.
 isx start <instance>
 ```
 
-isx prepares the instance as `isx shell` would, so the instance receives this start's credential proofs.
+isx prepares the instance as `isx shell` would, so the instance receives its credential proofs.
 An instance already running is checked and left running.
 If another isx process is starting or stopping it, `isx start` waits for that first, for up to two minutes.
 

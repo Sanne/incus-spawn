@@ -163,7 +163,8 @@ A tool with commands to create and destroy a machine can use isx the same way as
 | Resume | `isx start <name>` |
 | Destroy | `isx destroy <name> --owner <tool> --owner-id <workspace-id>` |
 
-`<tool>` is a stable name for the tool, such as `my-runner`.
+`<tool>` is a stable name for the tool, such as `my-runner`: lowercase letters, digits and `-`, at most 32 characters.
+
 `<workspace-id>` is that tool's identifier for this particular workspace or runtime, not the tool's name or an isx-generated value.
 Use the tool's existing workspace ID, or generate a unique ID when allocating a workspace and save it for later lifecycle calls.
 

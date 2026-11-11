@@ -139,7 +139,7 @@ A tool installs in this order: packages → downloads → `run` → `run_as_user
 After install, isx collects the environment variables from all tools and the template chain and writes them to one file, `/etc/profile.d/isx-env.sh`.
 Each tool's `verify` runs after that.
 
-isx loads tool definitions in the same order as template definitions (see [Configuration](CONFIGURATION.md#configuration)).
+isx loads tool definitions in the same order as template definitions (see [Search paths](CONFIGURATION.md#search-paths-for-templates-and-tools)).
 
 A tool that needs logind, to linger or to run a systemd user unit, lists `dbus-broker` and `systemd-pam` in `packages`.
 The base image ships no system bus, and without one logind does not start.

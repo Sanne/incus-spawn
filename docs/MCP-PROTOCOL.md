@@ -54,8 +54,11 @@ A client can ask to be told of task changes instead of polling.
 List `isx/task_changed` under `capabilities.experimental` in `initialize`.
 
 Every change of a task's state then arrives as a `notifications/isx/task_changed`, carrying `task_id`, `instance`, `run`, `state` and, once finished, `exit_code`.
+
 The `state` in a notification is `running`, `finished`, `lost`, `attached` or `released`.
-`released` means another session took the task's instance, with `adopt_instance`.
+`released` appears only in a notification, and means another session took the task's instance, with `adopt_instance`.
+A notification never carries `unknown`.
+
 For a client that does not ask, isx does not poll the tasks.
 
 ## Retrying safely after a crash
