@@ -204,7 +204,7 @@ The workspace is the other divergence.
 - **Docker Sandboxes.**
   `sbx run` mounts the current directory read-write by default, so the agent edits the host's files in place.
   Clone mode (`--clone`) is the opt-in that keeps work inside the sandbox until fetched.
-- **isx** is more cautious here: it never mounts a host directory read-write, since files the agent writes can end up executed on the host by a build, a commit or an IDE.
+- **isx** is more cautious here: it does not mount your project directory read-write, since files the agent writes can end up executed on the host by a build, a commit or an IDE.
   The [FAQ](FAQ.md#why-cant-i-mount-a-host-directory-read-write-to-follow-agent-work-in-my-ide) explains why.
   You fetch the agent's work through `isx://` git remotes instead, so clone mode is the only mode isx has.
 
