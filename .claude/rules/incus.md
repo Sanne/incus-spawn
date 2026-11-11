@@ -111,7 +111,7 @@ vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so 
   On Linux the close arrives at once; through vfkit it may not, and then the forwarder holds that silent connection until `socat -T` reaps it -- the whole API wedged for up to 180s, cleared early only by `forwarder-restart`.
   Appliances built since #1313 have the fix: each connection is classified in its own goroutine under a 3s read deadline, so a silent one stalls nothing and incusd closes it after 3s.
   Alpine 3.24 ships incusd 7.0.0, which predates it, so `appliance/build.sh` replaces it with incusd built from the 7.0.2 LTS release's signed tarball (`INCUS_VERSION`, #2104), which has it, plus `appliance/incus/*.patch`, and records what it built in `/etc/isx-incus`; the smoke test prints that file.
-  The patches are upstream `stable-7.0` security fixes 7.0.2 lacks (GHSA-v736-5xp3-jghf, GHSA-5pgx-q9xx-j3qv); drop each once an `INCUS_VERSION` contains it.
+  The patches are upstream `stable-7.0` security fixes 7.0.2 lacks (GHSA-v736-5xp3-jghf, GHSA-5pgx-q9xx-j3qv, GHSA-3wxw-5gh2-j2x2; the last is reachable through any crafted image, not only OCI ones); drop each once an `INCUS_VERSION` contains it.
   Alpine's packages stay pinned to `ALPINE_INCUS_VERSION`, so a new Alpine Incus fails the build rather than drifting.
   The rule stays, because an appliance built before #1313 is still affected.
   So no bare connect-and-close probes: `IncusApi.diagnoseVsock` sends a real `GET /1.0` (`IncusApiLossyTunnelTest` asserts the request arrives).
