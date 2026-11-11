@@ -137,7 +137,7 @@ A scenario of a benefit ends on the benefit:
 
 ### Accuracy
 
-**Never fix an inaccuracy by going vague.**
+**Never fix anything by going vague.**
 A concrete statement that is only partly true has two honest repairs.
 Either state the point at a level where it is true and still says something, or give the full mechanism with its cases.
 Swapping the concrete word for an abstract one is not a repair: a sentence that cannot be wrong because it says nothing is no better.
@@ -154,6 +154,15 @@ The second states what matters to the reader, and is true on both:
 
 The address and the proof are in `docs/CREDENTIAL-PROOFS.md`, whose reader came for them.
 
+The same holds for any other fault: a contradiction, an awkward join, an overclaim.
+`docs/SANDBOXES.md` said "In daily use, one command creates a workstation", and then listed five commands.
+The repair "each step of a task is one command" covered all five and named no task and no step.
+The two sentences were badly joined, not contradictory, and the first had a point worth keeping:
+
+> In daily use, one command gives you a new workstation: `isx branch` creates an instance instantly.
+
+A weak join between two sentences is repaired by connecting them, not by rewriting one until it fits.
+
 **An absolute is checked, or narrowed.**
 "Never", "nothing", "every", "always" and "any" claim every case, and one exception makes the sentence false.
 Stating the point pulls towards them, so each one is checked against the code before it is written.
@@ -166,6 +175,12 @@ What isx aims to do goes in `docs/VISION.md`, worded as an aim.
 A goal written as a fact is as false as a wrong absolute, and harder to notice, because the project believes it.
 The README said "everything an agent does can be traced back to that agent", while the Vision page calls identity per instance "partly delivered".
 Say what the reader can do now: "commits under the identity you assign it".
+
+**Read the new text before the reason for it.**
+A list of changes with a "what was wrong" column persuades: the reason sounds right, and the reviewer accepts the sentence without reading it.
+Read each new sentence alone first, as a newcomer would, and ask what it means.
+Read the justification second.
+This holds for a person, for an agent reviewing and for an agent checking its own work.
 
 **A rewrite is checked against every rule again.**
 A sentence fixed for one fault often gains another, and a moved paragraph can use a term before the page explains it.
