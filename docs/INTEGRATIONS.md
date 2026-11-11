@@ -10,14 +10,14 @@ Which way a tool connects depends on what it can do, not on a choice you make.
 | The tool | What isx does | Example |
 |----------|---------------|---------|
 | Runs a command to create a machine and another to destroy it | The tool drives isx through ordinary commands | Orca |
-| Only keeps a list of SSH machines | isx adds each instance to the tool's list, and removes it again | herdr |
+| Only keeps a list of SSH machines | isx adds each instance to the tool's list, and removes it when you destroy the instance | herdr |
 
-Either way, you put the tool's isx tool in a template, build it, and the rest follows.
-Agents still get no credentials in their instance: the proxy on your host adds them, as for any branch.
+Either way, you add the matching isx tool (`herdr` or `orca`) to a template and build that template, as the sections below show.
+Agents still get no credentials in their instance: the proxy on your host adds the credentials to their requests, as for any branch.
 
 ## herdr
 
-[herdr](https://herdr.dev) runs agents in terminal workspaces, on your machine or on SSH machines it lists.
+[herdr](https://herdr.dev) runs agents in terminal workspaces, on your host or on SSH machines it lists.
 
 1. Install herdr on your host.
 2. Add the `herdr` tool to a template and build it:
@@ -31,19 +31,19 @@ Agents still get no credentials in their instance: the proxy on your host adds t
 
 3. Branch it: `isx branch agent-1 --from tpl-herdr`.
 
-isx adds `agent-1` to herdr as a machine on its first start, and herdr starts its server there.
-`herdr --machine agent-1 agent list` then reaches it.
+isx adds `agent-1` to herdr as a machine when the instance first starts, and herdr starts its server in the instance.
+`herdr --machine agent-1 agent list` then reaches that server.
 When the instance is stopped, connecting to it from herdr starts it.
 
 When you destroy the instance, isx removes the machine from herdr.
 A machine you added to herdr yourself is never removed by isx.
 
-herdr insists on checking a machine's host key, which isx pins on every start.
+herdr always checks a machine's host key, which isx records on your host on every start.
 A machine added by an older isx reaches its instance again after that instance's next start.
-From then on herdr can start it too.
+From then on herdr can start that instance too.
 
 An open herdr reconnects to its machines by itself, so it starts a stopped instance again within two minutes.
-To keep one stopped, run `herdr machine disable` with the id `herdr machine list` shows, and `herdr machine enable` later.
+To keep an instance stopped, run `herdr machine disable` with the id `herdr machine list` shows, and `herdr machine enable` later.
 
 In the TUI, the instance's details (F3) say isx added it to herdr.
 
@@ -51,9 +51,9 @@ In the TUI, the instance's details (F3) say isx added it to herdr.
 
 [Orca](https://github.com/stablyai/orca) can run each workspace on a machine of its own, through an environment recipe.
 A recipe is four commands: one creates the machine, and three suspend, resume and destroy it.
-This is a first version: setting it up takes a few steps, which later releases will remove.
+isx's support for Orca is a first version: setting it up takes a few steps, which later releases will remove.
 
-1. Build a template with the `orca` tool, which Orca's server needs, and with your repository cloned as its workdir:
+1. Build a template with the `orca` tool, which Orca's server needs, and with your repository cloned as the template's working directory (`workdir`):
 
    ```yaml
    name: tpl-orca
@@ -66,7 +66,7 @@ This is a first version: setting it up takes a few steps, which later releases w
    ```
 
 2. Let Orca destroy the instances it creates, in `~/.config/incus-spawn/config.yaml`.
-   The recipe also uses this to take back an instance a failed create left:
+   The recipe also uses this permission to destroy an instance that a failed create left behind:
 
    ```yaml
    drivers:
@@ -74,7 +74,7 @@ This is a first version: setting it up takes a few steps, which later releases w
        destroy: true
    ```
 
-3. Download the recipe script for your isx version onto your `PATH`.
+3. Download the recipe script for your isx version into a directory on your `PATH`.
    It needs `bash`, `jq`, and `sha256sum` or `shasum`:
 
    ```shell
@@ -107,12 +107,12 @@ This is a first version: setting it up takes a few steps, which later releases w
    orca vm recipe doctor isx --repo-path /absolute/path/to/your/repo --json
    ```
 
-Each workspace then gets an instance named after Orca's runtime, such as `orca-3f2a6c1e0b5d`.
-Orca reaches it over SSH, adds its worktree under the template's workdir, and runs its agents there.
+Each workspace then gets an instance named from Orca's runtime id, such as `orca-3f2a6c1e0b5d`.
+Orca reaches the instance over SSH, adds the workspace's Git worktree under the template's workdir, and runs its agents in that worktree.
 The recipe supports Orca's worktree mode only, in which Orca makes the worktree itself.
 
-A workspace gets what its template gives any branch: one of a [coordinator template](MCP.md#a-coordinator-in-an-instance) is a coordinator.
-To keep workspaces plain, name a child template whose `coordinator:` says only `isx-control-capability: false`.
+A workspace's instance gets what its template gives any branch: an instance of a [coordinator template](MCP.md#a-coordinator-in-an-instance) is a coordinator, whose agent may control other instances.
+To make workspaces that are not coordinators, name in the recipe's `--from` a child template whose `coordinator:` holds only `isx-control-capability: false`.
 
 ### Faster first connections (experimental)
 
@@ -163,12 +163,12 @@ A tool with commands to create and destroy a machine can use isx the same way as
 | Resume | `isx start <name>` |
 | Destroy | `isx destroy <name> --owner <tool> --owner-id <workspace-id>` |
 
-`<tool>` is a stable name for the orchestrator, such as `my-runner`.
+`<tool>` is a stable name for the tool, such as `my-runner`.
 `<workspace-id>` is that tool's identifier for this particular workspace or runtime, not the tool's name or an isx-generated value.
 Use the tool's existing workspace ID, or generate a unique ID when allocating a workspace and save it for later lifecycle calls.
 
-Pass the same value to create and destroy; isx records it on the instance and checks it before deleting.
-It must contain 1 to 128 letters, digits, or `.`, `_`, `:`, `-`.
+Pass the same `<workspace-id>` to create and destroy; isx records it on the instance and checks it before deleting the instance.
+The id must contain 1 to 128 letters, digits, or `.`, `_`, `:`, `-`.
 
 For example, a runner creating its workspace `job-42` could use:
 
@@ -179,11 +179,12 @@ isx destroy runner-job-42 --owner my-runner --owner-id job-42
 ```
 
 That example also needs `drivers: {my-runner: {destroy: true}}` in the isx configuration.
-The Orca recipe passes these for you.
+The Orca recipe passes `--owner` and `--owner-id` for you.
 
 `isx branch --format=json` prints how to reach the instance over SSH, including a `ProxyCommand` that starts a stopped instance.
 The [CLI reference](CLI.md#isx-branch-fields) lists its fields.
-`isx list` shows which tool owns each instance, and the tool can only destroy its own, once `drivers:` lets it.
+
+`isx list` shows which tool owns each instance, and a tool can destroy only the instances it owns, once `drivers:` lets it.
 A tool that only knows SSH machines can reach any instance whose template installs `sshd`, as `ssh <name>`.
 
 ## A service on the host
@@ -196,7 +197,9 @@ exposed-host-ports: [11434]
 ```
 
 Instances then reach it at `host.isx.internal:11434`, for example with `OLLAMA_HOST=host.isx.internal:11434` in the template's `env:`.
-The proxy listens on that port where instances reach it and passes each connection, byte for byte, to the same port on `127.0.0.1`, or else `[::1]`.
+
+The proxy listens on that port at the bridge address, the host address where instances already reach the proxy.
+It passes each connection unchanged to the same port on `127.0.0.1`, or on `[::1]` when nothing answers on `127.0.0.1`.
 Nothing is installed in the instance, and the service keeps listening on loopback alone.
 
 | What | How it behaves |
@@ -217,18 +220,20 @@ isx does not filter the connections it passes to the service, so an instance can
 
 There is no list of templates and no caller identity, so every instance with network gets the same access.
 
-Ollama is the example to weigh.
+Ollama is an example of the access an exposed port gives.
 Its API has no authentication, and it can pull, create, push and delete models.
-Exposing 11434 gives every instance all of that, and the use of any cloud account Ollama is signed in to.
+Exposing 11434 gives every instance all of those operations, and the use of any cloud account Ollama is signed in to.
 
-A service that already listens on every address, or on the bridge address, was reachable from instances before, as your firewall allows.
+A service that already listens on every address, or on the bridge address, was reachable from instances before you listed its port, where your firewall allows it.
 Listing its port does not change how instances reach it.
-The proxy cannot bind that port on its own address then, and `isx doctor` warns that instances reach whatever holds it.
+
+In that case the proxy cannot bind that port on its own address, and `isx doctor` warns that instances reach whatever program holds the port.
 
 ## A controller on the host
 
-A program of your own on the host, such as a coordinator that agents report to, can be reached from instances by a name you choose.
-The proxy carries the calls, so this works in `--proxy-only` mode too, and tells the controller which instance is calling.
+A controller is a program of your own on the host, such as one that agents report to, and instances can reach it by a name you choose.
+The proxy carries the calls, so this works in `--proxy-only` mode too.
+The proxy also tells the controller which instance is calling.
 List the name in `~/.config/incus-spawn/config.yaml`:
 
 ```yaml
@@ -238,27 +243,28 @@ host-routes:
     templates: [tpl-isx-agent]   # required: only instances of these templates may call it
 ```
 
-An instance then calls `https://work.isx.internal/...`, sending the secret isx gave it at its last start as `X-Isx-Instance-Secret`.
+An instance then calls `https://work.isx.internal/...`, sending the secret isx gave it at its last start as the header `X-Isx-Instance-Secret`.
 That secret is in the file `$ISX_INSTANCE_SECRET_FILE` names.
 
 The proxy checks the secret and the instance's address together, and the instance's template against `templates:`.
-It forwards the request over plain HTTP to the target with `X-Isx-Instance` and `X-Isx-Template` set to who called.
+It forwards the request over plain HTTP to the target, with the headers `X-Isx-Instance` and `X-Isx-Template` naming the calling instance and its template.
 
 The proxy first removes any `X-Isx-*` header the instance sent, so the controller never sees the instance's secret.
-Anything else gets an error and never reaches the controller: a wrong or missing secret, a template the route does not list, an instance built from a project-local definition, a WebSocket.
+Any other request gets an error and never reaches the controller: a wrong or missing secret, a template the route does not list, an instance built from a project-local definition, a WebSocket.
 
 Names must end in `.internal` and `templates:` must list at least one template.
 The proxy skips an entry that is wrong in any way, with a warning in its log.
 
 ### Checking the route secret
 
-The controller must check the route secret before it trusts those headers.
+The controller must check the route secret before it trusts `X-Isx-Instance` and `X-Isx-Template`.
 
 The proxy also sends `X-Isx-Route-Secret`, a secret of this route alone that only this host holds.
-It is in `~/.config/incus-spawn/host-routes/<name>.secret` (here `work.isx.internal.secret`), which the proxy creates readable by you only the first time it serves the route.
-No instance ever has it, and the proxy removes it from the controller's response headers.
+The secret is in the file `~/.config/incus-spawn/host-routes/<name>.secret` (here `work.isx.internal.secret`).
+The proxy creates that file, readable only by you, the first time it serves the route.
+No instance ever has the route secret, and the proxy removes it from the controller's response headers.
 
-Compare it in constant time, and refuse the request when it does not match, for example in Python:
+Compare the header with the file's content in constant time, and refuse the request when they do not match, for example in Python:
 
 ```python
 expected = open(os.path.expanduser("~/.config/incus-spawn/host-routes/work.isx.internal.secret")).read().strip()
@@ -268,17 +274,17 @@ if not hmac.compare_digest(request.headers.get("X-Isx-Route-Secret", ""), expect
 
 ### Rules for the controller
 
-These rules keep the secret with the proxy and the controller, and nowhere else.
+These rules keep the route secret known to the proxy and the controller only.
 
-- Treat a request without the secret as one that did not come through the proxy: another program on this host, for example.
-- Keep the controller listening on loopback only: `127.0.0.1`, never `0.0.0.0`, which instances that are not `--proxy-only` reach at the bridge gateway.
-- Never echo the secret back, in a response body least of all.
-  The proxy removes it from response headers, but relays the body as it is.
+- Treat a request without the secret as one that did not come through the proxy: it came from another program on this host, for example.
+- Keep the controller listening on loopback only: `127.0.0.1`, never `0.0.0.0`, because instances that are not `--proxy-only` reach a `0.0.0.0` listener directly at the bridge address.
+- Never include the secret in a response, especially in a response body.
+  The proxy removes the secret from response headers, but relays the body unchanged.
 - To rotate the secret, delete the file; the proxy makes a new one at once.
-- Rotate it too if the controller was down while something else held its port: whatever held it received the secret.
+- Rotate the secret too if the controller was not running while another program held its port: that program received the secret.
 - Keep the secret file, its directory and `~/.config/incus-spawn` owned by you, the file readable by nobody else, and the directories writable by nobody else.
   The proxy refuses (503) every request to a route that breaks this.
   The config directory may be writable by your own private group, as a umask of 002 makes it, never by a group you share.
-- Keep the directories above `~/.config/incus-spawn` free of write access for anyone else, without relying on POSIX ACLs: the proxy does not check those directories and does not see `setfacl`.
-- Once you fix one with `chmod` or `chown`, the proxy serves the route again at once on Linux.
-  On macOS, run `isx proxy restart`, since its file watcher does not see permission changes (a rewritten or deleted secret it does see).
+- Do not give anyone else write access to the directories above `~/.config/incus-spawn`, by mode or by POSIX ACL: the proxy does not check those directories and does not see access granted with `setfacl`.
+- Once you fix the ownership or permissions with `chmod` or `chown`, the proxy serves the route again at once on Linux.
+  On macOS, run `isx proxy restart`, since the proxy's file watcher there does not see permission changes (a rewritten or deleted secret it does see).
