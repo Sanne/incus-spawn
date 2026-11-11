@@ -289,7 +289,7 @@ Rewritten:
 > isx does not filter the connections it passes to the service, so an instance can do whatever the service allows.
 
 The rewrite is nearly twice as long and is the better text.
-It is in `docs/INTEGRATIONS.md`, "What exposing a port gives away".
+It is in `docs/CONFIGURATION.md`, "What exposing a port gives away".
 
 ## Shape
 

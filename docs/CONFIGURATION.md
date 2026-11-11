@@ -1,11 +1,11 @@
 # Configuration
 
 `isx init` writes your settings and credentials.
-This page says where they live, how a credential gets several accounts that templates and instances choose between, and what isx caches on the host.
+This page says where they live, how a credential gets several accounts that templates and instances choose between, which host services instances can reach, and what isx caches on the host.
 
 | File | What it holds |
 | --- | --- |
-| `~/.config/incus-spawn/config.yaml` | Auth credentials and global settings, including [`host-routes:`](INTEGRATIONS.md#a-controller-on-the-host), [`exposed-host-ports:`](INTEGRATIONS.md#a-service-on-the-host) and `drivers:` |
+| `~/.config/incus-spawn/config.yaml` | Auth credentials and global settings, including [`host-routes:`](INTEGRATIONS.md#a-controller-on-the-host), [`exposed-host-ports:`](#a-service-on-the-host) and `drivers:` |
 | `~/.config/incus-spawn/mcp.yaml` | What `isx mcp` lets agents do (see [Delegating from an agent](MCP.md#delegating-from-an-agent-on-your-host-mcp)) |
 | `~/.config/incus-spawn/ssh/` | The managed SSH key pair and the per-instance SSH config |
 | `~/.config/incus-spawn/images/*.yaml` | User-level template definitions |
@@ -254,6 +254,55 @@ drivers:
 
 An external tool never destroys an instance it does not own, such as your own branch of one of its instances.
 An entry isx cannot read does not grant any permission, and isx says which entry and why.
+
+## A service on the host
+
+A service listening only on your host's loopback, such as Ollama, can be made reachable from every instance.
+List its port in `~/.config/incus-spawn/config.yaml`:
+
+```yaml
+exposed-host-ports: [11434]
+```
+
+Instances then reach it at `host.isx.internal:11434`, for example with this in the template:
+
+```yaml
+env:
+  - name: OLLAMA_HOST
+    value: host.isx.internal:11434
+```
+
+The proxy listens on that port at the bridge address, the host address where instances already reach the proxy.
+It passes each connection unchanged to the same port on `127.0.0.1`, or on `[::1]` when nothing answers on `127.0.0.1`.
+Nothing is installed in the instance, and the service keeps listening on loopback alone.
+
+| What | How it behaves |
+|---|---|
+| Who can connect | Every instance with network, including one built from a cloned repository's own template |
+| Other machines on your network | Refused, even when your firewall lets them reach the bridge address |
+| `--proxy-only` and `--airgap` | Cannot reach any exposed port |
+| What passes | Raw TCP: no TLS, no headers added, no credentials, no path filter |
+| What the service sees | A caller on loopback |
+| Unlisted loopback ports | Stay unreachable |
+| A port isx uses (443, 18443, 18080, 53) | Refused, with a warning in the proxy's log |
+
+### What exposing a port gives away
+
+Expose a port only when you would let any instance use that service as you do.
+Many development services trust any caller on loopback completely.
+isx does not filter the connections it passes to the service, so an instance can do whatever the service allows.
+
+There is no list of templates and no caller identity, so every instance with network gets the same access.
+
+Ollama is an example of the access an exposed port gives.
+Its API has no authentication, and it can pull, create, push and delete models.
+Exposing 11434 gives every instance all of those operations, and the use of any cloud account Ollama is signed in to.
+
+A service that already listens on every address, or on the bridge address, was reachable from instances before you listed its port, where your firewall allows it.
+Listing its port does not change how instances reach it.
+
+On Linux the proxy cannot bind such a port on its own address, and `isx doctor` warns that instances reach whatever program holds the port.
+On macOS the proxy binds the port all the same, so instances reach the service through the proxy and there is nothing to warn about.
 
 ## Host CA propagation
 

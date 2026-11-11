@@ -190,45 +190,8 @@ A tool that only knows SSH machines can reach any instance whose template instal
 
 ## A service on the host
 
-A service listening only on your host's loopback, such as Ollama, can be made reachable from every instance.
-List its port in `~/.config/incus-spawn/config.yaml`:
-
-```yaml
-exposed-host-ports: [11434]
-```
-
-Instances then reach it at `host.isx.internal:11434`, for example with `OLLAMA_HOST=host.isx.internal:11434` in the template's `env:`.
-
-The proxy listens on that port at the bridge address, the host address where instances already reach the proxy.
-It passes each connection unchanged to the same port on `127.0.0.1`, or on `[::1]` when nothing answers on `127.0.0.1`.
-Nothing is installed in the instance, and the service keeps listening on loopback alone.
-
-| What | How it behaves |
-|---|---|
-| Who can connect | Every instance with network, including one built from a cloned repository's own template |
-| Other machines on your network | Refused, even when your firewall lets them reach the bridge address |
-| `--proxy-only` and `--airgap` | Cannot reach any exposed port |
-| What passes | Raw TCP: no TLS, no headers added, no credentials, no path filter |
-| What the service sees | A caller on loopback |
-| Unlisted loopback ports | Stay unreachable |
-| A port isx uses (443, 18443, 18080, 53) | Refused, with a warning in the proxy's log |
-
-### What exposing a port gives away
-
-Expose a port only when you would let any instance use that service as you do.
-Many development services trust any caller on loopback completely.
-isx does not filter the connections it passes to the service, so an instance can do whatever the service allows.
-
-There is no list of templates and no caller identity, so every instance with network gets the same access.
-
-Ollama is an example of the access an exposed port gives.
-Its API has no authentication, and it can pull, create, push and delete models.
-Exposing 11434 gives every instance all of those operations, and the use of any cloud account Ollama is signed in to.
-
-A service that already listens on every address, or on the bridge address, was reachable from instances before you listed its port, where your firewall allows it.
-Listing its port does not change how instances reach it.
-
-In that case the proxy cannot bind that port on its own address, and `isx doctor` warns that instances reach whatever program holds the port.
+Making a service on your host, such as Ollama, reachable from every instance is a setting in `config.yaml`.
+See [A service on the host](CONFIGURATION.md#a-service-on-the-host) on the Configuration page.
 
 ## A controller on the host
 
