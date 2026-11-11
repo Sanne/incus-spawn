@@ -164,11 +164,11 @@ With `gui: true`, container branches get GUI passthrough by default when isx run
 
 With `coordinator: {control-over: [tpl-java]}`, every branch is a [coordinator](MCP.md#a-coordinator-in-an-instance) that drives isx over MCP.
 `isx branch --no-mcp-client` and the TUI dialog opt out.
-`coordinator.control-over` limits coordinators to these templates, of those `mcp.yaml` approves; without it they control none.
+`coordinator.control-over` limits coordinators to these templates, of those `mcp.yaml` approves; without it they cannot control any template.
 `isx-control-capability` beside the list says it explicitly; it is true by default exactly when the list is not empty.
 
 A child template inherits its parent's `coordinator:` whole, unless it is project-local or its own `coordinator:` sets either key, which replaces the parent's.
-It is never baked into the image, so changing it rebuilds nothing, and it is ignored in a project-local definition.
+It is never baked into the image, so changing it does not need a rebuild, and it is ignored in a project-local definition.
 
 ### Deprecating a template
 

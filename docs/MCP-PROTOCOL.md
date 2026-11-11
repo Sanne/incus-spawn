@@ -90,7 +90,7 @@ An agent with no model call in flight but a build pulling dependencies is still 
 | `traffic_*` | Every request the instance made through the proxy from the same `counting_since`, model calls included: package downloads, git, WebSockets (in flight while open). |
 
 For what a task spent, read before and after it and subtract, but only when both reads carry the same `counting_since`.
-A different or missing one means the proxy restarted in between and the counts started afresh.
+A different or missing one means the proxy restarted between the two reads and the counts started afresh.
 `isx proxy activity` shows the same counts for every instance on the host.
 
 Codex reports its own token usage in the task result when available, and Pi its turns, tokens and `cost_usd`.

@@ -372,7 +372,7 @@ When several entries cover one domain, the proxy picks one by these rules.
 - A trailing slash in a prefix is normalized: `/mcp/` is treated as `/mcp`.
   A root scope of `/` matches every path.
 - The proxy compares the request path as sent, never normalized.
-  A path an upstream may serve as another path therefore matches no scope but the root.
+  A path an upstream may serve as another path therefore matches only the root scope.
 
 Such a path has any of these:
 - a raw character outside RFC 3986 `pchar` and `/`: a backslash, `#`, a space, a control, any non-ASCII byte
@@ -454,7 +454,7 @@ Gateway connects with isx's managed SSH key through the instance's entry in `~/.
 With the `shell-status-bar` feature on, `g` in the F12 menu of `isx shell` opens the repository the session starts in, or else the first one.
 
 If Gateway shows its connection dialog, keep the instance name as the host.
-The instance's IP matches no entry, and on macOS the host cannot reach it.
+The instance's IP does not match any entry in `~/.ssh/config`, and on macOS the host cannot reach it.
 
 ```yaml
 name: tpl-java-ide
