@@ -97,6 +97,20 @@ class UfwCheckTest {
         assertEquals(-1, secondIdx, "Should not have duplicate NAT blocks");
     }
 
+    /** A stray END before the block, as an edit by hand can leave it, stays where it is; nothing is written twice. */
+    @Test
+    void insertNatBlockReplacesTheBlockAfterAStrayEnd() {
+        var block = UfwCheck.generateNatBlockWithoutRedirect("10.166.11.0/24");
+        var stray = "# stray\n" + UfwCheck.MARKER_NAT_END + "\n# between\n";
+        var withStray = stray + UfwCheck.insertNatBlock(TYPICAL_BEFORE_RULES, block);
+        var newBlock = UfwCheck.generateNatBlock("10.166.11.1", "10.166.11.0/24", 443, 18443);
+        assertEquals(stray + UfwCheck.insertNatBlock(TYPICAL_BEFORE_RULES, newBlock),
+                UfwCheck.insertNatBlock(withStray, newBlock));
+        assertEquals(stray + UfwCheck.removeBlock(UfwCheck.insertNatBlock(TYPICAL_BEFORE_RULES, block),
+                UfwCheck.MARKER_NAT_BEGIN, UfwCheck.MARKER_NAT_END),
+                UfwCheck.removeBlock(withStray, UfwCheck.MARKER_NAT_BEGIN, UfwCheck.MARKER_NAT_END));
+    }
+
     @Test
     void insertNatBlockDoesNotCorruptExistingForwardBlock() {
         // Forward block inserted first, then NAT block added — markers must not collide
