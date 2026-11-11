@@ -60,8 +60,11 @@ The agent reads [llms.txt](https://isx.run/llms.txt), which points it at these d
 2. Reads `isx init --plan`, which says what init would change and who each step needs, and changes nothing.
 3. Runs `isx init --no-sudo`, hands you the root script, and runs it again once you ran the script.
 4. Writes a template that adds Claude Code to `tpl-minimal`, with `isx templates new --from`, and builds it.
-5. Creates the first instance, `my-first`, from that template.
-6. Registers `isx mcp` with itself, so it can create instances from the templates you approve.
+5. Reads `isx init --plan` again, which now names the credential that template needs, and hands you `isx account add` when it is missing.
+6. Creates the first instance, `my-first`, from that template.
+7. Registers `isx mcp` with itself, so it can create instances from the templates you approve.
+
+When the agent first runs init, no template needs a credential yet, so init does not report one as missing.
 
 `isx init --plan` and the summary of `isx init --format=json` say for each step who must finish it: `none`, `sudo`, `secret` or `approval` ([`isx init`](CLI.md#isx-init)).
 An agent may do the steps marked `none`, and hands you the others.
