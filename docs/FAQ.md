@@ -50,7 +50,7 @@ The error reads `certificate_unknown`, `PKIX path building failed` or `CERTIFICA
 `isx-trust` replaces the runtime's bundle with a link to the system store, so certificate verification stays on.
 
 isx watches a few directories, such as `/opt`.
-If you unpack a runtime there, as `/opt/jdk-21`, isx links it automatically and you run no command.
+If you unpack a runtime there, such as `/opt/jdk-21`, isx links it automatically, shortly afterwards.
 A runtime anywhere else needs `isx-trust <dir>`, such as a vendor JDK in `~/tools` or a `certifi` that pip installs into a project's virtualenv.
 
 With no argument, `isx-trust` binds every runtime in the watched directories, which covers a runtime the watch has not bound yet.
