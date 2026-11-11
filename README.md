@@ -157,13 +157,6 @@ isx checks that the proxy is reachable and compatible before a build, a branch o
 
 The proxy also caches container image layers and build artifacts on the host, so the same dependency is never downloaded twice ([Caching](docs/CONFIGURATION.md#caching)).
 
-Each start also gives the instance a random instance secret, at the path in `$ISX_INSTANCE_SECRET_FILE` (`/run/isx/instance-secret`, readable by the instance user).
-It is not a credential for anything upstream: it tells a service on the host which instance is calling.
-On Linux the proxy also checks the caller's address, so one instance's secret is useless from any other instance.
-
-A restart replaces the secret.
-After a reboot isx did not perform, the instance has none until you next open it with `isx shell`, `isx start` or `ssh <name>`, which give it a new one.
-
 ### Credentials reach the login environment
 
 Each start replaces the placeholders with proof tokens unique to the instance and the credential, such as `gho_isx_…` in `GH_TOKEN`, exported by the login profile.
