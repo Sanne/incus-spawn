@@ -87,7 +87,7 @@ Their lists mirror the code's: every top-level command in the README's CLI table
 A new command or tool fails that test until its page names it.
 What the reader needs comes before the mechanism, and clarity outranks brevity, in every text a person reads, PR descriptions and review comments included: `.claude/rules/writing.md` "What the reader needs comes first".
 State the point in the reader's terms before the mechanism, say what a design decision gives up, and tell a scenario in order through to its outcome.
-Never fix an inaccuracy by going vague.
+Never fix anything by going vague.
 In a sentence, negate the verb ("does not filter the connections", never "filters nothing"), name what a verb acts on and where, use literal words, and state the consequence.
 Split a sentence of more than about 40 words where it splits cleanly; `.claude/rules/writing.md` "Splitting a sentence" lists the only word changes a split may make.
 
