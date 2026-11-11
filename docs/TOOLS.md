@@ -32,7 +32,7 @@ These tools ship with isx; a template's `tools:` list names them.
 | `orca` | What the Orca agent orchestrator needs to run its server over SSH |
 | `headroom` | Headroom context optimization for Claude Code |
 
-Run `isx tools list -v` to see all available tools, including user-defined and project-local definitions.
+Run `isx tools list -v` to see all available tools, including user-defined definitions and project-local definitions, which a cloned repository ships in `.incus-spawn/`.
 Use `isx tools show <name>` to inspect a tool's dependencies, packages, configurable parameters, downloads, TUI actions and proxy domains.
 
 ## Custom Tools
@@ -61,7 +61,7 @@ verify: gradle --version
 ```
 
 isx caches these downloads on the host at `~/.cache/incus-spawn/downloads/`, so a rebuild does not download an unchanged artifact again.
-isx extracts on the host, so the instance needs no `tar`, `unzip` or `curl`.
+isx extracts the archives on the host, so the instance needs no `tar`, `unzip` or `curl`.
 
 #### Tool schema fields
 
@@ -104,11 +104,11 @@ It then runs as root in root's own environment (`HOME=/root`, the default `PATH`
 
 `skills` takes the same forms as the image-level field, but bare names resolve against this tool's own `skills.repo`.
 
-isx ignores a key it does not know, here or in an entry, with a warning when the tool loads.
-The warning names where the key is (`downloads[0].sha265`) and the key it probably meant.
+isx ignores a key it does not know, at the top level of a tool file or inside one of its entries, with a warning when the tool loads.
+The warning names where the key is (`downloads[0].sha265`) and the key you probably meant.
 
 isx skips a tool file with a warning when its `name:` is missing or blank, holds anything but letters, digits, `.`, `-` and `_`, or starts with `.`, `-` or `_`.
-`isx build` refuses until it is fixed, since the file may have been meant to replace a tool of the same name from another layer.
+`isx build` refuses to build until the file is fixed, since the file may have been meant to replace a tool of the same name from another layer.
 
 #### Download entry fields
 
@@ -130,14 +130,16 @@ Supported archive formats for `extract` are `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.
 
 A JDK ships its own root store, and its HTTPS calls fail until isx binds it to the system store.
 isx binds a runtime extracted under `/opt`, `/usr/local`, `/usr/lib/jvm` or one of the home directories that [File bindings](FEDORA.md#file-bindings) lists.
-Extract a JDK there; elsewhere, a template's prime or a shell in the instance binds it with `isx-trust <dir>`.
+
+Extract a JDK into one of those directories; a template's prime or a shell in the instance binds a JDK in any other directory with `isx-trust <dir>`.
 
 #### Install order
 
 A tool installs in this order: packages → downloads → `run` → `run_as_user` → `files`.
-After install, isx collects the environment variables from all tools and the template chain and writes them centrally.
+After install, isx collects the environment variables from all tools and the template chain and writes them to one file, `/etc/profile.d/isx-env.sh`.
 Each tool's `verify` runs after that.
-Resolution follows the same order as templates (see [Configuration](CONFIGURATION.md#configuration)).
+
+isx loads tool definitions in the same order as template definitions (see [Configuration](CONFIGURATION.md#configuration)).
 
 A tool that needs logind, to linger or to run a systemd user unit, lists `dbus-broker` and `systemd-pam` in `packages`.
 The base image ships no system bus, and without one logind does not start.
@@ -208,7 +210,7 @@ A `proxy:` block declares four keys.
 | `placeholders` | The guest variables that carry proofs |
 
 The namespace uses letters, digits, `.`, `-` and `_`, starting with a letter or digit.
-A proof is the per-instance value the guest sends in place of the credential; the proxy recognizes it and swaps in the real one.
+A proof is the per-instance value the instance sends in place of the credential; the proxy recognizes the proof and replaces it with the real credential.
 
 A configuration entry can also use `value` for a hardcoded literal, which `isx init` does not prompt for, and `type: confirm` for a yes/no prompt such as license acceptance.
 A `help` list of lines is printed before the prompt in place of the description.
@@ -242,9 +244,9 @@ proxy:
 After placing this file, `isx init` prompts for the Artifactory token alongside other credentials.
 isx stores the token in `~/.config/incus-spawn/config.yaml` under the `artifactory` namespace's selected account.
 
-Add the tool to your template's `tools:` list and rebuild it so the guest exports `ARTIFACTORY_TOKEN`.
+Add the tool to your template's `tools:` list and rebuild the template so the instance exports `ARTIFACTORY_TOKEN`.
 Each start replaces `artifactory_placeholder` with that instance's current proof in a login shell.
-Send it in the declared authentication header:
+Send the proof in the declared authentication header:
 
 ```shell
 curl -H "Authorization: Bearer $ARTIFACTORY_TOKEN" https://artifactory.internal.example.com/
@@ -267,7 +269,7 @@ The proxy injects a credential only for a namespace with declared placeholders, 
 - The proxy checks declarations across all loaded tools and warns if the borrowed namespace has none.
 - An unscoped top-level credential needs a `config-namespace` and relative config paths before it can declare placeholders.
 - Another tool sharing that domain is not affected: a request needs only the proofs of the entry it selects.
-- The proxy forwards a request without valid proofs with its own authentication unchanged.
+- The proxy forwards a request without valid proofs with the request's own authentication unchanged.
 
 ##### Auth types
 
@@ -326,7 +328,7 @@ In this example, send `$MY_SERVICE_TOKEN` as the bearer token, Basic password or
 ##### Path-scoped injection
 
 An auth entry can restrict credential injection to specific request paths with `paths:`.
-When set, the proxy injects the credential only for requests whose path equals one of the listed prefixes or starts with one followed by `/`.
+When `paths:` is set, the proxy injects the credential only for requests whose path equals one of the listed prefixes or starts with one followed by `/`.
 The proxy strips query strings before matching.
 Without `paths:`, the proxy injects the credential for every request to the domain.
 
@@ -388,19 +390,19 @@ Such a request, and a prefix of such a form, are handled by these rules.
 - The proxy serves such a request as if no scoped entry matched.
 - An entry that serves every path injects its credential when the request proves its namespace.
   That is an entry unscoped or scoped to `/`, on the domain or else on a wildcard covering it.
-  Otherwise the proxy relays the request with its own authentication.
+  Otherwise the proxy relays the request with the request's own authentication.
 - Each prefix is a literal path starting with `/`, without a query, wildcard, whitespace, `;`, empty segment, `.`/`..` segment or any other form listed above.
-- isx refuses a tool definition with any other prefix when definitions load, with a warning, and `isx build` refuses until it is fixed.
+- isx refuses a tool definition with any other prefix when definitions load, with a warning, and `isx build` refuses to build until the definition is fixed.
   Such a prefix could never match, and servers that drop `;` path parameters would serve another path.
 
 When tools with different credential namespaces share a domain, these rules apply.
 
 - A request needs only the proof of the entry its path selects.
   A proof it does carry for another namespace must still be valid.
-- This needs distinct placeholder prefixes.
+- This rule holds only when the tools declare distinct placeholder prefixes.
   When two such tools send their proofs in the same header under the same prefix, the proxy cannot tell which namespace a proof is for, and a request must carry both.
-- The proxy never injects an entry for a request that did not prove its own namespace.
-  With an `/mcp` request carrying only the other tool's proof, or one that falls back to an unscoped entry of another tool, the proxy relays the request with its own authentication and logs a warning.
+- The proxy never injects an entry's credential for a request that did not prove its own namespace.
+  With an `/mcp` request carrying only the other tool's proof, or one that falls back to an unscoped entry of another tool, the proxy relays the request with the request's own authentication and logs a warning.
 
 ##### Where the token lives
 
@@ -410,21 +412,22 @@ Never copy the value into a file with `files:` or a build step.
 The token is unique to an instance and can be explicitly reset, so a copy made at build time is revoked before publication, and isx warns when it finds one.
 
 Tool YAML files with `proxy:` blocks must be placed in `~/.config/incus-spawn/tools/` or a configured search path.
-Project-local tools (`.incus-spawn/tools/`) cannot declare proxy rules, because the proxy runs independently of any project directory, and so cannot grant access to host credentials.
+Project-local tools (`.incus-spawn/tools/`) cannot declare proxy rules, because the proxy runs independently of any project directory.
+So a project-local tool cannot grant access to host credentials.
 
 ### Remote IDE Access
 
 Both VS Code and JetBrains IntelliJ can connect to an instance with their UI running natively on the host and all backend processing (indexing, builds, terminals, extensions) running inside the instance.
 
 isx manages the SSH keys: `isx init` generates a dedicated passphraseless key pair at `~/.config/incus-spawn/ssh/`.
-Each start of an instance with an SSH server injects it, along with your personal `~/.ssh` key: the first of `id_ed25519.pub`, `id_ecdsa.pub` and `id_rsa.pub`.
+Each start of an instance with an SSH server injects that key into the instance, along with your personal `~/.ssh` key: the first of `id_ed25519.pub`, `id_ecdsa.pub` and `id_rsa.pub`.
 
 isx writes a `Host` entry per instance to `~/.config/incus-spawn/ssh/config`, included from your `~/.ssh/config`.
-Each start pins the instance's host keys beside it, in `known_hosts`.
-So `ssh <instance-name>` just works, without a prompt, even for a client that insists on checking host keys.
-isx removes both when it destroys an instance.
+Each start records the instance's host keys in `known_hosts`, in the same directory.
+So `ssh <instance-name>` connects without a prompt, even for a client that insists on checking host keys.
+isx removes the `Host` entry and the recorded host keys when it destroys an instance.
 
-Both tools declare TUI actions: press F9 on a running instance to open a repo directly in your IDE.
+The `vscode-remote` and `idea-backend` tools both declare TUI actions: press F9 on a running instance to open a repo directly in your IDE.
 
 #### VS Code (Remote SSH)
 
@@ -475,7 +478,7 @@ tools:
 The `index-mcp` parameter gives the agent the IDE's code intelligence: find references, go to definition and diagnostics.
 With `index-mcp: true`, isx installs the [IDE Index MCP Server](https://plugins.jetbrains.com/plugin/29174-ide-index-mcp-server) plugin and registers it in Claude Code as `intellij-index`.
 The server runs while the IDE backend runs, which is while a Gateway session is open.
-It defaults to `false`.
+`index-mcp` defaults to `false`.
 
 ```yaml
 tools:
@@ -499,10 +502,11 @@ tools:
   - herdr
 ```
 
-When `herdr` is installed on the host too, isx adds each instance of such a template to it as a machine, on the instance's first start.
+When `herdr` is installed on the host too, isx adds each instance of such a template to the host's herdr as a machine, on the instance's first start.
 isx removes the machine again when it destroys the instance.
 herdr then lists the instance by its name, and `herdr --machine <name> agent list` reaches it.
-A template built from project-local definitions is never added.
+
+isx never adds an instance of a template built from project-local definitions.
 
 See [Driving isx from other tools](INTEGRATIONS.md#herdr).
 
@@ -538,7 +542,7 @@ For a second, independent terminal, run `isx shell <instance> --session <name>`,
 `--no-attach` opens a plain shell outside zmx.
 
 On Linux, isx shares the instance's zmx socket directory with the host through a disk device.
-That directory is yours alone, under `~/.local/state/incus-spawn/zmx`.
+That directory is under `~/.local/state/incus-spawn/zmx`, and no other user can access it.
 Instance sessions appear in your native zmx socket directory with an `isx-` prefix, with no configuration needed:
 
 ```bash
@@ -593,7 +597,7 @@ A tool can define parameters for build-time configuration.
 
 Every parameter also takes `default`, `description`, `optional` and `reconfigurable`.
 A parameter with no value and no default is an error unless it is `optional` or `reconfigurable`.
-A child template may change a `reconfigurable` parameter of a tool an ancestor installed; changing any other one there is an error.
+A child template may change a `reconfigurable` parameter of a tool an ancestor installed; changing any other parameter of that tool in a child template is an error.
 
 A parameter `memory` is `${param_memory}` in `run`, `run_as_user`, `verify`, env values and file paths and content:
 
@@ -647,9 +651,9 @@ Two fields control where else an action shows.
 
 - `shell_menu`: when `true`, the action also appears in the F12 shell status bar menu during `isx shell` sessions.
   The menu exists only with the `shell-status-bar` feature enabled in `config.yaml`.
-  Only `url` actions can, as they open on the host without taking over the terminal.
+  Only `url` actions can appear in that menu, as they open on the host without taking over the terminal.
 - `shortcut`: the single key that runs the action from that menu.
-  It is one printable ASCII character, not shared with another menu action (case-insensitively); an action without a usable one is left out of the menu with a warning.
+  It is one printable ASCII character, not shared with another menu action (case-insensitively); an action without a usable shortcut is left out of the menu with a warning.
 
 Template variables available in `url`, `command`, and `text`: `${ip}`, `${name}`, `${parent}`.
 When `expand: repos` is set, repo-specific variables are also available: `${repo_name}`, `${repo_path}`, `${repo_url}`.
