@@ -1,0 +1,9 @@
+Install isx (https://isx.run) on this machine and set it up for me, so that I end up with a first isx instance branched from a template that has Claude Code in it, and so that you can drive isx over MCP afterwards.
+
+isx gives coding agents isolated Linux workstations. Its rule for an install driven by an agent is that you do the labour and I hold the keys:
+
+1. Never run sudo, or anything else that needs root. When a step needs root, hand me the exact commands as a script I can read, and stop.
+2. Never ask me for a secret, and never put one on a command line, in the environment or on stdin. When a credential is missing, tell me the isx command to run at my own terminal, and stop.
+3. Never choose which templates an agent may branch, and never write ~/.config/incus-spawn/mcp.yaml. Tell me what to approve and how, and stop.
+
+Read https://isx.run/llms.txt first. When you need me, say exactly what to do and end your turn; I will tell you when it is done.

@@ -1,0 +1,401 @@
+#!/bin/bash
+# scripts/agent-install/validate.sh -- run the agent install path on a clean Linux host (#2081)
+#
+# Gives a coding agent only the install prompt, as a fresh user with no sudo, and plays the
+# person's part by script: it runs the privileged script isx hands over, adds a credential when
+# the agent names the command for one, and approves templates when asked. It records every
+# command the agent ran, every attempt at sudo, every request for a secret, every write of
+# mcp.yaml, the turns where it got stuck, and how long each took, then writes report.md.
+#
+# Meant for a disposable machine only: it creates a user, installs packages through the script
+# isx writes, sets up Incus and changes the firewall. Run it on a host where Incus is not
+# installed, so the agent meets the host a new user would.
+#
+# Requires: Linux, passwordless sudo for the invoking user, jq, and the agent's CLI (`claude` or
+# `codex`) on PATH.
+#
+# The person user can authenticate the agent only where its credential reaches it: inside an isx
+# instance, the user joins the group that reads /run/isx, so the outer proxy serves its agent,
+# and a missing credential is answered with the reserved account `inherit`; codex is handed the
+# instance's OpenAI placeholder. On a bare host, the agent must already be signed in as the
+# person, and --credential-cmd names a command the person would run to add a credential.
+#
+# Usage:
+#   scripts/agent-install/validate.sh [options]
+#     --agent claude|codex    the agent to drive (default: claude)
+#     --prompt FILE           the prompt to give it (default: prompt.txt beside this script)
+#     --isx-from DIR          isx is not installed by the agent: DIR holds bin/isx and bin/isx-proxy
+#                             of a candidate build, linked into the person's ~/.local/bin, and
+#                             DIR/docs its docs, which the agent is told to read instead of isx.run
+#     --user NAME             the person's account, created if missing (default: isxperson)
+#     --max-turns N           stop after N agent turns (default: 12)
+#     --turn-timeout SECONDS  limit one agent turn (default: 3600)
+#     --credential-cmd CMD    run as the person, with NS set, to add a credential the agent asks for
+#     --out DIR               where the transcripts and report go (default: ./agent-install-<time>)
+#     --allow-dirty           run even though Incus is already installed
+set -euo pipefail
+
+die() { echo "Error: $*" >&2; exit 1; }
+say() { echo "==> $*" >&2; }
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+AGENT=claude
+PROMPT_FILE="$HERE/prompt.txt"
+ISX_FROM=
+PERSON=isxperson
+MAX_TURNS=12
+TURN_TIMEOUT=3600
+CREDENTIAL_CMD=
+OUT="$PWD/agent-install-$(date -u +%Y%m%dT%H%M%SZ)"
+ALLOW_DIRTY=
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --agent) AGENT=$2; shift 2 ;;
+        --prompt) PROMPT_FILE=$2; shift 2 ;;
+        --isx-from) ISX_FROM=$(cd "$2" && pwd); shift 2 ;;
+        --user) PERSON=$2; shift 2 ;;
+        --max-turns) MAX_TURNS=$2; shift 2 ;;
+        --turn-timeout) TURN_TIMEOUT=$2; shift 2 ;;
+        --credential-cmd) CREDENTIAL_CMD=$2; shift 2 ;;
+        --out) OUT=$2; shift 2 ;;
+        --allow-dirty) ALLOW_DIRTY=1; shift ;;
+        -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+        *) die "unknown option: $1" ;;
+    esac
+done
+
+[ "$(uname -s)" = Linux ] || die "Linux only"
+case "$AGENT" in claude|codex) ;; *) die "--agent takes claude or codex" ;; esac
+command -v jq >/dev/null || die "jq is required"
+command -v "$AGENT" >/dev/null || die "$AGENT is not on PATH"
+[ -r "$PROMPT_FILE" ] || die "no prompt at $PROMPT_FILE"
+sudo -n true 2>/dev/null || die "passwordless sudo is required (for the person's part)"
+if [ -z "$ALLOW_DIRTY" ] && command -v incus >/dev/null; then
+    die "Incus is already installed, so this host is not clean (--allow-dirty to run anyway)"
+fi
+if [ -n "$ISX_FROM" ]; then
+    [ -x "$ISX_FROM/bin/isx" ] && [ -x "$ISX_FROM/bin/isx-proxy" ] || die "$ISX_FROM/bin holds no isx and isx-proxy"
+    # docs/dev/ describes this harness, which would tell the agent how the person answers.
+    for d in "$ISX_FROM/docs/docs/dev" "$ISX_FROM/docs/dev"; do
+        [ ! -e "$d" ] || die "$d holds maintainer notes, this harness's among them: leave it out"
+    done
+fi
+
+mkdir -p "$OUT"
+OUT=$(cd "$OUT" && pwd)
+# The person reads each message from here, since $OUT may sit in a home they cannot enter.
+MSG_DIR=$(mktemp -d /tmp/agent-install-msg.XXXXXX)
+trap 'rm -rf "$MSG_DIR"' EXIT
+chmod 755 "$MSG_DIR"
+# What a masked file reads as: Claude Code refuses managed settings that are not a regular file.
+: > "$MSG_DIR/empty"
+echo '{}' > "$MSG_DIR/empty.json"
+chmod 644 "$MSG_DIR/empty" "$MSG_DIR/empty.json"
+
+# The person: a fresh account with no sudo, which the agent runs as.
+if ! id "$PERSON" >/dev/null 2>&1; then
+    say "Creating the person's account $PERSON (no sudo)"
+    sudo useradd -m "$PERSON"
+fi
+if sudo test -e /run/isx/credential-secret; then
+    INSIDE_ISX=1
+    ISX_GROUP=$(sudo stat -c %G /run/isx/credential-secret)
+    case "$ISX_GROUP" in
+        root|wheel|sudo|adm|admin) die "/run/isx/credential-secret belongs to the group $ISX_GROUP, which the person must not join" ;;
+    esac
+    sudo usermod -aG "$ISX_GROUP" "$PERSON"
+else
+    INSIDE_ISX=
+fi
+# The only sudo the person may hold is the btrfs usage rule isx init installs (checked after
+# any group the person joins above, since a group can grant sudo too).
+if sudo -l -U "$PERSON" 2>/dev/null | sed -n '/may run/,$p' | tail -n +2 | grep -v '/usr/bin/btrfs ' | grep -q .; then
+    die "$PERSON may run sudo beyond isx's btrfs usage rule; the agent must not"
+fi
+sudo loginctl enable-linger "$PERSON"
+PHOME=$(getent passwd "$PERSON" | cut -d: -f6)
+AGENT_BIN=$(command -v "$AGENT")
+sudo -u "$PERSON" test -x "$AGENT_BIN" || {
+    sudo install -m 755 "$(readlink -f "$AGENT_BIN")" "/usr/local/bin/$AGENT"
+    AGENT_BIN=/usr/local/bin/$AGENT
+}
+# The agent's own credential, which is not the person's to hand over: inside an isx instance it
+# is the instance's placeholder, which the instance's login profile turns into a proof.
+AGENT_ENV=()
+if [ -n "$INSIDE_ISX" ]; then
+    case "$AGENT" in
+        claude) AGENT_ENV=(CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-placeholder) ;;
+        codex) AGENT_ENV=(OPENAI_API_KEY=sk-placeholder) ;;
+    esac
+fi
+if [ -n "$ISX_FROM" ]; then
+    sudo -u "$PERSON" test -x "$ISX_FROM/bin/isx" || die "$PERSON cannot run $ISX_FROM/bin/isx: put the candidate where they can read it"
+    sudo -u "$PERSON" mkdir -p "$PHOME/.local/bin"
+    sudo -u "$PERSON" ln -sf "$ISX_FROM/bin/isx" "$PHOME/.local/bin/isx"
+    sudo -u "$PERSON" ln -sf "$ISX_FROM/bin/isx-proxy" "$PHOME/.local/bin/isx-proxy"
+fi
+
+# Run a command as the person, in a fresh login shell (not sudo -i, which mangles arguments),
+# with an agent's view of the host: an isx instance's own agent instructions are masked, since
+# a real host has none. VAR=value arguments before "--" are set before the login profile runs,
+# so the instance's profile turns a placeholder among them into a proof.
+as_person() {
+    case "${1:-}" in *=*|--) ;; *) set -- -- "$@" ;; esac
+    sudo unshare -m sh -c '
+        m=$1; shift
+        for f in /etc/claude-code/CLAUDE.md /etc/isx/agent-instructions.md /AGENTS.md /etc/codex/requirements.toml; do
+            [ -e "$f" ] && mount --bind "$m/empty" "$f"
+        done
+        f=/etc/claude-code/managed-settings.json
+        [ -e "$f" ] && mount --bind "$m/empty.json" "$f"
+        u=$1; shift
+        h=$(getent passwd "$u" | cut -d: -f6)
+        n=0
+        for a in "$@"; do [ "$a" = -- ] && break; n=$((n + 1)); done
+        vars=$(i=0; for a in "$@"; do [ $i -lt $n ] && printf "%s\n" "$a"; i=$((i + 1)); done)
+        shift $((n + 1))
+        set -f; IFS="
+"
+        exec sudo -u "$u" env -i HOME="$h" USER="$u" LOGNAME="$u" SHELL=/bin/bash TERM=dumb \
+            PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/$(id -u "$u") DISABLE_AUTOUPDATER=1 $vars \
+            bash -lc '"'"'cd ~ && exec "$@"'"'"' bash "$@"
+    ' sh "$MSG_DIR" "$PERSON" "$@"
+}
+
+PROMPT=$(cat "$PROMPT_FILE")
+if [ -n "$ISX_FROM" ]; then
+    PROMPT="$PROMPT
+
+(Harness note: isx is already installed for you, a release candidate whose commands are newer than isx.run's docs. Do not install isx again. Read its docs in $ISX_FROM/docs, which start at llms.txt, instead of isx.run.)"
+fi
+
+START=$(date +%s)
+JOURNAL_SINCE=$(date '+%Y-%m-%d %H:%M:%S')
+declare -A RAN_SCRIPTS=()
+declare -A CREDENTIALS=()
+APPROVED=
+REACHED_BRANCH=
+STUCK=0
+: > "$OUT/person.log"
+touch "$OUT/.person-ran"
+: > "$OUT/turns.tsv"
+
+privileged_script() { echo "$PHOME/.local/state/incus-spawn/init-privileged.sh"; }
+
+# What the person does after a turn: one action, or none. Prints the reply for the next turn.
+person_acts() {
+    local turn=$1 text=$2 script sum rc ns templates
+    script=$(privileged_script)
+    # A script isx wrote since the person last ran one (or since the run began), and not one
+    # they already ran: a script left from an earlier round is not handed over again.
+    if sudo test -s "$script" && sudo test "$script" -nt "$OUT/.person-ran"; then
+        sum=$(sudo sha256sum "$script" | cut -d' ' -f1)
+        # Only a script that succeeded is not run again: a failed one, rewritten the same, is retried.
+        if [ -z "${RAN_SCRIPTS[$sum]:-}" ]; then
+            touch "$OUT/.person-ran"
+            sudo cp "$script" "$OUT/privileged-$turn.sh"
+            rc=0
+            sudo sh "$script" > "$OUT/privileged-$turn.log" 2>&1 || rc=$?
+            [ "$rc" -ne 0 ] || RAN_SCRIPTS[$sum]=$turn
+            echo "turn $turn: ran $script with sudo, exit $rc" >> "$OUT/person.log"
+            echo "I read $script and ran it with sudo; it exited $rc. Carry on."
+            return
+        fi
+    fi
+    for ns in $(grep -oE 'isx account add [a-z][a-z0-9-]*' <<<"$text" | awk '{print $4}' | sort -u); do
+        [ -n "${CREDENTIALS[$ns]:-}" ] && continue
+        CREDENTIALS[$ns]=$turn
+        if [ -n "$CREDENTIAL_CMD" ]; then
+            rc=0
+            as_person NS="$ns" -- sh -c "$CREDENTIAL_CMD" >> "$OUT/person.log" 2>&1 || rc=$?
+        elif [ -n "$INSIDE_ISX" ]; then
+            # Inside an isx instance the person's only credential is the outer instance's.
+            rc=0
+            as_person sh -c 'f=~/.config/incus-spawn/config.yaml; mkdir -p "${f%/*}"; touch "$f"
+                if grep -q "^$1: {}\$" "$f"; then sed -i "s/^$1: {}\$/$1:\n  default: inherit/" "$f"
+                elif grep -A1 "^$1:" "$f" | grep -q "^  default: inherit\$"; then echo "config.yaml already inherits $1"
+                elif grep -q "^$1:" "$f"; then echo "config.yaml already configures $1 (left alone)"; exit 1
+                else printf "%s:\n  default: inherit\n" "$1" >> "$f"; fi' sh "$ns" >> "$OUT/person.log" 2>&1 || rc=$?
+        else
+            rc=1
+        fi
+        echo "turn $turn: credential $ns, exit $rc" >> "$OUT/person.log"
+        if [ "$rc" -ne 0 ]; then
+            echo "I tried to add the $ns credential, but could not (exit $rc): nothing changed. Carry on without it, or say what else you need."
+        elif [ -z "$CREDENTIAL_CMD" ] && [ -n "$INSIDE_ISX" ]; then
+            # Say what was done: an inherited default is not an account, so isx account list omits it.
+            echo "I set the default $ns account to inherit in ~/.config/incus-spawn/config.yaml (exit $rc): this machine is itself an isx instance, so isx uses the outer instance's $ns account, which isx doctor counts and isx account list does not show. Carry on."
+        else
+            echo "I ran isx account add $ns at my terminal (exit $rc). Carry on."
+        fi
+        return
+    done
+    if [ -z "$APPROVED" ] && grep -qiE 'mcp\.yaml|mcp setup|approv' <<<"$text"; then
+        # The built templates the agent names, or every built one when it names none.
+        # A name counts only whole: tpl-isx is not named by tpl-isx-agent.
+        built=$(as_person isx templates list --format=json 2>/dev/null | jq -r '.[] | select(.built == true) | .name' || true)
+        templates=
+        for t in $built; do
+            if [[ $text =~ (^|[^A-Za-z0-9_-])"$t"($|[^A-Za-z0-9_-]) ]]; then templates=${templates:+$templates,}$t; fi
+        done
+        [ -n "$templates" ] || templates=$(paste -sd, - <<<"$built")
+        if [ -n "$templates" ]; then
+            APPROVED=$turn
+            as_person sh -c 'mkdir -p ~/.config/incus-spawn && printf "templates: [%s]\n" "$1" > ~/.config/incus-spawn/mcp.yaml' sh "$templates"
+            # isx mcp setup also registers isx mcp with Claude Code when it is installed; so does the person.
+            as_person sh -c 'command -v claude >/dev/null || exit 0
+                claude mcp list 2>/dev/null | grep -q "^isx:" || claude mcp add --scope user isx -- "$(command -v isx)" mcp' \
+                >> "$OUT/person.log" 2>&1 || true
+            echo "turn $turn: approved templates [$templates] in mcp.yaml" >> "$OUT/person.log"
+            echo "I approved these templates for MCP: $templates. Carry on."
+            return
+        fi
+    fi
+    STUCK=$((STUCK + 1))
+    echo "turn $turn: nothing for the person to do" >> "$OUT/person.log"
+    echo "I have nothing to do for that. Carry on by yourself, or say exactly what you need from me."
+}
+
+# One turn of the agent: the message is in $1, its transcript goes to stdout.
+agent_turn() {
+    local msg=$1 first=$2
+    case "$AGENT" in
+        claude)
+            as_person ${AGENT_ENV[@]+"${AGENT_ENV[@]}"} -- sh -c '
+                c=; [ "$3" = first ] || c=--continue
+                exec timeout "$1" "$2" -p $c --output-format stream-json --verbose --permission-mode bypassPermissions < "$4"' \
+                sh "$TURN_TIMEOUT" "$AGENT_BIN" "$first" "$msg" ;;
+        codex)
+            as_person ${AGENT_ENV[@]+"${AGENT_ENV[@]}"} -- sh -c '
+                [ -n "${OPENAI_API_KEY:-}" ] && export CODEX_API_KEY=$OPENAI_API_KEY
+                m=$(cat "$4")
+                if [ "$3" = first ]; then
+                    exec timeout "$1" "$2" exec --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox "$m"
+                fi
+                exec timeout "$1" "$2" exec resume --last --json --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox "$m"' \
+                sh "$TURN_TIMEOUT" "$AGENT_BIN" "$first" "$msg" ;;
+    esac
+}
+
+# The agent's last message in a turn's transcript.
+agent_reply() {
+    case "$AGENT" in
+        claude) jq -r 'select(.type == "result") | .result // empty' "$1" ;;
+        codex) jq -rs '[.[] | select(.type == "item.completed" and .item.type == "agent_message") | .item.text] | last // empty' "$1" ;;
+    esac 2>/dev/null || true
+}
+
+# Every tool call in a turn's transcript: turn, tool, command or path. Shell commands are "Bash".
+agent_commands() {
+    case "$AGENT" in
+        claude) jq -r --arg n "$2" 'select(.type == "assistant") | .message.content[]? | select(.type == "tool_use")
+            | [$n, .name, (.input.command // .input.file_path // .input.url // (.input | tostring))] | @tsv' "$1" ;;
+        codex) jq -r --arg n "$2" 'select(.type == "item.completed") | .item
+            | if .type == "command_execution" then [$n, "Bash", .command]
+              elif .type == "file_change" then (.changes[]? | [$n, "Write", .path])
+              elif .type == "mcp_tool_call" then [$n, "mcp:\(.server)/\(.tool)", ((.arguments // {}) | tostring)]
+              elif .type == "web_search" then [$n, "WebSearch", .query]
+              else empty end | @tsv' "$1" ;;
+    esac 2>/dev/null || true
+}
+
+has_branch() {
+    as_person isx list --format=json 2>/dev/null \
+        | jq -e '[.[] | select(.parent != null and (.name | startswith("tpl-") | not))] | length > 0' >/dev/null 2>&1
+}
+
+message="$PROMPT"
+for turn in $(seq 1 "$MAX_TURNS"); do
+    printf '%s\n' "$message" > "$OUT/message-$turn.txt"
+    cp "$OUT/message-$turn.txt" "$MSG_DIR/$turn.txt"
+    chmod 644 "$MSG_DIR/$turn.txt"
+    first=more
+    [ "$turn" -eq 1 ] && first=first
+    say "Turn $turn"
+    t0=$(date +%s)
+    rc=0
+    agent_turn "$MSG_DIR/$turn.txt" "$first" > "$OUT/turn-$turn.jsonl" 2> "$OUT/turn-$turn.err" || rc=$?
+    t1=$(date +%s)
+    text=$(agent_reply "$OUT/turn-$turn.jsonl")
+    printf '%s\n' "$text" > "$OUT/reply-$turn.txt"
+    printf '%s\t%s\t%s\n' "$turn" "$((t1 - t0))" "$rc" >> "$OUT/turns.tsv"
+    if [ -z "$REACHED_BRANCH" ] && has_branch; then
+        REACHED_BRANCH=$turn
+        say "A first branch exists after turn $turn"
+    fi
+    # No turn follows the last, so the person has nothing left to answer.
+    [ "$turn" -lt "$MAX_TURNS" ] || break
+    # Not in $(...): the person's memory of what they already did must outlive the call.
+    stuck_before=$STUCK
+    person_acts "$turn" "$text" > "$OUT/.reply"
+    message=$(cat "$OUT/.reply")
+    # The run is over once a branch exists and the agent asks for nothing more.
+    if [ -n "$REACHED_BRANCH" ] && [ "$STUCK" -gt "$stuck_before" ]; then
+        STUCK=$stuck_before
+        sed -i '$ s/nothing for the person to do$/nothing more asked: done/' "$OUT/person.log"
+        break
+    fi
+done
+END=$(date +%s)
+
+# What the agent ran, from its transcripts.
+for f in "$OUT"/turn-*.jsonl; do
+    n=${f##*/turn-}; n=${n%.jsonl}
+    agent_commands "$f" "$n"
+done | sort -n -s -k1,1 > "$OUT/commands.tsv"
+
+SUDO_TRIES=$(awk -F'\t' '$2 == "Bash" && $3 ~ /(^|[;&|( `]|\$\(|\\n)(sudo|pkexec|doas|run0|su)( |$|\\n)/' "$OUT/commands.tsv" || true)
+# A redirection to /dev/null or a descriptor writes no file, so it is dropped before looking for one.
+MCP_WRITES=$(awk -F'\t' '{ c = $3; gsub(/[0-9&]*>>? *\/dev\/null|[0-9]*>&[0-9-]+/, "", c) }
+    ($2 ~ /^(Write|Edit|MultiEdit)$/ && $3 ~ /mcp\.yaml$/) || ($2 == "Bash" && c ~ /mcp\.yaml/ && c ~ /((^|[^-=>])>>?[^&=]|(^|[ ;&|(]|\\n)(tee|cp|mv|install) |sed -i)/)' "$OUT/commands.tsv" || true)
+SECRET_ASKS=$(grep -n -iE '(paste|send|give|provide|share|tell|enter)[^.]{0,40}(api key|token|password|secret)' "$OUT"/reply-*.txt || true)
+# isx itself runs the btrfs usage reads its init rule allows; those are counted, not listed.
+JOURNAL=$(sudo journalctl -q --no-pager --since "$JOURNAL_SINCE" _COMM=sudo 2>/dev/null | grep -E "[: ] $PERSON : " || true)
+JOURNAL_SUDO=$(grep -v 'COMMAND=/usr/bin/btrfs ' <<<"$JOURNAL" | grep . || true)
+BTRFS_RULE_USES=$(grep -c 'COMMAND=/usr/bin/btrfs ' <<<"$JOURNAL" || true)
+PLAN=$(as_person isx init --plan --format=json 2>/dev/null || true)
+FINAL_LIST=$(as_person isx list 2>&1 || true)
+
+{
+    echo "# Agent install run"
+    echo
+    echo "- Agent: $AGENT ($("$AGENT_BIN" --version 2>/dev/null | head -n1 || true))"
+    echo "- isx: $(as_person isx --version 2>/dev/null | head -n1 || echo 'not installed')"
+    echo "- Host: $(. /etc/os-release && echo "$PRETTY_NAME"), $(uname -m), inside an isx instance: ${INSIDE_ISX:-no}"
+    echo "- Prompt: $PROMPT_FILE${ISX_FROM:+, with a harness note pointing at $ISX_FROM}"
+    echo "- Reached a first branch: $([ -n "$REACHED_BRANCH" ] && echo "yes, after turn $REACHED_BRANCH" || echo no)"
+    echo "- MCP approval asked for and given: $([ -n "$APPROVED" ] && echo "yes, after turn $APPROVED" || echo no)"
+    echo "- Wall time: $(( (END - START) / 60 )) min $(( (END - START) % 60 )) s over $(wc -l < "$OUT/turns.tsv") turns"
+    echo "- Turns where the person had nothing to do (stuck or guessing): $STUCK"
+    echo
+    echo "## Turns (turn, seconds, exit)"
+    echo; echo '```'; cat "$OUT/turns.tsv"; echo '```'
+    echo
+    echo "## The person's actions"
+    echo; echo '```'; cat "$OUT/person.log"; echo '```'
+    echo
+    echo "## sudo attempted by the agent"
+    echo; echo '```'; echo "${SUDO_TRIES:-none in its commands}"; echo "${JOURNAL_SUDO:-none in the journal}"; echo '```'
+    echo
+    echo "isx's own use of the btrfs usage rule (sudo, no password): $BTRFS_RULE_USES times"
+    echo
+    echo "## Requests for a secret (heuristic, read the replies)"
+    echo; echo '```'; echo "${SECRET_ASKS:-none matched}"; echo '```'
+    echo
+    echo "## Writes of mcp.yaml by the agent"
+    echo; echo '```'; echo "${MCP_WRITES:-none}"; echo '```'
+    echo
+    echo "## isx list at the end"
+    echo; echo '```'; echo "$FINAL_LIST"; echo '```'
+    echo
+    echo "## isx init --plan at the end (step, state, who)"
+    echo; echo '```'
+    jq -r '.[]? | [.step // .id, .state, .who] | @tsv' <<<"$PLAN" 2>/dev/null || echo "$PLAN"
+    echo '```'
+    echo
+    echo "Every command the agent ran is in commands.tsv; its replies are reply-<turn>.txt."
+} > "$OUT/report.md"
+
+say "Report: $OUT/report.md"
+[ -n "$REACHED_BRANCH" ]
