@@ -1,7 +1,7 @@
 # Agents
 
 Each agent is a tool: add it to a template's `tools:` list, and every branch of the template has it, set up for unattended work.
-Its credentials stay on the host, where `isx init` configures them, and the [proxy](../README.md#credential-isolation) adds them to its requests as they leave the instance.
+The agent's credentials stay on the host, where `isx init` configures them, and the [proxy](../README.md#credential-isolation) adds them to the agent's requests as they leave the instance.
 The sections below cover one agent each.
 
 ## Claude Code
@@ -49,8 +49,9 @@ tools:
 
 The build gives Claude Code bypass-permissions mode with every tool allowed, and turns off auto-update, telemetry, error reporting, the feedback survey and its own sandbox.
 It accepts the onboarding and the trust prompt for the home directory, so the first session starts without questions.
+
 The footer shows `Running unconstrained in isx [version] [container name]`.
-The default action resumes your most recent session in its directory.
+The default action (`default-action: claude` above) resumes your most recent session, in that session's directory.
 
 ## Codex CLI
 
@@ -93,18 +94,19 @@ tools:
 ### What the build sets up
 
 The build configures Codex for unattended use, turns off its update check and marks the home directory as trusted.
-It also hands Codex the [environment primer](#agent-environment-context), without touching `~/.codex/AGENTS.md`.
+The build also gives Codex the [environment primer](#agent-environment-context), a short text that tells an agent about its instance, and does not write `~/.codex/AGENTS.md`.
 The default action resumes your most recent session.
 
 The footer shows the model, the current directory and `Running unconstrained in isx [version] [container name]`.
-That is the name of a permission profile with full filesystem and network access, and live web search.
-The version and instance name refresh at login, including after cloning a template.
+That message is the name of a permission profile with full filesystem and network access, and live web search.
+
+The version and instance name refresh at login, including in a new branch of a template.
 Use `/statusline` to customize the footer; the `permissions` item displays the isx message.
 
 ## Pi Coding Agent
 
 Pi is a provider-agnostic CLI coding agent.
-Its default provider is `anthropic`, so it spends your Claude account: an API key, Claude Pro/Max OAuth or Vertex AI.
+Its default provider is `anthropic`, so it uses your Claude account: an API key, Claude Pro/Max OAuth or Vertex AI.
 A template with Pi alone needs a Claude account unless it sets Pi's `provider` parameter, described below.
 Add it to any template with `tools: [pi]`:
 
@@ -123,9 +125,9 @@ shell-command: pi
 
 The credential stays on the host, and the proxy adds it to Pi's requests as they leave the instance.
 To use Pi without making it the default shell, omit `shell-command` and launch it manually after `isx shell`.
-With `default-action: pi` instead, the instance opens Pi resuming your most recent session in its directory.
+With `default-action: pi` instead, the instance opens Pi resuming your most recent session, in that session's directory.
 
-Every template build puts the generated environment instructions at `/AGENTS.md`, which Pi loads in every directory.
+Every template build puts the [environment primer](#agent-environment-context) at `/AGENTS.md`, which Pi loads in every directory.
 Pi gets this file whether or not the template also installs Claude Code.
 Your own `~/.pi/agent/AGENTS.md` and project `AGENTS.md` files load as usual; isx never writes them.
 
@@ -146,12 +148,13 @@ A provider isx does not manage needs no credential from isx: Pi signs in to it i
 
 The `google` provider is the Gemini API, and uses your Gemini key, as [Gemini CLI](#gemini-cli) does.
 The `google-vertex` provider runs Gemini models on Vertex AI, and needs a Vertex AI Claude account.
-isx also accepts `vertex` for it, and writes Pi's own name in its settings.
+isx also accepts `vertex` as a name for this provider, and writes `google-vertex`, the name Pi knows, in Pi's settings.
 
-On Vertex AI, Pi sends its calls with an API key, a proof the instance holds.
-The proxy checks it and moves each call into your account's project and region.
-It signs the call with the host's GCP credentials, which never enter the instance.
-It serves only Gemini model calls with them, and refuses anything else the proof would reach.
+On Vertex AI, Pi sends its calls with an API key that is a proof: a token isx gives the instance in place of the credential.
+The proxy checks the proof and moves each call into your account's project and region.
+
+The proxy signs the call with the host's GCP credentials, which never enter the instance.
+It uses those credentials only for Gemini model calls, and refuses any other Vertex AI call that carries the proof.
 
 Pi can also run against OpenAI, using the same key as [Codex CLI](#codex-cli):
 
@@ -223,13 +226,13 @@ Gemini's shell checks can still require approval for commands outside the worksp
 The policy uses priority zero, so higher-priority user rules can override it.
 Remove the file to restore upstream approval defaults.
 
-When `gemini-cli` is installed, every template build writes the generated environment instructions to `~/.gemini/extensions/isx/GEMINI.md`, including inherited template notes, installed tools and cloned repositories.
+When `gemini-cli` is installed, every template build writes the [environment primer](#agent-environment-context) to `~/.gemini/extensions/isx/GEMINI.md`, including inherited template notes, installed tools and cloned repositories.
 That file belongs to an extension named `isx`, which Gemini CLI loads beside your own `~/.gemini/GEMINI.md`.
 The build never writes your file, and project `GEMINI.md` files remain separate.
 
 The extension file is owned by `agentuser` and regenerated on rebuild.
 A rebuild also removes the copy an older build left in `~/.gemini/GEMINI.md`, unless you changed its first line.
-Launching with `--extensions` naming other extensions leaves the instructions out.
+Launching with `--extensions` naming other extensions leaves the primer out.
 The tool leaves `context.fileName` unset.
 
 ## Bob Shell
@@ -254,7 +257,7 @@ Run `isx init` to configure the key: it stays on the host, and the proxy adds it
 An instance holds only a placeholder value.
 
 During `isx init` you are asked to accept the IBM license agreement.
-Accepting pre-configures it in every instance, so Bob Shell does not prompt again.
+When you accept, isx configures the acceptance in every instance, so Bob Shell does not prompt again.
 
 The default action resumes your most recent task with `--auto-approve`, which auto-approves all tool calls; running `bob` manually in a shell uses normal approval mode.
 The build trusts the home directory and turns off auto-update and the update reminder.
@@ -271,7 +274,7 @@ A child template can set any of them again without reinstalling Bob.
 
 ## GitHub Copilot CLI
 
-GitHub Copilot CLI signs in with the same GitHub PAT as the `gh` tool; no separate credential is needed.
+GitHub Copilot CLI signs in with the same GitHub personal access token as the `gh` tool; no separate credential is needed.
 Add it to a template with `tools: [copilot]`:
 
 ```yaml
@@ -308,12 +311,12 @@ tools:
       context: long_context
 ```
 
-They are written to Copilot's `~/.copilot/settings.json` as `model`, `effortLevel` and `contextTier`, and a child template can set any of them again without reinstalling Copilot.
+The build writes these parameters to Copilot's `~/.copilot/settings.json` as `model`, `effortLevel` and `contextTier`, and a child template can set any of them again without reinstalling Copilot.
 The same file always holds `defaultPermissionMode: allow-all`, so interactive sessions start in Allow All.
 
 ## Agent Skills
 
-A template can declare [agent skills](https://skills.sh) to bake in at build time.
+A template can declare [agent skills](https://skills.sh) for the build to install.
 Skills are installed once into the template, at `~/.agents/skills`, the shared location any agent can read, and inherited by every instance branched from it.
 Claude Code finds them through `~/.claude/skills`.
 
@@ -366,14 +369,15 @@ It also lists the tools and repositories the template provides.
 The build stores it once, in `/etc/isx/agent-instructions.md`.
 With Claude Code it appears at `/etc/claude-code/CLAUDE.md`, and with Pi at `/AGENTS.md`, both links to that one file.
 With Gemini CLI, the `isx` extension's `~/.gemini/extensions/isx/GEMINI.md` gets a copy you own.
-Editing one of the links changes every agent's, and the next build replaces them all.
 
-With Codex CLI, `/etc/codex/requirements.toml` holds them as managed developer instructions, which Codex adds to your own.
-A template that ships its own `requirements.toml` keeps it, and the build warns that Codex goes without the primer.
+Editing one of the links changes the stored file, so both agents read the edit, and the next build replaces every copy of the primer.
+
+With Codex CLI, `/etc/codex/requirements.toml` holds the primer as managed developer instructions, which Codex adds to your own.
+A template that ships its own `requirements.toml` keeps it, so Codex does not get the primer, and the build warns you of that.
 
 Your own `~/.claude/CLAUDE.md` and project `CLAUDE.md` files load as usual.
 
-Templates and tools can add their own lines with `agent_note`:
+Templates and tools can add their own lines to the primer with `agent_note`:
 
 ```yaml
 name: tpl-openjdk
@@ -383,7 +387,7 @@ agent_note: |
   deliberately omits 25.
 ```
 
-A tool's note, and any `skills` it ships, come along to every template that installs the tool.
+A tool's note, and any `skills` it ships, are added to every template that installs the tool.
 Bare skill names in a tool resolve against the tool's own `skills.repo`:
 
 ```yaml
@@ -400,7 +404,7 @@ skills:
 
 ### When to write a note
 
-The agent reads its notes in every session, so save them for things it would otherwise get wrong: a required flag, a version to avoid, an "obvious" fix that is not one.
+The agent reads its notes in every session, so write a note only for things the agent would otherwise get wrong: a required flag, a version to avoid, a fix that looks obvious and is wrong.
 Be specific:
 
 ```yaml
@@ -415,7 +419,7 @@ Some content is better placed elsewhere:
 | Instead of | Use |
 | --- | --- |
 | `agent_note: Maven 3.9 build tool` | `description`, which is what template and tool listings show |
-| `agent_note: maven, podman and jtreg are installed` | Nothing: the generated file already lists installed tools and cloned repos |
+| `agent_note: maven, podman and jtreg are installed` | Nothing: the primer already lists installed tools and cloned repos |
 | `agent_note: Build with 'make images', test with 'make test TEST=tier1'` | A [skill](#agent-skills), which loads on demand rather than in every session |
 | `agent_note: Be careful when editing the parser` | A specific constraint, or nothing at all |
 | `agent_note: Follow the Quarkus code style` | The repository's own `CLAUDE.md`, which applies only to work in that repo |
