@@ -162,6 +162,11 @@ QEMU stands in for vfkit: `vm.pid` names it and socat bridges its vsock ports, a
 The VM's lease is written to `/var/db/dhcpd_leases` for `VmNetwork`, and a `/usr/bin/security` answers the Keychain's admin trust settings with the one CA the GitHub stand-in's certificate chains to.
 It checks what #1582 broke and the Linux jobs cannot reach: a template build that runs `gh` is served the template's account, a pinned branch its pin, no known instance's proof is refused, an `--mcp-client` branch reaches `isx mcp`, and a forged proof or the host's own request gets no credential.
 Breaking `proofMayIdentify`'s macOS branch fails its template build with #1582's error, and the job also found that every `--mcp-client` branch was refused its first call (`CallerCheck`).
+It also checks the `exposed-host-ports:` relay in macOS's role, where `RelayCallers` admits only the VM's address as `VmNetwork.discoverVmIp()` reads it from the leases (#2135).
+An instance reaches a listed loopback port at `host.isx.internal`, which bridge DNS names the Mac's end of the VM link for.
+The host's own connection and a peer in a network namespace that routes the VM network through the host are closed and logged as refused.
+An unlisted loopback port and a `--proxy-only` instance reach nothing.
+Giving the macOS branch Linux's subnet rule fails the host's check, and a VM address that is not read fails the instance's.
 It runs in about a minute, in parallel with the other jobs, from `uber-jar-smoke`'s jars.
 
 Three guards keep the test build out of a release.

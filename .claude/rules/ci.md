@@ -183,6 +183,7 @@ Released binaries take their platform role from the OS they run on, and nothing 
 `appliance/test-macos-role.sh` boots the appliance with `VmManager.kernelCmdline()`'s command line and the VM's MAC (`RemoteProxyTestCmdlineTest` fails when they part), on a tap network with DHCP, DNS and NAT, and bridges its vsock ports onto isx's sockets.
 Stand-ins replace what only macOS has: QEMU named in `vm.pid`, the lease in `/var/db/dhcpd_leases`, a `/usr/bin/security` whose admin domain trusts one CA, and `echo-server.py` as GitHub's API, trusted only through it.
 It runs `isx init`, builds `tpl-minimal` and a template that runs `gh` on its own account, branches it plain, pinned and `--mcp-client`, and checks who was served what, that no known proof was refused, and that a forged proof and the host's own request get no credential.
+It lists a port in `exposed-host-ports:` and checks the relay's macOS caller rule (#2135): a branch reaches it at `host.isx.internal`, the host and a peer in a network namespace are refused, and an unlisted port and a `--proxy-only` branch reach nothing.
 About a minute under KVM; it needs internet access for the builds.
 It does not run the native macOS binaries, vfkit or the real Keychain.
 Keeping the test build out of a release is `check-platform-role.sh` in `release.yml`, `PlatformRoleFeature` and `PlatformRoleBuildGuardTest` (design/testing.md "The macOS roles, tested on Linux").

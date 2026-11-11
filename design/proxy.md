@@ -1001,6 +1001,7 @@ The relay listens on the bridge's gateway, or the Mac's end of the VM link, and 
 Every other gateway listener already refuses such a caller (the MITM listener by its unknown address, the health endpoint by its host-only routes), so `RelayCallers` closes a connection before anything is connected to loopback unless its source is in the bridge's subnet (Linux: the subnet of the interface holding the bind address) or is the VM's address (macOS: `VmNetwork.discoverVmIp()`).
 An address that cannot be placed admits nobody, and the rule is looked up again once it is 5 s old (`REDISCOVER_MILLIS`), at the next connection, since the bridge's subnet or the VM's lease can change under a running proxy and an address the old rule held must stop being admitted.
 This is a filter on where a caller is, not who: within the bridge, or behind the VM's NAT, every instance is still admitted alike.
+CI's `macos-role` job checks the macOS rule against the appliance: an instance is admitted, the host and a peer routed through it are refused (design/testing.md "The macOS roles, tested on Linux").
 
 **Closed by default.**
 No key, an empty list, or a value that is not a plain list of integers does not expose any port (`ExposedHostPorts`); within a list each port is checked alone, a duplicate is kept once, and isx's own ports (443, 18443, 18080, 53) are refused.

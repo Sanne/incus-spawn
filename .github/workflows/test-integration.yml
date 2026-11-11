@@ -522,9 +522,10 @@ jobs:
   # isx and isx-proxy in their macOS roles, on Linux (#1800): the macOS-role test build
   # (scripts/macos-role-build.sh, never released) against the appliance booted as isx boots it on
   # macOS, with stand-ins for vfkit, its NAT, the DHCP leases and the Keychain. A template build
-  # that runs gh, a pinned branch, refused proofs and --mcp-client, through the macOS code paths
-  # (appliance/test-macos-role.sh). Its own job, off the critical path: it starts once the uber-jars
-  # are built and ends before the slower integration jobs.
+  # that runs gh, a pinned branch, refused proofs, --mcp-client and the exposed-host-ports relay's
+  # caller rule, through the macOS code paths (appliance/test-macos-role.sh). Its own job, off the
+  # critical path: it starts once the uber-jars are built and ends before the slower integration
+  # jobs.
   macos-role:
     needs: [uber-jar-smoke, build_appliance]
     runs-on: ubuntu-26.04
