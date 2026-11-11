@@ -32,7 +32,7 @@ Both settings go in every tmux between the agent and your terminal, on the host 
 Run `isx doctor` on the host, and do not log in inside the instance, even when the agent asks you to.
 The credential that failed is stored on the host, and `isx doctor` reports it with the command that replaces it.
 
-A login inside the instance would put a real credential where the agent can read it, which is what isx exists to prevent.
+A login inside the instance would put a real credential where the agent can read it.
 
 ### Why does a tool I installed fail with a certificate error?
 
@@ -65,7 +65,6 @@ In return, nothing the agent writes reaches your host until you fetch it.
 
 Your build tools, package managers and IDE run what a project directory holds, with your full privileges on the host.
 With a read-write mount the agent writes those files, so what the agent writes runs on your host without your review.
-That is exactly what isx exists to prevent.
 
 Two things make a read-write mount dangerous even when it holds only the project directory:
 
