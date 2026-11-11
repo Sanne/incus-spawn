@@ -75,7 +75,7 @@ echo "==> Starting VM with isx (ISX_APPLIANCE_DIR=$BUILD_DIR)..."
 echo "==> Waiting for Incus daemon (up to 90s)..."
 deadline=$(( $(date +%s) + 90 ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
-    if "$ISX" instances >/dev/null 2>&1; then
+    if "$ISX" list -q >/dev/null 2>&1; then
         echo
         echo "SUCCESS: isx connected to the appliance."
         "$ISX" vm status
