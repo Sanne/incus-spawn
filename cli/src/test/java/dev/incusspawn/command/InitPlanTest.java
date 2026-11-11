@@ -46,6 +46,13 @@ class InitPlanTest {
         boolean reachable = true;
 
         @Override boolean hostHasCommand(String command) { return commands.contains(command); }
+        /** What a command run at the terminal exits with, by its line; 0 when not given. */
+        final Map<String, Integer> exits = new HashMap<>();
+        @Override int runShown(String... command) {
+            var line = String.join(" ", command);
+            ran.add(line);
+            return exits.getOrDefault(line, 0);
+        }
         @Override Path hostFile(String path) { return root.resolve(path.substring(1)); }
         @Override DetectionResult runningFirewall() { return firewall; }
         @Override boolean incusReachable() { return reachable; }
