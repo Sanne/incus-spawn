@@ -30,10 +30,10 @@ You fetch each agent's work as commits and review them the way you would review 
 An agent should not act as you.
 It should have its own identity: its own scoped API token, its own GitHub identity, its own commit-signing key.
 
-These credentials should be held outside the instance the agent works in, so that even a fully compromised agent cannot exfiltrate them.
-Because each agent should have its own identity, each action it takes should be traceable to that agent.
+These credentials are held outside the instance the agent works in, so even a fully compromised agent cannot exfiltrate them.
+An identity of its own is what makes each action traceable to its agent.
 
-The "held outside" part is delivered for the API keys and tokens you configure in isx: they never enter an instance in any form.
+The "held outside" part is delivered: isx never puts a key, token or credential into an instance, in any form.
 They stay on your host, and the proxy there adds them to requests as the requests leave an instance.
 
 The other part, an identity per instance, is partly delivered.
@@ -42,15 +42,15 @@ You choose the accounts when you branch.
 The proxy applies that choice on the host, where the agent cannot change it.
 
 Still to come is [#271](https://github.com/Sanne/incus-spawn/issues/271): SSH-agent-filtered commit signing, where the instance can request a signature for exactly one designated key.
-Each request would be checked to be for git signing only, and audited.
-The private key would never leave the host, or the hardware enclave when one holds it.
+Each request is checked to be for git signing only, and is audited.
+The private key never leaves the host, or the hardware enclave when one holds it.
 
 The per-instance account mechanism is deliberately general: per-agent API keys and GitHub identities are its first consumers, and signing keys and budgets are meant to use the same mechanism.
 
 ### 2. The proxy is the control plane
 
 The credential proxy began as a security mechanism, but its position gives it a second use: every request an agent makes with a credential isx holds, model calls included, passes through the proxy.
-Because the proxy sees each of these requests, it can provide the following without any instrumentation inside the instances:
+Because the proxy sees each of these requests, its position is enough to provide the following, without any instrumentation inside the instances:
 
 - **Activity**: an agent that is streaming API calls is working; one that stopped mid-session is waiting for input; one that went quiet is done or stuck.
 - **Spend**: live token usage per agent, attributable per instance.
@@ -58,7 +58,7 @@ Because the proxy sees each of these requests, it can provide the following with
 - **Policy**: per-agent domain allowlists, rate and budget caps, enforced by the proxy, outside the instance, where the agent cannot alter them.
 
 Alternatives need SDK cooperation or in-sandbox monitors to approximate any of this.
-isx can get all four from its architecture, because the proxy observes from outside the instance, whichever agent runs there: Claude Code, Pi, or whatever comes next.
+isx needs nothing inside the instance for any of the four, because the proxy observes from outside, whichever agent runs there: Claude Code, Pi, or whatever comes next.
 
 The counts behind activity and spend exist today: the proxy counts each instance's requests, model calls and tokens, and `isx proxy activity` shows them.
 The audit record and the policy are still to come.
