@@ -121,6 +121,7 @@ When the second run itself finds root work, such as a redirect to move after it 
 A step isx cannot write as a script, such as installing packages on a host without a package manager it knows, stops the run and names what to do yourself.
 
 On a UFW host the script edits `/etc/ufw/before.rules` itself, keeps a copy, and puts the copy back if UFW refuses the new file.
+If the blocks isx marks in that file are broken, the script stops and leaves the file as it was.
 On macOS `isx init` needs no administrator, so `--no-sudo` has no effect there.
 
 ## `isx build`

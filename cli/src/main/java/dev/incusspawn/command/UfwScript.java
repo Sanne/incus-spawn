@@ -86,10 +86,13 @@ final class UfwScript {
         lines.addAll(hereDocument("$nat", natBlock));
         if (forwardBlock != null) lines.addAll(hereDocument("$fwd", forwardBlock));
         else lines.add(": > \"$fwd\"");
-        lines.add("hasnat=0; grep -qF '" + UfwCheck.MARKER_NAT_BEGIN + "' \"$rules\" && grep -qF '"
-                + UfwCheck.MARKER_NAT_END + "' \"$rules\" && hasnat=1");
-        lines.add("hasfwd=0; grep -qF '" + UfwCheck.MARKER_FWD_BEGIN + "' \"$rules\" && grep -qF '"
-                + UfwCheck.MARKER_FWD_END + "' \"$rules\" && hasfwd=1");
+        // A block counts only with its END after its BEGIN; anything else is not isx's to edit
+        lines.add("hasnat=$(awk -v b='" + UfwCheck.MARKER_NAT_BEGIN + "' -v e='" + UfwCheck.MARKER_NAT_END + "' '" + PAIR + "' \"$rules\")");
+        lines.add("hasfwd=$(awk -v b='" + UfwCheck.MARKER_FWD_BEGIN + "' -v e='" + UfwCheck.MARKER_FWD_END + "' '" + PAIR + "' \"$rules\")");
+        // Only the blocks this edit replaces: the redirect's leaves the FORWARD block alone
+        lines.add("if [ \"$hasnat\" = bad ]" + (forwardBlock != null ? " || [ \"$hasfwd\" = bad ]" : "")
+                + "; then rm -f \"$nat\" \"$fwd\" \"$edited\";"
+                + " echo \"isx's marked blocks in $rules are not whole (an END without its BEGIN, or the reverse): fix them by hand, then run the script again.\" >&2; exit 1; fi");
         // An empty nat file leaves isx's NAT block as it stands
         if (keepMasquerading) lines.add("if [ \"$hasnat\" = 1 ] && awk -v subnet=\"$subnet\" '" + MASQUERADING + "' \"$rules\"; then : > \"$nat\"; fi");
         lines.add("awk -v nat=\"$nat\" -v fwd=\"$fwd\" -v hasnat=\"$hasnat\" -v hasfwd=\"$hasfwd\" '" + AWK + "' \"$rules\" > \"$edited\"");
@@ -97,8 +100,11 @@ final class UfwScript {
         // Written in place: the file keeps its owner and mode
         lines.add("cat \"$edited\" > \"$rules\"");
         lines.add("rm -f \"$nat\" \"$fwd\" \"$edited\"");
-        lines.add("if ! ufw reload; then cp -p \"$rules.isx-bak\" \"$rules\"; ufw reload || true;"
-                + " echo \"UFW refused the new $rules; the old one is back.\" >&2; exit 1; fi");
+        // The old file back; and if UFW refuses that too, its rules may be out of the kernel: say so
+        lines.add("if ! ufw reload; then cp -p \"$rules.isx-bak\" \"$rules\";"
+                + " if ufw reload; then echo \"UFW refused the new $rules; the old one is back.\" >&2;"
+                + " else echo \"UFW refused the new $rules, and reloading the old one failed too: UFW's rules may not be loaded. Check: sudo ufw status verbose\" >&2; fi;"
+                + " exit 1; fi");
         return lines;
     }
 
@@ -121,18 +127,28 @@ final class UfwScript {
             "END { exit !(index(block, \"MASQUERADE\") && index(block, subnet)) }");
 
     /**
+     * Whether {@code b} starts a line of the file with {@code e} on a later line: 1, 0 when there
+     * is no {@code b} nor {@code e}, and {@code bad} for an {@code e} first or a {@code b} never
+     * closed, as an edit by hand can leave them.
+     */
+    static final String PAIR = "index($0, b) == 1 && !begin { begin = NR; next } "
+            + "index($0, e) { if (!begin) bad = 1; else if (!end) end = NR } "
+            + "END { if (bad || (begin && !end)) print \"bad\"; else print (begin ? 1 : 0) }";
+
+    /**
      * The edit, line by line, as {@link UfwCheck#insertNatBlock} then {@link UfwCheck#insertFilterRules}
-     * do it on the whole text. An empty {@code nat} file leaves isx's NAT block as it stands, and an
-     * empty {@code fwd} file means no FORWARD block to place. Written without single quotes, since
-     * the shell line quotes it in them.
+     * do it on the whole text: only the first of each block is replaced, as their {@code indexOf}
+     * finds it. An empty {@code nat} file leaves isx's NAT block as it stands, and an empty
+     * {@code fwd} file means no FORWARD block to place. Written without single quotes, since the
+     * shell line quotes it in them.
      */
     static final String AWK = String.join("\n",
             "function emit(f,  l) { while ((getline l < f) > 0) print l; close(f) }",
             "function size(f,  l, n) { n = 0; while ((getline l < f) > 0) n++; close(f); return n }",
             "BEGIN { donat = size(nat) > 0; dofwd = size(fwd) > 0; skipnat = 0; skipfwd = 0; natdone = 0; fwddone = 0; infilter = 0 }",
-            "donat && hasnat && index($0, \"" + UfwCheck.MARKER_NAT_BEGIN + "\") == 1 { emit(nat); natdone = 1; skipnat = 1 }",
+            "donat && hasnat && !natdone && index($0, \"" + UfwCheck.MARKER_NAT_BEGIN + "\") == 1 { emit(nat); natdone = 1; skipnat = 1 }",
             "skipnat { if (index($0, \"" + UfwCheck.MARKER_NAT_END + "\")) skipnat = 0; next }",
-            "dofwd && hasfwd && index($0, \"" + UfwCheck.MARKER_FWD_BEGIN + "\") == 1 { emit(fwd); fwddone = 1; skipfwd = 1 }",
+            "dofwd && hasfwd && !fwddone && index($0, \"" + UfwCheck.MARKER_FWD_BEGIN + "\") == 1 { emit(fwd); fwddone = 1; skipfwd = 1 }",
             "skipfwd { if (index($0, \"" + UfwCheck.MARKER_FWD_END + "\")) skipfwd = 0; next }",
             "/^\\*filter[ \\t\\r]*$/ { if (donat && !hasnat && !natdone) { emit(nat); print \"\"; natdone = 1 } infilter = 1 }",
             "/^COMMIT[ \\t\\r]*$/ { if (infilter && dofwd && !hasfwd && !fwddone) { emit(fwd); fwddone = 1 } }",
