@@ -330,3 +330,32 @@ sudo ufw enable && isx init                                               # init
 
 An `isx init` with ufw still active repairs the file by itself.
 `isx doctor` names an affected file under "UFW forward rules", whether ufw is active or not.
+
+## A config directory made group-writable under a umask of 002
+
+isx used to create `~/.config/incus-spawn` with the login umask, so a umask of 002 left it group-writable.
+That is Ubuntu's default for a user with a private group (`pam_umask` with `USERGROUPS_ENAB yes`), and Fedora's.
+The proxy and `isx build` accept group write on that directory only when its gid equals the user's uid (issue 2136).
+So a host whose user has a gid other than their uid, such as `ubuntu` (uid 1000, gid 1001) on Ubuntu's cloud images, fails every build with `Cannot use credential proof host key: is in ~/.config/incus-spawn, which others can write to (chmod go-w it)`.
+isx now creates the directory without group write, whatever the umask, but it never repairs an existing one: group write it already had may have been used.
+
+### How to tell
+
+```shell
+stat -c '%A %U:%G (gid %g, uid %u)' ~/.config/incus-spawn
+```
+
+A `w` in the group or other position, with a gid other than the uid, is affected.
+
+### What to change
+
+Look for anything you did not put there, then remove the write bits:
+
+```shell
+ls -la ~/.config/incus-spawn
+chmod go-w ~/.config/incus-spawn
+```
+
+### How to verify
+
+`stat` shows `drwxr-xr-x` (or narrower), and `isx build tpl-minimal` gets past the credential proof host key.

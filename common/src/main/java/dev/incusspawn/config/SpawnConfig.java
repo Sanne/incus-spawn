@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.util.Map;
 import dev.incusspawn.ClientLog;
 import dev.incusspawn.Environment;
+import dev.incusspawn.OwnDirectory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -961,7 +962,7 @@ public class SpawnConfig extends UndeclaredKeys {
         try {
             migrateHostPath();
             var configFile = file();
-            Files.createDirectories(configFile.getParent());
+            OwnDirectory.create(configFile.getParent());
             Jjq.writeYaml(configFile, this);
             // Restrict permissions - config contains tokens
             configFile.toFile().setReadable(false, false);

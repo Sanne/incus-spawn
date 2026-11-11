@@ -936,6 +936,11 @@ It never reaches a guest:
 A route whose file is not usable is still claimed, and every request to it gets 503.
 Unusable means: a link or anything but a regular file (judged before it is opened, since opening a FIFO would block startup or a reload for good), a file or directory not owned by the proxy's uid, a file readable by anyone else, `host-routes/` writable by anyone else (group included: the proxy makes it 0700 itself), the config directory writable by others or by a shared group (group write is accepted there only when its gid equals the proxy's uid, a user-private group as `useradd` makes it, since a umask of 002 gives a user's directories that; never by comparing with a file made inside it, which takes a setgid directory's group, and every file on macOS), a config directory that is a link (only the real directory is checked), or content not 32 to 256 header-safe characters.
 The uid is that of a file the proxy has just created, once per process: never its user name, which may not resolve, and no directory-service lookup on the reload path.
+isx makes the config directory itself, and every directory it makes in it or on the way to it, without group or other write, whatever the umask (#2136).
+`OwnDirectory.create` does it, called from `isx init` before any step writes there and from every writer that may make the directory first.
+So a user whose primary group's gid is not their uid, as on Ubuntu's cloud images, is not refused for a umask of 002.
+An existing directory is left as it is: group write it already has may have been used, so it is checked, never repaired.
+`isx init` warns when the check would refuse it, judged by the uid it runs as, as the build and the proxy judge it, and the refusal says `chmod go-w`.
 Outside these checks, and so able to weaken them: the directories above `~/.config/incus-spawn`, which are not checked, and POSIX ACLs on any of them.
 An ACL entry granting another user write shows only as the group bits of the mode (its mask), so a config directory accepted for its user-private group can carry one.
 Java cannot read POSIX ACLs; refusing every group write on the config directory (`chmod g-w`, one command for a umask of 002) would close this at the cost of that step.

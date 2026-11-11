@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.OwnDirectory;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.DerEncoder;
 import dev.incusspawn.config.SpawnConfig;
@@ -161,7 +162,7 @@ public class CertStore {
 
     private void persist(String domain, CertEntry entry) {
         try {
-            Files.createDirectories(dir);
+            OwnDirectory.create(dir);
             trySetPerms(dir, "rwx------");
             Files.writeString(certPath(domain),
                     DerEncoder.toPem("CERTIFICATE", entry.cert().getEncoded()));

@@ -1,6 +1,7 @@
 package dev.incusspawn.config;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.OwnDirectory;
 import io.hyperfoil.tools.jjq.mapper.JqAnySetter;
 import io.hyperfoil.tools.jjq.mapper.JqConverter;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
@@ -363,7 +364,7 @@ public class McpConfig extends McpUndeclaredKeys {
             var target = file;
             // readSymbolicLink, not toRealPath: a dangling link (dotfiles not checked out yet) stays one.
             while (Files.isSymbolicLink(target)) target = target.resolveSibling(Files.readSymbolicLink(target));
-            Files.createDirectories(target.getParent());
+            OwnDirectory.create(target.getParent());
             // Owner-only from the first byte, and swapped in whole: a session reading it meanwhile
             // sees the old policy or the new one, never an empty or half-written file.
             var temp = Files.createTempFile(target.getParent(), ".mcp-", ".yaml",
