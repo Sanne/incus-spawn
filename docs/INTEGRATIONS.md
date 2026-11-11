@@ -247,6 +247,10 @@ host-routes:
 An instance then calls `https://work.isx.internal/...`, sending the secret isx gave it at its last start as the header `X-Isx-Instance-Secret`.
 That secret is in the file `$ISX_INSTANCE_SECRET_FILE` names.
 
+The file is `/run/isx/instance-secret`, readable by the instance user, and the secret is not a credential for anything upstream.
+A restart replaces the secret.
+After a reboot isx did not perform, the instance has no secret until you next open it with `isx shell`, `isx start` or `ssh <name>`.
+
 The proxy checks the secret and the instance's address together, and the instance's template against `templates:`.
 It forwards the request over plain HTTP to the target, with the headers `X-Isx-Instance` and `X-Isx-Template` naming the calling instance and its template.
 

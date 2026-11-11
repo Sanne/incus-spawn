@@ -141,6 +141,10 @@ A scenario of a benefit ends on the benefit:
 A concrete statement that is only partly true has two honest repairs.
 Either state the point at a level where it is true and still says something, or give the full mechanism with its cases.
 Swapping the concrete word for an abstract one is not a repair: a sentence that cannot be wrong because it says nothing is no better.
+The page's reader decides which repair: a page that explains states the point, and a reference page gives the mechanism with its cases.
+Before either, ask whether the reader of this page needs the statement at all.
+The README described how a host service identifies an instance, by address and secret, which is false on macOS.
+The repair was neither a Linux-only sentence nor a vaguer one: the paragraph moved to `docs/INTEGRATIONS.md`, whose reader builds such a service.
 `docs/VISION.md` said:
 
 > You choose the accounts when you branch, and the proxy resolves them from the caller's address.
