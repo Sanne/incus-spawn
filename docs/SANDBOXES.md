@@ -33,8 +33,8 @@ This sharing is what makes it cheap to create one instance per task and throw it
 A template declares the tools and the repositories, and is built once: the projects are cloned, their dependencies fetched and their build caches filled.
 Every branch of it starts ready to work, and every branch is the same.
 
-In daily use, one command creates a workstation.
-`isx branch` creates one instantly, `isx shell` or the TUI opens a shell in it, your editor attaches over SSH, an `isx://` git remote fetches the agent's work, and `isx destroy` deletes it.
+In daily use, each step of a task is one command.
+`isx branch` creates an instance instantly, `isx shell` or the TUI opens a shell in it, your editor attaches over SSH, an `isx://` git remote fetches the agent's work, and `isx destroy` deletes it.
 
 ## Why full system containers?
 
@@ -43,7 +43,9 @@ An isx instance is a complete system, because it is built for a different job th
 An application container, the kind Docker and Podman run by default, is built for shipping applications: a minimal filesystem, one process, fast startup.
 
 An isx instance is a workstation: a full [Incus](https://linuxcontainers.org/incus/) system container, or a KVM virtual machine with `--vm`.
-It has its own init system, real networking (`ping`, `strace`, nested Podman or Docker), and GUI and audio passthrough on Linux.
+It has its own init system and real networking.
+Tools such as `ping`, `strace` and nested Podman or Docker work in it as on a workstation.
+On Linux it can also pass through GUI and audio.
 
 The template pre-installs your baseline tools and repositories, but what the agent gets is a real Linux system.
 The agent can `dnf install`, `pip install`, build from source or run Docker Compose, just as on a workstation.
@@ -51,8 +53,8 @@ The agent can `dnf install`, `pip install`, build from source or run Docker Comp
 This matters for agents in particular: what you hand an agent is an investigation, and nobody knows at the start what tools it will need.
 An agent on an isx branch installs a tracer, starts a service or writes a tool of its own when the investigation needs it.
 
-The agent works exactly as it would on a developer workstation, because the instance is one.
-If it wrecks the instance, you destroy the branch and the next one is instant.
+The agent works as it would on a developer workstation, because the instance is one.
+If it wrecks the instance, you destroy it and branch again: the new branch is instant and starts from the clean template.
 
 For the strongest isolation, a KVM virtual machine (`--vm`) adds a separate kernel and hardware-level separation.
 The sections below compare this choice with the other sandboxes for agents.
@@ -147,7 +149,8 @@ None of these is possible in OpenShell:
 
 In isx the agent has root on a system with systemd, nested containers, debuggers and a real NIC.
 If it wrecks the instance, you destroy the branch and the next one is instant.
-Pick OpenShell to run an agent as a governed workload in a fleet; pick isx to let an agent work the way a good engineer does.
+
+Pick OpenShell to run an agent as a governed workload in a fleet; pick isx when the agent has to install, trace and run whatever the investigation needs.
 
 ### Dev containers
 
@@ -167,7 +170,9 @@ A [dev container](https://code.claude.com/docs/en/devcontainer) is a Docker cont
 A dev container is an application container: no init system, so no services; capabilities dropped, so nested containers and tracing need privileged flags; and the workspace the agent writes is your host's directory.
 
 You also keep the container and rebuild it from the Dockerfile, rather than discarding it after the task.
+
 Claude Code's own docs note that the credentials live inside it, in `~/.claude`, where an unattended session can read them.
+In isx the real credentials stay on your host, and a proxy there adds them to the agent's requests as the requests leave the instance.
 
 Pick a dev container to give a team one environment with the editor attached; pick isx when the agent should reshape its environment freely and its edits should not change your working tree.
 
@@ -204,9 +209,9 @@ The workspace is the other divergence.
 - **Docker Sandboxes.**
   `sbx run` mounts the current directory read-write by default, so the agent edits the host's files in place.
   Clone mode (`--clone`) is the opt-in that keeps work inside the sandbox until fetched.
-- **isx** is more cautious here: it does not mount your project directory read-write, since files the agent writes can end up executed on the host by a build, a commit or an IDE.
-  The [FAQ](FAQ.md#why-cant-i-mount-a-host-directory-read-write-to-follow-agent-work-in-my-ide) explains why.
-  You fetch the agent's work through `isx://` git remotes instead, so clone mode is the only mode isx has.
+- **isx** does not mount your project directory read-write, because a file the agent writes there can run on your host through a build, a commit or your IDE ([FAQ](FAQ.md#why-cant-i-mount-a-host-directory-read-write-to-follow-agent-work-in-my-ide)).
+  You give up having the agent's files as a local folder.
+  You fetch them through `isx://` git remotes instead, so clone mode is the only mode isx has.
 
 Pick Docker Sandboxes for one governed VM per developer, especially on Windows; pick isx when you want many cheap environments from one template, as containers or VMs as the work demands.
 
