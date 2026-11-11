@@ -203,7 +203,7 @@ Nothing is installed in the instance, and the service keeps listening on loopbac
 |---|---|
 | Who can connect | Every instance with network, including one built from a cloned repository's own template |
 | Other machines on your network | Refused, even when your firewall lets them reach the bridge address |
-| `--proxy-only` and `--airgap` | Reach no exposed port |
+| `--proxy-only` and `--airgap` | Cannot reach any exposed port |
 | What passes | Raw TCP: no TLS, no headers added, no credentials, no path filter |
 | What the service sees | A caller on loopback |
 | Unlisted loopback ports | Stay unreachable |
@@ -212,7 +212,9 @@ Nothing is installed in the instance, and the service keeps listening on loopbac
 ### What exposing a port gives away
 
 Expose a port only when you would let any instance use that service as you do.
-Many development services trust a loopback caller completely, and isx filters nothing on the way.
+Many development services trust any caller on loopback completely.
+isx does not filter the connections it passes to the service, so an instance can do whatever the service allows.
+
 There is no list of templates and no caller identity, so every instance with network gets the same access.
 
 Ollama is the example to weigh.
@@ -220,7 +222,7 @@ Its API has no authentication, and it can pull, create, push and delete models.
 Exposing 11434 gives every instance all of that, and the use of any cloud account Ollama is signed in to.
 
 A service that already listens on every address, or on the bridge address, was reachable from instances before, as your firewall allows.
-Listing its port changes nothing for it.
+Listing its port does not change how instances reach it.
 The proxy cannot bind that port on its own address then, and `isx doctor` warns that instances reach whatever holds it.
 
 ## A controller on the host

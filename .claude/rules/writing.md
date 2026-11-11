@@ -11,6 +11,7 @@ paths:
 
 The reader has little patience.
 They skim, read a sentence or two where the page seems to answer them, and leave.
+Some know Incus and TLS well, some are new to both, and many read English as a second language.
 Every rule here serves that reader.
 The home page (`site/index.html`) is the reference example of the shape and the voice.
 
@@ -18,6 +19,52 @@ The Shape and Voice rules are checked by `DocsShapeTest` and `DocsOneSentencePer
 `DocsListsTest` checks that the pages' lists mirror the code's: top-level commands, built-in tools, and tools with a proxy credential.
 A fact that is a list in the code is a list in the docs, and the test is what keeps them equal.
 `docs/dev/` is maintainer notes and is exempt from the budgets, and DESIGN.md and its `design/` pages keep their own register.
+
+## Clarity comes first
+
+Every other rule on this page serves this one, and no test checks it.
+A sentence is clear when a newcomer to isx, reading in a second language, takes its one meaning on the first pass.
+An expert reading the same sentence finds nothing left open either.
+When a clear sentence and a short one conflict, the clear one wins.
+The budgets under Shape are ceilings, never targets: a sentence that passes them and makes the reader guess has failed.
+These rules hold for every text a person reads: the user pages, the website, DESIGN.md and `design/`, a PR description and a review comment.
+
+**Negate the verb.**
+Write "isx does not filter the connections", not "isx filters nothing".
+A reader takes "isx filters" as a yes, and has to reverse it at "nothing".
+This holds for a verb of action: filter, list, match, grant, approve, rebuild.
+"Has no", "needs no" and "there is no" are plain English and stay, and so does "nothing" as the subject ("nothing it changes reaches the template").
+
+**A verb names what it acts on.**
+"Filters" what: requests, callers, ports?
+"Does not approve" what: a template, an instance, a command?
+The reader should never have to carry the object over from an earlier sentence.
+
+**A place and a direction are named.**
+"On the way", "on the way out", "in between" and "along the path" leave the reader to rebuild the route.
+Say from where and to where: "as the request leaves the instance", "between the instance and the host service".
+
+**Literal words, not idiom or understatement.**
+"Under the hood", "on its own", "says nothing about" and "at no cost" each have a literal form that is as short.
+The check is a translator, a machine one included: would the meaning survive?
+Understatement is the same fault in a warning: "may be surprising" where the truth is "deletes the instance".
+
+**State the consequence.**
+Two facts joined by "and" leave the reader to work out why they sit together.
+In a warning that inference is the message, so write it, with the true connective (Voice, "A connective must be true").
+
+**The worked example** is a sentence that passed every budget:
+
+> Many development services trust a loopback caller completely, and isx filters nothing on the way.
+
+It negates the object, names neither what is filtered nor where, and stops before its point.
+Rewritten:
+
+> Many development services trust any caller on loopback completely.
+> isx does not filter the connections it passes to the service, so an instance can do whatever the service allows.
+
+The rewrite is nearly twice as long and is the better text.
+It is in `docs/INTEGRATIONS.md`, "What exposing a port gives away".
 
 ## Shape
 
@@ -85,6 +132,7 @@ Write the true direction.
 A section opens with why it exists for the reader (the agent must be free to act, so its machine cannot hold secrets), and names the implementation (the proxy, copy-on-write, Incus) afterwards, as what makes it work.
 
 **Short factual sentences, plain words.**
+Short is the second virtue: "Clarity comes first" decides when the two conflict.
 "Terminates TLS" becomes "adds the credentials as the requests leave the machine".
 
 **Say what is meant before using the word.**
