@@ -94,9 +94,9 @@ Every tool that names an instance checks the session's registry *and* the stamp 
 `McpStanding` decides the state with `list_instances`' rules (`Orphans.othersOf`, kept first), and a test holds the two together.
 It does not read anything beyond the listing it is given.
 A process session's liveness is a local `/proc` read, and a coordinator instance's is whether that instance is in the same listing with the same grant, so `isx list` still costs one request.
-The TUI has no column for it, because the instance table has no width to spare, only rows in the detail pane.
+The TUI shows it in the table's `OWNER` column, which appears only when some instance has an owner and the table is wide enough, and in the detail pane.
 An orphan a sweep stopped as dormant (#1028) is still `orphaned` there, as in `list_instances`; the detail pane says when it was stopped and that `dormant-grace-hours` in `mcp.yaml`, not the orphan grace, comes next.
-`isx list --format=plain|json` gains `mcp_state` and `mcp_purpose` at the end, and its table gains an `MCP` column only when some instance has those stamps.
+`isx list --format=plain|json` gains `mcp_state` and `mcp_purpose` at the end, and its table gains an `OWNER` column only when some instance has an owner, an `isx mcp` session or an external `--owner`.
 Human output flattens control characters in these stamps: `isx mcp` refuses them in a purpose, but `incus config set` does not.
 
 **Orphans are quarantined, not reaped.**

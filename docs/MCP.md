@@ -323,5 +323,5 @@ What differs:
   Only `isx branch`, from the flag or the template's default, or the dialog's box makes an instance a coordinator.
   The grant never passes to a copy: not to `isx branch --from coord`, and not to anything created through MCP.
   A copy of the coordinator loses the grant and its Claude Code and Pi registrations on its first start.
-- The coordinator reaches only the host proxy.
+- The coordinator reaches the `isx mcp` server only through the host proxy.
   The proxy serves the `isx mcp` server to the coordinator, so a coordinator works with `--proxy-only`; an `--airgap` instance cannot be a coordinator.
