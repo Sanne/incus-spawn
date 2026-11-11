@@ -1,7 +1,8 @@
 Backport of lxc/incus@cf2d213bb64f11c024aa5624c15bd239f3f5ec89 (stable-7.0; on main as
 83eaa5e19) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2104), unchanged: the fix for
 GHSA-v736-5xp3-jghf, which v7.0.2 lacks although it carries the cgroup fallback the advisory
-is about. Remove this file once INCUS_VERSION is a release that contains the commit (7.0.3).
+is about. Remove this file once INCUS_VERSION is a release that contains the commit (the next 7.0
+release; 7.0.3 is not out yet).
 
 From cf2d213bb64f11c024aa5624c15bd239f3f5ec89 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>

@@ -1,0 +1,66 @@
+Backport of lxc/incus@7c998495cf7f3f8f658492a116c7e15288ac9993 (stable-7.0; on main as
+e00b75d4a) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2104), unchanged: part of the fix for
+GHSA-3wxw-5gh2-j2x2: loader variables such as LD_PRELOAD from an instance or image environment no
+longer reach the root forklxc process and its hooks.
+Remove this file once INCUS_VERSION is a release that contains the commit (the next 7.0
+release; 7.0.3 is not out yet).
+
+From 7c998495cf7f3f8f658492a116c7e15288ac9993 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
+Date: Fri, 25 Sep 2026 10:28:32 -0400
+Subject: [PATCH] incusd/instance/lxc: Keep loader variables out of the forklxc
+ environment
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Instance and image environment variables are passed to the root forklxc
+process so application containers inherit them. Variables such as
+LD_PRELOAD would also apply to forklxc and to the hooks it runs, so skip
+those. They still reach the container through lxc.environment.
+
+This addresses GHSA-3wxw-5gh2-j2x2 (CVE pending)
+
+Signed-off-by: Stéphane Graber <stgraber@stgraber.org>
+---
+ internal/server/instance/drivers/driver_lxc.go | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/internal/server/instance/drivers/driver_lxc.go b/internal/server/instance/drivers/driver_lxc.go
+index c62d4c8b5..eb868dfdd 100644
+--- a/internal/server/instance/drivers/driver_lxc.go
++++ b/internal/server/instance/drivers/driver_lxc.go
+@@ -178,6 +178,12 @@ func lxcSetConfigItem(c *liblxc.Container, key string, value string) error {
+ 	return nil
+ }
+ 
++// forklxcBlockedEnv returns whether an instance or image environment variable must be kept out of
++// the root forklxc process, as it would alter the behavior of the dynamic loader or of glibc.
++func forklxcBlockedEnv(name string) bool {
++	return strings.HasPrefix(name, "LD_") || slices.Contains([]string{"GCONV_PATH", "GLIBC_TUNABLES"}, name)
++}
++
+ // isOCI returns whether the container was created from an OCI image.
+ func (d *lxc) isOCI() bool {
+ 	return util.IsTrue(d.expandedConfig["volatile.container.oci"]) || d.localConfig["image.type"] == "oci"
+@@ -3214,7 +3220,7 @@ func (d *lxc) start(stateful bool, op *operationlock.InstanceOperation) error {
+ 
+ 	for k, v := range d.expandedConfig {
+ 		after, ok := strings.CutPrefix(k, "environment.")
+-		if ok {
++		if ok && !forklxcBlockedEnv(after) {
+ 			envDict[after] = v
+ 		}
+ 	}
+@@ -3235,7 +3241,7 @@ func (d *lxc) start(stateful bool, op *operationlock.InstanceOperation) error {
+ 
+ 		for k, v := range ociEnv {
+ 			_, ok := envDict[k]
+-			if !ok {
++			if !ok && !forklxcBlockedEnv(k) {
+ 				envDict[k] = v
+ 			}
+ 		}
+-- 
+2.54.0 (Apple Git-157)
+

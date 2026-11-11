@@ -1,0 +1,109 @@
+Backport of lxc/incus@1bd01df82ea19ec7dba87041a4e3d8f8b42a47f2 (stable-7.0; on main as
+e933b9f92) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2104), unchanged: part of the fix for
+GHSA-3wxw-5gh2-j2x2: line breaks in LXC config values, which let an image's config.json or the
+oci.* keys inject LXC directives such as a hook running as root.
+Remove this file once INCUS_VERSION is a release that contains the commit (the next 7.0
+release; 7.0.3 is not out yet).
+
+From 1bd01df82ea19ec7dba87041a4e3d8f8b42a47f2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
+Date: Fri, 25 Sep 2026 10:27:56 -0400
+Subject: [PATCH] incusd/instance/lxc: Reject line breaks in LXC config values
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Values from an OCI image's config.json and from the oci.entrypoint and
+oci.cwd keys were written into the LXC config without validation. As
+that file is line based, a line break lets an image or instance config
+inject arbitrary directives, such as a hook running as root on the host.
+
+Refuse line breaks in the config setter, in the OCI environment parser
+and in the oci.* keys.
+
+This addresses GHSA-3wxw-5gh2-j2x2 (CVE pending)
+
+Signed-off-by: Stéphane Graber <stgraber@stgraber.org>
+---
+ internal/instance/config.go                    | 13 +++++++++++--
+ internal/server/instance/drivers/driver_lxc.go |  5 +++++
+ internal/server/instance/oci.go                |  6 +++++-
+ 3 files changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/internal/instance/config.go b/internal/instance/config.go
+index cf2a67dd0..777fb02a4 100644
+--- a/internal/instance/config.go
++++ b/internal/instance/config.go
+@@ -28,6 +28,15 @@ func isNvidiaConfigValue(value string) error {
+ 	return nil
+ }
+ 
++// isOCIConfigValue rejects line breaks that would allow injecting arbitrary lines into the LXC config.
++func isOCIConfigValue(value string) error {
++	if strings.ContainsAny(value, "\r\n") {
++		return errors.New("OCI configuration values cannot contain line breaks")
++	}
++
++	return nil
++}
++
+ // isResolvConfValue rejects line breaks that would allow injecting arbitrary lines into the generated resolv.conf.
+ func isResolvConfValue(value string) error {
+ 	if strings.ContainsAny(value, "\r\n") {
+@@ -830,7 +839,7 @@ var InstanceConfigKeysContainer = map[string]func(value string) error{
+ 	//  liveupdate: no
+ 	//  condition: OCI container
+ 	//  shortdesc: Entry point
+-	"oci.entrypoint": validate.IsAny,
++	"oci.entrypoint": isOCIConfigValue,
+ 
+ 	// gendoc:generate(entity=instance, group=oci, key=oci.cwd)
+ 	// Override the working directory of an OCI container.
+@@ -839,7 +848,7 @@ var InstanceConfigKeysContainer = map[string]func(value string) error{
+ 	//  liveupdate: no
+ 	//  condition: OCI container
+ 	//  shortdesc: Working directory
+-	"oci.cwd": validate.Optional(validate.IsAbsFilePath),
++	"oci.cwd": validate.Optional(validate.IsAbsFilePath, isOCIConfigValue),
+ 
+ 	// gendoc:generate(entity=instance, group=oci, key=oci.gid)
+ 	// Override the GID of the process run in an OCI container.
+diff --git a/internal/server/instance/drivers/driver_lxc.go b/internal/server/instance/drivers/driver_lxc.go
+index 1521087a1..78a79536d 100644
+--- a/internal/server/instance/drivers/driver_lxc.go
++++ b/internal/server/instance/drivers/driver_lxc.go
+@@ -163,6 +163,11 @@ func lxcSetConfigItem(c *liblxc.Container, key string, value string) error {
+ 		return nil
+ 	}
+ 
++	// The config file is line based, so a line break in the key or value would inject additional directives.
++	if strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") {
++		return fmt.Errorf("Failed to set LXC config: %s: Key and value cannot contain line breaks", key)
++	}
++
+ 	err := c.SetConfigItem(key, value)
+ 	if err != nil {
+ 		return fmt.Errorf("Failed to set LXC config: %s=%s", key, value)
+diff --git a/internal/server/instance/oci.go b/internal/server/instance/oci.go
+index a66e78924..094abe273 100644
+--- a/internal/server/instance/oci.go
++++ b/internal/server/instance/oci.go
+@@ -45,10 +45,14 @@ func OCIEnvironment(spec *ociSpecs.Spec) (map[string]string, error) {
+ 
+ 	for _, entry := range spec.Process.Env {
+ 		key, value, ok := strings.Cut(entry, "=")
+-		if !ok {
++		if !ok || key == "" {
+ 			return nil, fmt.Errorf("Bad OCI environment variable: %s", entry)
+ 		}
+ 
++		if strings.ContainsAny(entry, "\r\n") {
++			return nil, fmt.Errorf("Bad OCI environment variable %q: Line breaks aren't allowed", key)
++		}
++
+ 		env[key] = value
+ 	}
+ 
+-- 
+2.54.0 (Apple Git-157)
+

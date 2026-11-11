@@ -1,7 +1,8 @@
 Backport of lxc/incus@a8b2c791e0821b4cee872766cdca5df87e0ad6dc (stable-7.0; on main as
 724ab0fee) to v7.0.2 for the isx appliance (Sanne/incus-spawn#2104), unchanged: the fix for
 GHSA-5pgx-q9xx-j3qv, special files, hard links and symlinks in a crafted image's or backup's
-metadata. Remove this file once INCUS_VERSION is a release that contains the commit (7.0.3).
+metadata. Remove this file once INCUS_VERSION is a release that contains the commit (the next 7.0
+release; 7.0.3 is not out yet).
 
 From a8b2c791e0821b4cee872766cdca5df87e0ad6dc Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?St=C3=A9phane=20Graber?= <stgraber@stgraber.org>
