@@ -167,6 +167,14 @@ public final class Environment {
         return home().resolve(".local/state/incus-spawn/proxy-drift-restart.properties");
     }
 
+    /**
+     * The gateway the bridge had before an {@code isx init --no-sudo} run moved it off a host route,
+     * kept until the person's script moved the redirect after it (#2118).
+     */
+    public static Path initBridgeMovedFile() {
+        return home().resolve(".local/state/incus-spawn/init-bridge-moved-from");
+    }
+
     /** Where {@code isx init --no-sudo} writes the steps that need root, for the person to run (#2074). */
     public static Path privilegedInitScript() {
         return home().resolve(".local/state/incus-spawn/init-privileged.sh");

@@ -399,17 +399,10 @@ public class InitCommand extends BaseCommand {
                 left.add(p);
             }
         }
+        // A kept bridge move made by the script is forgotten; one not yet made is in the plan's MITM step
+        host().forgetMadeBridgeMove();
         if (left.isEmpty()) {
             var script = Environment.privilegedInitScript();
-            // A script written but not run, as when the run itself found root work (a bridge it
-            // moved): what it holds is still the person's, though the plan cannot see it now
-            if (!scriptRan(script, applied)) {
-                BuildOutput.step("The root script from the last run has not been run yet: " + script);
-                BuildOutput.step("Read it, then run it as root:");
-                BuildOutput.stepNote("sudo sh " + script);
-                BuildOutput.step("Then run '" + NO_SUDO_COMMAND + "' again to finish.");
-                return CommandResult.valueOf(EXIT_WAITING_ON_PERSON);
-            }
             // Nothing is left for root: a script still lying there would only be handed over again
             try {
                 if (Files.deleteIfExists(script)) {
@@ -470,19 +463,6 @@ public class InitCommand extends BaseCommand {
         BuildOutput.stepNote("sudo sh " + script);
         BuildOutput.step("Then run '" + NO_SUDO_COMMAND + "' again to finish.");
         return CommandResult.valueOf(EXIT_WAITING_ON_PERSON);
-    }
-
-    /** A record key, as the script lists them. */
-    private static final Pattern RECORD_KEY = Pattern.compile("[0-9a-f]{24}");
-
-    /** Whether the script at {@code script} ran, or there is none: every key it would record is in {@code applied}. */
-    static boolean scriptRan(Path script, Set<String> applied) {
-        try {
-            return !Files.exists(script) || Files.readAllLines(script).stream().map(String::strip)
-                    .filter(l -> RECORD_KEY.matcher(l).matches()).allMatch(applied::contains);
-        } catch (IOException e) {
-            return true;
-        }
     }
 
     /** The keys the script recorded in {@link InitPlan#APPLIED_RECORD} as it ran; none before it ran. */

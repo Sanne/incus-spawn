@@ -312,14 +312,45 @@ class InitNoSudoTest {
         assertTrue(waiting.changes.stream().allMatch(p -> p.change().script().isEmpty()), waiting.changes.toString());
     }
 
-    /** A script written but not run is handed over again, though the plan sees nothing left: its work is the person's still. */
+    /**
+     * A move of the bridge is kept on disk until the script's record shows the redirect moved
+     * after it: a script written over it, or not run, cannot lose it, and a host whose root work
+     * was made another way (plain isx init) is not held at exit 75 by an old script (#2118 review).
+     */
     @Test
-    void aScriptNotYetRunIsHandedOverAgain(@TempDir Path root) throws Exception {
-        var script = root.resolve("init-privileged.sh");
+    void aBridgeMoveIsKeptUntilTheScriptMovedTheRedirect(@TempDir Path root) throws Exception {
+        var init = setUp(root);
+        Files.createDirectories(Environment.initBridgeMovedFile().getParent());
+        Files.writeString(Environment.initBridgeMovedFile(), GATEWAY + "\n");
+        var move = init.host().movedRedirect();
+        assertEquals(1, move.size());
+        // The plan names it, so the script is still the plan's sudo_script
+        assertTrue(init.host().planMitmProxy().changes().contains(move.getFirst().change()));
+        assertTrue(move.getFirst().change().script().getFirst().contains("-d " + GATEWAY), move.toString());
+        Files.createDirectories(root.resolve("var/lib/isx"));
+        Files.write(root.resolve("var/lib/isx/init-applied"), List.of(InitPlan.key(move.getFirst().change())));
+        assertEquals(List.of(), init.host().movedRedirect());
+        assertTrue(Files.exists(Environment.initBridgeMovedFile()), "the plan reads it and changes nothing");
+        init.host().forgetMadeBridgeMove();
+        assertFalse(Files.exists(Environment.initBridgeMovedFile()), "forgotten once a run sees it made");
+    }
+
+    /** An old, unrun script does not hold a host at exit 75 when nothing is left: it is removed. */
+    @Test
+    void anUnrunScriptWithNothingLeftIsRemoved(@TempDir Path root) throws Exception {
+        var script = Environment.privilegedInitScript();
+        Files.createDirectories(script.getParent());
         Files.writeString(script, "#!/bin/sh\ncat >> /var/lib/isx/init-applied <<'ISX_EOF'\n0123456789abcdef01234567\nISX_EOF\n");
-        assertFalse(InitCommand.scriptRan(script, Set.of()));
-        assertTrue(InitCommand.scriptRan(script, Set.of("0123456789abcdef01234567")));
-        assertTrue(InitCommand.scriptRan(root.resolve("absent.sh"), Set.of()));
+        var init = new InitPlanTest.PlanInit() {
+            @Override
+            List<InitStep> planSteps(boolean macOS) {
+                return List.of();
+            }
+        };
+        init.root = root;
+        init.noSudo = true;
+        RecordingOutput.during(() -> assertNull(init.privilegedStepsLeft()));
+        assertFalse(Files.exists(script));
     }
 
     /** firewalld shows the redirect missing for the gateway: scripted again, unless the script already ran it. */
@@ -361,6 +392,8 @@ class InitNoSudoTest {
         init.incus = new FakeIncusDaemon().failPoolListing().network("incusbr0", Map.of("ipv4.address", GATEWAY + "/24")).client();
         Privilege.forbid();
         var failure = assertThrows(IllegalStateException.class, () -> RecordingOutput.during(() -> init.host().initializeIncus()));
+        // The step's own stop, never the guard refusing the sudo it would otherwise have run
+        assertFalse(failure instanceof Privilege.Refused, failure.toString());
         assertTrue(failure.getMessage().contains("sudo incus admin init --minimal"), failure.getMessage());
     }
 
@@ -383,6 +416,13 @@ class InitNoSudoTest {
             assertThrows(Privilege.Refused.class, () -> Privilege.check(command), command.toString());
         }
         assertDoesNotThrow(() -> Privilege.check("env", "LC_ALL=C", "ls"));
+        // init's own continuation under sg passes; an sg, xargs or systemd-run that elevates does not
+        assertDoesNotThrow(() -> Privilege.check("sg", "incus-admin", "-c", "exec sg u -c 'exec /usr/bin/isx init --no-sudo'"));
+        for (var command : List.of(List.of("sg", "wheel", "-c", "sudo id"), List.of("xargs", "sudo"),
+                List.of("systemd-run", "--user", "sudo", "id"), List.of("systemd-run", "id"))) {
+            assertThrows(Privilege.Refused.class, () -> Privilege.check(command), command.toString());
+        }
+
         assertDoesNotThrow(() -> Privilege.check("firewall-cmd", "--list-all"));
         assertDoesNotThrow(() -> Privilege.check("sh", "-c", "echo sudoku"));
         Privilege.allow();

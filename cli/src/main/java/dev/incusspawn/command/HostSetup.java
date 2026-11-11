@@ -834,6 +834,60 @@ class HostSetup {
         }
     }
 
+    /** Set when the redirect is known not to be in effect though the script ran it: the step then says so, never that it is done. */
+    private boolean redirectNotInEffect;
+
+    /**
+     * The move of the redirect off the gateway a {@code --no-sudo} run moved the bridge from, this
+     * run or an earlier one ({@link Environment#initBridgeMovedFile}), until the script's record
+     * shows the move made. Kept on disk so a script written over the move, or not run, does not
+     * lose it; {@code privilegedStepsLeft} hands it over with the rest. On UFW, whose rules are not
+     * scripted, it is named for the person to make.
+     */
+    List<InitPlan.Privileged> movedRedirect() {
+        var from = movedFromGateway;
+        if (from == null) {
+            try {
+                var file = Environment.initBridgeMovedFile();
+                if (Files.exists(file)) from = Files.readString(file).strip();
+            } catch (IOException e) {
+                from = null;
+            }
+        }
+        if (from == null || from.isEmpty()) return List.of();
+        var step = new InitPlan.Entry("mitm-proxy", "MITM Authentication Proxy", String.join(" ", MITM_HINT),
+                InitPlan.Assessment.done());
+        var move = InitPlan.Change.sudo("Move the redirect to the proxy from the old gateway " + from
+                + " to the bridge's new one, which a run moved off a host route", null);
+        // On UFW, unscripted: named for the person, and kept until a run with sudo moves it
+        if (init.runningFirewall() instanceof DetectionResult.UseUfw) return List.of(new InitPlan.Privileged(step, move));
+        var lines = new ArrayList<String>();
+        lines.add(asRoot(fwdRedirect("--remove-rule", from)));
+        lines.addAll(bridgeRedirectLines());
+        var scripted = move.scripted(lines);
+        // Read only, as the plan is: the file goes once a run sees the move made (forgetMadeBridgeMove)
+        if (InitPlan.made(scripted, init.appliedByScript())) return List.of();
+        return List.of(new InitPlan.Privileged(step, scripted));
+    }
+
+    /** Under {@code --no-sudo}: forgets a kept move the script's record shows made. */
+    void forgetMadeBridgeMove() {
+        if (movedFromGateway == null && movedRedirect().isEmpty() && Files.exists(Environment.initBridgeMovedFile())
+                && !(init.runningFirewall() instanceof DetectionResult.UseUfw)) {
+            forgetBridgeMove();
+        }
+    }
+
+    /** The redirect followed the bridge: the move is no longer the person's. */
+    private void forgetBridgeMove() {
+        movedFromGateway = null;
+        try {
+            Files.deleteIfExists(Environment.initBridgeMovedFile());
+        } catch (IOException e) {
+            // Left behind, it names a move whose record holds it, which movedRedirect drops again
+        }
+    }
+
     /**
      * Under {@code --no-sudo}, the redirect changes left for the person once the steps ran: moving
      * it when this run moved the bridge, or adding it when firewalld shows it missing for
@@ -844,16 +898,9 @@ class HostSetup {
         var step = new InitPlan.Entry("mitm-proxy", "MITM Authentication Proxy", String.join(" ", MITM_HINT),
                 InitPlan.Assessment.done());
         var firewall = init.runningFirewall();
-        if (movedFromGateway != null) {
-            var move = InitPlan.Change.sudo("Move the redirect to the proxy from the old gateway "
-                    + movedFromGateway + " to the bridge's new one, which this run moved off a host route", null);
-            // UFW's rules are not scripted: handOver names the move for the person to make
-            if (firewall instanceof DetectionResult.UseUfw) return List.of(new InitPlan.Privileged(step, move));
-            var lines = new ArrayList<String>();
-            lines.add(asRoot(fwdRedirect("--remove-rule", movedFromGateway)));
-            lines.addAll(bridgeRedirectLines());
-            return List.of(new InitPlan.Privileged(step, move.scripted(lines)));
-        }
+        forgetMadeBridgeMove();
+        var move = movedRedirect();
+        if (!move.isEmpty()) return move;
         if (firewall instanceof DetectionResult.UseFirewalld fwd && !fwd.needsStart()) {
             var rules = firewalldRead(FWD_LIST_DIRECT);
             if (rules != null) {
@@ -864,6 +911,7 @@ class HostSetup {
                 if (!plan.changes().isEmpty() && plan.changes().stream().allMatch(c -> InitPlan.made(c, applied))) {
                     BuildOutput.warn("The script ran, but the redirect to the proxy is still not in effect.",
                             "isx init carries on; check it with: sudo firewall-cmd --direct --get-all-rules");
+                    redirectNotInEffect = true;
                     return List.of();
                 }
                 return plan.changes().stream().map(c -> new InitPlan.Privileged(step, c)).toList();
@@ -887,11 +935,14 @@ class HostSetup {
             // Unless the redirect is not where the gateway now is: then it is the person's again
             var redirect = redirectLeftUnderNoSudo(gatewayIp);
             if (!redirect.isEmpty()) throw new InitCommand.WaitingOnPerson(redirect);
-            BuildOutput.note(DONE_BY_SCRIPT);
+            if (redirectNotInEffect) redirected = false;
+            else BuildOutput.note(DONE_BY_SCRIPT);
         } else {
             redirected = useUfw
                     ? configureMitmProxyUfw(gatewayIp, UfwCheck.readBeforeRules())
                     : configureMitmProxyFirewalld(gatewayIp);
+            // With sudo the redirect followed the gateway here, whatever an earlier --no-sudo run left
+            if (redirected) forgetBridgeMove();
             configureHostSysctls();
             configureKsm();
         }
@@ -1029,7 +1080,10 @@ class HostSetup {
                 parts.add(InitPlan.Assessment.of(List.of(
                         InitPlan.Change.write("Record the bridge's gateway " + gatewayIp, InitPlan.Who.NONE, configFile()))));
             }
-            parts.add(switch (firewall) {
+            // A kept move of the bridge carries the new gateway's redirect with it
+            var move = movedRedirect();
+            if (!move.isEmpty()) parts.add(InitPlan.Assessment.of(move.stream().map(InitPlan.Privileged::change).toList()));
+            else parts.add(switch (firewall) {
                 case DetectionResult.UseUfw u -> planRedirectUfw(gatewayIp);
                 // Read once it runs, which the firewall step sees to: until then it has no rules to read
                 case DetectionResult.UseFirewalld fwd when !fwd.needsStart() -> planRedirectFirewalld(gatewayIp, firewalldRead(FWD_LIST_DIRECT));
@@ -1405,6 +1459,10 @@ class HostSetup {
                 InitPlan.Who.NONE, null);
     }
 
+    /** What the script's pool create appends, so a failed create warns and the script carries on. */
+    private static final String COW_CREATE_TOLERATED =
+            " || echo 'Could not create the copy-on-write pool: run isx doctor for why.' >&2";
+
     private InitPlan.Change createCowPool(boolean skipTrim) {
         var hostFs = init.filesystemOf(CowPoolBacking.POOLS_DIR);
         var command = CowPoolBacking.createCommand(hostFs, skipTrim);
@@ -1412,7 +1470,7 @@ class HostSetup {
                 String.join(" ", command));
         // A loop file goes in the disks directory, which the run makes first. The run carries on
         // without a CoW pool when the create fails, warning, and so does the script
-        var create = asRoot(command) + " || echo 'Could not create the copy-on-write pool: run isx doctor for why.' >&2";
+        var create = asRoot(command) + COW_CREATE_TOLERATED;
         return change.scripted("btrfs".equals(hostFs) ? List.of(create)
                 : List.of("mkdir -p " + CowPoolBacking.DISKS_DIR, create));
     }
@@ -1650,12 +1708,14 @@ class HostSetup {
         var anyCow = cowProbe.poolName() != null;
 
         if (!anyCow && init.noSudo()) {
-            // The script tolerates a failed create, as the run does; creating it again is root's
-            // The command the script ran, as the plan wrote it
-            var command = createCowPool(init.incus.hasApiExtension(STORAGE_CREATE_OPTIONS_EXTENSION)).command();
-            BuildOutput.warn("No copy-on-write storage pool: the root script could not create one.",
-                    "Clones and branches are full copies until there is one. Create it yourself:", command,
-                    "Run 'isx doctor' for why it failed.");
+            // The script tolerates a failed create, as the run does; creating it again is root's.
+            // Its lines, as root: on a loop-file host the disks directory comes first
+            var details = new ArrayList<>(List.of("Clones and branches are full copies until there is one. Create it as root:"));
+            details.addAll(createCowPool(init.incus.hasApiExtension(STORAGE_CREATE_OPTIONS_EXTENSION)).script().stream()
+                    .map(line -> line.replace(COW_CREATE_TOLERATED, ""))
+                    .toList());
+            details.add("Run 'isx doctor' for why it failed.");
+            BuildOutput.warn("No copy-on-write storage pool: the root script could not create one.", details.toArray(String[]::new));
             return;
         }
         if (!anyCow) {
@@ -1712,6 +1772,19 @@ class HostSetup {
      */
     private String movedFromGateway;
 
+    /** Keeps the gateway the bridge moved from until the redirect follows it (see {@link #movedRedirect}). */
+    private static void rememberBridgeMove(String from) {
+        try {
+            var file = Environment.initBridgeMovedFile();
+            Files.createDirectories(file.getParent());
+            // An older move still unmade stays the one to undo: the redirect is still on that gateway
+            if (!Files.exists(file)) Files.writeString(file, from + "\n");
+        } catch (IOException e) {
+            BuildOutput.warn("Could not keep the bridge's old gateway: " + BaseCommand.failure(e),
+                    "If this run stops before the redirect is moved, move it yourself from " + from + ".");
+        }
+    }
+
     void checkBridgeSubnet() {
         BuildOutput.stepStart("Checking bridge subnet for VPN conflicts");
         try {
@@ -1722,6 +1795,7 @@ class HostSetup {
                         + " overlaps with route: " + result.conflictingRoute());
                 if (result.newSubnet() != null) {
                     movedFromGateway = result.oldSubnet().substring(0, result.oldSubnet().indexOf('/'));
+                    if (init.noSudo()) rememberBridgeMove(movedFromGateway);
                     BuildOutput.step("Reconfigured bridge to " + result.newSubnet()
                             + " to avoid conflict.");
                     var migrated = InstanceNetwork.migrateAllInstancesToNewSubnet(init.incus);

@@ -64,6 +64,8 @@ public final class Privilege {
         if (command.isEmpty()) return false;
         var program = name(command.getFirst());
         if (ELEVATING.contains(program)) return true;
+        // Without --user, systemd-run asks the system manager, which runs it as root through polkit
+        if (program.equals("systemd-run") && !command.contains("--user")) return true;
         // A shell's script, or what a wrapper runs (env FOO=1 sudo ..., timeout -s KILL 5 sudo ...):
         // any argument naming one as a command word, whatever options and values come before it
         if (SHELLS.contains(program) || WRAPPERS.contains(program)) {
@@ -73,7 +75,8 @@ public final class Privilege {
     }
 
     /** Commands that run the rest of their arguments as a command, after options and values of their own. */
-    private static final Set<String> WRAPPERS = Set.of("env", "timeout", "nice", "nohup", "stdbuf", "setsid", "ionice", "chrt");
+    private static final Set<String> WRAPPERS = Set.of("env", "timeout", "nice", "nohup", "stdbuf", "setsid", "ionice", "chrt",
+            "sg", "xargs", "systemd-run");
     private static final Set<String> SHELLS = Set.of("sh", "bash", "dash", "zsh", "ksh");
 
     private static String name(String program) {
