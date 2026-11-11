@@ -1374,7 +1374,15 @@ public class InitCommand extends BaseCommand {
         if (legacy != null) BuildOutput.step(Character.toUpperCase(legacy.charAt(0)) + legacy.substring(1) + ".");
         var retired = mcp.retiredKeysNotice();
         if (retired != null) BuildOutput.warn(retired + ".", "Saving the approvals here removes them too.");
-        var registered = claude && claudeMcpRegistered();
+        // Never 'claude mcp get', which starts the server it names: isx mcp would then sweep orphans (#2099)
+        boolean registered;
+        try {
+            registered = claude && claudeMcpRegisteredInConfig();
+        } catch (IOException | IllegalArgumentException e) {
+            BuildOutput.warn("Could not read Claude Code's configuration: " + failure(e),
+                    "Fix it, then run '" + MCP_SETUP_COMMAND + "'.");
+            return;
+        }
         var approved = mcp.templates();
         var candidates = mcpCandidates(defs);
         var enabled = registered || !approved.isEmpty();
@@ -1473,8 +1481,8 @@ public class InitCommand extends BaseCommand {
      * {@code ~/.claude.json}, or {@code .claude.json} in {@code CLAUDE_CONFIG_DIR} when that is set,
      * whose top-level {@code mcpServers} holds the servers of the user scope, and
      * {@code projects.<directory>.mcpServers} those of the local scope. A project's {@code .mcp.json}
-     * is not read: the run's own registration is the user scope. Unlike
-     * {@link #claudeMcpRegistered}, it starts nothing. A missing file registers nothing.
+     * is not read: the run's own registration is the user scope. Unlike {@code claude mcp get}, which
+     * starts the server it names, it starts nothing. A missing file registers nothing.
      *
      * @throws IllegalArgumentException when the file is not JSON
      */
@@ -1500,11 +1508,6 @@ public class InitCommand extends BaseCommand {
         return System.getenv("CLAUDE_CONFIG_DIR");
     }
 
-    /** Whether Claude Code already knows an MCP server by this name; runs {@code claude mcp get}, which starts it. */
-    boolean claudeMcpRegistered() {
-        return runSilently("claude", "mcp", "get", McpClientRegistration.SERVER_NAME) == 0;
-    }
-
     /** Register {@code isx mcp} with Claude Code for every project; true on success. */
     boolean registerClaudeMcp(String isxPath) {
         return runSilently(claudeMcpAddCommand(isxPath).toArray(String[]::new)) == 0;
@@ -1516,7 +1519,7 @@ public class InitCommand extends BaseCommand {
     }
 
     /** Run a host command for its exit code alone, showing nothing and reading no input. */
-    private static int runSilently(String... command) {
+    int runSilently(String... command) {
         dev.incusspawn.util.Privilege.check(command);
         try {
             return new ProcessBuilder(command)

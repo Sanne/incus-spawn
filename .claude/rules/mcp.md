@@ -216,7 +216,9 @@ It names the templates installing `claude` that are not approved, so a new one i
 It shows the header of the same `mcp` `InitStep` init runs (`InitCommand.mcpStep`), and `isx init --plan` names it as the command for the approvals (`MCP_SETUP_COMMAND`, #2073).
 `isx mcp config` (`McpCommand.Config`) prints the stdio entry (`mcpServers.isx`: the resolved `isx` path, `args: ["mcp"]`) to `BuildOutput.results()` and writes nothing; `McpConfigCommandTest` pins its bytes.
 Bare `isx mcp` stays the server; the write stays in `InitCommand`, so `McpNoWritePathTest` holds.
-Host calls (`claudeMcpRegistered`, `registerClaudeMcp`, `isxPath`, `templateBuilt`) are overridable seams; `McpInitFlowTest` drives it.
+Whether isx is registered is read from Claude Code's `~/.claude.json` (`claudeMcpRegisteredInConfig`, the plan's check too), never with `claude mcp get`, which starts `isx mcp` and so its orphan sweep (#2099).
+A file it cannot read stops the step with a warning, as an unreadable `mcp.yaml` does.
+Host calls (`claudeConfigDirEnv`, `registerClaudeMcp`, `runSilently`, `isxPath`, `templateBuilt`) are overridable seams; `McpInitFlowTest` drives it, and its `runSilently` throws, as `InitPlanTest`'s does, so a test fails if the step or the plan starts `claude`.
 It needs no `INIT_VERSION` bump: nothing on the host changes unless the user opts in.
 
 **Tests.**
