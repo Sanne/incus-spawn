@@ -4,8 +4,19 @@
 
 A branch is to a template what a git worktree is to a repository, except that the working copy is the whole machine, toolchain, dependencies and running services included; it is instant and starts ready to work. It is an Incus system container by default, or a KVM virtual machine (`--vm`) for the strongest isolation: a sandboxed workstation, not a sandboxed process on your own machine or an application container with a fixed set of tools. The agent's work comes back as commits through a git remote isx manages, so you review an immutable commit, never a directory the agent can still change. isx works with Claude Code, Codex CLI, Pi, GitHub Copilot CLI and other coding agents, and with everyday tools like `gh`, `git` and `curl`, unchanged. An agent on your host can drive isx over MCP (`isx mcp`): branch machines from templates you approved, run commands in them, and delegate whole tasks to the agents inside. Install with `curl -fsSL https://isx.run | sh`, Homebrew, DNF, APT or JBang.
 
+If a person asked you to install isx and set it up, follow [Install with your agent](https://isx.run/docs/agent-install). You do the work, and the person holds the keys:
+
+- Never run sudo or anything else as root. Install isx without root: `curl -fsSL https://isx.run | sh` on Linux (into `~/.local/bin`), `brew install Sanne/tap/incus-spawn` on macOS.
+- Read `isx init --plan --format=json` first. Each step says `who` must finish it: `none` is yours, `sudo`, `secret` and `approval` are the person's.
+- Run `isx init --no-sudo --service --format=json`. Exit 75 means the steps that need root are in the script it names: hand the person `sudo sh <that script>` and stop, then run the same command again. Do not write a root script of your own from the plan's `sudo_script` fields: isx's script records what it ran, which the next run and the plan read.
+- Exit 76 means init finished but left steps for the person, which its JSON summary lists. Never ask for a secret: tell the person to run `isx account add <namespace>` (for example `claude`) at their own terminal, and stop.
+- Never write `~/.config/incus-spawn/mcp.yaml` or choose which templates agents may use: ask the person to run `isx mcp setup`, and stop.
+- Write a template without an editor with `isx templates new <name> --from -` (YAML on stdin), then `isx build <name>` and `isx branch <instance> --from <name> --format=json`, which opens no shell.
+- Register isx's MCP server with yourself: `claude mcp add --scope user isx -- "$(command -v isx)" mcp`, `codex mcp add isx -- "$(command -v isx)" mcp`, or the entry `isx mcp config` prints.
+
 ## Docs
 
+- [Install with your agent](https://isx.run/docs/agent-install): the prompt that has a coding agent install and set up isx, and the three steps that stay with the person
 - [Full documentation](https://isx.run/llms-full.txt): every page below as one Markdown file
 - [Quick start](https://isx.run/docs#quick-start): install, one-time host setup, a first template and a first agent
 - [Credential isolation](https://isx.run/docs#credential-isolation): how agents use their accounts with no credentials in their workstation

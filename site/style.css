@@ -548,6 +548,17 @@ kbd {
 
 /* --- Buttons --- */
 
+.install-agent {
+  margin-top: 1rem;
+  text-align: center;
+  font-size: 0.95rem;
+}
+
+.install-agent a {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .cta-links {
   margin-top: 2.25rem;
   display: flex;

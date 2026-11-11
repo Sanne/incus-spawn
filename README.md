@@ -35,7 +35,7 @@ isx was formerly known as incus-spawn.
 
 ## Quick Start
 
-Requires Linux, or macOS 15 (Sequoia) or later; `isx init` sets up the rest, and [Installation](#installation) has the details.
+Requires Linux, or macOS 15 (Sequoia) or later ([Installation](#installation)); `isx init` sets up the rest, or [your coding agent can do it all for you](docs/AGENT-INSTALL.md).
 
 <!-- tabs:os -->
 
