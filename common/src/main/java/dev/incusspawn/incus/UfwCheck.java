@@ -235,7 +235,8 @@ public final class UfwCheck {
     private static String replaceBlock(String content, String beginMarker,
                                        String endMarker, String replacement) {
         int start = content.indexOf(beginMarker);
-        int end = content.indexOf(endMarker);
+        // The END after the BEGIN: a stray one before it would cut the text between them twice
+        int end = start < 0 ? -1 : content.indexOf(endMarker, start);
         if (start < 0 || end < 0) return content;
         end += endMarker.length();
         if (end < content.length() && content.charAt(end) == '\n') end++;
@@ -245,7 +246,8 @@ public final class UfwCheck {
 
     public static String removeBlock(String content, String beginMarker, String endMarker) {
         int start = content.indexOf(beginMarker);
-        int end = content.indexOf(endMarker);
+        // The END after the BEGIN: a stray one before it would cut the text between them twice
+        int end = start < 0 ? -1 : content.indexOf(endMarker, start);
         if (start < 0 || end < 0) return content;
         end += endMarker.length();
         if (end < content.length() && content.charAt(end) == '\n') end++;
