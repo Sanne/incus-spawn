@@ -16,9 +16,25 @@ The harness answers each one as the person would:
 - When the agent names `isx account add <namespace>`, it adds that credential.
 - When the agent asks for approvals, it writes `mcp.yaml` with the built templates the agent named.
 
+The agent keeps the groups it had when the run started, as a running agent does, so the `incus-admin` group the root script adds reaches it only through `sg` (`--fresh-groups` gives it a new login each turn instead).
 Anything else gets "nothing to do", which the report counts as a turn where the agent was stuck or guessing.
 `report.md` lists the turns and their times, the person's actions, every sudo the agent tried (from its commands and the journal), replies that may ask for a secret, every write of `mcp.yaml`, and `isx init --plan` at the end.
 The heuristics are a first pass: read `reply-<turn>.txt` and `commands.tsv` before reporting a finding.
+
+## How clear the instructions were
+
+Reaching a first branch is not enough: an agent that got there by guessing shows the instructions are unclear.
+So the report has two more sections, kept apart, and #2081 wants a clarity report per agent built from them.
+
+- **The transcript**: commands that failed (`commands.tsv` has each one's outcome), `--help` lookups, web searches and downloads, commands run more than once, and which pages the agent named in a command and which it never opened.
+  This is the evidence.
+- **The debrief**: once the run is over, the harness asks the agent a fixed set of questions (in `validate.sh`, `DEBRIEF_PROMPT`): gaps it filled, extrapolations, wrong guidance it backed off from, ambiguities, what it read, and what it would change.
+  It is asked only afterwards, since asking for notes during the run would change how the agent reads the instructions.
+  Its answer is `debrief.txt`, and where it disagrees with the transcript the transcript wins.
+
+Write each finding with its fix: the install page, `llms.txt`, or a command's own output, which is preferred because it reaches an agent that never read the docs.
+Then run again, until a run fills no gap that mattered.
+`--no-debrief` leaves the debrief out.
 
 ## Running it
 
@@ -39,6 +55,12 @@ The host must not have Incus, since the first run is the one that matters.
 A second agent therefore needs a second clean host.
 
 ## Inside an isx instance
+
+`scripts/agent-install/run-in-vm.sh` does the setup below for you: it launches a fresh nested VM, prepares it, runs `validate.sh` in it with the options after `--`, copies the results out and deletes the VM.
+
+```shell
+scripts/agent-install/run-in-vm.sh --agent codex --out ~/runs/codex -- --docs /tmp/isx-docs
+```
 
 The person's account joins the group that reads `/run/isx`, so the instance's proxy serves the agent.
 A credential the agent asks for is answered with the reserved account `inherit`, which `isx account list` does not show.
