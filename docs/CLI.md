@@ -39,7 +39,7 @@ Each question that is not a secret has a flag that answers it, with or without a
 There is no flag, variable or piped input for a secret.
 A missing credential stays your step, with the `isx account add` command that adds it.
 The template approvals for agents stay yours too, with `isx mcp setup`.
-A question no flag answers is skipped when there is no terminal.
+A question no flag answers is skipped when there is no terminal, and the step says how to answer it later.
 
 With `--format=json` or `plain`, init ends with a summary on stdout and its progress on stderr.
 The summary has a record per step, in the fields `isx init --plan` prints, read after the run.

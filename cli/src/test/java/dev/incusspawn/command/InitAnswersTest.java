@@ -133,8 +133,20 @@ class InitAnswersTest {
         // Declined, not skipped: the summary says the person's answer was no, so nothing is left there
         assertEquals(Set.of("proxy-service"), no.declined);
         var unanswered = new NoTerminal();
-        RecordingOutput.during(() -> unanswered.completeWithProxyService(null));
+        var said = RecordingOutput.during(() -> unanswered.completeWithProxyService(null));
         assertEquals(Set.of("proxy-service"), unanswered.skipped);
+        // The skipped step names the flag, never only 'isx proxy start', which holds an agent's turn (#2081)
+        assertTrue(said.lines().stream().anyMatch(l -> l.contains("isx init --service")), said.lines().toString());
+        assertEquals(InitCommand.Services.INSTALL_PROXY, unanswered.linuxServices(false));
+        assertEquals(InitCommand.Services.START_PROXY, no.linuxServices(false));
+        assertEquals(InitCommand.Services.INSTALLED, unanswered.linuxServices(true));
+        assertTrue(String.join("\n", InitCommand.nextSteps(InitCommand.Services.INSTALL_PROXY)).contains("isx init --service"));
+        // A --no-sudo run names a re-run that asks sudo for nothing
+        var withoutSudo = new NoTerminal();
+        withoutSudo.noSudo = true;
+        var saidWithoutSudo = RecordingOutput.during(() -> withoutSudo.completeWithProxyService(null));
+        assertTrue(saidWithoutSudo.lines().stream().anyMatch(l -> l.contains("isx init --no-sudo --service")), saidWithoutSudo.lines().toString());
+        assertEquals(InitCommand.Services.INSTALL_PROXY_NO_SUDO, withoutSudo.linuxServices(false));
     }
 
     /** What is left for the person is what needs sudo, a secret or an approval; the summary adds skipped to the plan's fields. */

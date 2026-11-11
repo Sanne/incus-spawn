@@ -457,7 +457,7 @@ public class InitCommand extends BaseCommand {
             return handOver(waiting.changes);
         }
 
-        var next = new ArrayList<>(List.of(nextSteps(proxyServiceInstalled.get() ? Services.INSTALLED : Services.START_PROXY)));
+        var next = new ArrayList<>(List.of(nextSteps(linuxServices(proxyServiceInstalled.get()))));
         if (continued) next.addAll(GROUP_PENDING);
         printCompletionBox(next.toArray(String[]::new));
         return CommandResult.SUCCESS;
@@ -723,8 +723,20 @@ public class InitCommand extends BaseCommand {
 
         runSteps(macOsSetup(), finalSteps(macOsServicesStep(servicesInstalled)));
 
-        printCompletionBox(nextSteps(servicesInstalled.get() ? Services.INSTALLED : Services.START_VM_AND_PROXY));
+        printCompletionBox(nextSteps(servicesInstalled.get() ? Services.INSTALLED
+                : skipped.contains("macos-services") ? Services.INSTALL_VM_AND_PROXY : Services.START_VM_AND_PROXY));
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * What Linux's closing box says of the proxy service: a skipped question names the run that
+     * installs it, with {@code --no-sudo} when this run had it, since a re-run without it asks sudo
+     * for a password no terminal can type.
+     */
+    Services linuxServices(boolean installed) {
+        if (installed) return Services.INSTALLED;
+        if (!skipped.contains("proxy-service")) return Services.START_PROXY;
+        return noSudo ? Services.INSTALL_PROXY_NO_SUDO : Services.INSTALL_PROXY;
     }
 
     /**
@@ -734,7 +746,11 @@ public class InitCommand extends BaseCommand {
     enum Services {
         INSTALLED(null),
         START_PROXY("Start the proxy:   isx proxy start"),
-        START_VM_AND_PROXY("Start VM, proxy:   isx vm start && isx proxy start");
+        START_VM_AND_PROXY("Start VM, proxy:   isx vm start && isx proxy start"),
+        /** Skipped for want of a terminal: the flag that installs them, since 'isx proxy start' holds its terminal. */
+        INSTALL_PROXY("Install the proxy: isx init --service"),
+        INSTALL_PROXY_NO_SUDO("Install the proxy: isx init --no-sudo --service"),
+        INSTALL_VM_AND_PROXY("Install services:  isx init --service");
 
         final String step;
 
@@ -1750,19 +1766,20 @@ public class InitCommand extends BaseCommand {
         if (service) return true;
         if (noService) {
             declined.add("macos-services");
-            BuildOutput.step("Not installed, as --no-service asks. Start manually with: isx vm start && isx proxy start");
+            BuildOutput.step("Not installed, as --no-service asks. Start manually with: isx vm start && isx proxy start; the proxy runs in the foreground.");
             return false;
         }
         if (prompts == null) {
             skipped.add("macos-services");
-            BuildOutput.step("Skipped: no console. Start manually with: isx vm start && isx proxy start");
+            BuildOutput.step("Skipped: no terminal. Install the services with 'isx init --service', or decline them with"
+                    + " --no-service; 'isx proxy start' runs the proxy in the foreground instead.");
             return false;
         }
         prompts.say("Optional: install VM and proxy as macOS services so they start automatically on login"
                 + " and survive reboots.");
         if (!askYesNo(prompts, "Install services?", true)) {
             declined.add("macos-services");
-            BuildOutput.step("Skipped. Start manually with: isx vm start && isx proxy start");
+            BuildOutput.step("Skipped. Start manually with: isx vm start && isx proxy start; the proxy runs in the foreground.");
             return false;
         }
         return true;
@@ -1795,18 +1812,19 @@ public class InitCommand extends BaseCommand {
         if (service) return true;
         if (noService) {
             declined.add("proxy-service");
-            BuildOutput.step("Not installed, as --no-service asks. You can start the proxy manually with: isx proxy start");
+            BuildOutput.step("Not installed, as --no-service asks. You can start the proxy manually with: isx proxy start, which runs in the foreground.");
             return false;
         }
         if (prompts == null) {
             skipped.add("proxy-service");
-            BuildOutput.step("Skipped: no console. You can start the proxy manually with: isx proxy start");
+            BuildOutput.step("Skipped: no terminal. Install the proxy service with 'isx init" + (noSudo ? " --no-sudo" : "")
+                    + " --service', or decline it with --no-service; 'isx proxy start' runs the proxy in the foreground instead.");
             return false;
         }
         prompts.say("Optional: install the proxy as a systemd service so it starts automatically and survives reboots.");
         if (!askYesNo(prompts, "Install proxy service?", true)) {
             declined.add("proxy-service");
-            BuildOutput.step("Skipped. You can start the proxy manually with: isx proxy start");
+            BuildOutput.step("Skipped. You can start the proxy manually with: isx proxy start, which runs in the foreground.");
             return false;
         }
         return true;
@@ -2131,8 +2149,16 @@ public class InitCommand extends BaseCommand {
         if (!Files.exists(hostFile("/var/lib/systemd/linger/" + user))) {
             offers.add(InitPlan.Change.sudo("Keep it running after you log out", "sudo loginctl enable-linger " + user));
         }
-        return InitPlan.combine(List.of(marker, new InitPlan.Assessment(InitPlan.State.OPTIONAL, true, offers, null)));
+        return InitPlan.combine(List.of(marker, new InitPlan.Assessment(InitPlan.State.OPTIONAL, true, offers, SERVICE_NOTE)));
     }
+
+    /**
+     * What the plan and the summary say of a service not installed: the flag that installs it
+     * without a terminal. 'isx proxy start' runs the proxy in the foreground, holding its caller,
+     * which an agent took for the way to start it (#2081).
+     */
+    static final String SERVICE_NOTE = "Install the service with 'isx init --service', or decline it with --no-service;"
+            + " 'isx proxy start' runs the proxy in the foreground instead, holding its terminal.";
 
     /** What {@link #completeWithMacOsServices} would change. */
     InitPlan.Assessment planMacOsServices() {
@@ -2140,7 +2166,7 @@ public class InitCommand extends BaseCommand {
         if (macOsServicesInstalled()) return marker;
         return InitPlan.combine(List.of(marker, new InitPlan.Assessment(InitPlan.State.OPTIONAL, true, List.of(
                 InitPlan.Change.write("Install the VM and the proxy as launch agents", InitPlan.Who.NONE,
-                        Environment.home().resolve("Library/LaunchAgents").toString())), null)));
+                        Environment.home().resolve("Library/LaunchAgents").toString())), SERVICE_NOTE)));
     }
 
     /** What {@link #requireIncusHost} does on macOS before init: download the appliance if missing, start the VM. */
