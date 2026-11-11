@@ -131,7 +131,7 @@ Every query command takes it (#1038): `templates`, `tools list`/`show`, `account
 `branch` is the one exception to one map for both formats (#1720): its `plain` record stays the name alone, which that capture relies on, and only `json` gains fields (who owns the instance and how a program reaches it over SSH).
 Appending them to `plain` would have been the usual rule and would have broken every script that captures the name.
 The bare group commands (`isx templates`, `isx tools`, `isx account`) run their `list` and take its `--format`.
-A command whose work prints progress on the way (`doctor`'s checks, `branch`'s flow) runs it under `BaseCommand.withStdoutOnStderr`, so stdout holds only the result whatever the code underneath prints.
+A command whose work prints progress as it runs (`doctor`'s checks, `branch`'s flow) runs it under `BaseCommand.withStdoutOnStderr`, so stdout holds only the result whatever the code underneath prints.
 The machine formats never prompt: `doctor` offers no remediation and `branch` opens no shell.
 Exit codes are those of the table output, so a script reads the same state from either.
 `proxy status` prints its record in every state and exits 0/1/2/3 (when it cannot check at all, on Linux with Incus unreachable, the record says `status: "unknown"` with a `check_error`: it exits 1 like `not_running`, as the table always has, but no longer reads like it), `doctor` exits 1 when a check fails, and `vm status` exits 1 when Incus is unreachable (#1037 made the table do so).
@@ -178,7 +178,7 @@ Output captured from a guest command is someone else's text too (#1588).
 Its one pattern ends a control string at the next escape or introducer, as a terminal does, so a guest's long line costs linear time, never a stall.
 A control string runs to its terminator across lines and ignores the controls in it, as a terminal reads it (#1920).
 A C0 control inside a control sequence or escape is acted on as outside one, and the sequence carries on.
-CAN and SUB abort a control string, as they do a sequence, so a terminator after one ends nothing.
+CAN and SUB abort a control string, as they do a sequence, so a terminator after one does not end anything.
 A build step's `StepProgress` cleans its detail and log through it as it is made, the detail also through `OutputFormat.oneLine`, since a prime is code the repository controls.
 So the live line, the plain failure line, the log's warning and the saved failure report all show it as text, and the failure line is the last one with text left.
 A build's single steps (`BuildProgress.runDnf`, `runWithSpinner`, `runLiveStep`) are the seam's live step, drawn by the renderer every step uses (#1791): a failed one ends in its ✗ (a plain terminal ends its `label...` line), then, when it captured a log, one warning, `label failed` with the detail when the log does not end on it, the end of the log under it.
@@ -289,7 +289,7 @@ Each adopts the same helper and contract when it gains one.
 `isx completion <shell>` prints a script that answers every TAB by running `isx --aesh-complete -- <words>`, for bash, zsh and fish (#1842) as for PowerShell (#1744).
 That request walks the command tree this binary registered, so a platform's commands are offered only on that platform: on Linux there is no `vm` to strip, because the Linux top command has none.
 The scripts list no command, option or value of their own, so they cannot drift from the commands.
-The hand-written ones they replace did: zsh listed `init`, `update-all` and `mcp` but had no case for them, so their options completed nothing, and three regex edits (`stripVmCommand`) kept `vm` out of the Linux scripts.
+The hand-written ones they replace did: zsh listed `init`, `update-all` and `mcp` but had no case for them, so their options did not complete, and three regex edits (`stripVmCommand`) kept `vm` out of the Linux scripts.
 The values come from aesh completers on the commands' own arguments and options (`Completers`): instances (`isx list -q`'s source, one Incus request at `recursion=1`), `--from` sources with the built templates, template and tool definitions, `<namespace>=<account>` selections, credentials and fixed values such as `--format`.
 They follow the rules the scripts' old sources did: names only, never a credential, nothing that starts a VM, and nothing at all when the source fails, since an error would be drawn over the line being typed.
 `Completers.answer` replaces aesh's own `--aesh-complete` handler, which in aesh 3.18 gave completers no working directory (a `Path` option threw) and asked the shell for files after every command without a positional argument.
@@ -300,7 +300,7 @@ Words and candidates are plain values, so the request stays the same for every s
 The scripts are isx's, not aesh's generated ones.
 aesh's bash script runs `compgen -W "$values"` over what isx prints and inserts candidates unquoted, which reopens the hole #1778 closed: a `$(...)` in a name ran on TAB or on Enter.
 Its PowerShell script sent a quoted word with its quotes and inserted a path with a space as two arguments.
-Each of isx's sends every word's value, its quoting removed by something that expands nothing, and inserts each candidate quoted by its shell's own rules:
+Each of isx's sends every word's value, its quoting removed by something that does not expand anything, and inserts each candidate quoted by its shell's own rules:
 - bash reads the words from `COMP_LINE` with its own loop (`_isx_words`), since bash-completion's dequoting calls `eval` and its words split at every word break, `@` included; it never uses `compgen` or `eval`.
   Readline replaces only what follows the word's last unquoted `COMP_WORDBREAKS` character or its open quote, so that much of the typed word is dropped from each candidate before quoting.
   A closing quote is no break, so a second TAB into a directory completed inside a quote replaces the whole word.

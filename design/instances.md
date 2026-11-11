@@ -43,7 +43,7 @@ networkd is ordered after udev and configures eth0 about 200 ms into boot, while
 So the first exec after a start, the branch's setup script or the readiness probe of a stopped container's start, applies the file with `ip` (`InstanceNetwork.APPLY_STATIC_ADDRESS`).
 That also gives a cold start what a branch has: its address before the shell is handed over, where it used to win a race against networkd by about 45 ms.
 networkd adopts both when it comes up, since they are what it would have configured: the address is set with `brd +` and the route with `proto static`, without which systemd 262 deletes and re-adds each (docs/dev/PERFORMANCE-NOTES.md "Branch setup: the static address").
-The file stays the one source of truth, so subnet migration, copies and existing instances need nothing.
+The file stays the one source of truth, so subnet migration, copies and existing instances need no extra handling.
 Only a file for `eth0` with one address is applied: a VM's matches its NIC by MAC, and DHCP gives it the address before its agent answers.
 `raw.lxc` `lxc.net.0.ipv4.*` keys would be as fast but were rejected: LXC numbers NICs in device order, so an added NIC puts the address on the wrong one, and naming `lxc.net.0` on a masked NIC (airgap) fails the start.
 It is pushed root-owned `0644` explicitly: pushed with the local temp file's `0600`, `systemd-networkd` (which runs as `systemd-network`) could not read it, and only templates that already carried a `10-eth0.network` hid that, since overwriting keeps a file's mode.
@@ -85,7 +85,7 @@ The VM kernel has DMI for it (`appliance/kernel/vm.config`); without DMI systemd
 Incus makes a new `volatile.uuid` for every copy and keeps it across restarts, so each VM's ID is its own and stable, whatever it was copied from (a branch that has booted too) and however.
 An instance that keeps its `volatile.uuid` (restored from a backup or an export beside the original) keeps the original's ID too, as it would any disk image of the same machine.
 `appliance/test-vm-kernel.sh` boots the kernel with a new SMBIOS UUID each time and checks the guest's ID is that UUID, still mounted over the file rather than written to it.
-**Why not a fresh ID and a reboot at a VM branch's first start**: a stopped VM takes no file push, and the guest runs nothing before PID 1 reads the file, so isx could only write a new ID once the agent answers and then reboot.
+**Why not a fresh ID and a reboot at a VM branch's first start**: a stopped VM takes no file push, and the guest does not run anything before PID 1 reads the file, so isx could only write a new ID once the agent answers and then reboot.
 That adds a second boot (about 12 s under nested KVM, where a VM branch takes about 15 s), needs a stamp saying which sources were cleared and a pending mark for `--no-start` and for VMs started outside isx, and the first boot still sends DHCP and writes the journal under the source's ID.
 A per-branch `systemd.machine_id=` would need no reboot, but this kernel's command line is built in; `systemd.machine_id=firmware` and the `system.machine_id` credential apply only while the file is empty.
 **Why not the same for containers**: a container's systemd sees no per-copy UUID (PID 1 gets only `container=lxc` and its credentials directory), so isx would still have to make the ID up, and the push into the stopped copy costs about 15 ms and no boot.
@@ -103,7 +103,7 @@ The network config (IP, gateway and the NIC's MAC address) is read from one inst
 A VM's file matches its NIC by `PermanentMACAddress=` (the device's `hwaddr`, else `volatile.<nic>.hwaddr`), never by name -- the permanent address, so a VLAN or bridge built on the NIC, which takes over its MAC, does not match too.
 Incus renames a container's NIC to the device's `name` (`eth0`).
 But a VM guest keeps its kernel's predictable name (`enp5s0` on Incus's PCIe layout).
-So the `Name=eth0` file a VM used to get matched nothing and the VM ran on the base image's own DHCP config (#997).
+So the `Name=eth0` file a VM used to get did not match any interface and the VM ran on the base image's own DHCP config (#997).
 That DHCP config still covers the first boot -- Incus's DHCP server hands out the NIC's `ipv4.address`, so the address is the same -- and the pushed file takes over from the next one.
 A VM whose MAC cannot be read keeps DHCP rather than get a file matching no link or every link (a nested `docker0` included).
 Because the file now applies, a stale-subnet repair must reach the guest too, or the VM would come up on its old address, which IP filtering drops.
@@ -168,7 +168,7 @@ Devices are sent complete -- their expanded config with the new properties merge
 
 One write cannot say which of its settings Incus refused, and the old separate writes existed partly to keep two apart: failing to pin the address is fatal, failing to enable `security.ipv4_filtering` only warns.
 Incus rolls a refused write back whole, so on failure the write is retried once without filtering: failure surfaces the real error.
-Success does not prove filtering was the problem -- the first failure may have been transient -- so filtering is then enabled on its own with `applyIpFiltering()`, which warns as before if Incus refuses it.
+Success does not prove filtering was the problem -- the first failure may have been transient -- so filtering is then enabled separately with `applyIpFiltering()`, which warns as before if Incus refuses it.
 The source address is what identifies an instance to the proxy, so a first failure must not quietly leave the branch without it.
 Both extra writes happen only on the failure path.
 
@@ -185,7 +185,7 @@ A transfer still counts as open until forkfile has finished `syncfs` on the root
 So a start issued immediately after a push races that flush, and losing costs exactly one second (measured: 1149 ms against 142 ms with a 200 ms pause, same host).
 isx pushed terminfo, and for SSH-capable templates the authorized keys, 1 ms before every branch start.
 
-Both now travel inside the post-start setup script as heredocs (`buildSetupScript`), which costs no extra request, and `RuntimeSetup.prefetchAndStart()` -- shared by `isx branch` and the TUI -- pushes nothing between reading the config and starting.
+Both now travel inside the post-start setup script as heredocs (`buildSetupScript`), which costs no extra request, and `RuntimeSetup.prefetchAndStart()` -- shared by `isx branch` and the TUI -- does not push any file between reading the config and starting.
 Two related savings on the same path: `GuiPassthrough.removeGui()` returns after one read when the instance has no GUI state (it used to rewrite devices and config and push two empty files on every branch), and the setup script polls for the network address every 50 ms rather than every 0.5 s, which was ~400 ms of idle time per branch.
 
 Three kinds of file still go in before the start, because they must be in place at boot: a container's own `/etc/machine-id`, the static `.network` file, and the Wayland profile.d/tmpfiles.d files of a `--gui` branch (or the empty files that clear them, when a branch drops GUI state it inherited).
@@ -364,7 +364,7 @@ incus-spawn manages a dedicated SSH key pair, per-instance SSH configuration and
   After boot, a stopped or failed sshd will not come, so the refusal is reported at once, as before.
   Waiting on the sshd tool's `ready:` check at every start was the alternative, but it would charge that second to starts that never use SSH.
   Retrying the exec after a refusal cannot work, since ssh has already written its banner into the first one's stdin.
-  The probe reads the socket table rather than connecting, so a ready instance pays one `grep` and sshd logs nothing.
+  The probe reads the socket table rather than connecting, so a ready instance pays one `grep` and sshd does not log a connection.
 - **`Hostname` as a label** (4e271acb, #211): JetBrains Gateway resolves the host before it runs the `ProxyCommand`, and without the line it reported the instance name as not resolvable.
   It never dials that address: Gateway 2026.2 runs the `ProxyCommand` on macOS too, and logs the connection as `<Hostname>:<Port>` (#1600).
 - **Host keys pinned by the instance's name** (#1863): `StrictHostKeyChecking no` alone leaves a client that forces `yes` on its command line with nothing to check.
@@ -376,7 +376,7 @@ incus-spawn manages a dedicated SSH key pair, per-instance SSH configuration and
   Every key type sshd has is pinned, so no `HostKeyAlgorithms` restriction is needed.
   `test-ssh-host-keys.sh` in `isx-integration-tests-native` connects with herdr's options against a real Incus and sshd, by name and by address, after a key change and a start, and checks destroy removes the pins.
   Its key checks give the banner 60 s rather than herdr's 10: a branch's first connection reads `sshd-session` through a cold page cache, which a busy CI disk stretched past 10 s (#2119).
-  The keys come from the guest on the readiness exec a start already makes, never from a build: a template rebuild changes nothing for existing branches, and a key regenerated inside an instance is pinned again on its next start.
+  The keys come from the guest on the readiness exec a start already makes, never from a build: a template rebuild does not change the keys of existing branches, and a key regenerated inside an instance is pinned again on its next start.
   The guest is not trusted with the host's files: `HostKeys.parse` takes only a checked type and a base64 blob that decodes to a key of that type, at most eight of them, and isx writes the host field itself.
   A pin that has gone stale shows ssh's warning to plain `ssh`, which still logs in, and is replaced on the next start.
   Until then that `ssh` also turns off port, agent and X11 forwarding, which `/dev/null` never did, so an IDE's forwards stop working.
@@ -442,7 +442,7 @@ user.incus-spawn.static-ip=10.166.11.2       # (branches only, assigned at creat
 user.incus-spawn.host-resources=[...]        # (JSON, when host-resources declared)
 ```
 
-**Metadata outside the fingerprint**: `default-action` changes nothing in the image, so it is left out of `definition-sha` and editing it does not make a template outdated.
+**Metadata outside the fingerprint**: `default-action` does not change the image, so it is left out of `definition-sha` and editing it does not make a template outdated.
 Its stamp (`user.incus-spawn.default-action`, which `ActionResolver` falls back to when a layer of the YAML chain is gone and no layer on disk sets one) was then only ever written by a rebuild, and diverged silently from the YAML (#284).
 So every `isx build` that returns, successfully or with a failed template build, ends with `syncDefaultActions()`: one `GET /1.0/instances?recursion=1` covers every existing template, and a stamp is written only where it differs from the definition chain.
 Because the value is inherited, the guard covers the whole chain, not just the template's own definition: the chain must reach a root in the loaded definitions (with a parent's YAML gone the inherited value is unknown, and the stamp is exactly the fallback for that case), the template's own `definition-sha` must be current, and its `build-source` must record every ancestor with the content and project root it has now.
@@ -496,7 +496,7 @@ The in-process lock is keyed by the lock file's real path, since `fcntl` locks a
 
 **Replacing a template that others copy from (#1212).**
 A rebuild (`isx build`, `isx project create`) builds under `<name>-rebuilding` and swaps it in only on success, so a failed rebuild keeps the previous template.
-Incus cannot rename onto an existing name, and has no atomic swap: the swap is a delete and a rename, and in between the template does not exist.
+Incus cannot rename onto an existing name, and has no atomic swap: the swap is a delete and a rename, and between the two the template does not exist.
 Reordering the requests doesn't close that gap.
 Renaming the old template aside first still leaves a moment with nothing under the name.
 A lock that only the swap took would not help either, because readers don't ask for the template once.

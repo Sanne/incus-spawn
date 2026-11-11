@@ -93,7 +93,7 @@ It could already kill the proxy or edit `~/.config/incus-spawn`, so this gives i
 
 A deny of the default roots as a whole (`kSecTrustSettingsDefaultRootCertSetting`) drops the JDK store and the bundle, which stand for them, leaving only what an administrator trusts.
 Without a bundle the proxy keeps the JDK store, as before, with the Keychain's certificates added to it.
-Any failure, a timeout or a plist that does not parse adds nothing, is logged to the client log, and `isx doctor` reports it.
+Any failure, a timeout or a plist that does not parse adds no certificate, is logged to the client log, and `isx doctor` reports it.
 When only the System keychain's certificates cannot be read, by an exit status, a timeout or output that does not parse alike, the export's denies still apply, since they need no certificate bodies.
 When the Keychain's denies leave the proxy nothing to trust, it refuses to start rather than fall back to the JDK store, which would trust the denied roots again.
 The plist is parsed with its DOCTYPE dropped and any other refused, so no DTD or entity is ever resolved.
@@ -298,7 +298,7 @@ The credential itself is still reported, so pi's stricter Vertex need is not hid
 A missing credential is one entry, identified by the credential and its command; the notes of the tools and templates that need it are collected on it, so a note never splits one credential into two lines.
 
 **Auth error reporting**: When credential injection fails the proxy records an `authError` and surfaces it on `/health`, which `isx proxy status`, `isx doctor` and the TUI banner all render.
-Injection only runs on real container traffic, so that latch alone makes the status wrong in both directions: it reports failures the user has already fixed, and reports nothing at all before the first API call of a session.
+Injection only runs on real container traffic, so that latch alone makes the status wrong in both directions: it reports failures the user has already fixed, and does not report anything before the first API call of a session.
 The health endpoint therefore verifies the Vertex token itself, on a worker thread, before answering — clearing a stale error, or reporting a broken credential that no request has hit yet.
 
 The checks it declines are what keep this cheap:
@@ -307,8 +307,8 @@ The checks it declines are what keep this cheap:
   A non-Vertex setup never invokes `gcloud`, and pays nothing.
 - **A valid cached token with no standing error** — the steady state.
   Tokens are cached for 50 minutes, so a healthy Vertex install makes roughly one `gcloud` call per token lifetime regardless of poll rate.
-- **A standing OAuth error** (hint `isx init`) — only the user can resolve it; running `gcloud` would prove nothing.
-- **A check that ran within 10 seconds, or one in flight** — a failing credential caches nothing, so without this every poll from the TUI or `isx doctor` would fork a fresh `gcloud`.
+- **A standing OAuth error** (hint `isx init`) — only the user can resolve it; running `gcloud` would not prove anything.
+- **A check that ran within 10 seconds, or one in flight** — a failing credential leaves no cached result, so without this every poll from the TUI or `isx doctor` would fork a fresh `gcloud`.
 
 A failure found by the health check is recorded via `recordProbeAuthError`, which never sends a desktop notification: the check runs on every poll, and the notification belongs to the traffic path where a failure actually blocks the user.
 The first transition is still logged.
@@ -395,7 +395,7 @@ The anchor files' certificates stay plain, as the host trusts them for every pur
 A Keychain not fully read adds no CA, whatever it returned as trusted: the guests lose its CAs until a later use reads it, which narrows, and the failure goes to `Warnings`.
 That costs a reconcile each way on a transient failure; keeping the guest's set instead could keep a CA the Keychain has denied since, unread.
 Read twice when the stamp differs, once to decide and once under the lock: reusing the first read would bring back the race of #1381.
-Elsewhere `SystemTrust.keychain()` is empty and runs nothing.
+Elsewhere `SystemTrust.keychain()` is empty and runs no command.
 The Keychain is read only with propagation on, so the cost lands only there: about 10 ms of parallel `security` runs per `collectTrustAnchors()`, which `fixContainerCaIfNeeded` calls on every `isx shell`.
 It is not cached across processes, since a stale read could keep handing guests a CA the Keychain has since denied.
 
@@ -489,7 +489,7 @@ There is no upload size limit: a body passes as long as the host has disk for it
 - **npm tarballs** — keyed by package name and version, with ETag-based verification against the npm registry packument.
   A cached tarball is served without a lookup only while the packument ETag is the one it was verified under and its last confirmation is within the same tiers as Maven/Gradle (`artifactCacheTiers`, see "Confirmation tiers" below).
   The stored shasum's modification time is that confirmation: set when the tarball is stored, renewed by a matching lookup.
-  Within `fresh` the hit asks nothing upstream, within `max-stale` it is served and confirmed in the background (the same single-flight, capped queue), and older it is confirmed first.
+  Within `fresh` the hit makes no upstream request, within `max-stale` it is served and confirmed in the background (the same single-flight, capped queue), and older it is confirmed first.
   When the ETag changes or the confirmation is too old, the per-version digest is checked — a match updates the marker, a mismatch evicts and re-fetches.
   That digest is the version document's `dist.integrity` SHA-512, falling back to SHA-1 only for a document whose integrity is absent (or empty) or lists only SHA-1 hashes, and then to the integrity's own SHA-1, which npm checks, before `dist.shasum`; any other integrity with no readable SHA-512 (malformed, not a string, another algorithm, in any case) counts as no digest, never as a reason to settle for SHA-1 (`npmDigest`, #1465).
   The tarball, its `.etag` marker and its `.shasum` are committed together under `VerifiedArtifactStore`'s per-artifact lock, which every eviction and confirmation of it also takes (#1464): sidecars written at lookup time, before the download, let two concurrent misses whose lookups straddled a republish leave one tarball beside the other's digest, which the next matching lookup then served as confirmed.
@@ -511,25 +511,25 @@ How recent is configurable; with both durations at zero, every hit is confirmed 
 Only an unreachable upstream serves an older one.
 
 - *Confirmation tiers* (`ArtifactCacheTiers`, `artifact-cache:` in config.yaml).
-  The stored checksum's modification time is when upstream last confirmed the artifact: set to the time of the lookup the commit was verified on (not when its download finished), and renewed by a match only from an answer that could have evicted (on Central a client's own `.sha1` request matching confirms nothing, since the header outranks it).
+  The stored checksum's modification time is when upstream last confirmed the artifact: set to the time of the lookup the commit was verified on (not when its download finished), and renewed by a match only from an answer that could have evicted (on Central a client's own `.sha1` request matching does not confirm the artifact, since the header outranks it).
   Renewal is best-effort: a checksum file the proxy may not re-stamp (another owner) just ages into being confirmed first.
-  Every answer is ordered by its probe's time, taken before upstream was asked: a match stamps that time and never moves the confirmation back, and an answer from a probe made before the copy's last confirmation (a commit or another match after it) changes nothing (`Outcome.SUPERSEDED`), so a slow, older probe neither evicts a newer copy nor makes a download looked up after it look superseded (#1542).
+  Every answer is ordered by its probe's time, taken before upstream was asked: a match stamps that time and never moves the confirmation back, and an answer from a probe made before the copy's last confirmation (a commit or another match after it) has no effect (`Outcome.SUPERSEDED`), so a slow, older probe neither evicts a newer copy nor makes a download looked up after it look superseded (#1542).
   The client then gets the copy, and for a sidecar request the copy's stored sidecar, else upstream's answer to one more ask made after that confirmation (a 502 if that one is superseded too), never the older answer's checksum beside the newer bytes.
   That includes a 404/410: a takedown that reached upstream before the copy's confirmation was not in force when upstream confirmed it, and one after it is seen by the next probe.
   A sidecar answer settled by Central's checksum header applies only to the copy it was reconciled against: if that copy was replaced before the header matched, the match may be about bytes committed after the sidecar was asked for, so the answer neither stores nor drops a signature beside the new copy, and the client gets the copy's own (#1555).
   Younger than `fresh` (default 2h), a hit is served from disk with no upstream request.
   Younger than `max-stale` (default 7 days), it is served at once and confirmed again in the background: a match renews the confirmation, a change or withdrawal evicts the copy so the *next* request fetches it, and an answer that settles neither (a 403, an unusable sidecar) expires the confirmation, so the next hit gets the confirm-first path's handling.
   Older, it is confirmed before it is served, as below.
-  Background confirmations are single-flight per artifact, at most 16 in flight with the rest queued (dropping them would leave copies unconfirmed build after build under a parallel resolver), and confirm nothing during a domain's backoff.
+  Background confirmations are single-flight per artifact, at most 16 in flight with the rest queued (dropping them would leave copies unconfirmed build after build under a parallel resolver), and confirm no copy during a domain's backoff.
   Overlapping lookups share one (`SingleFlight`, #1567).
   A request that arrives while the same sidecar settle, confirmation (foreground or background), host-copy import or npm version lookup is in flight joins it and gets its result.
-  Two answers looked up at about the same time are both correct, but each was settled on its own.
+  Two answers looked up at about the same time are both correct, but each was settled separately.
   On Central the answer settled last overwrote or dropped the signature the other had stored.
   For two confirmations, the later probe's renewal superseded the other answer, whose request then went out without its checksum header.
   Every lookup is made by the proxy itself, with no client header, so its result belongs to no one caller.
   What depends on a caller stays its own: an npm lookup's 5xx is retried on each caller's own silence budget, and an unreachable sidecar falls back to each caller's own stored copy.
   The key is released before anyone is answered, so a request after that asks again, and its lookup follows the first one's writes.
-  Downloads are not joined: concurrent downloads of one file are already safe (#1538), and joining one in flight would mean streaming each follower from a growing spool and resuming it on its own, for bandwidth alone.
+  Downloads are not joined: concurrent downloads of one file are already safe (#1538), and joining one in flight would mean streaming each follower from a growing spool and resuming it separately, for bandwidth alone.
   The store-side ordering rules stay, since joining covers only one proxy's lookups in flight.
   A domain that can withdraw releases never gets the tiers (`Revalidation.mayWithdraw`: the Plugin Portal), so its every hit is confirmed first.
   npm tarballs get the same tiers, keyed on the stored shasum's modification time (see "Proxy caching" above).
@@ -568,7 +568,7 @@ Only an unreachable upstream serves an older one.
   A hardlink shares the inode, so an in-place rewrite of the `~/.m2` file (`cp` onto it, a truncating writer) would change the cache without it noticing.
 - *Sidecar requests go upstream* once the artifact's confirmation is past `fresh`/`max-stale` (within them the stored copy is served, see the tiers), and the answer is reconciled with the stored copy the same way.
   This is a second line of defence; confirming the artifact is what provides correctness.
-  A checksum we cannot parse says nothing and evicts nothing (Maven accepts the `sha1sum` and BSD/OpenSSL formats, and so does `Sidecar.hex`).
+  A checksum we cannot parse does not confirm the copy and does not evict it (Maven accepts the `sha1sum` and BSD/OpenSSL formats, and so does `Sidecar.hex`).
   On `HEAD_CHECKSUM` domains a sidecar never evicts on its own.
   A separately uploaded `.sha1` can be wrong where the server-computed header is right (old Central artifacts), so a disagreement (`Outcome.DISAGREES`) is settled by a `HEAD`, and only by its header (`SidecarAnswer.fromHeader`), never by the `.sha1` a header-less `HEAD` falls back to.
   When the header confirms the artifact, the stored sidecar follows upstream: a changed `.asc` is kept, a withdrawn one dropped.
@@ -581,7 +581,7 @@ Only an unreachable upstream serves an older one.
   The budget runs from the client's request, so waiting for the response head gets what the lookups before it (an npm shasum, a Maven confirmation) left, a head that never comes becomes a logged 502 the client can retry, each resume (connect, head, backoff after one that could not be made) gets what is left of it since the client's last byte, and the stall check looks again the moment a pause ends (the temp file opening, a drain, a resume's head), since a head or a resume that arrived late can leave less of the budget than one check.
   Upstream always gets a second after we let it go before it counts as stalled, and only a client that drains renews its budget, not a disk.
   When too little is left, the client gets the error, logged, rather than a silent drop.
-  A connect timed out that early says nothing about the domain, so it does not start the unreachable backoff below.
+  A connect timed out that early does not show that the domain is unreachable, so it does not start the unreachable backoff below.
   A resume needs a validator for `If-Range`: a strong `ETag`, or `Last-Modified` when there is no `ETag` at all and it is at least a second older than the response's `Date` (servers ignore a weak ETag, RFC 9110 does not let a date stand in for an entity tag, and a date within the second it was sent could match two versions).
   Without one there is no resume, since a file changed meanwhile would be spliced onto the old one's bytes.
   Only a `206` with the first response's validator, no `Content-Encoding`, a `Content-Length` of what is left and a `Content-Range` from the byte the client has to the end of the same length continues; `If-Range` alone is not trusted, since GitHub's asset store answers `206` to a mismatched one (#900, #1405).
@@ -618,7 +618,7 @@ Only an unreachable upstream serves an older one.
   Their clock starts at the client's request, or its last byte, not when the relay begins, since the head wait already spent part of the budget.
   So does every plain relay (#1059): one a cache handler falls back to after lookups of its own, such as the npm tarball whose shasum lookup failed, and an API request that first waited for its caller's proof to be checked.
   A Vertex model call, which the proxy sends itself once the body is in, gets a watchdog from then (#1059): through the token fetch, a 401's retry and the answer, which may be a stream.
-  A real stream from the API had never gone more than about a minute between chunks when this was measured, so 110s cuts nothing that would have lived; what changes is that the cut is logged and upstream is let go.
+  A real stream from the API had never gone more than about a minute between chunks when this was measured, so 110s does not cut any stream that would have lived; what changes is that the cut is logged and upstream is let go.
   A relay cannot resume, so a shasum lookup answered with a `5xx` is asked once more, while over half the client's budget is left, before the tarball falls back to a relay (`fetchNpmVersion`).
   A `429` is not, since asked again at once it would be refused again.
   The npm fallback logs that it relays, so a codex install that fails without a stall or resume line in the proxy log points at it directly.
@@ -639,12 +639,12 @@ Only an unreachable upstream serves an older one.
 - *Offline.*
   Only when upstream cannot be reached (connect/DNS/TLS failure, an exchange that broke on an established connection, or a 5xx or 429, i.e. cases where the client would otherwise get an error) are cached artifacts and stored sidecars served unconfirmed.
   A broken exchange is retried once first, since a pooled keep-alive connection may simply have died while idle; a timeout is not, which would double the wait on a black-holed network.
-  An answer we cannot use (an oversized sidecar, a redirect loop, a redirect to anything but http(s)) is a different thing, `SidecarAnswer.UNUSABLE`: upstream answered, so it confirms nothing and the request goes upstream rather than to the cache.
+  An answer we cannot use (an oversized sidecar, a redirect loop, a redirect to anything but http(s)) is a different thing, `SidecarAnswer.UNUSABLE`: upstream answered, so it does not confirm the artifact and the request goes upstream rather than to the cache.
   Redirects are followed over TLS, an `http` Location included, as the proxy always has.
   Only a failure to connect starts the domain's 30s backoff (not a connect timeout the proxy cut short to fit a client's budget), so a black-holed network does not cost a connect timeout per request.
   The backoff short-circuits only requests that have a cached copy to fall back on (a request without one still asks upstream, which it might answer).
   Only a response from the domain ends it.
-  A request on a pooled connection is sent without any network I/O first, so getting the connection proves nothing about reachability now, and would let one request end a backoff a real connect failure started.
+  A request on a pooled connection is sent without any network I/O first, so getting the connection does not prove the upstream is reachable now, and would let one request end a backoff a real connect failure started.
   It is kept where every upstream connection is made (`requestWithAsyncDns`), for every domain `Revalidation.keepsBackoff` names (the Maven/Gradle ones in `Revalidation` and the npm registry), so no fetch path can forget to update it.
 
 *Why only these domains.*
@@ -715,7 +715,7 @@ Anthropic entries use relaxed configuration resolution (at least one non-blank c
 A prefix that is not a literal `/`-rooted path is refused where definitions load, and one without a leading `/` never matches, so an empty prefix cannot widen a scope to every path.
 A scope other than `/` never matches a request path an upstream may serve as another path (a dot segment, for one; the full list is in docs/TOOLS.md, #1453).
 The proxy refuses rather than normalizes: a normalized match would also have to forward the rewritten target and guess how each upstream decodes.
-A refused match falls back to an entry that serves every path (unscoped, or scoped to `/`), which its scope covers anyway, if the request proves that entry's namespace; otherwise it injects nothing.
+A refused match falls back to an entry that serves every path (unscoped, or scoped to `/`), which its scope covers anyway, if the request proves that entry's namespace; otherwise it does not inject a credential.
 Unscoped collisions between tools are warned at startup (exact-domain conflicts and wildcard-suffix overlaps); tool domains that shadow built-in intercepted domains (registry, Maven, Gradle, npm) are warned during validation since built-in routing takes precedence.
 A `proxy:` entry also declares `placeholders:` -- each an `env` variable the tool reads its credential from and the `prefix` its value must start with -- which every start fills with the instance's proof token for the entry's namespace (see design/accounts.md "Proof tokens").
 A YAML tool that exports a static placeholder through `env:` declares the same variable here (`typesafe.yaml` does).
@@ -802,7 +802,7 @@ Concurrent refreshes of one session share one upstream call, and at most one goe
 A caller whose token no longer works waits for a refresh already upstream for it, whatever the throttle says; one whose token still works is answered with it, and never shares a failed refresh.
 Within that interval a token that has expired, or that the backend has just refused, is answered 503, not handed back as if refreshed, which would only loop Codex between refreshes and 401s with a bearer known to be bad.
 Such a caller is handed a generation committed since it read the session only when that generation's token works too, and is answered 401 once the account's session is another one or gone.
-A refusal is a 401 to a backend request or to a WebSocket handshake, and is kept per token (the session at one generation), so a late 401 for a token a refresh has already replaced marks nothing current; a refresh that succeeds clears the session's earlier ones.
+A refusal is a 401 to a backend request or to a WebSocket handshake, and is kept per token (the session at one generation), so a late 401 for a token a refresh has already replaced does not mark the current one; a refresh that succeeds clears the session's earlier ones.
 A rate limit or server error from OpenAI reaches the guest as one too (429, 502), so Codex retries rather than treating its session as dead.
 The answer is committed only if the file still holds the session and generation the refresh started from.
 A refresh overtaken by another write of the same session is answered from that write.
@@ -810,14 +810,14 @@ After a sign-in again it is discarded, its new refresh token revoked, and the re
 
 **The window atomic replacement cannot close:** Between OpenAI's answer and the commit's `fsync` the new tokens exist only in that answer.
 `refreshing` is written before the request goes out and cleared only when OpenAI answered, or the request provably never left; upstream Codex has the same window.
-So a proxy that died in between, or an answer lost on the way, leaves the record behind, and when the next refresh is then refused the host is told to sign in again because a refresh was interrupted.
+So a proxy that died between the request and the commit, or an answer lost before it reached the proxy, leaves the record behind, and when the next refresh is then refused the host is told to sign in again because a refresh was interrupted.
 
 **Testing:** `ChatGptRouteTest` covers the proof matrix (missing, static, another instance's, a previous session's, the wrong kind, one keyed with the metadata hash, the verifier itself) on both placeholders and both transports, the allowlist and refused shapes on both transports, the body bound and that no body is read before the proof, redirects (handed back, never followed), the refresh rules, and the sign-in-again and removal races.
 `.github/scripts/test-chatgpt-session.sh` runs real Codex (CI: the npm release current when `tpl-test-codex` is built) in an instance through the real `isx-proxy` against `.github/scripts/chatgpt-stub.py`.
 It passes only when Codex completes a turn over WebSocket and one over HTTP (the stub refusing the upgrade), with Codex's own refresh relayed once and committed, and the guest holding no real token.
 Nothing in it may leave the machine, and that is checked, not assumed.
 The host side runs with a group an nftables table lets reach only the stub and the bridge, and a negative control proves the drop first.
-A systemd `IPAddressDeny=` was the first plan; in a nested instance it was accepted and blocked nothing.
+A systemd `IPAddressDeny=` was the first plan; in a nested instance it was accepted and did not block any address.
 The guest's own `--proxy-only` rules can be removed by guest root (#1137), so a host table drops everything the bridge would route off the host, whatever address guest root takes, proven with the guest's rules flushed as root.
 Every token is stub-minted and searched for afterwards in the guest's files, journal and environment and in the proxy's log.
 It leaves the developer's own isx state alone: its proxy runs in a mount namespace with throwaway config and state directories bind-mounted over the real ones (a copy of `config.yaml` and the CA, plus the ChatGPT account and session).
@@ -953,7 +953,7 @@ A client header is stripped by the name a controller may read it as: every chara
 So are the hop-by-hop headers and those the client names in `Connection:`, and the target is sent in origin form, never a client's absolute URI.
 No credential is injected on a route.
 
-Each entry is checked on its own and dropped with a warning naming it, failing closed:
+Each entry is checked separately and dropped with a warning naming it, failing closed:
 - the name is a hostname under `.internal` that no other intercepted name equals, contains or lies under, nor another route;
 - the target is a loopback literal or `localhost`, taken as 127.0.0.1, never a name to look up, with a port from 1 to 65535;
 - `templates:` is required and a non-empty list (decided on #936: there is no route for every instance), and an unknown key drops the entry, so a misspelt filter never widens it; so does a name written twice (in two cases, say).
@@ -1003,7 +1003,7 @@ An address that cannot be placed admits nobody, and the rule is looked up again 
 This is a filter on where a caller is, not who: within the bridge, or behind the VM's NAT, every instance is still admitted alike.
 
 **Closed by default.**
-No key, an empty list, or a value that is not a plain list of integers exposes nothing (`ExposedHostPorts`); within a list each port is checked alone, a duplicate is kept once, and isx's own ports (443, 18443, 18080, 53) are refused.
+No key, an empty list, or a value that is not a plain list of integers does not expose any port (`ExposedHostPorts`); within a list each port is checked alone, a duplicate is kept once, and isx's own ports (443, 18443, 18080, 53) are refused.
 Those are exactly the gateway ports the proxy-only ACL admits (`ProxyOnlyAcl.egressRules`), so a `--proxy-only` instance never reaches an exposed port and the ACL is not widened; an airgapped one has no network.
 Unlisted loopback ports stay unreachable; a service already listening on every address or on the bridge was reachable before, firewall permitting, and still is.
 

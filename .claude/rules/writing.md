@@ -34,6 +34,7 @@ Write "isx does not filter the connections", not "isx filters nothing".
 A reader takes "isx filters" as a yes, and has to reverse it at "nothing".
 This holds for a verb of action: filter, list, match, grant, approve, rebuild.
 "Has no", "needs no" and "there is no" are plain English and stay, and so does "nothing" as the subject ("nothing it changes reaches the template").
+"Costs nothing" and "does nothing" stay too: each is a fixed phrase a reader takes whole.
 
 **A verb names what it acts on.**
 "Filters" what: requests, callers, ports?

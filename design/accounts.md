@@ -20,7 +20,7 @@ Claude stays typed because the type drives real behaviour — which variables a 
 
 **Per-instance selection.**
 Which account an instance uses is decided in three layers, each explicit, resolved lowest-first: the namespace's `default` in `config.yaml`, an `accounts:` map on the template (merged *per key* down the inheritance chain, so a child re-points one namespace and keeps the parent's choice for the rest), and a per-instance override from `isx branch --account <ns>=<account>` or `isx account set`.
-Only the last two are written onto the instance, as `user.incus-spawn.account.<namespace>`, so an instance that says nothing keeps following the global default as it changes.
+Only the last two are written onto the instance, as `user.incus-spawn.account.<namespace>`, so an instance that carries neither stamp keeps following the global default as it changes.
 
 Selection is always written `<namespace>=<account>`.
 A bare account name is deliberately not accepted even though it would read better.
@@ -78,7 +78,7 @@ So one `/1.0/instances?recursion=1` call maps every address to an instance and i
 `RequestContext` carries domain, caller, credentials and routing down the request path in place of the bare domain, and per-selection credentials are cached keyed by the selection itself and cleared on every config reload.
 
 An address that is not a known instance gets no injected credential; host-side traffic supplies its own authentication.
-A known instance that pins nothing receives the configured default only after proving its namespace.
+A known instance with no pin receives the configured default only after proving its namespace.
 
 That premise does not hold on macOS (#1582).
 There the VM's `PROXY_MODE=remote` DNATs `:443` to the host and the VM bridge's `ipv4.nat` masquerades it, so every container reaches the proxy from the VM's one address, which is no instance.
@@ -86,9 +86,9 @@ Before #1107 such a caller got the defaults; after it, nothing, so 0.4.0 served 
 So on macOS a caller whose address is no known instance is identified by its proof instead (`MitmProxy.proofMayIdentify`).
 The registry indexes each verifier hash to the running instance stamped with it, per namespace, and `InstanceRegistry.prove` takes the instance every presented proof names, refusing when they name different ones.
 A hash two instances share comes only from an `incus copy` made outside isx, and is decided as a shared address is: the one running, else nobody.
-Unlike an address, a proof never names a stopped instance, even its only holder: it sends nothing, and a listing taken before its start costs only the refresh `authorize` makes on a miss.
+Unlike an address, a proof never names a stopped instance, even its only holder: a stopped instance sends no requests, and a listing taken before its start costs only the refresh `authorize` makes on a miss.
 The host's own traffic (loopback, or from the listener's address) is never identified this way, and a caller at a known instance's address is always held to that instance's proofs.
-Linux keeps the strict address check, which is what stops a proof replayed from another instance; that protection never existed on macOS, where the address identifies nothing.
+Linux keeps the strict address check, which is what stops a proof replayed from another instance; that protection never existed on macOS, where the address does not identify an instance.
 `integration-tests` boots the appliance in `remote` mode (`appliance/test-proxy-remote.sh`, #1585) on a tap network shaped like vfkit's NAT.
 Two containers' requests to the gateway's `:443` must reach a host listener on the MITM port, and both must arrive from the VM's leased address.
 The listener stands in for `isx-proxy`.
@@ -107,7 +107,7 @@ They describe the parent's build.
 The proxy refuses an account -- pinned *or* default -- whose auth mode does not match one, so it would refuse this build the account its own template chose, or a default changed since the parent was built.
 They are read first: after tool setup, `settleIdentities` compares them with this build's accounts to re-derive a parent's identity that no longer matches (#281), and reading them back from the container then would find nothing.
 When the build is done it stamps what it baked and puts the parent's back for every other namespace (`BuildAccounts.identityStamps`).
-A namespace whose credential is no longer configured derives nothing, yet the parent's `.gitconfig` or Claude environment is still in the rootfs.
+A namespace whose credential is no longer configured does not derive an identity, yet the parent's `.gitconfig` or Claude environment is still in the rootfs.
 No `.network` file is pushed: the guest keeps DHCP, and Incus's DHCP server hands out the NIC's `ipv4.address`.
 It will not while another MAC holds a lease on that address, and one usually does when a chain is built.
 The allocator hands out the lowest free address, so a child's build is offered the one its parent's build has just given back, whose lease the parent's MAC keeps.
@@ -183,7 +183,7 @@ On Linux it is an extra layer, never an alternative (macOS is below): since the 
 Client certificates per instance were the alternative -- a key in the box and a CA to run, for nothing over address plus secret given the filter.
 
 *On macOS, the secret alone (#1583).*
-The address that would bind the secret identifies nothing there: every container reaches the proxy from the VM's address (#1582, "How the proxy tells callers apart"), so until 0.4.1 `identify()` refused every caller on a Mac, and with it `isx branch --mcp-client` and every host route.
+The address that would bind the secret does not identify an instance there: every container reaches the proxy from the VM's address (#1582, "How the proxy tells callers apart"), so until 0.4.1 `identify()` refused every caller on a Mac, and with it `isx branch --mcp-client` and every host route.
 So, behind the same gate as a proof (`MitmProxy.proofMayIdentify`: macOS, never the host's own traffic), a caller whose address is no known instance is the instance whose secret it presents (`identify(address, secret, true)`).
 The registry indexes each running address owner's secret hash to its address; a hash two instances share comes only from an `incus copy` made outside isx before isx started it, and is decided as a shared proof is: the one running, else nobody, and never a stopped instance.
 A failed listing clears that index with the proofs' (the address check keeps its last good listing), so an Incus outage does not keep a stopped instance's secret valid.
@@ -266,7 +266,7 @@ What it says goes to stderr only (`TerminalOutput.stderrOnly()`), since stdout i
 For a VM, whose readiness only its guest can answer, that is one probe per connection, as `--start` already prepares a running VM on every connection.
 The probe runs before the `secretLock`, so a VM that holds its secret never waits on another isx.
 A VM it finds without its secret is given it under the lock without a second probe, unless another isx held the lock meanwhile.
-An instance without isx's parent stamp, which `isx shell` refuses, is never given a secret, so isx writes nothing into an instance it did not make.
+An instance without isx's parent stamp, which `isx shell` refuses, is never given a secret, so isx does not write anything into an instance it did not make.
 A plain `incus exec` bypasses isx entirely, and stays without its proofs until isx next prepares the box.
 
 **Proof tokens: address and proof authorize credential injection (#1100, #1107).**
@@ -317,16 +317,16 @@ WebSocket setup failures after acceptance are logged as relay failures.
 Ordinary independent credentials pass without warnings.
 `/activity` adds `refused_injections`, including anonymous and independently authenticated pass-through requests.
 It also says whether the proxy can tell its callers apart (#1586), because #1582 went unseen for a year while every check passed.
-A refused proof that was checked against an instance's and matched nothing is `refused_proofs`: the instance's to renew.
+A refused proof that was checked against an instance's and did not match any of them is `refused_proofs`: the instance's to renew.
 One from an address no instance has was never checked: `refused_address_misses`, the proxy's problem.
 Both count only requests whose credential looks like a proof, so the host's own traffic is in neither.
-`registry_stale` says the last listing failed, or the listing under way has run past a caller's refresh wait (a hung Incus throws nothing), so refusals meanwhile count in neither: until one succeeds, a failure refuses every proof, and a hang any new or renewed one.
+`registry_stale` says the last listing failed, or the listing under way has run past a caller's refresh wait (a hung Incus does not throw an error), so refusals meanwhile count in neither: until one succeeds, a failure refuses every proof, and a hang any new or renewed one.
 Nor do refusals from a snapshot that may lack the caller's proofs: with no registry yet, after a refresh that timed out or listed nothing new (one coalesced onto a stalled listing gives up at its deadline), or from a stale snapshot, since they are no instance's to renew.
 `last_address_miss_at` says when the last address miss was.
 `unplaced_running` names the running instances no request has been attributed to; stopped instances and templates own addresses too, so the registry says which are running.
 Each instance's `identified_by_proof` says a request of it was named by its proof or secret alone, which only macOS allows.
 These stay off `/health`, which containers reach: what the proxy knows of their neighbours is not their business.
-`isx doctor` reads them on the host and says nothing while they are zero.
+`isx doctor` reads them on the host and does not report them while they are zero.
 Address misses are reported only while `unplaced_running` names an instance, and the finding names those: a miss cannot say whose it was, and one while every running instance is placed was transient.
 They fail only when the last was within ten minutes and no instance has had traffic attributed since, #1582's signature of a proxy that places nobody; otherwise they warn, since the counter never goes down and an idle instance is unplaced too.
 Refused proofs and a failed listing warn.
@@ -336,7 +336,7 @@ Refused proofs and a failed listing warn.
 An ordinary start keeps credential verifiers while replacing the MCP secret.
 Migration and changed tool declarations re-read under the instance proof lock before updating verifiers in the secret write.
 Before reset writes Incus, it invalidates the old generation with a marker under the host lock directory.
-This marker only forces an old prefetched listing to re-read authoritative metadata; it grants nothing and remains after a failed reset.
+This marker only forces an old prefetched listing to re-read authoritative metadata; it does not grant any access and remains after a failed reset.
 Delivery rechecks that marker after boot and holds the proof lock through the guest exec and boot stamp, so reset cannot finish before an older delivery overwrites its replacement.
 The normal start derives its seed once and keeps its request budget; the TUI restart passes its listing through instead of reading again.
 Every copy clears the generation, complete verifier stamp and boot-delivery stamp in the copy request; branches override them with fresh grants.
@@ -379,16 +379,16 @@ Their cleanup attempts revocation, managed-cache scrubbing, shutdown and address
 **Nested isx: nothing is inherited unless its isx says `inherit` (#1110).**
 An isx running inside an isx instance has its own proxy, and its instances present their own proofs, derived from secrets the inner isx gave them.
 The outer proxy cannot verify those, so a nested machine gets none of the outer credentials.
-That is the rule: a nested machine gets nothing unless its isx says `inherit`, or the user passes a token in by hand (`podman run -e GH_TOKEN …`).
+That is the rule: a nested machine gets no credential unless its isx says `inherit`, or the user passes a token in by hand (`podman run -e GH_TOKEN …`).
 `inherit` is a reserved account in every namespace of the inner `config.yaml`, chosen like any other: `isx branch --account github=inherit`, a template's `accounts:`, or `github.default: inherit`.
-For an instance resolved to it, the inner proxy injects nothing of its own for that namespace.
+For an instance resolved to it, the inner proxy does not inject a credential of its own for that namespace.
 It replaces each proof the request carries for the namespace with the parent instance's: `ProofToken.derive` over the secret the outer isx gave the parent, under the same prefix and in the same header (`InheritedProof`).
 The outer proxy then sees the parent's proof from the parent's address and serves the parent's account, for that namespace only.
 Nothing changes on the outer side: no registration of nested instances, no special mode.
 Keeping the instance's own carrier, rather than writing the credential the way a configured account would, is what lets Claude work in all three auth modes.
 The inner isx does not know which mode the parent uses, and the outer proxy accepts a proof in any of Claude's carriers.
 Only a whole proof of a declared prefix is swapped.
-A static placeholder proves nothing, and a token the caller supplied stays theirs, so `inherit` never fabricates a credential the instance did not present.
+A static placeholder is not a proof, and a token the caller supplied stays theirs, so `inherit` never fabricates a credential the instance did not present.
 The inner proxy verifies the calling instance's own proof before constructing the swap.
 A forged proof-shaped token or a deeper descendant's proof cannot obtain the parent's proof.
 The credential seed is read from `/run/isx/credential-secret` off the event loop: with every config read, every second by the config watcher, and in the background by a request that finds it more than a second old.
@@ -402,7 +402,7 @@ Never falling back matters here as everywhere: the inner default might be anyone
 The proxy intercepts a domain only if it was told to when the config was read, while a pin to `inherit` can name a namespace the inner config never mentions.
 So inside an instance the inner proxy intercepts the domains of every tool declaring a placeholder, with nothing to inject for them.
 An instance that does not inherit sends its own token through it unchanged.
-Whether the machine is an instance can change while the proxy runs: one started at boot, before the parent's isx delivered its secret, sees none.
+Whether the machine is an instance can change while the proxy runs: one started at boot, before the parent's isx delivered its secret, has no secret to read.
 The config watcher therefore asks every second whether that changed and reloads when it did.
 The alternatives were rejected.
 Intercepting those domains everywhere would MITM traffic on every host for tools nobody configured.
@@ -514,7 +514,7 @@ It used to happen silently and nothing repaired it: with no account, `bakedAccou
 Worse, stamps were computed from config.yaml, not from the guest: a child built once a token existed, on such a parent, was stamped with an identity its `.gitconfig` never got, and the reconcile trusted it.
 
 So the stamp is now decided by the guest.
-After tool setup, `BuildAccounts.settleIdentities` (called from `BuildCommand`) asks each tool in the template's chain that owns a namespace and can re-derive (`AccountSelection.rederivableNamespaces`: gh itself, not Copilot, which borrows the GitHub credential but derives nothing; never Claude, where a stamp the account does not match would refuse the account; only namespaces `namespaceSetups` knows, so a gated-out one is never marked) whether its identity is missing (`ToolSetup.lacksBakedIdentity`, one exec for gh).
+After tool setup, `BuildAccounts.settleIdentities` (called from `BuildCommand`) asks each tool in the template's chain that owns a namespace and can re-derive (`AccountSelection.rederivableNamespaces`: gh itself, not Copilot, which borrows the GitHub credential but does not derive an identity; never Claude, where a stamp the account does not match would refuse the account; only namespaces `namespaceSetups` knows, so a gated-out one is never marked) whether its identity is missing (`ToolSetup.lacksBakedIdentity`, one exec for gh).
 Missing, with an account to derive from, it is re-derived (`BuildAccounts.toRederive`, which shares `AccountSelection.needsRederive` with the branch-time reconcile, so the two cannot drift) -- whether the parent was stamped `<none>`, unstamped by an older isx, or stamped with an identity it never got.
 A failure fails the build, as for a fresh template.
 Missing with no account, the build warns (`ToolSetup.unbakedIdentityWarning`, whichever layer installed gh; it names the account when the template uses one that has no token, since "no token is configured" would be untrue while the default has one) and stamps `Metadata.ACCOUNT_IDENTITY_NONE` (`<none>`) over whatever the parent claimed.
@@ -523,7 +523,7 @@ A token-less account bakes `""`, not its name, so it is never stale against the 
 
 The marker differs from every account's identity, so once a token is configured it is an ordinary stale identity.
 The branch-time reconcile re-derives it and stamps the real one.
-While there is still no token the namespace bakes nothing and is left alone rather than failing on every start.
+While there is still no token the namespace does not bake an identity and is left alone rather than failing on every start.
 A real value rather than an absent key, because absence is what an image without gh looks like, and telling the two apart at branch time would cost a guest exec on every branch.
 
 Every template this isx builds is also stamped `Metadata.ACCOUNT_IDENTITY_VERIFIED`, which every branch inherits: its stamps came from the guest and are trusted, and its reconcile costs one instance read and no exec (`InstanceLifecycleRequestBudgetTest`).
@@ -534,7 +534,7 @@ One that has its identity is stamped with the account's, so a later change of ac
 The marker is written by any reconcile of an unmarked instance that had something to do, so one whose stamp was merely stale is marked once re-derived.
 Only a built-in tool can re-derive (it takes Java code a tool YAML cannot supply).
 So the plan is decided against those (`AccountSelection.rederivableSetups`) and the tool definitions are read from disk only when it finds something, to drop a namespace the proxy does not serve.
-An instance with nothing to do -- verified and current, `<none>` while there is still no token, or an older one while no account is configured, which is never marked and so would pay on every use -- reads nothing from disk.
+An instance with nothing to do -- verified and current, `<none>` while there is still no token, or an older one while no account is configured, which is never marked and so would pay on every use -- does not read anything from disk.
 That repairs templates already built without an identity, and their branches, without a rebuild.
 
 The guest is asked before waiting for the instance's address, which only re-deriving needs, so an older instance that has its identity is marked without that wait.
@@ -592,7 +592,7 @@ Both lines follow from what the flag names, not from how far a layer is trusted:
 `HelpContext.definitions()` is built once per opening of the dialog, so the size shown is exactly what gets sent.
 **Prompt caching:** every question carries the whole README, the `docs/` pages, DESIGN.md and its `design/` pages (~990 KB, the bulk of the cost; kept because answers are markedly less complete without the design rationale).
 So `HelpContext.systemBlocks()` returns the prompt as two blocks -- the fixed documentation, then the attached definitions -- and `AiHelpClient.cachedSystem()` puts a 5-minute `cache_control` breakpoint on each for Anthropic and Vertex.
-A follow-up question within five minutes then reads the documentation from the cache at 0.05x the input price (the first question pays 1.25x to write it; OpenAI caches the same stable prefix on its own).
+A follow-up question within five minutes then reads the documentation from the cache at 0.05x the input price (the first question pays 1.25x to write it; OpenAI caches the same stable prefix without being asked).
 Both Claude targets pin `claude-sonnet-5-5`, whose cache reads cost half Sonnet 5's at the same input and output prices (#1675).
 Both also ask at `output_config.effort: low` (`AiHelpClient.EFFORT`): at its default, `high`, Sonnet 5.5 thinks before every answer.
 Measured on #1675, `low` reached the first text in 2.6 s at the median, against 7.4 s at the default and 2.8 s for Haiku 5.5.

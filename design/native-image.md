@@ -51,7 +51,7 @@ These things keep it fixed:
 `isx init` marks itself complete *before* its last step touches the service.
 `isx-proxy` exits `EXIT_CONFIG` until that marker exists, so a service installed ahead of it failed its first start on every first-time install: launchd retried only after the ten-second `ThrottleInterval`, by which time init had given up waiting and reported "proxy is not responding" about a proxy that came up by itself moments later (#938), and systemd, told not to restart that exit code, did not retry at all.
 The step therefore asks, marks, then acts.
-Waiting longer was rejected: it would cost every first install those ten seconds for a start that takes well under one, and would change nothing on Linux.
+Waiting longer was rejected: it would cost every first install those ten seconds for a start that takes well under one, and would have no effect on Linux.
 Dropping the proxy's check was rejected too: it is what turns a proxy started on a half-configured host into a clear message.
 The price is that an install which fails after the marker leaves init recorded as complete, and nothing offers the service again; it is optional, its failure is printed, and `isx proxy install` remains.
 
@@ -79,12 +79,12 @@ On macOS a restart of the service is `launchctl kickstart -k`, not `bootout` fol
 The old sequence took that `print` for success, reported "Proxy service restarted", and moments later nothing was loaded at all.
 So the automatic restart never recovered a hung proxy while a later `isx proxy start`, finding no job, simply loaded one (#916).
 `kickstart -k` is launchd's own restart: the job stays loaded, so there is no teardown to race.
-The proxy's plist sets that `ExitTimeOut` to 15 s, past the proxy's own 10 s force-exit, so launchd does not kill a slow stop before it has warned about what did not close; a reload's wait for the job to be gone outlasts it, or it would give up and leave nothing loaded (#1905).
+The proxy's plist sets that `ExitTimeOut` to 15 s, past the proxy's own 10 s force-exit, so launchd does not kill a slow stop before it has warned about what did not close; a reload's wait for the job to be gone outlasts it, or it would give up and leave no job loaded (#1905).
 Only a changed plist has to be unloaded and loaded again, and then the restart waits until `print` no longer finds the job.
 In both cases the restart has worked when `launchctl` returned 0 and the job is running.
 Sleeping between `bootout` and `bootstrap` was rejected as timing-dependent and still blind to a failed `bootstrap`; retrying `bootstrap` on error 5 was rejected because 5 is also what a rejected plist returns.
 `isx proxy stop` waits the same way until `print` no longer finds the job, and fails when it still does after that wait (#1959).
-Returning at `bootout` let an `isx proxy start` straight after it find the dying job loaded, answer "already running", and leave nothing loaded once launchd was done.
+Returning at `bootout` let an `isx proxy start` straight after it find the dying job loaded, answer "already running", and leave no job loaded once launchd was done.
 Making the start treat a job being unloaded as not running was the alternative, but a stop that returns with the job still there misleads every caller, not only the start, and `isActive()` would have to read launchd's state names to tell the two apart.
 The price is a stop of a hung proxy that takes until launchd kills it, about 15 s.
 
@@ -177,7 +177,7 @@ That is a **~13x** difference, and `haswell` costs no hardware support whatsoeve
 Binary size is unchanged.
 
 `skylake` (haswell + ADX) was measured over three interleaved rounds and came out indistinguishable — 1530 vs 1514 req/s, with the ordering reversing between rounds.
-ADX buys nothing on this path, so there is no reason to accept its narrowing (it would drop Intel Haswell 2013-14 and AMD Excavator, which run v3 code).
+ADX gives no measurable gain on this path, so there is no reason to accept its narrowing (it would drop Intel Haswell 2013-14 and AMD Excavator, which run v3 code).
 
 Two things that look like they should help and do not, both measured:
 
@@ -185,7 +185,7 @@ Two things that look like they should help and do not, both measured:
   Adding `AES,CLMUL` to a v3 build left throughput unchanged, and adding the AVX-512 set to a build with AES recovered only ~1 of the ~11 points `native` holds.
   The AES-GCM intrinsic is selected at build time from `-march`; runtime dispatch applies to a narrower set of operations, and its AMD64 default is already `AVX,AVX2`.
   Note the option *replaces* that default rather than extending it, so anything added must re-state `AVX,AVX2`.
-- **Raising to `x86-64-v4`** buys nothing and costs all non-AVX-512 hardware.
+- **Raising to `x86-64-v4`** gives no gain and costs all non-AVX-512 hardware.
 
 ## aarch64: `+aes`
 
@@ -276,10 +276,10 @@ A profile kept in the repository or a release asset would go stale with every co
 **Alternative:** G1 on macOS aarch64 too.
 Native Image has supported it there since Oracle GraalVM 25.1, and the Apple Silicon release job builds with Oracle GraalVM 25.5, so nothing prevents it.
 
-**Why not:** it was measured on Apple Silicon (#1140) and buys nothing.
+**Why not:** it was measured on Apple Silicon (#1140) and gives no gain.
 Three interleaved rounds of `bench/run.sh`, same commit, Oracle GraalVM 25.4.4.1.1: 118 req/s for both collectors on `--load=maven`, and 53,900 (serial) against 53,700 (G1) on `--load=saturate`, a difference inside the noise.
 G1 costs 9.0 MB of binary (+12%), 5.4 MB of idle RSS (+13%) and 6 to 12 MB more after load.
-A larger G1 heap (`MaxRAM=512m`, 128 MB) changes nothing either, so `MaxRAM` stays 256m on every platform.
+A larger G1 heap (`MaxRAM=512m`, 128 MB) makes no difference either, so `MaxRAM` stays 256m on every platform.
 G1 on macOS is also an Oracle GraalVM feature: `native-image` from GraalVM Community Edition, which is what Homebrew's `graalvm` formula installs, stops with "'G1' is not an accepted value".
 So `install.sh --native` would fail on such a Mac.
 macOS x86_64 has no choice in any case: GraalVM dropped it after 25.0.1, before G1 reached macOS.
@@ -357,7 +357,7 @@ Only then is each file copied beside its destination and renamed over it, so an 
 A binary's sum is the one the build job that compiled it recorded (`SHA256SUMS` in each uploaded artifact, by the "Record checksums" step).
 `.github/scripts/release-sha256sums.sh` takes that sum, and refuses an artifact that no longer matches it, is not listed in it, or shares its name with another asset.
 Assets the release job makes itself (completions, the compressed kernel) or takes from a job that records none (the appliance disk, `git-remote-isx` from the checkout) are summed there.
-A `workflow_dispatch` publishes nothing, so its `checksums` job writes the same file for the binaries it built and uploads it as an artifact.
+A `workflow_dispatch` does not publish anything, so its `checksums` job writes the same file for the binaries it built and uploads it as an artifact.
 `GetIsxScriptTest` runs the script against a stand-in `curl` serving a fake release whose sums the release script wrote, and fails when the script fetches an asset the release's list does not hold.
 
 What this covers, honestly: the sums and the binaries come from the same release, both from GitHub.
@@ -418,7 +418,7 @@ It now prints `INCONCLUSIVE` per target instead of `ok`, so the report stops rea
 `Pattern.compile` is expensive, and `String.matches`, `replaceAll`, `replaceFirst` and a regex `split` each call it on every run (#1929).
 So every regular expression in `main` is a `static final Pattern`, used through `matcher(...)` or `Pattern.split`.
 A constant's class is initialized at build time in the native image, so the compiled pattern is in the image heap and costs nothing at startup either.
-A one-character `split` (`"\n"`, `"\t"`, `":"`) is exempt: `String.split` takes a fast path that compiles nothing.
+A one-character `split` (`"\n"`, `"\t"`, `":"`) is exempt: `String.split` takes a fast path that does not compile a pattern.
 A pattern known only at run time (a tool definition's `pattern:`, one per placeholder at load) is compiled once where it is known and carries a `// regex at run time: <why>` comment.
 `PatternConstantGateTest` (`cli`) fails on any other compile, in all three modules.
 

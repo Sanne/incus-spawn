@@ -57,20 +57,20 @@ Task ids carry a random per-session tag rather than the pid, so they cannot coll
 `max-concurrent-tasks` counts per user the same way (#1015), and for the same reason.
 The machine runs every task whichever process holds it, and a controller is one session running ten tasks, which a per-session cap sized for an editor stopped at once.
 The truth about a task is in its instance (its files and systemd unit).
-So a reservation asks each running instance of the user's that another session holds or that is orphaned, with one exec in parallel (`TaskScripts.busy()`), and asks nothing when there is none.
+So a reservation asks each running instance of the user's that another session holds or that is orphaned, with one exec in parallel (`TaskScripts.busy()`), and makes no exec when there is none.
 A kept instance counts while a live session still holds it (that session can go on starting tasks there) and stops counting with it, as for `max-instances`.
 The count is taken again after a delegate's instance is branched, since other sessions may have started tasks meanwhile.
 A host-side ledger lost: each session's own belief goes stale-high as soon as its tasks finish unobserved, and would block the others for nothing.
-An instance that cannot be asked counts nothing, so it cannot block every later task; `max-instances` still bounds it.
+An instance that cannot be asked adds no tasks to the count, so it cannot block every later task; `max-instances` still bounds it.
 Nor can one that never answers hold up every task start or pile up processes.
 The probe runs isx's script as agentuser's uid without a login shell (`IncusClient.execProbe`), so a profile that hangs `su -` -- which an agent in the instance can arrange -- never runs; and it is a bounded exec (`execStreamWithin`, killed at ten seconds and given up on shortly after), so even a guest whose own binaries hang releases the host.
 There is never more than one probe per instance.
-One that did not answer in time, or answered but took more than half of it (a FIFO a loop feeds just in time would otherwise cost every task start nearly ten seconds), is not asked for ten minutes and counts nothing meanwhile.
+One that did not answer in time, or answered but took more than half of it (a FIFO a loop feeds just in time would otherwise cost every task start nearly ten seconds), is not asked for ten minutes and adds no tasks to the count meanwhile.
 Counting its last answer instead was tried and lost.
 A count frozen for ten minutes goes stale-high and blocks starts for nothing, which is what asking the guest exists to avoid.
 The undercount is the same one the timeout path accepts, and `max-instances` bounds it.
 Every script the host waits on reads only regular task files (`TaskScripts.ifFile`), so a FIFO in place of a task file holds neither these probes nor an `adopt_instance`, `task_status` or `task_result` (#1035).
-Checking the path before opening it is not enough, as a FIFO can be swapped in between (#1080).
+Checking the path before opening it is not enough, as a FIFO can be swapped in between the check and the open (#1080).
 The file is opened read-write, which never waits on a FIFO, and the type of what was opened is checked (`[ -f /dev/fd/3 ]`).
 The path is still checked first, since a read-write open creates a missing file.
 Writes never open the file they write: `launch`, `cancel`, every exit record and `exec`'s pid file write into a file `mktemp` creates in the same directory and rename it into place, which replaces a FIFO without opening it (#1074).
@@ -92,7 +92,7 @@ Every tool that names an instance checks the session's registry *and* the stamp 
 **A person sees what the agent sees (#1053).**
 `isx list` and the TUI's instance details say which instances a session made, what for, and whether they are `held`, `orphaned` or `kept`, so a person can tell an agent's worker from their own instance before destroying or entering it.
 `McpStanding` decides the state with `list_instances`' rules (`Orphans.othersOf`, kept first), and a test holds the two together.
-It reads nothing beyond the listing it is given.
+It does not read anything beyond the listing it is given.
 A process session's liveness is a local `/proc` read, and a coordinator instance's is whether that instance is in the same listing with the same grant, so `isx list` still costs one request.
 The TUI has no column for it, because the instance table has no width to spare, only rows in the detail pane.
 An orphan a sweep stopped as dormant (#1028) is still `orphaned` there, as in `list_instances`; the detail pane says when it was stopped and that `dormant-grace-hours` in `mcp.yaml`, not the orphan grace, comes next.
@@ -101,7 +101,7 @@ Human output flattens control characters in these stamps: `isx mcp` refuses them
 
 **Orphans are quarantined, not reaped.**
 A name is registered before its copy starts, so a session ending mid-create still covers it.
-On end of input or SIGTERM a session destroys nothing: it stamps `mcp-orphaned` with the time on what it holds.
+On end of input or SIGTERM a session does not destroy any instance: it stamps `mcp-orphaned` with the time on what it holds.
 After a SIGKILL nobody stamps that, so the first later session to see the dead holder stamps it then.
 Either way, the grace period starts when the orphan is first known, without a per-call heartbeat write (each instance write costs Incus a backup-file rewrite).
 Each new session sweeps this user's orphans and destroys those past `orphan-grace-hours` in `mcp.yaml` (default 24: long enough to outlast a night's CI wait, short enough that forgotten instances do not pile up) -- never kept ones, never ones in a pending operation, never one being adopted, never one a person is working in, and never one whose delegated agent is still running.
@@ -268,14 +268,14 @@ Its text is rendered from the parsed structure, with a path holding a control ch
 **Told, for a client that asks (#1014).**
 A daemon driving `isx mcp` would rather be told than hold a `wait_any`: `notifications/isx/task_changed` (`{task_id, instance, run, state, exit_code?}`, state `running`, `finished`, `lost`, `attached` or `released`) is sent on every transition.
 Server and client both list `isx/task_changed` under `capabilities.experimental` to switch it on; it starts only once the `initialize` response is out.
-A client that does not ask -- Claude Code -- gets nothing and costs nothing.
+A client that does not ask -- Claude Code -- gets no notification and costs nothing.
 The server only learns task states when asked, so notifying means polling, and an always-on poller would spend an exec per instance every two seconds on messages that are dropped.
-`TaskWatcher` keeps the last state it reported per task and the paths that learn one for free feed it (launch, `task_status`, forgetting an instance), so a transition is reported once whichever path saw it first.
+`TaskWatcher` keeps the last state it reported per task and the paths that learn one anyway feed it (launch, `task_status`, forgetting an instance), so a transition is reported once whichever path saw it first.
 The poller fills in the rest, including a task never reported (adopted) or last reported running (cancelled since): an extra exec in adoption would only say it two seconds sooner.
-A cancel must not read as a loss on the way.
+A cancel in progress must not read as a loss.
 It stops the unit, sweeps the task's processes for two seconds and only then records exit 143, and a unit that is inactive with no exit file is otherwise `lost`.
 So `cancel` stamps `cancelling-<n>` before the stop.
-Every state read calls the run `running` while that stamp is under five minutes old -- still true, its processes are being killed, and the stop alone may wait systemd's 90 s -- so a poll landing in the sweep reports nothing and the client hears one `finished 143`.
+Every state read calls the run `running` while that stamp is under five minutes old -- still true, its processes are being killed, and the stop alone may wait systemd's 90 s -- so a poll landing in the sweep does not report a change and the client hears one `finished 143`.
 A stamp older than that (or from the future) is a cancel that died midway, and the run is lost after all -- once the exit file has been looked at again, since a cancel records its exit before removing its stamp and may finish between a reader's two checks.
 Every state read means `status()` too: it now prints the guest's own `RUN_STATE` rather than the raw unit state for Java to interpret, so the rules are written once.
 A cancel is also the one path that reports at once, and costs nothing: the watch script rides the cancel's own exec, because `stop_instance(force)` stops the instance straight after and a stopped instance cannot be asked.
@@ -301,10 +301,10 @@ Its presence alone, with no `mcp.yaml` yet, makes the policy `Invalid`: the defa
 Nothing is taken from the section; it only stops isx guessing.
 An empty section (`mcp:` or `mcp: {}`) set nothing the defaults would widen, so it does not count.
 A `config.yaml` that does not parse counts the same, since `SpawnConfig.load()` would read it as empty and hide the section.
-A coordinator session whose resume meets an invalid policy holds nothing until it reconnects, and says so on stderr.
+A coordinator session whose resume meets an invalid policy does not hold any instance until it reconnects, and says so on stderr.
 MCP was experimental, so this is a clean break: no fallback, no merging and no migration, because a policy assembled from two files is one nobody can review in one place.
 `McpConfig.load()` reads the file on every call, as before.
-A missing file or an empty document approves nothing.
+A missing file or an empty document does not approve any template.
 One that cannot be read, does not parse, or holds a key or value isx does not know throws `McpConfig.Invalid`, naming the file; `isx mcp` turns that into a `refused` error for the call that needed the policy, never an earlier policy and never defaults.
 Unknown keys are refused rather than ignored because ignoring them drops a restriction in silence: a mistyped `max-instance: 2`, or the old section pasted with its `mcp:` line, would otherwise leave the defaults in force.
 Retired keys (`McpConfig.RETIRED`) are the one exception: they restricted nothing that still exists, so they load and are named instead.
@@ -394,7 +394,7 @@ Now `cancel` saves the session itself, a refused resume never replaces the saved
 A saved session can still go later: Claude Code deletes transcripts older than `cleanupPeriodDays` (30 days by default), and resuming one fails the same way (#1902).
 So the status script, the run script and the join guard look for the transcript too, as Pi's resume looks for its session file.
 The status script's check is one `ls` in an exec `task_status` and `send_message` make anyway, so refusing costs no extra request.
-The appended brief frames the role -- a delegate reporting to a coordinator -- and forbids nothing: what a delegate can reach is bounded by the credentials the template's proxy account carries, what it does by the instruction.
+The appended brief frames the role -- a delegate reporting to a coordinator -- and does not forbid anything: what a delegate can reach is bounded by the credentials the template's proxy account carries, what it does by the instruction.
 That is what makes "fix it, don't push" -> review `get_diff` -> "push and open the PR" a controlled flow rather than a prompt-level honour system.
 `get_diff` compares against the commit each repository was at when the task started, using a throwaway index so untracked files are included and the instance's own index is untouched.
 One agent per instance, because two would clash in one working tree; `delegate(template=...)` gives parallelism instead.
@@ -487,7 +487,7 @@ The pieces, and why each is the way it is:
   Neither list can widen the other.
   Deny by default, with no fallback to the global list: no `coordinator.control-over`, a missing or project-local definition, or an untrusted lineage gives an empty scope, so a forgotten list is a warned refusal rather than silent access.
   The scope is keyed on the leaf template, judged by the same `InstanceRegistry.lineageOf` host routes use (#936), read once per session; the definition is read live from the trusted layers on every call, never stamped, so an edit reaches a running coordinator at once and nothing goes stale.
-  The nearest layer whose `coordinator:` sets either key decides alone, as it decides the default: its list replaces its parent's, so a child never silently widens a parent's scope, and a child that sets only `isx-control-capability` controls nothing until it lists templates.
+  The nearest layer whose `coordinator:` sets either key decides alone, as it decides the default: its list replaces its parent's, so a child never silently widens a parent's scope, and the coordinators of a child that sets only `isx-control-capability` cannot control any template until it lists some.
   Everything that asks which templates a session may use asks the scope: `list_templates`, `create_instance`, `from_instance`, `adopt_instance` and the take-back's release rule, so narrowing either list releases the workers it no longer covers.
   Each mismatch is said by one function, naming the list, file and key to change, wherever it surfaces: `isx branch` and the TUI branch, a refusal and `list_templates`' `scope_note`, the session log, `isx doctor`, and the TUI's instance details; `isx list` shows only `mcp_client`, since it loads no definitions.
   `coordinator:` is an object so per-caller limits can join it later as keys that only narrow `mcp.yaml`'s global values, the same intersection.
@@ -496,12 +496,12 @@ The pieces, and why each is the way it is:
   Branching with `--mcp-client` is the only per-instance act.
   The exec that delivers each start's secret (`InstanceSecret.GUEST_SCRIPT`, root in the guest) also gets `ISX_MCP_CLIENT` (`InstanceSecret.guestEnv(secret, mcpCaller)`), which every start path reads from the instance it already holds, so it costs no request.
   `McpClientRegistration` compares it with a root-owned marker in the rootfs (`/var/lib/isx/mcp-client-registered`, holding a digest of the entry it registered, `ENTRY_VERSION`, so an isx that changes the entry re-registers existing coordinators on their next start), and checks that Claude Code's own config still holds the entry (`CONFIG_HAS_ENTRY`, so an entry the agent removed comes back; root reads that agent-owned file through `timeout -k 1 2 head -c 16MiB`, since the agent may swap in a FIFO or a vast sparse file and the readiness exec has no time limit of its own -- a read cut short answers "no entry", which costs a re-registration, never a hang).
-  A copy gets one removal attempt, whatever it answers: an entry it cannot remove reaches nothing without the stamp, and retrying it would cost every later start; only when either says otherwise, runs Claude Code's own `claude mcp add-json --scope user isx` or `claude mcp remove --scope user isx` and updates the marker.
-  So the registration is the standard one (`claude mcp list` and `/mcp` show it, and every way of launching Claude Code finds it), a steady-state start runs no Claude Code at all, and a reboot isx did not do changes nothing.
+  A copy gets one removal attempt, whatever it answers: an entry it cannot remove cannot reach the MCP server without the stamp, and retrying it would cost every later start; only when either says otherwise, runs Claude Code's own `claude mcp add-json --scope user isx` or `claude mcp remove --scope user isx` and updates the marker.
+  So the registration is the standard one (`claude mcp list` and `/mcp` show it, and every way of launching Claude Code finds it), a steady-state start runs no Claude Code at all, and a reboot isx did not do does not change the registration.
   Nothing is inherited for good: a copy of a coordinator carries the registration until its first isx start, which a branch always is, removes it.
   Only `1` switches it on; a missing or unknown value removes, so a start path that forgot to say would fail closed.
   `claude` lives in the agent's home, where the agent can replace it, so the script runs it as the agent and never as root; the marker is root's, so only the script decides what isx believes it registered.
-  The registration is not the capability -- the proxy still checks address, secret and stamp -- so one left behind or added by hand reaches nothing.
+  The registration is not the capability -- the proxy still checks address, secret and stamp -- so one left behind or added by hand cannot reach the MCP server.
   The secret rotates every start while the registration is written once, so the entry carries a `headersHelper` that reads `/run/isx/instance-secret` by its absolute path: a `claude -p` under a systemd unit never read the login profile that names it.
   Pi gets the same treatment, beside Claude Code and independent of it, so a coordinator may run either.
   The script runs `pi mcp add isx` with the URL and an `X-Isx-Instance-Secret` header whose value is `!cat /run/isx/instance-secret`, which Pi runs on each connection, so it too reads the current secret.
@@ -526,7 +526,7 @@ The pieces, and why each is the way it is:
   It is a page's block rather than a built-in template: built-in templates are being retired (#1195), and a fixed one could only name a worker isx guessed at.
   It is not an option that fills in `control-over` either (#2076 dropped single-field options), and the two consents stay exactly as they were: the definition's list, and the person's approval in `mcp.yaml`.
   `CoordinatorFromFreshInstallDocsTest` runs the page's own definition through `isx templates new --from` and checks the coordinator it makes controls `tpl-agent` once approved and nothing before.
-  The one hint isx adds is where a coordinator controls nothing because its template lists nothing (`isx branch --mcp-client` on a plain template, say): that warning names the page.
+  The one hint isx adds is where a coordinator cannot control any template because its template lists none (`isx branch --mcp-client` on a plain template, say): that warning names the page.
 
 The tool contract is the stdio one, unchanged: the same tools, approved templates, `mcp.yaml` limits and audit log, the session's host-side stamps (`mcp-cwd`, `mcp-client-pid`) simply absent.
 Out of scope: gating outward actions such as pushes at the proxy (the complement to this), and reaching Incus on another host.
@@ -582,7 +582,7 @@ With `--start`, `ssh-proxy` installs `StdioGuard`, as `isx mcp` does, and relays
 The grant lives in the user's file, as `isx mcp`'s approval lives in `mcp.yaml`, so no process grants itself the right to delete; a flag the tool passes would have been exactly that.
 A missing instance is success, since an orchestrator repeats a destroy that failed after the delete.
 A plain `isx destroy` of an owned instance asks, and refuses without a terminal unless `--skip-confirmation`: deleting it under the tool breaks the tool's view of it.
-`drivers:` is a raw section like `host-routes:`, and an entry isx cannot read grants nothing.
+`drivers:` is a raw section like `host-routes:`, and an entry isx cannot read does not grant any permission.
 
 **Who owns what is one column.**
 `isx list` has one `OWNER` column, into which `isx mcp`'s standing folds (`mcp held: <purpose>`) beside a tool's name, and its formats append `owner` and `owner_id`.
@@ -601,7 +601,7 @@ herdr keeps its machines across a stop and cannot start one, and the instance's 
 Its label is the instance's name, so `herdr --machine <name>` still finds it.
 Unregistering on stop and adding again on start was the alternative; Sanne chose to keep the machine and start on connect.
 herdr's client reconnects to a lost machine by itself, every 0.5 s to 2 minutes, so while one is open it starts a stopped instance again; `herdr machine disable` keeps it stopped.
-herdr's own add runs from a start that is preparing the instance, so every command a host integration runs has `ISX_SSH_PROXY_NO_START=1` in its environment (`SshKeyManager.NO_START_ENV`), which ssh hands its ProxyCommand: that connection starts nothing.
+herdr's own add runs from a start that is preparing the instance, so every command a host integration runs has `ISX_SSH_PROXY_NO_START=1` in its environment (`SshKeyManager.NO_START_ENV`), which ssh hands its ProxyCommand: that connection does not start an instance.
 A nested start would wait for the start's lock, or, on a path holding none, prepare the instance again, a VM always, and wait for the herdr records lock its parent holds.
 A connection marked that way can only do less than one without the mark, so any host process may set it.
 A lost or stale config loses the alias with the instance's block, or the alias alone, so every start writes the alias again when it is not current and herdr's record targets it (`HostIntegration.usesStartAlias`).
@@ -612,7 +612,7 @@ Otherwise herdr would resolve the name as any host, a real machine of that name 
 What isx did is recorded on the host, one file per instance name: the id of the machine it added and its target, or `-` when it added none.
 A record with an id and no target is a machine an older isx added for the name, which never starts the instance.
 herdr cannot change a machine's target, so the next start removes that machine and adds the instance again, once; one it cannot remove is kept, warned about once and recorded as reaching the name.
-So later starts check one file and run nothing, a copy or a renamed instance gets a record of its own, and an untrusted build is not retried or reported again on every start.
+So later starts check one file and run no command, a copy or a renamed instance gets a record of its own, and an untrusted build is not retried or reported again on every start.
 A failed add (a timeout, a refused connection) is tried once more, on the next start, since the guest's sshd may not have been up; a second failure warns with the command to run and is recorded as not added (Sanne's decision on #1823).
 A destroy removes only the recorded machine: herdr may hold a machine the user added for a real host that shares the instance's name, which a match on the SSH target alone would have removed.
 The TUI's instance details name the tools that registered the instance, from the same records, read when they open rather than on every frame.

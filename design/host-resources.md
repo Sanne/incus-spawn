@@ -218,7 +218,7 @@ Trusted layers (user, search paths, built-in) are unaffected, and so are a proje
 
 A project-local template's `repos:` get no host reference mount, and `HostRepoRefresh.collectAllRepos()` leaves them out of the host-side fetch.
 Otherwise a cloned repository could list the URL of a repo you have checked out and get your working tree mounted into a build it controls.
-Their repos are cloned from the network inside the container, which is slower but reaches nothing of the host's.
+Their repos are cloned from the network inside the container, which is slower but does not reach anything of the host's.
 Trusted ancestors of a project-local template keep their references.
 
 ### Project-local templates cannot swap shared base images
