@@ -1106,6 +1106,11 @@ public class InitCommand extends BaseCommand {
         return commandExists(command);
     }
 
+    /** Runs a host command at the terminal, as {@link #runHost} does; tests record it instead. */
+    int runShown(String... command) {
+        return runHost(command);
+    }
+
     boolean proxyServiceActive() {
         return ProxyService.isActive();
     }

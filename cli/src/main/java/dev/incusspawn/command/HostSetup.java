@@ -34,7 +34,6 @@ import static dev.incusspawn.util.BuildOutput.BOLD;
 import static dev.incusspawn.util.BuildOutput.YELLOW;
 import static dev.incusspawn.util.BuildOutput.styled;
 import static dev.incusspawn.command.BaseCommand.askYesNo;
-import static dev.incusspawn.command.InitCommand.commandExists;
 import static dev.incusspawn.command.InitCommand.runHost;
 import static dev.incusspawn.command.InitCommand.runHostCapturingExit;
 
@@ -76,8 +75,8 @@ class HostSetup {
      * Detect the host package manager. Returns the install command prefix
      * (e.g. {"dnf", "install", "-y"}) or null if none is found.
      */
-    private static String[] detectInstallCommand() {
-        return detectInstallCommand(InitCommand::commandExists);
+    private String[] detectInstallCommand() {
+        return detectInstallCommand(init::hostHasCommand);
     }
 
     static String[] detectInstallCommand(Predicate<String> has) {
@@ -109,11 +108,11 @@ class HostSetup {
      * runs from the lists there are, and reports its own error if they will not do.
      */
     static final String APT_REFRESH = "[ -n \"${isx_apt_updated:-}\" ] || { isx_apt_updated=1;"
-            + " apt-get update || echo \"apt-get update failed; installing from the package lists there are.\" >&2; }";
+            + " apt-get update || echo \"" + HostSetup.APT_REFRESH_FAILED + "\" >&2; }";
 
     /**
      * The change that runs {@code cmd}, an {@link #installCommand}; on apt, its script refreshes the
-     * package lists first ({@link #APT_REFRESH}). The run with sudo installs as before.
+     * package lists first ({@link #APT_REFRESH}), as the run with sudo does in {@link #install}.
      */
     static InitPlan.Change installChange(String what, List<String> cmd) {
         if (cmd == null) return InitPlan.Change.sudo(what, null);
@@ -152,13 +151,35 @@ class HostSetup {
         return installCommand(has, packages.toArray(String[]::new));
     }
 
+    /** The run's refresh of apt's package lists, as the script's {@link #APT_REFRESH} does it. */
+    static final String[] APT_UPDATE = {"sudo", "apt-get", "update"};
+
+    static final String APT_REFRESH_FAILED = "apt-get update failed; installing from the package lists there are.";
+
+    private boolean aptRefreshed;
+
+    /**
+     * Runs {@code cmd}, an {@link #installCommand}, at the terminal under {@code label}. On apt the
+     * run's first install refreshes the package lists first, as the script does: a failed refresh
+     * only warns, and the install reports its own error if the lists there are will not do.
+     */
+    boolean install(String label, List<String> cmd) {
+        if (!aptRefreshed && cmd.contains("apt")) {
+            aptRefreshed = true;
+            if (!BuildOutput.liveStep("Refreshing the package lists", () -> init.runShown(APT_UPDATE) == 0)) {
+                BuildOutput.warn(APT_REFRESH_FAILED);
+            }
+        }
+        return BuildOutput.liveStep(label, () -> init.runShown(cmd.toArray(String[]::new)) == 0);
+    }
+
     void installDependencies() {
-        Predicate<String> has = InitCommand::commandExists;
+        Predicate<String> has = init::hostHasCommand;
         var missing = missingDependencies(has);
         var cmd = dependencyCommand(has, missing);
         if (missing.isEmpty() || cmd == null) return;
         var label = "Installing dependencies: " + String.join(", ", missing);
-        BuildOutput.liveStep(label, () -> runHost(cmd.toArray(String[]::new)) == 0);
+        install(label, cmd);
     }
 
     /** What {@link #installDependencies} would install. */
@@ -225,7 +246,7 @@ class HostSetup {
     }
 
     void checkIncusInstalled() {
-        if (!commandExists("incus")) {
+        if (!init.hostHasCommand("incus")) {
             var installCmd = detectInstallCommand();
             BuildOutput.step("Incus is not installed on this system.");
             BuildOutput.step("The following steps require sudo privileges:");
@@ -234,6 +255,7 @@ class HostSetup {
             BuildOutput.stepNote("Add your user to the 'incus-admin' group");
             if (installCmd != null) {
                 BuildOutput.step("If you prefer to install manually, abort now (Ctrl+C) and run:");
+                if ("apt".equals(installCmd[0])) BuildOutput.stepNote(String.join(" ", APT_UPDATE));
                 BuildOutput.stepNote("sudo " + String.join(" ", installCmd) + " incus");
             } else {
                 BuildOutput.step("No supported package manager found (dnf, apt, zypper, pacman).");
@@ -256,11 +278,7 @@ class HostSetup {
                 }
             }
 
-            var fullCmd = new String[installCmd.length + 2];
-            fullCmd[0] = "sudo";
-            System.arraycopy(installCmd, 0, fullCmd, 1, installCmd.length);
-            fullCmd[fullCmd.length - 1] = "incus";
-            BuildOutput.liveStep("Installing Incus via " + installCmd[0] + " (sudo required)", () -> runHost(fullCmd) == 0);
+            install("Installing Incus via " + installCmd[0] + " (sudo required)", installCommand(init::hostHasCommand, "incus"));
             BuildOutput.liveStep("Enabling the incus service", () -> runHost("sudo", "systemctl", "enable", "--now", "incus") == 0);
             BuildOutput.liveStep("Adding user to the incus-admin group",
                     () -> runHost("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name")) == 0);
@@ -521,16 +539,12 @@ class HostSetup {
             }
             case DetectionResult.NeitherInstalled n -> {
                 BuildOutput.step("No firewall detected.");
-                var installCmd = detectInstallCommand();
-                if (installCmd == null) {
+                var cmd = installCommand(init::hostHasCommand, "firewalld");
+                if (cmd == null) {
                     BuildOutput.warn("Could not detect package manager.");
                     return;
                 }
-                var cmd = new java.util.ArrayList<String>();
-                cmd.add("sudo");
-                cmd.addAll(java.util.List.of(installCmd));
-                cmd.add("firewalld");
-                if (!BuildOutput.liveStep("Installing firewalld", () -> runHost(cmd.toArray(String[]::new)) == 0)) {
+                if (!install("Installing firewalld", cmd)) {
                     BuildOutput.warn("Failed to install firewalld.");
                     return;
                 }
