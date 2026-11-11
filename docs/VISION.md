@@ -34,7 +34,7 @@ The proxy on the host, which adds the credentials to requests as they leave an i
 
 The other part, an identity per instance, is partly delivered.
 Credential accounts map each instance to its own tokens, such as its own Claude API key and GitHub identity.
-You choose the accounts when you branch, and the proxy resolves them from the caller's address.
+You choose the accounts when you branch, and the proxy resolves them from which instance is calling.
 
 Still to come is [#271](https://github.com/Sanne/incus-spawn/issues/271): SSH-agent-filtered commit signing, where the instance can request a signature for exactly one designated key.
 Each request is checked to be for git signing only, and is audited.
@@ -76,7 +76,7 @@ The review model, always an immutable commit and never a live shared directory, 
 ## Local-first, by conviction
 
 The major agent platforms are converging on cloud execution.
-isx deliberately does the opposite: it runs on your hardware, in your network, with your private repos, and nothing leaves infrastructure you own.
+isx deliberately does the opposite: it runs on your hardware, in your network, with your private repos, and your repositories and credentials stay on infrastructure you own.
 
 This is not nostalgia.
 Local execution is the requirement of sovereignty-sensitive organizations, which cloud agent platforms structurally cannot serve: regulated industries, the public sector, security-conscious engineering orgs.

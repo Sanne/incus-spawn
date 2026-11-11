@@ -23,7 +23,7 @@ isx onboards agents the way you'd onboard a new teammate:
   This autonomy is safe because the machine holds nothing worth stealing, and nothing the agent does reaches your host unless you ask for it.
 
 Runs on Linux and macOS, on your hardware.
-Your code and credentials never leave your hardware, and everything an agent does can be traced back to that agent.
+Your repositories and credentials stay on your hardware, and everything an agent does can be traced back to that agent.
 
 Agents are the main use, not the only one.
 The same disposable machines are ideal for triaging untrusted patches, reproducing bug reports and testing on a clean system.

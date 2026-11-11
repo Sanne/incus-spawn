@@ -78,14 +78,14 @@ You inspect a git hook or build script, decide it is safe and run your build, bu
 Unlike `git fetch`, which gives you one immutable commit to review and act on, a live mount means your review is never final.
 
 **Misleading view**: a shared project directory shows only part of the agent's environment.
-The agent's code runs against the instance's execution context: instance-local SNAPSHOT dependencies, `node_modules` and pip packages, none of which the mount shows on the host.
+The agent's code runs against the instance's execution context: instance-local SNAPSHOT dependencies and pip packages, neither of which the mount shows on the host.
 
 The source on the host looks like a complete project, but built on the host it may behave differently or break, because the host does not have the instance's dependencies.
 
 **What to use instead:**
 
 - **`isx://` git remotes** ([Git Remotes](../README.md#git-remotes)): `git fetch <instance>` pulls a consistent, atomic snapshot: a commit you review with `git diff` before merging.
-  Even if the agent pushes new commits between your review and your merge, you act on the exact commit you reviewed.
+  Even if the agent makes new commits between your review and your merge, you act on the exact commit you reviewed.
 
   Git identifies each commit by a hash of its content, so a fetch never gives you a mix of old and new files.
   This is the intended way to get work out of an instance.

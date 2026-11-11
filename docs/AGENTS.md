@@ -98,7 +98,8 @@ The build also gives Codex the [environment primer](#agent-environment-context),
 The default action resumes your most recent session.
 
 The footer shows the model, the current directory and `Running unconstrained in isx [version] [container name]`.
-That message is the name of a permission profile with full filesystem and network access, and live web search.
+That message is the name of a permission profile with full filesystem and network access.
+The build also turns on live web search.
 
 The version and instance name refresh at login, including in a new branch of a template.
 Use `/statusline` to customize the footer; the `permissions` item displays the isx message.

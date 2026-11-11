@@ -64,7 +64,7 @@ Running `isx update-base <tag>` or `--latest` removes a `minimal.yaml` that an o
 
 Add your own templates as YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local).
 A project-local template is one that a cloned repository ships in `.incus-spawn/`.
-You can also point to external directories via `searchPaths` in `config.yaml` (see [Configuration](CONFIGURATION.md#configuration)).
+You can also point to external directories via `searchPaths` in `config.yaml` (see [Search paths](CONFIGURATION.md#search-paths-for-templates-and-tools)).
 
 isx ignores a key it does not know, such as `repo:` written for `repos:`, and prints a warning that names where the key is and which key you probably meant.
 
