@@ -35,6 +35,9 @@ The agent stops and hands over to you at three points, and nowhere else:
 On macOS no step needs root, so the first handover does not happen.
 A fresh Linux host usually needs the root script once.
 
+On Linux the root script adds you to the `incus-admin` group, which an agent that is already running gets only when you start it again from a new login.
+Until then it runs isx commands through `sg incus-admin`.
+
 ## Why these steps stay with you
 
 An agent with a shell on your computer can already do whatever you can, and isx cannot change that.
