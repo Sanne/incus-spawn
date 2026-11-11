@@ -72,6 +72,8 @@ class CoordinatorFromFreshInstallDocsTest {
     @Test
     void thePagesDefinitionMakesACoordinatorOfTheQuickStartsTemplate() throws IOException {
         var page = page();
+        // The Quick Start sets up the Claude credential in isx init, before tpl-agent
+        IsolatedHome.seed("claude:\n  apiKey: \"sk-ant-api-x\"\n");
         assertEquals(List.of(), newFromStdin("tpl-agent", quickStart()));
         // What it reaches is shown to the person, which is the review the page asks of them
         var reach = newFromStdin("tpl-coordinator", definition(page));

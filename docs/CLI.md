@@ -404,6 +404,8 @@ Check a template definition without storing or building it.
 It takes a file, `-` for stdin, or the name of a template you have.
 It runs the same check as `isx templates new --from` and exits 1 when the definition has an error.
 
+A credential the template's tools need that is not configured is a warning on `tools`, naming the command that configures it.
+
 ```shell
 isx templates validate <file-or-name>
 ```
