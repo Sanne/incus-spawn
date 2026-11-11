@@ -1,16 +1,20 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.BuildInfo;
+import dev.incusspawn.ClientLog;
 import dev.incusspawn.Environment;
 import dev.incusspawn.OwnDirectory;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.Warnings;
+import dev.incusspawn.config.CredentialCheck;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.config.TemplateFinding;
 import dev.incusspawn.config.TemplateReach;
 import dev.incusspawn.config.TemplateValidator;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.Output;
 import dev.incusspawn.util.OutputFormat;
@@ -356,6 +360,7 @@ public class TemplatesCommand extends BaseCommand {
                         + "', not '" + templateName + "': the two must agree"));
             }
             var valid = check.stream().noneMatch(TemplateFinding::isError);
+            if (valid) check.addAll(credentialFindings(() -> ImageDef.parseYaml(yaml), defs));
             var written = false;
             if (valid) {
                 try {
@@ -431,10 +436,12 @@ public class TemplatesCommand extends BaseCommand {
             }
             var result = TemplateValidator.validate(yaml, location, defs);
             var valid = !result.hasErrors();
+            var findings = new ArrayList<>(result.findings());
+            if (valid) findings.addAll(credentialFindings(() -> ImageDef.parseYaml(yaml), defs));
             if (outputFormat != OutputFormat.TABLE) {
-                printCheck(outputFormat, result.name(), location, valid, false, result.findings(), result.reach());
+                printCheck(outputFormat, result.name(), location, valid, false, findings, result.reach());
             } else {
-                reportCheck(result.findings(), result.reach(), BuildOutput.bound());
+                reportCheck(findings, result.reach(), BuildOutput.bound());
             }
             return valid ? CommandResult.SUCCESS : CommandResult.valueOf(1);
         }
@@ -460,6 +467,43 @@ public class TemplatesCommand extends BaseCommand {
                 throw new IOException(TemplateValidator.NOT_UTF8, e);
             }
         }
+    }
+
+    /**
+     * A warning, on {@code tools}, for each credential the definition's tools need that is not
+     * configured: the definition is taken, but {@code isx branch} refuses its instances until the
+     * command it names has run, as the build also warns (#1438). So the commands run before the
+     * branch name the gap themselves (#2163). It reads the host's config, not the definition
+     * alone, so it is added here rather than in {@link TemplateValidator}; and only to a
+     * definition with no error, which parses and has a name. Only advice: whatever stops it, it
+     * says nothing.
+     */
+    static List<TemplateFinding> credentialFindings(ImageDefSource definition, Map<String, ImageDef> defs) {
+        try {
+            var def = definition.read();
+            var chain = new java.util.HashMap<>(defs);
+            chain.put(def.getName(), def);
+            var config = SpawnConfig.load();
+            return CredentialCheck.missingByCredential(config, List.of(def.getName()), chain,
+                            new ToolDefLoader(config.getSearchPaths()))
+                    .keySet().stream()
+                    .map(missing -> {
+                        var said = new ArrayList<String>();
+                        said.add(BuildCommand.unbranchable(missing, "this template"));
+                        said.addAll(missing.notes());
+                        return TemplateFinding.warning("tools", String.join(" ", said));
+                    })
+                    .toList();
+        } catch (IOException | RuntimeException e) {
+            ClientLog.warn("Missing-credential check skipped: " + e);
+            return List.of();
+        }
+    }
+
+    /** Where {@link #credentialFindings} reads the definition it checks. */
+    @FunctionalInterface
+    interface ImageDefSource {
+        ImageDef read() throws IOException;
     }
 
     /**
@@ -674,7 +718,9 @@ public class TemplatesCommand extends BaseCommand {
                     && result.errors().contains(own.substring(0, own.length() - dev.incusspawn.config.LayeredDefinitions.REFUSED.length())));
             if (!reported) Warnings.warn(warning);
         }
-        return reportFindings(result.findings(), out);
+        var findings = new ArrayList<>(result.findings());
+        if (!result.hasErrors()) findings.addAll(credentialFindings(() -> ImageDef.parseFile(file), defs));
+        return reportFindings(findings, out);
     }
 
     /** Edits {@code file} until it is valid or the user stops; whether it ended valid. */

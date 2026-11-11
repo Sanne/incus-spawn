@@ -2295,10 +2295,14 @@ public class BuildCommand extends BaseCommand {
             ClientLog.warn("Missing-credential check skipped: " + e);
             return;
         }
-        missing.forEach((credential, names) -> BuildOutput.warn("Missing credential: " + credential.credential()
-                + ". 'isx branch' will refuse " + OutputFormat.andList(names)
-                + " until it is configured with '" + credential.command() + "'.",
+        missing.forEach((credential, names) -> BuildOutput.warn(unbranchable(credential, OutputFormat.andList(names)),
                 credential.notes().toArray(String[]::new)));
+    }
+
+    /** What {@code isx branch} will refuse {@code refused} for while {@code credential} is not configured (#1438). */
+    static String unbranchable(CredentialCheck.Missing credential, String refused) {
+        return "Missing credential: " + credential.credential() + ". 'isx branch' will refuse " + refused
+                + " until it is configured with '" + credential.command() + "'.";
     }
 
     /**

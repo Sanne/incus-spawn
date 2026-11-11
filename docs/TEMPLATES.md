@@ -94,6 +94,9 @@ isx templates edit tpl-java    # opens in $EDITOR, validates on save
 A template's name is used exactly as you give it, and its file is named after it.
 The `tpl-` prefix of the built-in templates is a convention, which isx never adds or requires.
 
+The check also warns about a credential the template's tools need that is not configured, and names the command that configures it.
+The template is still stored, but `isx branch` refuses it until that command has run.
+
 Editing a built-in template creates a user-level override in `~/.config/incus-spawn/images/`.
 The override takes precedence over the built-in, but isx upgrades do not update it.
 isx validates a template after editing: YAML syntax, required fields and parent references.

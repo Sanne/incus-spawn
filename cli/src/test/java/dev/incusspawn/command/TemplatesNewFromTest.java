@@ -159,6 +159,47 @@ class TemplatesNewFromTest {
         assertEquals("name: tpl-elsewhere\nparent: tpl-minimal\n", Files.readString(stored("tpl-agent")));
     }
 
+    /**
+     * A template whose tools need a credential that is not configured is stored, and the check
+     * says so, as {@code isx branch} would later refuse it: the commands an agent runs before the
+     * branch name the gap themselves (#2163).
+     */
+    @Test
+    void aMissingCredentialIsAWarningThatNamesItsCommand() throws Exception {
+        var run = newFrom("tpl-agent", QUICK_START, "--format=json");
+        assertEquals(0, run.exit());
+        var json = run.json();
+        assertTrue(json.path("written").asBoolean(false));
+        assertTrue(json.path("valid").asBoolean(false));
+        var finding = json.path("findings").asList().stream()
+                .filter(f -> "tools".equals(f.pathText("field", null))).findFirst().orElseThrow(
+                        () -> new AssertionError("no credential finding: " + json.path("findings").asList()));
+        assertEquals("warning", finding.pathText("severity", null));
+        var message = finding.pathText("message", "");
+        assertTrue(message.contains("Anthropic API key") && message.contains("'isx account add claude'"), message);
+
+        var validated = validate(stored("tpl-agent").toString(), "json");
+        assertEquals(0, validated.exit());
+        assertEquals(List.of(finding), validated.json().path("findings").asList());
+    }
+
+    @Test
+    void aMissingCredentialIsShownToAPersonToo() throws Exception {
+        var run = newFrom("tpl-agent", QUICK_START);
+        assertEquals(0, run.exit());
+        assertTrue(run.out().events(RecordingOutput.Kind.WARN).stream()
+                        .anyMatch(w -> w.msg().contains("'isx account add claude'")),
+                run.out().events().toString());
+    }
+
+    @Test
+    void aConfiguredCredentialIsNotReported() throws Exception {
+        IsolatedHome.seed("claude:\n  apiKey: \"sk-ant-api-x\"\n");
+        var run = newFrom("tpl-agent", QUICK_START, "--format=json");
+        assertEquals(0, run.exit());
+        assertEquals(List.of(), run.json().path("findings").asList());
+    }
+
     @Test
     void theJsonFieldsAreInTheirContractOrder() throws Exception {
         var json = newFrom("tpl-agent", QUICK_START, "--format=json").json();
@@ -237,6 +278,8 @@ class TemplatesNewFromTest {
 
     @Test
     void validateChecksAFileAStdinOrANameAndWritesNothing() throws Exception {
+        // Configured, so the template is valid with nothing to say
+        IsolatedHome.seed("claude:\n  apiKey: \"sk-ant-api-x\"\n");
         var file = Files.writeString(dir.resolve("agent.yaml"), QUICK_START);
         var ok = validate(file.toString(), null);
         assertEquals(0, ok.exit());

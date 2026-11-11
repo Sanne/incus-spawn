@@ -79,4 +79,19 @@ class TemplatesEditReportTest {
                 report.events(RecordingOutput.Kind.ERROR).stream().map(RecordingOutput.Event::msg).toList());
         assertFalse(passedOn.stream().anyMatch(w -> w.startsWith("shallow.yaml: ")), passedOn.toString());
     }
+
+    @Test
+    void aMissingCredentialIsAWarningAfterAnEditToo() throws Exception {
+        // #2163: the editor reports what --from and validate report, so a template made in the
+        // editor says before its build that isx branch will refuse it
+        var images = Files.createDirectories(Environment.configDir().resolve("images"));
+        var file = images.resolve("tpl-agent.yaml");
+        Files.writeString(file, "name: tpl-agent\nparent: tpl-minimal\ntools:\n  - claude\n");
+        var report = new RecordingOutput();
+
+        assertTrue(TemplatesCommand.validateAndReport(file, ImageDef.loadAll(w -> {}), List.of(), report));
+
+        assertEquals(1, report.warnings().size(), report.warnings().toString());
+        assertTrue(report.warnings().getFirst().contains("'isx account add claude'"), report.warnings().toString());
+    }
 }
