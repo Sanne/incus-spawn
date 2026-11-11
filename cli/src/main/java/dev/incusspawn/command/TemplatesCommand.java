@@ -475,14 +475,18 @@ public class TemplatesCommand extends BaseCommand {
      * command it names has run, as the build also warns (#1438). So the commands run before the
      * branch name the gap themselves (#2163). It reads the host's config, not the definition
      * alone, so it is added here rather than in {@link TemplateValidator}; and only to a
-     * definition with no error, which parses and has a name. Only advice: whatever stops it, it
-     * says nothing.
+     * definition with no error, which parses and has a name. An account pin with no such account
+     * is instead one warning on {@code accounts}, since the build refuses it. Only advice: whatever
+     * stops it, it says nothing.
      */
     static List<TemplateFinding> credentialFindings(ImageDefSource definition, Map<String, ImageDef> defs) {
         try {
             var def = definition.read();
             var chain = new java.util.HashMap<>(defs);
             chain.put(def.getName(), def);
+            // An account pin with no such account, which the build refuses and the credential check skips
+            var unknownAccount = BuildCommand.validateTemplateAccounts(List.of(def.getName()), chain);
+            if (unknownAccount != null) return List.of(TemplateFinding.warning("accounts", unknownAccount));
             var config = SpawnConfig.load();
             return CredentialCheck.missingByCredential(config, List.of(def.getName()), chain,
                             new ToolDefLoader(config.getSearchPaths()))
