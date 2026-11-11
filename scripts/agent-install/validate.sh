@@ -24,10 +24,14 @@
 # Usage:
 #   scripts/agent-install/validate.sh [options]
 #     --agent claude|codex    the agent to drive (default: claude)
-#     --prompt FILE           the prompt to give it (default: prompt.txt beside this script)
+#     --prompt FILE           the prompt to give it (default: the one docs/AGENT-INSTALL.md
+#                             publishes, from its "## The prompt" section)
+#     --print-prompt          print that prompt and exit
 #     --isx-from DIR          isx is not installed by the agent: DIR holds bin/isx and bin/isx-proxy
 #                             of a candidate build, linked into the person's ~/.local/bin, and
 #                             DIR/docs its docs, which the agent is told to read instead of isx.run
+#     --docs DIR              the agent installs isx itself, but reads the docs in DIR (laid out
+#                             as --isx-from's docs/) instead of isx.run, which does not publish them yet
 #     --user NAME             the person's account, created if missing (default: isxperson)
 #     --max-turns N           stop after N agent turns (default: 12)
 #     --turn-timeout SECONDS  limit one agent turn (default: 3600)
@@ -41,8 +45,10 @@ say() { echo "==> $*" >&2; }
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 AGENT=claude
-PROMPT_FILE="$HERE/prompt.txt"
+PROMPT_FILE=
 ISX_FROM=
+DOCS_FROM=
+PRINT_PROMPT=
 PERSON=isxperson
 MAX_TURNS=12
 TURN_TIMEOUT=3600
@@ -54,7 +60,9 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --agent) AGENT=$2; shift 2 ;;
         --prompt) PROMPT_FILE=$2; shift 2 ;;
+        --print-prompt) PRINT_PROMPT=1; shift ;;
         --isx-from) ISX_FROM=$(cd "$2" && pwd); shift 2 ;;
+        --docs) DOCS_FROM=$(cd "$2" && pwd); shift 2 ;;
         --user) PERSON=$2; shift 2 ;;
         --max-turns) MAX_TURNS=$2; shift 2 ;;
         --turn-timeout) TURN_TIMEOUT=$2; shift 2 ;;
@@ -66,19 +74,36 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# The prompt the install page publishes: the first fenced block under its "## The prompt".
+page_prompt() {
+    awk '/^## /{in_s = ($0 == "## The prompt")} in_s && /^```/{if (f) exit; f = 1; next} f' "$1"
+}
+[ -z "$ISX_FROM" ] || [ -z "$DOCS_FROM" ] || die "--isx-from already brings its docs: leave out --docs"
+if [ -n "$PROMPT_FILE" ]; then
+    [ -r "$PROMPT_FILE" ] || die "no prompt at $PROMPT_FILE"
+    PROMPT=$(cat "$PROMPT_FILE")
+else
+    PROMPT_FILE="$(cd "$HERE/../.." && pwd)/docs/AGENT-INSTALL.md"
+    PROMPT=$(page_prompt "$PROMPT_FILE")
+    [ -n "$PROMPT" ] || die "no prompt under \"## The prompt\" in $PROMPT_FILE"
+fi
+if [ -n "$PRINT_PROMPT" ]; then printf '%s\n' "$PROMPT"; exit 0; fi
+
 [ "$(uname -s)" = Linux ] || die "Linux only"
 case "$AGENT" in claude|codex) ;; *) die "--agent takes claude or codex" ;; esac
 command -v jq >/dev/null || die "jq is required"
 command -v "$AGENT" >/dev/null || die "$AGENT is not on PATH"
-[ -r "$PROMPT_FILE" ] || die "no prompt at $PROMPT_FILE"
 sudo -n true 2>/dev/null || die "passwordless sudo is required (for the person's part)"
 if [ -z "$ALLOW_DIRTY" ] && command -v incus >/dev/null; then
     die "Incus is already installed, so this host is not clean (--allow-dirty to run anyway)"
 fi
 if [ -n "$ISX_FROM" ]; then
     [ -x "$ISX_FROM/bin/isx" ] && [ -x "$ISX_FROM/bin/isx-proxy" ] || die "$ISX_FROM/bin holds no isx and isx-proxy"
+    DOCS_FROM=$ISX_FROM/docs
+fi
+if [ -n "$DOCS_FROM" ]; then
     # docs/dev/ describes this harness, which would tell the agent how the person answers.
-    for d in "$ISX_FROM/docs/docs/dev" "$ISX_FROM/docs/dev"; do
+    for d in "$DOCS_FROM/docs/dev" "$DOCS_FROM/dev"; do
         [ ! -e "$d" ] || die "$d holds maintainer notes, this harness's among them: leave it out"
     done
 fi
@@ -165,11 +190,14 @@ as_person() {
     ' sh "$MSG_DIR" "$PERSON" "$@"
 }
 
-PROMPT=$(cat "$PROMPT_FILE")
 if [ -n "$ISX_FROM" ]; then
     PROMPT="$PROMPT
 
-(Harness note: isx is already installed for you, a release candidate whose commands are newer than isx.run's docs. Do not install isx again. Read its docs in $ISX_FROM/docs, which start at llms.txt, instead of isx.run.)"
+(Harness note: isx is already installed for you, a release candidate whose commands are newer than isx.run's docs. Do not install isx again. Read its docs in $DOCS_FROM, which start at llms.txt, instead of isx.run.)"
+elif [ -n "$DOCS_FROM" ]; then
+    PROMPT="$PROMPT
+
+(Harness note: isx.run does not publish the docs for this release yet. Install isx as they say, but read them in $DOCS_FROM, which start at llms.txt, instead of isx.run.)"
 fi
 
 START=$(date +%s)
@@ -392,7 +420,7 @@ FINAL_LIST=$(as_person isx list 2>&1 || true)
     echo "- Agent: $AGENT ($("$AGENT_BIN" --version 2>/dev/null | head -n1 || true))"
     echo "- isx: $(as_person isx --version 2>/dev/null | head -n1 || echo 'not installed')"
     echo "- Host: $(. /etc/os-release && echo "$PRETTY_NAME"), $(uname -m), inside an isx instance: ${INSIDE_ISX:-no}"
-    echo "- Prompt: $PROMPT_FILE${ISX_FROM:+, with a harness note pointing at $ISX_FROM}"
+    echo "- Prompt: $PROMPT_FILE${DOCS_FROM:+, with a harness note pointing at $DOCS_FROM}"
     echo "- Reached a first branch: $([ -n "$REACHED_BRANCH" ] && echo "yes, after turn $REACHED_BRANCH" || echo no)"
     echo "- MCP approval asked for and given: $([ -n "$APPROVED" ] && echo "yes, after turn $APPROVED" || echo no)"
     echo "- Wall time: $(( (END - START) / 60 )) min $(( (END - START) % 60 )) s over $(wc -l < "$OUT/turns.tsv") turns"
