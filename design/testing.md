@@ -65,6 +65,10 @@ So the script first lists `https://mirrors.edge.kernel.org/ubuntu/` last, and dr
 A ports list, an arm64 runner's, gets no fallback, since that mirror carries amd64's archive only.
 The archive's signatures are checked whichever mirror serves it.
 `WorkflowAptInstallTest` fails on a workflow that runs apt directly, and drives the script against a stand-in `apt-get` that stalls on a named mirror and a stand-in resolver.
+host-distro's Ubuntu guest resolves through the runner too, so in the same outage its own apt failed every index and `isx init` found no `incus` package (#2148).
+So `distro-vm.sh boot` runs `scripts/distro-vm-apt-fallback.sh` in an apt guest, which points each `ubuntu.com` archive host that does not resolve at the same kernel.org mirror.
+That stays in the harness: `isx init`'s own apt on a user's host is unchanged.
+`DistroVmAptFallbackTest` drives the script against sample sources and a stand-in resolver.
 
 **A github.com outage is ridden out, never skipped.**
 For most of an hour GitHub answered release downloads with 503s and 504s and let connections time out, failing the gitleaks install, isx's base-image download and host-distro's HTTPS check on `main` and on unrelated PRs (#2042).
