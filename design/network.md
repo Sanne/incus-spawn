@@ -36,7 +36,7 @@ Incus installs it as per-NIC chains in the host's nftables `bridge` family, the 
 A start whose ACL cannot be installed fails.
 Those chains match in the bridge family, which on most hosts is before the host's PREROUTING redirect, so they see port 443 rather than the proxy's 18443.
 On a host with bridge netfilter on (`net.bridge.bridge-nf-call-iptables=1`, which Docker and Kubernetes set), iptables runs during the bridge's prerouting, so the redirect comes first and the chains see 18443 (#1503).
-The ACL allows both ports, which makes nothing new reachable, since every connection to 443 already lands on that socket; isx neither refuses such a host nor asks for the sysctl off, which Docker's own bridge filtering needs.
+The ACL allows both ports, which does not make anything new reachable, since every connection to 443 already lands on that socket; isx neither refuses such a host nor asks for the sysctl off, which Docker's own bridge filtering needs.
 The appliance still turns it off: its DNAT goes to the host's proxy, not the gateway's 18443 (`appliance/DESIGN.md`).
 A rule set there also stops traffic to other instances on the bridge, which a rule on the host's INPUT chain would not see.
 
@@ -154,7 +154,7 @@ The override's one use is the bridge's address when Incus cannot report it (#892
 Then it must equal the gateway `isx init` cached, if there is one, else `EXIT_CONFIG`.
 As the credential listener's bind address it must also be private (RFC 1918) or loopback, since nothing vouches for it: a cached gateway could be an address the bridge has since given up (#1022).
 A routable override that passes the cache comparison stops the proxy with exit 1, as it does without an override when the bridge cannot be read.
-Loopback is accepted though, as an A record, it sends instances to themselves: it exposes nothing.
+Loopback is accepted though, as an A record, it sends instances to themselves: it does not expose anything.
 Recording a differing override where the CLI could read it (a `proxy-gateway-ip` key in `config.yaml`, used by the health address, the DNS writers, init's PREROUTING redirect and the `PROXY_GATEWAY` stamp) was the alternative, rejected because nobody needs a proxy away from the bridge and no such configuration ever worked on Linux: the redirect and the proxy-only ACL both target the bridge gateway.
 It is the path to take if a second bridge or a dedicated proxy interface ever becomes a real request.
 Saving `isx proxy start --gateway-ip` into `config.yaml` was rejected too: a command must not rewrite the user's secrets-bearing file to remember an option.

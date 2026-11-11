@@ -85,7 +85,7 @@ The figure that *does* answer "how big is this template" is btrfs **referenced**
 
 So `isx` reads rfer itself, and caches it.
 Because a built template is immutable and its rfer is stable (referenced bytes don't change when a parent is later deleted — the child still references those extents), `BuildCommand` measures rfer **once at build time** and stamps it as `user.incus-spawn.disk-referenced` metadata (excluded from the content fingerprint, so it never triggers a rebuild).
-The TUI then reads that stamp for free on every reload and shows each template as a **delta from its parent**.
+The TUI then reads that stamp at no extra cost on every reload and shows each template as a **delta from its parent**.
 The root template's delta is its own rfer — i.e. the base-image weight — and each derived template shows only what its layer added (packages, a tools install), which is exactly the intuitive "cost of this template".
 Instances keep their exclusive usage: a branch with no descendants has `exclusive ≈ rfer − rfer(parent)`, so exclusive already *is* its delta, and it comes free from the API.
 This replaces the older `foldBaseWeightIntoRootTemplate`, which — lacking rfer — could only dump the *entire* pool remainder onto the root template.
@@ -99,7 +99,7 @@ This makes instance→instance branching safe by construction.
 Because nothing is cached, deleting the branched-from instance needs no invalidation.
 On the next reload the surviving branch's exclusive usage simply grows to absorb the blocks that were shared, since they are now unique to it.
 The delete-confirmation note closes the loop in the other direction.
-Before the shared-with-parent caveat it checks whether anything was branched or derived from the target (`hasDescendant`, using the parent each row already records for free) and, if so, warns that deleting it reclaims little while its descendants remain — the instance analog of the base-template note.
+Before the shared-with-parent caveat it checks whether anything was branched or derived from the target (`hasDescendant`, using the parent each row already records) and, if so, warns that deleting it reclaims little while its descendants remain — the instance analog of the base-template note.
 
 Deleting a template is safe: rfer is a property of the *extents a subvolume references*, so a child's stamped rfer stays accurate after its parent is deleted (the child still references — and keeps alive — those blocks).
 Only the delta arithmetic has to cope with a missing parent, and it does.
@@ -160,11 +160,11 @@ Otherwise N deletes would mean N status reads, each an agent round trip on macOS
 Nothing is missed by collapsing: only the deletes in the burst could have set the flag, the first check already caught that and started the rescan, and the TUI cadence and next build re-check regardless.
 The rescan-trigger budget (`MAX_RESCAN_TRIGGERS`) counts *consecutive* attempts and resets the moment accounting reads consistent, so it bounds a stuck repair rather than capping how many times a long-lived session may legitimately self-heal.
 The TUI also calls it every reload (cadence-limited: 30s normally, 2s while a repair is pending, so an agent round trip on macOS isn't on the hot path).
-While untrusted it keeps showing existing stamps (a stamp taken from consistent accounting stays valid, templates being immutable), reads nothing live (no backfill, no shared-base fold) and shows a one-shot "repairing" hint.
+While untrusted it keeps showing existing stamps (a stamp taken from consistent accounting stays valid, templates being immutable), does not read anything live (no backfill, no shared-base fold) and shows a one-shot "repairing" hint.
 The reload that first sees the flag clear re-validates the stamps with one live probe and re-stamps whatever differs — the one path that overwrites a stamp, which also fires once per session on the poisoned-stamp signature (a derived template stamped with exactly its parent's value) so pools broken before the check existed heal without a rebuild.
 `BuildCommand.probeReferencedSize` runs the same detect-and-repair before stamping, and never waits for it.
 A rescan walks the whole pool, which took over 20 s on a nested host, and every rebuild's swap deletes a subvolume and can flag the pool again, so a batch of builds would wait once per template.
-The stamp serves only the TUI's disk panel, so a build whose accounting is under repair leaves its template unstamped, says nothing, and the TUI's backfill measures and saves it once the flag clears.
+The stamp serves only the TUI's disk panel, so a build whose accounting is under repair leaves its template unstamped, prints no message, and the TUI's backfill measures and saves it once the flag clears.
 `isx doctor` reports the state and offers the rescan for when the automatic one couldn't run.
 
 **Full qgroups make the next branches wait for deleted instances (#2061).**
@@ -220,7 +220,7 @@ Four consumers use it, and each **fails open** when the pool cannot be listed (n
   On Linux it prints the `sudo btrfs subvolume delete -R` command instead of widening the read-only sudoers rule — removal stays manual there.
   On macOS it offers a real remediation, one orphan at a time, through the `btrfs-orphan-delete` agent verb (#874).
   Wiping the whole pool with `isx vm reset` was the only option before, which is disproportionate for a handful of stray subvolumes and loses every instance, not just the orphaned ones.
-  The agent re-checks, from inside the VM and across every Incus project, that nothing still references the name before it deletes anything — a separate trust boundary from `isx doctor`'s own scan, which runs on the host and can be stale by the time a user confirms the remediation (another branch could finish, or fail and get cleaned up, in between).
+  The agent re-checks, from inside the VM and across every Incus project, that nothing still references the name before it deletes anything — a separate trust boundary from `isx doctor`'s own scan, which runs on the host and can be stale by the time a user confirms the remediation (another branch could finish, or fail and get cleaned up, between the scan and the confirmation).
   It also confirms the path is still a *subvolume*, not "exists": Incus 6.23 recreates a plain directory with `backup.yaml` at a dangling record's path whenever it rewrites that record, and that directory is not the orphan's data.
   `subvolumeFindings` stays pure (no agent call) so it is unit-testable without a VM.
   `DoctorCommand.checkSubvolumes` is where the live action is wired in, replacing the finding's description and remediation only on macOS and only when there are orphans and `VmAgentClient.supportsOrphanDelete` confirms the appliance has the verb.
@@ -261,7 +261,7 @@ With an appliance from before #881 that warning appears on every Mac uninstall w
 The exit status is opt-in so that `isx vm stop && ...` keeps working where every stop is still a signalled one.
 An isx from before the flag rejects it with 2; the script then runs a plain `isx vm stop` and, since that isx cannot say how it went, warns that it cannot tell.
 `isx` is asked for the counts through a temporary file rather than a pipe, so `$(...)` does not wait for a child isx left holding its output.
-`bounded` runs the command in a process group of its own under a watchdog that SIGKILLs the group, since a bare `alarm` does nothing to a command that ignores SIGALRM (an ignored disposition survives `exec`) and reaches nothing the command started.
+`bounded` runs the command in a process group of its own under a watchdog that SIGKILLs the group, since a bare `alarm` does nothing to a command that ignores SIGALRM (an ignored disposition survives `exec`) and does not reach anything the command started.
 The 20 s is a hard bound.
 `uninstall.sh --binaries-only` removes just the binaries and install.sh's Homebrew override, for switching install channel.
 On Linux the proxy service needs no change there, since the next isx command rewrites a start script that names another `isx-proxy` (`ProxyService.reinstallIfChanged`).

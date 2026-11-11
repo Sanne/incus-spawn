@@ -16,7 +16,7 @@ tpl-minimal   (Base OS only — no tools)
 `tpl-dev` and `tpl-java` are deprecated and will be removed; their maintained copies, under the same names, live in `incus-spawn-templates`.
 `isx project create`, whose default parent is still `tpl-java`, warns the same way.
 A definition sets `deprecated: true` or `deprecated: <what to use instead>` (#1195): it still builds, so nobody's build breaks, but `BuildCommand` warns for each template it builds that is deprecated or names a deprecated `parent`, in one line naming both when both are, once per template per run (not for deprecated templates further up the chain, #1353: the template naming the deprecated one is where it gets replaced, and a warning per ancestor per descendant buried which one that was), and the TUI keeps that warning in its warning log (the build prints it on the released terminal, which the TUI redraws over, so the TUI copies every warning of a build it runs there with `Output.copying`) and shows it in the template's details before anyone builds.
-`deprecated` is left out of the content fingerprint, so marking a template deprecated, or switching to a copy that is not, rebuilds nothing.
+`deprecated` is left out of the content fingerprint, so marking a template deprecated, or switching to a copy that is not, does not need a rebuild.
 Removing a template outright was the alternative: every template derived from it would stop building on upgrade, with no warning beforehand.
 
 **The `tpl-` prefix is a convention, never a rule.**
@@ -34,7 +34,7 @@ The editor, `--from` and `validate` share one check, `TemplateValidator.validate
 Its findings are structured (`TemplateFinding`: severity, the field at fault, a message), so a form can mark the field and an agent correct its own mistake; the edit loop still reports only their messages, as before.
 The check refuses a repo the loader would skip the whole file for (`ImageDef.repoProblem`, one rule for both), so `--from` never stores a template that then does not exist; the edit loop, which used to call such a file valid beside the load's warning, now reports it once, as an error.
 The check also lists what the definition's own fields reach beyond its instance (`TemplateReach`: a `file://` base image, a child's too since a change of machine type builds it from scratch, host resources, `host-source` repos, `gui`, account pins, coordinator control; for a project-local definition `gui` and `coordinator` are told as what they do there, no branch default and ignored), which is what a person reviews once something else writes the templates.
-`--from` refuses a `name:` that disagrees with the name given rather than choosing one, writes nothing for a definition with an error, and creates its file exclusively; `--replace` swaps in a whole new file, and only the template's own (`TemplatesCommand.placeProblem`), never a built-in or the other layer's.
+`--from` refuses a `name:` that disagrees with the name given rather than choosing one, does not write a file for a definition with an error, and creates its file exclusively; `--replace` swaps in a whole new file, and only the template's own (`TemplatesCommand.placeProblem`), never a built-in or the other layer's.
 The skeleton the editor starts from is written by the same `TemplatesCommand.store`.
 An earlier design added `--tool` and `--repo` flags that wrote the YAML; it was dropped, since a flag per field is a second way to write a template, and every later field would either be refused arbitrarily or make the flags a shadow of the YAML schema.
 Changing part of an existing template stays out: rewriting a hand-written file loses its comments and layout.
@@ -112,7 +112,7 @@ A single row's F7 still acts at once.
 The keys that open one thing (F2, F3, F4, F6, F9, `a`, Enter) keep acting on the cursor's row, since for several rows each would be a shell or a dialog.
 Shift+F8 still means all.
 A batch is refused while any marked row has an operation under way, as F5's are.
-A mark moves nothing on the screen: it is drawn in the cursor gutter's blank second cell, and counted at the end of the context line.
+A mark does not move anything on the screen: it is drawn in the cursor gutter's blank second cell, and counted at the end of the context line.
 
 **Base image**: The root image (`tpl-minimal`) uses a custom Fedora base image from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images) instead of linuxcontainers.org.
 This image is a pre-baked systemd rootfs with agentuser, systemd-networkd, a connectivity watchdog, container-specific service masking, and a tmpfiles override for device node permissions — all the static setup that `buildFromScratch` would otherwise perform on every build.
@@ -353,7 +353,7 @@ A line it left unended, such as a prompt it stalled on, is part of that tail.
 SSH never prompts, in a build (decided on #1403) or in `update-all` (#1410).
 isx inserts `-o BatchMode=yes` right after the `ssh` of the command Git would run, in Git's order (`GIT_SSH_COMMAND`, else `core.sshCommand`, else `GIT_SSH`), where a later `-o BatchMode=no` or a trailing comment cannot undo it, or uses plain `ssh -o BatchMode=yes`.
 `update-all` fetches in the user's checkout, so that repository's own `core.sshCommand` applies; a build runs Git in isx's own repository, so only the user's global one does.
-Where the option cannot go (`GIT_SSH`, a wrapper or plink, a command isx could not read), `SSH_ASKPASS_REQUIRE=force` with `SSH_ASKPASS=false` makes OpenSSH 8.4 and later ask a program that answers nothing instead of the terminal.
+Where the option cannot go (`GIT_SSH`, a wrapper or plink, a command isx could not read), `SSH_ASKPASS_REQUIRE=force` with `SSH_ASKPASS=false` makes OpenSSH 8.4 and later ask a program that gives no answer instead of the terminal.
 isx sets those two for every case.
 OpenSSH before 8.4 ignores them, so there a wrapper or `GIT_SSH` can still prompt until the stall budget ends it.
 isx also sets an empty `GIT_ASKPASS`, which ends Git's own askpass chain (`GIT_ASKPASS`, `core.askPass`, `SSH_ASKPASS`) before any dialog.
@@ -372,7 +372,7 @@ isx's own text, such as a reason it stopped Git or could not run it, never goes 
 The exception message names only the Git command, never its URL or output.
 The calling thread polls instead of reading, so it can stop Git at any time.
 It stops a transfer that exceeds the `git-transfer:` total limit, or that stalls for the stall budget: no output, no I/O (`/proc/<pid>/io`, sockets included, on Linux), and less than 5% of a CPU across Git and its live helpers between samples, a second or more apart.
-Any change in CPU time is not enough: an idle `git-remote-http` polls curl and gains a clock tick a minute while its server says nothing.
+Any change in CPU time is not enough: an idle `git-remote-http` polls curl and gains a clock tick a minute while its server sends no data.
 Usage is kept per process, so a helper that exits neither looks like work nor takes the others' usage with it.
 Silence alone is not a stall, since resolving deltas or writing a pack is quiet but busy, and a server that is still building a pack sends keepalives; where CPU times are unavailable only the total limit applies.
 On macOS the JDK reports CPU time only for its own process, so the tree's CPU times come from `ps -o pid=,time=` instead.
@@ -458,7 +458,7 @@ Additional differences:
   A failure names the VM and its agent, never "Container", and points at the whole console log, which it first saves on the host (`VmAgentFailure.save`, to `~/.local/state/incus-spawn/console-logs/<n>.log`, overwritten by the next failure).
   It used to name `incus console <n> --show-log`, which the macOS host has no CLI to run (#1139); isx already reads the log over the API, so saving it does the step for the user.
   A log that cannot be read or written is not named.
-  The wait prints nothing itself: its callers already show a step line for it, and the TUI calls it too.
+  The wait does not print anything itself: its callers already show a step line for it, and the TUI calls it too.
   A VM is probed with exec far less often while its state reports the agent disconnected (#954).
   Each iteration first reads `GET /1.0/instances/<n>/state`, whose `processes` Incus reports as -1 until the agent connects -- the moment exec starts working -- and the exec probe, a POST plus WebSockets that almost always fails until then (and leaves `broken pipe` lines in the guest journal), runs on every poll only once `processes >= 0`, and otherwise only at the safety interval below.
   The same read's `status` catches a VM that died.
@@ -522,7 +522,7 @@ Otherwise it is gone, and so is a built-in this isx no longer ships.
 The check is one `stat` and no Incus request.
 A stamp that holds no definition of the instance's own name is a branch's, so the instance is not a template.
 
-The refusal names the file and the reason, with any unknown name given beside it, and builds nothing.
+The refusal names the file and the reason, with any unknown name given beside it, and isx does not build any template.
 The TUI marks the row `◌`, says the reason on the context line and under the details' `Source:`, disables the build menu's rebuild of it, and leaves it out of the out-of-sync count.
 `isx doctor` reports each one, as a warning when renamed or gone and as a note when out of scope.
 The TUI remembers which definitions it took from stamps since the last full reload, since a light refresh merges into the same map and must not list them as loaded.
@@ -613,7 +613,7 @@ It excludes anything the agent would treat identically whether or not it was tol
 Notes are for always-true constraints and traps that must be known *before* the first relevant action; procedures belong in `skills`, which load on demand when the model recognizes a matching task.
 Both are declarable on a tool as well as an image, so they travel with the tool into every template that installs it.
 `mvnd` is the worked example.
-The note is what gets it reached for at all (the name alone says nothing), and a skill would carry the procedure without spending context in sessions that never build anything.
+The note is what gets it reached for at all (the name alone does not say what it is for), and a skill would carry the procedure without spending context in sessions that never build anything.
 Tool skills are installed by `installSkills` alongside the image's, deduplicated against them, and bare names resolve against the *tool's* `skills.repo`, since the tool reaches templates that have never heard of its catalog.
 Most tools declare neither.
 
@@ -668,14 +668,14 @@ A stamp written at build would have left exactly those unknown.
 
 The comparison is with the instance's root definition as loaded, its base-image pin applied: what a rebuild would use offline.
 The image's fingerprint (`volatile.base_image`, a base image's tarball sha256) is compared before the tag.
-A release can re-publish an unchanged asset, and the import then reuses the image under the tag it was first imported with, which says nothing about its age.
+A release can re-publish an unchanged asset, and the import then reuses the image under the tag it was first imported with, which does not tell its age.
 Otherwise the tags are compared (`<distribution>-<release>-<yyyymmdd>`, release first): a newer one, such as a tracked build of a later release, is fine, and one that does not parse is unknown, a `NOTE`.
 A later release the same day carries `-2`, `-3` and so on (incus-spawn-images' `release-tag.sh`), which orders after that day's bare tag and before the next day.
 Doctor's remediation is a rebuild the user starts: an instance cannot be rebuilt, only branched again, and that is theirs to decide.
 An older base image is a `NOTE`, so publishing a routine release does not turn every host's `isx doctor` into a list of issues to address (Sanne's decision on #1664).
 It is a `WARN` only when the instance's release predates a known fix that a rebuild would bring: `BaseImageAge.KNOWN_FIXES`, which names the fix, such as the network watchdog of `fedora-44-20261009`.
 That list is written by hand, one entry per base-image fix worth a rebuild for everyone still on an older release.
-A release lacks a fix only on the fix's own release line (`fedora-44`), since a date on another release says nothing about the scripts it was built from.
+A release lacks a fix only on the fix's own release line (`fedora-44`), since a date on another release does not say which scripts it was built from.
 Each release is one finding, so a rebuild is planned once, and it is a `WARN` as soon as one member lacks a known fix, which the detail names with those members.
 A note's remediation is printed under it, since only an issue's is offered after the list.
 A project template is a copy of its parent, so it moves by `isx project create` again, which replaces it.

@@ -10,7 +10,7 @@ Only `WARN` and `FAIL` answer `Status.isProblem()`, which is what the exit code,
 So a note can never turn a clean run into a reported problem, and never dilutes the exit status a script checks.
 
 It exists because of unconfigured credentials.
-Every tool's credential is offered unconditionally (`ToolProxyResolver.findUnresolved`), so "OpenAI key not set" says nothing about health on its own.
+Every tool's credential is offered unconditionally (`ToolProxyResolver.findUnresolved`), so "OpenAI key not set" alone does not say whether the host is healthy.
 It is missing for the user who has never touched codex exactly as it is for the user whose template installs it.
 Before `NOTE` those were the same yellow line.
 The graduation of `codex` out of the `openai` feature flag would have added one to every existing user's `doctor` output — the classic way a diagnostic becomes something people learn to ignore.
@@ -39,7 +39,7 @@ A build whose base image's `/sbin/init` fails with "Exec format error" deletes t
 A remote image is launched once more, and a local one isx imported from the template's `image_url` is re-imported by the re-run it asks for.
 A local image with no `image_url` behind it (imported by hand) is the only copy, so it is kept, and the error says to replace it.
 The check sits around the start (`BuildCommand.launchBuildInstance`), because that is where the fault shows.
-Creating the instance runs nothing in it, so Incus fails the *start* (forkstart exits 1) and LXC writes `<errno> - Failed to exec "/sbin/init"` to the instance's `lxc.log`.
+Creating the instance does not run anything in it, so Incus fails the *start* (forkstart exits 1) and LXC writes `<errno> - Failed to exec "/sbin/init"` to the instance's `lxc.log`.
 Until #986 the hint was checked after the create and so could never fire.
 A base image imported by another project stays a trust gate: at a terminal the build offers to delete it (`--yes` does not answer for it) and stops either way.
 Without a terminal it says to re-run in one.
@@ -50,10 +50,10 @@ The hints `isx init` prints during Linux setup, before isx manages a pool or pro
 `gatewayUnavailableHint` and the proxy's `--gateway-ip` check already named `incus network` only on Linux.
 `NoIncusCliHintTest` allowlists those literals one by one, scanning `cli`, `common` and `proxy`, and fails on any other.
 #1139 then covered `incus console` and `incus config`: a VM agent failure saves the console log on the host and names that file, and an inbox removed for a missing directory is mounted again by the start that finds it back.
-The macOS remediation for "no CoW pool" is still open (#1085): doctor offers none, and `noCowPoolMsg` names `isx vm delete`, which does not exist.
+The macOS remediation for "no CoW pool" is still open (#1085): doctor does not offer one, and `noCowPoolMsg` names `isx vm delete`, which does not exist.
 
 On Linux the bridge-subnet conflict diagnostic now points at `isx doctor` instead (#1203), whose "Bridge subnet conflict" finding applies init's fix without the rest of init (`InitCommand.moveBridgeOff`).
-Reading the conflict (`BridgeSubnetCheck.detect`) changes nothing.
+Reading the conflict (`BridgeSubnetCheck.detect`) does not change anything.
 The remedy reads it again when the user agrees, since the routes may have changed meanwhile, and acts on that one read.
 It asks for sudo before anything moves, then moves the bridge and migrates the instances.
 It refuses before anything moves when no firewall is running, chosen as init chooses it (`FirewallDetector`), since the redirect could not follow the bridge.
@@ -128,7 +128,7 @@ It tells the model to treat the files as data: logs hold text that guests and ot
 
 **The user sees what leaves the machine, and who pays.**
 Every run names the account and the size of what it sends.
-Above `DoctorExplain.LARGE_BYTES` (100 KB, about 25k tokens) it asks first, and with no terminal to ask on it sends nothing and exits 1: the flag consents to a diagnosis, not to any size.
+Above `DoctorExplain.LARGE_BYTES` (100 KB, about 25k tokens) it asks first, and with no terminal to ask on it does not send anything and exits 1: the flag consents to a diagnosis, not to any size.
 After the answer come the disclaimer every AI answer carries and the provider's token split (`AiHelpClient.Usage.summary`, shared with the TUI's AI Help).
 The answer is prose for people on stdout, so `--explain` refuses `--format`, as `--bundle` does.
 The TUI has no doctor view, so this is a CLI feature only.

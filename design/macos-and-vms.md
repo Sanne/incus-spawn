@@ -66,7 +66,7 @@ That single fault surfaced in two directions and shaped several design choices:
   The post-exit drain is **adaptive**: it waits a short minimum for bytes in flight, extends while output is still arriving (so trailing output isn't truncated), and closes shortly after it goes idle (`OutputDrain`).
   Idle is counted only while the drain was watching.
   When the host process pauses (a VM's vCPU descheduled, a GC), the first poll after the pause used to read the pause as quiet output and close the sockets before the reader threads, paused with it, had taken what arrived meanwhile -- truncating the output (#1062, #1084, seen on macOS CI runners).
-  So a gap between two polls counts as idle for at most half the window, and a late poll ends the drain only if the poll before it already found the output idle, which gives the readers the sleep in between to catch up.
+  So a gap between two polls counts as idle for at most half the window, and a late poll ends the drain only if the poll before it already found the output idle, which gives the readers the sleep between the two polls to catch up.
   (Restarting the whole window on each late poll, the first form of this, held every drain to its ceiling on the macOS runners, where polls come late again and again: #1122.)
   The ceiling stays wall time, so pauses never hold the caller past it.
   The drain also waits for bytes that reached the host but that no reader has taken yet.
@@ -98,7 +98,7 @@ That single fault surfaced in two directions and shaped several design choices:
   A pooled connection keeps the read-ahead it opened with for its whole life, since what it read past one response belongs to the next.
   Every early EOF is an `EOFException` (EOF before the first byte is `NoResponseException`, which the keep-alive path maps to its retry-safe stale case), and malformed numbers are `IOException`s rather than runtime exceptions that escape callers' handlers.
   WebSocket frames follow the same rule (EOF inside a frame is an error; EOF between frames is end-of-stream).
-  The WebSocket connect + handshake is bounded by the transport timeout like any request, since a wedged tunnel accepts and then says nothing.
+  The WebSocket connect + handshake is bounded by the transport timeout like any request, since a wedged tunnel accepts the connection and then never answers.
   Only the handshake is bounded -- an open exec or shell socket legitimately stays quiet, and its liveness comes from the keepalive pings.
 
 - **A bulk exec stream is framed large and read ahead (#1643).**
@@ -164,7 +164,7 @@ Two behaviours combine:
 
 So when isx closes a tunnel connection, the unix-to-vsock copy ends and nothing is sent to the guest.
 The vsock-to-unix copy keeps blocking on its read, and vfkit holds both fds.
-The guest's socat learns nothing until incusd closes its side (30s `IdleTimeout` on a keep-alive connection) or `socat -T` reaps it (180s).
+The guest's socat does not learn of it until incusd closes its side (30s `IdleTimeout` on a keep-alive connection) or `socat -T` reaps it (180s).
 Connections opened faster than those timeouts reap them pile up as vfkit-held host fds, which is the leak the section above describes.
 
 isx never half-closes on purpose: `UnixSocketTransport` must not call `shutdownOutput()`, because Incus cancels the request on a half-close.
@@ -296,7 +296,7 @@ The firmware, about 1 s at one level of virtualization, is what remains; a trimm
 The VM base image and the macOS appliance build one kernel, the version `appliance/kernel/build-kernel.sh` pins, and a stable fix reaches neither until that pin moves.
 The upstream watch moves it, as a proposal (#2036, design/upstream.md "The model"): its `kernel` item takes the newest point release of the pinned series and its sum from kernel.org's `sha256sums.asc`, through `appliance/kernel/update-kernel-pin.sh releases` and `sum`, waits a day after the release, and keeps one PR, `upstream/kernel`, on it.
 A newer release replaces that PR's commit and title rather than opening a second PR, so a stale bump never waits beside a current one; a release whose PR was closed unmerged is not proposed again; a PR that `main` has overtaken is closed, and one ahead of the newest release the signed sums list stays as it is, since that file can lag.
-The engine reads what the open PR proposes from its branch, and a declined release from a marker in the closed PR's body, so editing a title changes nothing; the branch is pushed again only for a newer release or when `main`'s `build-kernel.sh` has changed under it, since each push discards the PR's Mac boot; the PR is marked pending before the push and names the release only after it, so a failure in between never leaves a PR naming one release over another's commit.
+The engine reads what the open PR proposes from its branch, and a declined release from a marker in the closed PR's body, so editing a title has no effect; the branch is pushed again only for a newer release or when `main`'s `build-kernel.sh` has changed under it, since each push discards the PR's Mac boot; the PR is marked pending before the push and names the release only after it, so a failure between the two never leaves a PR naming one release over another's commit.
 A new series is never proposed: when kernel.org lists one, the watch opens `[upstream] kernel: series <s> available`, and when it ends the pinned one, `[upstream] kernel: series <s> is EOL`, since its fragments, both boot paths and the Mac boot need a person.
 A failed run opens `[upstream] watch failing`, which the next good run closes, so a failure is not only in an Actions log.
 The bump goes through CI and a Mac boot (ci.md, #791), and merges only as the engine's proven regeneration: `upstream-verify` and `kernel-mac-verified` green, then the bot's merge script, never a person's reading of the diff (design/upstream.md "The model").
