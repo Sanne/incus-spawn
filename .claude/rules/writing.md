@@ -20,15 +20,132 @@ The Shape and Voice rules are checked by `DocsShapeTest` and `DocsOneSentencePer
 A fact that is a list in the code is a list in the docs, and the test is what keeps them equal.
 `docs/dev/` is maintainer notes and is exempt from the budgets, and DESIGN.md and its `design/` pages keep their own register.
 
-## Clarity comes first
+## What the reader needs comes first
 
-Every other rule on this page serves this one, and no test checks it.
+One rule is underneath every other on this page: find the thing the argument turns on, and write it down.
+A text can be accurate, short and well formed and still leave out the one thing its reader most needed.
+The reader should never have to work that thing out.
+
+Check a text in this order, and stop at the first check it fails:
+
+1. What is the point for the reader?
+2. Is it true?
+3. Is each sentence clear ("A clear sentence")?
+4. Does it fit the budgets (Shape)?
+
+A sentence that fails the first check is not rescued by passing the others.
+No test covers the first three, so a review has to.
+These rules hold for every text a person reads: the user pages, the website, DESIGN.md and `design/`, a PR description and a review comment.
+
+### The point
+
+**Start from what the reader fears or wants.**
+Ask it before writing: what is this reader afraid of, or trying to do, at this place in the page?
+The sentence answers that.
+
+**Use the reader's things, then the mechanism.**
+The reader's things are their code, their review, their host and their credentials.
+A commit, a hash, a proof and a stamp are mechanism.
+Mechanism comes second, as the reason to believe the point, or goes to the reference page.
+A sentence in `docs/FAQ.md` was rewritten three times to be more exact about Git:
+
+> Even if the agent adds or rewrites commits on its branch between your review and your merge, you act on the exact commit you reviewed.
+
+Each version was more accurate and further from the point, which is that the code cannot change after the review:
+
+> The code you reviewed is the code you merge, whatever the agent does afterwards.
+> Git identifies each commit by a hash of its content, so a fetch never gives you a mix of old and new files.
+
+The first sentence is the point, and the second is why the reader can believe it.
+
+**A design decision says what could happen to you, what isx does about it, what you give up, and what you get for it.**
+The risk comes first and is concrete.
+What you give up is stated plainly, because a decision with no loss reads as a sales claim:
+
+> isx does not mount your project read-write into an instance.
+> You give up watching the agent's edits appear live in your IDE.
+> In return, nothing in your checkout changes until you fetch it.
+
+**Engaging means a concrete case the reader recognises.**
+It never means an adjective, or a claim nobody can check.
+"Nothing leaves the building" was engaging and untrue, since an agent's model calls carry code to the provider.
+
+**This applies in full to a page that explains**: the README, the FAQ, `docs/SANDBOXES.md`, `docs/VISION.md` and every section opener.
+A reference row stays a plain fact, because its reader came for the mechanism.
+Voice, "Lead with the reason, then the mechanism", is the same rule for a section opener.
+
+### A scenario
+
+A scenario is a short story of what happens to the reader, and it is the best way to show a risk.
+The reader must be able to follow what happened, in order, and see where it hurt.
+
+**Tell events in the order they happen, in one tense.**
+The present tense is the default.
+A sentence that ends with "after…" or "before…", or that reveals an earlier event in the past tense, makes the reader put the story back in order.
+
+**Say whether events follow each other or overlap.**
+"Then" and "afterwards" are for a step that follows.
+"While" and "meanwhile" are for something that happens at the same time.
+The wrong one changes the story: "then" makes a race sound like a sequence.
+
+**Introduce the second actor before it acts.**
+"The agent is still working" tells the reader that two things are going on at once.
+
+**Say what the reader can and cannot see.**
+When the harm depends on the reader not knowing something, that is a fact of the scenario, and it gets a sentence.
+
+**End on the outcome for the reader, good or bad.**
+Do not stop at the event.
+
+The worked example is from `docs/FAQ.md`, on why a live mount is unsafe:
+
+> You inspect a git hook or build script, decide it is safe and run your build, but the agent changed the file after you inspected it.
+
+It tells the events out of order, changes tense, hides that the two overlap, and stops before the outcome.
+Rewritten:
+
+> You inspect a git hook or build script and decide it is safe.
+> The agent is still working, and it changes that file while you read or just afterwards.
+> Nothing on your side shows the change.
+> You run your build, and the build runs a version you never reviewed.
+
+A scenario of a benefit ends on the benefit:
+
+> The agent breaks its instance beyond repair.
+> You destroy it and branch again, and the new instance starts from the clean template.
+
+### Accuracy
+
+**Never fix an inaccuracy by going vague.**
+A concrete statement that is only partly true has two honest repairs.
+Either state the point at a level where it is true and still says something, or give the full mechanism with its cases.
+Swapping the concrete word for an abstract one is not a repair: a sentence that cannot be wrong because it says nothing is no better.
+`docs/VISION.md` said:
+
+> You choose the accounts when you branch, and the proxy resolves them from the caller's address.
+
+That is false on macOS, where the proxy knows an instance by its proof.
+The first repair, "resolves them from which instance is calling", was true everywhere and said nothing.
+The second states what matters to the reader, and is true on both:
+
+> You choose the accounts when you branch.
+> The proxy applies that choice on the host, where the agent cannot change it.
+
+The address and the proof are in `docs/CREDENTIAL-PROOFS.md`, whose reader came for them.
+
+**A rewrite is at least as concrete as what it replaces.**
+Concreteness is much of what makes a sentence feel clear.
+
+**A general statement that is true beats a list of cases.**
+"Whatever the agent does afterwards" covers what "adds or rewrites commits" tries to list, and a list invites the reader to wonder about a missing case.
+
+## A clear sentence
+
+No test checks these rules either.
 A sentence is clear when a newcomer to isx, reading in a second language, takes its one meaning on the first pass.
 An expert reading the same sentence finds nothing left open either.
 When a clear sentence and a short one conflict, the clear one wins.
 The budgets under Shape are ceilings, never targets: a sentence that passes them and makes the reader guess has failed.
-These rules hold for every text a person reads: the user pages, the website, DESIGN.md and `design/`, a PR description and a review comment.
-
 **Negate the verb.**
 Write "isx does not filter the connections", not "isx filters nothing".
 A reader takes "isx filters" as a yes, and has to reverse it at "nothing".
@@ -53,6 +170,11 @@ Understatement is the same fault in a warning: "may be surprising" where the tru
 **State the consequence.**
 Two facts joined by "and" leave the reader to work out why they sit together.
 In a warning that inference is the message, so write it, with the true connective (Voice, "A connective must be true").
+
+**A time word says when, and a consequence word says why.**
+"Then", "while" and "afterwards" mark time.
+"So" and "because" mark consequence.
+"And" marks neither, and never stands in for either.
 
 **The worked example** is a sentence that passed every budget:
 
@@ -133,7 +255,7 @@ Write the true direction.
 A section opens with why it exists for the reader (the agent must be free to act, so its machine cannot hold secrets), and names the implementation (the proxy, copy-on-write, Incus) afterwards, as what makes it work.
 
 **Short factual sentences, plain words.**
-Short is the second virtue: "Clarity comes first" decides when the two conflict.
+Short is the second virtue: "What the reader needs comes first" decides when the two conflict.
 "Terminates TLS" becomes "adds the credentials as the requests leave the machine".
 
 **Say what is meant before using the word.**
