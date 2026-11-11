@@ -37,17 +37,17 @@ Each question that is not a secret has a flag that answers it, with or without a
 | `--service`, `--no-service` | Whether to install the proxy as a service, and on macOS the VM too |
 
 There is no flag, variable or piped input for a secret.
-A missing credential stays your step, with the `isx account add` command that adds it.
-The template approvals for agents stay yours too, with `isx mcp setup`.
+Adding a missing credential stays your step, which you do with the `isx account add` command.
+Approving templates for agents stays your step too, which you do with `isx mcp setup`.
 A question no flag answers is skipped when there is no terminal, and the step says how to answer it later.
 
 With `--format=json` or `plain`, init ends with a summary on stdout and its progress on stderr.
-The summary has a record per step, in the fields `isx init --plan` prints, read after the run.
-A field `skipped` says that init skipped the step's question for want of a terminal.
+The summary has a record per step, with the fields `isx init --plan` prints, their values read after the run.
+A field `skipped` says that init skipped the step's question because there was no terminal.
 
-The last, `declined`, says the answer was no, given by you or by a flag such as `--no-service`.
+The last field, `declined`, says the answer was no, given by you or by a flag such as `--no-service`.
 
-The run then exits 76 when it finished with a step only you can do, such as a credential, an approval or a step that needs root.
+The run then exits 76 when it finished but left a step only you can do, such as a credential, an approval or a step that needs root.
 A run that waits on the root script, exit 75, prints the summary too; a run that fails exits 1 and does not print the summary.
 
 `isx init --plan` says what `isx init` would change on this host, and does not change the host.
@@ -60,7 +60,7 @@ Some of what init checks only root can read, such as the btrfs sudoers rule.
 Firewall rules are read without sudo where the host's polkit policy allows it or polkit is not installed, and never in a way that asks for a password.
 
 The plan reports anything it could not read as `unknown`, saying what it skipped and why.
-Its `check_commands` are the sudo commands you run to check it yourself.
+Its `check_commands` are the sudo commands that let you check what the plan skipped.
 
 The plan lists every step init would take, in its order, with what it is for and its state:
 
@@ -113,7 +113,7 @@ A fresh host needs the script once, unless the second run moves the bridge off a
 
 Some of what the script does only root can check afterwards, such as the btrfs sudoers rule.
 The script records what it ran in `/var/lib/isx/init-applied`, which the second run reads for those steps.
-`isx init --plan` reads it too, so it reports that work as done.
+`isx init --plan` reads that file too, so the plan reports that work as done.
 
 Once nothing needs root any more, the second run removes the script.
 When the second run itself finds root work, such as a redirect to move after it moved the bridge off a VPN's subnet, it writes a new script and exits 75 again.
@@ -147,7 +147,7 @@ These are each tool's `run`, `run_as_user` and `verify` commands and each reposi
 The log is written as each command ends, so `tail -f` follows a build, and a failure report names it.
 
 A template's name may be at most 52 characters, since isx builds it as `<name>-rebuilding` first and swaps it in once built.
-isx refuses a longer name before it builds anything, its parents included.
+isx refuses a longer name before it builds anything, the template's parents included.
 
 Several templates build in one invocation:
 
@@ -157,7 +157,7 @@ Several templates build in one invocation:
 - With an unknown name anywhere in the list, isx does not build any of them.
 
 A target that fails does not stop the others: isx skips what inherits from it and builds the rest.
-The build then exits 1 with one `Some templates failed to build:` line on stderr naming every template it left unbuilt, a parent a target's chain failed on included.
+The build then exits 1 with one `Some templates failed to build:` line on stderr naming every template it left unbuilt, including a parent that failed to build for a target.
 
 ## `isx branch`
 
@@ -170,7 +170,7 @@ isx branch <name> [options]
 | Option | What it does |
 |--------|--------------|
 | `--from <source>` | Source instance to branch from, detected from the current directory if omitted |
-| `--gui` | Enable GUI passthrough: Wayland, GPU and audio. The default for a `gui: true` container template, a project-local one excepted, when isx runs in a Wayland session |
+| `--gui` | Enable GUI passthrough: Wayland, GPU and audio. The default for a `gui: true` container template when isx runs in a Wayland session, except for a project-local template, one a cloned repository ships in `.incus-spawn/` |
 | `--no-gui` | Disable GUI passthrough even if the template has `gui: true` |
 | `--kvm` | Expose `/dev/kvm` for nested virtualization. Linux only: refused on macOS |
 | `--no-kvm` | Disable KVM even if the template was built with `type: kvm` |
@@ -183,10 +183,10 @@ isx branch <name> [options]
 | `--no-start` | Do not start the instance after creation |
 | `--shell` | Open a plain shell instead of running the default action |
 | `--account <ns>=<account>` | Use this [credential account](CONFIGURATION.md#credential-accounts) instead of the template's or the default; repeatable |
-| `--owner <name>` | Mark the instance as controlled by an external tool, such as `orca`. A lowercase name; `mcp` is reserved. Its copies never inherit it |
+| `--owner <name>` | Mark the instance as controlled by an external tool, a program outside isx that drives it, such as `orca`. A lowercase name; `mcp` is reserved. Copies of the instance never inherit the owner |
 | `--owner-id <id>` | The owner's own handle for the instance, such as an orchestrator's workspace id. Needs `--owner` |
-| `--mcp-client` | Let the instance drive isx over MCP at `https://mcp.isx.internal/mcp`, as a [coordinator in an instance](MCP.md#a-coordinator-in-an-instance). The default for a template whose `coordinator:` block says so: `isx-control-capability`, true when `control-over` lists templates. Its copies never inherit it |
-| `--no-mcp-client` | Make no coordinator, even if the template makes coordinators by default |
+| `--mcp-client` | Let the instance drive isx over MCP at `https://mcp.isx.internal/mcp`, as a [coordinator in an instance](MCP.md#a-coordinator-in-an-instance). The default for a template whose `coordinator:` block says so: `isx-control-capability`, true when `control-over` lists templates. Copies of the instance never inherit this permission |
+| `--no-mcp-client` | Do not make the instance a coordinator, even if the template makes coordinators by default |
 | `--format=<format>` | `table` (the default), `plain` to print only the new name, or `json` to add how to reach it, with progress on stderr and no shell opened. See [Scripting isx](#isx-branch-fields) |
 
 ## `isx shell`
@@ -206,12 +206,13 @@ A name is 1 to 32 letters, digits, `-` or `_`, and does not start with `-`.
 `--no-attach` opens a plain login shell outside any session.
 
 With `--task`, it opens the conversation of a task an agent [delegated over MCP](MCP.md) instead of a shell.
-The agent resumes it in the directory it worked in, and leaving it ends the session.
+The agent resumes the conversation in the directory it worked in, and leaving the conversation ends the session.
+
 Without an id it joins the only task in the instance.
-With several, it lists them, each with the command that joins it, and exits.
+With several tasks, it lists them, each with the command that joins that task, and exits.
 
 isx refuses a task in the middle of a turn until the turn ends.
-Plain `isx shell` into an instance `isx mcp` made prints that command before the prompt.
+Plain `isx shell` into an instance `isx mcp` made prints the `--task` command before the prompt.
 
 Copying from an agent inside the instance needs an OSC 52-capable host terminal.
 See the [FAQ](FAQ.md#why-doesnt-copied-from-an-agent-reach-my-host-clipboard).
@@ -235,7 +236,7 @@ Start an instance and make it ready for use, without opening a shell.
 isx start <instance>
 ```
 
-isx prepares it as `isx shell` would, so it receives this start's credential proofs.
+isx prepares the instance as `isx shell` would, so the instance receives this start's credential proofs.
 An instance already running is checked and left running.
 If another isx process is starting or stopping it, `isx start` waits for that first, for up to two minutes.
 
@@ -280,7 +281,7 @@ isx destroy --all-instances      # destroy all instances
 | `--all-templates` | Destroy all built templates (reverse order, derived first) |
 | `--all-instances` | Destroy all instances |
 | `--skip-confirmation` | Skip the confirmation prompt |
-| `--owner <name>` | Destroy the instance only if this external tool owns it, for that tool. `drivers:` in `config.yaml` must let the tool destroy, and an instance already gone is success |
+| `--owner <name>` | Destroy the instance on behalf of this external tool, and only if that tool owns it. `drivers:` in `config.yaml` must let the tool destroy its instances. Destroying an instance that is already gone succeeds |
 | `--owner-id <id>` | Destroy it only if the owner's handle for it is this one. Needs `--owner` |
 
 Destroying an instance an external tool owns without `--owner` asks first.
@@ -302,7 +303,7 @@ isx list [options]
 | `--status=<status>` | Only instances that are `running` or `stopped` |
 
 It does not list templates: `isx templates` lists those.
-On macOS it starts the VM if it is stopped, except with `-q`, which shell completion runs.
+On macOS it starts the VM if the VM is stopped, except with `-q`, which shell completion runs.
 See [Scripting isx](#scripting-isx) for the `plain` and `json` formats and the fields.
 
 ## `isx update-base`
@@ -321,7 +322,7 @@ isx update-base [<release-tag>] [options]
 
 Pass a release tag, such as `fedora-44-v2`, to pin to that version.
 The pin is written to `~/.config/incus-spawn/base-image-pin.yaml` and changes only the base image `tpl-minimal` downloads.
-A tag of another Fedora release, such as `fedora-44-...` on an isx that ships Fedora 45, is pinned under that release's own image and file names.
+For a tag of another Fedora release, such as `fedora-44-...` on an isx that ships Fedora 45, the pin uses that release's own image name and file names.
 
 ## `isx update-all`
 
@@ -370,7 +371,7 @@ isx templates list [options]
 
 Create a new template definition.
 The name is used exactly as given, and the file is named after it: `isx templates new my-app` writes `my-app.yaml`.
-A name whose file a built-in template's override uses, such as `dev`, is refused.
+isx refuses a name whose file is the one an override of a built-in template uses, such as `dev`.
 Without a name, it writes `new-template.yaml` for you to name in the editor.
 
 ```shell
@@ -378,8 +379,8 @@ isx templates new [<name>]
 isx templates new <name> --from <file>
 ```
 
-With `--from`, it takes the whole definition from a file, or from stdin for `-`, and opens no editor.
-It checks the definition as the editor does, then stores it only when nothing is wrong.
+With `--from`, it takes the whole definition from a file, or from stdin for `-`, and does not open an editor.
+It checks the definition as the editor does, then stores the definition only when it has no error.
 The definition's `name:` must be the name you give.
 It never prompts, so a script or an agent can run it.
 
@@ -387,7 +388,7 @@ It never prompts, so a script or an agent can run it.
 |--------|--------------|
 | `--project` | Create it in the project-local directory (`.incus-spawn/images/`) |
 | `--from <file>` | Take the whole definition from this file, or `-` for stdin, check it and store it |
-| `--replace` | With `--from`, replace the template's own file when it has one; a built-in or a template in the other directory is never replaced |
+| `--replace` | With `--from`, replace the template's own file when it has one; isx never replaces a built-in template or a template defined in another file |
 | `--format=<format>` | With `--from`, `table` (the default), `plain` or `json`; see [Template check fields](#template-check-fields) |
 
 With an invalid definition, isx does not write a file and exits 1.
@@ -468,13 +469,13 @@ isx account <subcommand>
 | `show <instance>` | The account the instance uses for each credential, and where it comes from |
 | `set <instance> <ns>=<account>...` | Pin the instance to these accounts; takes effect on its next request |
 | `unset <instance> <ns>...` | Remove the pins, so the instance follows the default again |
-| `reset-proofs <instance>` | Revoke shared proofs and deliver replacements, waiting for the proxy to acknowledge. Then restart tools and nested services so they use the new tokens |
+| `reset-proofs <instance>` | Revoke shared proofs and deliver replacements, waiting for the proxy to acknowledge. Afterwards, restart tools and nested services yourself so they use the new tokens |
 
 `isx account add` runs that one step and nothing else: no sudo, no other step.
 Name the credential by namespace (`github`, `claude`, `openai`) or by tool (`gh`, `codex`); without a name, choose from init's credential menu.
 
 Adding a second account goes through the same account menu.
-The proxy picks the change up by itself.
+The proxy applies the change automatically.
 
 ## `isx project`
 
@@ -552,13 +553,15 @@ isx proxy start [options]
 |--------|--------------|
 | `--port <port>` | MITM TLS proxy port (default: `18443`) |
 | `--health-port <port>` | Health check HTTP port (default: `18080`) |
-| `--gateway-ip <ip>` | Incus bridge gateway IP, for when Incus cannot report it |
+| `--gateway-ip <ip>` | The bridge address, where instances reach the proxy, for when Incus cannot report it |
 | `--debug` | Log full request/response details |
 
 On Linux, `--gateway-ip` must be the bridge's own address, which is where every `isx` command looks for the proxy.
-When the bridge can be read, that is exactly its gateway.
-When it cannot, it is a private (RFC 1918) or loopback address matching the gateway `isx init` recorded, if it recorded one.
-On macOS, it is the host's VM-facing bridge address.
+
+When the bridge can be read, the value must be exactly the bridge's gateway address.
+When the bridge cannot be read, the value must be a private (RFC 1918) or loopback address that matches the gateway `isx init` recorded, if init recorded one.
+
+On macOS, the value must be the host's VM-facing bridge address.
 
 ### `isx proxy dump`
 
@@ -584,7 +587,7 @@ isx doctor [options]
 |--------|--------------|
 | `--deep` | Run per-instance checks (DNS, TLS, resolv.conf) |
 | `--bundle` | Collect findings and logs into a support archive (.tar.gz); implies `--deep` |
-| `--explain` | Ask your AI Help account for a first diagnosis of the same material (uses AI tokens); implies `--deep` |
+| `--explain` | Ask your AI Help account for a first diagnosis of the material `--bundle` collects (uses AI tokens); implies `--deep` |
 | `--format=<format>` | `table` (the default), `plain` or `json`; not with `--bundle` or `--explain` |
 
 Each finding carries a mark:
@@ -592,7 +595,7 @@ Each finding carries a mark:
 | Mark | Meaning |
 |------|---------|
 | `✓` | Healthy |
-| `⚠` | Worth a look |
+| `⚠` | A warning, which you should check |
 | `✗` | Broken |
 | `·` | A note, which does not affect the exit code |
 
@@ -605,7 +608,7 @@ isx redacts credentials before it writes anything, and `REDACTIONS.txt` in the a
 
 `--explain` sends the findings and the archive's redacted files to the account `isx ask` uses, which is billed for it.
 The answer lists the likely causes, the command to run next and the repository a fix belongs in.
-isx prints the size before sending, and asks first when it is over 100 KB.
+isx prints the size of what it sends before sending, and asks first when the size is over 100 KB.
 
 The answer is a suggestion, so check it before acting on it.
 
@@ -634,13 +637,13 @@ All subcommands accept these options:
 | `--skip-confirmation` | Skip the confirmation prompt |
 
 On macOS, `isx clean state` keeps the VM's data disk, with every instance, template and image, unless you pass `--delete-instances`.
-It refuses while the VM runs: stop it first with `isx vm stop`.
+It refuses to run while the VM runs: stop the VM first with `isx vm stop`.
 Run `isx init` afterwards: the VM needs the appliance again before it boots on the kept disk.
 
 `isx clean pool --base-images` also removes the downloaded base images, which the next build downloads again.
 
-`isx clean all` touches no Incus template or instance unless you pass `--delete-instances`, which on macOS also deletes the VM's data disk.
-Like `isx clean state`, it refuses while the VM runs.
+`isx clean all` does not delete any Incus template or instance unless you pass `--delete-instances`, which on macOS also deletes the VM's data disk.
+Like `isx clean state`, it refuses to run while the VM runs.
 
 ## `isx reset`
 
@@ -679,8 +682,8 @@ isx vm <subcommand>
 ### When the VM stops answering
 
 When isx cannot reach the VM, run `isx doctor` first.
-It starts a stopped VM, and clears leaked connections in the VM's forwarder without a reboot, so running containers keep going.
-Only when neither is the cause does it offer to restart the VM.
+It starts a stopped VM, and clears leaked connections in the VM's forwarder without a reboot, so running containers keep running.
+It offers to restart the VM only when neither a stopped VM nor leaked connections are the cause.
 
 A restart, by doctor or with `isx vm restart`, keeps your instances and templates.
 It stops running containers, and applies any pending appliance update.
@@ -696,7 +699,7 @@ Ask the guest to shut down, and wait up to 30 s for it.
 The guest stops Incus and its instances and syncs the disks.
 
 isx warns when the guest did not shut down and had to be stopped with signals, which loses the writes of the last few minutes.
-That is every stop of an appliance from before the fix for [#881](https://github.com/Sanne/incus-spawn/issues/881), until `isx vm restart` applies a newer one.
+That happens at every stop of an appliance from before the fix for [#881](https://github.com/Sanne/incus-spawn/issues/881), until `isx vm restart` applies a newer appliance.
 
 With `--require-clean`, such a stop also exits 4, and a VM isx could not stop exits 1.
 
@@ -704,7 +707,7 @@ With `--require-clean`, such a stop also exits 4, and a VM isx could not stop ex
 
 Stop and restart the VM, applying any pending appliance updates.
 It keeps instances and templates, but stops running containers.
-When the VM is not running, it says so and leaves it to `isx vm start`.
+When the VM is not running, it says so and does not start the VM: use `isx vm start` for that.
 
 ```shell
 isx vm restart [options]
@@ -730,7 +733,7 @@ The size, such as `100G`, must be larger than the current disk: the disk only gr
 
 ### `isx vm reset`
 
-Wipe the VM's storage pool, for when it is beyond repair, as with orphaned subvolumes reported by `isx doctor`.
+Wipe the VM's storage pool, for when the pool cannot be repaired, as with orphaned subvolumes reported by `isx doctor`.
 
 ```shell
 isx vm reset [options]
@@ -741,7 +744,7 @@ isx vm reset [options]
 | `-y`, `--yes` | Skip the confirmation prompt |
 
 It deletes every instance, template and cached image.
-isx starts a stopped VM to list them, asks first, or needs `--yes` without a terminal.
+isx starts a stopped VM to list them and asks before it deletes them, and without a terminal it needs `--yes`.
 Rebuild your templates afterwards with `isx build --all`.
 
 ## `isx ask`
@@ -749,7 +752,7 @@ Rebuild your templates afterwards with `isx build --all`.
 Ask the AI any question about isx; it uses AI tokens.
 It needs an Anthropic API key, Vertex AI or an OpenAI key, since a Claude subscription token only serves Claude Code.
 Claude Max and Team plans include [monthly API credits](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers) that pay for such a key.
-`isx init` offers to add one beside a subscription account.
+`isx init` offers to add such a key beside a subscription account.
 
 ```shell
 isx ask <question...>
@@ -759,7 +762,7 @@ isx ask <question...>
 |--------|--------------|
 | `--with-templates` | Include template and tool definitions in the AI context |
 
-An answer is AI-generated and can be wrong, so it is asked to end with the documentation sections it relies on: check it against them.
+An answer is AI-generated and can be wrong, so isx asks the AI to end the answer with the documentation sections the answer relies on: check the answer against them.
 A note on stderr says so after every answer, and stdout holds only the answer.
 
 ## `isx mcp`
@@ -774,7 +777,7 @@ claude mcp add isx -- isx mcp
 See [Delegating from an agent on your host](MCP.md#delegating-from-an-agent-on-your-host-mcp) for what it offers and how to approve templates.
 
 `isx mcp --caller-instance <name>` serves an instance branched with `--mcp-client` instead.
-The proxy runs it for each connection that instance makes to `https://mcp.isx.internal/mcp`, as [a coordinator in an instance](MCP.md#a-coordinator-in-an-instance).
+The proxy runs this command for each connection that instance makes to `https://mcp.isx.internal/mcp`, as [a coordinator in an instance](MCP.md#a-coordinator-in-an-instance).
 
 ### `isx mcp setup`
 
@@ -820,7 +823,7 @@ Add `isx completion pwsh | Out-String | Invoke-Expression` to your `$PROFILE` to
 The scripts also complete `<namespace>=<account>` for `isx branch --account` and `isx account set`, and the namespaces for `isx account unset`.
 For `isx account add` they offer each credential by namespace and by tool, such as `github` and `gh`.
 They offer names only, never credentials.
-The zsh, fish and PowerShell scripts mark each namespace's default account; bash shows no descriptions.
+The zsh, fish and PowerShell scripts mark each namespace's default account; bash does not show descriptions.
 
 ## Scripting isx
 
@@ -853,8 +856,8 @@ Neither format lets a value write a control character to your terminal.
 A value can hold one: an instance stamp set by hand with `incus config set` can carry an escape sequence.
 
 - `plain` keeps each record on one line and safe to print, so every control character in a value becomes a space.
-  That loses them.
-- `json` keeps every value as it is, writing each control character as a JSON escape that any JSON parser turns back into the original.
+  The original characters are then lost.
+- `json` keeps every value unchanged, writing each control character as a JSON escape that any JSON parser turns back into the original.
   Read `json` when you need a value exactly.
 
 The characters `plain` replaces and `json` escapes:
@@ -931,7 +934,7 @@ The fields of each command, in order:
 | `isx branch <name>` | `name` |
 | `isx templates validate`, `isx templates new --from` | `name`, `path`, `valid`, `written`, `findings`, `reach` |
 
-The sections below say what the fields that need it mean.
+The sections below explain the fields that need an explanation.
 
 #### `isx templates` fields
 
@@ -939,11 +942,11 @@ The sections below say what the fields that need it mean.
 |-------|---------|
 | `source` | `built-in` or the file |
 | `version_outdated` | Built by another isx version |
-| `definition_changed` | Its definition or a tool it uses changed since |
+| `definition_changed` | Its definition or a tool it uses changed since it was built |
 | `parent_rebuilt` | Its parent was built after it, and it was copied from the parent |
 
-`parent_rebuilt` is never set for a VM over a container parent, or the reverse, which is built from the definitions.
-The staleness flags are `null` for a template that is not built.
+`parent_rebuilt` is never set for a VM whose parent is a container, or the reverse, because isx builds such a template from the definitions and does not copy the parent.
+`version_outdated`, `definition_changed` and `parent_rebuilt` are `null` for a template that is not built.
 Everything from `built` on is `null` when Incus could not be asked, with the reason on stderr.
 
 `isx build --out-of-sync` builds the templates that are not built, rebuilds those with `version_outdated`, `definition_changed` or `parent_rebuilt`, and rebuilds the descendants of every template it builds.
@@ -988,7 +991,7 @@ Only the definition's own fields count, not its parent's.
 | `identity_pending` | The git identity the instance takes on its next start or shell, from its stamps |
 | `template_problem` | Why the template's own choice cannot be used |
 
-An identity missing from an instance whose template an older isx built is filled in then too, but is not listed.
+On that next start or shell, isx also fills in an identity missing from an instance whose template an older isx built, but `identity_pending` does not list that identity.
 
 #### `isx proxy status` fields
 
@@ -1015,14 +1018,14 @@ One record per instance the proxy knows, by name, then one whose `instance` is `
 | `counting_since` | Subtract two reads only when both carry the same value |
 | `requests`, `in_flight`, `last_activity_at`, `request_bytes`, `response_bytes` | All traffic, model calls included. `in_flight` counts an open WebSocket too; the byte fields are body bytes, counted as each request ends |
 | `model_requests`, `model_in_flight`, `last_model_request_at`, `last_model_response_at`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` | Model calls alone |
-| `identified_by_proof` | Its proof or secret alone named it, not its address; `null` on the unattributed record |
+| `identified_by_proof` | The instance's proof or secret alone named the instance, not its address; `null` on the unattributed record |
 | `refused_proofs` | Proofs the proxy checked that did not match any proof isx gave an instance |
-| `refused_address_misses` | Requests from an address that is no instance, never checked |
+| `refused_address_misses` | Requests from an address that no instance has, whose proofs the proxy never checked |
 | `registry_stale` | The proxy's last instance listing failed, or the one under way has hung |
 | `unplaced_running` | Running instances with no traffic attributed |
 | `last_address_miss_at` | The time of the last address miss |
 
-The last five are the proxy's own: on the unattributed record alone, and `null` on the others.
+The last five fields describe the proxy, not one instance: they are set on the unattributed record alone, and are `null` on the others.
 The table ends with the refused proofs and a failed listing when there are any, and the unplaced instances when there are address misses.
 
 With `--by-domain`, one record per instance and domain: `instance`, `domain`, `counting_since`, `requests`, `in_flight`, `last_activity_at`, `request_bytes`, `response_bytes`.
@@ -1054,13 +1057,13 @@ It exits 1 when Incus is unreachable.
 
 The current base image is unlisted when it is older than every release fetched, unpublished or deleted.
 It then gets a record of its own, last, with no `date`.
-That alone does not tell you its age.
+The `listed` field alone does not tell you the image's age.
 
 #### `isx branch` fields
 
 `isx branch <name> --format=plain` prints `name` alone.
-Progress goes to stderr and no shell is opened, so `name=$(isx branch my-box --from tpl-java --format=plain)` captures it.
-That is why `plain` never gains a field.
+Progress goes to stderr and no shell is opened, so `name=$(isx branch my-box --from tpl-java --format=plain)` captures the name.
+`plain` never gains a field, so that this capture keeps working.
 
 `--format=json` adds the fields a program needs to reach the instance:
 
@@ -1079,7 +1082,8 @@ That is why `plain` never gains a field.
 | `mcp_scope` | The templates such a coordinator may control, or `null` |
 
 The SSH fields are `null` when the template does not install `sshd`, or when isx cannot create its SSH key.
-isx creates the key before printing it, and authorizes it in the instance when the instance starts, so a `--no-start` branch is reachable once started.
+isx creates the key before printing its path, and authorizes the key in the instance when the instance starts, so a `--no-start` branch is reachable once started.
+
 A plain `ssh <name>` uses the instance's own Host block, which never starts a stopped instance.
 
 ### Exit codes
