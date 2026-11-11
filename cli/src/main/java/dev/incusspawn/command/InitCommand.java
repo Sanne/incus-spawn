@@ -2091,9 +2091,8 @@ public class InitCommand extends BaseCommand {
         }
         var approved = mcp.templates();
         var candidates = mcpCandidates(trustedDefinitions());
-        // Fully set up, the run still names the templates not approved and offers to change them
-        var toApprove = (registered || !claude) && !approved.isEmpty()
-                ? candidates.stream().filter(n -> !approved.contains(n)).toList() : candidates;
+        // The run asks about every candidate, but one already approved keeps its answer: only the rest is a change (#2130)
+        var toApprove = candidates.stream().filter(n -> !approved.contains(n)).toList();
         var offers = new ArrayList<InitPlan.Change>();
         if (claude && !registered) {
             var isx = isxPath();
