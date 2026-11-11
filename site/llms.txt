@@ -6,13 +6,25 @@ A branch is to a template what a git worktree is to a repository, except that th
 
 If a person asked you to install isx and set it up, follow [Install with your agent](https://isx.run/docs/agent-install). You do the work, and the person holds the keys:
 
-- Never run sudo or anything else as root. Install isx without root: `curl -fsSL https://isx.run | sh` on Linux (into `~/.local/bin`), `brew install Sanne/tap/incus-spawn` on macOS.
+- Never run sudo or anything else as root. Install isx without root: `curl -fsSL https://isx.run | sh` on Linux, `brew install Sanne/tap/incus-spawn` on macOS. The Linux script installs into `~/.local/bin`, which a non-interactive shell may not have on its `PATH`: run `~/.local/bin/isx`, or add it.
 - Read `isx init --plan --format=json` first. Each step says `who` must finish it: `none` is yours, `sudo`, `secret` and `approval` are the person's.
 - Run `isx init --no-sudo --service --format=json`. Exit 75 means the steps that need root are in the script it names: hand the person `sudo sh <that script>` and stop, then run the same command again. Do not write a root script of your own from the plan's `sudo_script` fields: isx's script records what it ran, which the next run and the plan read.
 - Exit 76 means init finished but left steps for the person, which its JSON summary lists. Never ask for a secret: tell the person to run `isx account add <namespace>` (for example `claude`) at their own terminal, and stop.
+- Init asks for a credential only once a template needs one, so on a fresh host its `credentials` step reads `done`. After writing your template, run `isx init --plan --format=json` again: its `credentials` step then names each missing credential and the `isx account add` command for it.
 - Never write `~/.config/incus-spawn/mcp.yaml` or choose which templates agents may use: ask the person to run `isx mcp setup`, and stop.
-- Write a template without an editor with `isx templates new <name> --from -` (YAML on stdin), then `isx build <name>` and `isx branch <instance> --from <name> --format=json`, which opens no shell. Make its parent `tpl-minimal`, as the Quick Start's `tpl-agent` does, so the first branch needs only the agent's credential. `tpl-dev` is deprecated, and its `gh` needs a GitHub credential before any branch.
-- Register isx's MCP server with yourself: `claude mcp add --scope user isx -- "$(command -v isx)" mcp`, `codex mcp add isx -- "$(command -v isx)" mcp`, or the entry `isx mcp config` prints.
+- Write a template without an editor with `isx templates new <name> --from -` (YAML on stdin), then `isx build <name>` and `isx branch <instance> --from <name> --format=json`, which opens no shell. The Quick Start's template, whose first branch needs only the Claude credential (for another agent, replace `claude` with `codex`, `pi`, `gemini-cli`, `bob` or `copilot`):
+
+  ```yaml
+  name: tpl-agent
+  description: Claude Code on the base OS
+  parent: tpl-minimal
+  tools:
+    - claude
+  default-action: claude
+  ```
+
+  Keep `tpl-minimal` as its parent. `tpl-dev` is deprecated, and its `gh` needs a GitHub credential before any branch.
+- Register isx's MCP server with yourself: `claude mcp add --scope user isx -- "$(command -v isx)" mcp`, `codex mcp add isx -- "$(command -v isx)" mcp`, or the entry `isx mcp config` prints. Your client may load it only in a new session. To check it, call `list_templates`: it lists the templates the person approved. `list_instances` lists only instances created over MCP, so the first instance, made with `isx branch`, is not in it.
 
 ## Docs
 
