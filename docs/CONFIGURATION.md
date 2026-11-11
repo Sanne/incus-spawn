@@ -10,12 +10,13 @@ This page says where they live, how a credential gets several accounts that temp
 | `~/.config/incus-spawn/ssh/` | The managed SSH key pair and the per-instance SSH config |
 | `~/.config/incus-spawn/images/*.yaml` | User-level template definitions |
 | `~/.config/incus-spawn/tools/*.yaml` | User-level tool definitions |
-| `.incus-spawn/images/*.yaml` | Project-local template definitions |
+| `.incus-spawn/images/*.yaml` | Project-local template definitions, the ones a cloned repository ships in its `.incus-spawn/` directory |
 | `.incus-spawn/tools/*.yaml` | Project-local tool definitions |
 
 ## Credential accounts
 
-You can configure a credential more than once under different names, for example a personal and a client Claude subscription, or two GitHub identities, and choose which one each instance uses.
+You can configure a credential more than once under different names, for example a personal and a client Claude subscription, or two GitHub identities.
+Each named copy is an account, and you choose which account each instance uses.
 You can even switch a running instance to another account, with no restart.
 
 ```yaml
@@ -42,16 +43,16 @@ github:
 You do not need to write this by hand: `isx init` adds, renames and removes accounts and sets the default.
 Re-run it any time to change them.
 
-A key isx does not read in a tool's credential section, such as `openai.token` for `openai.apiKey`, is never used.
-`isx init`, `isx account add` and `isx doctor` name it, and so does the error when a template needs that credential.
+isx ignores a key it does not read in a tool's credential section, such as `openai.token` written where `openai.apiKey` is meant.
+`isx init`, `isx account add` and `isx doctor` name the ignored key, and so does the error when a template needs that credential.
 
 A subscription account serves Claude Code in your instances, but not [`isx ask`](CLI.md#isx-ask), which needs an API key.
-Claude Max and Team plans include [monthly API credits](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers) for one, claimed on claude.ai under Settings > Billing.
+Claude Max and Team plans include [monthly API credits](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers) for an API key, claimed on claude.ai under Settings > Billing.
 
 Add the key as a second `claude` account with `type: api-key`, and keep the subscription as the default.
 `isx init` offers this when it saves a subscription.
 
-An instance uses, most specific first:
+An instance uses the account from the first of these that is set:
 
 1. its own choice: `isx branch --account`, `isx account set`, or the `a` key in the TUI;
 2. its template's `accounts:`;
@@ -66,7 +67,7 @@ accounts:
 ```
 
 When you branch from a template, the new instance takes the template's account choices and keeps them.
-Editing `accounts:` later only affects instances branched after that.
+Editing the template's `accounts:` later affects only instances branched after the edit.
 
 ### Example: keeping a client's work on the client's accounts
 
@@ -86,8 +87,8 @@ acme-42 (branched from tpl-acme):
           Pinned by template tpl-acme's accounts: setting, copied onto this instance when it was branched.
 ```
 
-Everything in `acme-42` runs as Acme's accounts.
-For a one-off, choose per branch: `isx branch review-1 --account github=acme-bot`.
+Everything in `acme-42` uses Acme's accounts.
+For a single instance, choose the account when you branch: `isx branch review-1 --account github=acme-bot`.
 
 ### Managing an instance's accounts
 
@@ -106,25 +107,28 @@ Changes take effect on the instance's next request, with no restart.
 An instance switched to another GitHub account takes that account's git identity on its next start or shell.
 The exception is switching between Claude auth modes (Pro/Max, API key, Vertex), which needs a template built for that mode ([#866](https://github.com/Sanne/incus-spawn/issues/866)).
 
-Changing a default moves every instance that follows it; `isx init` lists them first and lets you keep them where they are.
-Renaming an account in `isx init` updates the instances using it, and removing one tells you what still uses it.
+Changing a default switches every instance that follows it to the new account; `isx init` lists those instances first and lets you keep them on their current account.
 
-An instance left pointing at a missing account stops working rather than using another one.
-`isx doctor` and `isx account show` point these out.
+Renaming an account in `isx init` updates the instances using that account, and when you remove an account, `isx init` tells you what still uses it.
+
+An instance set to an account that no longer exists stops working rather than using another account.
+`isx doctor` and `isx account show` report such instances.
 
 ### Inheriting the outer instance's account
 
 An isx running inside an isx instance serves its own instances from its own `config.yaml`.
-The reserved account `inherit` lets them use the outer instance's account for one credential instead.
+The reserved account `inherit` lets those inner instances use, for one credential, the account of the outer instance, which is the instance that isx runs in.
 
-Select it like any other account, in any of these ways:
+Select `inherit` like any other account, in any of these ways:
 
 - `isx branch inner-1 --account github=inherit`;
 - `isx account set inner-1 github=inherit`;
 - a template's `accounts:`;
 - `default: inherit` under `github:` in the inner `config.yaml`.
 
-The inner proxy then presents the outer instance's proof token in place of the inner instance's own, so the outer proxy serves the outer instance's account for that credential only.
+isx gives each instance a proof, a token that the instance sends in place of a credential.
+With `inherit`, the inner proxy presents the outer instance's proof in place of the inner instance's own proof, so the outer proxy serves the outer instance's account for that credential only.
+
 The inner proxy checks its instance's current proof before substituting the outer instance's proof.
 CA trust and the outer network policy still apply.
 
@@ -133,16 +137,18 @@ A nested process with no proof, a forged proof-shaped token, or an independent a
 Outside an isx instance, `inherit` is refused when you branch, and so is any request that relies on it.
 You cannot name an account of your own `inherit`.
 
-`isx doctor` counts an inherited default as configured inside an instance whose secret it can read, and warns about it otherwise.
+`isx doctor` counts an inherited default as configured inside an instance whose secret `isx doctor` can read, and warns about the default otherwise.
 
-A template whose own `accounts:` says `claude: inherit` builds Claude for an API key, the form the outer proxy turns into whichever account it serves.
-The git identity of an instance that inherits GitHub is the outer account's when it starts inheriting.
-If the outer instance later switches GitHub accounts, branch again or run `isx account set` to pick up the new one.
+A template whose own `accounts:` says `claude: inherit` builds Claude for an API key, the form of request that the outer proxy converts to whichever account it serves.
+
+The git identity of an instance that inherits GitHub is the outer account's at the time the instance starts inheriting.
+If the outer instance later switches GitHub accounts, branch again or run `isx account set` to take the new account's identity.
 
 ## Git cache
 
-Builds can read Git objects directly from linked host checkouts without changing them or copying their object stores first.
-A full clone's snapshot holds the branch or tag the template asks for, or else the remote's default branch, with all its history.
+Builds can read Git objects directly from linked host checkouts without changing the checkouts or copying their object stores first.
+
+A full clone's snapshot, a clean copy of the repository that the build prepares on the host, holds the branch or tag the template asks for, or else the remote's default branch, with all its history.
 The instance fetches other branches itself when it needs them; shallow clones retain their configured depth.
 
 Each build's copy also gets the tags in that history, so `git describe` gives the same answer as on a regular clone.
@@ -185,12 +191,12 @@ What to do before a transfer:
 
 - Load the key into `ssh-agent`: ssh does not ask for a passphrase.
 - Keep the host in `~/.ssh/known_hosts`: ssh does not ask about a host key.
-- Do not count on a password prompt: Git fails at once instead of asking for one.
+- Do not rely on a password prompt: Git fails at once instead of asking for one.
 
 Where it can, isx adds `-o BatchMode=yes` to ssh or to your `core.sshCommand`, which stops both ssh prompts; for a build, only a global `core.sshCommand` applies.
 isx makes any other ssh, such as a custom `GIT_SSH` or a wrapper, fail rather than ask (OpenSSH 8.4 or later).
 
-A transfer that stops making progress is ended without waiting for it:
+isx ends a transfer that stops making progress, instead of waiting for the transfer to finish:
 
 ```yaml
 git-transfer:
@@ -200,12 +206,12 @@ git-transfer:
 
 These are the defaults; `0` turns a bound off.
 Quiet work such as resolving deltas still uses the CPU, so it is not a stall.
-An ended `isx update-all` fetch is a warning, and the checkout stays as it was.
+An ended `isx update-all` fetch is a warning, and the checkout stays unchanged.
 An ended build preparation falls back to cloning inside the build.
 
 ## Search paths for templates and tools
 
-`config.yaml` also holds git remote auto-management via `host-paths` and `repo-paths` (see [Git Remotes](../README.md#git-remotes)), and a `searchPaths` list for loading templates and tools from external directories.
+`config.yaml` also holds `host-paths` and `repo-paths`, with which isx manages git remotes for you (see [Git Remotes](../README.md#git-remotes)), and a `searchPaths` list for loading templates and tools from external directories.
 Each directory holds `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions.
 Every path setting expands a tilde (`~`):
 
@@ -223,7 +229,7 @@ my-templates/
     gradle.yaml
 ```
 
-Resolution order, later sources overriding earlier ones with the same name:
+isx loads definitions in this order, and a later source overrides an earlier definition with the same name:
 
 1. Built-in (bundled with isx)
 2. User (`~/.config/incus-spawn/`)
@@ -232,9 +238,9 @@ Resolution order, later sources overriding earlier ones with the same name:
 
 ## External tools that drive isx
 
-`drivers:` says what a tool that creates instances for you, such as an orchestrator, may do to the instances it owns.
-A tool owns an instance it branched with `isx branch --owner <name>`.
-Nothing is granted unless you list it here:
+`drivers:` says what an external tool, a program outside isx that creates instances for you, such as an orchestrator, may do to the instances it owns.
+An external tool owns an instance it branched with `isx branch --owner <name>`.
+isx does not grant an external tool any permission unless you list the permission here:
 
 ```yaml
 drivers:
@@ -246,20 +252,20 @@ drivers:
 |-----|---------|--------------|
 | `destroy` | `false` | Lets `isx destroy --owner <name>` delete the instances that tool owns |
 
-A tool never destroys an instance it does not own, such as your own branch of one of its instances.
+An external tool never destroys an instance it does not own, such as your own branch of one of its instances.
 An entry isx cannot read does not grant any permission, and isx says which entry and why.
 
 ## Host CA propagation
 
-By default an instance trusts the isx CA beside Fedora's roots and nothing else.
-On a host behind TLS inspection, or for an isx inside another isx, you can have the host's own CA anchors installed in every instance too:
+By default an instance trusts only the isx CA and Fedora's roots.
+On a host behind TLS inspection, or for an isx inside another isx, you can make isx install the host's own CA anchors in every instance too:
 
 ```yaml
 host-ca:
   propagate: true
 ```
 
-See [Host CAs](FEDORA.md#host-cas-opt-in) for what it installs and where.
+See [Host CAs](FEDORA.md#host-cas-opt-in) for what isx installs and where.
 
 ## TUI live refresh
 
@@ -281,13 +287,13 @@ ready-timeouts:
   proxy: 1m               # durations: 30s, 1m, 2m ...
 ```
 
-The same section holds `container` and `vm`: how long a start waits for the instance to answer before it fails.
+The same section holds `container` and `vm`: how long a start waits for the instance to answer before the start fails.
 Their defaults are 30s and 2m.
 
 ## Storage pool
 
 Every instance lives on one btrfs copy-on-write pool, which `isx init` creates when Incus has none.
-On Linux, how isx backs it depends on the filesystem under `/var/lib/incus`.
+On Linux, how isx backs the pool depends on the filesystem under `/var/lib/incus`.
 
 | Host filesystem | Backing | Size |
 |---|---|---|
@@ -297,10 +303,10 @@ On Linux, how isx backs it depends on the filesystem under `/var/lib/incus`.
 A loop file on btrfs would nest one btrfs inside another.
 Every write in an instance would then be copied twice, with two sets of metadata.
 
-isx mounts the loop file to commit every 300 seconds, not 30, since instances are scratch space.
-It also compresses inside the pool, since nothing below it does.
+isx mounts the loop file to commit every 300 seconds, not 30, since instances hold disposable working data.
+isx also compresses data inside the pool, since no layer under the pool compresses it.
 
-On macOS the pool lives on the appliance's own disk; `isx vm resize` grows it.
+On macOS the pool lives on the appliance's own disk, the appliance being the Linux VM that isx runs; `isx vm resize` grows it.
 
 A subvolume pool has no cap of its own, so it can fill the host's disk.
 `isx doctor` warns when the pool is over 90% full; each instance's `--disk` limit still applies.
@@ -308,7 +314,7 @@ A subvolume pool has no cap of its own, so it can fill the host's disk.
 A subvolume pool also changes the host filesystem as a whole.
 Incus enables btrfs quotas to enforce the `--disk` limit, and they cover the whole filesystem.
 Each time Incus starts on the host, it mounts the filesystem with `user_subvol_rm_allowed`.
-That lets a user delete any subvolume they can write to, not only in the pool.
+That option lets a user delete any subvolume they can write to, not only in the pool.
 
 `isx init` sets up a new pool only.
 For a pool that is already a loop file on btrfs, `isx doctor` warns and links to the steps for moving it.
@@ -316,22 +322,22 @@ For a pool that is already a loop file on btrfs, `isx doctor` warns and links to
 ## Caching
 
 The proxy and build system cache downloads on the host, shared by all templates and branches.
-Only content that can be verified is cached: isx checks everything against its digest or upstream checksum before storing it.
+isx caches only content it can verify: isx checks everything against its digest or upstream checksum before storing it.
 
 Proxy caches, from instance traffic:
 
 - **Container image layers**: OCI blobs from Docker Hub, GHCR and Quay, keyed by SHA256 content digest.
 - **Maven and Gradle artifacts**: release JARs, POMs and plugins from Maven Central and the Gradle plugin portal, verified against the upstream checksum and re-confirmed with upstream as they age (a `HEAD` on Maven Central, the checksum file elsewhere).
   When the repository is unreachable, the proxy serves cached artifacts unconfirmed, so builds keep working offline.
-- **Gradle distributions**: verified against the upstream `.sha256` sidecar, and re-confirmed against it the same way.
+- **Gradle distributions**: verified against the `.sha256` file upstream publishes beside the distribution, and re-confirmed against it the same way.
 - **npm tarballs**: from `registry.npmjs.org`, verified against the version's published SHA-512 integrity, or its SHA-1 shasum for old versions without one.
-  The proxy re-confirms them against it the same way, so a version removed upstream stops being served.
+  The proxy re-confirms the tarballs against that value the same way, so the proxy stops serving a version removed upstream.
 
 How recently a cached Maven or Gradle artifact, or npm tarball, must have been confirmed with upstream is configurable:
 
-- Within `fresh` of its last confirmation, the proxy serves it straight from the cache.
-- Within `max-stale`, the proxy serves it at once and confirms it again in the background; a copy upstream has changed or withdrawn is evicted for the next request.
-- Older than that, the proxy confirms it before serving it.
+- Within `fresh` of its last confirmation, the proxy serves the artifact from the cache without asking upstream.
+- Within `max-stale`, the proxy serves the artifact at once and confirms it again in the background; the proxy evicts a copy that upstream has changed or withdrawn, so the next request does not receive that copy.
+- Older than `max-stale`, the proxy confirms the artifact before serving it.
 
 Gradle Plugin Portal artifacts are always confirmed first, since the portal can delete a published version.
 The defaults:
@@ -342,8 +348,8 @@ artifact-cache:
   max-stale: 7d
 ```
 
-Setting both to `0` confirms every hit before serving it.
-This is not recommended: Maven Central does not allow published artifacts to change, so it only adds latency.
+Setting both to `0` makes the proxy confirm every cached artifact before serving it.
+This is not recommended: Maven Central does not allow published artifacts to change, so confirming every time only adds latency.
 
 Build-time caches:
 
