@@ -439,7 +439,8 @@ class HostSetup {
     /** What {@link #configureUfw} would change, when {@code before.rules} can be read without sudo. */
     private InitPlan.Assessment planUfw() {
         var beforeRules = readIfReadable(init.hostFile(UfwCheck.BEFORE_RULES.toString()));
-        if (beforeRules == null) return unreadable(UFW_UNREADABLE, "Add the firewall rules that are missing, if any", UFW_CHECKS, List.of());
+        if (beforeRules == null) return unreadable(UFW_UNREADABLE, "Add the firewall rules that are missing, if any", UFW_CHECKS,
+                UfwScript.firewallLines());
         String subnet;
         try {
             subnet = CidrUtils.deriveSubnet(ProxyConfig.resolveGatewayIp(init.incus));
@@ -450,11 +451,11 @@ class HostSetup {
         if (!UfwCheck.hasMasquerade(beforeRules, subnet)) adding.add("NAT masquerading");
         if (!UfwCheck.hasForwardRules(beforeRules)) adding.add("FORWARD rules for incusbr0");
         if (adding.isEmpty()) return InitPlan.Assessment.done();
-        return InitPlan.Assessment.of(List.of(
-                sudoChange("Allow traffic in on incusbr0", UFW_ALLOW_BRIDGE),
-                new InitPlan.Change("Add " + String.join(" and ", adding) + " to before.rules", InitPlan.Who.SUDO,
-                        null, UfwCheck.BEFORE_RULES.toString()),
-                sudoChange("Reload UFW", UFW_RELOAD)));
+        // One change: the script edits before.rules as it runs, by UfwScript's lines, and reloads UFW
+        return InitPlan.Assessment.of(List.of(new InitPlan.Change("Allow traffic in on incusbr0, add "
+                + String.join(" and ", adding) + " to before.rules, and reload UFW", InitPlan.Who.SUDO,
+                null, UfwCheck.BEFORE_RULES.toString()).scripted(UfwScript.forReading("For the subnet " + subnet,
+                UfwScript.firewallLines()))));
     }
 
     /** What a step's root part says under {@code --no-sudo}, where the script made it (#2074). */
@@ -841,8 +842,9 @@ class HostSetup {
      * The move of the redirect off the gateway a {@code --no-sudo} run moved the bridge from, this
      * run or an earlier one ({@link Environment#initBridgeMovedFile}), until the script's record
      * shows the move made. Kept on disk so a script written over the move, or not run, does not
-     * lose it; {@code privilegedStepsLeft} hands it over with the rest. On UFW, whose rules are not
-     * scripted, it is named for the person to make.
+     * lose it; {@code privilegedStepsLeft} hands it over with the rest. On UFW the lines rewrite
+     * isx's NAT block, under a comment naming the old gateway: without it they are the redirect's
+     * own lines, which the first script's record already holds.
      */
     List<InitPlan.Privileged> movedRedirect() {
         var from = movedFromGateway;
@@ -859,11 +861,14 @@ class HostSetup {
                 InitPlan.Assessment.done());
         var move = InitPlan.Change.sudo("Move the redirect to the proxy from the old gateway " + from
                 + " to the bridge's new one, which a run moved off a host route", null);
-        // On UFW, unscripted: named for the person, and kept until a run with sudo moves it
-        if (init.runningFirewall() instanceof DetectionResult.UseUfw) return List.of(new InitPlan.Privileged(step, move));
         var lines = new ArrayList<String>();
-        lines.add(asRoot(fwdRedirect("--remove-rule", from)));
-        lines.addAll(bridgeRedirectLines());
+        if (init.runningFirewall() instanceof DetectionResult.UseUfw) {
+            // isx's NAT block is replaced whole, so the old gateway's redirect goes with it
+            lines.addAll(UfwScript.forReading("Off the old gateway " + from, UfwScript.redirectLines()));
+        } else {
+            lines.add(asRoot(fwdRedirect("--remove-rule", from)));
+            lines.addAll(bridgeRedirectLines());
+        }
         var scripted = move.scripted(lines);
         // Read only, as the plan is: the file goes once a run sees the move made (forgetMadeBridgeMove)
         if (InitPlan.made(scripted, init.appliedByScript())) return List.of();
@@ -872,8 +877,7 @@ class HostSetup {
 
     /** Under {@code --no-sudo}: forgets a kept move the script's record shows made. */
     void forgetMadeBridgeMove() {
-        if (movedFromGateway == null && movedRedirect().isEmpty() && Files.exists(Environment.initBridgeMovedFile())
-                && !(init.runningFirewall() instanceof DetectionResult.UseUfw)) {
+        if (movedFromGateway == null && movedRedirect().isEmpty() && Files.exists(Environment.initBridgeMovedFile())) {
             forgetBridgeMove();
         }
     }
@@ -1021,14 +1025,15 @@ class HostSetup {
     /** What {@link #configureMitmProxyUfw} would change, when {@code before.rules} can be read without sudo. */
     private InitPlan.Assessment planRedirectUfw(String gatewayIp) {
         var beforeRules = readIfReadable(init.hostFile(UfwCheck.BEFORE_RULES.toString()));
-        if (beforeRules == null) return unreadable(UFW_UNREADABLE, "Add the redirect to the proxy, if it is missing", UFW_CHECKS, List.of());
+        if (beforeRules == null) return unreadable(UFW_UNREADABLE, "Add the redirect to the proxy, if it is missing", UFW_CHECKS,
+                UfwScript.redirectLines());
         if (UfwCheck.hasPreRoutingRedirect(beforeRules, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp)) {
             return InitPlan.Assessment.done();
         }
-        return InitPlan.Assessment.of(List.of(
-                new InitPlan.Change("Redirect the containers' HTTPS on " + gatewayIp + " to the proxy",
-                        InitPlan.Who.SUDO, null, UfwCheck.BEFORE_RULES.toString()),
-                sudoChange("Reload UFW", UFW_RELOAD)));
+        return InitPlan.Assessment.of(List.of(new InitPlan.Change("Redirect the containers' HTTPS on " + gatewayIp
+                + " to the proxy in before.rules, and reload UFW", InitPlan.Who.SUDO, null,
+                UfwCheck.BEFORE_RULES.toString()).scripted(UfwScript.forReading("For the gateway " + gatewayIp,
+                UfwScript.redirectLines()))));
     }
 
     static final String[] MITM_HINT = {
@@ -1044,13 +1049,18 @@ class HostSetup {
      * script's record of them still holds once it is.
      */
     private static List<String> bridgeRedirectLines() {
-        var lines = new ArrayList<>(List.of(
+        var lines = new ArrayList<>(bridgeGatewayLines());
+        lines.addAll(redirectLines("\"$gw\""));
+        return lines;
+    }
+
+    /** The script's lines setting {@code gw} from the bridge, made as {@link IncusClient#createBridgeIfMissing} makes it when missing. */
+    static List<String> bridgeGatewayLines() {
+        return List.of(
                 "incus network show " + BridgeAddress.BRIDGE + " >/dev/null 2>&1 || incus network create " + BridgeAddress.BRIDGE
                         + " ipv4.address=" + VmManager.gatewayIp() + "/24 ipv4.nat=true ipv6.address=none",
                 "gw=$(incus network get " + BridgeAddress.BRIDGE + " ipv4.address)",
-                "gw=${gw%/*}"));
-        lines.addAll(redirectLines("\"$gw\""));
-        return lines;
+                "gw=${gw%/*}");
     }
 
     /** What {@link #configureMitmProxy} would change. */
@@ -1072,7 +1082,7 @@ class HostSetup {
                 parts.add(InitPlan.Assessment.of(List.of(
                         InitPlan.Change.write("Record the bridge's gateway", InitPlan.Who.NONE, configFile()),
                         InitPlan.Change.sudo("Redirect the containers' HTTPS on the bridge's gateway to the proxy", null)
-                                .scripted(firewall instanceof DetectionResult.UseUfw ? List.of() : bridgeRedirectLines())))
+                                .scripted(firewall instanceof DetectionResult.UseUfw ? UfwScript.redirectLines() : bridgeRedirectLines())))
                         .noting("The gateway is known once Incus is set up."));
             }
         } else {

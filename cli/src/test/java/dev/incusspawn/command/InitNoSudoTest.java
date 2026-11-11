@@ -299,9 +299,9 @@ class InitNoSudoTest {
         assertTrue(lines.contains("gw=$(incus network get incusbr0 ipv4.address)"), lines.toString());
     }
 
-    /** On UFW the move is not scripted: the run names it for the person instead. */
+    /** On UFW the move rewrites isx's NAT block, under the old gateway's name, so the first script's record does not hold it. */
     @Test
-    void aBridgeTheRunMovesOnUfwNamesTheMoveUnscripted(@TempDir Path root) throws Exception {
+    void aBridgeTheRunMovesOnUfwRewritesTheNatBlock(@TempDir Path root) throws Exception {
         var init = setUp(root);
         init.routes = List.of("10.1.0.0/20 dev vpn0");
         init.firewall = new DetectionResult.UseUfw();
@@ -309,7 +309,12 @@ class InitNoSudoTest {
         RecordingOutput.during(() -> init.host().checkBridgeSubnet());
         var waiting = assertThrows(InitCommand.WaitingOnPerson.class,
                 () -> RecordingOutput.during(() -> init.host().configureMitmProxy()));
-        assertTrue(waiting.changes.stream().allMatch(p -> p.change().script().isEmpty()), waiting.changes.toString());
+        // isx's NAT block, replaced whole on the new gateway, takes the old redirect with it (#2074)
+        var scripts = waiting.changes.stream().map(p -> p.change().script()).toList();
+        assertEquals(1, scripts.size(), scripts.toString());
+        assertEquals(UfwScript.redirectLines(), scripts.get(0).subList(1, scripts.get(0).size()));
+        assertFalse(InitPlan.made(waiting.changes.get(0).change(), Set.of(InitPlan.key(UfwScript.redirectLines()))),
+                "the first script's redirect is not the move");
     }
 
     /**

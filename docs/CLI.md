@@ -118,7 +118,9 @@ The script records what it ran in `/var/lib/isx/init-applied`, which the second 
 Once nothing needs root any more, the second run removes the script.
 When the second run itself finds root work, such as a redirect to move after it moved the bridge off a VPN's subnet, it writes a new script and exits 75 again.
 
-A step isx cannot write as a script, such as a UFW firewall's rules, stops the run and names what to do yourself.
+A step isx cannot write as a script, such as installing packages on a host without a package manager it knows, stops the run and names what to do yourself.
+
+On a UFW host the script edits `/etc/ufw/before.rules` itself, keeps a copy, and puts the copy back if UFW refuses the new file.
 On macOS `isx init` needs no administrator, so `--no-sudo` has no effect there.
 
 ## `isx build`

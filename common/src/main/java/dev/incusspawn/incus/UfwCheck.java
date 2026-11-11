@@ -17,8 +17,8 @@ public final class UfwCheck {
     public static final Path BEFORE_RULES = Path.of("/etc/ufw/before.rules");
     public static final String MARKER_NAT_BEGIN = "# BEGIN incus-spawn-nat";
     public static final String MARKER_NAT_END = "# END incus-spawn-nat";
-    static final String MARKER_FWD_BEGIN = "# BEGIN incus-spawn-forward";
-    static final String MARKER_FWD_END = "# END incus-spawn-forward";
+    public static final String MARKER_FWD_BEGIN = "# BEGIN incus-spawn-forward";
+    public static final String MARKER_FWD_END = "# END incus-spawn-forward";
     /** A line that is exactly {@code *filter} or {@code COMMIT}, trailing blanks aside: never a comment naming it. */
     static final Pattern FILTER_LINE = Pattern.compile("^\\*filter[ \\t\\r]*$", Pattern.MULTILINE);
     static final Pattern COMMIT_LINE = Pattern.compile("^COMMIT[ \\t\\r]*$", Pattern.MULTILINE);
