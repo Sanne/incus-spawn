@@ -17,8 +17,11 @@ Every part of that future workflow raises the same questions:
 - How do you review and accept work you did not watch being written?
 
 isx's answer: onboard agents the way you would onboard a new teammate.
-Each agent gets its own disposable, full-fidelity Linux workstation, its own credentials and its own audit trail.
-You review its work as commits, the same way you would review any teammate's pull request, before any of its work reaches your host or your repos.
+Each agent gets its own disposable, full-fidelity Linux workstation.
+You can give it its own API keys and GitHub account, and those credentials stay on your host.
+Its own audit trail is still to come.
+
+You fetch each agent's work as commits and review them the way you would review any teammate's pull request, before you merge any of it.
 
 ## Three theses
 
@@ -27,10 +30,11 @@ You review its work as commits, the same way you would review any teammate's pul
 An agent should not act as you.
 It should have its own identity: its own scoped API token, its own GitHub identity, its own commit-signing key.
 
-These credentials are held outside the instance the agent works in, so even a fully compromised agent cannot exfiltrate them.
-Because each agent has its own identity, every action is attributable to the specific agent that performed it.
+These credentials should be held outside the instance the agent works in, so that even a fully compromised agent cannot exfiltrate them.
+Because each agent should have its own identity, each action it takes should be traceable to that agent.
 
-The proxy on the host, which adds the credentials to requests as they leave an instance, already guarantees the "held outside" part: no key, token or credential ever enters an instance in any form.
+The "held outside" part is delivered for the API keys and tokens you configure in isx: they never enter an instance in any form.
+They stay on your host, and the proxy there adds them to requests as the requests leave an instance.
 
 The other part, an identity per instance, is partly delivered.
 Credential accounts map each instance to its own tokens, such as its own Claude API key and GitHub identity.
@@ -38,15 +42,15 @@ You choose the accounts when you branch.
 The proxy applies that choice on the host, where the agent cannot change it.
 
 Still to come is [#271](https://github.com/Sanne/incus-spawn/issues/271): SSH-agent-filtered commit signing, where the instance can request a signature for exactly one designated key.
-Each request is checked to be for git signing only, and is audited.
-The private key never leaves the host, or the hardware enclave when one holds it.
+Each request would be checked to be for git signing only, and audited.
+The private key would never leave the host, or the hardware enclave when one holds it.
 
 The per-instance account mechanism is deliberately general: per-agent API keys and GitHub identities are its first consumers, and signing keys and budgets are meant to use the same mechanism.
 
 ### 2. The proxy is the control plane
 
-The credential proxy began as a security mechanism, but its position gives it a second use: every API call that every agent makes passes through the proxy.
-Because the proxy sees every call, it provides the following without any instrumentation inside the instances:
+The credential proxy began as a security mechanism, but its position gives it a second use: every request an agent makes with a credential isx holds, model calls included, passes through the proxy.
+Because the proxy sees each of these requests, it can provide the following without any instrumentation inside the instances:
 
 - **Activity**: an agent that is streaming API calls is working; one that stopped mid-session is waiting for input; one that went quiet is done or stuck.
 - **Spend**: live token usage per agent, attributable per instance.
@@ -54,8 +58,10 @@ Because the proxy sees every call, it provides the following without any instrum
 - **Policy**: per-agent domain allowlists, rate and budget caps, enforced by the proxy, outside the instance, where the agent cannot alter them.
 
 Alternatives need SDK cooperation or in-sandbox monitors to approximate any of this.
-isx gets all four from its architecture, because the proxy observes from outside the instance.
-isx gets them for any agent: Claude Code, Pi, or whatever comes next.
+isx can get all four from its architecture, because the proxy observes from outside the instance, whichever agent runs there: Claude Code, Pi, or whatever comes next.
+
+The counts behind activity and spend exist today: the proxy counts each instance's requests, model calls and tokens, and `isx proxy activity` shows them.
+The audit record and the policy are still to come.
 
 ### 3. The TUI grows into mission control
 
@@ -69,7 +75,7 @@ isx's primitives map one-to-one onto the dispatch-and-review workflow:
 | `isx://` remote | The deliverable: an immutable commit you review before merging |
 | Destroy | Offboarding: workstation, credentials, and remotes cleaned up atomically |
 
-The TUI evolves from an instance manager into the place where you dispatch tasks, watch agent status (derived from proxy traffic), inspect diffs, and accept or reject work.
+The goal is for the TUI to grow from an instance manager into the place where you dispatch tasks, watch agent status (derived from proxy traffic), inspect diffs, and accept or reject work.
 The concrete shape of that TUI is brainstormed in [#322](https://github.com/Sanne/incus-spawn/issues/322).
 
 The review model, always an immutable commit and never a live shared directory, is already the project's position: see the [FAQ](FAQ.md#why-cant-i-mount-a-host-directory-read-write-to-follow-agent-work-in-my-ide) on read-write mounts.
@@ -77,7 +83,8 @@ The review model, always an immutable commit and never a live shared directory, 
 ## Local-first, by conviction
 
 The major agent platforms are converging on cloud execution.
-isx deliberately does the opposite: it runs on your hardware, in your network, with your private repos, and your repositories and credentials stay on infrastructure you own.
+isx deliberately does the opposite: it runs the agents on your hardware, in your network, with your private repos, and your repositories and credentials stay on infrastructure you own.
+An agent's model calls still send the code it works on to the model provider.
 
 This is not nostalgia.
 Local execution is the requirement of sovereignty-sensitive organizations, which cloud agent platforms structurally cannot serve: regulated industries, the public sector, security-conscious engineering orgs.
@@ -106,7 +113,7 @@ These are the priorities, in order: each stage unblocks the next.
    Task dispatch onto fresh branches, and review inside the TUI: you read the diff, then accept or reject the work ([#322](https://github.com/Sanne/incus-spawn/issues/322)).
    Agents dispatch work themselves too, through the `isx mcp` server ([#859](https://github.com/Sanne/incus-spawn/issues/859)).
    - A coordinating agent on your host creates instances from templates you approved, runs commands, builds and tests in them, delegates whole tasks to the agents inside, and reads back their diffs.
-   - What a coordinating agent further needs, including proxy-derived activity per instance, is tracked in [#898](https://github.com/Sanne/incus-spawn/issues/898).
+   - A coordinating agent can already read proxy-derived activity per instance, and what it further needs is tracked in [#898](https://github.com/Sanne/incus-spawn/issues/898).
 5. **Policy.**
    Per-agent domain sets, network modes, and budget caps as settings you choose when you dispatch a task.
 
