@@ -101,6 +101,30 @@ class HostSetup {
         return cmd;
     }
 
+    /**
+     * The root script's refresh of apt's package lists, run before its first apt install and not
+     * again: a fresh Debian or Ubuntu host may have none, or stale ones that name versions its
+     * mirror no longer serves, and the script is one shell, so the variable holds across its steps.
+     * A refresh that fails, such as one broken third-party source, only warns: the install then
+     * runs from the lists there are, and reports its own error if they will not do.
+     */
+    static final String APT_REFRESH = "[ -n \"${isx_apt_updated:-}\" ] || { isx_apt_updated=1;"
+            + " apt-get update || echo \"apt-get update failed; installing from the package lists there are.\" >&2; }";
+
+    /**
+     * The change that runs {@code cmd}, an {@link #installCommand}; on apt, its script refreshes the
+     * package lists first ({@link #APT_REFRESH}). The run with sudo installs as before.
+     */
+    static InitPlan.Change installChange(String what, List<String> cmd) {
+        if (cmd == null) return InitPlan.Change.sudo(what, null);
+        var change = InitPlan.Change.sudo(what, String.join(" ", cmd));
+        if (!cmd.contains("apt")) return change;
+        var lines = new ArrayList<String>();
+        lines.add(APT_REFRESH);
+        lines.addAll(change.script());
+        return change.scripted(lines);
+    }
+
     /** The packages init installs before its steps, as Fedora names them: those whose command is missing. */
     static List<String> missingDependencies(Predicate<String> has) {
         var missing = new ArrayList<String>();
@@ -164,8 +188,7 @@ class HostSetup {
                     "Install " + String.join(", ", missing) + " yourself", null)))
                     .noting(NO_PACKAGE_MANAGER + " " + (init.noSudo() ? NO_SUDO_FIRST : SUDO_FIRST));
         }
-        return InitPlan.Assessment.of(List.of(InitPlan.Change.sudo(
-                "Install " + String.join(", ", missing), String.join(" ", cmd))));
+        return InitPlan.Assessment.of(List.of(installChange("Install " + String.join(", ", missing), cmd)));
     }
 
     static final String[] INCUS_HINT = {
@@ -184,7 +207,7 @@ class HostSetup {
         String note = null;
         if (!init.hostHasCommand("incus")) {
             var cmd = installCommand(init::hostHasCommand, "incus");
-            changes.add(InitPlan.Change.sudo("Install the incus package", cmd == null ? null : String.join(" ", cmd)));
+            changes.add(installChange("Install the incus package", cmd));
             changes.add(InitPlan.Change.sudo("Enable the incus service", "sudo systemctl enable --now incus"));
             // It asks before installing, and stops where it cannot
             if (cmd == null) note = NO_PACKAGE_MANAGER + " Install Incus yourself, then run 'isx init'.";
@@ -406,7 +429,7 @@ class HostSetup {
                             .noting(NO_PACKAGE_MANAGER));
                 } else {
                     parts.add(InitPlan.Assessment.of(List.of(
-                            InitPlan.Change.sudo("Install firewalld", String.join(" ", install)),
+                            installChange("Install firewalld", install),
                             sudoChange("Start firewalld", ENABLE_FIREWALLD))));
                     parts.add(firewalldRuleChanges("", ""));
                 }

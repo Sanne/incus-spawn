@@ -81,6 +81,44 @@ class InitNoSudoTest {
         assertTrue(init.queried.stream().noneMatch(c -> c.startsWith("sudo")), init.queried.toString());
     }
 
+    /**
+     * On a fresh Debian or Ubuntu host the script refreshes apt's package lists before its first
+     * install, which a host with none or stale ones fails without, and only once (Sanne, #2134).
+     */
+    @Test
+    void anAptHostsScriptRefreshesThePackageListsOnceBeforeInstalling(@TempDir Path root) throws Exception {
+        subids(root);
+        var init = fresh(root);
+        init.commands = Set.of("apt");
+        RecordingOutput.during(init::privilegedStepsLeft);
+        var script = Files.readString(Environment.privilegedInitScript());
+        var lines = script.lines().toList();
+        var installs = lines.stream().filter(l -> l.startsWith("apt install -y ")).toList();
+        assertEquals(List.of("apt install -y openssl openssh-client btrfs-progs", "apt install -y incus",
+                "apt install -y firewalld"), installs, script);
+        for (var install : installs) assertEquals(HostSetup.APT_REFRESH, lines.get(lines.indexOf(install) - 1), script);
+
+        // Run as the script runs it: the second install's refresh does nothing, and a failed one only warns
+        var bin = Files.createDirectories(root.resolve("bin"));
+        var aptGet = bin.resolve("apt-get");
+        Files.writeString(aptGet, "#!/bin/sh\necho refreshed\nexit ${APT_EXIT:-0}\n");
+        aptGet.toFile().setExecutable(true);
+        var body = "set -eu\n" + HostSetup.APT_REFRESH + "\n" + HostSetup.APT_REFRESH + "\necho installed\n";
+        assertEquals("refreshed\ninstalled\n", sh(bin, body, "0"));
+        var failed = sh(bin, body, "100");
+        assertTrue(failed.startsWith("refreshed\napt-get update failed") && failed.endsWith("\ninstalled\n"), failed);
+    }
+
+    private static String sh(Path bin, String body, String aptExit) throws Exception {
+        var process = new ProcessBuilder("sh", "-c", body).redirectErrorStream(true);
+        process.environment().put("PATH", bin + ":/usr/bin:/bin");
+        process.environment().put("APT_EXIT", aptExit);
+        var p = process.start();
+        var out = new String(p.getInputStream().readAllBytes());
+        assertEquals(0, p.waitFor(), out);
+        return out;
+    }
+
     /** The script is the plan's: every step's sudo_script, in the plan's order, and nothing else of isx's. */
     @Test
     void theScriptHoldsExactlyWhatThePlanReports(@TempDir Path root) throws Exception {
