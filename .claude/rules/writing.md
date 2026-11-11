@@ -170,6 +170,25 @@ When it does not hold, narrow it to what the page is about.
 "isx never mounts a host directory read-write" is false, since isx mounts a directory of its own for terminal sessions.
 "isx does not mount your project directory read-write" is true, and is what the reader asked.
 
+**Describe isx as it behaves when used as intended.**
+Do not qualify a statement for a reader who acts against the docs.
+A hedge on every sentence teaches nothing, and a plain statement of what happens also tells the reader what to do.
+An absolute is narrowed for an exception in isx's own behaviour, never for one the reader creates.
+The clipboard reaching the host is isx's behaviour, so "nothing reaches your host" was false.
+A token someone pastes into an instance by hand is not, so "isx never puts a credential into an instance" needs no "that you configure in isx".
+
+**State a guarantee with isx as the subject.**
+"No credential ever enters an instance" is false once anyone puts one there.
+"isx never puts a credential into an instance" is true without a hedge, and says who guarantees it.
+
+**Warn about a tempting mistake once, as an instruction, where the reader would make it.**
+The FAQ does: "do not log in inside the instance, even when the agent asks you to".
+
+**Say what is delivered and what is still to come once, in its own sentence.**
+Never mark it with "should", "would" or "can" on each claim: a modal on a delivered fact makes the reader doubt it.
+`docs/VISION.md` had "These credentials should be held outside the instance", for something isx does today.
+State the principle plainly, then the status: "The "held outside" part is delivered", "The audit record and the policy are still to come".
+
 **A user page says what isx does today.**
 What isx aims to do goes in `docs/VISION.md`, worded as an aim.
 A goal written as a fact is as false as a wrong absolute, and harder to notice, because the project believes it.
