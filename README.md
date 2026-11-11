@@ -158,19 +158,20 @@ isx checks that the proxy is reachable and compatible before a build, a branch o
 The proxy also caches container image layers and build artifacts on the host, so the same dependency is never downloaded twice ([Caching](docs/CONFIGURATION.md#caching)).
 
 Each start also gives the instance a random instance secret, at the path in `$ISX_INSTANCE_SECRET_FILE` (`/run/isx/instance-secret`, readable by the instance user).
-The instance secret is not a credential for anything upstream.
-It lets a service on the host identify an instance by source address and secret together, so one instance's secret is useless from any other instance.
+It is not a credential for anything upstream: it tells a service on the host which instance is calling.
+On Linux the proxy also checks the caller's address, so one instance's secret is useless from any other instance.
 
 A restart replaces the secret.
-After a reboot isx did not perform, the instance has none until isx next starts it.
+After a reboot isx did not perform, the instance has none until you next open it with `isx shell`, `isx start` or `ssh <name>`, which give it a new one.
 
 ### Credentials reach the login environment
 
-Each start replaces the placeholders with proof tokens, unique to the instance and the credential, such as `gho_isx_…` in `GH_TOKEN`.
-The login profile exports them.
-They stay the same across stops, starts and reboots, so a nested service you configured with one keeps working.
+Each start replaces the placeholders with proof tokens unique to the instance and the credential, such as `gho_isx_…` in `GH_TOKEN`, exported by the login profile.
+The proxy adds an instance's credentials only to requests carrying its proof token.
+The tokens stay the same across stops, starts and reboots, so a nested service you configured with one keeps working.
 
-The proof tokens reach exactly what runs in the login environment: a nested container gets none unless you pass one in.
+Only what runs in the instance's login environment receives the proof tokens, so a nested container gets none unless you pass one in.
+Plain Git is the exception: for its HTTPS requests to `github.com`, a credential helper isx installs presents the GitHub proof token even outside a login shell.
 
 [Credential proofs](docs/CREDENTIAL-PROOFS.md) says how to share or revoke proof tokens, and what to do after an upgrade.
 
@@ -247,8 +248,8 @@ git diff main..fix-auth/main    # review exactly what it did
 git cherry-pick fix-auth/main   # take what you like
 ```
 
-This is the intended review workflow.
-You act on a specific, immutable commit, never on a live directory the agent can still change.
+This is the intended review workflow: the code you review is the code you take, whatever the agent does afterwards.
+You act on fetched commits, which git identifies by a hash of their content, never on a live directory the agent can still change.
 The [FAQ](docs/FAQ.md#why-cant-i-mount-a-host-directory-read-write-to-follow-agent-work-in-my-ide) says why there is deliberately no read-write project mount.
 
 #### isx:// URLs
@@ -318,7 +319,7 @@ isx build --out-of-sync              # rebuilds what changed since it was built
 ## Agents
 
 An agent is a tool in a template's `tools:` list, set up for unattended work.
-It signs in through the proxy with an account you configured in `isx init`, where the menu names each credential, not every agent that shares that credential:
+It signs in through the proxy with an account you configured in `isx init`, whose menu lists each credential under the tool that owns it, so Pi and Copilot have no entry of their own:
 
 | Agent | Tool | Signs in with |
 |-------|------|---------------|
@@ -362,8 +363,7 @@ It also installs and enables firewalld when the host has neither firewalld nor U
 
 **macOS**: `isx init` uses [vfkit](https://github.com/crc-org/vfkit) to provision a lightweight Linux VM, and the VM starts when needed.
 `isx vm start|stop|restart|status|resize|reset|console|check-version` manages the VM, and [its reference](docs/CLI.md#when-the-vm-stops-answering) says what to do when the VM stops answering.
-Apple Silicon is supported.
-Intel Macs are no longer supported: v0.4.2 and v0.5.0-dev.2 were the last releases built for them.
+Apple Silicon is supported, and Intel Macs are not: v0.4.2 and v0.5.0-dev.2 were the last releases built for them.
 
 On macOS isx runs containers only.
 These are Linux-only:
@@ -378,7 +378,7 @@ These are Linux-only:
 - On Linux that is the system bundle: `/etc/pki/ca-trust`, `/etc/ssl/certs`.
 - On macOS it is `/etc/ssl/cert.pem` plus every certificate an administrator or MDM trusts for SSL in the System keychain, which is where inspection agents install their CA.
   A certificate an administrator denied there, or you marked "Never Trust" in your login keychain, is not trusted from any source, and neither is a chain holding it or a cross-signed copy.
-- A CA trusted only in your login keychain is not used, because trusting a CA for isx should require an administrator.
+- A CA trusted only in your login keychain is not used, because isx leaves the choice of which CAs to trust to an administrator.
   Trust it system-wide, then restart the proxy:
 
 ```shell
