@@ -34,6 +34,14 @@ The credential that failed is stored on the host, and `isx doctor` reports it wi
 
 A login inside the instance would put a real credential where the agent can read it.
 
+### Can an instance use a model server on my host, such as Ollama?
+
+Yes: list its port in `~/.config/incus-spawn/config.yaml`, and point the agent at `host.isx.internal`.
+For Ollama, add `exposed-host-ports: [11434]` to `config.yaml`, and an `env:` entry to the template setting `OLLAMA_HOST` to `host.isx.internal:11434`.
+
+Every instance with network then gets the same access to that service, whatever its template.
+[A service on the host](CONFIGURATION.md#a-service-on-the-host) says what that access gives away.
+
 ### Why does a tool I installed fail with a certificate error?
 
 Run `isx-trust <dir>`, naming the directory that holds the tool's runtime, as in `isx-trust ~/tools/jdk-21`.

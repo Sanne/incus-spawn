@@ -4,6 +4,8 @@ Each agent is a tool: add it to a template's `tools:` list, and every branch of 
 The agent's credentials stay on the host, where `isx init` configures them, and the [proxy](../README.md#credential-isolation) adds them to the agent's requests as they leave the instance.
 The sections below cover one agent each.
 
+An agent that uses a model server on your host, such as Ollama, reaches it once you [expose its port](CONFIGURATION.md#a-service-on-the-host) and point the agent at `host.isx.internal`.
+
 ## Claude Code
 
 Claude Code is Anthropic's official CLI for Claude, and works with all three Claude auth modes: API key, Claude Pro/Max OAuth and Vertex AI.
