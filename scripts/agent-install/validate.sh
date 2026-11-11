@@ -2,10 +2,11 @@
 # scripts/agent-install/validate.sh -- run the agent install path on a clean Linux host (#2081)
 #
 # Gives a coding agent only the install prompt, as a fresh user with no sudo, and plays the
-# person's part by script: it runs the privileged script isx hands over, adds a credential when
-# the agent names the command for one, and approves templates when asked. It records every
-# command the agent ran, every attempt at sudo, every request for a secret, every write of
-# mcp.yaml, the turns where it got stuck, and how long each took, then writes report.md.
+# person's part by script: it runs the privileged script isx hands over (or one the agent wrote
+# and handed over as `sudo sh <path>`), adds a credential when the agent names the command for
+# one, and approves templates when asked. It records every command the agent ran, every attempt
+# at sudo, every request for a secret, every write of mcp.yaml, the turns where it got stuck,
+# and how long each took, then writes report.md.
 #
 # Meant for a disposable machine only: it creates a user, installs packages through the script
 # isx writes, sets up Incus and changes the firewall. Run it on a host where Incus is not
@@ -115,6 +116,7 @@ if sudo -l -U "$PERSON" 2>/dev/null | sed -n '/may run/,$p' | tail -n +2 | grep 
 fi
 sudo loginctl enable-linger "$PERSON"
 PHOME=$(getent passwd "$PERSON" | cut -d: -f6)
+PHOME_REAL=$(sudo realpath -- "$PHOME")
 AGENT_BIN=$(command -v "$AGENT")
 sudo -u "$PERSON" test -x "$AGENT_BIN" || {
     sudo install -m 755 "$(readlink -f "$AGENT_BIN")" "/usr/local/bin/$AGENT"
@@ -173,6 +175,7 @@ fi
 START=$(date +%s)
 JOURNAL_SINCE=$(date '+%Y-%m-%d %H:%M:%S')
 declare -A RAN_SCRIPTS=()
+declare -A FAILED_SCRIPTS=()
 declare -A CREDENTIALS=()
 APPROVED=
 REACHED_BRANCH=
@@ -184,25 +187,51 @@ touch "$OUT/.person-ran"
 privileged_script() { echo "$PHOME/.local/state/incus-spawn/init-privileged.sh"; }
 
 # What the person does after a turn: one action, or none. Prints the reply for the next turn.
+# Runs a root script the person was handed, unless they already ran it successfully. Returns 1
+# when there was nothing to run. A failed script is retried only when it is handed over anew:
+# isx's when isx rewrote it (even the same), the agent's when its content changed, so a reply
+# that only recalls a failed script does not rerun it.
+run_root_script() {
+    local script=$1 turn=$2 whose=$3 interp=${4:-sh} sum rc
+    sum=$(sudo sha256sum "$script" | cut -d' ' -f1)
+    [ -z "${RAN_SCRIPTS[$sum]:-}" ] || return 1
+    [ "$whose" = "isx's" ] || [ -z "${FAILED_SCRIPTS[$sum]:-}" ] || return 1
+    touch "$OUT/.person-ran"
+    sudo cp "$script" "$OUT/privileged-$turn.sh"
+    rc=0
+    sudo "$interp" "$script" > "$OUT/privileged-$turn.log" 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ]; then RAN_SCRIPTS[$sum]=$turn; else FAILED_SCRIPTS[$sum]=$turn; fi
+    echo "turn $turn: ran $whose script $script with sudo $interp, exit $rc" >> "$OUT/person.log"
+    echo "I read $script and ran it with sudo; it exited $rc. Carry on."
+}
+
 person_acts() {
-    local turn=$1 text=$2 script sum rc ns templates
+    local turn=$1 text=$2 script ns templates rc interp path owner
     script=$(privileged_script)
     # A script isx wrote since the person last ran one (or since the run began), and not one
     # they already ran: a script left from an earlier round is not handed over again.
     if sudo test -s "$script" && sudo test "$script" -nt "$OUT/.person-ran"; then
-        sum=$(sudo sha256sum "$script" | cut -d' ' -f1)
-        # Only a script that succeeded is not run again: a failed one, rewritten the same, is retried.
-        if [ -z "${RAN_SCRIPTS[$sum]:-}" ]; then
-            touch "$OUT/.person-ran"
-            sudo cp "$script" "$OUT/privileged-$turn.sh"
-            rc=0
-            sudo sh "$script" > "$OUT/privileged-$turn.log" 2>&1 || rc=$?
-            [ "$rc" -ne 0 ] || RAN_SCRIPTS[$sum]=$turn
-            echo "turn $turn: ran $script with sudo, exit $rc" >> "$OUT/person.log"
-            echo "I read $script and ran it with sudo; it exited $rc. Carry on."
-            return
-        fi
+        run_root_script "$script" "$turn" "isx's" && return
     fi
+    # A script the agent wrote itself and handed over as 'sudo sh <path>' (or bash), in the
+    # person's home or /tmp, in the order the reply names them. Prose and markup after a path
+    # (a full stop, quotes, a closing bracket, bold) are not part of it. It runs with the interpreter
+    # named, and the report calls it the agent's only when the person owns it.
+    while read -r interp path; do
+        [ -n "$path" ] || continue
+        # shellcheck disable=SC2088 # a literal ~ in the agent's text, expanded by hand
+        case "$path" in "~/"*) path=$PHOME/${path#"~/"} ;; esac
+        # Resolved as root: the harness cannot read the person's home, where an unresolved
+        # symlink would pass for a path inside it.
+        script=$(sudo realpath -m -- "$path")
+        case "$script" in "$PHOME_REAL"/*|/tmp/*) ;; *) continue ;; esac
+        [ "$script" = "$(privileged_script)" ] && continue
+        sudo test -f "$script" || continue
+        owner=$(sudo stat -c %U -- "$script")
+        if [ "$owner" = "$PERSON" ]; then owner="the agent's"; else owner="$owner's"; fi
+        run_root_script "$script" "$turn" "$owner" "$interp" && return
+    done < <(grep -oE 'sudo (sh|bash) [~/][^ `"]+' <<<"$text" \
+        | sed -E "s/[].,;:)}>*'\"]+\$//" | awk '!seen[$2 " " $3]++ {print $2, $3}')
     for ns in $(grep -oE 'isx account add [a-z][a-z0-9-]*' <<<"$text" | awk '{print $4}' | sort -u); do
         [ -n "${CREDENTIALS[$ns]:-}" ] && continue
         CREDENTIALS[$ns]=$turn

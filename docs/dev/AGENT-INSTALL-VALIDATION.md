@@ -10,6 +10,8 @@ The agent must reach a first branch while stopping at exactly three handovers: t
 The harness answers each one as the person would:
 
 - When `isx init --no-sudo` wrote a new `~/.local/state/incus-spawn/init-privileged.sh`, it runs that script with sudo.
+- When the agent hands over a script it wrote itself, as `sudo sh <path>` or `sudo bash <path>` in the home or `/tmp`, it runs that one too, with the shell named.
+  The report names it as the agent's when the person owns the file.
 - When the agent names `isx account add <namespace>`, it adds that credential.
 - When the agent asks for approvals, it writes `mcp.yaml` with the built templates the agent named.
 
