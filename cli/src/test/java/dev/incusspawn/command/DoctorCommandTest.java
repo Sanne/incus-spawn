@@ -517,6 +517,34 @@ class DoctorCommandTest {
         assertEquals(java.util.Set.of("ghost"), into);
     }
 
+    private static dev.incusspawn.config.ImageDef template(String yaml, boolean builtIn) throws Exception {
+        var def = dev.incusspawn.config.ImageDef.parseYaml(yaml);
+        if (builtIn) def.setSource("built-in");
+        return def;
+    }
+
+    /**
+     * A tool a user template inherits from a built-in parent is in use (#2159): {@code isx branch}
+     * refuses the template without its credential, so doctor must warn about it rather than call
+     * it unused. A built-in template alone still counts nothing.
+     */
+    @Test
+    void aToolInheritedFromABuiltInParentIsInUse() throws Exception {
+        var defs = new java.util.LinkedHashMap<String, dev.incusspawn.config.ImageDef>();
+        defs.put("tpl-minimal", template("name: tpl-minimal\nimage: fedora\n", true));
+        defs.put("tpl-dev", template("name: tpl-dev\nparent: tpl-minimal\ntools: [gh]\n", true));
+        defs.put("tpl-java", template("name: tpl-java\nparent: tpl-minimal\ntools: [codex]\n", true));
+        defs.put("tpl-claude", template("name: tpl-claude\nparent: tpl-dev\ntools: [claude]\n", false));
+        var tools = toolMap(new FakeTool("gh"), new FakeTool("claude"), new FakeTool("codex"));
+
+        var inUse = DoctorCommand.toolsInUse(defs, tools);
+
+        assertEquals(java.util.Set.of("gh", "claude"), inUse);
+        var findings = credentialFindings(true, unresolved("gh", "token", "github"), inUse::contains);
+        assertEquals(DoctorCommand.Status.WARN, findings.getFirst().status(), findings.toString());
+        assertEquals("Missing credentials", findings.getFirst().label());
+    }
+
     /** A credential under a key no tool reads is named with the key it belongs in (#1733). */
     @Test
     void anUnreadCredentialKeyIsAWarning() throws Exception {

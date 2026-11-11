@@ -15,8 +15,9 @@ It is missing for the user who has never touched codex exactly as it is for the 
 Before `NOTE` those were the same yellow line.
 The graduation of `codex` out of the `openai` feature flag would have added one to every existing user's `doctor` output — the classic way a diagnostic becomes something people learn to ignore.
 
-Doctor distinguishes the two by asking whether a template *the user wrote* declares the tool.
-Built-in definitions are excluded deliberately: they ship with isx and declare tools for everyone (`tpl-dev` has `gh`), so counting them would warn about every credential again and put us back where we started.
+Doctor distinguishes the two by asking whether a template *the user wrote* installs the tool, itself or through any ancestor.
+Built-in definitions alone are excluded deliberately: they ship with isx and declare tools for everyone (`tpl-dev` has `gh`), so counting them would warn about every credential again and put us back where we started.
+A user template whose parent is built-in still counts what it inherits (#2159): one with `parent: tpl-dev` gets `gh`, and `isx branch` refuses it without a GitHub token.
 Templates are only the triage signal, not the gate — `isx branch` already refuses to run without the credentials a template actually needs (`CredentialCheck`), so a note here cannot let a broken build through.
 Anthropic credentials stay a `WARN` regardless: isx itself uses them for `isx ask`, so there is no template to check against.
 If the definitions can't be read at all, every tool counts as in use — the conservative direction is to keep reporting.

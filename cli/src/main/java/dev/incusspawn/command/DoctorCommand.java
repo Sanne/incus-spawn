@@ -632,14 +632,8 @@ public class DoctorCommand extends BaseCommand {
     }
 
     /**
-     * Whether a template the user wrote declares this tool, directly or transitively via a
-     * `requires:` chain -- the only evidence doctor has that they intend to run it. A wrapper
-     * tool that requires codex pulls codex into the build exactly as if the template had listed
-     * it directly, so the credential it needs must count as in use the same way. Built-in
-     * definitions don't count: they ship with isx and declare tools (`tpl-dev` has `gh`) for
-     * everyone, so counting them would warn every user about every credential again. Templates
-     * are also not the hard gate -- `isx build` and `isx branch` refuse to run without the
-     * credentials a template actually needs.
+     * Whether a template the user wrote installs this tool -- the only evidence doctor has that
+     * they intend to run it. See {@link #toolsInUse}.
      *
      * <p>If the definitions can't be read, every tool counts as in use: the conservative
      * direction is to keep reporting, and {@code checkTemplates} surfaces the load failure.
@@ -647,15 +641,34 @@ public class DoctorCommand extends BaseCommand {
     private Predicate<String> toolInUse() {
         var loaded = loadImageDefs().loaded();
         if (loaded == null) return name -> true;
-        var allTools = RuntimeServices.toolDefLoader().allToolSetups();
+        return toolsInUse(loaded.defs(), RuntimeServices.toolDefLoader().allToolSetups())::contains;
+    }
+
+    /**
+     * The tools the user's templates install: each one's own and those of every ancestor,
+     * built-in parents included (#2159), each expanded through its `requires:` chain. A user
+     * template {@code parent: tpl-dev} gets {@code gh} from {@code tpl-dev}, and {@code isx
+     * branch} refuses it without a GitHub token, so the token is in use. A wrapper tool that
+     * requires codex pulls codex into the build exactly as if the template had listed it.
+     * Built-in templates alone count nothing: they ship with isx and declare tools for everyone,
+     * so counting them would warn every user about every credential again. Templates are also
+     * not the hard gate -- {@code isx build} and {@code isx branch} refuse to run without the
+     * credentials a template actually needs.
+     */
+    static Set<String> toolsInUse(Map<String, ImageDef> defs, Map<String, ToolSetup> allTools) {
         var declared = new HashSet<String>();
-        for (var def : loaded.defs().values()) {
+        // A layer shared by several user templates is expanded once
+        var layers = new HashSet<String>();
+        for (var def : defs.values()) {
             if (def.isBuiltIn()) continue;
-            for (var toolRef : def.getTools()) {
-                ToolSetup.addWithRequires(toolRef.getName(), allTools, declared);
+            for (var layer : ImageDef.chain(def, defs)) {
+                if (!layers.add(layer.getName())) continue;
+                for (var toolRef : layer.getTools()) {
+                    ToolSetup.addWithRequires(toolRef.getName(), allTools, declared);
+                }
             }
         }
-        return declared::contains;
+        return declared;
     }
 
     /**
