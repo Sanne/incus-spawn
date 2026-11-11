@@ -15,7 +15,7 @@ The `tui.link_activation = "disabled"` setting did not resolve it in our testing
 
 ### Why doesn't "copied" from an agent reach my host clipboard?
 
-Use a terminal that supports OSC 52, and let every tmux on the way pass it through.
+Use a terminal that supports OSC 52, and let every tmux between the agent and that terminal pass it through.
 Agents copy with OSC 52, which isx forwards but cannot apply: your host terminal must support it.
 
 | Terminal | OSC 52 |

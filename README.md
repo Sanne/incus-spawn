@@ -111,7 +111,7 @@ isx
 ```
 
 Claude Code signs in with the Claude credential you set up in `isx init`; `isx account add claude` adds one later.
-It never sees the credential: the proxy adds it on the way out.
+It never sees the credential: the proxy adds it to each request after the request leaves the instance.
 If you did not install the services `isx init` offers, start them before building: `isx proxy start` on Linux, `isx vm start && isx proxy start` on macOS.
 
 For another agent, replace `claude` with `codex`, `pi`, `gemini-cli`, `bob` or `copilot`; see [Agents](#agents).
@@ -127,10 +127,10 @@ Instead, a proxy on your host (`isx proxy`) adds the real credentials to the age
 
 How it works:
 
-- The instance's DNS resolves the intercepted domains to the proxy, and it trusts the proxy's CA, so the traffic takes that route on its own.
+- The instance's DNS resolves the intercepted domains to the proxy, and it trusts the proxy's CA, so the traffic reaches the proxy without any setting in the tool.
 - The proxy replaces the placeholder with the real credential and forwards the request upstream over TLS.
 - Inside, a tool sees only a placeholder such as `sk-ant-placeholder`.
-  It satisfies the tool's local checks and authenticates against nothing.
+  It satisfies the tool's local checks, and no service accepts it as a credential.
 - Nothing inside the instance yields a real credential: no API, no endpoint, no variable, no file.
 
 What the proxy can sign in as:

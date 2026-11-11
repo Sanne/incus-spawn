@@ -48,10 +48,10 @@ A field `skipped` says that init skipped the step's question for want of a termi
 The last, `declined`, says the answer was no, given by you or by a flag such as `--no-service`.
 
 The run then exits 76 when it finished with a step only you can do, such as a credential, an approval or a step that needs root.
-A run that waits on the root script, exit 75, prints the summary too; a run that fails exits 1 and prints none.
+A run that waits on the root script, exit 75, prints the summary too; a run that fails exits 1 and does not print the summary.
 
-`isx init --plan` says what `isx init` would change on this host, and changes nothing.
-It asks no question, writes no file, never runs sudo and asks Incus only to read.
+`isx init --plan` says what `isx init` would change on this host, and does not change the host.
+It does not ask a question, write a file or run sudo, and it asks Incus only to read.
 On macOS it does not start the VM, so what Incus holds stays unknown while the VM is stopped.
 
 On Linux, `isx init` itself starts with `sudo -v`, so running it needs sudo even when every step is done.
@@ -103,7 +103,7 @@ The last field, `sudo_script`, holds the step's lines of the script `isx init --
 
 ### Without sudo
 
-`isx init --no-sudo` runs nothing as root, for you or for an agent driving the install.
+`isx init --no-sudo` does not run any step as root, for you or for an agent driving the install.
 It writes every step that needs root into one script, `~/.local/state/incus-spawn/init-privileged.sh`, with a comment saying why each is there.
 It then exits 75 and names the script.
 
@@ -119,7 +119,7 @@ Once nothing needs root any more, the second run removes the script.
 When the second run itself finds root work, such as a redirect to move after it moved the bridge off a VPN's subnet, it writes a new script and exits 75 again.
 
 A step isx cannot write as a script, such as a UFW firewall's rules, stops the run and names what to do yourself.
-On macOS `isx init` needs no administrator, so `--no-sudo` changes nothing there.
+On macOS `isx init` needs no administrator, so `--no-sudo` has no effect there.
 
 ## `isx build`
 
@@ -154,7 +154,7 @@ Several templates build in one invocation:
 - With plain names, each builds in turn, a named parent before its child.
   Each gets any parent that is missing or out of sync, so a parent they share builds once.
 - With `--with-parents` or `--with-descendants`, they build as one batch with one confirmation, parents before children and every template once.
-- With an unknown name anywhere in the list, nothing builds.
+- With an unknown name anywhere in the list, isx does not build any of them.
 
 A target that fails does not stop the others: isx skips what inherits from it and builds the rest.
 The build then exits 1 with one `Some templates failed to build:` line on stderr naming every template it left unbuilt, a parent a target's chain failed on included.
@@ -301,7 +301,7 @@ isx list [options]
 | `-q`, `--quiet` | Print instance names only, one per line |
 | `--status=<status>` | Only instances that are `running` or `stopped` |
 
-It lists no templates: `isx templates` lists those.
+It does not list templates: `isx templates` lists those.
 On macOS it starts the VM if it is stopped, except with `-q`, which shell completion runs.
 See [Scripting isx](#scripting-isx) for the `plain` and `json` formats and the fields.
 
@@ -390,7 +390,7 @@ It never prompts, so a script or an agent can run it.
 | `--replace` | With `--from`, replace the template's own file when it has one; a built-in or a template in the other directory is never replaced |
 | `--format=<format>` | With `--from`, `table` (the default), `plain` or `json`; see [Template check fields](#template-check-fields) |
 
-An invalid definition writes nothing and exits 1.
+With an invalid definition, isx does not write a file and exits 1.
 The check also lists what the template reaches beyond its instance, so you can review a template an agent wrote before you build it.
 
 ### `isx templates validate`
@@ -786,7 +786,7 @@ isx mcp setup
 ```
 
 It needs a terminal, and takes no option naming a template.
-Without a terminal it changes nothing and exits 1, since approving templates is a step for you, not for an agent.
+Without a terminal it does not change `mcp.yaml` and exits 1, since approving templates is a step for you, not for an agent.
 
 ### `isx mcp config`
 
@@ -796,7 +796,7 @@ Print the entry that starts `isx mcp`, as the `mcpServers` JSON most MCP clients
 isx mcp config
 ```
 
-It names the installed `isx` by its full path and changes nothing.
+It names the installed `isx` by its full path and does not change any file.
 Paste it into the settings of an agent other than Claude Code, such as Cursor or Gemini CLI.
 
 ## `isx completion`
@@ -1016,7 +1016,7 @@ One record per instance the proxy knows, by name, then one whose `instance` is `
 | `requests`, `in_flight`, `last_activity_at`, `request_bytes`, `response_bytes` | All traffic, model calls included. `in_flight` counts an open WebSocket too; the byte fields are body bytes, counted as each request ends |
 | `model_requests`, `model_in_flight`, `last_model_request_at`, `last_model_response_at`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` | Model calls alone |
 | `identified_by_proof` | Its proof or secret alone named it, not its address; `null` on the unattributed record |
-| `refused_proofs` | Proofs the proxy checked that matched nothing |
+| `refused_proofs` | Proofs the proxy checked that did not match any proof isx gave an instance |
 | `refused_address_misses` | Requests from an address that is no instance, never checked |
 | `registry_stale` | The proxy's last instance listing failed, or the one under way has hung |
 | `unplaced_running` | Running instances with no traffic attributed |
@@ -1034,7 +1034,7 @@ It exits 1 when the proxy cannot be read.
 
 `level` is `ok`, `note`, `warn` or `fail`.
 `detail` and `remediation` are free text for people: key a script on `level` and `label`.
-In a script format, nothing is offered or applied, and `--bundle` cannot be combined with it.
+In a script format, isx does not offer or apply any fix, and `--bundle` cannot be combined with it.
 
 #### `isx vm status` fields
 
@@ -1054,7 +1054,7 @@ It exits 1 when Incus is unreachable.
 
 The current base image is unlisted when it is older than every release fetched, unpublished or deleted.
 It then gets a record of its own, last, with no `date`.
-That alone says nothing about its age.
+That alone does not tell you its age.
 
 #### `isx branch` fields
 

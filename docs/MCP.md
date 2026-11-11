@@ -46,7 +46,7 @@ Any agent that speaks MCP over stdio can use `isx mcp`.
 Cursor reads it from `~/.cursor/mcp.json`, and Gemini CLI from `~/.gemini/settings.json`.
 Most desktop apps and editors take the same `mcpServers` object in their MCP settings.
 If the file already holds servers, add `isx` beside them.
-The command prints and writes nothing, so registering stays your step.
+The command only prints the entry and does not write any file, so registering stays your step.
 
 Codex and Gemini CLI also register it with their own commands:
 
@@ -84,7 +84,7 @@ host-tools:
 | `summary-model` | `haiku` | The model that answers the tools' `ask` inside the instance. |
 | `host-tools` | none | User-defined MCP tools that run a command on the host. Each key is a tool name with `command:`, `description:`, optional `timeout:` (default 60, max 600, 0 = no limit) and `min-interval:` (default 10, 0 = block instead of refuse). |
 
-A missing or empty file approves nothing.
+A missing or empty file does not approve any template.
 A file `isx mcp` cannot use refuses every call that depends on it, naming `mcp.yaml` and what is wrong, until you fix it.
 Unusable means unreadable, malformed, an unknown key or a value it does not accept.
 A change takes effect on the next call, with no restart.
@@ -258,11 +258,11 @@ A project-local template's `coordinator:` is ignored, and an airgapped branch go
 
 The capability is on by default exactly when `control-over` lists a template.
 `isx-control-capability: false` beside it turns the default off, and isx warns of that, since the list suggests otherwise.
-`isx-control-capability: true` turns it on for a template that lists nothing.
+`isx-control-capability: true` turns it on for a template whose `control-over` is empty or missing.
 
 `isx branch --mcp-client`, or ticking MCP control, makes a coordinator of a branch of any other template.
 The box is not offered while the network is Airgapped.
-Such a coordinator controls nothing until its template lists templates under `control-over`, and isx warns of that with a link to the steps above.
+Such a coordinator cannot control any template until its template lists templates under `control-over`, and isx warns of that with a link to the steps above.
 
 Once the instance has started, the branch checks the connection from inside it.
 It says whether the server was reached, with its version and tool count, or why not, and whether the instance's Claude Code or Pi has the server.
@@ -288,9 +288,9 @@ coordinator:
 `mcp.yaml` stays your ceiling for every agent, so a template holding secrets you never list there is out of reach whatever a definition says.
 The definition says what this coordinator is for, so a new coordinator template for templates you already approved needs no edit to `mcp.yaml`.
 
-A template whose definition lists nothing gives its coordinators nothing, and so does one from a project-local definition.
+A template whose `control-over` is empty or missing does not let its coordinators control any template, and neither does one from a project-local definition.
 The nearest template in the chain whose `coordinator:` sets either key decides, replacing its parent's.
-A child that sets only `isx-control-capability: true` controls nothing until it lists templates.
+The coordinators of a child that sets only `isx-control-capability: true` cannot control any template until the child lists some.
 
 Each mismatch is a warning that names the template, the list missing it and the file to edit.
 `isx branch` and the TUI print what a new coordinator may control, and warn of each mismatch.

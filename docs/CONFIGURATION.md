@@ -128,7 +128,7 @@ The inner proxy then presents the outer instance's proof token in place of the i
 The inner proxy checks its instance's current proof before substituting the outer instance's proof.
 CA trust and the outer network policy still apply.
 
-It shares nothing else.
+`inherit` does not share anything else.
 A nested process with no proof, a forged proof-shaped token, or an independent account gets no inherited credential.
 Outside an isx instance, `inherit` is refused when you branch, and so is any request that relies on it.
 You cannot name an account of your own `inherit`.
@@ -247,7 +247,7 @@ drivers:
 | `destroy` | `false` | Lets `isx destroy --owner <name>` delete the instances that tool owns |
 
 A tool never destroys an instance it does not own, such as your own branch of one of its instances.
-An entry isx cannot read grants nothing, and isx says which entry and why.
+An entry isx cannot read does not grant any permission, and isx says which entry and why.
 
 ## Host CA propagation
 
@@ -273,7 +273,7 @@ tui-live-refresh: false
 ## Proxy ready timeout
 
 `isx proxy install` and `isx proxy start` wait for the proxy to become healthy after starting the service.
-The default is 30 seconds; a healthy proxy answers at once, so a generous default costs nothing.
+The default is 30 seconds; a healthy proxy answers at once, so a generous default does not slow a healthy start.
 To change it:
 
 ```yaml

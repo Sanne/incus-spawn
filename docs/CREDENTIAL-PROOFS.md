@@ -41,7 +41,7 @@ The proxy injects a selected credential only when the source instance presents i
 A nested container, a sandbox or anything started without that environment gets none, unless you pass one in deliberately, as `podman run -e GH_TOKEN …` does.
 
 Plain Git is the one exception: for HTTPS requests to `github.com` it presents the GitHub proof through a credential helper isx installs system-wide, so a clone of a private repository works without `gh`.
-The helper reads the current proof on every request, outside login shells and after a reset too, and stores nothing.
+The helper reads the current proof on every request, outside login shells and after a reset too, and does not store it.
 
 ### Sharing a token
 
@@ -166,7 +166,7 @@ Refused injections are counted in `/activity`.
 | Counter | What it counts |
 | --- | --- |
 | `refused_injections` | Every refused injection. |
-| `refused_proofs` | Refused requests that carried a proof: the proxy checked it and it matched nothing. |
+| `refused_proofs` | Refused requests that carried a proof: the proxy checked it and it did not match any proof isx gave an instance. |
 | `refused_address_misses` | Refused requests that carried a proof from an address that is no instance; the proof was never checked. |
 
 The last two count only refusals the proxy's current listing stands behind.
