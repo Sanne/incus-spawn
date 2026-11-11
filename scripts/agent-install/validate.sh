@@ -6,7 +6,10 @@
 # and handed over as `sudo sh <path>`), adds a credential when the agent names the command for
 # one, and approves templates when asked. It records every command the agent ran, every attempt
 # at sudo, every request for a secret, every write of mcp.yaml, the turns where it got stuck,
-# and how long each took, then writes report.md.
+# and how long each took. Once the run is over it asks the agent a fixed debrief about the
+# instructions, and writes report.md with the transcript's evidence on how clear they were
+# (failed commands, --help lookups, web searches, repeats, the pages it read and did not)
+# apart from the agent's own account.
 #
 # Meant for a disposable machine only: it creates a user, installs packages through the script
 # isx writes, sets up Incus and changes the firewall. Run it on a host where Incus is not
@@ -37,6 +40,10 @@
 #     --turn-timeout SECONDS  limit one agent turn (default: 3600)
 #     --credential-cmd CMD    run as the person, with NS set, to add a credential the agent asks for
 #     --out DIR               where the transcripts and report go (default: ./agent-install-<time>)
+#     --no-debrief            do not ask the agent the debrief once the run is over
+#     --fresh-groups          give each agent turn the person's current groups; by default the
+#                             agent keeps the groups it started with, as a running agent does, so
+#                             the incus-admin group the root script adds reaches it only through sg
 #     --allow-dirty           run even though Incus is already installed
 set -euo pipefail
 
@@ -55,6 +62,8 @@ TURN_TIMEOUT=3600
 CREDENTIAL_CMD=
 OUT="$PWD/agent-install-$(date -u +%Y%m%dT%H%M%SZ)"
 ALLOW_DIRTY=
+DEBRIEF=1
+FRESH_GROUPS=
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -69,6 +78,8 @@ while [ $# -gt 0 ]; do
         --credential-cmd) CREDENTIAL_CMD=$2; shift 2 ;;
         --out) OUT=$2; shift 2 ;;
         --allow-dirty) ALLOW_DIRTY=1; shift ;;
+        --no-debrief) DEBRIEF=; shift ;;
+        --fresh-groups) FRESH_GROUPS=1; shift ;;
         -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
         *) die "unknown option: $1" ;;
     esac
@@ -142,6 +153,10 @@ fi
 sudo loginctl enable-linger "$PERSON"
 PHOME=$(getent passwd "$PERSON" | cut -d: -f6)
 PHOME_REAL=$(sudo realpath -- "$PHOME")
+# The groups the agent's session starts with, which it keeps for the whole run (--fresh-groups:
+# a new login each turn, as if the person restarted the agent every time).
+AGENT_GROUPS=$(id -G "$PERSON" | tr ' ' ,)
+[ -z "$FRESH_GROUPS" ] || AGENT_GROUPS=
 AGENT_BIN=$(command -v "$AGENT")
 sudo -u "$PERSON" test -x "$AGENT_BIN" || {
     sudo install -m 755 "$(readlink -f "$AGENT_BIN")" "/usr/local/bin/$AGENT"
@@ -170,7 +185,7 @@ fi
 as_person() {
     case "${1:-}" in *=*|--) ;; *) set -- -- "$@" ;; esac
     sudo unshare -m sh -c '
-        m=$1; shift
+        m=$1; g=$2; shift 2
         for f in /etc/claude-code/CLAUDE.md /etc/isx/agent-instructions.md /AGENTS.md /etc/codex/requirements.toml; do
             [ -e "$f" ] && mount --bind "$m/empty" "$f"
         done
@@ -184,10 +199,20 @@ as_person() {
         shift $((n + 1))
         set -f; IFS="
 "
-        exec sudo -u "$u" env -i HOME="$h" USER="$u" LOGNAME="$u" SHELL=/bin/bash TERM=dumb \
+        # The agent keeps the groups it started with, as a running agent does: groups a root
+        # script adds reach its commands only through sg, or once the person starts it again.
+        # (The prefix is split on the newlines IFS holds now.)
+        if [ -n "$g" ]; then run_as="setpriv
+--reuid=$u
+--regid=$(id -g "$u")
+--groups=$g"
+        else run_as="sudo
+-u
+$u"; fi
+        exec $run_as env -i HOME="$h" USER="$u" LOGNAME="$u" SHELL=/bin/bash TERM=dumb \
             PATH=/usr/local/bin:/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/$(id -u "$u") DISABLE_AUTOUPDATER=1 $vars \
             bash -lc '"'"'cd ~ && exec "$@"'"'"' bash "$@"
-    ' sh "$MSG_DIR" "$PERSON" "$@"
+    ' sh "$MSG_DIR" "${AS_GROUPS:-}" "$PERSON" "$@"
 }
 
 if [ -n "$ISX_FROM" ]; then
@@ -319,12 +344,12 @@ agent_turn() {
     local msg=$1 first=$2
     case "$AGENT" in
         claude)
-            as_person ${AGENT_ENV[@]+"${AGENT_ENV[@]}"} -- sh -c '
+            AS_GROUPS=$AGENT_GROUPS as_person ${AGENT_ENV[@]+"${AGENT_ENV[@]}"} -- sh -c '
                 c=; [ "$3" = first ] || c=--continue
                 exec timeout "$1" "$2" -p $c --output-format stream-json --verbose --permission-mode bypassPermissions < "$4"' \
                 sh "$TURN_TIMEOUT" "$AGENT_BIN" "$first" "$msg" ;;
         codex)
-            as_person ${AGENT_ENV[@]+"${AGENT_ENV[@]}"} -- sh -c '
+            AS_GROUPS=$AGENT_GROUPS as_person ${AGENT_ENV[@]+"${AGENT_ENV[@]}"} -- sh -c '
                 [ -n "${OPENAI_API_KEY:-}" ] && export CODEX_API_KEY=$OPENAI_API_KEY
                 m=$(cat "$4")
                 if [ "$3" = first ]; then
@@ -343,16 +368,26 @@ agent_reply() {
     esac 2>/dev/null || true
 }
 
-# Every tool call in a turn's transcript: turn, tool, command or path. Shell commands are "Bash".
+# Every tool call in a turn's transcript: turn, tool, command or path, and how it ended (ok,
+# error, exit N, or - when the transcript does not say). "ok, output says Error" is a command
+# that exited 0 although isx printed an error, as through a pipe to tail. Shell commands are "Bash".
 agent_commands() {
     case "$AGENT" in
-        claude) jq -r --arg n "$2" 'select(.type == "assistant") | .message.content[]? | select(.type == "tool_use")
-            | [$n, .name, (.input.command // .input.file_path // .input.url // (.input | tostring))] | @tsv' "$1" ;;
+        # Read line by line: a turn cut off by its timeout can end in a partial line, which must
+        # not lose the turn's other commands.
+        claude) jq -Rrn --arg n "$2" '
+            [inputs | fromjson?] | ([.[] | select(.type == "user") | .message.content[]? | select(.type? == "tool_result")
+              | {key: .tool_use_id, value: (if .is_error then "error"
+                  elif ((.content | tostring) | test("(^|\\n|\\\\n)\\s*Error:")) then "ok, output says Error" else "ok" end)}] | from_entries) as $r
+            | .[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use")
+            | [$n, .name, (.input.command // .input.file_path // .input.url // .input.query // .input.pattern // (.input | tostring)), ($r[.id] // "-")] | @tsv' "$1" ;;
         codex) jq -r --arg n "$2" 'select(.type == "item.completed") | .item
-            | if .type == "command_execution" then [$n, "Bash", .command]
-              elif .type == "file_change" then (.changes[]? | [$n, "Write", .path])
-              elif .type == "mcp_tool_call" then [$n, "mcp:\(.server)/\(.tool)", ((.arguments // {}) | tostring)]
-              elif .type == "web_search" then [$n, "WebSearch", .query]
+            | if .type == "command_execution" then [$n, "Bash", .command,
+                  (if .exit_code == 0 and ((.aggregated_output // "") | test("(^|\\n|\\\\n)\\s*Error:")) then "ok, output says Error"
+                   elif .exit_code == 0 then "ok" elif .exit_code == null then "-" else "exit \(.exit_code)" end)]
+              elif .type == "file_change" then (.changes[]? | [$n, "Write", .path, "-"])
+              elif .type == "mcp_tool_call" then [$n, "mcp:\(.server)/\(.tool)", ((.arguments // {}) | tostring), (.status // "-")]
+              elif .type == "web_search" then [$n, "WebSearch", .query, "-"]
               else empty end | @tsv' "$1" ;;
     esac 2>/dev/null || true
 }
@@ -396,6 +431,29 @@ for turn in $(seq 1 "$MAX_TURNS"); do
 done
 END=$(date +%s)
 
+# Read before the debrief, so a command the agent runs during it does not change the outcome.
+PLAN=$(as_person isx init --plan --format=json 2>/dev/null || true)
+FINAL_LIST=$(as_person isx list 2>&1 || true)
+
+# The debrief, asked only now: asking for notes during the run would change how the agent reads
+# the instructions. Its answer is the agent's own account, which the report keeps apart from
+# what the transcript shows.
+DEBRIEF_PROMPT='The install is over, and nothing more is needed from you. Do not run any commands now. Looking back at the instructions you had (my prompt, the isx docs and the output of isx commands), answer under these headings:
+1. Gaps you filled: what you had to work out that the instructions did not say (a command, an order, a precondition, how to tell a step had finished).
+2. Extrapolations: instructions you extended or reinterpreted to make progress, and why.
+3. Wrong guidance you backed off from: a step you followed as written that failed or misled you, what you did instead, and how many attempts it cost.
+4. Ambiguities: wording you could have read two ways, and which way you read it.
+5. What you read: the pages and command outputs you used, and any you skipped.
+6. What you would change in the instructions, and where: the install page, llms.txt, or an isx command'"'"'s own output.'
+if [ -n "$DEBRIEF" ]; then
+    say "Debrief"
+    printf '%s\n' "$DEBRIEF_PROMPT" > "$MSG_DIR/debrief.txt"
+    chmod 644 "$MSG_DIR/debrief.txt"
+    agent_turn "$MSG_DIR/debrief.txt" more > "$OUT/debrief.jsonl" 2> "$OUT/debrief.err" || true
+    agent_reply "$OUT/debrief.jsonl" > "$OUT/debrief.txt"
+    agent_commands "$OUT/debrief.jsonl" debrief > "$OUT/debrief-commands.tsv"
+fi
+
 # What the agent ran, from its transcripts.
 for f in "$OUT"/turn-*.jsonl; do
     n=${f##*/turn-}; n=${n%.jsonl}
@@ -411,8 +469,17 @@ SECRET_ASKS=$(grep -n -iE '(paste|send|give|provide|share|tell|enter)[^.]{0,40}(
 JOURNAL=$(sudo journalctl -q --no-pager --since "$JOURNAL_SINCE" _COMM=sudo 2>/dev/null | grep -E "[: ] $PERSON : " || true)
 JOURNAL_SUDO=$(grep -v 'COMMAND=/usr/bin/btrfs ' <<<"$JOURNAL" | grep . || true)
 BTRFS_RULE_USES=$(grep -c 'COMMAND=/usr/bin/btrfs ' <<<"$JOURNAL" || true)
-PLAN=$(as_person isx init --plan --format=json 2>/dev/null || true)
-FINAL_LIST=$(as_person isx list 2>&1 || true)
+# How clear the instructions were, from the transcript alone (the agent's debrief is kept apart).
+FAILED=$(awk -F'\t' '$4 != "ok" && $4 != "-" && $4 != "completed"' "$OUT/commands.tsv" || true)
+HELP_LOOKUPS=$(awk -F'\t' '$2 == "Bash" && $3 ~ /(--help|isx( [^ |;&]+)* -h( |$|\x27)|(^|[ \x27])help( |$|\x27))/' "$OUT/commands.tsv" || true)
+WEB=$(awk -F'\t' '$2 ~ /^Web/ || ($2 == "Bash" && $3 ~ /(curl|wget) / && $3 !~ /isx\.run *\| *(ba)?sh/)' "$OUT/commands.tsv" || true)
+REPEATS=$(awk -F'\t' '$2 == "Bash" { n[$3]++; t[$3] = t[$3] (t[$3] == "" ? "" : ",") $1 }
+    END { for (c in n) if (n[c] > 1) printf "turns %s: %s\n", t[c], c }' "$OUT/commands.tsv" | sort || true)
+DOCS_LIST=$(if [ -n "$DOCS_FROM" ]; then cd "$DOCS_FROM" && find . -name '*.md' -o -name llms.txt; else cd "$HERE/../.." && { echo ./README.md; ls docs/*.md | sed 's|^|./|'; echo ./llms.txt; }; fi 2>/dev/null \
+    | sed 's|^\./||; s|^docs/||' | sort -u || true)
+DOCS_READ=$(cut -f3 "$OUT/commands.tsv" | grep -oE 'llms(-full)?\.txt|README\.md|[A-Z][A-Z-]*\.md|isx\.run/docs/[a-z-]+' \
+    | sed -E 's|isx\.run/docs/([a-z-]+)|\U\1.md|' | grep -vE '^(SKILL|AGENTS-NOTES)\.md$' | sort | uniq -c | sort -rn || true)
+DOCS_UNREAD=$(for d in $DOCS_LIST; do awk '{print $2}' <<<"$DOCS_READ" | grep -qxF -- "$d" || echo "$d"; done)
 
 {
     echo "# Agent install run"
@@ -425,6 +492,7 @@ FINAL_LIST=$(as_person isx list 2>&1 || true)
     echo "- MCP approval asked for and given: $([ -n "$APPROVED" ] && echo "yes, after turn $APPROVED" || echo no)"
     echo "- Wall time: $(( (END - START) / 60 )) min $(( (END - START) % 60 )) s over $(wc -l < "$OUT/turns.tsv") turns"
     echo "- Turns where the person had nothing to do (stuck or guessing): $STUCK"
+    echo "- The agent's groups: $([ -n "$AGENT_GROUPS" ] && echo "kept from its start ($AGENT_GROUPS), as a running agent's are" || echo "the person's current ones each turn (--fresh-groups)")"
     echo
     echo "## Turns (turn, seconds, exit)"
     echo; echo '```'; cat "$OUT/turns.tsv"; echo '```'
@@ -450,6 +518,36 @@ FINAL_LIST=$(as_person isx list 2>&1 || true)
     echo; echo '```'
     jq -r '.[]? | [.step // .id, .state, .who] | @tsv' <<<"$PLAN" 2>/dev/null || echo "$PLAN"
     echo '```'
+    echo
+    echo "## How clear the instructions were: the transcript"
+    echo
+    echo "Evidence, read before the debrief below: commands that failed, lookups the instructions did not send the agent to, and repeats."
+    echo
+    echo "### Commands that failed (turn, tool, command, outcome)"
+    echo; echo '```'; echo "${FAILED:-none}"; echo '```'
+    echo
+    echo "### --help lookups"
+    echo; echo '```'; echo "${HELP_LOOKUPS:-none}"; echo '```'
+    echo
+    echo "### Web searches and other downloads"
+    echo; echo '```'; echo "${WEB:-none}"; echo '```'
+    echo
+    echo "### Commands run more than once"
+    echo; echo '```'; echo "${REPEATS:-none}"; echo '```'
+    echo
+    echo "### Pages it read (times named in a command), and pages it never opened"
+    echo; echo '```'; echo "${DOCS_READ:-none}"; echo "never opened: $(echo $DOCS_UNREAD)"; echo '```'
+    echo
+    echo "## How clear the instructions were: the agent's debrief"
+    echo
+    if [ -n "$DEBRIEF" ]; then
+        echo "Asked once the run was over (the prompt is in validate.sh). Where it disagrees with the transcript, the transcript wins."
+        echo
+        cat "$OUT/debrief.txt"
+        [ ! -s "$OUT/debrief-commands.tsv" ] || { echo; echo "It ran commands during the debrief: debrief-commands.tsv."; }
+    else
+        echo "Not asked (--no-debrief)."
+    fi
     echo
     echo "Every command the agent ran is in commands.tsv; its replies are reply-<turn>.txt."
 } > "$OUT/report.md"
