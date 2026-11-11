@@ -73,7 +73,11 @@ Two attack surfaces make a read-write mount dangerous even when it holds "just t
    An agent writing to the project directory can trigger code execution on your host just by the folder being open, with no build command required.
 
 **Race condition**: a live mount compounds both risks, since files can change between review and execution.
-You inspect a git hook or build script, decide it is safe and run your build, but the agent changed the file after you inspected it.
+
+You inspect a git hook or build script and decide it is safe.
+The agent is still working, and it changes that file while you read or just afterwards.
+Nothing on your side shows the change.
+You run your build, and the build runs a version you never reviewed.
 
 Unlike `git fetch`, which gives you one immutable commit to review and act on, a live mount means your review is never final.
 
@@ -85,7 +89,7 @@ The source on the host looks like a complete project, but built on the host it m
 **What to use instead:**
 
 - **`isx://` git remotes** ([Git Remotes](../README.md#git-remotes)): `git fetch <instance>` pulls a consistent, atomic snapshot: a commit you review with `git diff` before merging.
-  Even if the agent adds or rewrites commits on its branch between your review and your merge, you act on the exact commit you reviewed.
+  The code you reviewed is the code you merge, whatever the agent does afterwards.
 
   Git identifies each commit by a hash of its content, so a fetch never gives you a mix of old and new files.
   This is the intended way to get work out of an instance.

@@ -34,7 +34,8 @@ The proxy on the host, which adds the credentials to requests as they leave an i
 
 The other part, an identity per instance, is partly delivered.
 Credential accounts map each instance to its own tokens, such as its own Claude API key and GitHub identity.
-You choose the accounts when you branch, and the proxy resolves them from which instance is calling.
+You choose the accounts when you branch.
+The proxy applies that choice on the host, where the agent cannot change it.
 
 Still to come is [#271](https://github.com/Sanne/incus-spawn/issues/271): SSH-agent-filtered commit signing, where the instance can request a signature for exactly one designated key.
 Each request is checked to be for git signing only, and is audited.
