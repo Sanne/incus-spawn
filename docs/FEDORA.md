@@ -10,30 +10,30 @@ Some come from isx at build time, some from the `tpl-minimal` template, and some
 | Trust variables point runtimes at the system store | A runtime that ships its own root bundle does not read the system anchors | `/etc/profile.d/isx-env.sh`, `/etc/environment.d/00-isx-trust.conf` |
 | JDK and `certifi` bundles are symlinks to the system store | A JDK or `certifi` from outside Fedora ships its own root bundle | `isx-trust-system.path`, `isx-trust-home.path`, `isx-trust` |
 | Host CAs are installed beside the isx CA | A host behind TLS inspection, or an isx inside another isx | `host-ca: { propagate: true }` in `config.yaml`, off by default |
-| `/tmp` is on disk | Instances restart often, and agents clone into `/tmp` | `tmp.mount` masked in `tpl-minimal` |
+| `/tmp` is on disk | Instances restart often and agents clone into `/tmp`, so a `/tmp` in memory would lose their clones at each restart | `tmp.mount` masked in `tpl-minimal` |
 | `agentuser` has passwordless sudo | The agent must be free to install what it needs | `/etc/sudoers.d/agentuser` |
-| systemd-networkd with a static address | A branch boots straight onto its address, which the proxy identifies it by | `/etc/systemd/network/10-eth0.network`, `isx-network-watchdog.timer` |
-| isx writes `/etc/resolv.conf` and drops `resolve` from `nsswitch.conf` | Names resolve at the bridge gateway, `.local` ones included | `/etc/resolv.conf`, `/etc/nsswitch.conf` |
-| About twenty units are masked | Time sync, TPM, boot and update units have no place in an instance | base image |
-| SELinux is off | The filesystem is unlabelled; an enforcing VM loses its agent | `/etc/selinux/config` |
+| systemd-networkd with a static address | A branch has its address as soon as it boots, and the proxy identifies the branch by that address | `/etc/systemd/network/10-eth0.network`, `isx-network-watchdog.timer` |
+| isx writes `/etc/resolv.conf` and drops `resolve` from `nsswitch.conf` | Names resolve at the bridge address, `.local` names included | `/etc/resolv.conf`, `/etc/nsswitch.conf` |
+| About twenty units are masked | An instance has no use for time sync, TPM, boot and update units | base image |
+| SELinux is off | The filesystem is unlabelled; a VM that enforces SELinux blocks the Incus agent, so isx cannot reach the VM | `/etc/selinux/config` |
 | No documentation files, English locale only | A smaller image | base image, build-time `dnf` |
 | dnf has no plugins until a template enables a COPR repo | A smaller image; `dnf copr` comes with the first COPR repo | base image, build-time `dnf` |
-| Every instance has its own machine ID | Branches are copies of one template | `/etc/machine-id` |
-| Generated agent instructions, stored once | Each agent that is installed reads them where it looks, as a hardlink to the one file | `/etc/isx/agent-instructions.md`, `/etc/isx/agent-instructions.paths` |
-| With Pi, an `AGENTS.md` at the filesystem root | Pi reads context from every directory above its own, so isx's instructions leave `~/.pi/agent/AGENTS.md` to you | `/AGENTS.md`, a link from the `pi` tool |
+| Every instance has its own machine ID | Branches are copies of one template, so they would otherwise share its ID | `/etc/machine-id` |
+| Generated agent instructions, stored once | Each installed agent reads them at the path it reads instructions from, which is a hardlink to the one file | `/etc/isx/agent-instructions.md`, `/etc/isx/agent-instructions.paths` |
+| With Pi, an `AGENTS.md` at the filesystem root | Pi reads context from every directory above its own, so isx puts its instructions at the root and `~/.pi/agent/AGENTS.md` stays yours | `/AGENTS.md`, a link from the `pi` tool |
 | With Pi, an isx footer extension | Pi's footer names isx and the instance, as Claude Code's status line does | `/etc/isx/pi/isx-status.ts`, listed in `~/.pi/agent/settings.json` by the `pi` tool |
 | With Codex CLI, system requirements | Codex adds them to your own instructions, so `~/.codex/AGENTS.md` and `~/.codex/config.toml` stay yours | `/etc/codex/requirements.toml`, written by the `codex` tool |
-| With Gemini CLI, an isx extension | Gemini CLI loads its context beside your own `~/.gemini/GEMINI.md`, which stays yours | `~/.gemini/extensions/isx/`, a manifest and a copy written by the `gemini-cli` tool |
+| With Gemini CLI, an isx extension | Gemini CLI loads the extension's context beside your own `~/.gemini/GEMINI.md`, which stays yours | `~/.gemini/extensions/isx/`, a manifest and a copy written by the `gemini-cli` tool |
 | With Claude Code, its managed policy | Claude Code loads it before your own `CLAUDE.md` files, which stay yours | `/etc/claude-code/CLAUDE.md`, a link from the `claude` tool |
 | A VM's `dnf` refuses kernel packages | The VM boots the image's own kernel | `/etc/dnf/libdnf5.conf.d/isx-kernel.conf` |
 
 ## Trust
 
-Traffic to intercepted domains passes through the host proxy, which signs with the isx CA.
+Traffic to intercepted domains passes through the host proxy, which presents certificates signed with the isx CA.
 The CA is installed in the system anchors as `/etc/pki/ca-trust/source/anchors/isx-<sha256>.crt` (`update-ca-trust`), so everything that reads the system store trusts it.
 
-A runtime that ships its own root bundle does not, so isx binds it to the system store, through the environment or by replacing its bundle file.
-No verification is turned off anywhere: every runtime still verifies chains and hostnames, against the system store.
+A runtime that ships its own root bundle does not read the system store, so isx binds the runtime to the system store, through the environment or by replacing its bundle file.
+isx does not turn off verification anywhere: every runtime still verifies chains and hostnames, against the system store.
 
 ### Environment bindings
 
@@ -46,9 +46,10 @@ Every login shell (`/etc/profile.d/isx-env.sh`) and systemd user session (`/etc/
 | `DENO_TLS_CA_STORE` | `system` |
 | `UV_NATIVE_TLS` | `1` |
 
-A value already exported, or set by the template or a tool, wins in a login shell.
-In a systemd user session any other `environment.d` file overrides the drop-in, because it is named `00-isx-trust.conf` and sorts first.
+A value already exported, or set by the template or a tool, takes precedence in a login shell.
+In a systemd user session any other `environment.d` file overrides isx's drop-in, because the drop-in is named `00-isx-trust.conf` and sorts first.
 `~/.config/environment.d/10-mine.conf` is such a file.
+
 Java is never bound through a variable: `JAVA_TOOL_OPTIONS` prints a "Picked up" line that breaks tools parsing `java -version`.
 
 ### File bindings
@@ -57,23 +58,24 @@ isx replaces a JDK's `lib/security/cacerts` and an installed Python `certifi`'s 
 The `certifi` copy a package vendors under `site-packages`, pip's included, is bound the same way; a source checkout is never touched.
 Such a runtime then trusts the Fedora/Mozilla root set plus the isx CA instead of its vendor's bundle.
 
-Fedora's own JDK and `python3-certifi` already use the system store, so this changes only a runtime from elsewhere.
+Fedora's own JDK and `python3-certifi` already use the system store, so this changes only a runtime from outside Fedora.
 
 The build binds what the image already carries.
-After that, two systemd path units watch where runtimes land and bind each new one within seconds, with no resident process.
+After that, two systemd path units watch the directories where runtimes are installed and bind each new runtime within seconds, and no process stays running to do it.
 
 | Unit | Runs as | Watches |
 | --- | --- | --- |
 | `isx-trust-system.path` | root | `/usr/lib/jvm`, `/opt`, `/usr/local` |
 | `isx-trust-home.path` | `agentuser` | `~/opt`, `~/.jdks`, `~/.sdkman/candidates/java`, `~/.gradle/jdks`, `~/.jbang/cache/jdks`, `~/.local/share/mise/installs/java`, `~/.asdf/installs/java` |
 
-A watch is not recursive, so a runtime is caught when it lands directly in one of those directories, and each costs one inotify instance.
+A watch is not recursive, so it sees a runtime when the runtime is installed directly in one of those directories.
+Each watched directory costs one inotify instance.
 
-A watch binds a new runtime shortly after it lands, and a command that downloads a JDK and uses it at once can run it first.
+A watch binds a new runtime shortly after the runtime is installed, so a command that downloads a JDK and uses it at once can run the JDK before the watch binds it.
 In a template's prime, isx then binds the new runtime and runs the failed prime command again (see [Templates](TEMPLATES.md#runtimes-a-prime-downloads)).
 Elsewhere, run `isx-trust` and repeat the command.
 
-`isx-trust` binds runtimes by hand, for one a watch missed or one outside the watched directories.
+`isx-trust` binds runtimes by hand, for a runtime a watch missed or a runtime outside the watched directories.
 You can run it again safely: it skips what is already bound, and it uses `sudo` only where it cannot write.
 
 | Command | Binds |
@@ -86,12 +88,12 @@ isx-trust ~/tools/jdk-21
 isx-trust ~/project/.venv
 ```
 
-The symptoms are `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`, and the agent context pairs them with `isx-trust <dir>`.
+The symptoms of an unbound runtime are `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`, and the generated agent instructions name `isx-trust <dir>` as the fix for them.
 
 ### Host CAs (opt-in)
 
 Host CA propagation is for a host behind TLS inspection, or an isx inside another isx: the outer proxy's CA must be trusted for the domains the inner one does not intercept.
-It is off by default, and then instances trust only the isx CA beside Fedora's roots.
+It is off by default, and while it is off instances trust only the isx CA beside Fedora's roots.
 To turn it on, put this in `~/.config/incus-spawn/config.yaml`:
 
 ```yaml
@@ -99,8 +101,8 @@ host-ca:
   propagate: true
 ```
 
-With that, the certificates in the `.crt` and `.pem` files of the host's `/etc/pki/ca-trust/source/anchors/` are installed beside the isx CA in every instance, of every template, as `isx-<sha256>.crt`.
-That directory is Fedora's and RHEL's; other Linux hosts have none there to propagate.
+With that, isx installs the certificates in the `.crt` and `.pem` files of the host's `/etc/pki/ca-trust/source/anchors/` beside the isx CA in every instance, of every template, as `isx-<sha256>.crt`.
+That directory is Fedora's and RHEL's; other Linux hosts have no certificates there to propagate.
 
 On macOS, the CAs an administrator trusts for SSL in the Keychain are installed too, the same ones isx itself trusts there.
 They are trusted for TLS alone, as the Keychain trusts them.
@@ -108,14 +110,14 @@ They are trusted for TLS alone, as the Keychain trusts them.
 A CA that only your own trust settings trust, not an administrator's, is not installed, and neither is one the Keychain denies.
 A deny does not remove the instance's own Fedora roots, though.
 
-Only certificates cross, re-encoded from each file; a file holding anything else, such as a private key, is refused with a warning.
+isx copies only certificates from the host to an instance, re-encoded from each file; it refuses a file holding anything else, such as a private key, with a warning.
 
-Builds install the set.
-A branch, `isx shell`, `isx run` and the TUI bring each instance up to date on use, which also removes a CA taken off the host or every host CA once propagation is turned off.
-An `--airgap` instance keeps what its template was built with.
+Builds install this set of certificates.
+A branch, `isx shell`, `isx run` and the TUI bring each instance up to date on use, which also removes a CA removed from the host, or every host CA once propagation is turned off.
+An `--airgap` instance keeps the certificates its template was built with.
 
 In an instance's anchors directory isx owns only `incus-spawn-mitm.crt` and names of exactly the form `isx-` + 64 lowercase hex digits + `.crt`.
-Any other file there, such as an `isx-company.crt` a template adds, is left alone.
+isx does not change or remove any other file there, such as an `isx-company.crt` a template adds.
 
 ## `/tmp` is on disk
 
@@ -132,37 +134,38 @@ A template that wants the tmpfs back can install a tool whose `run` is `systemct
 ## The agent user
 
 Every instance has one user, `agentuser` (UID 1000), and no password for it or for root: isx enters through Incus, never a login prompt.
-It has passwordless sudo (`/etc/sudoers.d/agentuser`), reads the journal (group `systemd-journal`) and owns `~/inbox`.
+`agentuser` has passwordless sudo (`/etc/sudoers.d/agentuser`), reads the journal (group `systemd-journal`) and owns `~/inbox`.
 Its `.bashrc` sets the terminal title to `isx:<hostname>` and sources bash completion.
 
-It holds the subordinate ID range `100000:65536` in `/etc/subuid` and `/etc/subgid`, for rootless containers inside the instance.
+`agentuser` holds the subordinate ID range `100000:65536` in `/etc/subuid` and `/etc/subgid`, for rootless containers inside the instance.
 
 ## Networking
 
 systemd-networkd manages the network; NetworkManager is not installed.
-Each branch gets a static address, gateway and DNS in `/etc/systemd/network/10-eth0.network`, written into a container before its first boot, so it boots onto its address with no DHCP round trip.
-The proxy identifies an instance by that address, which is why the file is isx's to write.
+Each branch gets a static address, gateway and DNS in `/etc/systemd/network/10-eth0.network`, written into a container before its first boot, so the container boots with its address and needs no DHCP exchange.
+The proxy identifies an instance by that address, which is why isx owns the file.
 
 A container does not wait for systemd-networkd to apply that file.
 isx sets the address and default route with `ip` as soon as the container answers, and systemd-networkd adopts them when it starts.
 
-A VM's file is pushed once the VM is up, applies at its next boot or `networkctl reload`, and matches its NIC by MAC address rather than by name.
+isx pushes a VM's file once the VM is running.
+The file applies at the VM's next boot or `networkctl reload`, and matches the VM's NIC by MAC address rather than by name.
 
-A watchdog (`isx-network-watchdog.timer`, 10 seconds after boot and every 30 seconds) restarts systemd-networkd when the address is missing or the gateway does not answer, as after the host sleeps.
+A watchdog (`isx-network-watchdog.timer`, 10 seconds after boot and every 30 seconds) restarts systemd-networkd when the address is missing or the gateway does not answer, as happens after the host sleeps.
 
-Base images before `fedora-44-20261009` read the address of `eth0` with `awk`.
-The container image has no `awk`, and a VM's network interface is not named `eth0`, so containers and VMs were both affected.
+The watchdog in base images before `fedora-44-20261009` reads the address of `eth0` with `awk`.
+The container image has no `awk`, and a VM's network interface is not named `eth0`, so that watchdog reads no address, in containers and in VMs alike.
 Their watchdog restarts systemd-networkd on every run, and logs `IP mismatch` with an empty current address each time (`journalctl -t isx-watchdog`).
 
-An instance keeps its base image for life, so rebuild its template and branch it again.
+An instance keeps its base image as long as it exists, so to get the fix, rebuild its template and branch the template again.
 `isx doctor` warns about the templates and instances on such a base image when a rebuild would bring the fix.
 
-Nothing in the instance manages `/etc/resolv.conf`: isx writes it, naming the bridge gateway as the one nameserver, and checks it on use.
-The `resolve` entry is removed from `/etc/nsswitch.conf`, so `.local` names go to the gateway's DNS instead of multicast DNS.
+Nothing in the instance manages `/etc/resolv.conf`: isx writes it, naming the bridge address as the one nameserver, and checks it on use.
+The `resolve` entry is removed from `/etc/nsswitch.conf`, so `.local` names go to the DNS at the bridge address instead of multicast DNS.
 
 ## Masked units
 
-The base image masks units an instance has no use for, which would otherwise fail at every boot and leave it degraded.
+The base image masks units an instance has no use for, which would otherwise fail at every boot and leave the instance degraded.
 
 | Masked | What it means |
 | --- | --- |
@@ -182,16 +185,17 @@ A template adds its own masks with `mask_services:`, as `tpl-minimal` masks `tmp
 ## SELinux is off
 
 The base image ships no SELinux policy, so nothing on the filesystem is labelled, and `/etc/selinux/config` says `SELINUX=disabled`.
-A package that pulls a policy in later, as `perl` does, cannot turn it on: the file is only written when missing or empty.
-In a container the setting is inert anyway.
+A package that pulls a policy in later, as `perl` does, cannot turn SELinux on: `/etc/selinux/config` is only written when missing or empty.
+In a container the setting has no effect anyway.
 
-In a VM it matters: every VM build rewrites the file before installing anything and fails if it ends up `enforcing`, since an enforcing guest denies its agent and is unreachable.
+In a VM the setting matters: every VM build rewrites the file before installing anything and fails if the file ends up `enforcing`.
+A VM that enforces SELinux blocks the Incus agent, the program through which isx reaches the VM, so isx cannot reach such a VM.
 
 ## No documentation files
 
 The base image installs its packages without weak dependencies and without documentation, and strips `/usr/share/doc`, `man`, `info`, `licenses` and `groff`.
 Packages a template installs during a build come without documentation too.
-A `dnf install` you run inside an instance installs them as on stock Fedora.
+A `dnf install` you run inside an instance installs the documentation files, as on stock Fedora.
 Only the English locale is installed (`glibc-langpack-en`).
 
 ## dnf plugins
@@ -203,10 +207,12 @@ Inside an instance, `sudo dnf install 'dnf5-command(copr)'` adds it by hand.
 
 ## Machine ID
 
-Every branch is a copy of its template, so without care every branch would share one `/etc/machine-id`: one host to the journal, one DHCP client identity.
+Every branch is a copy of its template, so unless isx prevented it, every branch would share one `/etc/machine-id`.
+All branches would then be one host to the journal and one DHCP client identity.
+
 The base image ships the file empty, isx empties it again before saving a template, and gives each container branch a fresh ID before its first boot.
 
-A VM takes its ID from its SMBIOS UUID at every boot, which Incus makes anew for every copy.
+A VM takes its ID at every boot from its SMBIOS UUID, which Incus makes anew for every copy.
 
 ## Containers
 
@@ -219,7 +225,7 @@ A VM boots the image's own kernel, built with no modules and no initrd, started 
 `/etc/dnf/libdnf5.conf.d/isx-kernel.conf` excludes `kernel`, `kernel-core`, `kernel-modules` and every other package that carries a kernel or its modules; `kernel-headers` and `kernel-devel` stay installable.
 `dnf install kernel-core` answers that it matches only excluded packages.
 
-`dnf --setopt=excludepkgs= install ...` lifts it for one command and deleting the file lifts it for good, but neither makes the VM boot that kernel.
+`dnf --setopt=excludepkgs= install ...` lifts the exclusion for one command and deleting the file lifts it permanently, but neither makes the VM boot the kernel you install.
 Kernel updates arrive with a new base image.
 
 The root filesystem is found by its GPT partition name (`PARTLABEL=isx-root`) and there is no `/boot/efi` mount: Linux never mounts the EFI partition.
