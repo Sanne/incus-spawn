@@ -19,11 +19,11 @@ isx onboards agents the way you'd onboard a new teammate:
   Branch a prepared template like you'd branch a repo: an instant copy-on-write clone.
   Use it, throw it away, branch again from a clean state.
 - **Full autonomy, no supervision.**
-  Agents commit under their own identity and run without permission prompts.
-  This autonomy is safe because the machine holds nothing worth stealing, and nothing the agent does reaches your host unless you ask for it.
+  Each agent runs without permission prompts, and commits under the identity you assign it.
+  It has no credentials to leak, and what it runs, installs or deletes is in its own machine, which you can throw away.
 
-Runs on Linux and macOS, on your hardware.
-Your repositories and credentials stay on your hardware, and everything an agent does can be traced back to that agent.
+Each agent works in its own machine and asks for no approval, so you can run many side by side and build automations that run with nobody watching.
+isx runs on Linux and macOS, on your hardware, and your repositories and credentials stay there.
 
 Agents are the main use, not the only one.
 The same disposable machines are ideal for triaging untrusted patches, reproducing bug reports and testing on a clean system.
