@@ -66,6 +66,18 @@ What you give up is stated plainly, because a decision with no loss reads as a s
 > You give up watching the agent's edits appear live in your IDE.
 > In return, nothing in your checkout changes until you fetch it.
 
+**Stop when the outcome is stated.**
+A fact and its outcome are enough, and the reader draws the judgement.
+Do not add what the fact means for isx's purpose, or how the reader should feel about it:
+
+> A login inside the instance would put a real credential where the agent can read it, which is what isx exists to prevent.
+
+The last clause adds no fact, stacks one clause inside another, and overstates, since isx exists for more than that.
+The sentence ends at "can read it".
+The test is to delete the clause: when the reader loses no fact, it stays deleted.
+The same holds for a word that only adds weight, such as "exactly", "simply", "of course" or "it is important that".
+"State the consequence" and this rule meet at one place: write the outcome once, then stop.
+
 **Engaging means a concrete case the reader recognises.**
 It never means an adjective, or a claim nobody can check.
 "Nothing leaves the building" was engaging and untrue, since an agent's model calls carry code to the provider.
