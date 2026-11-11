@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -29,7 +30,6 @@ class McpInitFlowTest {
     /** InitCommand with the host stubbed out: which commands exist, Claude Code's MCP list. */
     static final class Host extends InitCommand {
         boolean hasClaude = true;
-        boolean registered;
         boolean registrationWorks = true;
         String isx = "/home/u/.local/bin/isx";
         Set<String> built = Set.of();
@@ -40,16 +40,35 @@ class McpInitFlowTest {
             return !command.equals("claude") || hasClaude;
         }
 
-        @Override
-        boolean claudeMcpRegistered() {
-            return registered;
+        /** Registers isx in Claude Code's user scope, as {@code claude mcp add --scope user} would. */
+        void register() throws java.io.IOException {
+            Files.writeString(Path.of(System.getProperty("user.home")).resolve(".claude.json"),
+                    "{\"mcpServers\": {\"isx\": {\"command\": \"isx\", \"args\": [\"mcp\"]}}}");
         }
 
         @Override
         boolean registerClaudeMcp(String isxPath) {
             registrations.add(isxPath);
-            if (registrationWorks) registered = true;
+            if (registrationWorks) {
+                try {
+                    register();
+                } catch (java.io.IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            }
             return registrationWorks;
+        }
+
+        // Every command but the registration above: 'claude mcp get' would start isx mcp and its sweep
+        @Override
+        int runSilently(String... command) {
+            throw new AssertionError("the step ran " + String.join(" ", command));
+        }
+
+        // The developer's own CLAUDE_CONFIG_DIR would point the step at their real configuration
+        @Override
+        String claudeConfigDirEnv() {
+            return null;
         }
 
         @Override
@@ -207,10 +226,38 @@ class McpInitFlowTest {
         assertEquals(List.of("tpl-agent-java"), approved());
     }
 
+    /**
+     * #2099: the step reads the registration from Claude Code's own {@code ~/.claude.json}, as the
+     * plan does. Asking Claude Code ({@code claude mcp get}) starts the server it names, so isx mcp
+     * would resume and sweep orphans, stopping or destroying instances, for a yes or no question.
+     */
+    @Test
+    void theRegistrationIsReadFromClaudeCodesFileWithoutStartingAnything() throws Exception {
+        var host = new Host();
+        host.register();
+        seedMcp("templates: [tpl-agent]\n");
+        var prompts = ScriptedPrompts.lines("");
+        var out = reported(() -> run(host, prompts));
+        assertTrue(out.contains("Currently registered with Claude Code"), out);
+        assertEquals(List.of(), host.registrations, "already registered: not again");
+    }
+
+    /** A {@code ~/.claude.json} that is not JSON leaves the step alone, as an unreadable mcp.yaml does, rather than guessing. */
+    @Test
+    void anUnreadableClaudeCodeConfigurationIsReportedAndChangesNothing() throws Exception {
+        var host = new Host();
+        Files.writeString(Path.of(System.getProperty("user.home")).resolve(".claude.json"), "{not json");
+        var out = reported(() -> run(host, ScriptedPrompts.lines()));
+        assertTrue(out.contains("Could not read Claude Code's configuration"), out);
+        assertTrue(out.contains("isx mcp setup"), out);
+        assertEquals(List.of(), host.registrations);
+        assertNothingSavedAnywhere();
+    }
+
     @Test
     void aTemplateApprovedEarlierIsTheDefaultAndHandApprovedOnesAreKept() throws Exception {
         var host = new Host();
-        host.registered = true;
+        host.register();
         seedMcp("templates: [tpl-dev, tpl-agent]\n");
         // Already set up: 't' to change; Enter keeps tpl-agent; Enter declines tpl-agent-java.
         run(host, ScriptedPrompts.lines("t", "", ""));
@@ -222,7 +269,7 @@ class McpInitFlowTest {
     @Test
     void unapprovingATemplateRemovesIt() throws Exception {
         var host = new Host();
-        host.registered = true;
+        host.register();
         seedMcp("templates: [tpl-agent, tpl-agent-java]\nmax-instances: 5\n");
         run(host, ScriptedPrompts.lines("t", "n", "y"));
         assertEquals(List.of("tpl-agent-java"), approved());
@@ -232,7 +279,7 @@ class McpInitFlowTest {
     @Test
     void endOfInputAtATemplateQuestionKeepsItsApproval() throws Exception {
         var host = new Host();
-        host.registered = true;
+        host.register();
         var seeded = "templates: [tpl-agent, tpl-agent-java]\n";
         // 't', then Ctrl-D at the first template question (and the script is exhausted for the rest).
         seedMcp(seeded);
@@ -243,7 +290,7 @@ class McpInitFlowTest {
     @Test
     void turningItOffOnlyShowsHow() throws Exception {
         var host = new Host();
-        host.registered = true;
+        host.register();
         var seeded = "templates: [tpl-agent]\n";
         seedMcp(seeded);
         run(host, ScriptedPrompts.lines("n"));
@@ -253,7 +300,7 @@ class McpInitFlowTest {
     @Test
     void registeredWithNothingApprovedStillAsksAboutEachTemplate() throws Exception {
         var host = new Host();
-        host.registered = true;
+        host.register();
         // Enabled is the default: Enter keeps it; then tpl-agent yes, tpl-agent-java no.
         run(host, ScriptedPrompts.lines("", "y", "n"));
         assertEquals(List.of(), host.registrations);
@@ -264,7 +311,7 @@ class McpInitFlowTest {
     void aReRunKeepsAnExistingSetupWithOneEnter() throws Exception {
         // #1292: re-running init for something else must not walk through every template again.
         var host = new Host();
-        host.registered = true;
+        host.register();
         var seeded = "templates: [tpl-agent]\n";
         seedMcp(seeded);
         var out = reported(() -> run(host, ScriptedPrompts.lines("")));
@@ -281,7 +328,7 @@ class McpInitFlowTest {
     @Test
     void retiredDelegatePoliciesAreNamedAndDroppedOnSave() throws Exception {
         var host = new Host();
-        host.registered = true;
+        host.register();
         var seeded = "templates: [tpl-agent]\ndelegate-max-turns: 40\ndelegate-permission-mode: plan\n";
         seedMcp(seeded);
         var out = reported(() -> run(host, ScriptedPrompts.lines("")));
@@ -296,7 +343,7 @@ class McpInitFlowTest {
     @Test
     void anUnknownChoiceAsksAgain() throws Exception {
         var host = new Host();
-        host.registered = true;
+        host.register();
         seedMcp("templates: [tpl-agent]\n");
         run(host, ScriptedPrompts.lines("y", "t", "n", "y"));
         assertEquals(List.of("tpl-agent-java"), approved());
@@ -370,7 +417,7 @@ class McpInitFlowTest {
         var seeded = "mcp:\n  templates: [tpl-agent]\n  max-instances: 2\n";
         seed(seeded);
         var host = new Host();
-        host.registered = true;
+        host.register();
         var out = reported(() -> run(host, ScriptedPrompts.lines()));
         assertTrue(out.contains("mcp.yaml does not exist, and the mcp: section of config.yaml"), out);
         assertFalse(Files.exists(McpConfig.file()));

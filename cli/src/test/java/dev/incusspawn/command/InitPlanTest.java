@@ -64,8 +64,8 @@ class InitPlanTest {
         String filesystem = "ext4";
         @Override String filesystemOf(Path path) { return filesystem; }
         @Override String incusConnectivity() { return "Cannot access the Incus socket (permission denied)."; }
-        // Runs 'claude mcp get', which starts the server it names: isx mcp would sweep orphans
-        @Override boolean claudeMcpRegistered() { throw new AssertionError("the plan ran claude mcp get"); }
+        // Any command the plan ran: 'claude mcp get' starts the server it names, and isx mcp would sweep orphans
+        @Override int runSilently(String... command) { throw new AssertionError("init ran " + String.join(" ", command)); }
         // The developer's own CLAUDE_CONFIG_DIR would point the plan at their real configuration
         @Override String claudeConfigDirEnv() { return null; }
         boolean proxyActive;
