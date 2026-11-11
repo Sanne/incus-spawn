@@ -80,7 +80,7 @@ The last clause adds no fact, stacks one clause inside another, and overstates, 
 The sentence ends at "can read it".
 The test is to delete the clause: when the reader loses no fact, it stays deleted.
 The same holds for a word that only adds weight, such as "exactly", "simply", "of course" or "it is important that".
-"State the consequence" and this rule meet at one place: write the outcome once, then stop.
+"State the consequence" asks for the outcome to be written, and this rule asks for nothing after it.
 
 **A list of properties ends with what they add up to.**
 The README listed four: a machine of its own, no credentials inside, instant branches, no permission prompts.
@@ -233,7 +233,7 @@ It points back to the sentence before, hides who acts, puts the condition last a
 Rewritten:
 
 > isx watches a few directories, such as `/opt`.
-> If you unpack a runtime there, as `/opt/jdk-21`, isx links it automatically and you run no command.
+> If you unpack a runtime there, such as `/opt/jdk-21`, isx links it automatically, shortly afterwards.
 
 **A time word says when, and a consequence word says why.**
 "Then", "while" and "afterwards" mark time.
