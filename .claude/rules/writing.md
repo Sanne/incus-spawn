@@ -82,6 +82,11 @@ The test is to delete the clause: when the reader loses no fact, it stays delete
 The same holds for a word that only adds weight, such as "exactly", "simply", "of course" or "it is important that".
 "State the consequence" and this rule meet at one place: write the outcome once, then stop.
 
+**A list of properties ends with what they add up to.**
+The README listed four: a machine of its own, no credentials inside, instant branches, no permission prompts.
+What they add up to is the selling point, and it was missing: you can run many agents side by side, and build automations that run with nobody watching.
+State it after the list, as its consequence, where the reader has just been given the reasons to believe it.
+
 **Engaging means a concrete case the reader recognises.**
 It never means an adjective, or a claim nobody can check.
 "Nothing leaves the building" was engaging and untrue, since an agent's model calls carry code to the provider.
@@ -156,6 +161,12 @@ When it does not hold, narrow it to what the page is about.
 "isx never mounts a host directory read-write" is false, since isx mounts a directory of its own for terminal sessions.
 "isx does not mount your project directory read-write" is true, and is what the reader asked.
 
+**A user page says what isx does today.**
+What isx aims to do goes in `docs/VISION.md`, worded as an aim.
+A goal written as a fact is as false as a wrong absolute, and harder to notice, because the project believes it.
+The README said "everything an agent does can be traced back to that agent", while the Vision page calls identity per instance "partly delivered".
+Say what the reader can do now: "commits under the identity you assign it".
+
 **A rewrite is checked against every rule again.**
 A sentence fixed for one fault often gains another, and a moved paragraph can use a term before the page explains it.
 After a rewrite, read the page from the top.
@@ -201,6 +212,11 @@ In a warning that inference is the message, so write it, with the true connectiv
 **The reader is "you", and a condition starts from what you do.**
 Write "if you unpack a runtime into `/opt`, isx links it", not "isx does the same when the runtime is placed in a directory isx watches".
 A passive hides that the reader is the one acting, and a condition at the end makes the reader wait to learn whether the sentence is about them.
+
+**"Each" and the singular for what holds per thing.**
+"Each agent gets a full Linux workstation" says one machine per agent.
+"Agents get Linux workstations" leaves open whether they share one.
+The plural is for what is true of the group: "you can run many side by side".
 
 **An example shows what a qualifier only names.**
 "Placed directly in a watched directory" needs working out, and "`/opt/jdk-21`" does not.
