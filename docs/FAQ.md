@@ -85,7 +85,7 @@ The source on the host looks like a complete project, but built on the host it m
 **What to use instead:**
 
 - **`isx://` git remotes** ([Git Remotes](../README.md#git-remotes)): `git fetch <instance>` pulls a consistent, atomic snapshot: a commit you review with `git diff` before merging.
-  Even if the agent makes new commits between your review and your merge, you act on the exact commit you reviewed.
+  Even if the agent adds or rewrites commits on its branch between your review and your merge, you act on the exact commit you reviewed.
 
   Git identifies each commit by a hash of its content, so a fetch never gives you a mix of old and new files.
   This is the intended way to get work out of an instance.
