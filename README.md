@@ -1,6 +1,7 @@
 # isx
 
 **Give your AI coding agents their own machines, not your credentials.**
+[isx.run](https://isx.run) is the website, with the full documentation.
 
 An AI agent in your terminal can read your API keys, your GitHub token, your `~/.ssh` and every repo you have checked out.
 Your IDE and build tools execute anything the agent writes.
@@ -34,8 +35,7 @@ isx was formerly known as incus-spawn.
 
 ## Quick Start
 
-Requires Linux, or macOS 15 (Sequoia) or later; `isx init` sets up the rest.
-[Installation](#installation) has the details.
+Requires Linux, or macOS 15 (Sequoia) or later; `isx init` sets up the rest, and [Installation](#installation) has the details.
 
 <!-- tabs:os -->
 
