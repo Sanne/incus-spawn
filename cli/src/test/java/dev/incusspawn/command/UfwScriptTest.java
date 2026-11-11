@@ -53,7 +53,7 @@ class UfwScriptTest {
     private static final List<String> AWKS = java.util.stream.Stream.of("awk", "gawk", "mawk", "busybox")
             .filter(dev.incusspawn.util.HostPath::isOnPath).toList();
 
-    /** Runs {@code lines} on a copy of {@code content}, with the gateway set and a stand-in ufw whose reload exits {@code reload}. */
+    /** Runs {@code lines} on a copy of {@code content}, with the gateway set and a stand-in ufw whose first {@code reload} reloads fail. */
     private static Ran run(Path dir, List<String> lines, String content, int reload) throws Exception {
         Ran first = null;
         for (var awk : AWKS) {
@@ -71,7 +71,10 @@ class UfwScriptTest {
         Files.writeString(rules, content);
         var bin = Files.createDirectories(dir.resolve("bin"));
         var ufw = bin.resolve("ufw");
-        Files.writeString(ufw, "#!/bin/sh\necho \"ufw $*\"\n[ \"$1\" = reload ] && exit " + reload + "\nexit 0\n");
+        var count = bin.resolve("reloads");
+        Files.writeString(ufw, "#!/bin/sh\necho \"ufw $*\"\n[ \"$1\" = reload ] || exit 0\n"
+                + "n=$(( $(cat " + count + " 2>/dev/null || echo 0) + 1 )); echo $n > " + count + "\n"
+                + "[ $n -le " + reload + " ] && exit 1\nexit 0\n");
         ufw.toFile().setExecutable(true);
         var awkStandIn = bin.resolve("awk");
         // By its absolute path: a bare "awk" would find this stand-in again and exec itself forever
@@ -142,6 +145,51 @@ class UfwScriptTest {
         assertNotEquals(0, ran.exit(), ran.output());
         assertEquals(stock(), ran.rules());
         assertTrue(ran.output().contains("the old one is back"), ran.output());
+    }
+
+    /** A host whose UFW refuses the old file too is told its rules may not be loaded, never that all is back. */
+    @Test
+    void aReloadOfTheOldFileThatFailsTooSaysTheRulesMayNotBeLoaded(@TempDir Path dir) throws Exception {
+        var ran = run(dir, UfwScript.firewallLines(), stock(), 2);
+        assertNotEquals(0, ran.exit(), ran.output());
+        assertEquals(stock(), ran.rules());
+        assertTrue(ran.output().contains("may not be loaded"), ran.output());
+        assertFalse(ran.output().contains("the old one is back"), ran.output());
+    }
+
+    /** Marked blocks that are not whole, as an edit by hand can leave them, stop the script with the file untouched. */
+    @Test
+    void anEndMarkerBeforeItsBeginStopsTheScript(@TempDir Path dir) throws Exception {
+        var content = stock().replace("*filter", UfwCheck.MARKER_NAT_END + "\n" + UfwCheck.MARKER_NAT_BEGIN + "\n*filter");
+        var ran = run(dir, UfwScript.firewallLines(), content, 0);
+        assertNotEquals(0, ran.exit(), ran.output());
+        assertEquals(content, ran.rules());
+        assertTrue(ran.output().contains("not whole"), ran.output());
+        var unclosed = stock().replace("*filter", UfwCheck.MARKER_NAT_BEGIN + "\n*filter");
+        assertNotEquals(0, run(dir.resolve("unclosed"), UfwScript.redirectLines(), unclosed, 0).exit());
+        var endFirst = javaRedirect(stock()).replace(UfwCheck.MARKER_NAT_BEGIN, UfwCheck.MARKER_NAT_END + "\n" + UfwCheck.MARKER_NAT_BEGIN);
+        var stray = run(dir.resolve("endFirst"), UfwScript.redirectLines(), endFirst, 0);
+        assertNotEquals(0, stray.exit(), stray.output());
+        assertEquals(endFirst, stray.rules());
+    }
+
+    /** The redirect's lines leave the FORWARD block alone, so a broken one does not stop them. */
+    @Test
+    void aBrokenForwardBlockDoesNotStopTheRedirect(@TempDir Path dir) throws Exception {
+        var content = stock().replace("*filter", UfwCheck.MARKER_FWD_BEGIN + "\n*filter");
+        var ran = run(dir, UfwScript.redirectLines(), content, 0);
+        assertEquals(0, ran.exit(), ran.output());
+        assertEquals(javaRedirect(content), ran.rules());
+    }
+
+    /** A second NAT block is left as it stands, as the Java's {@code indexOf} leaves it: a stray BEGIN never swallows the rest of the file. */
+    @Test
+    void onlyTheFirstNatBlockIsReplaced(@TempDir Path dir) throws Exception {
+        var content = javaRedirect(stock()) + UfwCheck.MARKER_NAT_BEGIN + "\n# kept\n";
+        var ran = run(dir, UfwScript.redirectLines(), content, 0);
+        assertEquals(0, ran.exit(), ran.output());
+        assertEquals(javaRedirect(content), ran.rules());
+        assertTrue(ran.rules().endsWith(UfwCheck.MARKER_NAT_BEGIN + "\n# kept\n"), ran.rules());
     }
 
     /** A FORWARD block an older isx wrote into another line is the run's to move: the script stops and says so. */
