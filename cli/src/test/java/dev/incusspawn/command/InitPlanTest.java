@@ -588,6 +588,34 @@ class InitPlanTest {
         assertEquals(InitPlan.State.DONE, init.planMcp().state());
     }
 
+    /** Unregistered, the step offers only registration and the templates not yet approved (#2130). */
+    @Test
+    void anUnregisteredServerOffersOnlyTheTemplatesNotApproved(@TempDir Path root) throws Exception {
+        var defs = Map.of(
+                "tpl-agent", dev.incusspawn.config.ImageDef.parseYaml("name: tpl-agent\ntools: [claude]\n"),
+                "tpl-agent-pi", dev.incusspawn.config.ImageDef.parseYaml("name: tpl-agent-pi\ntools: [pi]\n"));
+        var init = new PlanInit() {
+            @Override
+            Map<String, dev.incusspawn.config.ImageDef> trustedDefinitions() {
+                return defs;
+            }
+        };
+        init.root = root;
+        init.commands = Set.of("claude");
+        Files.createDirectories(dev.incusspawn.config.McpConfig.file().getParent());
+        Files.writeString(dev.incusspawn.config.McpConfig.file(), "templates: [tpl-agent, tpl-agent-pi]\n");
+        var plan = init.planMcp();
+        assertEquals(InitPlan.State.OPTIONAL, plan.state(), plan.toString());
+        assertEquals(1, plan.changes().size(), plan.toString());
+        assertEquals(InitPlan.Who.NONE, plan.changes().getFirst().who());
+        assertTrue(plan.changes().getFirst().command().startsWith("claude mcp add"), plan.toString());
+        Files.writeString(dev.incusspawn.config.McpConfig.file(), "templates: [tpl-agent]\n");
+        var partial = init.planMcp();
+        assertEquals(List.of("claude mcp add", "Approve which of tpl-agent-pi agents may create instances from"),
+                partial.changes().stream().map(c -> c.who() == InitPlan.Who.APPROVAL ? c.what()
+                        : c.command().substring(0, "claude mcp add".length())).toList(), partial.toString());
+    }
+
     /** Init shows the MCP step's header once, from its InitStep, as 'isx mcp setup' does. */
     @Test
     void initShowsTheMcpHeaderOnce() throws Exception {
