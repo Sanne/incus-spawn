@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.OwnDirectory;
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.Metadata;
 
@@ -94,7 +95,7 @@ public final class CredentialProof {
         if (!HEX_64.matcher(generation).matches()) throw new IllegalStateException("Invalid credential proof generation; reset the instance's proofs");
         try {
             var configDir = Environment.configDir();
-            Files.createDirectories(configDir);
+            OwnDirectory.create(configDir);
             configDir = configDir.toRealPath();
             var uid = HostRouteSecret.ownUid(configDir);
             var file = configDir.resolve("credential-proofs/host.key");

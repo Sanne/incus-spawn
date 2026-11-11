@@ -1,5 +1,6 @@
 package dev.incusspawn.config;
 
+import dev.incusspawn.OwnDirectory;
 import io.hyperfoil.tools.jjq.mapper.JqInclude;
 import io.hyperfoil.tools.jjq.mapper.JqMapped;
 import io.hyperfoil.tools.jjq.mapper.JqName;
@@ -156,7 +157,7 @@ public class BaseImagePin extends MappedDefinition {
     }
 
     public void write(Path file) throws IOException {
-        Files.createDirectories(file.getParent());
+        OwnDirectory.create(file.getParent());
         Jjq.writeYaml(file, this);
     }
 

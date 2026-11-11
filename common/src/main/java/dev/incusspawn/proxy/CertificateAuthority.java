@@ -4,6 +4,7 @@ import dev.incusspawn.util.BuildOutput;
 import io.hyperfoil.tools.jjq.value.JqValue;
 import dev.incusspawn.ClientLog;
 import dev.incusspawn.Environment;
+import dev.incusspawn.OwnDirectory;
 import dev.incusspawn.Warnings;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
@@ -655,7 +656,7 @@ public class CertificateAuthority {
     }
 
     private static CertificateAuthority generateUnreported() throws Exception {
-        Files.createDirectories(caKeyFile().getParent());
+        OwnDirectory.create(caKeyFile().getParent());
         // A new key pair is a real rotation, not an SKI upgrade: drop any record of a
         // superseded cert so images built against it are not mistaken for repairable.
         Files.deleteIfExists(caSupersededCertFile());

@@ -1,6 +1,8 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.BuildInfo;
+import dev.incusspawn.Environment;
+import dev.incusspawn.OwnDirectory;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.Warnings;
 import dev.incusspawn.config.ImageDef;
@@ -202,7 +204,7 @@ public class TemplatesCommand extends BaseCommand {
                     BuildOutput.note("This override will take precedence over the built-in"
                             + " and will not auto-update with isx upgrades.");
                     try {
-                        Files.createDirectories(editPath.getParent());
+                        OwnDirectory.create(editPath.getParent());
                         copyBuiltinResource(filename, editPath);
                     } catch (IOException e) {
                         BuildOutput.error("Failed to copy built-in template: " + e.getMessage());
@@ -304,7 +306,7 @@ public class TemplatesCommand extends BaseCommand {
                     return CommandResult.valueOf(1);
                 }
                 try {
-                    Files.createDirectories(dir);
+                    makeDirectory(dir);
                     Files.writeString(targetPath, SKELETON);
                 } catch (IOException e) {
                     BuildOutput.error("Failed to create template file: " + e.getMessage());
@@ -491,12 +493,24 @@ public class TemplatesCommand extends BaseCommand {
     }
 
     /**
+     * Makes {@code dir}: in the config directory without group write whatever the umask, as every
+     * writer there does (#2136); in a project, as its umask says, since its group may share it.
+     */
+    private static void makeDirectory(Path dir) throws IOException {
+        if (dir.toAbsolutePath().normalize().startsWith(Environment.configDir())) {
+            OwnDirectory.create(dir);
+        } else {
+            Files.createDirectories(dir);
+        }
+    }
+
+    /**
      * Writes {@code yaml} as {@code target}, the one way a new definition is stored: created
      * exclusively, so nothing is overwritten, or with {@code replace} swapped in whole through a
      * file the loader never reads, so no reader sees half a definition.
      */
     static void store(Path target, String yaml, boolean replace) throws IOException {
-        Files.createDirectories(target.getParent());
+        makeDirectory(target.getParent());
         if (!replace) {
             Files.writeString(target, yaml, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
             return;

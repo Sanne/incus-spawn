@@ -1,10 +1,12 @@
 package dev.incusspawn;
 
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 
 /**
  * Whether a directory is one user's alone to change: theirs, a real directory and not a link,
@@ -46,6 +48,31 @@ public final class OwnDirectory {
                 throw new NotOwn("is in " + path + ", which others can write to (chmod go-w it)");
             }
         }
+    }
+
+    /**
+     * Makes {@code dir}, with its parents, when it is missing, writable by its owner alone whatever
+     * the umask: a umask of 002, which Ubuntu and Fedora give a user with a private group, would
+     * otherwise make it group-writable, which {@link #require} refuses unless its gid is the uid
+     * (#2136). Each missing parent is made the same way, and the umask still narrows them further.
+     * An existing directory, or a link to one, is left as it is, to be checked rather than
+     * repaired; anything else there fails, as {@link Files#createDirectories} does.
+     */
+    public static Path create(Path dir) throws IOException {
+        if (Files.isDirectory(dir)) return dir;
+        var parent = dir.toAbsolutePath().getParent();
+        if (parent != null) create(parent);
+        try {
+            if (dir.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+                Files.createDirectory(dir, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwxr-xr-x")));
+            } else {
+                Files.createDirectory(dir);
+            }
+        } catch (FileAlreadyExistsException raced) {
+            // another isx made it: left as it is, like any existing one
+            if (!Files.isDirectory(dir)) throw raced;
+        }
+        return dir;
     }
 
     /** That {@code link} is one, and what to do. Never toRealPath: a dangling link gets this too. */

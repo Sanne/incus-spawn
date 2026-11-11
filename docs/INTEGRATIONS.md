@@ -285,7 +285,9 @@ These rules keep the route secret known to the proxy and the controller only.
 - Rotate the secret too if the controller was not running while another program held its port: that program received the secret.
 - Keep the secret file, its directory and `~/.config/incus-spawn` owned by you, the file readable by nobody else, and the directories writable by nobody else.
   The proxy refuses (503) every request to a route that breaks this.
-  The config directory may be writable by your own private group, as a umask of 002 makes it, never by a group you share.
+- isx makes the config directory writable by you alone, whatever your umask.
+  A config directory that an older isx made under a umask of 002 may be writable by your group only when that group's ID is your user ID.
+  Otherwise the proxy refuses it, so run `chmod go-w ~/.config/incus-spawn` once.
 - Do not give anyone else write access to the directories above `~/.config/incus-spawn`, by mode or by POSIX ACL: the proxy does not check those directories and does not see access granted with `setfacl`.
 - Once you fix the ownership or permissions with `chmod` or `chown`, the proxy serves the route again at once on Linux.
   On macOS, run `isx proxy restart`, since the proxy's file watcher there does not see permission changes (a rewritten or deleted secret it does see).

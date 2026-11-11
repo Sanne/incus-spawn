@@ -2,6 +2,7 @@ package dev.incusspawn.proxy;
 
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Environment;
+import dev.incusspawn.OwnDirectory;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.config.ReadyTimeoutsConfig;
 import dev.incusspawn.config.SpawnConfig;
@@ -331,7 +332,7 @@ public final class ProxyService {
 
         try {
             writeProxyStartScript(proxyStartScript(), proxyBin);
-            Files.createDirectories(Environment.proxyServiceFile().getParent());
+            OwnDirectory.create(Environment.proxyServiceFile().getParent());
             Files.writeString(Environment.proxyServiceFile(), serviceContent);
         } catch (IOException e) {
             BuildOutput.error("Failed to write service file: " + e.getMessage());
@@ -1226,7 +1227,7 @@ public final class ProxyService {
     }
 
     static void writeProxyStartScript(Path script, String proxyBin) throws IOException {
-        Files.createDirectories(script.getParent());
+        OwnDirectory.create(script.getParent());
         Files.writeString(script, proxyStartScriptContent(proxyBin));
         Files.setPosixFilePermissions(script, PosixFilePermissions.fromString("rwxr-xr-x"));
     }

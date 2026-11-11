@@ -1,6 +1,7 @@
 package dev.incusspawn.ssh;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.OwnDirectory;
 import dev.incusspawn.Warnings;
 import dev.incusspawn.incus.CidrUtils;
 import dev.incusspawn.util.BuildOutput;
@@ -46,7 +47,7 @@ public final class SshKeyManager {
                         "ssh-keygen not found. Install openssh-clients (Fedora/RHEL) " +
                         "or openssh-client (Debian/Ubuntu) and re-run 'isx init'.");
             }
-            Files.createDirectories(Environment.sshDir());
+            OwnDirectory.create(Environment.sshDir());
 
             if (Files.exists(Environment.sshKeyFile()) && !Files.exists(Environment.sshPubKeyFile())) {
                 // Private key exists but public key is missing — derive it rather than
@@ -130,7 +131,7 @@ public final class SshKeyManager {
     public static boolean ensureSshConfigInclude() {
         try {
             var sshDir = Environment.home().resolve(".ssh");
-            Files.createDirectories(sshDir);
+            OwnDirectory.create(sshDir);
             Files.setPosixFilePermissions(sshDir, PosixFilePermissions.fromString("rwx------"));
 
             var sshConfig = sshDir.resolve("config");
@@ -182,7 +183,7 @@ public final class SshKeyManager {
      * Also creates the ssh directory if needed.
      */
     static void ensureManagedConfigExists() throws IOException {
-        Files.createDirectories(Environment.sshDir());
+        OwnDirectory.create(Environment.sshDir());
         if (!Files.exists(Environment.sshConfigFile())) {
             Files.writeString(Environment.sshConfigFile(), CONFIG_HEADER);
         }
@@ -351,7 +352,7 @@ public final class SshKeyManager {
             // Taken again under the lock, which reports it
         }
         try (var lock = lockManagedConfig()) {
-            Files.createDirectories(Environment.sshDir());
+            OwnDirectory.create(Environment.sshDir());
             var content = Files.exists(file) ? Files.readString(file) : "";
             afterConfigRead.run();
             writeIfChanged(file, content, pinned(content, instanceName, ip, keys));

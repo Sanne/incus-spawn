@@ -254,6 +254,8 @@ Key design:
   It is stripped from response headers (by name and by value) and from a reason phrase, redacted from `HostRouteRelay.Served.toString()`, and never logged; nothing may hand it to a guest.
   `ConfigWatcher` reloads on any change to a secret file, so deleting one rotates it, and on a `chmod` of one or of the directory on Linux only (macOS's polling watcher sees mtimes, not modes).
   Every check is made before the file is opened (a FIFO would block `reload()` for good): its type, and that it, `host-routes/` and the config directory belong to the proxy's uid (of a file it created, never a name lookup) with nobody else able to write them: no group write on `host-routes/`, and on the config directory only by a user-private group (its gid equals the proxy's uid; never a gid read off a file made inside it, which takes a setgid directory's group).
+  isx makes the config directory without group write whatever the umask, and never repairs an existing one (#2136).
+  Every writer that may make it first, `HostLock` included, goes through `OwnDirectory.create`, which makes the missing parents the same way; a new writer there uses it too.
   A refused caller's retry is `InstanceRegistry.refreshAfterNow`: one listing started after the call answers every waiter, so a burst of wrong secrets costs one listing.
   The routes live in `ConfigState` (replaced whole on reload) and their names in the routing's intercepted domains, from `ToolProxyResolver.hostRoutes`, which `resolvedDomains` includes for the CLI's DNS writers.
   See design/proxy.md "Host routes".

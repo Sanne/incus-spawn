@@ -2,6 +2,8 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.ClientLog;
 import dev.incusspawn.Environment;
+import dev.incusspawn.OwnDirectory;
+import dev.incusspawn.proxy.HostRouteSecret;
 import dev.incusspawn.config.CredentialCheck;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
@@ -38,6 +40,7 @@ import org.aesh.command.option.OptionList;
 import dev.incusspawn.util.Privilege;
 
 import java.io.IOException;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -424,6 +427,7 @@ public class InitCommand extends BaseCommand {
         // From here this process elevates nothing: every sudo is the script's (#2074)
         if (noSudo) Privilege.forbid();
         if (!requireIncusHost()) return CommandResult.valueOf(1);
+        ownConfigDirectory(Environment.configDir());
         this.incus = RuntimeServices.incus();
         if (Platform.isMacOS()) {
             return doMacOsInit();
@@ -461,6 +465,73 @@ public class InitCommand extends BaseCommand {
         if (continued) next.addAll(GROUP_PENDING);
         printCompletionBox(next.toArray(String[]::new));
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * Makes the config directory before any step writes into it, so no umask makes it
+     * group-writable (#2136). One an older isx made so is never repaired, since group write it
+     * had may have been used: init says so here rather than leaving it to the first build.
+     */
+    static void ownConfigDirectory(Path configDir) {
+        Path dir;
+        Integer uid;
+        try {
+            dir = OwnDirectory.create(configDir).toRealPath();
+            // As the build and the proxy judge it, by the uid this process creates files as, but
+            // probed afresh: a cached uid would skip the probe that finds a root-owned directory
+            uid = HostRouteSecret.probedUid(dir);
+        } catch (AccessDeniedException e) {
+            // Denied making it, a parent or the probe in it: name the directory that refused,
+            // never the file that could not be made there
+            var denied = existingAncestor(e.getFile() == null ? configDir : Path.of(e.getFile()));
+            refused(configDir, "isx cannot write to " + denied + ownerOf(denied) + " (chown it to yourself, and chmod u+w it)");
+            return;
+        } catch (IOException e) {
+            // Something else in its place, or a read-only file system: said, as for a refusal,
+            // rather than ending init before any step
+            refused(configDir, "isx cannot make it: " + e.getMessage());
+            return;
+        }
+        ownConfigDirectory(dir, uid);
+    }
+
+    /** ", which belongs to uid N", or nothing where that cannot be read. */
+    private static String ownerOf(Path dir) {
+        try {
+            return ", which belongs to uid " + OwnDirectory.uidOf(dir);
+        } catch (IOException | RuntimeException e) {
+            return "";
+        }
+    }
+
+    /** {@code path}, or the nearest directory above it that exists, resolved where it can be. */
+    private static Path existingAncestor(Path path) {
+        var at = path.toAbsolutePath();
+        while (at.getParent() != null && !Files.isDirectory(at)) at = at.getParent();
+        try {
+            // Real, as the other warnings name the directory: macOS's /var is a link to /private/var
+            return at.toRealPath();
+        } catch (IOException e) {
+            return at;
+        }
+    }
+
+    /** That {@code dir}, real, is {@code uid}'s and nobody else's to write, else a warning saying why. */
+    static void ownConfigDirectory(Path dir, Integer uid) {
+        try {
+            OwnDirectory.require(dir, uid, uid, "isx");
+        } catch (OwnDirectory.NotOwn e) {
+            // Someone else's, as an earlier sudo isx init may leave it, or writable by others
+            refused(dir, "The credential proof host key " + e.getMessage());
+        } catch (IOException e) {
+            // Its owner or mode unreadable: said, rather than ending init before any step
+            refused(dir, "isx cannot read who may write to it: " + e.getMessage());
+        }
+    }
+
+    private static void refused(Path dir, String why) {
+        BuildOutput.warn("Builds and host routes will refuse the secrets in " + dir, why + ".",
+                "Check that nothing in it is someone else's first.");
     }
 
     /** Whether this run is {@code --no-sudo}: the privileged steps are the person's script (#2074). */

@@ -120,20 +120,30 @@ public final class HostRouteSecret {
      * (which may not resolve, or name someone else) nor a directory service is asked. Once per
      * process, so no reload pays for it again. Null where the file system has no uids.
      */
-    static Integer ownUid(Path configDir) throws IOException {
+    public static Integer ownUid(Path configDir) throws IOException {
         if (!hasUids(configDir)) return null;
         var uid = ownUid;
         if (uid == null) {
-            Files.createDirectories(configDir);
-            var probe = Files.createTempFile(configDir, ".uid-", ".tmp");
-            try {
-                uid = OwnDirectory.uidOf(probe);
-            } finally {
-                Files.deleteIfExists(probe);
-            }
+            OwnDirectory.create(configDir);
+            uid = probedUid(configDir);
             ownUid = uid;
         }
         return uid;
+    }
+
+    /**
+     * The uid of a file made in {@code dir} just now, never cached: what {@link #ownUid} reads
+     * once, for a caller that must see the directory as it is (isx init). Null where the file
+     * system has no uids.
+     */
+    public static Integer probedUid(Path dir) throws IOException {
+        if (!hasUids(dir)) return null;
+        var probe = Files.createTempFile(dir, ".uid-", ".tmp");
+        try {
+            return OwnDirectory.uidOf(probe);
+        } finally {
+            Files.deleteIfExists(probe);
+        }
     }
 
     private static boolean hasUids(Path path) {
@@ -160,7 +170,7 @@ public final class HostRouteSecret {
      */
     static Path ownerOnlyDirectory(Path configDir, Path dir, Integer uid, Integer privateGroup) throws IOException {
         if (!Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) {
-            Files.createDirectories(dir.getParent());
+            OwnDirectory.create(dir.getParent());
             try {
                 if (isPosix(dir.getParent())) {
                     Files.createDirectory(dir, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));

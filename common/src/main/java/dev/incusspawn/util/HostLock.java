@@ -1,5 +1,7 @@
 package dev.incusspawn.util;
 
+import dev.incusspawn.OwnDirectory;
+
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
@@ -175,7 +177,7 @@ public final class HostLock implements AutoCloseable {
     private static Key key(Path lockFile) {
         try {
             // fcntl locks a file, not a path: two spellings of one directory must share a lock
-            Files.createDirectories(lockFile.getParent());
+            OwnDirectory.create(lockFile.getParent());
             return new Key(lockFile.getParent().toRealPath().resolve(lockFile.getFileName()), null);
         } catch (IOException e) {
             return new Key(lockFile.toAbsolutePath().normalize(), e);
