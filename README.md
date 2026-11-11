@@ -3,29 +3,29 @@
 **Give your AI coding agents their own machines, not your credentials.**
 
 An AI agent in your terminal can read your API keys, your GitHub token, your `~/.ssh` and every repo you have checked out.
-Anything it writes, your IDE and build tools will happily execute.
+Your IDE and build tools execute anything the agent writes.
 
 isx onboards agents the way you'd onboard a new teammate:
 
 - **A real machine of their own.**
   Each agent gets a full Linux workstation: its own filesystem, init system, networking and process tree.
   It can `dnf install`, run Docker Compose, use `strace` and nested containers, because it is a real system, not an app container.
-  A hardware-isolated KVM virtual machine is one flag away when you want the strongest isolation.
+  One flag gives the agent a hardware-isolated KVM virtual machine instead, when you want the strongest isolation.
 - **Zero credential exposure.**
   API keys and tokens never enter the machine in any form.
-  A proxy on your host adds them to the agent's requests as they leave, so `claude`, `pi`, `gh`, `git` and `curl` work unmodified inside.
+  A proxy on your host adds them to the agent's requests as the requests leave the machine, so `claude`, `pi`, `gh`, `git` and `curl` work unmodified inside it.
   See [Credential Isolation](#credential-isolation).
 - **Instant branches.**
   Branch a prepared template like you'd branch a repo: an instant copy-on-write clone.
   Use it, throw it away, branch again from a clean state.
-- **Full autonomy, no babysitting.**
+- **Full autonomy, no supervision.**
   Agents commit under their own identity and run without permission prompts.
-  That is safe because the machine holds nothing worth stealing, and nothing the agent does reaches your host uninvited.
+  This autonomy is safe because the machine holds nothing worth stealing, and nothing the agent does reaches your host unless you ask for it.
 
 Runs on Linux and macOS, on your hardware.
-Your code and credentials never leave the building, and everything an agent does can be traced back to it.
+Your code and credentials never leave your hardware, and everything an agent does can be traced back to that agent.
 
-Agents are the headline, not the limit.
+Agents are the main use, not the only one.
 The same disposable machines are ideal for triaging untrusted patches, reproducing bug reports and testing on a clean system.
 
 Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/), powered by [Incus](https://linuxcontainers.org/incus/) system containers.
@@ -87,7 +87,7 @@ On a fresh Linux host, `isx init` adds you to the `incus-admin` group and finish
 Other terminals get the group at your next login, or in each one with `newgrp incus-admin`.
 
 A template is a machine image you build once: an OS, tools and repos.
-This one adds Claude Code to the built-in `tpl-minimal`.
+The template below adds Claude Code to the built-in `tpl-minimal` template.
 Save it as `~/.config/incus-spawn/images/tpl-agent.yaml`, or run `isx templates new tpl-agent` and paste it over the skeleton that opens in your editor:
 
 ```yaml
@@ -111,7 +111,7 @@ isx
 ```
 
 Claude Code signs in with the Claude credential you set up in `isx init`; `isx account add claude` adds one later.
-It never sees the credential: the proxy adds it to each request after the request leaves the instance.
+Claude Code never sees the credential: the proxy adds the credential to each request after the request leaves the instance.
 If you did not install the services `isx init` offers, start them before building: `isx proxy start` on Linux, `isx vm start && isx proxy start` on macOS.
 
 For another agent, replace `claude` with `codex`, `pi`, `gemini-cli`, `bob` or `copilot`; see [Agents](#agents).
@@ -123,14 +123,14 @@ Its commits come back to your host with `git fetch` ([Git Remotes](#git-remotes)
 
 The agent must be free to act, so its instance cannot hold anything worth stealing.
 API keys and tokens never enter an instance in any form.
-Instead, a proxy on your host (`isx proxy`) adds the real credentials to the agent's requests as they leave, and `curl`, `git`, `gh`, `claude` and `pi` work unmodified inside.
+Instead, a proxy on your host (`isx proxy`) adds the real credentials to the agent's requests as the requests leave the instance, so `curl`, `git`, `gh`, `claude` and `pi` work unmodified inside it.
 
 How it works:
 
-- The instance's DNS resolves the intercepted domains to the proxy, and it trusts the proxy's CA, so the traffic reaches the proxy without any setting in the tool.
-- The proxy replaces the placeholder with the real credential and forwards the request upstream over TLS.
-- Inside, a tool sees only a placeholder such as `sk-ant-placeholder`.
-  It satisfies the tool's local checks, and no service accepts it as a credential.
+- The instance's DNS resolves the intercepted domains to the proxy, and the instance trusts the proxy's certificate authority (CA), so the traffic reaches the proxy without any setting in the tool.
+- The proxy replaces the placeholder credential that the tool sent with the real credential and forwards the request upstream over TLS.
+- Inside the instance, a tool sees only a placeholder such as `sk-ant-placeholder`.
+  The placeholder satisfies the tool's local checks, and no service accepts it as a credential.
 - Nothing inside the instance yields a real credential: no API, no endpoint, no variable, no file.
 
 What the proxy can sign in as:
@@ -148,7 +148,7 @@ What the proxy can sign in as:
 | A service of your own | whatever your tool YAML installs | its credential, declared in the YAML's `proxy:` block ([Proxy Credentials](docs/TOOLS.md#proxy-credentials)) |
 
 A credential can have several accounts, for example a personal and a client Claude subscription, or two GitHub identities.
-Each template or instance chooses which one it spends: see [Credential accounts](docs/CONFIGURATION.md#credential-accounts).
+Each template or instance chooses which account it uses: see [Credential accounts](docs/CONFIGURATION.md#credential-accounts).
 Git must use HTTPS URLs, not SSH; `gh` defaults to HTTPS.
 
 The proxy must be running for every instance that has a network.
@@ -158,8 +158,8 @@ isx checks that the proxy is reachable and compatible before a build, a branch o
 The proxy also caches container image layers and build artifacts on the host, so the same dependency is never downloaded twice ([Caching](docs/CONFIGURATION.md#caching)).
 
 Each start also gives the instance a random instance secret, at the path in `$ISX_INSTANCE_SECRET_FILE` (`/run/isx/instance-secret`, readable by the instance user).
-It is not a credential for anything upstream.
-It lets a service on the host tell instances apart by source address and secret together, so it is useless from any other instance.
+The instance secret is not a credential for anything upstream.
+It lets a service on the host identify an instance by source address and secret together, so one instance's secret is useless from any other instance.
 
 A restart replaces the secret.
 After a reboot isx did not perform, the instance has none until isx next starts it.
@@ -170,9 +170,9 @@ Each start replaces the placeholders with proof tokens, unique to the instance a
 The login profile exports them.
 They stay the same across stops, starts and reboots, so a nested service you configured with one keeps working.
 
-They reach exactly what runs in the login environment: a nested container gets none unless you pass one in.
+The proof tokens reach exactly what runs in the login environment: a nested container gets none unless you pass one in.
 
-[Credential proofs](docs/CREDENTIAL-PROOFS.md) says how to share or revoke them, and what to do after an upgrade.
+[Credential proofs](docs/CREDENTIAL-PROOFS.md) says how to share or revoke proof tokens, and what to do after an upgrade.
 
 ### Git Configuration
 
@@ -180,7 +180,7 @@ With a GitHub token configured, every instance gets a ready-made `.gitconfig`: y
 
 - **A dedicated agent account** (recommended): give `isx init` the token of a separate GitHub account, so the agent's commits and PRs are clearly its own.
 - **Your personal account**: use your own token.
-  To bring your aliases and settings along, mount `~/.gitconfig` as a [host resource](docs/TEMPLATES.md#host-resources); it takes precedence over the generated config.
+  To use your aliases and settings in the instance, mount `~/.gitconfig` as a [host resource](docs/TEMPLATES.md#host-resources); the mounted file takes precedence over the generated config.
 
 Commit signing is not supported inside an instance yet ([#271](https://github.com/Sanne/incus-spawn/issues/271)).
 To sign, fetch the changes to your host through [git remotes](#git-remotes) and rebase there.
@@ -190,7 +190,7 @@ To sign, fetch the changes to your host through [git remotes](#git-remotes) and 
 A branch is an instance made from a template, the way `git branch` makes a branch from a commit: an instant copy-on-write clone.
 It has its own filesystem, and nothing it changes reaches the template or another branch.
 
-The storage backend (btrfs, zfs or lvm) shares the unchanged data, so a branch costs only what it changes.
+The storage backend (btrfs, zfs or lvm) shares the unchanged data, so a branch uses disk space only for what it changes.
 `isx init` creates a btrfs storage pool if there is none.
 
 ```
@@ -207,14 +207,14 @@ What a branch can have, each on request:
 
 - GUI and audio passthrough: Wayland and PipeWire with GPU acceleration, Linux only.
 - Restricted networking: see [Network Modes](#network-modes).
-- An inbox: a read-only mount of a host directory, to hand files in.
+- An inbox: a read-only mount of a host directory, to give files to the instance.
 - Other [credential accounts](docs/CONFIGURATION.md#credential-accounts) than its template's.
 - Resource limits for CPU, memory and disk, detected from the host and overridable.
 
 The TUI (`isx` with no arguments) is a Midnight Commander-style view of your templates and branches.
 It has dialogs for branching, renaming and building, F3 for an instance's details and F9 for tool actions.
 
-Without function keys, press the digit instead: 1 to 0 stand for F1 to F10, and Alt with a digit for Shift with that key.
+Without function keys, press the digit instead: 1 to 0 stand for F1 to F10, and Alt with a digit stands for Shift with that function key.
 On macOS, Alt is Option once the terminal sends Option as Meta.
 
 A storage gauge and per-row disk usage show what is filling the pool.
@@ -222,7 +222,7 @@ Sizes are approximate (`~`): the base template carries the shared base image, an
 Press C to reclaim space, or on macOS grow the disk with `isx vm resize <size>`.
 
 Templates pre-install your baseline tools and repos.
-Integrations plug in through the same tool system: VS Code Remote, JetBrains Gateway and agent skills.
+Integrations are installed through the same tool system: VS Code Remote, JetBrains Gateway and agent skills.
 
 ### Network Modes
 
@@ -231,12 +231,12 @@ Each branch runs in one of three network modes:
 | Mode | Flag | What it means |
 |------|------|---------------|
 | Full internet | *(default)* | Unrestricted access through NAT, signed in through the proxy |
-| Proxy only | `--proxy-only` | Outbound traffic reaches only the proxy, enforced on the host, where root in the instance cannot lift it |
+| Proxy only | `--proxy-only` | Outbound traffic reaches only the proxy; the host enforces the restriction, so root in the instance cannot remove it |
 | Airgapped | `--airgap` | No network device at all, and no `pci` or `usb` passthrough |
 
 ### Git Remotes
 
-An instance is isolated, and the work has to come back.
+An instance is isolated, but the work done in it has to reach your host.
 isx speaks git's remote helper protocol, so plain `git fetch`, `git push` and `git pull` work between a host repo and a repo in an instance:
 
 ```shell
@@ -318,7 +318,7 @@ isx build --out-of-sync              # rebuilds what changed since it was built
 ## Agents
 
 An agent is a tool in a template's `tools:` list, set up for unattended work.
-It signs in through the proxy with an account you configured in `isx init`, whose menu names the credential, not every agent that shares it:
+It signs in through the proxy with an account you configured in `isx init`, where the menu names each credential, not every agent that shares that credential:
 
 | Agent | Tool | Signs in with |
 |-------|------|---------------|
@@ -329,27 +329,27 @@ It signs in through the proxy with an account you configured in `isx init`, whos
 | Bob Shell | `bob` | an IBM API key |
 | GitHub Copilot CLI | `copilot` | the GitHub token `gh` uses |
 
-[Agents](docs/AGENTS.md) has each one's parameters (model, reasoning effort, provider), agent skills, and the notes isx writes for an agent about its instance.
+[Agents](docs/AGENTS.md) has each agent's parameters (model, reasoning effort, provider), agent skills, and the notes isx writes for an agent about its instance.
 
 ## Tools
 
 Templates are made of tools.
 `gh`, `herdr`, `maven-3`, `orca`, `podman`, `sshd`, the VS Code and IntelliJ remote backends, `tmux` and `zmx` ship with isx; `isx tools list -v` lists them all.
-Your own are YAML files in `~/.config/incus-spawn/tools/` or a project's `.incus-spawn/tools/`: packages, commands, environment variables, TUI actions, and credentials the proxy adds for a service of yours.
+Your own tools are YAML files in `~/.config/incus-spawn/tools/` or a project's `.incus-spawn/tools/`: packages, commands, environment variables, TUI actions, and credentials the proxy adds for a service of yours.
 See [Tools](docs/TOOLS.md).
 
 ## Delegating over MCP
 
-An agent on your host, Claude Code say, can drive isx through `isx mcp`: branch instances from templates you approved, run builds and tests in them, and hand whole tasks to Claude Code, Codex or Pi inside one.
-It is off by default, since it hands an agent that power; `isx init` offers to set it up.
+An agent on your host, such as Claude Code, can control isx through `isx mcp`: branch instances from templates you approved, run builds and tests in those instances, and give whole tasks to Claude Code, Codex or Pi inside an instance.
+`isx mcp` is off by default, because it gives an agent that control; `isx init` offers to set it up.
 
 [Delegating from an agent on your host](docs/MCP.md) says what such an agent can and cannot do, and how to run the coordinating agent in an instance of its own, branched with `isx branch --mcp-client`.
-[Driving `isx mcp` from a program](docs/MCP-PROTOCOL.md) is the reference for a controller of your own.
+[Driving `isx mcp` from a program](docs/MCP-PROTOCOL.md) is the reference for a program of your own that controls `isx mcp`.
 
 ## Configuration
 
 `isx init` writes your settings and credentials to `~/.config/incus-spawn/config.yaml`; your own templates and tools go beside it, in `images/` and `tools/`.
-A credential can have several accounts, a personal and a client Claude subscription say, and each template or instance chooses which one it spends.
+A credential can have several accounts, for example a personal and a client Claude subscription, and each template or instance chooses which account it uses.
 [Configuration](docs/CONFIGURATION.md) covers the files, credential accounts and the download caches.
 
 ## Installation
@@ -360,8 +360,8 @@ Windows is not supported.
 **Linux**: `isx init` installs [Incus](https://linuxcontainers.org/incus/) with your package manager.
 It also installs and enables firewalld when the host has neither firewalld nor UFW, since the proxy's redirect needs a firewall.
 
-**macOS**: `isx init` provisions a lightweight Linux VM with [vfkit](https://github.com/crc-org/vfkit), which starts when needed.
-`isx vm start|stop|restart|status|resize|reset|console|check-version` manages it, and [its reference](docs/CLI.md#when-the-vm-stops-answering) says what to do when it stops answering.
+**macOS**: `isx init` uses [vfkit](https://github.com/crc-org/vfkit) to provision a lightweight Linux VM, and the VM starts when needed.
+`isx vm start|stop|restart|status|resize|reset|console|check-version` manages the VM, and [its reference](docs/CLI.md#when-the-vm-stops-answering) says what to do when the VM stops answering.
 Apple Silicon is supported.
 Intel Macs are no longer supported: v0.4.2 and v0.5.0-dev.2 were the last releases built for them.
 
@@ -378,7 +378,7 @@ These are Linux-only:
 - On Linux that is the system bundle: `/etc/pki/ca-trust`, `/etc/ssl/certs`.
 - On macOS it is `/etc/ssl/cert.pem` plus every certificate an administrator or MDM trusts for SSL in the System keychain, which is where inspection agents install their CA.
   A certificate an administrator denied there, or you marked "Never Trust" in your login keychain, is not trusted from any source, and neither is a chain holding it or a cross-signed copy.
-- A CA trusted only in your login keychain is not used: trusting a CA for isx should take an administrator.
+- A CA trusted only in your login keychain is not used, because trusting a CA for isx should require an administrator.
   Trust it system-wide, then restart the proxy:
 
 ```shell
@@ -399,7 +399,7 @@ isx proxy restart
 The `curl` script installs the `isx` and `isx-proxy` native binaries to `~/.local/bin` (set `INSTALL_DIR` to change it), with no JVM needed, and only once every download matches the release's `SHA256SUMS`.
 JBang installs need both commands, and `jbang` must stay on your PATH.
 
-A source build (`./install.sh` in a checkout) leaves a Homebrew install alone, since other accounts may use it: whichever `isx` comes first on your PATH is the one you and your proxy service run.
+A source build (`./install.sh` in a checkout) does not change a Homebrew install, since other accounts may use it, so whichever `isx` comes first on your PATH is the one you and your proxy service run.
 
 To uninstall, run `uninstall.sh`:
 
@@ -444,7 +444,7 @@ Scripts read `--format=plain` or `--format=json`, which stay stable: see [Script
 ## Further reading
 
 - [FAQ](docs/FAQ.md): URL clicks in Codex, the clipboard, and why there is no read-write project mount.
-- [Compared with other sandboxes](docs/SANDBOXES.md): why an isx instance is a whole machine, and where nono, Claude Code's sandbox runtime, NVIDIA OpenShell, dev containers, Docker Sandboxes and a VM you manage sit beside it.
+- [Compared with other sandboxes](docs/SANDBOXES.md): why an isx instance is a whole machine, and how nono, Claude Code's sandbox runtime, NVIDIA OpenShell, dev containers, Docker Sandboxes and a VM you manage compare with it.
 - [What differs from a stock Fedora install](docs/FEDORA.md): the few deliberate deviations, mostly so that every runtime trusts the proxy's CA.
 - [Vision](docs/VISION.md): where isx is going, from a container manager to mission control for parallel coding agents.
 - [DESIGN.md](DESIGN.md): the architecture and why each choice was made.
