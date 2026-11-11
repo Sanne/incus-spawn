@@ -11,7 +11,7 @@ If a person asked you to install isx and set it up, follow [Install with your ag
 - Run `isx init --no-sudo --service --format=json`. Exit 75 means the steps that need root are in the script it names: hand the person `sudo sh <that script>` and stop, then run the same command again. Do not write a root script of your own from the plan's `sudo_script` fields: isx's script records what it ran, which the next run and the plan read.
 - Exit 76 means init finished but left steps for the person, which its JSON summary lists. Never ask for a secret: tell the person to run `isx account add <namespace>` (for example `claude`) at their own terminal, and stop.
 - Never write `~/.config/incus-spawn/mcp.yaml` or choose which templates agents may use: ask the person to run `isx mcp setup`, and stop.
-- Write a template without an editor with `isx templates new <name> --from -` (YAML on stdin), then `isx build <name>` and `isx branch <instance> --from <name> --format=json`, which opens no shell.
+- Write a template without an editor with `isx templates new <name> --from -` (YAML on stdin), then `isx build <name>` and `isx branch <instance> --from <name> --format=json`, which opens no shell. Make its parent `tpl-minimal`, as the Quick Start's `tpl-agent` does, so the first branch needs only the agent's credential. `tpl-dev` is deprecated, and its `gh` needs a GitHub credential before any branch.
 - Register isx's MCP server with yourself: `claude mcp add --scope user isx -- "$(command -v isx)" mcp`, `codex mcp add isx -- "$(command -v isx)" mcp`, or the entry `isx mcp config` prints.
 
 ## Docs
