@@ -29,25 +29,28 @@ Both settings go in every tmux between the agent and your terminal, on the host 
 
 ### What do I do when an agent in an instance reports an authentication error?
 
-Run `isx doctor` on the host, never a login inside the instance.
-The credential is stored on the host, so following an agent's advice to log in inside the instance would put a real credential in the instance.
-`isx doctor` reports a credential the provider rejected, and the command that replaces it.
+Run `isx doctor` on the host, and do not log in inside the instance, even when the agent asks you to.
+The credential that failed is stored on the host, and `isx doctor` reports it with the command that replaces it.
+
+A login inside the instance would put a real credential where the agent can read it, which is what isx exists to prevent.
 
 ### Why does a tool I installed fail with a certificate error?
+
+Run `isx-trust <dir>` on the directory that holds the tool's runtime, then repeat the command that failed.
+Never turn certificate verification off instead: the tool would then accept a certificate from anyone.
+
+The error reads `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`.
+It means the tool brought its own bundle of trusted root certificates, and the isx CA is not in that bundle.
+A JDK or a Python `certifi` package from a source other than Fedora can ship such a bundle.
 
 The proxy signs the HTTPS traffic it intercepts from an instance with the isx CA, which the instance's system certificate store trusts.
 Most tools read the system store, Fedora's own JDK and Python packages included.
 
-A JDK or Python `certifi` package from another source can ship its own bundle of trusted root certificates, which lacks the isx CA, so it rejects the proxy's certificate.
-The error reads `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`.
-
-isx binds such a runtime to the system store, replacing its bundle with a link, when the runtime is placed directly in a directory isx watches (such as `/opt`).
-
-For a runtime in any other directory, such as a vendor JDK unpacked into `~/tools` or a `certifi` that pip installs into a project's virtualenv, run `isx-trust <dir>` on that directory.
-Then repeat the command that failed.
-
 `isx-trust` replaces the runtime's bundle with a link to the system store, so certificate verification stays on.
-Never turn verification off instead.
+isx does the same without being asked when the runtime is placed directly in a directory isx watches (such as `/opt`).
+
+A runtime in any other directory needs the command, such as a vendor JDK unpacked into `~/tools` or a `certifi` that pip installs into a project's virtualenv.
+
 With no argument, `isx-trust` binds every runtime in the watched directories, which covers a runtime the watch has not bound yet.
 [What differs from Fedora](FEDORA.md#trust) lists those directories, and the environment variables that cover other runtimes.
 
@@ -56,11 +59,15 @@ With no argument, `isx-trust` binds every runtime in the watched directories, wh
 Fetch the agent's work as commits over an `isx://` git remote, or run your IDE's backend inside the instance.
 Both are described under "What to use instead" at the end of this answer.
 
-A project directory is not just data: it is an implicit code execution channel.
-Build tools, package managers and IDEs all trust its contents and execute them with your full host privileges.
-With a read-write mount, what the agent writes is executed on your host without review, which is exactly the threat isx exists to prevent.
+isx never mounts a host directory read-write into an instance.
+You give up having the agent's files appear directly in a directory on your host.
+In return, nothing the agent writes reaches your host until you fetch it.
 
-Two attack surfaces make a read-write mount dangerous even when it holds "just the project directory":
+Your build tools, package managers and IDE run what a project directory holds, with your full privileges on the host.
+With a read-write mount the agent writes those files, so what the agent writes runs on your host without your review.
+That is exactly what isx exists to prevent.
+
+Two things make a read-write mount dangerous even when it holds only the project directory:
 
 1. **Executable project content.**
    Build plugins, Makefiles, `gradlew`, `.mvn/jvm.config`, git hooks, IDE run configurations, and dependency declarations with local path references (`<systemPath>`, `file:` deps, Go `replace` directives) all execute when you run a normal build command.
@@ -82,7 +89,7 @@ You run your build, and the build runs a version you never reviewed.
 Unlike `git fetch`, which gives you one immutable commit to review and act on, a live mount means your review is never final.
 
 **Misleading view**: a shared project directory shows only part of the agent's environment.
-The agent's code runs against the instance's execution context: instance-local SNAPSHOT dependencies and pip packages, neither of which the mount shows on the host.
+The agent builds and runs the code inside the instance, with dependencies installed there: local SNAPSHOT dependencies and pip packages, neither of which the mount shows on the host.
 
 The source on the host looks like a complete project, but built on the host it may behave differently or break, because the host does not have the instance's dependencies.
 
@@ -94,7 +101,7 @@ The source on the host looks like a complete project, but built on the host it m
   Git identifies each commit by a hash of its content, so a fetch never gives you a mix of old and new files.
   This is the intended way to get work out of an instance.
 - **VS Code Remote SSH / JetBrains Gateway** ([Remote IDE Access](TOOLS.md#remote-ide-access)): the IDE backend runs inside the instance while the UI runs on your host.
-  You see live edits, have full debugging, and the security boundary stays intact.
+  You see live edits and have full debugging, and the project's build and configuration run inside the instance, not on your host.
   Both are built-in tools (`vscode-remote`, `idea-backend`).
-- **`readonly` and `overlay` host-resources** ([Host Resources](TEMPLATES.md#host-resources)): for sharing files into the instance safely.
+- **`readonly` and `overlay` host-resources** ([Host Resources](TEMPLATES.md#host-resources)): for sharing host files with the instance, which cannot change them on the host.
   `readonly` is a read-only bind mount; `overlay` gives the instance a writable view backed by an ephemeral layer, without modifying the host.
