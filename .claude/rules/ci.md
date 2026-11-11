@@ -12,6 +12,8 @@ paths:
   # The macOS-role test build and the release check that keeps it out (#1800).
   - "scripts/macos-role-build.sh"
   - "scripts/check-platform-role.sh"
+  # host-distro's guest harness (#1972, #2148).
+  - "scripts/distro-vm*.sh"
   - "appliance/test-macos-role.sh"
   # Verifies its downloads against the SHA256SUMS release.yml publishes (#2080).
   - "get-isx.sh"
@@ -115,6 +117,7 @@ Before the first attempt it lists a mirror outside `ubuntu.com` last and drops m
 A step that adds an apt source (zabbly's Incus) writes it before calling the script, which runs its own `apt-get update`.
 `WorkflowAptInstallTest` fails on a workflow that runs `apt-get update` or `install` itself, or calls the script before the checkout.
 Scripts pushed into a guest (`test-host-distro.sh`) are not runner installs and keep their own apt calls.
+Their guest's apt still gets the fallback: `distro-vm.sh boot` runs `scripts/distro-vm-apt-fallback.sh` there, which points each `ubuntu.com` archive host that does not resolve at kernel.org's mirror (#2148).
 
 **A github.com download in CI rides out an outage, never skips its check** (#2042, design/testing.md "Testing").
 The gitleaks install retries with `curl --retry 8 --retry-all-errors` before `sha256sum -c`.

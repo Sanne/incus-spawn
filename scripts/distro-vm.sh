@@ -19,8 +19,11 @@
 # Environment: DISTRO_VM_CPUS (default: all), DISTRO_VM_MEMORY (default 8G), DISTRO_VM_DISK
 # (default 40G). DISTRO_VM_TRUST names a PEM CA to add to the guest's system trust store at boot:
 # run inside an isx instance, the guest's HTTPS goes through that instance's proxy, as it does
-# for the instance itself. Requires qemu-system-x86_64 with /dev/kvm, qemu-img, genisoimage (or
-# xorriso), ssh, curl and sha256sum.
+# for the instance itself. On an Ubuntu guest, an ubuntu.com archive host that does not resolve
+# is replaced in apt's sources by DISTRO_VM_APT_FALLBACK (default
+# https://mirrors.edge.kernel.org/ubuntu, empty for none; see distro-vm-apt-fallback.sh).
+# Requires qemu-system-x86_64 with /dev/kvm, qemu-img, genisoimage (or xorriso), ssh, curl and
+# sha256sum.
 
 set -euo pipefail
 
@@ -120,6 +123,8 @@ boot() {
     # cloud-init may still be growing the disk or writing the user's files
     remote "$dir" "sudo cloud-init status --wait >/dev/null || true" </dev/null
     [ -z "${DISTRO_VM_TRUST:-}" ] || trust_ca "$dir" "$DISTRO_VM_TRUST"
+    # after the trust: the fallback mirror is HTTPS, which goes through that proxy
+    apt_fallback "$dir"
     echo "Guest up: $(remote "$dir" '. /etc/os-release; echo "$PRETTY_NAME, kernel $(uname -r)"' </dev/null)"
 }
 
@@ -130,6 +135,16 @@ trust_ca() {
         else
             sudo tee /usr/local/share/ca-certificates/distro-vm.crt >/dev/null && sudo update-ca-certificates >/dev/null 2>&1
         fi' < "$pem"
+}
+
+# An apt guest whose ubuntu.com hosts do not resolve reads another mirror (#2148)
+apt_fallback() {
+    local dir=$1
+    # A guest without apt's sources (Arch) leaves the script nothing to do
+    local env=
+    [ -z "${DISTRO_VM_APT_FALLBACK+set}" ] || env="APT_FALLBACK_MIRROR=$(printf %q "$DISTRO_VM_APT_FALLBACK")"
+    remote "$dir" "sudo $env bash -s" \
+        < "$(dirname "${BASH_SOURCE[0]}")/distro-vm-apt-fallback.sh"
 }
 
 remote() {
