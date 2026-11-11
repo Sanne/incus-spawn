@@ -192,6 +192,19 @@ class TemplatesNewFromTest {
                 run.out().events().toString());
     }
 
+    /** An account pin with no such account is said too: the build refuses it, and so would the branch. */
+    @Test
+    void anUnknownAccountPinIsAWarningOnAccounts() throws Exception {
+        IsolatedHome.seed("claude:\n  apiKey: \"sk-ant-api-x\"\n");
+        var run = newFrom("tpl-agent", QUICK_START + "accounts:\n  claude: work\n", "--format=json");
+        assertEquals(0, run.exit());
+        var findings = run.json().path("findings").asList();
+        assertEquals(1, findings.size(), findings.toString());
+        assertEquals("accounts", findings.getFirst().pathText("field", null));
+        assertEquals("warning", findings.getFirst().pathText("severity", null));
+        assertTrue(findings.getFirst().pathText("message", "").contains("work"), findings.toString());
+    }
+
     @Test
     void aConfiguredCredentialIsNotReported() throws Exception {
         IsolatedHome.seed("claude:\n  apiKey: \"sk-ant-api-x\"\n");
