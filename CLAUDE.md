@@ -85,8 +85,10 @@ A docs-only PR runs these docs tests in `docs-gates.yml`, since `test-integratio
 README.md and `docs/*.md` also keep to the budgets in `.claude/rules/writing.md` (a paragraph of at most four sentences and 60 words, a sentence of at most 40, no dashes, no issue numbers), enforced by `DocsShapeTest`.
 Their lists mirror the code's: every top-level command in the README's CLI table and `docs/CLI.md`, every built-in tool in the Tools page's table, every tool with a proxy credential in the README's credential table (`DocsListsTest`).
 A new command or tool fails that test until its page names it.
-Clarity outranks brevity, in every text a person reads, PR descriptions and review comments included: `.claude/rules/writing.md` "Clarity comes first".
-Negate the verb ("does not filter the connections", never "filters nothing"), name what a verb acts on and where, use literal words, and state the consequence.
+What the reader needs comes before the mechanism, and clarity outranks brevity, in every text a person reads, PR descriptions and review comments included: `.claude/rules/writing.md` "What the reader needs comes first".
+State the point in the reader's terms before the mechanism, say what a design decision gives up, and tell a scenario in order through to its outcome.
+Never fix an inaccuracy by going vague.
+In a sentence, negate the verb ("does not filter the connections", never "filters nothing"), name what a verb acts on and where, use literal words, and state the consequence.
 Split a sentence of more than about 40 words where it splits cleanly; `.claude/rules/writing.md` "Splitting a sentence" lists the only word changes a split may make.
 
 The `gemini-cli` tool installs and configures Google Gemini CLI through `GeminiSetup`.
