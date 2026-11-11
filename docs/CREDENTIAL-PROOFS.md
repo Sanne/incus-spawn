@@ -171,7 +171,8 @@ The proxy counts what it refuses, and warns about tools whose credentials it can
 
 ### Refusal counters
 
-The proxy counts refused injections in its `/activity` report, which `isx proxy activity` prints.
+The proxy counts refused injections in its `/activity` report.
+`isx proxy activity` prints `refused_proofs` and `refused_address_misses` from it.
 
 | Counter | What it counts |
 | --- | --- |
