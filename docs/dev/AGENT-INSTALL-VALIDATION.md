@@ -1,7 +1,8 @@
 # Validating the agent install path
 
 `scripts/agent-install/validate.sh` checks the agent-driven install of plan #2072 on a clean Linux host (#2081).
-It gives a coding agent only an install prompt, as a fresh user who cannot run sudo, and plays the person's part by script.
+It gives a coding agent only the prompt that [Install with your agent](../AGENT-INSTALL.md) publishes, as a fresh user who cannot run sudo, and plays the person's part by script.
+It reads the prompt from that page's "The prompt" section, so a change to the page is what the next run tests; `--print-prompt` shows it, and `AgentInstallPromptTest` keeps the two joined.
 Run it again for every release that changes `isx init`, `isx mcp` or the install docs.
 
 ## What it checks
@@ -24,9 +25,12 @@ The heuristics are a first pass: read `reply-<turn>.txt` and `commands.tsv` befo
 ```shell
 scripts/agent-install/validate.sh --agent claude            # the agent installs isx from isx.run
 scripts/agent-install/validate.sh --agent codex --isx-from /opt/isx-rc --out ~/run-codex
+scripts/agent-install/validate.sh --agent claude --docs /opt/isx-docs   # a released isx, docs not yet on isx.run
 ```
 
 `--isx-from` is for a build that no install channel serves yet.
+`--docs <dir>` is for a release that a channel serves before isx.run publishes its docs: the agent installs isx itself and reads the docs in `<dir>`, laid out as the `docs/` of `--isx-from` below.
+The person's account must be able to read either directory.
 The directory holds `bin/isx`, `bin/isx-proxy` and `docs/` (the repository's `docs/` without `docs/dev/`, `README.md` and `site/llms.txt`), and the prompt then tells the agent to read those docs instead of isx.run.
 The harness refuses a `docs/dev/` there: this page would tell the agent how the person answers.
 A JVM build serves: launchers in `bin/` that run `java -jar` on copies of `cli/target/quarkus-app` and `proxy/target/quarkus-app`.
