@@ -33,8 +33,8 @@ This sharing is what makes it cheap to create one instance per task and throw it
 A template declares the tools and the repositories, and is built once: the projects are cloned, their dependencies fetched and their build caches filled.
 Every branch of it starts ready to work, and every branch is the same.
 
-In daily use, each step of a task is one command.
-`isx branch` creates an instance instantly, `isx shell` or the TUI opens a shell in it, your editor attaches over SSH, an `isx://` git remote fetches the agent's work, and `isx destroy` deletes it.
+In daily use, one command gives you a new workstation: `isx branch` creates an instance instantly.
+`isx shell` or the TUI opens a shell in it, your editor attaches over SSH, an `isx://` git remote fetches the agent's work, and `isx destroy` deletes it.
 
 ## Why full system containers?
 
