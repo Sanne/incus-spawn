@@ -62,9 +62,13 @@ The first sentence is the point, and the second is why the reader can believe it
 The risk comes first and is concrete.
 What you give up is stated plainly, because a decision with no loss reads as a sales claim:
 
-> isx does not mount your project read-write into an instance.
-> You give up watching the agent's edits appear live in your IDE.
-> In return, nothing in your checkout changes until you fetch it.
+> With a read-write mount, what the agent writes runs on your host without your review.
+> For that reason isx does not mount your project directory read-write into an instance.
+> You give up having the agent's files as a local folder on your host.
+> In return, the agent's files do not reach your host until you fetch them.
+
+Where the page promises an action first, as the FAQ does, the order is the action, the risk, then the decision.
+An example on this page is copied into the docs as fact, so each one must be true.
 
 **Stop when the outcome is stated.**
 A fact and its outcome are enough, and the reader draws the judgement.
@@ -145,6 +149,17 @@ The second states what matters to the reader, and is true on both:
 
 The address and the proof are in `docs/CREDENTIAL-PROOFS.md`, whose reader came for them.
 
+**An absolute is checked, or narrowed.**
+"Never", "nothing", "every", "always" and "any" claim every case, and one exception makes the sentence false.
+Stating the point pulls towards them, so each one is checked against the code before it is written.
+When it does not hold, narrow it to what the page is about.
+"isx never mounts a host directory read-write" is false, since isx mounts a directory of its own for terminal sessions.
+"isx does not mount your project directory read-write" is true, and is what the reader asked.
+
+**A rewrite is checked against every rule again.**
+A sentence fixed for one fault often gains another, and a moved paragraph can use a term before the page explains it.
+After a rewrite, read the page from the top.
+
 **A rewrite is at least as concrete as what it replaces.**
 Concreteness is much of what makes a sentence feel clear.
 
@@ -182,6 +197,27 @@ Understatement is the same fault in a warning: "may be surprising" where the tru
 **State the consequence.**
 Two facts joined by "and" leave the reader to work out why they sit together.
 In a warning that inference is the message, so write it, with the true connective (Voice, "A connective must be true").
+
+**The reader is "you", and a condition starts from what you do.**
+Write "if you unpack a runtime into `/opt`, isx links it", not "isx does the same when the runtime is placed in a directory isx watches".
+A passive hides that the reader is the one acting, and a condition at the end makes the reader wait to learn whether the sentence is about them.
+
+**An example shows what a qualifier only names.**
+"Placed directly in a watched directory" needs working out, and "`/opt/jdk-21`" does not.
+
+**The common word is the literal word.**
+"Automatically" is plain and stays.
+Do not replace an idiom with a rarer phrase: "on its own" became "without being asked", which is longer and no clearer.
+
+The worked example for these three:
+
+> isx does the same without being asked when the runtime is placed directly in a directory isx watches (such as `/opt`).
+
+It points back to the sentence before, hides who acts, puts the condition last and explains nothing about "directly" or "watches".
+Rewritten:
+
+> isx watches a few directories, such as `/opt`.
+> If you unpack a runtime there, as `/opt/jdk-21`, isx links it automatically and you run no command.
 
 **A time word says when, and a consequence word says why.**
 "Then", "while" and "afterwards" mark time.
