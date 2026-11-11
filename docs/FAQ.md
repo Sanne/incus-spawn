@@ -36,20 +36,22 @@ A login inside the instance would put a real credential where the agent can read
 
 ### Why does a tool I installed fail with a certificate error?
 
-Run `isx-trust <dir>` on the directory that holds the tool's runtime, then repeat the command that failed.
+Run `isx-trust <dir>`, naming the directory that holds the tool's runtime, as in `isx-trust ~/tools/jdk-21`.
+Then repeat the command that failed.
 Never turn certificate verification off instead: the tool would then accept a certificate from anyone.
 
-The error reads `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`.
-It means the tool brought its own bundle of trusted root certificates, and the isx CA is not in that bundle.
-A JDK or a Python `certifi` package from a source other than Fedora can ship such a bundle.
+The proxy signs the HTTPS traffic it intercepts from an instance with its own certificate authority, the isx CA.
+The instance's system certificate store trusts the isx CA, and most tools read that store, Fedora's own JDK and Python packages included.
 
-The proxy signs the HTTPS traffic it intercepts from an instance with the isx CA, which the instance's system certificate store trusts.
-Most tools read the system store, Fedora's own JDK and Python packages included.
+A JDK or a Python `certifi` package from another source can bring its own bundle of trusted root certificates.
+The isx CA is not in that bundle, so the tool rejects the proxy's certificate.
+The error reads `certificate_unknown`, `PKIX path building failed` or `CERTIFICATE_VERIFY_FAILED`.
 
 `isx-trust` replaces the runtime's bundle with a link to the system store, so certificate verification stays on.
-isx does the same without being asked when the runtime is placed directly in a directory isx watches (such as `/opt`).
 
-A runtime in any other directory needs the command, such as a vendor JDK unpacked into `~/tools` or a `certifi` that pip installs into a project's virtualenv.
+isx watches a few directories, such as `/opt`.
+If you unpack a runtime there, as `/opt/jdk-21`, isx links it automatically and you run no command.
+A runtime anywhere else needs `isx-trust <dir>`, such as a vendor JDK in `~/tools` or a `certifi` that pip installs into a project's virtualenv.
 
 With no argument, `isx-trust` binds every runtime in the watched directories, which covers a runtime the watch has not bound yet.
 [What differs from Fedora](FEDORA.md#trust) lists those directories, and the environment variables that cover other runtimes.
@@ -59,12 +61,12 @@ With no argument, `isx-trust` binds every runtime in the watched directories, wh
 Fetch the agent's work as commits over an `isx://` git remote, or run your IDE's backend inside the instance.
 Both are described under "What to use instead" at the end of this answer.
 
-isx never mounts a host directory read-write into an instance.
-You give up having the agent's files appear directly in a directory on your host.
-In return, nothing the agent writes reaches your host until you fetch it.
-
 Your build tools, package managers and IDE run what a project directory holds, with your full privileges on the host.
 With a read-write mount the agent writes those files, so what the agent writes runs on your host without your review.
+
+For that reason isx does not mount your project directory read-write into an instance.
+You give up having the agent's files as a local folder on your host.
+In return, the agent's files do not reach your host until you fetch them.
 
 Two things make a read-write mount dangerous even when it holds only the project directory:
 
@@ -88,7 +90,7 @@ You run your build, and the build runs a version you never reviewed.
 Unlike `git fetch`, which gives you one immutable commit to review and act on, a live mount means your review is never final.
 
 **Misleading view**: a shared project directory shows only part of the agent's environment.
-The agent builds and runs the code inside the instance, with dependencies installed there: local SNAPSHOT dependencies and pip packages, neither of which the mount shows on the host.
+The agent builds and runs the code inside the instance, with dependencies installed there: instance-local SNAPSHOT dependencies and pip packages, neither of which the mount shows on the host.
 
 The source on the host looks like a complete project, but built on the host it may behave differently or break, because the host does not have the instance's dependencies.
 
