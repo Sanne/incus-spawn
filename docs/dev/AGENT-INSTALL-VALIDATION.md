@@ -43,8 +43,9 @@ Record the run here, then add the agent's name to the page's "tested on a clean 
 
 | Agent | Version | isx | Date | Run |
 |---|---|---|---|---|
-| Claude Code | 2.1.322 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6827659356 |
-| Codex CLI | 0.167.2 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6827659356 |
+| Claude Code | 2.1.322 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6830826213 |
+| Codex CLI | 0.167.2 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6830826213 |
+| Pi | 1.5.2 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6830826213 |
 
 ## How clear the instructions were
 
