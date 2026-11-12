@@ -605,6 +605,13 @@ Only an unreachable upstream serves an older one.
   That is at most one read's worth, or the socket's receive buffer once upstream has closed, which epoll then reads to the end.
   Reading is turned back on once Vert.x has delivered the response's end or error, since the connection may then serve another request.
   HTTP/2 is still paused, since its flow control keeps what arrives.
+  Vert.x can still pause an HTTP/1.1 connection itself, and so lose the tail the same way, but only for a response handled off the connection's event loop (#2176).
+  There the stream's queue crosses threads, and it pauses the connection once it holds more than 16 chunks.
+  On the connection's own loop it hands each chunk on as it is read, so it never fills.
+  Every response is on that loop today, and by structure: the MITM listener is one server on one event loop, so every guest request and every upstream connection it opens run there.
+  Two listener instances break that, and then a 20-chunk answer closed by upstream lost its end through the proxy (docs/dev/PERFORMANCE-NOTES.md "Upstream responses off their connection's event loop").
+  So `ResponseHold` counts a response off its connection's loop and warns once, and `ArtifactCacheProxyTest#upstreamResponsesRunOnTheirConnectionsEventLoop` holds the count at zero.
+  Serving the MITM listener from more than one event loop would need upstream clients per loop first, so that a pooled connection is only reused on the loop that opened it.
   Plain relays (`relayRequest`, including an npm tarball whose shasum could not be fetched) are held to the same budget without a resume (`RelayWatchdog`, #929): 110s since the client's last byte either way, not counting the time its request body is streaming or the client holds the response back.
   So an upload is never cut while the client sends, and nothing is ended that the 120s timeout would have let live: while upstream holds the body back the client is paused too, and its connection idle.
   An early answer can stream while the upload still does, so the watchdog keeps the two waits apart: the end of one never ends the other.

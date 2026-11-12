@@ -1513,6 +1513,30 @@ class ArtifactCacheProxyTest {
         }
     }
 
+    @Test
+    void upstreamResponsesRunOnTheirConnectionsEventLoop() throws Exception {
+        // Concurrent guests, each on a connection of its own, download from an HTTP/1.1 upstream
+        // and leave its connections pooled for the next round. A response handled off its
+        // connection's event loop lets Vert.x pause the connection itself, which loses the tail
+        // when upstream closes (#2176): the proxy avoids that only by serving every guest on one loop
+        assertTrue(ProxyMain.applyBenchUpstream(proxy, CENTRAL + "=127.0.0.1:" + h1UpstreamPort, ""));
+        long before = ResponseHold.offLoop();
+        long checkedBefore = ResponseHold.checked();
+        var jars = jars(24);
+        for (var jar : jars) publishJar(CENTRAL, jar, jar);
+        for (int from = 0; from < jars.size(); from += 8) {
+            var batch = jars.subList(from, from + 8);
+            var responses = Future.all(batch.stream().map(jar -> getAsync(CENTRAL, jar)).toList())
+                    .toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+            for (int i = 0; i < batch.size(); i++) {
+                assertEquals(batch.get(i), responses.<Response>resultAt(i).text());
+            }
+        }
+        assertTrue(ResponseHold.checked() - checkedBefore >= jars.size(),
+                "every download's loop was checked: " + (ResponseHold.checked() - checkedBefore));
+        assertEquals(0, ResponseHold.offLoop() - before, "upstream responses handled off their connection's event loop");
+    }
+
     /** An HTTP/1.1 upstream for {@code host} that answers {@link #JAR} with {@code answer} and closes, anything else 404. */
     static ClosingUpstream closingUpstream(String host, Buffer answer) throws Exception {
         var closed = new AtomicInteger();

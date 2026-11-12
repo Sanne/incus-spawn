@@ -887,3 +887,19 @@ Each row is the median of alternated `bench/run.sh --skip-build` runs, per Hyper
 - **Read the phases, not the headline.**
   `bench/run.sh` reports as its headline the phase with the most throughput, which differed between runs of the same binary.
   Its p50 then jumped by 7x between runs that measured the same latency per phase.
+
+## Upstream responses off their connection's event loop (issue #2176)
+
+Measured on 2026-11-12 in a Linux container box (x86_64), Vert.x 5.2.3, NIO transport.
+The question was whether Vert.x's own stream queue can pause an HTTP/1.1 client connection and lose the tail on close, as a paused response did in #2088.
+
+| Setup | Answer | Lost |
+|---|---|---|
+| Plain Vert.x, request on another loop than its pooled connection, handler idle | 20 chunks, then close | 1 of 50 |
+| Same, handler busy 200 µs per chunk | 20 chunks, then close | 50 of 50 |
+| Same, handler busy 20 µs per chunk | 2000 chunks, then close | 0 of 50 |
+| The proxy, as built (one MITM listener) | 20 chunks, then close, on a reused connection | 0 of 600 |
+| The proxy with a second listener instance on another loop | same | first loss at download 26 |
+
+The 2000-chunk case loses nothing on NIO because Vert.x turns auto-read off once 8 messages are pending, so the close is read only after the queue drains.
+Across the proxy's unit tests (965 tests, 433 HTTP/1.x responses held by `ResponseHold`) no response ran off its connection's loop.
