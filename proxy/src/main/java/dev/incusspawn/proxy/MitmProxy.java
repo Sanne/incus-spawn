@@ -2456,7 +2456,6 @@ public class MitmProxy {
                     spool.closeOnceSent();
                     onApiResponse(ctx, upResp, exchange, debug);
                     upstream.copyResponseHead(upResp, clientResp);
-                    watchdog.upResp = upResp;
                     upstream.pipeResponse(upResp, clientResp, watchdog, responseTap(exchange, debug));
                 }).onFailure(err -> {
                     // A cut resets the request itself

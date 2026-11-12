@@ -92,6 +92,8 @@ class ArtifactCacheProxyTest {
     static int mitmPort;
     static int upstreamPort;
     static int h1UpstreamPort;
+    /** The upstreams' certificate, for one a test starts itself. */
+    static PemKeyCertOptions keyCert;
     /**
      * A loopback port nothing holds: taken from the kernel and closed again at once, so a connect
      * to it is refused on every platform (#1008). Not 127.0.0.2, which only Linux refuses (macOS
@@ -190,7 +192,7 @@ class ArtifactCacheProxyTest {
         var ca = CertificateAuthority.loadOrCreate();
         var leaf = ca.generateDomainCert(CENTRAL);
         vertx = Vertx.vertx();
-        var keyCert = new PemKeyCertOptions()
+        keyCert = new PemKeyCertOptions()
                 .setCertValue(Buffer.buffer(DerEncoder.toPem("CERTIFICATE", leaf.cert().getEncoded())))
                 .setKeyValue(Buffer.buffer(DerEncoder.toPem("PRIVATE KEY", leaf.key().getEncoded())));
         // Offers h2 like the real repositories do, so confirmations run over HTTP/2
@@ -559,13 +561,19 @@ class ArtifactCacheProxyTest {
 
     /** A GET through the proxy, sent (or not) by {@code send}, on the client's context. */
     static <T> Future<T> requestAsync(String host, String path, Function<HttpClientRequest, Future<T>> send) {
+        return requestAsync(client, host, path, send);
+    }
+
+    /** As above, through {@code through} rather than the class's own client. */
+    static <T> Future<T> requestAsync(HttpClient through, String host, String path,
+                                      Function<HttpClientRequest, Future<T>> send) {
         var options = new RequestOptions()
                 .setMethod(HttpMethod.GET)
                 .setServer(SocketAddress.inetSocketAddress(mitmPort, "127.0.0.1"))
                 .setHost(host)
                 .setPort(443)
                 .setURI(path);
-        return onClientContext(() -> client.request(options).compose(send));
+        return onClientContext(() -> through.request(options).compose(send));
     }
 
     static void publish(String host, String path, String content, String algorithm, String extension)
@@ -1389,9 +1397,8 @@ class ArtifactCacheProxyTest {
 
     @Test
     void downloadNeverAsksUpstreamToCloseItsConnection() throws Exception {
-        // Vert.x drops what a paused response still holds when its connection closes, so an
-        // upstream closing at the end of the body would cut its tail off a download paused on
-        // backpressure (#2082). Kept open, the connection gives that tail when the download resumes.
+        // Kept open, the connection is pooled again (#2082). Before ResponseHold, a close also cut
+        // the tail off a download paused on backpressure (#2088)
         var content = randomText(128 * 1024);
         var bytes = content.getBytes(StandardCharsets.UTF_8);
         var cdnPath = "/cdn/lib-1.0.jar";
@@ -1425,6 +1432,119 @@ class ArtifactCacheProxyTest {
         assertEquals(1, hitsOn(CENTRAL, JAR));
         assertEquals(2, hitsOn(CENTRAL, cdnPath), "the resume goes to the redirect target's host");
         awaitFile(cached(CENTRAL, JAR), content);
+    }
+
+    @Test
+    void bodyHeldBackArrivesWholeWhenUpstreamClosesAfterIt() throws Exception {
+        // An HTTP/1.1 server that closes once its answer is out, its body in many small chunks
+        // that arrive with the close, while the download still holds upstream back for its temp
+        // file. A paused Vert.x connection dropped what it had queued when the close came (#2088)
+        var content = new StringBuilder();
+        var wire = new StringBuilder();
+        for (int i = 0; i < 20; i++) {
+            var chunk = "chunk " + i + ";";
+            content.append(chunk);
+            wire.append(Integer.toHexString(chunk.length())).append("\r\n").append(chunk).append("\r\n");
+        }
+        var answer = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + wire + "0\r\n\r\n";
+        try (var closing = closingUpstream(CENTRAL, Buffer.buffer(answer))) {
+            for (int i = 0; i < 5; i++) {
+                var response = get(CENTRAL, JAR);
+                assertEquals(200, response.status(), "attempt " + i + ": " + response.text());
+                assertEquals(content.toString(), response.text(), "attempt " + i);
+            }
+        }
+    }
+
+    @Test
+    void relayHeldBackByTheClientArrivesWholeWhenUpstreamClosesAfterIt() throws Exception {
+        // An error answer is relayed while the client reads a few chunks at a time, so the proxy
+        // holds upstream back. Upstream can only close once the rest of its answer fits in the
+        // socket buffers, which on macOS needs the proxy to read on: the client trickles until
+        // the close, so the close comes while the proxy holds the rest (#2088). Not a
+        // reproduction: on NIO the paused connection had mostly stopped reading before the close,
+        // so this guards the hold itself
+        var body = new byte[4 << 20];
+        new java.util.Random(2088).nextBytes(body);
+        var answer = Buffer.buffer("HTTP/1.1 404 Not Found\r\nContent-Length: " + body.length + "\r\n\r\n")
+                .appendBytes(body);
+        // Kept alive: a client that asks for Connection: close is closed on once the body is
+        // sent, and the test client's own paused connection would drop its tail then too
+        var keepAlive = vertx.createHttpClient(new HttpClientOptions()
+                .setSsl(true).setTrustAll(true).setVerifyHost(false));
+        var ticker = new java.util.concurrent.atomic.AtomicLong(-1);
+        try (var closing = closingUpstream(CENTRAL, answer)) {
+            var readAtClose = new java.util.concurrent.atomic.AtomicLong(-1);
+            var got = requestAsync(keepAlive, CENTRAL, JAR, req -> req.send().compose(resp -> {
+                var received = Buffer.buffer();
+                var done = io.vertx.core.Promise.<Buffer>promise();
+                // Chunks asked for and not yet read: a fetch only once they are, or the demand
+                // left over by a slow stretch would add up to reading at full speed
+                var demand = new int[1];
+                resp.pause();
+                resp.handler(chunk -> {
+                    received.appendBuffer(chunk);
+                    demand[0]--;
+                });
+                resp.endHandler(v -> done.tryComplete(received));
+                resp.exceptionHandler(done::tryFail);
+                ticker.set(vertx.setPeriodic(20, tick -> {
+                    if (closing.closed.get() == 0) {
+                        if (demand[0] <= 0) {
+                            demand[0] = 4;
+                            resp.fetch(4);
+                        }
+                        return;
+                    }
+                    vertx.cancelTimer(tick);
+                    readAtClose.set(received.length());
+                    resp.resume();
+                }));
+                return done.future();
+            })).toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
+            assertTrue(readAtClose.get() >= 0 && readAtClose.get() < body.length,
+                    "upstream should close while the client has more to read, but the client had read "
+                            + readAtClose.get() + " of " + body.length + " bytes (-1: no close seen)");
+            assertArrayEquals(body, got.getBytes());
+        } finally {
+            // A failed or timed-out run leaves the trickle ticking for the rest of the class otherwise
+            vertx.cancelTimer(ticker.get());
+            keepAlive.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    /** An HTTP/1.1 upstream for {@code host} that answers {@link #JAR} with {@code answer} and closes, anything else 404. */
+    static ClosingUpstream closingUpstream(String host, Buffer answer) throws Exception {
+        var closed = new AtomicInteger();
+        var server = vertx.createNetServer(new io.vertx.core.net.NetServerOptions().setSsl(true).setKeyCertOptions(keyCert))
+                .connectHandler(socket -> {
+                    var request = Buffer.buffer();
+                    socket.handler(data -> {
+                        request.appendBuffer(data);
+                        var head = request.toString(StandardCharsets.ISO_8859_1);
+                        if (!head.contains("\r\n\r\n")) return;
+                        socket.handler(null);
+                        if (head.startsWith("GET " + JAR + " ")) {
+                            socket.write(answer).onComplete(written -> {
+                                closed.incrementAndGet();
+                                socket.close();
+                            });
+                        } else {
+                            socket.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+                        }
+                    });
+                });
+        int port = server.listen(0, "127.0.0.1").toCompletionStage().toCompletableFuture()
+                .get(5, TimeUnit.SECONDS).actualPort();
+        assertTrue(ProxyMain.applyBenchUpstream(proxy, host + "=127.0.0.1:" + port, ""));
+        return new ClosingUpstream(server, closed);
+    }
+
+    record ClosingUpstream(io.vertx.core.net.NetServer server, AtomicInteger closed) implements AutoCloseable {
+        @Override
+        public void close() throws Exception {
+            server.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+        }
     }
 
     @Test

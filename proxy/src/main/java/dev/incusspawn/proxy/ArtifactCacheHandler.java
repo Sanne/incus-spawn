@@ -228,9 +228,8 @@ class ArtifactCacheHandler {
             // A head that never comes is an error the client can retry, not a silent drop
             upReq.idleTimeout(upstream.timeoutLeftMillis(started));
             upstream.copyRequestHeaders(clientReq, upReq, domain);
-            // Never Connection: close, here or on a redirect or resume: Vert.x drops what a paused
-            // response still holds when its connection closes, so a server closing at the end of the
-            // body would cut the tail off a download paused on backpressure (#2082)
+            // Never Connection: close, here or on a redirect or resume, so the connection is pooled
+            // again (#2082). A server that closes anyway loses nothing: ResponseHold (#2088)
 
             // Don't let upstream gzip the response — we cache raw bytes
             // and serve them directly via sendFile on cache hits.
@@ -373,7 +372,7 @@ class ArtifactCacheHandler {
         // Why a break could never be resumed, whatever happens: then a stall is not cut either
         private final String neverResumable;
         // The response bytes are coming from; null while a resume is being asked for
-        private HttpClientResponse current;
+        private ResponseHold current;
         private io.vertx.core.file.AsyncFile file;
         private Path tempFile;
         private long received;
@@ -477,10 +476,11 @@ class ArtifactCacheHandler {
             resumeWhenWritable();
         }
 
-        private void attach(HttpClientResponse upResp) {
+        private void attach(HttpClientResponse response) {
+            var upResp = new ResponseHold(response);
             current = upResp;
             upstreamActive = System.nanoTime();
-            upResp.pause();
+            upResp.hold();
             upResp.handler(chunk -> {
                 if (upResp != current) return;
                 received += chunk.length();
@@ -489,7 +489,7 @@ class ArtifactCacheHandler {
                 if (!clientGone) clientResp.write(chunk);
                 file.write(chunk);
                 if (clientBackedUp() || file.writeQueueFull()) {
-                    upResp.pause();
+                    upResp.hold();
                     waitingForDrain = true;
                     resumeWhenWritable();
                 }
@@ -524,7 +524,7 @@ class ArtifactCacheHandler {
                     waitingForDrain = false;
                     upstreamActive = System.nanoTime();
                 }
-                current.resume();
+                current.release();
                 // Checked again now, not an idle period after the pause began
                 vertx.cancelTimer(stallTimer);
                 watchForStalls();
@@ -698,7 +698,7 @@ class ArtifactCacheHandler {
         private void abandonCurrent() {
             var upResp = current;
             current = null;
-            if (upResp != null) upResp.request().reset();
+            if (upResp != null) upResp.reset();
         }
 
         /** Whether a 206 carries the rest of this file, from {@code offset} to its end, whatever If-Range got. */
