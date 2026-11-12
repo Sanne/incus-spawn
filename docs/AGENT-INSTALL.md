@@ -6,11 +6,12 @@ The [Quick Start](../README.md#quick-start) is the same install by hand.
 
 ## The prompt
 
-Paste this into a coding agent on your computer, such as Claude Code or Codex CLI:
+Paste this into the coding agent you use on your computer.
+The prompt is the same for every agent: the agent puts itself in your first template ([Agents](AGENTS.md)).
 
 <!-- copy -->
 ```text
-Install isx (https://isx.run) on this machine and set it up for me. I want to end up with a first isx instance branched from a template that has Claude Code in it, and with you able to drive isx over MCP afterwards.
+Install isx (https://isx.run) on this machine and set it up for me. I want to end up with a first isx instance branched from a template that runs the same coding agent as you, and with you able to drive isx over MCP afterwards.
 
 isx gives coding agents isolated Linux workstations. When an agent installs it, you do the work and I hold the keys:
 
@@ -18,20 +19,24 @@ isx gives coding agents isolated Linux workstations. When an agent installs it, 
 2. Never ask me for a secret, and never put one on a command line, in the environment or on stdin. When a credential is missing, tell me which `isx account add` command to run at my own terminal, and stop.
 3. Never choose which templates an agent may use, and never write ~/.config/incus-spawn/mcp.yaml. Ask me to run `isx mcp setup`, and stop.
 
-Read https://isx.run/llms.txt first. When you need me, say exactly what to do and end your turn. I will tell you when it is done.
+Read https://isx.run/llms.txt first. If you cannot tell which coding agent you are, or isx has no tool for it, ask me which agent to put in the template. When you need me, say exactly what to do and end your turn. I will tell you when it is done.
 ```
-
-For another agent in the template, replace "Claude Code" with Codex CLI, Pi, Gemini CLI, Bob Shell or GitHub Copilot CLI ([Agents](AGENTS.md)).
 
 ## What you do
 
-The agent stops and hands over to you at three points, and nowhere else:
+The agent stops and hands over to you at three points:
 
 | When | What the agent asks | What you do |
 |------|---------------------|-------------|
 | A step needs root | `sudo sh ~/.local/state/incus-spawn/init-privileged.sh` | Read the script, run it, and tell the agent |
-| A credential is missing | `isx account add claude`, or another service | Run it at your own terminal and type the credential |
+| A credential is missing | `isx account add` and the service, such as `openai` for Codex | Run it at your own terminal and type the credential |
 | Agents need templates | `isx mcp setup` | Choose the templates agents may create instances from |
+
+It also asks you which agent to put in your first template when it cannot tell which agent it is, or isx has no tool for it.
+
+`isx mcp setup` offers only templates with Claude Code, Codex or Pi, the agents a task can be handed to.
+For a template with Gemini CLI, Bob Shell or GitHub Copilot CLI, add its name under `templates:` in `~/.config/incus-spawn/mcp.yaml` yourself.
+An agent can then create instances from it and run commands in them, but cannot hand it a task.
 
 On macOS no step needs root, so the first handover does not happen.
 A fresh Linux host usually needs the root script once.
@@ -63,7 +68,8 @@ The agent reads [llms.txt](https://isx.run/llms.txt), which points it at these d
 1. Installs isx without root: the install script on Linux, or Homebrew on macOS.
 2. Reads `isx init --plan`, which says what init would change and who each step needs, and changes nothing.
 3. Runs `isx init --no-sudo`, hands you the root script, and runs it again once you ran the script.
-4. Writes a template that adds Claude Code to `tpl-minimal`, with `isx templates new --from`, and builds it.
+4. Writes a template that adds its own isx tool to `tpl-minimal`, with `isx templates new --from`, and builds it.
+   An agent that cannot tell which agent it is, or that isx has no tool for, asks you which agent to use instead.
 5. Reads `isx init --plan` again, which now names the credential that template needs, and hands you `isx account add` when it is missing.
 6. Creates the first instance, `my-first`, from that template.
 7. Registers `isx mcp` with itself, so it can create instances from the templates you approve.
