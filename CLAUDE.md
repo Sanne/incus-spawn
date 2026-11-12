@@ -162,6 +162,12 @@ Three Maven modules under a parent POM:
   `+aes` enables AES and PMULL, and GraalVM has no runtime CPU dispatch on aarch64, so it is a build-time choice.
   It drops no hardware the default ran on in practice: ARMv8.0 cores (Raspberry Pi 3/4) already fail `armv8.1-a`'s LSE check.
 
+**`launcher/` is a Swift package, outside the Maven build** (#2031, design/macos-and-vms.md "The launcher's relay").
+It will become `isx-vm`, the program that replaces vfkit on macOS; so far it holds the relay between a host Unix socket and a guest vsock port (`IsxRelay`) and `isx-vsock-bridge`, that relay in front of `AF_VSOCK` on Linux.
+The relay ends a connection as soon as either side ends and closes both sides, which vfkit's does not, and it gives up half-close, so no tunnel client may send one.
+`swift test --package-path launcher` runs its tests (Swift 6); CI runs them on Linux and macOS and bridges the appliance's vsock ports with the bridge in `integration-tests`.
+A Mac still runs vfkit until the launcher ships.
+
 **PGO**: release binaries are built with profiles collected in the same release run (#1637, design/native-image.md "Profile-guided optimization").
 `release.yml`'s `profiles` job builds both binaries instrumented (`-Dnative.pgo.instrument`), runs `bench/pgo-collect.sh` against a real Incus, and merges each binary's dumps into one profile (`scripts/pgo-merge.sh`).
 The build jobs apply them with `-Dnative.pgo=<dir>`, and `.github/scripts/check-pgo-quality.sh` fails a build whose binaries did not both take their profile above a floor.
