@@ -35,7 +35,8 @@ The heuristics are a first pass: read `reply-<turn>.txt` and `commands.tsv` befo
 Pi runs on the OpenAI account, its default provider in `~/.pi/agent/settings.json` (Pi 1.5 refuses `--provider` without `--model`), since upstream refuses Pi on a Claude subscription.
 `--agent-model` picks the model for `pi`, `gemini`, `opencode` and `copilot`, where their default is not available.
 Bob Shell is not driven: its headless `bob run` has no flag that approves tool calls, and no approval setting was confirmed to apply to it.
-The event shapes the harness reads for the four newer agents come from their sources and docs, not from a recorded run, so check `commands.tsv` against `turn-<n>.jsonl` after a first run of each.
+The event shapes the harness reads for Pi and opencode were checked against recorded runs (#2178).
+Those for Gemini CLI and GitHub Copilot CLI come from their sources and docs alone, so check `commands.tsv` against `turn-<n>.jsonl` after a first run of each.
 
 ## Agents that passed
 
@@ -45,9 +46,8 @@ Record the run here, then add the agent's name to the page's "tested on a clean 
 
 | Agent | Version | isx | Date | Run |
 |---|---|---|---|---|
-| Claude Code | 2.1.322 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6833242379 |
-| Codex CLI | 0.167.2 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6830826213 |
-| Pi | 1.5.2 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6830826213 |
+| Codex CLI | 0.167.2 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6835241625 |
+| Pi | 1.5.2 | 0.5.1 | 2026-11-12 | https://github.com/Sanne/incus-spawn/issues/2178#issuecomment-6835241625 |
 
 ## How clear the instructions were
 

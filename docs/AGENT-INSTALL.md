@@ -8,7 +8,7 @@ The [Quick Start](../README.md#quick-start) is the same install by hand.
 
 Paste this into the coding agent you use on your computer.
 The prompt is the same for every agent: the agent puts itself in your first template ([Agents](AGENTS.md)).
-It has been tested on a clean host with these agents: Claude Code, Codex CLI, Pi.
+It has been tested on a clean host with these agents: Codex CLI, Pi.
 
 <!-- copy -->
 ```text
