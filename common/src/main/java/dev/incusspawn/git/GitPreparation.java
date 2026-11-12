@@ -561,6 +561,11 @@ public final class GitPreparation {
         }
     }
 
+    /** The object format a {@link #selection} names on its first line. */
+    private static String objectFormat(String selection) {
+        return selection.substring(0, selection.indexOf('\n'));
+    }
+
     /** The ref a {@link #selection} names. */
     private static String refName(String selection) {
         var ref = selection.split("\n", 2)[1];
@@ -703,7 +708,7 @@ public final class GitPreparation {
 
     /**
      * The sealed snapshot of another pin of the same URL, pinned into {@code destination}, or null. Its one ref
-     * is the fetch's negotiation tip, so the remote sends only what the new ref adds, and the non-thin repack
+     * is the fetch's negotiation tip, so the remote sends only what the new ref adds, and the non-thin export
      * after the fetch copies only the new ref's closure: the sibling's own history never widens the result.
      */
     private Reference siblingReference(String key, String family, Path destination, Path tips) throws IOException {
@@ -751,12 +756,28 @@ public final class GitPreparation {
                                Phases phase, Map<String, Long> timings) throws IOException {
         long start = System.nanoTime();
         var progress = live(phase, "Creating clean Git snapshot");
+        if (reference != null) {
+            Borrowed borrowed;
+            try {
+                borrowed = borrow(url, target, work, reference, progress);
+            } finally {
+                elapsed(timings, "clone", start);
+            }
+            start = System.nanoTime();
+            try {
+                indexBorrowed(target, borrowed, result, phase);
+            } finally {
+                Files.deleteIfExists(borrowed.export());
+                elapsed(timings, "verify", start);
+            }
+            return;
+        }
         var trace = work.resolve("clone-trace");
         boolean transferChecked, loose;
         Received received;
         try {
             try {
-                received = clone(url, target, result, reference, trace, phase, progress);
+                received = clone(url, target, result, trace, phase, progress);
                 if (Files.exists(result.resolve("shallow")) || Files.exists(result.resolve("objects/info/alternates"))) {
                     throw new IOException("Git snapshot is not a standalone full repository");
                 }
@@ -769,8 +790,7 @@ public final class GitPreparation {
             } finally {
                 Files.deleteIfExists(trace);
             }
-            // Small network clones may unpack received objects. Normalize those once; a dissociated
-            // reference clone already has its selected pack and must not pay for a second repack.
+            // Small network clones may unpack received objects. Normalize those once.
             if (loose) {
                 git(result, "repack", "-a", "-d");
                 git(result, "prune-packed");
@@ -778,13 +798,12 @@ public final class GitPreparation {
         } finally {
             elapsed(timings, "clone", start);
         }
-        // Without a reference, a strict receive has hashed every object and checked its structure and
-        // links; a reference clone's borrowed objects are copied without rehashing and need the full fsck.
+        // A strict receive has hashed every object and checked its structure and links.
         if (transferChecked) return;
         start = System.nanoTime();
-        phase.accept("Verifying Git snapshot");
+        var checking = live(phase, "Verifying Git snapshot");
         try {
-            git(result, "fsck", "--full", "--no-dangling");
+            run(result, null, null, List.of("fsck", "--full", "--no-dangling", "--progress"), LOCAL, checking);
         } catch (IOException failed) {
             // Keep why the snapshot was cloned twice next to why it was then rejected.
             if (received.rejected() != null) failed.addSuppressed(received.rejected());
@@ -810,13 +829,9 @@ public final class GitPreparation {
     /** {@code strict}: the strict receive was kept. {@code rejected}: why it was not, when it was cloned again. */
     private record Received(boolean strict, GitCommandException rejected) {}
 
-    /** Fetch {@code target} from {@code url}; without a reference, with a strict receive traced to {@code trace}. */
-    private Received clone(String url, String target, Path result, Reference reference, Path trace, Phases phase,
+    /** Fetch {@code target} from {@code url} with a strict receive traced to {@code trace}. */
+    private Received clone(String url, String target, Path result, Path trace, Phases phase,
                           Consumer<GitProcess.Progress> progress) throws IOException {
-        if (reference != null) {
-            fetchSnapshot(url, target, result, reference, false, progress, Map.of());
-            return new Received(false, null);
-        }
         GitCommandException rejected;
         try {
             // Git's trace shows how the objects arrived. It names the URL, so it stays in the private lease.
@@ -839,18 +854,85 @@ public final class GitPreparation {
         return new Received(false, rejected);
     }
 
+    /** A reference clone's objects as one pack, {@code export}, of the ref fetched at {@code id}. */
+    private record Borrowed(Path export, String id) {}
+
+    /**
+     * Fetch {@code target} borrowing {@code reference}'s objects, then export what the ref reaches as one pack, as
+     * a host-source export does: walked from the ref alone and, without {@code --thin}, holding every base it needs,
+     * so the reference's private objects, and those only other refs reach, stay behind.
+     */
+    private Borrowed borrow(String url, String target, Path work, Reference reference,
+                            Consumer<GitProcess.Progress> progress) throws IOException {
+        var borrowing = work.resolve("borrowing.git");
+        var roots = work.resolve("roots");
+        var export = work.resolve("export.pack");
+        try {
+            fetchSnapshot(url, target, borrowing, reference, false, progress, Map.of());
+            var id = git(borrowing, "rev-parse", "--verify", refName(target));
+            Files.writeString(roots, id + "\n");
+            // Bitmaps stay off: they are the reference's own claim about reachability, not our walk.
+            // A large repository's export takes minutes: keep its elapsed time and progress showing.
+            run(borrowing, roots, export, List.of("-c", "protocol.https.allow=never", "-c", "protocol.ssh.allow=never",
+                    "-c", "protocol.git.allow=never", "pack-objects", "--stdout", "--revs", "--delta-base-offset",
+                    "--no-use-bitmap-index", "--progress"), LOCAL, progress);
+            return new Borrowed(export, id);
+        } catch (IOException failed) {
+            Files.deleteIfExists(export);
+            throw failed;
+        } finally {
+            Files.deleteIfExists(roots);
+            delete(borrowing);
+        }
+    }
+
+    /**
+     * Index a reference clone's export into the empty {@code result}, with nothing attached to borrow from (#1991).
+     * {@code index-pack --strict} then hashes every object, checks its structure and resolves every link inside
+     * the pack, so a borrowed object whose bytes do not match its name, or one missing, fails here, as it does for a
+     * host-source export. It also makes fsck's warnings fatal: on that rejection alone the pack is indexed without
+     * it, and the full fsck decides, as it alone did before. The export is indexed where it lies, inside the
+     * repository but with no index yet, so it is not an object source until then and is never copied.
+     */
+    private static void indexBorrowed(String target, Borrowed borrowed, Path result, Phases phase) throws IOException {
+        // A large repository's index takes minutes: show its elapsed time and progress, as for the fetch.
+        var progress = live(phase, "Verifying Git snapshot");
+        init(result, objectFormat(target));
+        var packs = Files.createDirectories(result.resolve("objects/pack"));
+        var pack = Files.move(borrowed.export(), packs.resolve("export.pack"));
+        GitCommandException rejected = null;
+        String hash;
+        try {
+            hash = run(result, null, null, List.of("index-pack", "--strict", "-v", pack.toString()), LOCAL, progress);
+        } catch (GitCommandException e) {
+            if (!fsckRejected(e.details())) throw e;
+            rejected = e;
+            hash = run(result, null, null, List.of("index-pack", "-v", pack.toString()), LOCAL, progress);
+        }
+        Files.move(packs.resolve("export.idx"), packs.resolve("pack-" + hash.strip() + ".idx"));
+        Files.move(pack, packs.resolve("pack-" + hash.strip() + ".pack"));
+        var name = refName(target);
+        git(result, "update-ref", name, borrowed.id());
+        writeHead(result, name);
+        if (rejected == null) return;
+        try {
+            run(result, null, null, List.of("fsck", "--full", "--no-dangling", "--progress"), LOCAL, progress);
+        } catch (IOException failed) {
+            failed.addSuppressed(rejected);
+            throw failed;
+        }
+    }
+
     /**
      * A fresh bare repository holding only {@code target}'s ref, fetched by name. Not a clone: clone asks the
      * remote to include every annotated tag pointing into what it sends, even with {@code --no-tags}, and those
      * tag objects would sit in the snapshot with no ref of it reaching them. With a reference, its objects are
-     * borrowed through an alternate and then copied, as {@code clone --reference --dissociate} does: a bare
-     * repository avoids older Git's commit-graph/checkout bug there, and the non-thin repack walks only our ref,
-     * so the reference's private objects stay behind.
+     * borrowed through an alternate, which stays: {@link #borrow} exports what the ref reaches from there.
      */
     private void fetchSnapshot(String url, String target, Path result, Reference reference, boolean strict,
                                Consumer<GitProcess.Progress> progress, Map<String, String> environment) throws IOException {
         var name = refName(target);
-        init(result, target.substring(0, target.indexOf('\n')));
+        init(result, objectFormat(target));
         var alternates = result.resolve("objects/info/alternates");
         var fetch = new ArrayList<String>();
         if (reference != null) {
@@ -871,11 +953,6 @@ public final class GitPreparation {
                 "--no-auto-maintenance", "--no-write-commit-graph", "--no-recurse-submodules",
                 "--", url, "+" + name + ":" + name));
         run(result, null, null, fetch, transfer, progress, environment);
-        if (reference != null) {
-            git(result, "repack", "-a", "-d");
-            Files.delete(alternates);
-            git(result, "prune-packed");
-        }
         writeHead(result, name);
     }
 

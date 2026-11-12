@@ -891,11 +891,9 @@ class GitPreparationTest {
             if (phase.equals("Verifying Git snapshot") && checks.incrementAndGet() == 1) {
                 try {
                     assertTrue(PreparationGit.children(cache.resolve("snapshots")).isEmpty());
+                    // The reference's objects leave as one pack, indexed strictly into the snapshot (#1991).
                     var work = PreparationGit.children(cache.resolve("work")).getFirst();
-                    var pack = PreparationGit.children(work.resolve("snapshot/repo.git/objects/pack")).stream()
-                            .filter(p -> p.toString().endsWith(".pack")).findFirst().orElseThrow();
-                    assertTrue(pack.toFile().setWritable(true));
-                    Files.writeString(pack, "incomplete or damaged dissociation");
+                    Files.writeString(work.resolve("export.pack"), "incomplete or damaged dissociation");
                 } catch (IOException e) { throw new java.io.UncheckedIOException(e); }
             }
         })) {
@@ -908,8 +906,8 @@ class GitPreparationTest {
 
     @Execution(CONCURRENT) @Test void aCheckoutObjectWhoseBytesDoNotMatchItsNameIsCaughtAfterDissociation() throws Exception {
         start();
-        // --dissociate copies borrowed objects without rehashing them, and clone's connectivity check
-        // and fsck --connectivity-only accept the result: only a check that rehashes catches this (#1548).
+        // pack-objects copies borrowed objects without rehashing them, and clone's connectivity check
+        // and fsck --connectivity-only accept the result: only a check that rehashes catches this (#1548, #1991).
         var objects = host.resolve(".git/objects");
         var moved = Files.createDirectory(tmp.resolve("host-packs"));
         for (var file : PreparationGit.children(objects.resolve("pack"))) Files.move(file, moved.resolve(file.getFileName()));
@@ -965,6 +963,31 @@ class GitPreparationTest {
             sameObjects(remote, result.repository());
         }
         try (var result = prepare(null, "old")) { assertEquals("cached clean snapshot", result.strategy()); }
+    }
+
+    @Execution(CONCURRENT) @Test void historyThatFsckOnlyWarnsAboutIsAcceptedFromAReferenceWithoutTheRemote() throws Exception {
+        // The reference's export is indexed with --strict, which makes fsck's warnings fatal: the full fsck
+        // then decides on the same pack, so a zero-padded mode costs no clone from the remote (#1991).
+        literalTreeBranch("old", "0100644", 1);
+        start();
+        var phases = new ArrayList<String>();
+        try (var result = preparation.prepare(new GitPreparation.Request(server.url(remote), "old", host), phases::add)) {
+            assertEquals("reference-seeded clean snapshot", result.strategy());
+            assertEquals(1, phases.stream().filter("Verifying Git snapshot"::equals).count());
+            assertFalse(phases.contains("Retrying Git snapshot without reference"));
+            sameObjects(remote, result.repository());
+        }
+    }
+
+    @Execution(CONCURRENT) @Test void aBrokenStructureFromAReferenceIsRejectedByTheFullFsckToo() throws Exception {
+        // The strict index's rejection only hands the decision to the fsck, which rejects this tree as well.
+        literalTreeBranch("bad", "100644", 2);
+        start();
+        var phases = new ArrayList<String>();
+        assertThrows(IOException.class, () -> preparation.prepare(
+                new GitPreparation.Request(server.url(remote), "bad", host), phases::add));
+        assertTrue(phases.contains("Retrying Git snapshot without reference"));
+        assertTrue(PreparationGit.children(cache.resolve("snapshots")).isEmpty());
     }
 
     /** A branch whose commit's tree, written without Git's checks, lists {@code isx.deb} as "a" {@code copies} times. */
