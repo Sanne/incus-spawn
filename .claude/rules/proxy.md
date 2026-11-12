@@ -362,7 +362,9 @@ Key design:
   The head wait and every resume fit into `clientSilenceBudgetSeconds` (110s since the client's request or last byte, threaded as `started` from `routeRequest`), below the MITM server's 120s idle timeout, which otherwise drops the client silently.
   The stall watchdog re-checks whenever a pause ends (`resumeWhenWritable`) so a late head cannot outsleep it.
   No validator (a strong ETag, or with no ETag a Last-Modified a second or more before `Date`), no resume, and then no stall cut either (`neverResumable`): only the client's budget ends it.
-  Cache fetches, redirects and resumes never send `Connection: close` (#2082): Vert.x drops a paused response's queued tail when its connection closes.
+  Cache fetches, redirects and resumes never send `Connection: close` (#2082).
+  An upstream HTTP/1.x response is never `pause()`d: a paused Vert.x connection drops its queued tail when upstream closes, so `CachingDownload` and `pipeResponse` hold it back through `ResponseHold`, which turns the socket's auto-read off and keeps what was already read (#2088).
+  A new path that holds an upstream response back goes through it too.
   A `206` continues only unencoded, with the remaining `Content-Length` and the first response's own validator (`resumesAt`), whatever `If-Range` got, since some servers ignore it.
   Both rules, the validator (`HttpValidator.strong`) and the whole continuation check (`HttpValidator.continues`), live in `common`, shared with `DownloadCache`, so the two paths cannot drift apart again.
   A connect timeout cut short to fit the budget does not start the unreachable backoff (`requestWithAsyncDns`).

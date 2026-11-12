@@ -597,9 +597,14 @@ Only an unreachable upstream serves an older one.
   A client that leaves mid-download, or while its head was still awaited, does not stop it.
   It goes on into the cache, as it always has, so a client that gave up and retries gets a hit.
   With nobody waiting the budget no longer applies.
-  A cache download, its redirect and its resumes never ask upstream for `Connection: close` (#2082).
-  Vert.x drops what a paused response still holds when its connection closes, so a server closing after the body would cut the tail off a download paused on backpressure.
-  Kept open, the connection delivers that tail when the download resumes.
+  A cache download, its redirect and its resumes never ask upstream for `Connection: close` (#2082), so the connection is pooled again.
+  An upstream response is never paused in Vert.x (`ResponseHold`, #2088).
+  A paused Vert.x 5 HTTP/1.1 connection queues what still arrives, and drops that queue when upstream closes: the body's tail and its end are lost, and the response fails with "Connection was closed".
+  A server closes on its own after a body when it speaks HTTP/1.0, sends `Connection: close`, reaches its request limit or times the connection out.
+  So the cache download and every relay hold upstream back by turning off the socket's auto-read, and keep what Netty had already read, in order, with the end or error behind it.
+  That is at most one read's worth, or the socket's receive buffer once upstream has closed, which epoll then reads to the end.
+  Reading is turned back on once Vert.x has delivered the response's end or error, since the connection may then serve another request.
+  HTTP/2 is still paused, since its flow control keeps what arrives.
   Plain relays (`relayRequest`, including an npm tarball whose shasum could not be fetched) are held to the same budget without a resume (`RelayWatchdog`, #929): 110s since the client's last byte either way, not counting the time its request body is streaming or the client holds the response back.
   So an upload is never cut while the client sends, and nothing is ended that the 120s timeout would have let live: while upstream holds the body back the client is paused too, and its connection idle.
   An early answer can stream while the upload still does, so the watchdog keeps the two waits apart: the end of one never ends the other.

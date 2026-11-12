@@ -467,7 +467,6 @@ class Upstream {
             copyResponseHead(upResp, clientResp);
             // Upstream answered before the upload ended: the rest of it is dropped (RelayWatchdog)
             if (watchdog.uploadUnread()) clientResp.putHeader("Connection", "close");
-            watchdog.upResp = upResp;
             pipeResponse(upResp, clientResp, watchdog, hooks.responseTap());
         }).onFailure(err -> {
             // A client that left mid-upload resets the request itself
@@ -580,7 +579,8 @@ class Upstream {
         private final String domain;
         private final boolean streaming;
         private HttpClientRequest upReq;
-        HttpClientResponse upResp;
+        // The response in hand, once there is one
+        ResponseHold upResp;
         boolean cut;
         // The request body streams; not while the DNS lookup and connect wait, nor while a paused
         // body does, nor while upstream holds it back: that is upstream's time
@@ -601,14 +601,14 @@ class Upstream {
          * response's end and close handlers, and a handler set later replaces the earlier.
          */
         RelayWatchdog(HttpServerRequest clientReq, String domain, boolean streaming, long since,
-                      HttpClientResponse upResp, io.vertx.core.Handler<Void> onEnd) {
+                      ResponseHold upResp, io.vertx.core.Handler<Void> onEnd) {
             this.clientReq = clientReq;
             this.domain = domain;
             this.streaming = streaming;
             bodyAsked = !expectsContinue(clientReq);
             this.clientActive = since;
             this.upResp = upResp;
-            if (upResp != null) upReq = upResp.request();
+            if (upResp != null) upReq = upResp.response().request();
             var clientResp = clientReq.response();
             io.vertx.core.Handler<Void> ended = v -> {
                 stop();
@@ -702,7 +702,7 @@ class Upstream {
 
         /** Ends the upstream request, and hears no more of its answer: nothing is to be relayed. */
         private void letUpstreamGo() {
-            if (upResp != null) upResp.handler(null).endHandler(null).exceptionHandler(ignored -> {});
+            if (upResp != null) upResp.letGo();
             // A plain reset: an ended request refuses a new exception handler. One still sending has
             // adopt()'s; one ended, as a response in hand's is, fails only its silenced response
             if (upReq != null) upReq.reset();
@@ -836,24 +836,24 @@ class Upstream {
     /** Relays upstream's response, head and body, as {@link #relayBody} does the body. */
     void relayResponse(HttpServerRequest clientReq, String domain, HttpClientResponse upResp, long since) {
         copyResponseHead(upResp, clientReq.response());
-        relayBody(clientReq, domain, upResp, since);
+        relayBody(clientReq, domain, new ResponseHold(upResp), since);
     }
 
     /**
      * Pipes a response's body under the head already set on {@code clientReq}'s response, with a
      * {@link RelayWatchdog} counting from {@code since}, when the client last heard from us (#1192).
      */
-    void relayBody(HttpServerRequest clientReq, String domain, HttpClientResponse upResp, long since) {
+    void relayBody(HttpServerRequest clientReq, String domain, ResponseHold upResp, long since) {
         var watchdog = new RelayWatchdog(clientReq, domain, false, since, upResp, null);
         // The budget was spent before the response came (check() has let it go and sent the 502), or
         // the client left. Without a handler, the reset's error would be logged by Vert.x, unprefixed
         if (watchdog.gone()) {
-            upResp.exceptionHandler(ignored -> {}).request().reset();
+            upResp.reset();
             return;
         }
-        pipeResponse(upResp, clientReq.response(), watchdog);
-        // A response held paused, as CachingDownload's is
-        upResp.resume();
+        pipeResponse(upResp, clientReq.response(), watchdog, null);
+        // A response held back, as CachingDownload's is
+        upResp.release();
     }
 
     /**
@@ -871,8 +871,15 @@ class Upstream {
     /** As above, showing each chunk to {@code tap} too, when there is one. */
     void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp, RelayWatchdog watchdog,
                               java.util.function.Consumer<Buffer> tap) {
+        pipeResponse(new ResponseHold(upResp), clientResp, watchdog, tap);
+    }
+
+    /** Held back while the client's write queue is full, never paused in Vert.x ({@link ResponseHold}). */
+    private void pipeResponse(ResponseHold upResp, HttpServerResponse clientResp, RelayWatchdog watchdog,
+                              java.util.function.Consumer<Buffer> tap) {
+        if (watchdog != null) watchdog.upResp = upResp;
         int status = clientResp.getStatusCode();
-        if (upResp.getHeader("Content-Length") == null
+        if (upResp.response().getHeader("Content-Length") == null
                 && status != 204 && status != 304 && (status < 100 || status >= 200)) {
             clientResp.setChunked(true);
         }
@@ -881,11 +888,11 @@ class Upstream {
             clientResp.write(chunk);
             if (watchdog != null) watchdog.touch();
             if (clientResp.writeQueueFull()) {
-                upResp.pause();
+                upResp.hold();
                 if (watchdog != null) watchdog.holdingResponse(true);
                 clientResp.drainHandler(v -> {
                     if (watchdog != null) watchdog.holdingResponse(false);
-                    upResp.resume();
+                    upResp.release();
                 });
             }
         });
