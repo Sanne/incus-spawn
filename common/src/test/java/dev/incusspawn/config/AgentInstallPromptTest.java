@@ -91,6 +91,21 @@ class AgentInstallPromptTest {
         for (var handover : HANDOVERS) assertTrue(llms.contains(handover), handover + " is not in llms.txt");
     }
 
+    /**
+     * On Linux an agent's session predates the incus-admin group the root script adds, so an MCP
+     * server it registers without {@code sg incus-admin} is refused by the Incus socket (#2178:
+     * Claude Code took the plain form twice while llms.txt offered sg only as a condition).
+     * The prompt asks for the sg form, and llms.txt gives it as the Linux command for each agent.
+     */
+    @Test
+    void theLinuxRegistrationRunsUnderSg() throws Exception {
+        assertTrue(harnessPrompt().contains("`sg incus-admin`"), "the prompt does not ask for the sg registration");
+        var llms = Files.readString(ROOT.resolve("site/llms.txt"));
+        for (var linux : List.of("| Claude Code | `claude mcp add --scope user isx -- sg incus-admin -c \"<isx> mcp\"` |",
+                "| Codex CLI | `codex mcp add isx -- sg incus-admin -c \"<isx> mcp\"` |"))
+            assertTrue(llms.contains(linux), "llms.txt does not give the Linux registration " + linux);
+    }
+
     /** The prompt the clean-host harness gives its agent, read from the page. */
     private static String harnessPrompt() throws Exception {
         var process = new ProcessBuilder("bash", "scripts/agent-install/validate.sh", "--print-prompt")
