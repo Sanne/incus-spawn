@@ -297,13 +297,66 @@ jobs:
     if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
     uses: ./.github/workflows/build-appliance.yml
 
+  # The launcher's Swift package (#2031): its tests, and the bridge that integration-tests puts
+  # between the host and the appliance's vsock ports, so the relay isx is to ship is the one the
+  # tunnel checks run through. Built in the Swift image, since no runner label says which Swift
+  # an image carries: 6.1 is what macos-15's Xcode compiles the launcher with. The image is
+  # pinned by the digest of its multi-arch index, so it changes when someone changes it.
+  launcher-linux:
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    name: launcher-linux (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    container: swift:6.1-noble@sha256:42b58c8cff07f45e6f083ade65743b5b147d0c01d4370d602fcf3c7b37dc1cac
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Test the relay
+        run: swift test --package-path launcher
+
+      # Static, so the binary runs on a runner that has no Swift runtime.
+      - name: Build the vsock bridge
+        run: swift build --package-path launcher -c release --static-swift-stdlib
+
+      - name: Upload the vsock bridge
+        uses: ./.github/actions/upload-artifact-retry
+        with:
+          name: isx-vsock-bridge-${{ matrix.arch }}
+          path: launcher/.build/release/isx-vsock-bridge
+          if-no-files-found: error
+          retention-days: 1
+
+  # The same tests where the launcher will run. Nothing waits for this job: a macOS runner that
+  # is slow to come does not hold the Linux jobs.
+  launcher-macos:
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.event.repository.fork
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Test the relay
+        run: |
+          swift --version
+          swift test --package-path launcher
+
   # One job per appliance arch. aarch64 is what Apple Silicon Macs run, and has its own kernel
   # config and console. GitHub's arm64 runners expose no /dev/kvm, so that leg runs under TCG
   # emulation; the appliance still reaches ISX READY in seconds. The backstop check (a fixed
   # three-minute wait, arch-independent) and the native isx step (CI builds no arm64 CLI) run
   # on x86_64 only.
   integration-tests:
-    needs: [unit-tests, build_appliance, build-native-cli]
+    needs: [unit-tests, build_appliance, build-native-cli, launcher-linux]
     strategy:
       fail-fast: false
       matrix:
@@ -397,10 +450,11 @@ jobs:
           fi
 
       # One boot covers both halves: the in-guest smoke test (Incus works inside the VM) and
-      # the host-facing tunnel, reached the way isx reaches it on macOS. host socat stands in
-      # for vfkit, bridging Unix sockets to the guest's vsock ports:
-      #   Unix socket -> socat VSOCK-CONNECT -> in-guest socat forwarder -> Incus socket
-      # This proves everything either side of vfkit, not vfkit itself (#774).
+      # the host-facing tunnel, reached the way isx reaches it on macOS. The launcher's relay
+      # bridges Unix sockets to the guest's vsock ports, where vfkit does on a Mac today:
+      #   Unix socket -> isx-vsock-bridge -> in-guest socat forwarder -> Incus socket
+      # This proves the relay and everything either side of it, not vfkit (#774) and not
+      # Virtualization.framework, which only a Mac has (#2031).
       - name: Boot appliance VM
         run: |
           ${{ matrix.qemu }} \
@@ -443,23 +497,34 @@ jobs:
             exit 1
           fi
 
+      - name: Download the vsock bridge
+        uses: actions/download-artifact@v6
+        with:
+          name: isx-vsock-bridge-${{ matrix.arch }}
+          path: ${{ runner.temp }}/bridge
+
       # Bridge onto the paths isx itself looks for (Environment.vmVsockSocket/vmAgentSocket).
       # This runner has no native Incus, so the real client can only reach the VM's daemon
-      # through the tunnel. backlog=128 keeps the bridge's own accept queue (socat defaults
-      # to 5) out of the concurrency checks, which are about the guest's listeners.
+      # through the tunnel. The bridge is the launcher's relay (launcher/) in front of AF_VSOCK;
+      # its accept queue is 128, which keeps it out of the concurrency checks, which are about
+      # the guest's listeners. The third socket is the test-only silent endpoint the backstop
+      # check times (isx.test_silent_vsock).
       - name: Bridge the tunnel sockets
         run: |
           STATE="$HOME/.local/state/incus-spawn"
           mkdir -p "$STATE"
-          nohup socat UNIX-LISTEN:"$STATE/vm.incus.sock",fork,backlog=128 VSOCK-CONNECT:3:8443 >/dev/null 2>&1 &
-          nohup socat UNIX-LISTEN:"$STATE/vm.agent.sock",fork,backlog=128 VSOCK-CONNECT:3:1025 >/dev/null 2>&1 &
-          # The test-only silent endpoint the backstop check times (isx.test_silent_vsock).
-          nohup socat UNIX-LISTEN:"$RUNNER_TEMP/silent.sock",fork,backlog=128 VSOCK-CONNECT:3:8444 >/dev/null 2>&1 &
-          for _ in $(seq 1 10); do
-            [ -S "$STATE/vm.incus.sock" ] && [ -S "$STATE/vm.agent.sock" ] && [ -S "$RUNNER_TEMP/silent.sock" ] && exit 0
+          chmod +x "$RUNNER_TEMP/bridge/isx-vsock-bridge"
+          nohup "$RUNNER_TEMP/bridge/isx-vsock-bridge" 3 \
+            "$STATE/vm.incus.sock"=8443 "$STATE/vm.agent.sock"=1025 "$RUNNER_TEMP/silent.sock"=8444 \
+            > "$RUNNER_TEMP/bridge.log" 2>&1 &
+          echo "BRIDGE_PID=$!" >> "$GITHUB_ENV"
+          # It says so once all three sockets are listening.
+          for _ in $(seq 1 20); do
+            grep -q '^relaying 3 sockets' "$RUNNER_TEMP/bridge.log" && exit 0
             sleep 0.5
           done
-          echo "::error::socat bridge sockets did not appear"
+          echo "::error::the vsock bridge did not start"
+          cat "$RUNNER_TEMP/bridge.log"
           exit 1
 
       - name: Test the tunnel (forwarder, agent verbs, silent clients, backstop, recovery)
@@ -467,6 +532,24 @@ jobs:
           STATE="$HOME/.local/state/incus-spawn"
           TUNNEL_BACKSTOP=${{ matrix.full && '1' || '0' }} \
             appliance/test-tunnel.sh "$STATE/vm.incus.sock" "$STATE/vm.agent.sock" "$RUNNER_TEMP/silent.sock"
+
+      # The checks above count what the guest still holds. This is the relay's own side: over a
+      # real vsock it has let go of every connection they opened. SIGUSR1 makes the bridge print
+      # one line per socket; a bridge that died fails the kill.
+      - name: The bridge holds no connection the checks closed
+        run: |
+          for _ in $(seq 1 20); do
+            kill -USR1 "$BRIDGE_PID"
+            sleep 0.5
+            report=$(tail -n 3 "$RUNNER_TEMP/bridge.log")
+            if [ "$(printf '%s\n' "$report" | grep -c ' waiting 0 held 0 total ')" = 3 ]; then
+              printf '%s\n' "$report"
+              exit 0
+            fi
+          done
+          echo "::error::the vsock bridge still holds connections after the tunnel checks"
+          cat "$RUNNER_TEMP/bridge.log"
+          exit 1
 
       - name: Download CLI native binary
         if: matrix.full
