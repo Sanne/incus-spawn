@@ -173,7 +173,7 @@ Every build passed its floors and its smoke test, the macOS build the keychain s
 There are three builds: Intel Macs are not shipped since Quarkus 4 (design/native-image.md "Intel Macs are not shipped").
 An earlier run, 41919773942, stopped at the Intel build, whose Oracle GraalVM 25.0.1 Quarkus 4 refuses; run 41928844885 built it with Liberica NIK 25.0.4 instead, which is not shipped (Q-12 in `QUARKUS-4.md`).
 Sizes are against v0.5.0-dev.2, the last release on Quarkus 3.
-The proxy no longer carries the DNS resolver substitution (Q-1), which accounts for most of its growth:
+The proxy no longer carries the DNS resolver substitution (fixed in Quarkus 4.0.0.CR1 by quarkusio/quarkus#58134; `QUARKUS-4.md` "Verification"), which accounts for most of its growth:
 
 | Platform | CLI applicability / relevance | Proxy applicability / relevance | `isx-proxy`, v0.5.0-dev.2 → Quarkus 4 | `isx`, v0.5.0-dev.2 → Quarkus 4 |
 |---|---|---|---|---|

@@ -1,18 +1,18 @@
 # Quarkus 4
 
-This is the record of moving incus-spawn from Quarkus 3.40.1.1 to Quarkus 4.0.0.Beta3.
-The port was first made on Beta2; what Beta3 changed is recorded beside each item.
+This is the record of moving incus-spawn from Quarkus 3.40.1.1 to Quarkus 4.0.0.CR1.
+The port was first made on Beta2 and then moved to Beta3 and CR1; what each release changed is recorded beside each item.
 We are Quarkus maintainers, and we use this project to validate Quarkus 4 on a real application before it ships.
-So we treat the beta as a final release: every problem still open is written down here, and the Q-* and V-* items go back upstream.
+So we treat each prerelease as a final release: every problem still open is written down here, and the Q-* and V-* items go back upstream.
 An item is removed once a release fixes it.
 
-| | Quarkus 3.40.1.1 | Quarkus 4.0.0.Beta3 |
+| | Quarkus 3.40.1.1 | Quarkus 4.0.0.CR1 |
 |---|---|---|
 | Vert.x | 4.5.35 | 5.2.3 |
 | Netty | 4.1.139 | 4.2.20 |
 | Jackson | 2.x, test scope only since jjq (#1263) | 3.1.8 core reaches the proxy through `vertx-core`; no test uses Jackson 2 since #1702 |
 | CDI API | `jakarta.enterprise` | `jakarta.cdi` 5.0.0 |
-| SmallRye Config | 3.x | 4.2.0 |
+| SmallRye Config | 3.x | 4.2.2 |
 | GraalVM minimum | 25.0 | 25.0.4 (Q-12), so no Intel macOS build |
 
 ## Landed ahead of the upgrade
@@ -55,19 +55,27 @@ Every remaining change is in the proxy; `common` and `cli` compile and pass unch
 
 ## Verification
 
-On Oracle GraalVM 25.0.4.1.1, x86_64, against Quarkus 4.0.0.Beta3:
+CR1 keeps Beta3's Vert.x 5.2.3 and Netty 4.2.20, so the move from Beta3 is a version bump with no code change.
+It was checked on Oracle GraalVM 25.0.4.1.1, x86_64, against Beta3 at 8b8fd9b4 (#2169):
 
-- **`mvn package`**: all three modules pass: common runs 3331 tests, cli 2394 and the proxy 938, skipping 1 (a `JitWorkaroundTest` check that needs the Graal JIT, as on `main`).
-- **Native, unprofiled**: the proxy is 105,450,832 bytes against 102,501,712 on Quarkus 3 (`main` at af8907c4), so 2.8 MiB more, where Beta2 added 4.7 MiB.
-  Q-1 and Q-3 are still in that growth.
-  The native CLI is 38,866,040 bytes against 38,800,504.
-  The native proxy answers its health check with 27 threads and 87 MB resident.
-- **Repro program**: rerun on Vert.x 5.2.3; V-T1 still reproduces.
+- **`mvn package`**: all three modules pass: common runs 3481 tests, cli 2708 and the proxy 962.
+- **Native, unprofiled**: the proxy is 104,664,400 bytes against 105,516,368 on Beta3, 832 KiB less.
+  Netty's `DnsNameResolver` is gone from it, since CR1 substitutes the async DNS resolver away again (Q-1, fixed by quarkusio/quarkus#58134).
+  The native CLI is 39,652,472 bytes on both.
+- **Native proxy against a real Incus**: a container behind it fetched a Maven artifact, which the proxy intercepted, verified and cached, as well as an npm packument and an unintercepted site.
+  This ran in a nested isx instance, so no template was built or branched (`validate-on-real-incus`).
+- **Native benchmarks**: `bench/run.sh` on both binaries, alternated, with the `maven`, `npm` and `saturate` loads (`PERFORMANCE-NOTES.md`, "Quarkus 4.0.0.CR1 against Beta3").
+  The cached artifact and npm paths and resident memory are unchanged.
+  The plain-HTTP `/health` ceiling is 1 to 4% lower on CR1, in every one of five pairs; release builds take a profile, which unprofiled builds do not show.
+  CLI startup is unchanged.
+
+On Beta3 the proxy had added 2.8 MiB to Quarkus 3 (105,450,832 bytes against 102,501,712 at af8907c4), where Beta2 added 4.7 MiB.
+The repro program was rerun on Vert.x 5.2.3, and V-T1 still reproduces.
 
 The release workflow with PGO built, profiled and smoke-tested the three shipped platforms on Beta3, in dispatch run 42024366815 at f7e8516b (`docs/dev/PGO.md`).
 Every build passed its floors, the lowest at 15.03% applicability and 97.25% relevance (macOS aarch64), and the macOS build the keychain smoke.
 Intel Macs are not built any more (Q-12).
-Not yet validated: real Incus (`validate-on-real-incus`), and proxy throughput, latency and memory (`bench/run.sh`, D-3).
+That run has not been repeated on CR1.
 
 ## Open decisions
 
@@ -81,7 +89,8 @@ Not yet validated: real Incus (`validate-on-real-incus`), and proxy throughput, 
   Netty 4.2 defaults to `AdaptiveByteBufAllocator`, and Quarkus 4 sets `io.netty.noUnsafe=true` in native (Q-7).
   A JVM-mode test, four 32 MB TLS relays, measured peak RSS of 625 MB on Vert.x 4, 533 MB on Vert.x 5 pooled and 448 MB on Vert.x 5 adaptive.
   The adaptive allocator kept 68 MB of direct memory after the burst, against 8 MB pooled.
-  The native proxy runs with `-R:MaxRAM=256m`, so `bench/run.sh` on the native binary decides whether we pin one.
+  The native proxy runs with `-R:MaxRAM=256m`.
+  On CR1 the unprofiled native proxy peaked at 110 MB resident under the `maven` load and 113 MB under `npm`, as on Beta3, so nothing calls for pinning one yet.
   Quarkus means to enforce the adaptive allocator (quarkusio/quarkus#57860, open).
 - **D-4: `sendFile(FileChannel)`.**
   New in Vert.x 5, it would close the stat-then-open window in `serveTrusted`, but it is marked unstable and HTTP/1-only.
@@ -91,23 +100,18 @@ Not yet validated: real Incus (`validate-on-real-incus`), and proxy throughput, 
 
 ## Feedback for the Quarkus team
 
-Q-1, Q-3, Q-7 and Q-9 are confirmed against Beta3, and Q-8 and Q-10 are partly fixed there; Q-12 is new in Beta3.
-Q-11 was noted during the port and is not rechecked.
+Q-1 is fixed in CR1 and removed (quarkusio/quarkus#58134).
+Q-3 and Q-7 are confirmed against CR1's sources, and Q-8 and Q-10 are partly fixed there; Q-12 is new in Beta3.
+Q-9 is confirmed against Beta3, and Q-11 was noted during the port; neither is rechecked.
 
-- **Q-1 (native size regression): the async DNS resolver is back in native images.**
-  Commit `12145237998` ("Migrate Vert.x Core extension to Vert.x 5") dropped the Quarkus 3 substitution of `ResolverProvider.factory`.
-  Vert.x 5 reads `vertx.disableDnsResolver` at run time, so Netty's resolver and DNS codec are linked although Quarkus forces the property in native.
-  That cost 2.2 MiB in our native proxy on Beta2 (106,827,040 bytes against 104,533,280); substituting `AddressResolverProvider.factory` with `DefaultAddressResolverProvider` removes it.
-  Beta3 still links it (`DnsNameResolver` is in the image), and quarkusio/quarkus#58063 is open for it.
-  We do not carry that substitution ourselves, since it targets Vert.x internals (#1853, deferred).
 - **Q-3: Jackson 3 core is always reachable in Vert.x native images.**
   `VertxCoreProcessor` registers `io.vertx.core.json.jackson.v3.JacksonCodec` for reflection unconditionally, which adds 0.87 MiB with no JSON in use.
-  Unchanged in Beta3; not filed yet.
+  Unchanged in CR1; not filed yet.
 - **Q-7 (undocumented default): `io.netty.noUnsafe=true` in native.**
   It changes buffer performance for TLS-heavy native apps, and neither the migration guide nor the release notes mention it.
 - **Q-8 (stale tuning): `quarkus.netty.allocator-max-order` is inert by default.**
   Netty 4.2 defaults to the adaptive allocator, and `io.netty.allocator.maxOrder` only affects the pooled one.
-  Beta3 documents the property as pooled-only (quarkusio/quarkus#57840, fixing quarkusio/quarkus#57374).
+  Beta3 documents the property as pooled-only (quarkusio/quarkus#57840, fixing quarkusio/quarkus#57374), and CR1 deprecates it.
   Pinning the allocator, which would make the warning moot, is quarkusio/quarkus#57860 (open).
 - **Q-9 (migration guide gaps).**
   It has no Vert.x 4 to 5 or Netty 4.2 section, not even a pointer to the Vert.x guide.
@@ -115,10 +119,11 @@ Q-11 was noted during the port and is not rechecked.
   Its Jackson defaults table omits `SORT_PROPERTIES_ALPHABETICALLY`, which silently changes serialized output.
   The CDI API group change and the `smallrye-common-vertx-context` rename are missing, and both matter to explicit exclusions and enforcer rules.
 - **Q-10 (minor).**
-  The native build still passes the deprecated `--enable-url-protocols` in Beta3.
+  The native build still passes the deprecated `--enable-url-protocols` in CR1.
   The `NativeConfig` javadoc no longer names `jdk-21` builder images (quarkusio/quarkus#57953, Beta3).
   The uber-jar builder warns about duplicate Jackson 2 and 3 license files, which the BOM itself produces.
-  `vertx-core` hard-depends on the HTTP/3, QUIC and tcnative classes, and `quarkus-netty` on Netty's `netty-codec` umbrella: none reaches a native image, but all sit on the JVM classpath.
+  `vertx-core` hard-depends on the HTTP/3, QUIC and tcnative classes: none reaches a native image, but all sit on the JVM classpath.
+  `quarkus-netty` depended on Netty's `netty-codec` umbrella too, which CR1 replaced with `netty-codec-base`.
 - **Q-11 (suggestion): reflection-free Jackson outside REST.**
   The build-time generated (de)serializers exist only in `quarkus-rest-jackson`, for REST endpoint types.
   An application mapping its own model with mappers it builds itself has no way to use them.
