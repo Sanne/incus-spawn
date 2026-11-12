@@ -5,7 +5,7 @@ Each holds one ref with all of its history: the branch or tag the template reque
 The guest fetches any other branch it needs itself, later, with its own account.
 A fresh remote advertisement of that ref decides whether the cached snapshot can be reused.
 When upstream changes preserve the selected history, a new generation reuses verified packs and fetches the additional objects.
-Initial snapshots and updates that remove selected history fetch the ref into a fresh bare repository, borrowing objects from the previous clean snapshot or the user's existing checkout directly, as `clone --reference … --dissociate` does.
+Initial snapshots and updates that remove selected history fetch the ref into a fresh bare repository, borrowing objects from the previous clean snapshot or the user's existing checkout directly, then export the ref's closure alone into a standalone repository.
 The guest copies the resulting repository with `--no-hardlinks` and verifies its object bytes before priming.
 
 This is the clean-snapshot alternative to the certificate/bitmap implementation in [PR #1400](https://github.com/Sanne/incus-spawn/pull/1400), addressing [#1395](https://github.com/Sanne/incus-spawn/issues/1395).
@@ -53,13 +53,13 @@ Full clones have no depth limit and use snapshots only for eligible network URLs
 
 | Situation | What we do / ready-line label | Why |
 | --- | --- | --- |
-| Full clone, no usable cached snapshot, eligible host checkout available | Create a snapshot by borrowing directly from the checkout with `--reference … --dissociate`: `via reference-seeded clean snapshot` | Reuse local objects while excluding private history and removing the dependency on the checkout. |
-| Full clone, no usable cached snapshot or eligible host checkout, a verified snapshot of another ref of the same URL cached | Create a snapshot borrowing that snapshot's objects: `via sibling-seeded clean snapshot` | Fetch only what the new ref adds; the repack copies only the new ref's closure, so the other ref's history stays out. |
+| Full clone, no usable cached snapshot, eligible host checkout available | Create a snapshot by borrowing directly from the checkout, then exporting the ref's closure: `via reference-seeded clean snapshot` | Reuse local objects while excluding private history and removing the dependency on the checkout. |
+| Full clone, no usable cached snapshot or eligible host checkout, a verified snapshot of another ref of the same URL cached | Create a snapshot borrowing that snapshot's objects: `via sibling-seeded clean snapshot` | Fetch only what the new ref adds; the export copies only the new ref's closure, so the other ref's history stays out. |
 | Full clone, neither a usable cached snapshot nor an eligible reference | Create a snapshot from the remote: `via new clean snapshot` | Establish a validated, independent copy for this build and later reuse. |
 | Full clone, cached bytes verify and the selected ref and object format are unchanged | Reuse it: `via cached clean snapshot` | Avoid another full-history clone, repack and fsck; still check current remote access, selection and cached bytes. |
 | Full clone, upstream changes preserve the previously selected history | Fetch into a new generation, retaining verified old packs: `via incremental clean snapshot` | Ordinary new commits and merges need only the additional objects and their validation, plus checks of retained bytes and reachability. |
 | Full clone, changes remove selected history, incremental validation fails, or the result would exceed 32 packs | Rebuild a clean snapshot, preferably borrowing from the previous verified generation: usually `via reference-seeded clean snapshot` | Drop objects no longer selected, recover from failed validation, or compact accumulated packs. |
-| Reference cloning, dissociation or full validation fails | Discard the partial snapshot and retry from the remote: `via new clean snapshot (reference retry)` | A changing or damaged reference must not produce an incomplete guest repository. |
+| Reference cloning, dissociation or validation fails | Discard the partial snapshot and retry from the remote: `via new clean snapshot (reference retry)` | A changing or damaged reference must not produce an incomplete guest repository. |
 | Shallow clone (`depth: N`, including `depth: 1`) | Bypass this cache: `via host reference (shallow, depth N)` or `via remote (shallow, depth N)` | The separate shallow path reconciles with the remote and repacks on every build; limiting history still requires copying current large binaries. |
 | Guest's ref moved while the snapshot was prepared | Read the guest's ref again and refresh the snapshot incrementally, up to three times: `via … (refreshed)` | A busy repository changes during a long preparation, and discarding the snapshot costs a full network clone in the guest. |
 | Project-local template, ineligible URL, denied guest access, a remote HEAD naming no branch, guest/host refs still differing after the refreshes, or preparation/mount/copy-verification failure | Use the ordinary guest clone path | Host preparation must respect the template's trust and access scope; failures must not expose an unchecked snapshot. |
@@ -222,11 +222,12 @@ After successful dissociation, verification, publication and guest copying no lo
 The authoritative remote supplies the selected ref, fetched by name into a new bare repository.
 It is a fetch rather than `clone --single-branch --no-tags`, because clone still asks the remote to include every annotated tag pointing into what it sends.
 Those tag objects would sit in the snapshot with no ref of it reaching them, and a tag the guest's account cannot see would come with them.
-With a reference, its object directory is the new repository's alternate for the fetch; `repack -a -d` then copies the selected objects into a standalone, non-thin store, and the alternate is removed, as `--dissociate` does.
+With a reference, its object directory is the new repository's alternate for the fetch.
+Then `pack-objects --stdout --revs` walks the ref alone and writes its closure as one non-thin pack, which `index-pack --strict` indexes where it lies, in an otherwise empty repository, as a host-source export does (#1991).
 This rewrites mixed public/private packs, including public objects whose stored delta base is private.
 The fresh repository also drops objects retained only by a rewritten ref or a moved tag; fetching into an old snapshot would leave those objects behind.
 Without a reference, the fetch supplies the objects and keeps each received pack (`fetch.unpackLimit=1`); loose objects, as dumb HTTP writes them, are packed once.
-Initial and rebuilt output must be full and independent, and pass `git fsck --full` or, cloned without a reference, a strict check of every received object (see below).
+Initial and rebuilt output must be full and independent, and pass a strict check of every object it holds, or `git fsck --full` where that check cannot be relied on (see below).
 Only its pack/index pairs and the freshly installed ref and HEAD enter the final minimal bare repository, discarding configuration and generated sidecars.
 
 A bare repository avoids the historical in-process checkout failure in older Git's `--dissociate` path.
@@ -238,13 +239,23 @@ The guest's later local clone checks out in a separate Git process from a reposi
 On apache/camel (4.4 million objects, #1548) the reference clone takes about 34 s and `fsck --full` another 62 s.
 With retention working it runs only on a first build and on rebuilds, but those still matter for large repositories, so the cheaper checks were measured against what they catch ([measurements](../../bench/data/git-large-repositories-2026-10-19.json)).
 
-A reference clone keeps the full fsck.
-`--dissociate` repacks the borrowed objects with `pack-objects`, which copies them as stored and names them after the checkout's own index entries or loose file names without rehashing them; only packed entries get a CRC check against the checkout's index.
-A checkout whose loose object holds other content under a public object's name therefore produces a clone that succeeds, with one standalone pack serving the wrong content under that name.
-Clone's own connectivity check and `fsck --connectivity-only` (8 s on camel) accept that repository; `fsck --full` rejects it and the remote retry follows.
+A reference clone needs a check that rehashes every object.
+`pack-objects` copies the borrowed objects as stored and names them after the checkout's own index entries or loose file names without rehashing them; only packed entries get a CRC check against the checkout's index.
+A checkout whose loose object holds other content under a public object's name therefore produces a pack that serves the wrong content under that name.
+Clone's own connectivity check and `fsck --connectivity-only` (8 s on camel) accept such a repository.
 Checking objects on receive (`fetch.fsckObjects`) does not help here: it checks only objects received from the remote, and a reference clone borrows almost all of them.
 The test `aCheckoutObjectWhoseBytesDoNotMatchItsNameIsCaughtAfterDissociation` keeps this case covered.
-`index-pack --verify --strict` on the single pack would catch it as well, in 43 s against 62 s; it is not adopted (#1553, option (a)).
+
+That check is the export's strict index, not a full fsck (#1991).
+On nixpkgs (8.4 million objects in `master`) the fsck took 716 s and 5.6 GB, and the whole cold snapshot 981 s ([measurements](../../bench/data/git-very-large-repository-2026-11-12.json)).
+`index-pack --strict` in an otherwise empty repository computes each object's ID from its bytes, checks its structure and fails on any link the pack itself does not resolve, since nothing is attached to resolve it.
+So the misnamed object above fails there: its bytes hash to another name, and the tree's link to the real one finds nothing.
+The remote retry follows.
+It runs threaded, where the fsck is mostly serial: the cold snapshot of nixpkgs took 302 s instead of 981 s.
+On a small machine the serial fsck could also overrun the 15-minute limit of a local step, which then sent the build to the network.
+Indexing the repack's pack in place instead (`index-pack --verify --strict`, #1553 option (a)) took 271 s and 6.8 GB, on top of the repack.
+`--strict` makes fsck's warnings fatal, such as zero-padded file modes in old history.
+On that rejection alone the export is indexed again without it and the full fsck decides, locally, with no clone from the remote.
 
 A clone without a reference, the first build's and the retry's, skips the separate fsck when the transfer has already done its work (#1557).
 Every object then arrives over the transport, and with `fetch.fsckObjects=true` `index-pack --strict` computes each ID as it receives it, checks each object's structure and fails on a link that does not resolve; fetch's connectivity check covers the ref.

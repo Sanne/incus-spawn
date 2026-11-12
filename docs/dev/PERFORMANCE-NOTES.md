@@ -507,8 +507,42 @@ nixpkgs had 8,980,547 objects in a 3.4 GiB pack; the snapshot is 3.6 GiB.
 
 Within 40 minutes `master`, `release-26.05`, a `backport-*` branch and a `gh-readonly-queue/*` branch moved.
 Before #1980 that made the guest's selection differ from any cold snapshot, which was then discarded for a full network clone in the guest.
-Faster cold paths for such repositories are researched in #1991.
+#1991 measured faster cold paths for such repositories, below.
 Since #1990 a snapshot holds only the branch its template requests, so the other branches moving no longer discard it.
+
+## Git preparation: the cold snapshot of a very large repository (issue #1991)
+
+Measured 2026-11-12 with Git 2.56 on 32 cores, about 7 MiB/s from GitHub, through `bench/GitPreparationBench.java` and the commands it runs ([data](../../bench/data/git-very-large-repository-2026-11-12.json)).
+The fixture is nixpkgs: a host checkout of 9.0 million objects, and a `master` snapshot of 8.4 million objects in 3.24 GB.
+A first version indexed a copy of the export (`index-pack --stdin`), which took 314 s and needed twice the snapshot's size on disk.
+
+| Cold `master` snapshot | Time | Peak RSS |
+| --- | --- | --- |
+| From the checkout, before: fetch, `repack -a -d`, `fsck --full` | 981 s (259 + 716 s) | 5.6 GB |
+| From the checkout, after: fetch, `pack-objects --stdout`, `index-pack --strict` of that pack in place | 302 s (107 + 189 s) | 5.3 GB |
+| No checkout, strict clone from GitHub | 652 s | 3.4 GB |
+| No checkout, strict clone over a loopback `git daemon` | 384 s | 3.1 GB |
+
+A warm build takes 6.6 s either way, 4.9 s of it GitHub's `ls-remote`.
+
+The four options of the issue, decided:
+- **The full fsck is replaced, but not by option (a) as written.**
+  Indexing the repack's pack in place (`index-pack --verify --strict`) took 271 s and 6.8 GB on top of the repack.
+  Streaming the ref's closure out of the borrowing repository and indexing it into an empty one does the repack's work and the check in one pass, as host-source exports already do.
+  It catches the misnamed checkout object that the fsck caught.
+- **The reference stays.**
+  Before, a checkout made the cold snapshot slower than GitHub at 7 MiB/s.
+  Now it is twice as fast, and faster than a loopback clone with no bandwidth limit, whose server-side pack and strict receive alone took 384 s.
+- **The cache limit needs no change.**
+  The default has been 16 GiB since #2097, and #1554's warnings name an eviction or an oversized snapshot.
+  The `master` snapshot is 3.24 GB, barely smaller than every branch's 3.6 GiB.
+- **No up-front warning.**
+  The network path cannot know the size before it fetches.
+  Instead the check now shows its elapsed time and Git's progress, as the fetch does.
+
+On 4 cores (`taskset -c 0-3`) the export took 104 s and the strict index 209 s, about what they take on 32.
+`fsck --full` took 718 s on 4 cores and 716 s on 32: it is effectively serial.
+On a CPU with a quarter less single-thread speed it would pass the 15-minute limit of a local step, and the build would clone from the network instead.
 
 ## Git preparation: one ref instead of every branch (issue #1990)
 
