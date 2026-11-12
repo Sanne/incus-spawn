@@ -49,7 +49,7 @@ A fast operation still costs one wait, which the request budgets pin; `Operation
 ## macOS vsock robustness
 
 The vfkit vsock tunnel (`AF_VSOCK` across `host unix socket → vfkit → in-VM socat → Incus`) does **not reliably propagate connection close/EOF** — particularly after macOS sleep/resume, when in-flight streams are left half-open.
-Where the host-to-guest half of it most likely comes from is in "Where the vsock leak comes from" below.
+Where the host-to-guest half of it comes from is in "Where the vsock leak comes from" below, and the relay that replaces vfkit's is in "The launcher's relay".
 That single fault surfaced in two directions and shaped several design choices:
 
 - **Exec completion is derived from the operation, not the socket.**
@@ -146,10 +146,40 @@ That single fault surfaced in two directions and shaped several design choices:
 ## Where the vsock leak comes from
 
 The mitigations above treat the tunnel's lost closes as a given.
-Reading the code of vfkit and the libraries it is built on points to a concrete cause for the host-to-guest direction.
-This is a source analysis, not yet reproduced on a Mac.
+Most of the bridge that loses them is open source, and reading it points to a concrete cause for the host-to-guest direction.
+That cause is confirmed: a relay with vfkit's logic in front of a real vsock on Linux fails the same two checks, with the same counts, as vfkit does on a Mac.
+This section is the record of every tunnel fault isx works around, who owns the code at fault, and what follows (#785, #2030, #2031).
+It does not list the bugs fixed under #774: those were isx's own parsers, which read an EOF from a lossy tunnel as a normal end.
 
-### A close from isx never reaches the guest
+### Who owns which part of the tunnel
+
+```
+isx  -- unix socket -->  vfkit  -->  Virtualization.framework  -- virtio-vsock -->  guest kernel  -->  socat forwarder  -->  Incus
+```
+
+| layer | project | where to engage |
+|---|---|---|
+| host client | isx (`UnixSocketTransport`, `KeepAliveConnection`, `IncusApi`) | here |
+| host Unix socket to vsock bridge | crc-org/vfkit `pkg/vf/vsock.go` (v0.6.4, Apache-2.0) | GitHub |
+| the proxy loop inside that bridge | inetaf/tcpproxy, which vfkit pins at `c4b9df0` (Apache-2.0) | GitHub |
+| Go bindings to Apple's framework | Code-Hex/vz v3.7.1, which vfkit pins (MIT) | GitHub |
+| the hypervisor's vsock device | Apple Virtualization.framework (`VZVirtioSocketDevice`), closed source | Feedback Assistant only |
+| guest vsock and forwarder | the appliance kernel and `socat -T 180` (`isx-start-vsock-forwarder`) | here |
+
+So "Apple's vsock is brittle" is not established.
+Three of the four layers between isx and the guest are open source, and the one fault that has been pinned down is in them.
+
+### The faults, and what isx does about each
+
+| # | symptom | seen in | what isx does today |
+|---|---|---|---|
+| P1 | A connection the host closes does not close in the guest. The forwarder's `socat` children and vfkit's fds on `vm.incus.sock` pile up, and new connections slow down (a sub-second `isx list` took about 30 s). | #253, #676, #791, #2031 | the `socat -T 180` backstop; `ConnectionPool` to cut churn; `isx doctor`'s leak localization; the agent's `forwarder-restart` |
+| P2 | vfkit stops serving `vm.incus.sock` while the agent socket on the same vsock device works. `connect()` succeeds, then no byte arrives, and the guest never sees the connection. Only a VM restart recovers. | #253, #676, #791, #1874 | `LeakLayer.VFKIT` detection; fail fast with "run `isx vm restart`" |
+| P3 | Exec WebSocket close frames do not arrive, and an interactive shell's teardown stalls about 8 s. | #254 | completion from the operation's `/wait`; the adaptive drain and force-close; keepalive pings on every fd |
+| P4 | Streams go half-open across macOS sleep and resume. Reads block forever and shells die. | #248, #253 | keepalive pings; the event stream's silence limit (50 s); request watchdogs; reconnect in `InstanceEventWatcher` |
+| P5 | vfkit's `--timesync` does not reliably set the guest clock after wake. The guest clock ran 32 h behind. | #204, #290 | chrony in the guest; the `isx.time` seed at boot |
+
+### A close from isx never reaches the guest (P1)
 
 vfkit relays each connection on `vm.incus.sock` to the guest with `inetaf/tcpproxy` (`pkg/vf/vsock.go`, `connectVsock`).
 Two behaviours combine:
@@ -170,6 +200,57 @@ Connections opened faster than those timeouts reap them pile up as vfkit-held ho
 isx never half-closes on purpose: `UnixSocketTransport` must not call `shutdownOutput()`, because Incus cancels the request on a half-close.
 So the tunnel has no use for half-close, and closing both sides on the first EOF is correct for it.
 
+**On a Mac the loss is one-directional.**
+A close the host makes is lost, and a close the guest makes crosses (Apple M2 Pro, vfkit v0.6.4, 2026-09-27, #791).
+A keep-alive `GET /1.0` that the host then closed left its forwarder child until about 30 s later, incusd's idle close, which is a guest-side close.
+A connection the host opened and closed without sending a byte held the whole Incus API for about 179 s, until `socat -T 180` reaped it.
+That was an appliance from before #1313, whose incusd waited on a silent connection.
+Since 2026-10-23 the Mac runner fails two checks of `appliance/test-tunnel.sh` through vfkit on every run, with every other check passing:
+
+```
+forwarder children exit with their connections (count 52, baseline 4)
+their forwarder children exited with them (count 58, baseline 4)
+```
+
+**The same counts come out on Linux, from the relay's logic alone** (2026-11-11, #2031).
+The v0.5.0 appliance was booted under QEMU with `vhost-vsock-pci`, as `integration-tests` boots it, and the unmodified `test-tunnel.sh` was run through different bridges:
+
+| bridge between the host sockets and the guest's vsock ports | the two forwarder checks |
+|---|---|
+| `socat UNIX-LISTEN:…,fork VSOCK-CONNECT:3:<port>`, CI's bridge until #2031 | pass, count 1, baseline 1 |
+| tcpproxy's `DialProxy` at vfkit v0.6.4's commit, the vsock side wrapped as vz v3.7.1 wraps it | fail, 52/4 and 58/4 |
+| the same `socat` with `ignoreeof` on the listening side | fail, 52/4 and 58/4 |
+| the same tcpproxy, the vsock side given `CloseWrite()` and `CloseRead()` | pass, 1/1 |
+| a relay that closes both sides on the first EOF, in Go and in Swift | pass, 1/1 |
+
+The numbers are arithmetic.
+The baseline is read after three API requests, so 4 is the listener and three leaked children.
+52 adds the 48 requests of the two bursts (16 and 32), and 58 adds the six requests of the next section.
+Through the vfkit-like relay a leaked child lived about 32 s, until incusd's idle close, as on the Mac.
+So P1 needs no fault in Virtualization.framework, and either change to the relay clears it.
+
+### vfkit can stop serving one socket (P2)
+
+This one is read from source and seen on a Mac, and it is not reproduced on Linux.
+
+tcpproxy's `serveListener` returns on the first `Accept()` error and never accepts again.
+The error is reported only through `Proxy.Wait()`.
+vfkit starts one proxy per vsock socket, keeps only its `Close()` and never calls `Wait()`, so the error is neither logged nor acted on (`cmd/vfkit/main.go`, `pkg/vf/vsock.go`).
+The listening socket stays open, so a client's `connect()` still succeeds into the backlog and nothing serves it.
+The agent socket has a proxy of its own and keeps working, which is the picture of #676.
+Which `Accept()` error would start it is unknown: Go already retries `ECONNABORTED` and raises `RLIMIT_NOFILE`, and vfkit logs nothing.
+
+On the Mac, about 70 concurrent `GET /1.0` wedged vfkit's side of the tunnel (2026-09-27, #791).
+`forwarder-restart` reset the guest's count and the API stayed unreachable, with vfkit holding 6 fds on `vm.incus.sock` against 2 forwarder processes in the guest.
+Only `isx vm restart` cleared it.
+A later run wedged at bursts of 32, 3 times in 24 runs of `test-tunnel.sh`, and in 4 more runs a burst lost one request without a wedge (2026-10-31, #1874).
+About one request in a burst of 32 came back as `Empty reply from server` within 0.1 ms (#1313).
+
+None of this happens on Linux through the vfkit-like relay.
+Bursts of 32, 70, 100 and 120 concurrent requests, repeated, never lost one, and with 3,992 leaked children in the guest a `GET /1.0` still took 1.7 ms.
+So the wedge, the lost requests and the slow `isx list` are not the relay's close logic.
+They are in vfkit's or vz's process, or in the framework, and only a Mac shows them.
+
 ### A second suspect: who owns the vsock fd
 
 vz duplicates the framework's fd (`net.FileConn`) and then closes the original itself (`socket.go`, `newVirtioSocketConnection`).
@@ -180,31 +261,99 @@ This is unconfirmed.
 
 ### What may still be Virtualization.framework's
 
-Whether the framework reliably turns a guest-side close into EOF on the host fd, in particular across sleep and resume, is internal to Apple and cannot be read from source.
-The "particularly after sleep/resume" observation may be such a separate fault.
-It may also be the leak above, made visible by a backlog that builds up while the Mac sleeps.
+Whether the framework carries a close the host makes on its descriptor to the guest cannot be read from source, and no relay can repair it if it does not.
+vfkit never makes that close, so the Mac data so far does not answer it.
+The same holds for sleep and resume: the half-open streams of P4 may be a separate fault of the framework.
+They may also be the leak above, made visible by a backlog that builds up while the Mac sleeps.
+Both are measured on a Mac with a relay that does close (#2031 stage 2).
 
-### How to confirm it, and what follows
+### What follows
 
-The check is to send one keep-alive `GET /1.0` to `vm.incus.sock` and close it.
-The guest's socat child count (agent `socat-count`) should then stay up until incusd's idle close, instead of dropping at once.
-Running the same check against a vfkit whose vsock connection implements `CloseWrite()`, or closes both sides on the first EOF, separates this cause from Apple's part.
-
-Two fixes follow, and they are not exclusive:
-
-- **Patch the relay upstream.**
-  Adding `CloseWrite()` and `CloseRead()` to vz's `VirtioSocketConnection` fixes the leak, if the framework turns `shutdown(SHUT_WR)` into a vsock shutdown.
-  Closing both sides on the first EOF does not depend on that.
-  It waits on vz and vfkit releases and then on Homebrew.
-- **Replace vfkit with an isx launcher.**
-  A small Swift binary on Virtualization.framework covers the devices isx uses: three virtio-blk disks, NAT networking with a fixed MAC, a serial log, one virtio-fs share and two vsock ports.
-  Its relay closes both sides on the first EOF and closes through the framework's `close()`, so fd ownership is never in doubt.
-  It can also drop relayed connections on wake, report its connection counts instead of the `lsof` guess in `leakLayer()`, and make the home share read-only at the hypervisor, which vfkit cannot (crc-org/vfkit#495).
+- **isx replaces vfkit with a launcher of its own** (#2031, decided).
+  A small Swift program on Virtualization.framework, `isx-vm`, boots the VM and relays its two vsock ports with the relay of the next section.
+  It removes vfkit, vz and tcpproxy from the path, so P1, P2 and P5 are no longer another project's code.
+  It lands in three stages: the relay, tested on Linux and used as CI's bridge; a prototype measured against vfkit on the Mac runner, which is a go or no-go; then the shipped launcher.
   The cost is a third macOS binary to build, sign with the `com.apple.security.virtualization` entitlement and ship, and the session handling `VmManager` does for vfkit today.
+- **The upstream reports are still worth filing.**
+  Adding `CloseWrite()` and `CloseRead()` to vz's `VirtioSocketConnection` fixes P1 for every vfkit user, if the framework turns `shutdown(SHUT_WR)` into a vsock shutdown.
+  Closing both sides on the first EOF does not depend on that.
+  The Linux reproduction above is a self-contained report for Code-Hex/vz and crc-org/vfkit; no report existed in vfkit, vz or tcpproxy when searched (2026-09-26).
+  isx does not wait for it: a fix has to pass a vz release, a vfkit release and Homebrew, and isx pins no minimum vfkit version.
+- **No compensation is retired because a fix shipped.**
+  `/wait`-based completion, the request and handshake watchdogs and strict parsing are correct on any transport and stay.
+  `socat -T 180`, the leak-layer diagnosis, the pool's TTL and `forwarder-restart` exist only because of P1 and P2.
+  Each is retired by itself, with Mac evidence, once the launcher is the only relay a supported isx runs.
 
 vfkit itself is maintained but slow: in the year to November 2026 it had 19 commits by people, all from its two maintainers, and outside pull requests waited months.
 No fork is more active.
 The alternatives fit less well: krunkit is a different engine that hardcodes a writable virtio-fs share as well, and Lima and Tart are whole VM managers.
+
+## The launcher's relay
+
+A connection isx closes is closed in the guest at once, so nothing piles up for a timeout to reap.
+That is what the relay in `launcher/` is for (#2031).
+Until the launcher ships, a Mac still runs vfkit's relay, and the relay here runs only in tests and as CI's bridge.
+
+`launcher/` is a Swift package, outside the Maven build.
+Its module `IsxRelay` holds the relay and imports no framework, only the C library and `Synchronization` for one mutex.
+A connection to the guest is whatever file descriptor a `dial` function returns, and `hangUp` gives it back to whoever owns it.
+On a Mac those two will be Virtualization.framework's `connect(toPort:)` and `VZVirtioSocketConnection.close()`.
+On Linux they are an `AF_VSOCK` socket to a QEMU guest and `close()`, in `isx-vsock-bridge`, which CI runs.
+So the code that decides when a connection ends is the same in both places.
+
+- **The first side to end ends the connection.**
+  When a read from either side returns EOF or an error, the relay stops copying, calls `shutdown(SHUT_RDWR)` on the guest's descriptor and closes both descriptors, each once.
+  The shutdown tells the guest at once, whatever `hangUp` then does with the descriptor.
+  What was read from a side is written whole before that side is read again, so a reply the guest sent just before closing arrives complete.
+- **A write that fails does not end it.**
+  The side that refused the write has stopped reading, and it may have answered first: Incus does that when it turns an upload down while isx is still sending.
+  The relay's write to the guest then fails before the other direction has carried the answer to the host.
+  So that direction reads on and drops what it reads, and the connection ends when either side's read ends.
+  A relay that closed both sides at the failed write lost the answer in about one of five such connections (`testAnAnswerArrivesFromAGuestThatClosesWhileTheHostStillSends`).
+  What this gives up: the sender is not told at once that its bytes go nowhere, only when the side that refused them ends.
+- **It gives up half-close.**
+  A client that shut down its write side and waited for a reply would lose the reply.
+  No client of the tunnel does that: `UnixSocketTransport` never half-closes, since Incus cancels a request on one, and `VmAgentClient` keeps its write side open until the agent hangs up.
+  A new tunnel client must do the same.
+  In return the relay does not depend on the framework carrying `SHUT_WR`, which nobody has measured.
+- **The accept loop does not end on an error.**
+  It retries `EINTR` and `ECONNABORTED` at once.
+  When the process is out of descriptors or memory it reports the error once, waits 100 ms and accepts again, so the connection waiting in the backlog is served when there is room.
+  It returns only when the listener is no longer a listening socket, and the caller treats that as fatal.
+  A loop that ends on its first error leaves a socket that accepts connections and serves none, which is the suspected cause of P2.
+- **Each connection has one thread of its own, and it waits only in `poll()`.**
+  The thread carries both directions, and its reads and writes never wait (`MSG_DONTWAIT`), so no call of one thread has to end a call of another.
+  The first version did depend on that: a thread per direction, each in a blocking `read()`, and a `shutdown()` to end the other's read.
+  On macOS it kept a connection the guest had closed, the host still sending into it, in 3 of 600 rounds, until the host closed too.
+  That is the fault this relay exists to remove, and Linux never showed it.
+  The cause is in XNU, read in the published source (xnu-11417): `soreceive()` on a Unix socket can release the socket's lock in `uipc_rcvd()` just before it sleeps, and then sleeps without looking at the socket's state again.
+  A `shutdown()` from another thread in that window wakes nobody, and what the peer sends afterwards is dropped without a wakeup.
+  What this gives up: an extra `poll()` call for each read.
+- **It asks `poll()` only about a descriptor a direction waits for.**
+  A direction waits for its source to be readable or, while bytes it read are still unwritten, for its destination to be writable.
+  A side that closed is reported on every `poll()` call, asked for or not.
+  Its end must wait while bytes read from it are unwritten, so a relay that kept it in the call would spin until the other side took them (`testWhatAHostSentBeforeClosingWaitsForAGuestThatReadsLate`).
+- **The thread is never a Dispatch queue's.**
+  It waits for as long as its connection lives, and a Dispatch queue's pool is bounded, so a few dozen held connections would stop every later one.
+  When no thread can be made, the connection is closed and counted as refused.
+- **It counts what it holds.**
+  `waiting`, `held`, `total` and `refused` per socket are what the launcher's control socket will report in place of the `lsof` guess in `leakLayer()` (stage 3).
+  `waiting` is the host connections whose `dial` has not returned: a guest that stopped answering shows there, where `held` stays at zero.
+  The bridge prints them on `SIGUSR1`.
+- **The socket is the user's alone.**
+  `Relay.listen` sets mode `0600` before it listens, replaces a socket a killed process left behind, and refuses to remove anything that is not a socket.
+  It does not check whether a live process still listens there, so running one launcher per VM is the caller's job (stage 3).
+  A path too long for a socket address is an error, never truncated to another path.
+
+The package's tests drive the relay over socket pairs, with no VM (`swift test`, in `launcher-linux` and `launcher-macos`).
+The regression test is `testAHostCloseReachesTheGuest`: the guest's end must see the end within a second of the host closing.
+With the relay changed to vfkit's logic that test fails, and so do the guest-close test and the burst test, which finds 128 connections still held.
+`testAnAnswerArrivesFromAGuestThatClosesWhileTheHostStillSends` runs 400 rounds, which is what showed the macOS fault above in `launcher-macos`.
+Over a real vsock, `integration-tests` runs the unmodified `appliance/test-tunnel.sh` through the bridge, then requires that the bridge holds no connection and none is waiting.
+Linux differs from macOS in one place the tests allow for: Linux reserves a descriptor for `accept()` before it blocks, so at the limit an accept already waiting still takes one connection.
+
+What CI cannot show is the framework's half: that a close on its descriptor reaches the guest, and how the relay behaves under bursts, held connections and sleep on a Mac.
+Stage 2 measures those against vfkit on the Mac runner before anything ships.
 
 ## The macOS VM outlives whatever started it
 
