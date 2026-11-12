@@ -421,10 +421,11 @@ agent_turn() {
                 else mkdir -p "${s%/*}" && printf "{\"defaultProvider\": \"openai\"}\n" > "$s"; fi
                 exec timeout "$1" "$2" -p --mode json ${5:+--provider openai --model "$5"} $c "$(cat "$4")"' \
                 sh "$TURN_TIMEOUT" "$AGENT_BIN" "$first" "$msg" "$AGENT_MODEL" ;;
+        # Headless Gemini CLI 0.68 refuses a folder it has not been told to trust, yolo or not.
         gemini)
             AS_GROUPS=$AGENT_GROUPS as_person ${AGENT_ENV[@]+"${AGENT_ENV[@]}"} -- sh -c '
                 c=; [ "$3" = first ] || c="--resume latest"
-                exec timeout "$1" "$2" -o stream-json --approval-mode yolo ${5:+-m "$5"} $c -p "$(cat "$4")"' \
+                exec timeout "$1" "$2" -o stream-json --approval-mode yolo --skip-trust ${5:+-m "$5"} $c -p "$(cat "$4")"' \
                 sh "$TURN_TIMEOUT" "$AGENT_BIN" "$first" "$msg" "$AGENT_MODEL" ;;
         # Without --auto, opencode run rejects every permission request.
         opencode)
