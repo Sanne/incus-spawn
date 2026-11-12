@@ -373,13 +373,10 @@ person_acts() {
         if [ -n "$templates" ]; then
             APPROVED=$turn
             as_person sh -c 'mkdir -p ~/.config/incus-spawn && printf "templates: [%s]\n" "$1" > ~/.config/incus-spawn/mcp.yaml' sh "$templates"
-            # isx mcp setup also registers isx mcp with Claude Code when it is installed; so does the
-            # person. Whether the agent registered itself first is recorded before, so the report
-            # does not credit the agent with the person's registration.
+            # The person writes mcp.yaml and nothing else: registering isx in the agent's own client
+            # is the agent's step, for Claude Code as for every other agent (#2178), so the pass
+            # never rests on a registration the harness made. When it came is recorded here.
             if [ -z "$REGISTERED" ] && mcp_registered; then REGISTERED="by the agent, before turn $((turn + 1))"; fi
-            as_person sh -c 'command -v claude >/dev/null || exit 0
-                claude mcp list 2>/dev/null | grep -q "^isx:" || claude mcp add --scope user isx -- "$(command -v isx)" mcp' \
-                >> "$OUT/person.log" 2>&1 || true
             echo "turn $turn: approved templates [$templates] in mcp.yaml" >> "$OUT/person.log"
             echo "I approved these templates for MCP: $templates. Carry on."
             return
@@ -608,10 +605,7 @@ END=$(date +%s)
 
 # Read before the debrief, so a command the agent runs during it does not change the outcome.
 OWN_TOOL=$(own_tool_template)
-if [ -z "$REGISTERED" ] && mcp_registered; then
-    if [ -n "$APPROVED" ] && [ "$AGENT" = claude ]; then REGISTERED="by the person's isx mcp setup, after turn $APPROVED"
-    else REGISTERED="by the agent"; fi
-fi
+if [ -z "$REGISTERED" ] && mcp_registered; then REGISTERED="by the agent${APPROVED:+, after turn $APPROVED}"; fi
 PLAN=$(as_person isx init --plan --format=json 2>/dev/null || true)
 FINAL_LIST=$(as_person isx list 2>&1 || true)
 
