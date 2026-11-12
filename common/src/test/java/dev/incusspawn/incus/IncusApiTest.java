@@ -4,7 +4,11 @@ import dev.incusspawn.config.Jjq;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import io.hyperfoil.tools.jjq.value.JqValues;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -31,6 +35,18 @@ class IncusApiTest {
         // In an environment without any Incus socket, the message describes what to do
         // In an environment WITH a socket, the message describes the specific failure
         System.out.println("Diagnosis: " + msg.strip());
+    }
+
+    @Test
+    void aSocketThisProcessMayNotWriteIsDenied(@TempDir Path dir) throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeFalse("root".equals(System.getProperty("user.name")), "root may write anything");
+        var open = Files.createFile(dir.resolve("open.socket"));
+        var refused = Files.createFile(dir.resolve("refused.socket"));
+        Files.setPosixFilePermissions(refused, PosixFilePermissions.fromString("r--r-----"));
+        var missing = dir.resolve("missing.socket").toString();
+        assertTrue(IncusApi.socketDenied(List.of(missing, refused.toString())));
+        assertFalse(IncusApi.socketDenied(List.of(refused.toString(), open.toString())));
+        assertFalse(IncusApi.socketDenied(List.of(missing)), "no socket is not a refusal");
     }
 
     @Test

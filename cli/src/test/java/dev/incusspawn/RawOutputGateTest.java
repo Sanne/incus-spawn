@@ -150,6 +150,7 @@ class RawOutputGateTest {
             Map.entry("cli/src/main/java/dev/incusspawn/command/CredentialSetup.java", "'claude setup-token', whose prompts reach the user"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/DoctorCommand.java", "an interactive remediation the user chose"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/InitCommand.java", "host setup commands, shown as they run, and stdin for a sudo prompt"),
+            Map.entry("cli/src/main/java/dev/incusspawn/command/GroupContinuation.java", "the whole command run again under sg, on this process's streams (#2167)"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/TemplatesCommand.java", "the user's editor"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/LogFollower.java", "follows a log on the terminal, from the CLI alone"),
             Map.entry("cli/src/main/java/dev/incusspawn/command/CowPoolBacking.java", "host pool commands, shown as they run"),
