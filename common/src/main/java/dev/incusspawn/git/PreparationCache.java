@@ -30,19 +30,30 @@ final class PreparationCache {
     private static final Map<Path, Lease> ACTIVE = new HashMap<>();
     private final Path root;
     private final GitCacheConfig policy;
+    /** Allows for Git's 15-minute commands and retry/fsck; far beyond {@link HostLock#TIMEOUT}. */
+    static final java.time.Duration WRITER_TIMEOUT = java.time.Duration.ofHours(2);
+    private final java.time.Duration writerTimeout;
 
     PreparationCache(Path root, GitCacheConfig policy) throws IOException {
+        this(root, policy, WRITER_TIMEOUT);
+    }
+
+    /** The writer wait is a parameter so a test need not wait out the real one. */
+    PreparationCache(Path root, GitCacheConfig policy, java.time.Duration writerTimeout) throws IOException {
         Files.createDirectories(root);
         this.root = root.toRealPath();
         Files.setPosixFilePermissions(this.root, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
         this.policy = policy;
+        this.writerTimeout = writerTimeout;
     }
+
+    java.time.Duration writerTimeout() { return writerTimeout; }
 
     HostLock writer(String key) {
         // A stable inode per URL: unrelated preparations never compete for a stripe. Do not unlink
         // a lock another process may have open. Allow for Git's 15-minute commands and retry/fsck.
         return HostLock.acquire(root.resolve("locks/" + key + ".lock"), "preparing this Git repository",
-                s -> {}, java.time.Duration.ofHours(2));
+                s -> {}, writerTimeout);
     }
 
     private HostLock catalogue() {
