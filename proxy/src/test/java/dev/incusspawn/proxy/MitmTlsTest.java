@@ -57,7 +57,7 @@ class MitmTlsTest {
         originalHome = System.getProperty("user.home");
         System.setProperty("user.home", home.toString());
         Files.createDirectories(home.resolve(".config/incus-spawn"));
-        vertx = Vertx.vertx();
+        vertx = ProxyTransport.vertx();
     }
 
     @AfterEach

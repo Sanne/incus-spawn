@@ -846,6 +846,12 @@ jobs:
             fi
             sleep 1
           done
+          # Every test below then runs over Netty's native epoll transport, as users do (#475)
+          if ! grep -q 'transport native (EpollTransport)' ~/.local/state/incus-spawn/proxy.log; then
+            grep 'Starting proxy' ~/.local/state/incus-spawn/proxy.log || true
+            echo "::error::The proxy is not running on the native epoll transport"
+            exit 1
+          fi
 
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0

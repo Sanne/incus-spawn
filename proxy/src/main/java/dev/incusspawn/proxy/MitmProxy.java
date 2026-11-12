@@ -1245,10 +1245,24 @@ public class MitmProxy {
         }
     }
 
-    private static boolean isBindException(Exception e) {
+    /** {@code EADDRINUSE}: 98 on Linux, 48 on macOS and the BSDs. */
+    private static final int EADDRINUSE = Platform.isMacOS() ? 48 : 98;
+    /** {@code ECONNRESET}: 104 on Linux, 54 on macOS. */
+    static final int ECONNRESET = Platform.isMacOS() ? 54 : 104;
+    /** {@code EPIPE}: 32 on Linux and macOS. */
+    static final int EPIPE = 32;
+
+    /**
+     * Whether a bind failed because the port is in use. Java NIO says so with a
+     * {@link java.net.BindException}; Netty's native transports, which the proxy runs on
+     * (#475), with their own {@code NativeIoException} carrying the negated errno.
+     */
+    private static boolean isBindException(Throwable e) {
         Throwable cause = e;
         while (cause != null) {
             if (cause instanceof java.net.BindException) return true;
+            if (cause instanceof io.netty.channel.unix.Errors.NativeIoException nativeError
+                    && nativeError.expectedErr() == -EADDRINUSE) return true;
             cause = cause.getCause();
         }
         return false;
@@ -1257,14 +1271,21 @@ public class MitmProxy {
     /**
      * Whether a server-level exception is an expected connection teardown rather
      * than a real fault. Containers close connections abruptly (RST, half-close,
-     * TLS abort) on process exit or timeout, which Netty surfaces here as
-     * {@link java.net.SocketException} ("Connection reset", "Broken pipe") or a
-     * closed-channel error. These carry no useful stack trace.
+     * TLS abort) on process exit or timeout, which Netty surfaces here as an
+     * {@link java.io.IOException} saying "Connection reset" or "Broken pipe" (a
+     * {@link java.net.SocketException} on NIO; on epoll a {@code NativeIoException}, matched by
+     * its errno, #475) or a closed-channel error. These carry no useful stack trace.
      */
-    private static boolean isBenignConnectionError(Throwable err) {
+    static boolean isBenignConnectionError(Throwable err) {
         Throwable cause = err;
         while (cause != null) {
             if (cause instanceof java.nio.channels.ClosedChannelException) return true;
+            // On epoll the message is strerror's, which a non-English locale translates:
+            // match the errno instead (#475).
+            if (cause instanceof io.netty.channel.unix.Errors.NativeIoException nativeError
+                    && (nativeError.expectedErr() == -ECONNRESET || nativeError.expectedErr() == -EPIPE)) {
+                return true;
+            }
             var msg = cause.getMessage();
             if (msg != null) {
                 var m = msg.toLowerCase(java.util.Locale.ROOT);

@@ -902,9 +902,36 @@ The rules for what comes next, agreed with the decision on #935:
 - A new capability (per-instance routes, header grants, leases) is data in one of those two stores, with its copy rule stated: a stamp is no-inherit, stripped by `configureBranch` on every copy in the same change, as `mcp.caller` is.
 - An operation that changes them is done by `isx` (the CLI and `isx mcp` tools): validate, write the store, signal the proxy, as `isx account set` does.
   The proxy may itself write to Incus later, but only `PATCH`ing `user.incus-spawn.*` stamps of instances the registry lists, never devices, profiles or lifecycle, through a narrow wrapper around `IncusClient`, and only from a host-side admin surface that no bridge-facing handler (MITM routing, the WebSocket relay, `McpBridge`) can reach, pinned by a static test as `McpNoWritePathTest` pins the MCP package.
-- That surface is authenticated, not address-gated: the source address (`isHostCaller`) is enough for reads such as `/activity`, but a write needs a bearer secret in an owner-only file in the state directory, on a loopback listener or a JDK domain socket (Vert.x needs its native transport for domain-socket listeners, which the proxy does not use).
+- That surface is authenticated, not address-gated: the source address (`isHostCaller`) is enough for reads such as `/activity`, but a write needs a bearer secret in an owner-only file in the state directory, on a loopback listener or a JDK domain socket (Vert.x needs its native transport for domain-socket listeners, which the proxy has on Linux only).
 - Every grant expires: the proxy enforces the expiry on read, revoking is the fast path and expiry the safety net for a coordinator that dies, and a grant without one is refused.
 Until a resource to lease exists, only the read side ships; the health server stays read-only (`MitmProxy.healthRoute`).
+
+## The socket transport: epoll on Linux
+On Linux the proxy runs Vert.x on Netty's native epoll transport, not Java NIO (#475).
+On the cached Maven path it serves 3 to 15% more requests per second, at a cost of 2.5% in binary size (docs/dev/PERFORMANCE-NOTES.md "Native socket transport (issue #475)").
+An OS- and arch-activated profile in `proxy/pom.xml` adds `netty-transport-native-epoll` for the build's architecture and sets `quarkus.vertx.native-transport=if-available`.
+A build without one, such as macOS's, keeps the native transport disabled, so Quarkus does not warn at every start that no native transport was found.
+Its JAR carries the JNI library for one architecture only.
+The uber-jar that JBang installs is built once, on Linux x86_64, and runs on every platform, so its build (`-Prelease`) keeps the native transport disabled and runs on NIO.
+With it on, every start on macOS or Linux aarch64 would warn that epoll did not load.
+At startup Netty unpacks the library into `java.io.tmpdir` and loads it.
+Where that fails, on a `/tmp` mounted without exec rights for example, the proxy runs on NIO instead of refusing to start.
+The proxy log's startup line names the transport in use, or the reason the native one did not load.
+
+What differs on epoll is the exceptions a socket error raises.
+A port still held fails a bind with Netty's `NativeIoException` carrying `EADDRINUSE`, not a `BindException`, so `MitmProxy.isBindException` matches both.
+Without that, a restart whose old proxy still held its ports would fail at once instead of waiting for it.
+The bind tests in `MitmTlsTest` and `ForeignHolderBindTest` run on the native transport (`ProxyTransport`), and the other proxy tests run on NIO.
+The native integration job fails when its proxy is not on epoll, so its whole suite runs over the transport users have.
+The release smoke test fails a Linux proxy binary that does not contain the epoll transport.
+
+Rejected, for now:
+- **io_uring**: it measured 46 to 61% more throughput on the cached Maven path, with p99 a third lower.
+  It also exposes the host kernel's io_uring code to the process that handles guest traffic.
+  Where io_uring is disabled, Quarkus falls back to NIO, not to epoll.
+  The current direction is epoll for now, with io_uring not pursued (#475, 2026-11-13).
+- **kqueue on macOS**: not measured yet, so not shipped.
+- **`required` instead of `if-available`**: a host that cannot load the library would then lose its proxy, not just the speedup.
 
 ## Host routes
 An agent in a box needs to reach whatever coordinates it (ask for a review, file a report) without going through GitHub, and without leaving proxy-only mode (#936).

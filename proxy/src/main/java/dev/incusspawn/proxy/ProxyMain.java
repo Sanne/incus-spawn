@@ -13,6 +13,7 @@ import io.quarkus.arc.Arc;
 import io.quarkus.runtime.QuarkusApplication;
 import io.quarkus.runtime.annotations.QuarkusMain;
 import io.vertx.core.Vertx;
+import io.vertx.core.internal.VertxInternal;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -101,10 +102,13 @@ public class ProxyMain implements QuarkusApplication {
         var creds = proxy.credentials();
 
         var build = BuildInfo.instance();
-        ProxyLog.info("Starting proxy " + build.displayVersion() + " (" + build.gitSha() + ") " + build.runtime());
+        var transport = transport(vertx);
+        ProxyLog.info("Starting proxy " + build.displayVersion() + " (" + build.gitSha() + ") " + build.runtime()
+                + ", transport " + transport);
         ProxyLog.stdout("Starting MITM authentication proxy...");
         ProxyLog.field("Version", build.displayVersion() + " (" + build.gitSha() + ")");
         ProxyLog.field("Runtime", build.runtime());
+        ProxyLog.field("Transport", transport);
         if (!Platform.isMacOS()) {
             ProxyLog.field("Incus", build.incusClient() + " (client) / " + build.incusServer() + " (server)");
         }
@@ -526,4 +530,31 @@ public class ProxyMain implements QuarkusApplication {
 
     private static final Pattern BENCH_UPSTREAM_ENTRY =
             Pattern.compile("([^=\\s]+)=([^:\\s]+):(\\d{1,5})");
+
+    /**
+     * Which socket transport Vert.x runs on, for the startup log: Netty's native epoll where
+     * it loaded (#475), else Java NIO with the reason the native one did not.
+     */
+    static String transport(Vertx vertx) {
+        if (vertx.isNativeTransportEnabled()) {
+            return vertx instanceof VertxInternal internal
+                    ? "native (" + internal.transport().getClass().getSimpleName() + ")" : "native";
+        }
+        var cause = vertx.unavailableNativeTransportCause();
+        // Quarkus hands Vert.x a native transport only once it loaded, so Vert.x has no cause
+        // of its own for a fallback: ask the transport itself why it did not load. Only a build
+        // that asked for one does (the linux-epoll profiles); asking otherwise would load a
+        // library the build turned off and blame it (the uber-jar, macOS).
+        if (cause == null && nativeTransportRequested()) {
+            var wanted = io.vertx.core.transport.Transport.nativeTransport();
+            if (wanted != null) cause = wanted.unavailabilityCause();
+        }
+        return cause == null ? "NIO" : "NIO (native unavailable: " + cause + ")";
+    }
+
+    /** The build's {@code quarkus.vertx.native-transport}, mirrored in {@code isx.native-transport}. */
+    private static boolean nativeTransportRequested() {
+        return !"disabled".equals(org.eclipse.microprofile.config.ConfigProvider.getConfig()
+                .getOptionalValue("isx.native-transport", String.class).orElse("disabled"));
+    }
 }

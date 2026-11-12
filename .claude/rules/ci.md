@@ -63,7 +63,8 @@ Key jobs:
   The container is pinned by the digest of its multi-arch index, and the upstream watch does not track it, so a newer Swift is a bump by hand.
 - **`launcher-macos`** (`macos-15`): `swift test` on the same package with the runner's Xcode toolchain, so the relay's Darwin half (its threads, `SO_NOSIGPIPE`, how a closed listener ends `accept`) is compiled and tested on every PR.
   It boots no VM: a hosted macOS runner has no Virtualization.framework guest to relay to.
-- **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-podman-rootless`, `tpl-test-vm`, `tpl-test-codex`, `tpl-test-mcp`, `tpl-test-ssh`), then runs test scripts inside branched instances.
+- **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy (and fails unless its log says it runs on the epoll transport, #475), builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-podman-rootless`, `tpl-test-vm`, `tpl-test-codex`, `tpl-test-mcp`, `tpl-test-ssh`), then runs test scripts inside branched instances.
+  `release.yml`'s native smoke step fails a Linux proxy binary that does not contain `EpollTransport`, since one without it still runs, on NIO.
   `test-proxy-only.sh` is the only real check of the proxy-only boundary (#1137): branches of `tpl-minimal` (no iptables) and `tpl-test-vm` must reach the proxy and nothing else after `isx branch`, after `incus restart`, and on a `--no-start` branch first started by `incus start`.
   It needs Incus's nftables firewall driver on the runner
 - **`host-distro (arch)`, `host-distro (arch-ufw)`, `host-distro (ubuntu-ufw)`**: isx on hosts as users install them (#1972).

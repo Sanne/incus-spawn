@@ -267,6 +267,13 @@ jobs:
           # Proxy --help: must exit 0
           "$PROXY" --help > /dev/null
 
+          # Linux: the proxy carries Netty's native epoll transport (#475). Without it the
+          # proxy still runs, on NIO, so nothing else would notice a missing dependency.
+          if [ "${{ matrix.os }}" = linux ] && ! grep -qa EpollTransport "$PROXY"; then
+            echo "::error::$PROXY does not contain Netty's epoll transport"
+            exit 1
+          fi
+
           # templates list: exercises YAML resource bundling and definition parsing
           TEMPLATES_OUTPUT=$("$CLI" templates list)
           echo "$TEMPLATES_OUTPUT"

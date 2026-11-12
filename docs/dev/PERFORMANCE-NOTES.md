@@ -944,6 +944,39 @@ The question was whether Vert.x's own stream queue can pause an HTTP/1.1 client 
 The 2000-chunk case loses nothing on NIO because Vert.x turns auto-read off once 8 messages are pending, so the close is read only after the queue drains.
 Across the proxy's unit tests (965 tests, 433 HTTP/1.x responses held by `ResponseHold`) no response ran off its connection's loop.
 
+## Native socket transport (issue #475)
+
+Measured on 2026-11-13 in a Linux container box (nested Incus 6.23), x86_64, 32 CPUs, kernel 7.3.3, with no other work on the host.
+Three native proxies were built with Oracle GraalVM 25.4, `-O3 -march=haswell`, G1, and no PGO.
+`nio` is `main` at `da960615`, `epoll` adds `netty-transport-native-epoll` with `quarkus.vertx.native-transport=if-available`, and `uring` adds io_uring on top with `native-transport-type=io-uring`.
+`bench/run.sh` ran them interleaved, `maven` three times each and `saturate` twice each, and every run had 100% 2xx.
+The raw runs are in [bench/data/proxy-transport-2026-11-13.json](../../bench/data/proxy-transport-2026-11-13.json).
+
+`maven`, median req/s, with p50 / p99 in ms:
+
+| Users | nio | epoll | uring |
+|---|---|---|---|
+| 8 | 1653 (4.4 / 9.9) | 1797 (3.9 / 8.1), +9% | 2480 (3.2 / 5.6), +50% |
+| 32 | 1744 (18.2 / 22.4) | 1802 (17.6 / 24.0), +3% | 2539 (12.4 / 15.8), +46% |
+| 64 | 1577 (40.1 / 46.7) | 1813 (35.1 / 40.9), +15% | 2545 (24.9 / 28.3), +61% |
+
+`saturate`, median req/s:
+
+| Users | nio | epoll | uring |
+|---|---|---|---|
+| 16 | 96,735 | 98,961 (+2%) | 102,704 (+6%) |
+| 64 | 97,536 | 100,462 (+3%) | 103,687 (+6%) |
+| 128 | 96,649 | 100,443 (+4%) | 102,590 (+6%) |
+| 256 | 95,735 | 99,750 (+4%) | 102,753 (+7%) |
+
+- **Size:** 104,140,112 bytes for `nio`, 106,696,016 for `epoll` (+2.5%) and 107,744,592 for `uring` (+3.5%).
+- **Memory on `maven`:** idle RSS 66, 68 and 70 MB, and peak RSS 110, 110 and 119 MB, for `nio`, `epoll` and `uring`.
+- **Startup:** 260 to 274 ms for all three.
+- **Spread:** runs of one binary agree within 1.5% for `uring` and within about 10% for `nio`.
+- **Not measured:** kqueue on macOS, aarch64, and the release toolchain with its PGO profile.
+
+The proxy took epoll, and the current direction is epoll for now, with io_uring not pursued (design/proxy.md "The socket transport: epoll on Linux").
+
 ## Java deserialization in the native images (issue #458)
 
 Measured on 2026-11-12 on `main` at `8c671fb4` (Quarkus 4.0.0.CR1, Vert.x 5.2.3), Oracle GraalVM 25.4 (JDK 25.0.4), x86_64, the proxy at `-O3 -march=haswell`, built with `-H:+PrintAnalysisCallTree`.

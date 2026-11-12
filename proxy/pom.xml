@@ -25,6 +25,9 @@
         <svm.target.name.args/>
 <!-- Empty by default: -march values are architecture-specific, and passing an x86 one to an aarch64 build fails (or vice versa). Set by the arch-gated profiles below. -->
         <native.march.args/>
+<!-- quarkus.vertx.native-transport: off unless a linux-epoll profile below adds the transport, so a
+     build without one (macOS, another arch) neither looks for it nor warns at every start (#475). -->
+        <proxy.native.transport>disabled</proxy.native.transport>
 <!-- Empty unless a PGO profile below is active. -->
         <native.pgo.args/>
     </properties>
@@ -250,6 +253,55 @@
             </activation>
             <properties>
                 <native.march.args>,-march=armv8.1-a+aes</native.march.args>
+            </properties>
+        </profile>
+        <!--
+          Netty's native epoll transport (#475), and quarkus.vertx.native-transport=if-available
+          (application.properties) to use it. The jar carries the JNI library for one architecture,
+          so each arch gets its own profile. No <version>: the Quarkus BOM manages Netty.
+        -->
+        <profile>
+            <id>linux-epoll-x86_64</id>
+            <activation>
+                <os><name>linux</name><arch>amd64</arch></os>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-transport-native-epoll</artifactId>
+                    <classifier>linux-x86_64</classifier>
+                </dependency>
+            </dependencies>
+            <properties>
+                <proxy.native.transport>if-available</proxy.native.transport>
+            </properties>
+        </profile>
+        <profile>
+            <id>linux-epoll-aarch64</id>
+            <activation>
+                <os><name>linux</name><arch>aarch64</arch></os>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-transport-native-epoll</artifactId>
+                    <classifier>linux-aarch_64</classifier>
+                </dependency>
+            </dependencies>
+            <properties>
+                <proxy.native.transport>if-available</proxy.native.transport>
+            </properties>
+        </profile>
+        <!--
+          The uber-jar JBang installs (-Prelease) is built once, on linux/amd64, and runs on every
+          platform: with the native transport on, every start on macOS or Linux aarch64 would warn
+          that epoll did not load. It stays on NIO, as it ran before #475. Declared after
+          the linux-epoll profiles, so its value wins.
+        -->
+        <profile>
+            <id>release</id>
+            <properties>
+                <proxy.native.transport>disabled</proxy.native.transport>
             </properties>
         </profile>
         <profile>
