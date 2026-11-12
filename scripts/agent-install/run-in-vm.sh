@@ -12,7 +12,8 @@
 # instance, so the outer proxy serves the agent's credential.
 #
 # Usage:
-#   scripts/agent-install/run-in-vm.sh --agent claude|codex --out DIR [--name VM] [--keep] -- [validate.sh options]
+#   scripts/agent-install/run-in-vm.sh --agent NAME --out DIR [--name VM] [--keep] -- [validate.sh options]
+#   NAME is one validate.sh drives: claude, codex, pi, gemini, opencode or copilot
 #   e.g.  scripts/agent-install/run-in-vm.sh --agent codex --out ~/runs/codex -- --docs "$PWD/candidate-docs"
 # A --docs or --isx-from directory given after "--" is copied into the VM at the same path.
 set -euo pipefail
@@ -38,7 +39,7 @@ while [ $# -gt 0 ]; do
         *) die "unknown option: $1" ;;
     esac
 done
-case "$AGENT" in claude|codex) ;; *) die "--agent takes claude or codex" ;; esac
+case "$AGENT" in claude|codex|pi|gemini|opencode|copilot) ;; *) die "--agent takes claude, codex, pi, gemini, opencode or copilot" ;; esac
 [ -n "$OUT" ] || die "--out is required"
 VM=${VM:-agent-install-$AGENT-$(date +%H%M%S)}
 command -v incus >/dev/null || die "this host has no Incus to nest a VM in"
@@ -90,8 +91,16 @@ case "$AGENT" in
     claude) "${INC[@]}" file push -q "$(readlink -f "$(command -v claude)")" "$VM/usr/local/bin/claude"
         in_vm chmod 755 /usr/local/bin/claude ;;
     # npm reaches its registry through this instance's proxy, so it comes after the CA above.
-    codex) in_vm sh -c 'dnf install -y -q nodejs npm >/dev/null 2>&1
-        npm install -g @openai/codex >/tmp/npm.log 2>&1 || { tail -n 20 /tmp/npm.log >&2; exit 1; }' ;;
+    *) case "$AGENT" in
+           codex) PKG=@openai/codex ;;
+           # The package isx itself installs (PiSetup); the older @mariozechner one has no MCP.
+           pi) PKG=@earendil-works/pi-coding-agent ;;
+           gemini) PKG=@google/gemini-cli ;;
+           opencode) PKG=opencode-ai ;;
+           copilot) PKG=@github/copilot ;;
+       esac
+       in_vm sh -c 'dnf install -y -q nodejs npm >/dev/null 2>&1
+        npm install -g "$1" >/tmp/npm.log 2>&1 || { tail -n 20 /tmp/npm.log >&2; exit 1; }' sh "$PKG" ;;
 esac
 in_vm sh -c "command -v $AGENT" >/dev/null || die "could not install $AGENT in $VM"
 

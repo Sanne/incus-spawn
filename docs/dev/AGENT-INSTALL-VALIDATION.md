@@ -8,6 +8,8 @@ Run it again for every release that changes `isx init`, `isx mcp` or the install
 ## What it checks
 
 The agent must reach a first branch while stopping at exactly three handovers: the root script, a credential and the MCP approvals.
+The run passes, and `validate.sh` exits 0, only when the branch's template installs the agent's own isx tool and `isx` is in the agent's own MCP settings as well (#2178).
+The harness finds the tool by following the branch's template chain through each definition's file, and the registration in the agent's settings file, without starting the server.
 The harness answers each one as the person would:
 
 - When `isx init --no-sudo` wrote a new `~/.local/state/incus-spawn/init-privileged.sh`, it runs that script with sudo.
@@ -15,11 +17,23 @@ The harness answers each one as the person would:
   The report names it as the agent's when the person owns the file.
 - When the agent names `isx account add <namespace>`, it adds that credential.
 - When the agent asks for approvals, it writes `mcp.yaml` with the built templates the agent named.
+  With Claude Code on the host it also registers `isx mcp` there, as `isx mcp setup` does; the report says whether the agent had registered itself before that.
+- When the agent asks which agent to put in the template, it names the isx tool given with `--template-agent`.
+  An agent isx has a tool for should not need to ask, so for those the question is a finding.
 
 The agent keeps the groups it had when the run started, as a running agent does, so the `incus-admin` group the root script adds reaches it only through `sg` (`--fresh-groups` gives it a new login each turn instead).
 Anything else gets "nothing to do", which the report counts as a turn where the agent was stuck or guessing.
 `report.md` lists the turns and their times, the person's actions, every sudo the agent tried (from its commands and the journal), replies that may ask for a secret, every write of `mcp.yaml`, and `isx init --plan` at the end.
 The heuristics are a first pass: read `reply-<turn>.txt` and `commands.tsv` before reporting a finding.
+
+## The agents it drives
+
+`--agent` takes `claude`, `codex`, `pi`, `gemini`, `opencode` and `copilot`, each run headless with every tool call allowed.
+`opencode` has no isx tool, so it is the run that exercises the question: give it `--template-agent` (for example `codex`), and the run then expects that tool in the template.
+Pi runs on the OpenAI account (`--provider openai`), since upstream refuses Pi on a Claude subscription.
+`--agent-model` picks the model for `pi`, `gemini`, `opencode` and `copilot`, where their default is not available.
+Bob Shell is not driven: its headless `bob run` has no flag that approves tool calls, and no approval setting was confirmed to apply to it.
+The event shapes the harness reads for the four newer agents come from their sources and docs, not from a recorded run, so check `commands.tsv` against `turn-<n>.jsonl` after a first run of each.
 
 ## Agents that passed
 
@@ -71,6 +85,7 @@ A second agent therefore needs a second clean host.
 
 ```shell
 scripts/agent-install/run-in-vm.sh --agent codex --out ~/runs/codex -- --docs /tmp/isx-docs
+scripts/agent-install/run-in-vm.sh --agent opencode --out ~/runs/opencode -- --template-agent codex --agent-model <provider/model>
 ```
 
 The person's account joins the group that reads `/run/isx`, so the instance's proxy serves the agent.
