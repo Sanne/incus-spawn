@@ -24,6 +24,8 @@ class GuestExecScriptTest {
     private static final Path SCRIPTS = Path.of("../.github/scripts").toAbsolutePath();
     private static final String NO_ATTACH = "Error: Failed to retrieve PID of executing child process";
     private static final Pattern RAW_EXEC = Pattern.compile("\\bincus exec\\b");
+    private static final Pattern CURL_FAILS_IN_GUEST =
+            Pattern.compile("(?ms)^curl_fails_in_guest\\(\\) \\{$.*?^}$");
 
     @TempDir
     Path dir;
@@ -80,10 +82,47 @@ class GuestExecScriptTest {
                 "host-distro must push guest-exec.sh beside test-proxy-only.sh");
     }
 
+    @Test
+    void aNoEgressCheckPassesOnlyOnCurlNotConnecting() throws Exception {
+        // Could not resolve, connect or finish: the answers the check is asking for
+        for (int status : new int[] {6, 7, 28, 35, 45, 56}) {
+            var result = curlFailsInGuest(status);
+            assertEquals(0, result.exitCode, "exit " + status + " failed as egress:\n" + result.output);
+        }
+        // Incus could not reach the instance, Incus could not run the command, no curl in the guest
+        for (int status : new int[] {1, 255, 127}) {
+            var result = curlFailsInGuest(status);
+            assertEquals(1, result.exitCode, "exit " + status + " passed as blocked egress:\n" + result.output);
+            assertTrue(result.output.contains("curl in box exited " + status), result.output);
+        }
+    }
+
+    /** test-proxy-only.sh's curl_fails_in_guest, against an incus whose exec exits with the status. */
+    private Result curlFailsInGuest(int status) throws Exception {
+        var script = Files.readString(SCRIPTS.resolve("test-proxy-only.sh"));
+        var function = CURL_FAILS_IN_GUEST.matcher(script);
+        assertTrue(function.find(), "test-proxy-only.sh must define curl_fails_in_guest");
+        return run("""
+                #!/bin/bash
+                [ "$1 $2 $3" = "exec box --" ] || { echo "unexpected: $*" >&2; exit 2; }
+                exit %d
+                """.formatted(status), function.group() + "\ncurl_fails_in_guest box -- curl http://1.1.1.1/");
+    }
+
+    @Test
+    void theCommandGetsNoStdin() throws Exception {
+        // A retry would run the command again on input the first try already read
+        var result = run("""
+                #!/bin/bash
+                if IFS= read -r line; then echo "read: $line"; else echo "no stdin"; fi
+                """, "echo piped | guest_exec box -- true");
+        assertEquals(0, result.exitCode, result.output);
+        assertTrue(result.output.contains("no stdin"), result.output);
+    }
+
     /** guest_exec against an incus whose exec fails {@code failures} times with the message and status. */
     private Result guestExec(int failures, String message, int status) throws Exception {
-        var bin = Files.createDirectories(dir.resolve("bin"));
-        Files.writeString(bin.resolve("incus"), """
+        return run("""
                 #!/bin/bash
                 [ "$1 $2 $3" = "exec box --" ] || { echo "unexpected: $*" >&2; exit 2; }
                 runs=$(( $(cat "%1$s/runs" 2>/dev/null || echo 0) + 1 ))
@@ -91,14 +130,20 @@ class GuestExecScriptTest {
                 [ "$runs" -gt %2$d ] && { echo "ran in the guest"; exit 0; }
                 echo '%3$s' >&2
                 exit %4$d
-                """.formatted(dir, failures, message, status));
+                """.formatted(dir, failures, message, status), "guest_exec box -- true");
+    }
+
+    /** The commands, with guest-exec.sh sourced, against the given stand-in for incus. */
+    private Result run(String incus, String commands) throws Exception {
+        var bin = Files.createDirectories(dir.resolve("bin"));
+        Files.writeString(bin.resolve("incus"), incus);
         bin.resolve("incus").toFile().setExecutable(true);
         // No sudo: the forkexec log is best effort and must not hold up a try
         Files.writeString(bin.resolve("sudo"), "#!/bin/bash\nexit 1\n");
         bin.resolve("sudo").toFile().setExecutable(true);
 
         var builder = new ProcessBuilder("bash", "--norc", "--noprofile", "-c",
-                "set -euo pipefail; source \"$1\"; PATH=\"$2:$PATH\" guest_exec box -- true",
+                "set -euo pipefail; source \"$1\"; PATH=\"$2:$PATH\"; " + commands,
                 "test", SCRIPTS.resolve("guest-exec.sh").toString(), bin.toString())
                 .redirectErrorStream(true);
         builder.environment().put("GUEST_EXEC_PAUSES", "0 0 0");

@@ -4,6 +4,8 @@
 # executing child process" (exit 255): its forkexec helper could not attach to the guest, so the
 # command never ran. Running it again is then safe, whatever the command does.
 # Any other result, the command's own failure included, is returned as it is.
+# It gives the command no stdin (/dev/null): a retry would run a piped command again on input the
+# first try already read.
 #
 # Sourced for its function, or run as `guest-exec.sh <instance> -- <command...>`.
 
@@ -20,7 +22,7 @@ guest_exec() {
     err=$(mktemp)
     for pause in $GUEST_EXEC_PAUSES ""; do
         rc=0
-        incus exec "$@" 2>"$err" || rc=$?
+        incus exec "$@" </dev/null 2>"$err" || rc=$?
         if [ "$rc" -ne 255 ] || ! grep -qF "$GUEST_EXEC_NO_ATTACH" "$err" || [ -z "$pause" ]; then
             break
         fi
