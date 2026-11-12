@@ -7,6 +7,7 @@ paths:
   - "common/src/main/java/dev/incusspawn/lifecycle/**"
   - "common/src/main/java/dev/incusspawn/ClientLog.java"
   - "appliance/**"
+  - "launcher/**"
   - "cli/src/main/java/dev/incusspawn/command/BuildCommand.java"
   - "cli/src/main/java/dev/incusspawn/command/CowPoolBacking.java"
   - "cli/src/main/java/dev/incusspawn/command/BuildProgress.java"
@@ -105,7 +106,7 @@ vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so 
   A late wakeup of the fake's sender stretched a gap past the window on a macOS runner (#1208).
   Every test asserts `UnixSocketTransport.openConnectionCount()` returns to its baseline, so a leaked permit on a failure path fails the build.
   The guest half (the in-VM forwarder, `isx-agent`, the `-T` backstop, recovery) runs in `integration-tests` against the real appliance over a vsock-bridged QEMU boot (`appliance/test-tunnel.sh`, see `ci.md`).
-  Only vfkit itself is untested, and cannot be on hosted runners (#774).
+  The bridge there is the launcher's relay (`launcher/`, below), so only vfkit and Virtualization.framework are untested, and cannot be on hosted runners (#774, #2031).
 - **Never open a tunnel connection without sending a request.**
   Without lxc/incus@2cb2549, incusd's local listener (`StarttlsListener`) peeks 8 bytes inside `Accept()` with no deadline, so one connection that has sent fewer than 8 bytes stalls *every new* API connection until it speaks or closes.
   On Linux the close arrives at once; through vfkit it may not, and then the forwarder holds that silent connection until `socat -T` reaps it -- the whole API wedged for up to 180s, cleared early only by `forwarder-restart`.
@@ -122,6 +123,10 @@ vfkit parses `unix://<path>` as a URL while isx strips the scheme literally, so 
   A `socat -T` inactivity backstop reaps them (the forwarder and agent listeners also set `backlog=128`: socat's default of 5 refused concurrent connects, and one exec opens about five).
   `isx doctor` diagnoses it (host-side connection gauge in `UnixSocketTransport` / `vm status` vs the in-VM `isx-agent`'s socat count, localizing vfkit vs forwarder) and can restart the forwarder via the agent **without rebooting the VM**.
   `ClientLog` is a file-only (TUI-safe) diagnostic log for expected-but-noisy events like stale-connection recycling.
+  The leak's source is vfkit's relay, which waits for both directions to end and cannot tell the guest that the host closed (design/macos-and-vms.md "Where the vsock leak comes from", reproduced on Linux).
+  The replacement is the relay in `launcher/` (Swift package, module `IsxRelay`, #2031): it ends a connection as soon as either side ends and closes both sides, and its accept loop goes on after a failed accept.
+  It gives up half-close, which isx never sends, so do not add one to a tunnel client.
+  Until the launcher ships (#2031 stages 2 and 3) a Mac still runs vfkit, and every compensation above stays.
   The agent (`appliance/root/usr/local/sbin/isx-agent`, host side `VmAgentClient`) is an allowlisted one-verb-per-connection dispatcher -- `ping`, `version` (returns the appliance version from `/etc/isx-version`, cached by `VmAgentClient.applianceVersion()`; used to detect CLI↔appliance version skew in `ensureRunning`, `isx doctor`, `isx vm status`, and the TUI, all through `VmManager.applianceSkew()`, which reports skew only when a restart would re-extract the root disk -- i.e. `disk.version` differs from the installed version -- so a locally built `0.0.0-SNAPSHOT` appliance is not told to restart for a release it would not get), `socat-count`, `sshd-status`, `forwarder-restart`, `btrfs-usage <pool> [sync]` (returns the pool's `btrfs qgroup show`/`subvolume list` output for disk accounting, since only the in-VM root agent can read the pool; the allowlisted `sync` second token forces a commit first), `btrfs-status <pool>` (the kernel's qgroup accounting flags from sysfs as `key=value` lines -- `enabled`, `inconsistent`, `mode`, `drop_subtree_threshold` -- resolved via the same mountinfo-source-device lookup as `BtrfsSysfs.java`; keep the two in step), `btrfs-rescan <pool>` (starts a background `btrfs quota rescan`, replying `started`/`running`/`error: ...`) and `btrfs-orphan-delete <pool> <kind> <name>` (deletes one orphaned top-level subvolume -- `kind` is `containers` or `virtual-machines` -- after re-checking, from inside the VM and in every Incus project, that nothing still references it; a separate trust boundary from the host's own scan, since that scan can be stale by the time a user confirms `isx doctor`'s remediation.
   `name` rejects a leading `.` or `-` as well as any character outside `A-Za-z0-9._-`.
   `.` and `..` are themselves valid under that charset alone, and `..` resolved against the pool root -- itself a btrfs subvolume -- would recursively delete the whole pool (review, #874).

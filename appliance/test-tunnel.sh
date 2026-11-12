@@ -5,7 +5,8 @@ set -uo pipefail
 # forwarder, and every verb of the in-guest control agent (isx-agent).
 #
 # Takes the two host-side Unix sockets, however they were bridged to the guest's vsock
-# ports: vfkit on macOS (test-boot.sh), or socat VSOCK-CONNECT under QEMU on Linux (CI).
+# ports: vfkit on macOS (test-boot.sh), or the launcher's relay under QEMU on Linux (CI:
+# isx-vsock-bridge, launcher/).
 # The guest half under test is the same either way; only the bridge differs.
 #
 # Usage:  ./test-tunnel.sh <incus-socket> <agent-socket> [<silent-socket>]
