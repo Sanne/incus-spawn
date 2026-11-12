@@ -25,7 +25,7 @@ final class Target_io_vertx_core_eventbus_impl_codecs_SerializableCodec {
     }
 }
 
-// Checker.checkCopyable() → SerializableUtils.fromBytes() → ObjectInputStream
+// Checker.copySerializable() → SerializableUtils.fromBytes() → ObjectInputStream
 // Safe: we do not use Vert.x shared data structures.
 
 @TargetClass(className = "io.vertx.core.impl.SerializableUtils")
