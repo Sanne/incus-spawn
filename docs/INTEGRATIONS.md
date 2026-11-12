@@ -42,8 +42,13 @@ herdr always checks a machine's host key, which isx records on your host on ever
 A machine added by an older isx reaches its instance again after that instance's next start.
 From then on herdr can start that instance too.
 
-An open herdr reconnects to its machines by itself, so it starts a stopped instance again within two minutes.
-To keep an instance stopped, run `herdr machine disable` with the id `herdr machine list` shows, and `herdr machine enable` later.
+When isx stops the instance, it disables the machine in herdr first.
+herdr then shows the machine dimmed and does not reconnect to it, so the instance stays stopped.
+While it is disabled, `herdr --machine agent-1` refuses to reach the instance.
+
+Starting the instance with isx enables the machine again.
+So does enabling it in herdr, and herdr's connection then starts the instance.
+If the instance stops without isx, for example when its guest shuts down, the machine stays enabled and an open herdr starts the instance again.
 
 In the TUI, the instance's details (F3) say isx added it to herdr.
 

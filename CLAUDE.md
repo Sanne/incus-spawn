@@ -343,6 +343,7 @@ The `mcp.yaml` keys that once narrowed them still load, have no effect and are n
 An orchestrator with hooks (Orca) needs no isx code: `integrations/orca/isx-orca-recipe` speaks its recipe contract over those commands, with `jq` (`OrcaRecipeScriptTest`, `docs/INTEGRATIONS.md`).
 An orchestrator with no hooks (herdr) is served by a tool's host half instead: a built-in `HostIntegration` keyed on the tool being in the instance's build, which registers the instance on its first start and removes it on destroy, never for a project-local or untrusted build (`.claude/rules/tools-env.md`).
 herdr's machine targets the instance's `<name>.start.isx` alias, whose Host block runs `isx ssh-proxy --start`, so herdr reconnecting starts a stopped instance while `ssh <name>` still never does (#2038).
+Every stop isx makes disables that machine first (`HostIntegration.stoppingAll`), so an open herdr does not start the instance again, and the next start enables it (#2041).
 See `.claude/rules/commands.md` and design/mcp.md "External orchestrators: owners, start, stop and destroy".
 
 **Native image: host paths belong in the run-time-initialized classes.**

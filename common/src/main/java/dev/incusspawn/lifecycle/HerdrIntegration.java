@@ -34,6 +34,13 @@ import java.util.regex.Pattern;
  * host that happens to share the instance's name. A destroy with no record runs nothing. A record
  * with no target is a machine an older isx added for the instance's name, which never starts it:
  * the next start replaces it once.
+ *
+ * <p>herdr reconnects to a machine it lost by itself, through the start alias, so an open herdr
+ * would start a stopped instance again within two minutes (#2041). So before isx stops an instance
+ * it {@code herdr machine disable}s its machine, which herdr then draws dimmed and leaves alone,
+ * and records {@link #DISABLED} as a third line; the next start isx makes enables it again, and so
+ * does the user enabling it in herdr, whose connection then starts the instance. A stop isx does
+ * not make, a guest's poweroff or the host's reboot, leaves the machine enabled.
  */
 public final class HerdrIntegration implements HostIntegration {
 
@@ -45,6 +52,8 @@ public final class HerdrIntegration implements HostIntegration {
      * more, and a second failure is {@link #NOT_ADDED} (Sanne's decision on #1823).
      */
     static final String RETRY = "retry";
+    /** Recorded as a third line after isx disabled the machine for a stop; the next start enables it. */
+    static final String DISABLED = "disabled";
     /** Its first connection starts herdr's server in the instance, about a second when it works. */
     static final Duration ADD_TIMEOUT = Duration.ofSeconds(30);
     static final Duration QUICK = Duration.ofSeconds(10);
@@ -112,7 +121,8 @@ public final class HerdrIntegration implements HostIntegration {
             var lines = Files.readString(record).strip().lines().toList();
             var first = lines.isEmpty() ? "" : lines.getFirst();
             // A machine an older isx added has no target, and is replaced once
-            return !RETRY.equals(first) && !(HERDR_ID_PATTERN.matcher(first).matches() && lines.size() < 2);
+            return !RETRY.equals(first) && !(HERDR_ID_PATTERN.matcher(first).matches() && lines.size() < 2)
+                    && !disabled(lines);
         } catch (IOException e) {
             return true;
         }
@@ -127,27 +137,95 @@ public final class HerdrIntegration implements HostIntegration {
     /** The machine isx added targets the instance's start alias. */
     @Override
     public boolean usesStartAlias(String name) {
+        return usesStartAlias(name, lines(name));
+    }
+
+    private static boolean usesStartAlias(String name, List<String> lines) {
+        return lines.size() > 1 && lines.get(1).equals(SshKeyManager.startAlias(name));
+    }
+
+    /** Whether {@code lines}, a record, says isx disabled the machine for a stop. */
+    private static boolean disabled(List<String> lines) {
+        return lines.size() > 2 && DISABLED.equals(lines.get(2));
+    }
+
+    /** The record's lines, none when there is no record. */
+    private List<String> lines(String name) {
         try {
-            var lines = Files.readString(record(name)).strip().lines().toList();
-            return lines.size() > 1 && lines.get(1).equals(SshKeyManager.startAlias(name));
+            return Files.readString(record(name)).strip().lines().toList();
         } catch (IOException | IllegalArgumentException e) {
-            return false;
+            return List.of();
+        }
+    }
+
+    /**
+     * Disable the machine isx added, so herdr does not start the instance again: only one that
+     * targets its start alias, which is the one herdr would start it through.
+     */
+    @Override
+    public void stopping(String name, Output out) {
+        var lines = lines(name);
+        var id = recordedId(lines);
+        if (id == null || disabled(lines) || !usesStartAlias(name, lines) || !host.onPath(TOOL)) return;
+        var shown = OutputFormat.oneLine(name);
+        var disabled = host.run(QUICK, List.of(TOOL, "machine", "disable", id));
+        if (!disabled.ok()) {
+            out.warn("could not disable " + shown + " in herdr: " + lastLine(disabled.output()),
+                    "An open herdr may start it again; disable it yourself: herdr machine disable " + id);
+            return;
+        }
+        try {
+            record(name, lines.get(0) + "\n" + lines.get(1) + "\n" + DISABLED);
+        } catch (IOException e) {
+            out.warn("could not record that " + shown + " is disabled in herdr: " + e.getMessage(),
+                    "Enable it again after starting it: herdr machine enable " + id);
+        }
+    }
+
+    @Override
+    public void stopFailed(String name, Output out) {
+        var lines = lines(name);
+        if (disabled(lines)) enable(name, lines, out);
+    }
+
+    /**
+     * Enable the machine isx {@link #stopping disabled}, and forget that it did: once, so a machine
+     * the user removed in the meantime is not asked for on every start.
+     */
+    private void enable(String name, List<String> lines, Output out) {
+        var id = recordedId(lines);
+        var shown = OutputFormat.oneLine(name);
+        try {
+            record(name, lines.get(0) + "\n" + lines.get(1));
+        } catch (IOException e) {
+            out.warn("could not record that " + shown + " is enabled in herdr: " + e.getMessage());
+            return;
+        }
+        var enabled = host.run(QUICK, List.of(TOOL, "machine", "enable", id));
+        if (!enabled.ok()) {
+            out.warn("could not enable " + shown + " in herdr: " + lastLine(enabled.output()),
+                    "Enable it yourself: herdr machine enable " + id);
         }
     }
 
     /** The id of the machine isx added for {@code name}, or null when it added none. */
     private String recordedId(String name) {
-        try {
-            var lines = Files.readString(record(name)).strip().lines().toList();
-            return !lines.isEmpty() && HERDR_ID_PATTERN.matcher(lines.getFirst()).matches() ? lines.getFirst() : null;
-        } catch (IOException | IllegalArgumentException e) {
-            return null;
-        }
+        return recordedId(lines(name));
+    }
+
+    /** The machine id {@code lines}, a record, holds, or null. */
+    private static String recordedId(List<String> lines) {
+        return !lines.isEmpty() && HERDR_ID_PATTERN.matcher(lines.getFirst()).matches() ? lines.getFirst() : null;
     }
 
     @Override
     public void started(IncusClient incus, String name, JqValue instance, Output out) {
         if (!host.onPath(TOOL)) return;
+        var lines = lines(name);
+        if (disabled(lines)) {
+            enable(name, lines, out);
+            return;
+        }
         removeOrphans(out);
         var shown = OutputFormat.oneLine(name);
         // One first start at a time: a branch and an orchestrator's start must not both add it

@@ -304,6 +304,95 @@ class HerdrIntegrationTest {
         assertTrue(herdr.registered("ws"), "a destroy still removes it");
     }
 
+    private FakeHost hostThatTogglesMachines() {
+        var host = new FakeHost(true);
+        host.answers.put("herdr machine disable", new HostCommands.Result(0, "Disabled SSH machine " + ID + "."));
+        host.answers.put("herdr machine enable", new HostCommands.Result(0, "Enabled SSH machine " + ID + "."));
+        return host;
+    }
+
+    @Test
+    void aStopDisablesTheMachineSoHerdrDoesNotStartItAgainAndTheNextStartEnablesIt() throws Exception {
+        Files.writeString(records.resolve("ws"), ID + "\n" + TARGET + "\n");
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("herdr", false)));
+        var host = hostThatTogglesMachines();
+        var herdr = herdr(host);
+
+        var stopping = RecordingOutput.during(() -> herdr.stopping("ws", BuildOutput.bound()));
+        assertEquals(List.of("herdr machine disable " + ID), host.ran);
+        assertEquals(ID + "\n" + TARGET + "\n" + HerdrIntegration.DISABLED, recorded("ws"));
+        assertEquals(List.of(), stopping.events(), "nothing to say on a stop that worked");
+        assertFalse(herdr.done("ws"), "so the next start enables it");
+        assertTrue(herdr.registered("ws"));
+        assertTrue(herdr.usesStartAlias("ws"));
+
+        host.ran.clear();
+        RecordingOutput.during(() -> herdr.stopping("ws", BuildOutput.bound()));
+        assertEquals(List.of(), host.ran, "a machine already disabled is not asked for again");
+
+        started(herdr, daemon, "ws");
+        assertEquals(List.of("herdr machine enable " + ID), host.ran, "enabled, never added again");
+        assertEquals(ID + "\n" + TARGET, recorded("ws"));
+        assertTrue(herdr.done("ws"), "a later start runs nothing");
+    }
+
+    @Test
+    void aStopRunsNothingForAnInstanceWithoutAMachineThatStartsIt() throws Exception {
+        Files.writeString(records.resolve("old"), ID + "\n");
+        Files.writeString(records.resolve("n"), HerdrIntegration.NOT_ADDED + "\n");
+        Files.writeString(records.resolve("r"), HerdrIntegration.RETRY + "\n");
+        var host = hostThatTogglesMachines();
+        var herdr = herdr(host);
+        var recorded = RecordingOutput.during(() -> {
+            for (var name : List.of("none", "old", "n", "r")) herdr.stopping(name, BuildOutput.bound());
+        });
+        assertEquals(List.of(), host.ran, "an older isx's machine never starts the instance, so it is left enabled");
+        assertEquals(List.of(), recorded.events());
+        assertFalse(Files.exists(records.resolve("none")));
+
+        Files.writeString(records.resolve("ws"), ID + "\n" + TARGET + "\n");
+        RecordingOutput.during(() -> herdr(new FakeHost(false)).stopping("ws", BuildOutput.bound()));
+        assertEquals(ID + "\n" + TARGET, recorded("ws"), "nothing without herdr on the host");
+    }
+
+    @Test
+    void aStopThatFailsEnablesTheMachineAgain() throws Exception {
+        Files.writeString(records.resolve("ws"), ID + "\n" + TARGET + "\n");
+        var host = hostThatTogglesMachines();
+        var herdr = herdr(host);
+        RecordingOutput.during(() -> herdr.stopping("ws", BuildOutput.bound()));
+        RecordingOutput.during(() -> herdr.stopFailed("ws", BuildOutput.bound()));
+        assertEquals(List.of("herdr machine disable " + ID, "herdr machine enable " + ID), host.ran);
+        assertEquals(ID + "\n" + TARGET, recorded("ws"));
+
+        host.ran.clear();
+        RecordingOutput.during(() -> herdr.stopFailed("ws", BuildOutput.bound()));
+        assertEquals(List.of(), host.ran, "nothing to undo when isx disabled nothing");
+    }
+
+    @Test
+    void aFailedDisableIsWarnedAndAFailedEnableIsWarnedOnce() throws Exception {
+        Files.writeString(records.resolve("ws"), ID + "\n" + TARGET + "\n");
+        var daemon = daemon("ws", Map.of(Metadata.BUILD_SOURCE, buildWith("herdr", false)));
+        var host = new FakeHost(true);
+        host.answers.put("herdr machine disable", new HostCommands.Result(1, "machine profile " + ID + " was not found"));
+        var herdr = herdr(host);
+
+        var stopping = RecordingOutput.during(() -> herdr.stopping("ws", BuildOutput.bound()));
+        assertEquals(1, stopping.events(RecordingOutput.Kind.WARN).size());
+        assertTrue(stopping.events(RecordingOutput.Kind.WARN).getFirst().msg().contains("was not found"));
+        assertEquals(ID + "\n" + TARGET, recorded("ws"), "not recorded as disabled");
+        assertTrue(herdr.done("ws"));
+
+        Files.writeString(records.resolve("ws"), ID + "\n" + TARGET + "\n" + HerdrIntegration.DISABLED + "\n");
+        host.answers.put("herdr machine enable", new HostCommands.Result(1, "machine profile " + ID + " was not found"));
+        host.ran.clear();
+        var first = started(herdr, daemon, "ws");
+        assertEquals(List.of("herdr machine enable " + ID), host.ran);
+        assertEquals(1, first.events(RecordingOutput.Kind.WARN).size());
+        assertTrue(herdr.done("ws"), "forgotten, so a machine the user removed is not asked for on every start");
+    }
+
     /**
      * The instance details say herdr lists the instance only while isx's record holds the machine it
      * added: not before the first add, not for a retry or a decision not to add, not after a destroy.

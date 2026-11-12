@@ -506,6 +506,9 @@ When `herdr` is installed on the host too, isx adds each instance of such a temp
 isx removes the machine again when it destroys the instance.
 herdr then lists the instance by its name, and `herdr --machine <name> agent list` reaches it.
 
+When isx stops the instance, it disables the machine in herdr, so herdr does not start it again.
+Its next start through isx enables it.
+
 isx never adds an instance of a template built from project-local definitions.
 
 See [Driving isx from other tools](INTEGRATIONS.md#herdr).
