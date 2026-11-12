@@ -16,8 +16,8 @@ The harness answers each one as the person would:
 - When the agent hands over a script it wrote itself, as `sudo sh <path>` or `sudo bash <path>` in the home or `/tmp`, it runs that one too, with the shell named.
   The report names it as the agent's when the person owns the file.
 - When the agent names `isx account add <namespace>`, it adds that credential.
-- When the agent asks for approvals, it writes `mcp.yaml` with the built templates the agent named.
-  With Claude Code on the host it also registers `isx mcp` there, as `isx mcp setup` does; the report says whether the agent had registered itself before that.
+- When the agent asks for approvals, it writes `mcp.yaml` with the templates the agent named, or all of them when it names none, built or the person's own.
+  It never registers `isx mcp` in the agent's client, although `isx mcp setup` does that for Claude Code: registering is the agent's step, and a Claude Code run passes only when the agent took it (#2178).
 - When the agent asks which agent to put in the template, it names the isx tool given with `--template-agent`.
   An agent isx has a tool for should not need to ask, so for those the question is a finding.
 
