@@ -170,9 +170,10 @@ The scan of the real sysfs is made once per process.
 `CpuInfoTest` pins each source with sysfs fixtures (an i7-12700H, a Ryzen AI 300, an X3D, a three-tier ARM SoC, an RK3588 device-tree layout).
 For full network clones, `GitPreparation` selects one ref in owned host staging: the requested branch, else tag, else the branch the remote's HEAD names, with all of its history (#1990).
 Its cache is keyed by URL and requested ref, and the host and the guest `ls-remote` only that ref and the tags (`GitPreparation.lsRemotePatterns`).
-A new ref with no host checkout borrows objects from a sealed snapshot of another ref of the same URL (`PreparationCache.sibling`, #2050), and the repack keeps only the new ref's closure.
+A new ref with no host checkout borrows objects from a sealed snapshot of another ref of the same URL (`PreparationCache.sibling`, #2050), and the export keeps only the new ref's closure.
 It fetches the ref by name into a fresh bare repository, never `clone`, which asks for every annotated tag pointing into its history even with `--no-tags`.
-It borrows objects directly from a matching checkout through an alternate, then `repack -a -d` and removes it, as `--dissociate` does, without copying the checkout's packs first.
+It borrows objects directly from a matching checkout through an alternate, without copying the checkout's packs first.
+Then `pack-objects --stdout --revs` walks the ref's closure into one pack, which `index-pack --strict` indexes where it lies, in an empty repository with nothing attached (`GitPreparation.borrow`, `indexBorrowed`, #1991).
 It never fetches into or maintains the user's repository.
 Only HTTPS, SSH and Git network URLs qualify, with a protocol allowlist blocking local/file transports and remote helpers, including rewritten URLs.
 SSH uses batch mode unless the user supplied an SSH command or executable.
@@ -199,7 +200,9 @@ Incoming objects and new packs are checked, retained bytes must still match thei
 A fast-forward can therefore reuse old packs without full-history repacking or fsck; the host's own refresh records a ref that moved during its fetch as fetched.
 Removed history, a fetch/verification failure or more than 32 packs uses a fresh reference fetch and dissociation instead.
 Failed staging is discarded before the rebuild; it never becomes a reference.
-Bare dissociation avoids older Git's commit-graph/checkout bug, and rebuilt output passes full fsck before publication.
+Bare dissociation avoids older Git's commit-graph/checkout bug.
+A reference clone's strict index replaces the full fsck: it hashes every object, checks its structure and resolves every link inside the export (#1991).
+Only when it rejects an object (it makes fsck warnings fatal) is the export indexed without it and the full fsck run, locally, with no clone from the remote.
 A clone without a reference skips that fsck only when its `GIT_TRACE` shows every pack came from `index-pack --strict` (`fetch.fsckObjects`) and no object is loose; dumb HTTP, packfile URIs, bundles and user `fetch.fsck.*` settings still get it.
 When that strict receive rejects an object (it makes fsck warnings fatal), the clone is repeated without it and the fsck runs.
 A host-source export is indexed with `--strict` after its source alternate is removed, which proves it self-contained without a fsck.

@@ -74,13 +74,13 @@ Failures are aggregated and abort the build; as a best-effort fail-fast, once an
 Discovery still uses `host-paths` and `repo-paths`, matching every configured remote, including an upstream beside a fork.
 The host checkout is never fetched into or maintained, and its packs are not copied before borrowing.
 A small list of the matching remote's tracking tips supplies negotiation hints through an invocation-scoped `core.alternateRefsCommand`, excluding private refs and other remotes' tips.
-If a reference clone, dissociation or full fsck fails, its partial output is discarded and preparation retries once from the remote without any reference.
+If a reference clone, dissociation or its integrity check fails, its partial output is discarded and preparation retries once from the remote without any reference.
 Source removal, corruption or concurrent pruning therefore cannot publish an incomplete snapshot.
 A warm reuse requires a fresh authoritative advertisement showing the snapshot's one ref at the same ID in the same object format, plus a verified SHA-256 seal covering all cached repository files.
 Each branch or tag pin has a snapshot of its own, keyed by URL and pin, and is checked on every request.
 A pin's first preparation without a host checkout borrows from a sealed snapshot of another pin of the same URL, found by a URL-only family hash in the snapshot's directory name (#2050).
 That snapshot's one ref is the fetch's negotiation tip, so the remote sends only what the new pin adds.
-The non-thin repack after the fetch copies only the new pin's closure, so the other pin's history never widens what the guest receives.
+The non-thin export after the fetch copies only the new pin's closure, so the other pin's history never widens what the guest receives.
 Snapshots share no packs: each counts in full against `git-cache.snapshot-max-mib`, and evicting one never damages another.
 No graph walk, user-checkout access or repack runs on a hit.
 Network-source preparation allows only HTTPS, SSH and Git network URLs and enforces the transport allowlist in Git, including after URL rewrites.
@@ -106,8 +106,10 @@ The old tip must remain reachable from the new one, including an annotated tag o
 This permits fast-forwards without rewriting or fully decoding old packs, and other refs moving costs nothing at all.
 Removed history, failed incremental validation or growth beyond 32 packs discards staging and fetches a fresh snapshot with the previous one as its reference instead.
 The rebuild prefers the previous snapshot as its reference, never the failed staging tree.
-Git's dissociation repack selects the current closure, excluding private reference objects and objects belonging only to deleted refs; a bare repository avoids the historical commit-graph/checkout failure in older Git's dissociation path.
-Reference-seeded snapshots pass full fsck; one cloned without a reference relies instead on `fetch.fsckObjects` checking every object it receives, when the clone's `GIT_TRACE` shows that only strict receives wrote objects (dumb HTTP still gets the fsck, #1557); incremental snapshots reuse the object validation of exactly matching old bytes and validate new objects and their links.
+Dissociation walks the current closure from the ref alone into one exported pack, excluding private reference objects and objects belonging only to deleted refs; a bare repository avoids the historical commit-graph/checkout failure in older Git's dissociation path.
+Reference-seeded snapshots index that export with `index-pack --strict`, where it lies in an otherwise empty repository, which hashes every object and resolves every link inside it, in place of a full fsck that took 12 minutes on nixpkgs (#1991).
+Only its rejection of an fsck warning falls back to the full fsck, on the same export.
+One cloned without a reference relies instead on `fetch.fsckObjects` checking every object it receives, when the clone's `GIT_TRACE` shows that only strict receives wrote objects (dumb HTTP still gets the fsck, #1557); incremental snapshots reuse the object validation of exactly matching old bytes and validate new objects and their links.
 Only selected pack/index pairs and freshly written refs enter the minimal bare repository mounted read-only into the guest.
 The guest copies them with `clone --no-hardlinks`, checks their SHA-256 digests, and sets the real remote URL; no full-history guest repack remains.
 A failed preparation, mount or verification falls back to a fresh remote clone before priming.
