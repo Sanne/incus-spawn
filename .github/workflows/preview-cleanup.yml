@@ -1,7 +1,9 @@
 name: Cleanup site preview
 
+# pull_request_target, so a fork's PR has the Cloudflare token to delete its preview (#2180).
+# Nothing of the PR is checked out or run: the job only deletes the pr-<N> deployments.
 on:
-  pull_request:
+  pull_request_target:
     types: [closed]
     paths:
       - 'README.md'
@@ -14,7 +16,6 @@ permissions:
 
 jobs:
   cleanup:
-    if: github.event.pull_request.head.repo.fork != true
     runs-on: ubuntu-26.04
     steps:
       - name: Delete preview deployments

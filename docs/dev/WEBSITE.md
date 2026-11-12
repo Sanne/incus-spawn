@@ -9,11 +9,22 @@ setup lives in the Cloudflare dashboard, not in this repository, so it is writte
 | What | Where it goes | Workflow |
 |---|---|---|
 | Push to `main` touching `site/**`, `README.md`, `docs/*.md` or the workflow | Production: isx.run | `.github/workflows/pages.yml` |
-| Pull request touching `site/**`, `README.md` or `docs/*.md` | `https://pr-<N>.isx-5ks.pages.dev`, linked in a PR comment | `.github/workflows/preview.yml` |
+| Pull request touching `site/**`, `README.md` or `docs/*.md` | Built, uploaded as the `site-preview` artifact | `.github/workflows/preview.yml` |
+| That build succeeding, for a PR by a collaborator | `https://pr-<N>.isx-5ks.pages.dev`, linked in a PR comment | `.github/workflows/preview-deploy.yml` |
 | Pull request closed | Its preview deployments are deleted | `.github/workflows/preview-cleanup.yml` |
 
-- **Project:** all three use the Cloudflare Pages project **`isx`**. Its address is `isx-5ks.pages.dev`; `isx.pages.dev` belongs to someone else.
+- **Project:** `pages.yml`, `preview-deploy.yml` and `preview-cleanup.yml` use the Cloudflare Pages project **`isx`**. Its address is `isx-5ks.pages.dev`; `isx.pages.dev` belongs to someone else.
 - **Credentials:** the repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+- **Fork PRs:** the AI assistant's PRs come from its fork (`Sanne-ai-bot/incus-spawn`), and a fork's `pull_request` run gets no secret, so building and
+  deploying are split (#2180). `preview.yml` runs the PR's `site/build.sh` with no secret and a read-only token.
+  `preview-deploy.yml` runs on `workflow_run`, from `main`'s copy, with the Cloudflare token, and runs nothing of the
+  PR: it finds the PR from the run's head repository, branch and SHA (never from the artifact), deploys only when the
+  author is `OWNER`, `MEMBER` or `COLLABORATOR` and the SHA is still the open PR's head, checked again just before the
+  deploy, and refuses an artifact holding a Pages Functions entry (`_worker.js`, `_routes.json`, `functions/`). Its
+  symlink check is a backstop: `upload-artifact` already stores a symlink's target. A stranger's PR gets no preview:
+  its HTML would be served on the project's `pages.dev` address. `preview-cleanup.yml` is `pull_request_target` and
+  runs nothing of the PR. A change to `preview-deploy.yml` takes effect only once merged, since `workflow_run` always
+  runs the default branch's copy.
 - **Production branch:** the project's production branch (Pages project → Settings → Branch control) must stay `main`. `pages.yml` deploys with `--branch=main`, and a deploy to any other branch name only becomes a preview.
 
 Cloudflare Pages behaves differently from GitHub Pages in two ways the site accounts for:

@@ -69,6 +69,14 @@ Key jobs:
   Run inside an isx instance, `DISTRO_VM_TRUST=<its CA>` adds that instance's proxy CA to the guest's trust store.
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
 
+**Site previews** (#2180): `preview.yml` builds a PR's site on `pull_request`, a fork's included, with no secret, and uploads `_site` as `site-preview`.
+`preview-deploy.yml` deploys it on `workflow_run` with the Cloudflare token, from `main`'s copy, and never checks out, runs or sources anything of the PR; the artifact is data.
+It takes the PR from the run's head repository, branch and SHA through the API, never from the artifact.
+It deploys only while that SHA is the PR's open head and its author is `OWNER`, `MEMBER` or `COLLABORATOR`.
+The head must be in this repository or the author's own fork, and the artifact may hold no Pages Functions entry.
+`PreviewWorkflowTest` holds these invariants: never add a checkout, a local action or a `${{ }}` in a `run:` or `script:` to the two credentialed workflows.
+`preview-cleanup.yml` runs on `pull_request_target` and only deletes the `pr-<N>` deployments; docs/dev/WEBSITE.md has the rest.
+
 **`upstream-verify`** (`.github/workflows/upstream-verify.yml`, #2036) runs on every PR under `pull_request_target`, with `main`'s engine and manifest, a read-only token and no secret, and the PR's trees read as data: for each item of `upstream/manifest.yaml` whose files the PR changes, the pinned fields must be what the publisher gives the pinned version, re-hashing the downloads (design/upstream.md "The model").
 For `minimal.yaml` that is the four checksums, the release's own for the assets `image_url` and `vm_image_url` download (`.github/scripts/verify-base-image-sums.sh`, as the retired `verify-base-image-checksums.yml` ran it, #1678); for `idea-backend.yaml` the `.sha256` beside each tarball; for `build-kernel.sh` the sum in kernel.org's signed file.
 A PR by the `isx-upstream[bot]` app from this repository must be, whole, `main`'s engine's regeneration of one mechanical item at the version its fields name, from the merge base, else it fails; it passes at once when no watched file changed, so it can be a required check.
