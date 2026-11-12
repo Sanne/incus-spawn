@@ -172,6 +172,14 @@ public class ClaudeSetup implements ToolSetup {
         model.setReconfigurable(true);
         params.put("model", model);
 
+        var advisorModel = new ToolDef.ParameterDef();
+        advisorModel.setType("string");
+        advisorModel.setDescription("Advisor model Claude Code consults (e.g. opus, or a Claude model ID such as claude-opus-5-5)");
+        advisorModel.setPattern("^(opus|sonnet|haiku|claude-[a-z0-9][-a-z0-9.]*)$");
+        advisorModel.setOptional(true);
+        advisorModel.setReconfigurable(true);
+        params.put("advisor-model", advisorModel);
+
         var attributionCommit = new ToolDef.ParameterDef();
         attributionCommit.setType("string");
         attributionCommit.setDescription("Git commit attribution trailer (e.g. 'Assisted-By: Claude Code <noreply@anthropic.com>')");
@@ -418,6 +426,11 @@ public class ClaudeSetup implements ToolSetup {
 
     void configureSettings(Container c, SpawnConfig.ClaudeConfig claudeConfig, Map<String, String> params) {
         BuildOutput.stepStart("Configuring Claude Code");
+        // Claude Code's telemetry stays on, deliberately (ClaudeSetupTest pins it).
+        // DO_NOT_TRACK, DISABLE_TELEMETRY and CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC each
+        // also switch off the advisor and other server-flagged features (Claude Code 2.1.322),
+        // and managed settings cannot be overridden from user settings.
+        // None of the flags below is a telemetry flag.
         var managedSettingsJson = """
                 {
                   "permissions": {
@@ -433,7 +446,6 @@ public class ClaudeSetup implements ToolSetup {
                   },
                   "env": {
                     "DISABLE_AUTOUPDATER": "1",
-                    "DO_NOT_TRACK": "1",
                     "DISABLE_ERROR_REPORTING": "1",
                     "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
                     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
@@ -612,10 +624,11 @@ public class ClaudeSetup implements ToolSetup {
             """;
 
     static String buildUserSettings(Map<String, String> params) {
-        var root = JqObject.builder(6)
+        var root = JqObject.builder(7)
                 .put("disableDeepLinkRegistration", "disable");
 
         putIfPresent(root, params, "model", "model");
+        putIfPresent(root, params, "advisor-model", "advisorModel");
         putIfPresent(root, params, "theme", "theme");
         putIfPresent(root, params, "editor-mode", "editorMode");
         putIfPresent(root, params, "output-style", "outputStyle");

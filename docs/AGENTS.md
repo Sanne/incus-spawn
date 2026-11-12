@@ -32,6 +32,7 @@ The key or token stays on the host, and the proxy adds it to Claude Code's reque
 | Parameter | Default | What it does |
 | --- | --- | --- |
 | `model` | Claude Code's own default | The model Claude Code uses |
+| `advisor-model` | Claude Code's own default | The model Claude Code consults as its advisor, such as `opus` |
 | `theme` | Claude Code's own default | Colour theme: `dark`, `light`, `dark-daltonized` or `light-daltonized` |
 | `editor-mode` | Claude Code's own default | Input editor mode: `normal` or `vim` |
 | `output-style` | Claude Code's own default | Response style: `Default`, `Proactive`, `Explanatory` or `Learning` |
@@ -39,6 +40,7 @@ The key or token stays on the host, and the proxy adds it to Claude Code's reque
 | `attribution-pr` | Claude Code's own default | The text Claude Code adds to its pull requests; an empty string omits it |
 
 Model IDs follow the `claude-*` naming convention: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`.
+`advisor-model` also takes the aliases `opus`, `sonnet` and `haiku`, which `model` does not.
 A child template can set any of these parameters again without reinstalling Claude Code.
 
 ```yaml
@@ -49,7 +51,9 @@ tools:
 
 ### What the build sets up
 
-The build gives Claude Code bypass-permissions mode with every tool allowed, and turns off auto-update, telemetry, error reporting, the feedback survey and its own sandbox.
+The build gives Claude Code bypass-permissions mode with every tool allowed, and turns off auto-update, error reporting, the feedback survey and its own sandbox.
+It leaves Claude Code's telemetry on, because turning it off also turns off the advisor.
+
 It accepts the onboarding and the trust prompt for the home directory, so the first session starts without questions.
 
 The footer shows `Running unconstrained in isx [version] [container name]`.
