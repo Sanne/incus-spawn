@@ -1,0 +1,249 @@
+{
+  "date": "2026-11-12",
+  "issue": "https://github.com/Sanne/incus-spawn/issues/1991",
+  "git": "git version 2.56.0",
+  "cpu": "AMD Ryzen 9 9950X3D2, 32 threads",
+  "filesystem": "btrfs, warm page cache",
+  "network": "about 7 MiB/s from GitHub",
+  "fixture": {
+    "repository": "https://github.com/NixOS/nixpkgs.git",
+    "checkout": "git clone --no-checkout, 9,037,355 objects in one 3.51 GiB pack, 293 remote-tracking refs, 654 s over the network",
+    "master_tip": "e9ad335daf0eccf04c1dcfabbd91c23339b3de8c",
+    "master_objects": 8350512,
+    "snapshot_bytes": 3235361054
+  },
+  "scope": "Production JVM host preparation (bench/GitPreparationBench.java), one ref per snapshot since #1990, and the individual Git commands it runs; excludes Incus, guest access checks, guest copying and priming. Single runs; the remote moved between runs, so tips differ slightly.",
+  "base_revision": "8b8fd9b404feea2891c671e7ac61d2db93e62e97",
+  "source_hashes": {
+    "file": "common/src/main/java/dev/incusspawn/git/GitPreparation.java",
+    "before (8b8fd9b4: fetch with the checkout as alternate, repack -a -d, fsck --full)": "0e6a32993c419602b2eb6b9d94a86ec7ba1c4aba2da85e621395d7d51c083f62",
+    "first version (pack-objects --stdout --revs, index-pack --stdin --strict into an empty repository)": "61dc36df0498614c5746ba124845cef6be542d1a7234181acbe1e1602d4195e2",
+    "final (the PR's head: pack-objects --stdout --revs, index-pack --strict of the export where it lies in an empty repository)": "08270ba9e3ee5d5a9e3a80611cda4b134bbb0c2349bdb570ca7a6003f6a69383"
+  },
+  "bench_trials_ms": {
+    "reference_from_checkout_before": {
+      "url": "https://github.com/NixOS/nixpkgs.git",
+      "peak_rss_kb": 5606288,
+      "trials": [
+        {
+          "strategy": "reference-seeded clean snapshot",
+          "total_ms": 980897,
+          "phases_ms": {
+            "remote": 5228,
+            "reference": 8,
+            "clone": 259346,
+            "verify": 716273,
+            "publish": 1
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 6601,
+          "phases_ms": {
+            "remote": 4864,
+            "check": 1732
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 6591,
+          "phases_ms": {
+            "remote": 4855,
+            "check": 1731
+          }
+        }
+      ]
+    },
+    "reference_from_checkout_first_version": {
+      "url": "https://github.com/NixOS/nixpkgs.git",
+      "peak_rss_kb": 5307996,
+      "trials": [
+        {
+          "strategy": "reference-seeded clean snapshot",
+          "total_ms": 314226,
+          "phases_ms": {
+            "remote": 5233,
+            "reference": 7,
+            "clone": 118277,
+            "verify": 190694,
+            "publish": 1
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 7529,
+          "phases_ms": {
+            "remote": 5842,
+            "check": 1682
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 6543,
+          "phases_ms": {
+            "remote": 4826,
+            "check": 1712
+          }
+        }
+      ]
+    },
+    "network_github_no_checkout": {
+      "url": "https://github.com/NixOS/nixpkgs.git",
+      "note": "strict receive, no separate fsck (#1557); master moved during the clone, so the second trial refreshed incrementally",
+      "peak_rss_kb": 3421920,
+      "trials": [
+        {
+          "strategy": "new clean snapshot",
+          "total_ms": 652398,
+          "phases_ms": {
+            "remote": 6891,
+            "clone": 643633,
+            "verify": 1861,
+            "publish": 1
+          }
+        },
+        {
+          "strategy": "incremental clean snapshot",
+          "total_ms": 17412,
+          "phases_ms": {
+            "remote": 11366,
+            "check": 1785,
+            "fetch": 658,
+            "verify": 3592,
+            "publish": 1
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 6604,
+          "phases_ms": {
+            "remote": 4813,
+            "check": 1786
+          }
+        }
+      ]
+    },
+    "network_loopback_git_daemon_no_checkout": {
+      "url": "git://127.0.0.1:9419/checkout (git daemon serving the checkout)",
+      "note": "the network path with no bandwidth limit: the server's pack-objects plus the strict receive",
+      "peak_rss_kb": 3122956,
+      "trials": [
+        {
+          "strategy": "new clean snapshot",
+          "total_ms": 385944,
+          "phases_ms": {
+            "remote": 118,
+            "clone": 383954,
+            "verify": 1846,
+            "publish": 1
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 1841,
+          "phases_ms": {
+            "remote": 88,
+            "check": 1747
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 1838,
+          "phases_ms": {
+            "remote": 87,
+            "check": 1746
+          }
+        }
+      ]
+    },
+    "reference_from_checkout_final": {
+      "url": "https://github.com/NixOS/nixpkgs.git",
+      "note": "the export is indexed in place instead of copied by index-pack --stdin; master moved before the second trial",
+      "peak_rss_kb": 5310336,
+      "trials": [
+        {
+          "strategy": "reference-seeded clean snapshot",
+          "total_ms": 301615,
+          "phases_ms": {
+            "remote": 5092,
+            "reference": 7,
+            "clone": 107008,
+            "verify": 189494,
+            "publish": 1
+          }
+        },
+        {
+          "strategy": "incremental clean snapshot",
+          "total_ms": 15452,
+          "phases_ms": {
+            "remote": 9706,
+            "check": 1710,
+            "fetch": 593,
+            "verify": 3431,
+            "publish": 1
+          }
+        },
+        {
+          "strategy": "cached clean snapshot",
+          "total_ms": 6515,
+          "phases_ms": {
+            "remote": 4806,
+            "check": 1704
+          }
+        }
+      ]
+    }
+  },
+  "commands": {
+    "note": "by hand on master's closure; wall and user CPU in seconds, peak RSS in KB",
+    "32 cores": {
+      "index-pack --verify --strict <snapshot pack> (in its repository, #1553 option (a))": {
+        "wall": 270.69,
+        "rss_kb": 6841192
+      },
+      "pack-objects --stdout --revs --no-use-bitmap-index (checkout as alternate)": {
+        "wall": 108.41,
+        "rss_kb": 5303972
+      },
+      "index-pack --stdin --strict (empty repository)": {
+        "wall": 198.58,
+        "rss_kb": 3280516
+      },
+      "index-pack --stdin, plain (empty repository)": {
+        "wall": 67.43,
+        "rss_kb": 2611556
+      },
+      "fsck --connectivity-only --no-dangling": {
+        "wall": 109.78,
+        "rss_kb": 4169068
+      }
+    },
+    "4 cores (taskset -c 0-3)": {
+      "pack-objects --stdout --revs --delta-base-offset --no-use-bitmap-index (checkout as alternate)": {
+        "wall": 103.51,
+        "user": 99.83,
+        "rss_kb": 5353440
+      },
+      "index-pack --stdin --strict (empty repository)": {
+        "wall": 208.83,
+        "user": 499.35,
+        "rss_kb": 2781428
+      },
+      "fsck --full --no-dangling": {
+        "wall": 718.09,
+        "user": 673.91,
+        "rss_kb": 4347424
+      }
+    }
+  },
+  "export_pack_bytes": {
+    "pack-objects --stdout without --delta-base-offset": 3084000177,
+    "repack -a -d (before)": 2983962619,
+    "note": "with --delta-base-offset the snapshot is 3,242,593,035 bytes against 3,246,205,450 before, pack and index included"
+  },
+  "corruption_probe": {
+    "case": "checkout loose object with other content under a public object's name, borrowed through the alternate",
+    "pack-objects --stdout --revs": "exit 0, copies the wrong bytes",
+    "index-pack --stdin --strict (empty repository)": "fails: did not receive expected object <the public object's ID>"
+  }
+}
