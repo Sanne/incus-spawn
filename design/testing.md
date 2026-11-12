@@ -207,3 +207,18 @@ The Arch leg found at once that isx init needed `which`, which Arch's base syste
 
 **Integration tests** (`mvn verify -DskipITs=false`, requires Incus):
 - `TemplateBuildIT` — builds actual images, verifies metadata, agentuser, and that the generated agent context file lands without touching the user-layer CLAUDE.md
+
+## Site previews: built without secrets, deployed without PR code
+
+Every PR the AI assistant opens comes from its fork (`Sanne-ai-bot/incus-spawn`), and a fork's `pull_request` run gets no secret, so a preview that built and deployed in one job never ran for any of them (#2180).
+Running the build where the Cloudflare token is would give the PR's `site/build.sh` that token, so the two halves run apart.
+`preview.yml` builds on `pull_request` with a read-only token and uploads `_site`, and `preview-deploy.yml` deploys it on `workflow_run`, from `main`'s copy, running nothing of the PR.
+The artifact is data, and the run decides which PR it belongs to from GitHub's record of the run, never from the artifact, so a PR cannot point its upload at another PR's preview or comment thread.
+It deploys only while the run's SHA is still the PR's head, so a slow old run cannot replace a newer preview.
+It refuses a Pages Functions entry, so a preview is static files and never code that Cloudflare runs.
+`upload-artifact` stores a symlink's target and the job checks nothing out, so its symlink and `./functions` checks are backstops.
+The PR is checked again just before the deploy, which leaves a window of seconds in which a PR closed mid-deploy keeps its preview.
+It deploys only for a PR whose author is `OWNER`, `MEMBER` or `COLLABORATOR`, from this repository or the author's own fork.
+That gives up previews for outside contributors: their HTML would be served on the project's `pages.dev` address and linked from a comment on the repository, which is a phishing page under the project's name.
+Such a PR can still be checked by building it locally (`site/build.sh`).
+`PreviewWorkflowTest` holds these invariants.

@@ -163,6 +163,7 @@ Measurements, with the conditions they were taken under, are in [docs/dev/PERFOR
   - The VM base image's own kernel (#1255)
   - Considered and deferred
 - [Testing](design/testing.md)
+  - Site previews: built without secrets, deployed without PR code
 - [Doctor, support bundles and secret scanning](design/doctor.md)
   - Doctor: a finding that is neither healthy nor broken
   - Doctor and build remediations act through isx, never name an `incus` command

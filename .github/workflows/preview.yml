@@ -8,63 +8,33 @@ on:
       - 'site/**'
       - '.github/workflows/preview.yml'
 
+# This run builds the PR's own site/build.sh, a fork's included, so it holds no secret and a
+# read-only token. Deploying is preview-deploy.yml's job: it takes the built _site as an artifact
+# and never runs anything from the PR (#2180).
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: preview-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  preview:
-    if: github.event.pull_request.head.repo.fork != true
+  build:
     runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0  # build.sh dates the sitemap from each page's last commit
+          persist-credentials: false
 
       - name: Build site
         run: site/build.sh
 
-      - name: Deploy preview
-        id: deploy
-        uses: cloudflare/wrangler-action@v4
+      - name: Upload site
+        uses: ./.github/actions/upload-artifact-retry
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy _site --project-name=isx --branch=pr-${{ github.event.pull_request.number }}
-
-      - name: Comment preview URL
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const marker = '<!-- site-preview -->';
-            const body = `${marker}\n**Site preview:** ${process.env.URL}`;
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const existing = comments.find(c => c.body.startsWith(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
-            }
-        env:
-          URL: ${{ steps.deploy.outputs.deployment-url }}
+          name: site-preview
+          path: _site
+          retention-days: 3
+          if-no-files-found: error

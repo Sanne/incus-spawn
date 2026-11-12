@@ -1,0 +1,167 @@
+name: Deploy site preview
+
+# Deploys what preview.yml built for a PR, a fork's included, to pr-<N> on Cloudflare Pages (#2180).
+# This run holds the Cloudflare token, so nothing from the PR runs here: no checkout, no script,
+# no workflow file of the PR's. The PR's built _site is data, uploaded as it is.
+#
+# What it trusts, and why:
+# - The PR is looked up from the run's head repository and branch, never read from the artifact,
+#   and only while the run's head SHA is still the PR's head: an artifact cannot pick another PR's
+#   preview or comment thread, and a slow old run cannot overwrite a newer preview.
+# - Only a PR whose author is OWNER, MEMBER or COLLABORATOR, from this repository or the author's own
+#   fork, is deployed. A stranger's HTML would be served on the project's pages.dev address and
+#   linked from a comment on this repository.
+# - The artifact may not hold a Pages Functions entry point (_worker.js, _routes.json, functions/),
+#   so a preview is static files and never code running in Cloudflare. upload-artifact follows
+#   symlinks when it zips, and this job checks nothing out, so the symlink check and the one for a
+#   ./functions beside _site are backstops, not the guard.
+# - The PR is checked again just before the deploy, so a PR closed or pushed while the artifact
+#   downloaded gets no preview. A PR closed during the deploy itself can still keep a pr-<N>
+#   deployment, since preview-cleanup.yml may have run first; that window is seconds wide.
+# - Strings from the PR (its branch name) reach scripts only through env, never ${{ }} in a script.
+
+on:
+  workflow_run:
+    workflows: ['Preview site']
+    types: [completed]
+
+permissions:
+  actions: read
+  pull-requests: write
+
+concurrency:
+  group: preview-deploy-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Find the PR
+        id: pr
+        uses: actions/github-script@v8
+        env:
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        with:
+          script: |
+            const { HEAD_REPO, HEAD_OWNER, HEAD_BRANCH, HEAD_SHA } = process.env;
+            const { data: pulls } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: `${HEAD_OWNER}:${HEAD_BRANCH}`,
+            });
+            const pr = pulls.find(p => p.head.repo && p.head.repo.full_name === HEAD_REPO
+                && p.head.sha === HEAD_SHA);
+            if (!pr) {
+              core.notice(`No open PR has ${HEAD_SHA} at its head any more; nothing to deploy.`);
+              return;
+            }
+            const trusted = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+            if (!trusted.includes(pr.author_association)) {
+              core.notice(`PR #${pr.number} is by ${pr.user.login} (${pr.author_association}); `
+                + 'previews are deployed only for the repository\'s collaborators.');
+              return;
+            }
+            // The author vouches only for a head they control: a collaborator's PR from a
+            // stranger's fork would deploy whatever the stranger pushes next.
+            const ownHead = pr.head.repo.full_name === `${context.repo.owner}/${context.repo.repo}`
+                || pr.head.repo.owner.login === pr.user.login;
+            if (!ownHead) {
+              core.notice(`PR #${pr.number} comes from ${pr.head.repo.full_name}, which ${pr.user.login} `
+                + 'does not own; previews are deployed only from the author\'s own head.');
+              return;
+            }
+            core.setOutput('number', String(pr.number));
+
+      - name: Download site
+        if: steps.pr.outputs.number
+        uses: actions/download-artifact@v6
+        with:
+          name: site-preview
+          path: _site
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      # A backstop: upload-artifact stores a symlink's target, and there is no checkout here.
+      - name: Check the site is static files
+        if: steps.pr.outputs.number
+        run: |
+          bad=$(find _site -type l -o -path '_site/_worker.js' -o -path '_site/_routes.json' -o -path '_site/functions')
+          if [ -n "$bad" ]; then
+            echo "::error::The built site holds what Pages would run or follow, so it is not deployed:"
+            echo "$bad"
+            exit 1
+          fi
+          # wrangler looks for ./functions beside the deployed directory; there is no checkout here.
+          test ! -e functions
+
+      - name: Check the PR again
+        if: steps.pr.outputs.number
+        id: still
+        uses: actions/github-script@v8
+        env:
+          PR: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: Number(process.env.PR),
+            });
+            if (pr.state !== 'open' || pr.head.sha !== process.env.HEAD_SHA) {
+              core.notice(`PR #${pr.number} is ${pr.state} at ${pr.head.sha} now; nothing to deploy.`);
+              return;
+            }
+            core.setOutput('open', 'true');
+
+      - name: Deploy preview
+        if: steps.still.outputs.open
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy _site --project-name=isx --branch=pr-${{ steps.pr.outputs.number }}
+
+      - name: Comment preview URL
+        if: steps.still.outputs.open
+        uses: actions/github-script@v8
+        env:
+          URL: ${{ steps.deploy.outputs.deployment-url }}
+          PR: ${{ steps.pr.outputs.number }}
+        with:
+          script: |
+            const marker = '<!-- site-preview -->';
+            const body = `${marker}\n**Site preview:** ${process.env.URL}`;
+            const issue_number = Number(process.env.PR);
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+            });
+
+            const existing = comments.find(c => c.user.login === 'github-actions[bot]' && c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                body,
+              });
+            }
